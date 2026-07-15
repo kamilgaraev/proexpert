@@ -14,23 +14,24 @@ use Illuminate\Support\Facades\Schema;
 final class BrickHouseDemoScenarioService
 {
     public const SCENARIO_SLUG = 'brick-house';
+
     public const PROJECT_EXTERNAL_CODE = 'BRICK-HOUSE-DEMO-2026';
 
     private const ORGANIZATION_TAX_NUMBERS = ['7701000001', '7701000002'];
 
     private const USER_EMAILS = [
-        'demo.general-contractor@prohelper.test',
-        'demo.contractor@prohelper.test',
-        'demo.gp.project-manager@prohelper.test',
-        'demo.gp.pto@prohelper.test',
-        'demo.gp.foreman@prohelper.test',
-        'demo.gp.supply@prohelper.test',
-        'demo.gp.accountant@prohelper.test',
-        'demo.sub.work-manager@prohelper.test',
-        'demo.sub.pto@prohelper.test',
-        'demo.sub.foreman@prohelper.test',
-        'demo.sub.storekeeper@prohelper.test',
-        'demo.sub.accountant@prohelper.test',
+        'demo.general-contractor@most.test',
+        'demo.contractor@most.test',
+        'demo.gp.project-manager@most.test',
+        'demo.gp.pto@most.test',
+        'demo.gp.foreman@most.test',
+        'demo.gp.supply@most.test',
+        'demo.gp.accountant@most.test',
+        'demo.sub.work-manager@most.test',
+        'demo.sub.pto@most.test',
+        'demo.sub.foreman@most.test',
+        'demo.sub.storekeeper@most.test',
+        'demo.sub.accountant@most.test',
     ];
 
     public function seed(): array
@@ -108,7 +109,8 @@ final class BrickHouseDemoScenarioService
             $this->checkCount('supplier_proposals', 'Коммерческие предложения поставщиков', 10, $projectId, $organizationIds),
             $this->checkCount('purchase_orders', 'Заказы поставщикам', 10, $projectId, $organizationIds),
             $this->checkCount('purchase_receipts', 'Приемки по заказам поставщикам', 4, $projectId, $organizationIds),
-            $this->checkCount('organization_subscriptions', 'Активные подписки организаций', 2, null, $organizationIds),
+            $this->checkCount('organization_commercial_accounts', 'Коммерческие контуры организаций', 2, null, $organizationIds),
+            $this->checkCount('organization_package_subscriptions', 'Пакеты коммерческого контура', 20, null, $organizationIds),
             $this->checkCount('organization_custom_roles', 'Кастомные роли организаций', 10, null, $organizationIds),
             $this->checkCount('workforce_employees', 'Сотрудники workforce', 12, null, $organizationIds),
             $this->checkCount('workforce_payroll_statements', 'Ведомости workforce', 2, null, $organizationIds),
@@ -350,8 +352,8 @@ final class BrickHouseDemoScenarioService
             $this->deleteByIds('measurement_units', 'id', $ids['unitIds']),
             $this->deleteByColumn('activity_events', 'project_id', $ids['projectIds']),
             $this->deleteByColumn('organization_package_subscriptions', 'organization_id', $ids['organizationIds']),
+            $this->deleteByColumn('organization_commercial_accounts', 'organization_id', $ids['organizationIds']),
             $this->deleteByColumn('organization_module_activations', 'organization_id', $ids['organizationIds']),
-            $this->deleteByColumn('organization_subscriptions', 'organization_id', $ids['organizationIds']),
             $this->deleteByIds('user_role_assignments', 'context_id', $ids['contextIds']),
             $this->deleteByCodes('organization_custom_roles', $ids['organizationIds'], ['brick_house_'], true, 'slug'),
             $this->deleteByColumn('project_user', 'project_id', $ids['projectIds']),
@@ -369,7 +371,7 @@ final class BrickHouseDemoScenarioService
         return [
             'table' => $table,
             'run' => function (bool $dryRun) use ($table, $column, $ids): int {
-                if ($ids === [] || !Schema::hasTable($table) || !Schema::hasColumn($table, $column)) {
+                if ($ids === [] || ! Schema::hasTable($table) || ! Schema::hasColumn($table, $column)) {
                     return 0;
                 }
 
@@ -388,14 +390,14 @@ final class BrickHouseDemoScenarioService
         return [
             'table' => $table,
             'run' => function (bool $dryRun) use ($table, $projectIds, $organizationIds): int {
-                if (!Schema::hasTable($table) || ($projectIds === [] && $organizationIds === [])) {
+                if (! Schema::hasTable($table) || ($projectIds === [] && $organizationIds === [])) {
                     return 0;
                 }
 
                 $hasProjectColumn = Schema::hasColumn($table, 'project_id');
                 $hasOrganizationColumn = Schema::hasColumn($table, 'organization_id');
 
-                if (($projectIds === [] || !$hasProjectColumn) && ($organizationIds === [] || !$hasOrganizationColumn)) {
+                if (($projectIds === [] || ! $hasProjectColumn) && ($organizationIds === [] || ! $hasOrganizationColumn)) {
                     return 0;
                 }
 
@@ -419,7 +421,7 @@ final class BrickHouseDemoScenarioService
         return [
             'table' => $table,
             'run' => function (bool $dryRun) use ($table, $organizationIds, $codes, $prefix, $column): int {
-                if ($organizationIds === [] || $codes === [] || !Schema::hasTable($table) || !Schema::hasColumn($table, $column)) {
+                if ($organizationIds === [] || $codes === [] || ! Schema::hasTable($table) || ! Schema::hasColumn($table, $column)) {
                     return 0;
                 }
 
@@ -431,7 +433,7 @@ final class BrickHouseDemoScenarioService
                     return $query->where(function (Builder $scope) use ($codes, $prefix, $column): void {
                         foreach ($codes as $code) {
                             $prefix
-                                ? $scope->orWhere($column, 'like', $code . '%')
+                                ? $scope->orWhere($column, 'like', $code.'%')
                                 : $scope->orWhere($column, $code);
                         }
                     });
@@ -445,7 +447,7 @@ final class BrickHouseDemoScenarioService
         $query = $scope(DB::table($table));
         $count = (int) (clone $query)->count();
 
-        if (!$dryRun && $count > 0) {
+        if (! $dryRun && $count > 0) {
             $query->delete();
         }
 
@@ -454,7 +456,7 @@ final class BrickHouseDemoScenarioService
 
     private function ids(string $table, Closure $scope): array
     {
-        if (!Schema::hasTable($table) || !Schema::hasColumn($table, 'id')) {
+        if (! Schema::hasTable($table) || ! Schema::hasColumn($table, 'id')) {
             return [];
         }
 
@@ -469,14 +471,14 @@ final class BrickHouseDemoScenarioService
 
     private function idsByScope(string $table, array $projectIds, array $organizationIds): array
     {
-        if (!Schema::hasTable($table)) {
+        if (! Schema::hasTable($table)) {
             return [];
         }
 
         $hasProjectColumn = Schema::hasColumn($table, 'project_id');
         $hasOrganizationColumn = Schema::hasColumn($table, 'organization_id');
 
-        if (($projectIds === [] || !$hasProjectColumn) && ($organizationIds === [] || !$hasOrganizationColumn)) {
+        if (($projectIds === [] || ! $hasProjectColumn) && ($organizationIds === [] || ! $hasOrganizationColumn)) {
             return [];
         }
 
@@ -495,7 +497,7 @@ final class BrickHouseDemoScenarioService
 
     private function idsByColumn(string $table, string $column, array $values): array
     {
-        if ($values === [] || !Schema::hasTable($table) || !Schema::hasColumn($table, $column)) {
+        if ($values === [] || ! Schema::hasTable($table) || ! Schema::hasColumn($table, $column)) {
             return [];
         }
 
@@ -511,7 +513,7 @@ final class BrickHouseDemoScenarioService
 
     private function idsByCodePrefixes(string $table, array $organizationIds, array $prefixes, string $column = 'code'): array
     {
-        if ($organizationIds === [] || !Schema::hasTable($table) || !Schema::hasColumn($table, $column)) {
+        if ($organizationIds === [] || ! Schema::hasTable($table) || ! Schema::hasColumn($table, $column)) {
             return [];
         }
 
@@ -522,7 +524,7 @@ final class BrickHouseDemoScenarioService
 
             $query->where(function (Builder $scope) use ($prefixes, $column): void {
                 foreach ($prefixes as $prefix) {
-                    $scope->orWhere($column, 'like', $prefix . '%');
+                    $scope->orWhere($column, 'like', $prefix.'%');
                 }
             });
         });
@@ -530,7 +532,7 @@ final class BrickHouseDemoScenarioService
 
     private function projectId(): ?int
     {
-        if (!Schema::hasTable('projects') || !Schema::hasColumn('projects', 'external_code')) {
+        if (! Schema::hasTable('projects') || ! Schema::hasColumn('projects', 'external_code')) {
             return null;
         }
 
@@ -543,7 +545,7 @@ final class BrickHouseDemoScenarioService
 
     private function organizationIds(): array
     {
-        if (!Schema::hasTable('organizations') || !Schema::hasColumn('organizations', 'tax_number')) {
+        if (! Schema::hasTable('organizations') || ! Schema::hasColumn('organizations', 'tax_number')) {
             return [];
         }
 
@@ -557,7 +559,7 @@ final class BrickHouseDemoScenarioService
 
     private function userIds(): array
     {
-        if (!Schema::hasTable('users') || !Schema::hasColumn('users', 'email')) {
+        if (! Schema::hasTable('users') || ! Schema::hasColumn('users', 'email')) {
             return [];
         }
 
@@ -582,7 +584,7 @@ final class BrickHouseDemoScenarioService
         array $organizationIds = [],
         array $userIds = []
     ): array {
-        if (!Schema::hasTable($table)) {
+        if (! Schema::hasTable($table)) {
             return $this->check($name, false, 0, $expected);
         }
 

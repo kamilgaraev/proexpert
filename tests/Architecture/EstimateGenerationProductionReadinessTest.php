@@ -57,6 +57,18 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
     }
 
     #[Test]
+    public function production_image_provides_bcmath_required_by_ai_cost_accounting(): void
+    {
+        $dockerfile = $this->source(dirname(__DIR__, 2).'/Dockerfile.prod');
+
+        self::assertMatchesRegularExpression(
+            '/docker-php-ext-install[^\n]*\bbcmath\b/',
+            $dockerfile,
+        );
+        self::assertStringContainsString("function_exists('bcdiv')", $dockerfile);
+    }
+
+    #[Test]
     public function plan_migrations_are_uniquely_ordered_and_reversible_in_reverse_dependency_order(): void
     {
         $directory = dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration/migrations';

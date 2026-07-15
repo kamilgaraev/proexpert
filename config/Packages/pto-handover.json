@@ -1,0 +1,19 @@
+{
+    "slug": "pto-handover",
+    "name": "ПТО и сдача",
+    "description": "Исполнительная и проектная документация, контроль качества и приёмка результата.",
+    "sort_order": 5,
+    "schema_version": 2,
+    "business_outcomes": ["Комплектная исполнительная документация", "Прозрачная приёмка и сдача"],
+    "tiers": {
+        "standard": {
+            "label": "ПТО и сдача",
+            "description": "Исполнительная документация, проектная документация и приёмка.",
+            "price": 11900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": ["budget-estimates", "file-management", "quality-control", "report-templates", "executive-documentation", "design-management", "handover-acceptance"],
+            "highlights": ["Исполнительная документация", "ПИР", "Приёмка"]
+        }
+    }
+}

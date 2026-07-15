@@ -6,103 +6,100 @@ namespace Tests\Feature\Api\V1\Landing;
 
 use App\Models\Module;
 use App\Models\Organization;
-use App\Models\OrganizationModuleActivation;
+use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
-use App\Models\OrganizationSubscription;
-use App\Models\SubscriptionPlan;
-use App\Models\User;
+use App\Services\Landing\ModulesOverviewService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 class ModulesOverviewControllerTest extends TestCase
 {
-    private Organization $organization;
-    private User $user;
+    public function refreshDatabase(): void {}
 
-    public function refreshDatabase(): void
+    public function test_runtime_overview_resolves_new_package_schema_and_enums(): void
     {
-    }
-
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        $this->withoutMiddleware();
         $this->createSchema();
-
-        $this->organization = Organization::factory()->create();
-        $this->user = User::factory()->create([
-            'current_organization_id' => $this->organization->id,
-        ]);
-
-        $this->organization->users()->attach($this->user->id, [
-            'is_owner' => true,
+        $organization = Organization::withoutEvents(static fn (): Organization => Organization::create([
+            'name' => 'Overview organization',
             'is_active' => true,
+            'is_verified' => true,
+        ]));
+        $account = OrganizationCommercialAccount::create([
+            'organization_id' => $organization->id,
+            'status' => 'active',
+            'offer_type' => 'packages',
+            'quote_version' => 1,
+            'current_period_start_at' => now(),
+            'current_period_end_at' => now()->addDays(30),
+            'auto_renew_enabled' => true,
         ]);
+        OrganizationPackageSubscription::create([
+            'organization_id' => $organization->id,
+            'commercial_account_id' => $account->id,
+            'package_slug' => 'machinery',
+            'status' => 'active',
+            'access_source' => 'paid_package',
+            'price_paid' => 7900,
+            'current_period_start_at' => now(),
+            'current_period_end_at' => now()->addDays(30),
+        ]);
+        Module::create([
+            'name' => 'Техника',
+            'slug' => 'machinery-operations',
+            'version' => '1.0.0',
+            'type' => 'feature',
+            'billing_model' => 'subscription',
+            'pricing_config' => [],
+            'features' => [],
+            'permissions' => [],
+            'dependencies' => [],
+            'conflicts' => [],
+            'limits' => [],
+            'display_order' => 1,
+            'is_active' => true,
+            'is_system_module' => false,
+            'can_deactivate' => true,
+        ]);
+
+        $overview = app(ModulesOverviewService::class)->build($organization->id);
+
+        $this->assertSame(10, $overview['summary']['total_solutions_count']);
+        $this->assertSame(1, $overview['summary']['active_solutions_count']);
+        $this->assertSame('7900.00', $overview['summary']['monthly_total']);
+        $machinery = collect($overview['solutions'])->firstWhere('slug', 'machinery');
+        $this->assertIsArray($machinery);
+        $this->assertTrue($machinery['is_active']);
+        $this->assertSame('paid_package', $machinery['access_source']);
+        $this->assertArrayNotHasKey('tier', $machinery);
+        $module = collect($overview['advanced_modules'])->firstWhere('slug', 'machinery-operations');
+        $this->assertIsArray($module);
+        $this->assertSame('packaged', $module['classification']);
     }
 
     private function createSchema(): void
     {
         Schema::dropIfExists('organization_module_activations');
         Schema::dropIfExists('organization_package_subscriptions');
-        Schema::dropIfExists('organization_subscriptions');
-        Schema::dropIfExists('subscription_plans');
+        Schema::dropIfExists('organization_commercial_accounts');
         Schema::dropIfExists('modules');
-        Schema::dropIfExists('organization_user');
-        Schema::dropIfExists('users');
         Schema::dropIfExists('organizations');
 
-        Schema::create('organizations', function (Blueprint $table) {
+        Schema::create('organizations', function (Blueprint $table): void {
             $table->id();
             $table->string('name');
-            $table->string('legal_name')->nullable();
-            $table->string('tax_number')->nullable();
-            $table->string('registration_number')->nullable();
-            $table->string('phone')->nullable();
-            $table->string('email')->nullable();
-            $table->string('address')->nullable();
-            $table->string('city')->nullable();
-            $table->string('postal_code')->nullable();
-            $table->string('country')->nullable();
             $table->boolean('is_active')->default(true);
             $table->boolean('is_verified')->default(false);
-            $table->string('verification_status')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });
-
-        Schema::create('users', function (Blueprint $table) {
-            $table->id();
-            $table->string('name');
-            $table->string('email')->unique();
-            $table->timestamp('email_verified_at')->nullable();
-            $table->string('password');
-            $table->rememberToken();
-            $table->foreignId('current_organization_id')->nullable();
-            $table->boolean('is_active')->default(true);
-            $table->json('settings')->nullable();
-            $table->timestamps();
-            $table->softDeletes();
-        });
-
-        Schema::create('organization_user', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('user_id');
-            $table->foreignId('organization_id');
-            $table->boolean('is_owner')->default(false);
-            $table->boolean('is_active')->default(true);
-            $table->json('settings')->nullable();
-            $table->timestamps();
-        });
-
-        Schema::create('modules', function (Blueprint $table) {
+        Schema::create('modules', function (Blueprint $table): void {
             $table->id();
             $table->string('name');
             $table->string('slug')->unique();
-            $table->string('version')->default('1.0.0');
-            $table->string('type')->default('feature');
-            $table->string('billing_model')->default('free');
+            $table->string('version');
+            $table->string('type');
+            $table->string('billing_model');
             $table->string('category')->nullable();
             $table->text('description')->nullable();
             $table->json('pricing_config')->nullable();
@@ -119,298 +116,42 @@ class ModulesOverviewControllerTest extends TestCase
             $table->string('development_status')->nullable();
             $table->timestamps();
         });
-
-        Schema::create('organization_module_activations', function (Blueprint $table) {
+        Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id')->unique();
+            $table->string('status');
+            $table->string('offer_type');
+            $table->unsignedInteger('quote_version');
+            $table->timestamp('billing_anchor_at')->nullable();
+            $table->timestamp('current_period_start_at')->nullable();
+            $table->timestamp('current_period_end_at')->nullable();
+            $table->boolean('auto_renew_enabled');
+            $table->timestamps();
+        });
+        Schema::create('organization_package_subscriptions', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('commercial_account_id');
+            $table->string('package_slug');
+            $table->string('status');
+            $table->string('access_source');
+            $table->decimal('price_paid', 10, 2);
+            $table->timestamp('current_period_start_at')->nullable();
+            $table->timestamp('current_period_end_at')->nullable();
+            $table->timestamp('trial_started_at')->nullable();
+            $table->timestamp('trial_ends_at')->nullable();
+            $table->timestamp('cancel_at')->nullable();
+            $table->timestamp('canceled_at')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('organization_module_activations', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id');
             $table->foreignId('module_id');
-            $table->foreignId('subscription_id')->nullable();
-            $table->boolean('is_bundled_with_plan')->default(false);
-            $table->string('status')->default('active');
-            $table->timestamp('activated_at')->nullable();
-            $table->timestamp('expires_at')->nullable();
-            $table->timestamp('trial_ends_at')->nullable();
-            $table->timestamp('last_used_at')->nullable();
-            $table->decimal('paid_amount', 10, 2)->nullable();
-            $table->json('payment_details')->nullable();
-            $table->timestamp('next_billing_date')->nullable();
-            $table->json('module_settings')->nullable();
-            $table->json('usage_stats')->nullable();
-            $table->timestamp('cancelled_at')->nullable();
-            $table->string('cancellation_reason')->nullable();
-            $table->boolean('is_auto_renew_enabled')->default(false);
-            $table->timestamps();
-        });
-
-        Schema::create('organization_package_subscriptions', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('organization_id');
-            $table->foreignId('subscription_id')->nullable();
-            $table->boolean('is_bundled_with_plan')->default(false);
-            $table->string('package_slug');
-            $table->string('tier');
-            $table->decimal('price_paid', 10, 2)->default(0);
+            $table->string('status');
             $table->timestamp('activated_at')->nullable();
             $table->timestamp('expires_at')->nullable();
             $table->timestamps();
         });
-
-        Schema::create('subscription_plans', function (Blueprint $table) {
-            $table->id();
-            $table->string('name');
-            $table->string('slug')->unique();
-            $table->text('description')->nullable();
-            $table->decimal('price', 10, 2)->default(0);
-            $table->string('currency')->default('RUB');
-            $table->integer('duration_in_days')->default(30);
-            $table->integer('max_projects')->nullable();
-            $table->integer('max_storage_gb')->nullable();
-            $table->integer('max_users')->nullable();
-            $table->json('features')->nullable();
-            $table->json('included_packages')->nullable();
-            $table->boolean('is_active')->default(true);
-            $table->integer('display_order')->default(0);
-            $table->timestamps();
-        });
-
-        Schema::create('organization_subscriptions', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('organization_id');
-            $table->foreignId('subscription_plan_id');
-            $table->string('status')->default('active');
-            $table->timestamp('trial_ends_at')->nullable();
-            $table->timestamp('starts_at')->nullable();
-            $table->timestamp('ends_at')->nullable();
-            $table->timestamp('next_billing_at')->nullable();
-            $table->timestamp('canceled_at')->nullable();
-            $table->timestamp('payment_failure_notified_at')->nullable();
-            $table->string('payment_gateway_subscription_id')->nullable();
-            $table->string('payment_gateway_customer_id')->nullable();
-            $table->boolean('is_auto_payment_enabled')->default(false);
-            $table->timestamps();
-        });
-    }
-
-    public function test_overview_classifies_packaged_standalone_and_system_modules(): void
-    {
-        $projectModule = $this->createModule('project-management', 'Управление проектами', 'free', true, false, 0);
-        $brigadesModule = $this->createModule('brigades', 'Бригады', 'free', true, false, 0);
-        $this->createModule('workforce-management', 'Персонал и трудозатраты', 'subscription', true, false, 0);
-        $this->createModule('production-labor', 'Наряды и выработка', 'subscription', true, false, 0);
-        $this->createModule('video-monitoring', 'Видеонаблюдение', 'subscription', true, false, 1900);
-        $usersModule = $this->createModule('users', 'Пользователи', 'free', false, true, 0);
-        $organizationsModule = $this->createModule('organizations', 'Организации', 'free', false, true, 0);
-
-        $this->createModule('contractor-portal', 'Contractor portal', 'subscription', true, false, 3490, false);
-
-        foreach ([$projectModule, $brigadesModule, $usersModule, $organizationsModule] as $module) {
-            OrganizationModuleActivation::create([
-                'organization_id' => $this->organization->id,
-                'module_id' => $module->id,
-                'status' => 'active',
-                'activated_at' => now(),
-                'expires_at' => null,
-                'is_bundled_with_plan' => $module->slug === 'project-management',
-                'is_auto_renew_enabled' => false,
-            ]);
-        }
-
-        $response = $this->actingAs($this->user, 'api_landing')
-            ->getJson('/api/v1/landing/modules/overview');
-
-        $response->assertOk()
-            ->assertJsonPath('success', true)
-            ->assertJsonPath('data.summary.total_solutions_count', 11)
-            ->assertJsonFragment(['slug' => 'objects-execution'])
-            ->assertJsonFragment(['slug' => 'workforce-management'])
-            ->assertJsonFragment(['slug' => 'brigades'])
-            ->assertJsonFragment(['slug' => 'video-monitoring'])
-            ->assertJsonFragment(['slug' => 'users', 'is_system' => true])
-            ->assertJsonFragment(['slug' => 'organizations', 'is_system' => true]);
-
-        $standaloneSlugs = collect($response->json('data.standalone_modules'))->pluck('slug')->all();
-
-        $this->assertNotContains('video-monitoring', $standaloneSlugs);
-        $this->assertNotContains('brigades', $standaloneSlugs);
-        $this->assertNotContains('workforce-management', $standaloneSlugs);
-        $this->assertNotContains('production-labor', $standaloneSlugs);
-        $this->assertNotContains('contractor-portal', $standaloneSlugs);
-        $this->assertNotContains('users', $standaloneSlugs);
-        $this->assertNotContains('organizations', $standaloneSlugs);
-
-        $advancedModules = collect($response->json('data.advanced_modules'));
-
-        $this->assertNull($advancedModules->firstWhere('slug', 'contractor-portal'));
-        $this->assertTrue($advancedModules->firstWhere('slug', 'users')['is_system']);
-        $this->assertSame('packaged', $advancedModules->firstWhere('slug', 'project-management')['classification']);
-        $this->assertSame('packaged', $advancedModules->firstWhere('slug', 'brigades')['classification']);
-        $this->assertSame('packaged', $advancedModules->firstWhere('slug', 'video-monitoring')['classification']);
-        $this->assertSame('packaged', $advancedModules->firstWhere('slug', 'workforce-management')['classification']);
-        $this->assertSame('packaged', $advancedModules->firstWhere('slug', 'production-labor')['classification']);
-
-        $objectsExecution = collect($response->json('data.solutions'))->firstWhere('slug', 'objects-execution');
-        $recommendedAddonSlugs = collect($objectsExecution['recommended_addons'] ?? [])->pluck('module_slug')->all();
-
-        $this->assertContains('video-monitoring', $recommendedAddonSlugs);
-        $this->assertNotContains('contractor-portal', $recommendedAddonSlugs);
-    }
-
-    public function test_monthly_total_counts_subscription_and_excludes_bundled_package_prices(): void
-    {
-        $projectModule = $this->createModule('project-management', 'Управление проектами', 'free', true, false, 0);
-        $this->createModule('video-monitoring', 'Видеонаблюдение', 'subscription', true, false, 1900);
-
-        $plan = SubscriptionPlan::create([
-            'name' => 'Profi',
-            'slug' => 'profi',
-            'description' => 'Профессиональный тариф',
-            'price' => 19900,
-            'currency' => 'RUB',
-            'duration_in_days' => 30,
-            'included_packages' => [
-                ['package_slug' => 'objects-execution', 'tier' => 'base'],
-            ],
-            'features' => [],
-            'is_active' => true,
-            'display_order' => 1,
-        ]);
-
-        $subscription = OrganizationSubscription::create([
-            'organization_id' => $this->organization->id,
-            'subscription_plan_id' => $plan->id,
-            'status' => 'active',
-            'starts_at' => now()->subDay(),
-            'ends_at' => now()->addMonth(),
-            'next_billing_at' => now()->addMonth(),
-            'is_auto_payment_enabled' => false,
-        ]);
-
-        OrganizationPackageSubscription::create([
-            'organization_id' => $this->organization->id,
-            'subscription_id' => $subscription->id,
-            'is_bundled_with_plan' => true,
-            'package_slug' => 'objects-execution',
-            'tier' => 'base',
-            'price_paid' => 0,
-            'activated_at' => now(),
-            'expires_at' => now()->addMonth(),
-        ]);
-
-        OrganizationModuleActivation::create([
-            'organization_id' => $this->organization->id,
-            'module_id' => $projectModule->id,
-            'subscription_id' => $subscription->id,
-            'status' => 'active',
-            'activated_at' => now(),
-            'expires_at' => now()->addMonth(),
-            'is_bundled_with_plan' => true,
-            'is_auto_renew_enabled' => false,
-        ]);
-
-        $response = $this->actingAs($this->user, 'api_landing')
-            ->getJson('/api/v1/landing/modules/overview');
-
-        $response->assertOk()
-            ->assertJsonPath('data.summary.monthly_total', 19900);
-    }
-
-    public function test_overview_uses_standalone_package_upgrade_over_bundled_tier(): void
-    {
-        $this->createModule('project-management', 'Проекты', 'free', true, false, 0);
-        $this->createModule('site-requests', 'Заявки', 'subscription', true, false, 1000);
-        $this->createModule('catalog-management', 'Каталог', 'free', true, false, 0);
-        $this->createModule('basic-warehouse', 'Склад', 'subscription', true, false, 1000);
-        $this->createModule('procurement', 'Закупки', 'subscription', true, false, 1000);
-        $this->createModule('material-analytics', 'Аналитика', 'subscription', true, false, 1000);
-        $this->createModule('data-export', 'Экспорт', 'subscription', true, false, 1000);
-
-        OrganizationPackageSubscription::create([
-            'organization_id' => $this->organization->id,
-            'subscription_id' => 200,
-            'is_bundled_with_plan' => true,
-            'package_slug' => 'supply-warehouse',
-            'tier' => 'pro',
-            'price_paid' => 0,
-            'activated_at' => now(),
-            'expires_at' => now()->addMonth(),
-        ]);
-
-        OrganizationPackageSubscription::create([
-            'organization_id' => $this->organization->id,
-            'subscription_id' => null,
-            'is_bundled_with_plan' => false,
-            'package_slug' => 'supply-warehouse',
-            'tier' => 'enterprise',
-            'price_paid' => 3000,
-            'activated_at' => now(),
-            'expires_at' => now()->addMonth(),
-        ]);
-
-        $response = $this->actingAs($this->user, 'api_landing')
-            ->getJson('/api/v1/landing/modules/overview');
-
-        $solution = collect($response->json('data.solutions'))
-            ->firstWhere('slug', 'supply-warehouse');
-
-        $response->assertOk();
-        $this->assertSame('enterprise', $solution['current_tier'] ?? null);
-        $this->assertFalse($solution['is_bundled_with_plan'] ?? true);
-        $this->assertSame('standalone', $solution['access_source'] ?? null);
-    }
-
-    public function test_overview_exposes_admin_entries_for_machinery_and_labor_package(): void
-    {
-        $response = $this->actingAs($this->user, 'api_landing')
-            ->getJson('/api/v1/landing/modules/overview');
-
-        $solution = collect($response->json('data.solutions'))
-            ->firstWhere('slug', 'machinery-and-labor');
-
-        $response->assertOk();
-        $this->assertNotNull($solution);
-        $this->assertContains(
-            ['module_slug' => 'machinery-operations', 'label' => 'Ресурсы → Техника', 'path' => '/machinery-operations'],
-            $solution['admin_entries'] ?? []
-        );
-        $this->assertContains(
-            ['module_slug' => 'production-labor', 'label' => 'Ресурсы → Наряды и выработка', 'path' => '/production-labor'],
-            $solution['admin_entries'] ?? []
-        );
-    }
-
-    private function createModule(
-        string $slug,
-        string $name,
-        string $billingModel,
-        bool $canDeactivate,
-        bool $isSystem,
-        int $price,
-        bool $marketplaceVisible = true
-    ): Module {
-        return Module::create([
-            'name' => $name,
-            'slug' => $slug,
-            'version' => '1.0.0',
-            'type' => $isSystem ? 'core' : 'feature',
-            'billing_model' => $billingModel,
-            'category' => $isSystem ? 'core' : 'operations',
-            'description' => $name,
-            'pricing_config' => [
-                'base_price' => $price,
-                'currency' => 'RUB',
-                'duration_days' => 30,
-                'marketplace_visible' => $marketplaceVisible,
-            ],
-            'features' => [$name],
-            'permissions' => [],
-            'dependencies' => [],
-            'conflicts' => [],
-            'limits' => [],
-            'icon' => 'puzzle-piece',
-            'display_order' => 1,
-            'is_active' => true,
-            'is_system_module' => $isSystem,
-            'can_deactivate' => $canDeactivate,
-        ]);
     }
 }

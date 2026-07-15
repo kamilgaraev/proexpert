@@ -60,14 +60,6 @@ final class FilamentPermission
 
     public const ORGANIZATIONS_REACTIVATE = 'system_admin.organizations.reactivate';
 
-    public const SUBSCRIPTION_PLANS_VIEW = 'system_admin.subscription_plans.view';
-
-    public const SUBSCRIPTION_PLANS_CREATE = 'system_admin.subscription_plans.create';
-
-    public const SUBSCRIPTION_PLANS_UPDATE = 'system_admin.subscription_plans.update';
-
-    public const SUBSCRIPTION_PLANS_DELETE = 'system_admin.subscription_plans.delete';
-
     public const BILLING_VIEW = 'system_admin.billing.view';
 
     public const BILLING_REVENUE_VIEW = 'system_admin.billing.revenue.view';
@@ -77,10 +69,6 @@ final class FilamentPermission
     public const PAYMENTS_VIEW = 'system_admin.payments.view';
 
     public const PAYMENTS_MANAGE = 'system_admin.payments.manage';
-
-    public const SUBSCRIPTIONS_VIEW = 'system_admin.subscriptions.view';
-
-    public const SUBSCRIPTIONS_MANAGE = 'system_admin.subscriptions.manage';
 
     public const MODULES_VIEW = 'system_admin.modules.view';
 

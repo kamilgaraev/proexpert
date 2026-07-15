@@ -2,13 +2,13 @@
 
 namespace App\BusinessModules\Core\MultiOrganization;
 
-use App\Modules\Contracts\ModuleInterface;
+use App\Enums\BillingModel;
+use App\Enums\ModuleType;
 use App\Modules\Contracts\BillableInterface;
 use App\Modules\Contracts\ConfigurableInterface;
-use App\Enums\ModuleType;
-use App\Enums\BillingModel;
+use App\Modules\Contracts\ModuleInterface;
 
-class MultiOrganizationModule implements ModuleInterface, BillableInterface, ConfigurableInterface
+class MultiOrganizationModule implements BillableInterface, ConfigurableInterface, ModuleInterface
 {
     public function getName(): string
     {
@@ -65,13 +65,13 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
     public function canActivate(int $organizationId): bool
     {
         $organization = \App\Models\Organization::find($organizationId);
-        
-        if (!$organization) {
+
+        if (! $organization) {
             return false;
         }
 
         // Проверяем что организация не является дочерней
-        return !$organization->parent_organization_id;
+        return ! $organization->parent_organization_id;
     }
 
     public function getDependencies(): array
@@ -92,7 +92,7 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
             'multi-organization.create_holding',
             'multi-organization.manage_children',
             'multi-organization.add_child_organization',
-            'multi-organization.edit_child_organization', 
+            'multi-organization.edit_child_organization',
             'multi-organization.delete_child_organization',
             'multi-organization.manage_child_users',
             'multi-organization.view_hierarchy',
@@ -113,7 +113,7 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
             'multi-organization.website.delete',
             'multi-organization.website.assets.upload',
             'multi-organization.website.assets.manage',
-            'multi-organization.website.templates.access'
+            'multi-organization.website.templates.access',
         ];
     }
 
@@ -139,7 +139,7 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
             'base_price' => 5900,
             'currency' => 'RUB',
             'included_in_plan' => false,
-            'duration_days' => 30
+            'duration_days' => 30,
         ];
     }
 
@@ -156,22 +156,22 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
             'notification_settings' => [
                 'notify_on_child_added' => true,
                 'notify_on_user_added' => true,
-                'notify_on_project_created' => false
-            ]
+                'notify_on_project_created' => false,
+            ],
         ];
     }
 
     public function validateSettings(array $settings): bool
     {
         $requiredKeys = ['max_child_organizations'];
-        
+
         foreach ($requiredKeys as $key) {
-            if (!array_key_exists($key, $settings)) {
+            if (! array_key_exists($key, $settings)) {
                 return false;
             }
         }
 
-        if (!is_int($settings['max_child_organizations']) || $settings['max_child_organizations'] < 1) {
+        if (! is_int($settings['max_child_organizations']) || $settings['max_child_organizations'] < 1) {
             return false;
         }
 
@@ -187,7 +187,7 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
             'Дашборд холдинга',
             'Управление пользователями дочерних организаций',
             'Права доступа между организациями',
-            'Консолидированная отчетность'
+            'Консолидированная отчетность',
         ];
     }
 
@@ -196,7 +196,7 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
         return [
             'max_child_organizations' => 50,
             'max_hierarchy_levels' => 3,
-            'max_users_per_child' => 100
+            'max_users_per_child' => 100,
         ];
     }
 
@@ -207,21 +207,12 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
 
     public function canAfford(int $organizationId): bool
     {
-        $organization = \App\Models\Organization::find($organizationId);
-        
-        if (!$organization) {
-            return false;
-        }
-
-        $billingEngine = app(\App\Modules\Core\BillingEngine::class);
-        $module = \App\Models\Module::where('slug', $this->getSlug())->first();
-        
-        return $module ? $billingEngine->canAfford($organization, $module) : false;
+        return false;
     }
 
     public function applySettings(int $organizationId, array $settings): void
     {
-        if (!$this->validateSettings($settings)) {
+        if (! $this->validateSettings($settings)) {
             throw new \InvalidArgumentException('Некорректные настройки модуля');
         }
 
@@ -234,7 +225,7 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
         if ($activation) {
             $currentSettings = $activation->module_settings ?? [];
             $activation->update([
-                'module_settings' => array_merge($currentSettings, $settings)
+                'module_settings' => array_merge($currentSettings, $settings),
             ]);
         }
     }
@@ -247,7 +238,7 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
             })
             ->first();
 
-        if (!$activation) {
+        if (! $activation) {
             return $this->getDefaultSettings();
         }
 

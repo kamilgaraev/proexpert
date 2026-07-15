@@ -12,7 +12,6 @@ class SystemAdminDangerousActionsTest extends TestCase
     {
         foreach ([
             'app/Filament/Resources/OrganizationResource.php',
-            'app/Filament/Resources/SubscriptionPlanResource.php',
         ] as $relativePath) {
             $source = $this->source($relativePath);
 
@@ -54,4 +53,3 @@ class SystemAdminDangerousActionsTest extends TestCase
         return (string) file_get_contents(base_path($relativePath));
     }
 }
-

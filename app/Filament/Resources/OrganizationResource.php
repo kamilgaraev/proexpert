@@ -10,7 +10,6 @@ use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
 use App\Filament\Support\TableEmptyState;
 use App\Models\Organization;
-use App\Models\OrganizationSubscription;
 use App\Models\SystemAdmin;
 use App\Policies\SystemAdmin\OrganizationResourcePolicy;
 use App\Services\Filament\OrganizationAdminActionService;
@@ -153,32 +152,9 @@ class OrganizationResource extends Resource
                             ->formatStateUsing(fn (?string $state): string => self::verificationStatusLabel($state))
                             ->badge()
                             ->color(fn (?string $state): string => self::verificationStatusColor($state)),
-                        Infolists\Components\TextEntry::make('subscription_state')
-                            ->label(trans_message('widgets.organizations.subscription_status'))
-                            ->getStateUsing(fn (Organization $record): string => self::subscriptionStateLabel(self::resolveSubscriptionState($record)))
-                            ->badge()
-                            ->color(fn (Organization $record): string => self::subscriptionStateColor(self::resolveSubscriptionState($record))),
                         Infolists\Components\TextEntry::make('created_at')
                             ->label(trans_message('widgets.organizations.created_at'))
                             ->dateTime(),
-                    ])
-                    ->columns(2),
-                Section::make(trans_message('widgets.organizations.sections.subscription'))
-                    ->schema([
-                        Infolists\Components\TextEntry::make('currentSubscription.plan.name')
-                            ->label(trans_message('widgets.organizations.subscription_plan'))
-                            ->placeholder(trans_message('widgets.organizations.no_subscription')),
-                        Infolists\Components\TextEntry::make('currentSubscription.ends_at')
-                            ->label(trans_message('widgets.organizations.subscription_ends_at'))
-                            ->dateTime()
-                            ->placeholder(trans_message('widgets.organizations.empty_value')),
-                        Infolists\Components\TextEntry::make('subscription_expires_at')
-                            ->label(trans_message('widgets.organizations.subscription_expires_at'))
-                            ->dateTime()
-                            ->placeholder(trans_message('widgets.organizations.empty_value')),
-                        Infolists\Components\TextEntry::make('storage_used_mb')
-                            ->label(trans_message('widgets.organizations.storage_usage'))
-                            ->formatStateUsing(fn (mixed $state): string => self::formatStorageUsage($state)),
                     ])
                     ->columns(2),
                 Section::make(trans_message('widgets.organizations.sections.metrics'))
@@ -205,7 +181,6 @@ class OrganizationResource extends Resource
     {
         return TableEmptyState::for($table, 'organizations', 'heroicon-o-building-office-2')
             ->modifyQueryUsing(fn (Builder $query): Builder => $query
-                ->with(['currentSubscription.plan'])
                 ->withCount(['users', 'projects', 'contracts']))
             ->columns([
                 Tables\Columns\TextColumn::make('name')
@@ -233,15 +208,6 @@ class OrganizationResource extends Resource
                     ->badge()
                     ->color(fn (?string $state): string => self::verificationStatusColor($state))
                     ->sortable(),
-                Tables\Columns\TextColumn::make('currentSubscription.plan.name')
-                    ->label(trans_message('widgets.organizations.subscription_plan'))
-                    ->placeholder(trans_message('widgets.organizations.no_subscription'))
-                    ->toggleable(),
-                Tables\Columns\TextColumn::make('subscription_state')
-                    ->label(trans_message('widgets.organizations.subscription_status'))
-                    ->getStateUsing(fn (Organization $record): string => self::subscriptionStateLabel(self::resolveSubscriptionState($record)))
-                    ->badge()
-                    ->color(fn (Organization $record): string => self::subscriptionStateColor(self::resolveSubscriptionState($record))),
                 Tables\Columns\TextColumn::make('users_count')
                     ->label(trans_message('widgets.organizations.users_count'))
                     ->sortable(),
@@ -266,14 +232,6 @@ class OrganizationResource extends Resource
                 Tables\Filters\SelectFilter::make('verification_status')
                     ->label(trans_message('widgets.organizations.verification_status'))
                     ->options(self::verificationStatusOptions()),
-                Tables\Filters\Filter::make('subscription_state')
-                    ->label(trans_message('widgets.organizations.subscription_status'))
-                    ->schema([
-                        Forms\Components\Select::make('state')
-                            ->label(trans_message('widgets.organizations.subscription_status'))
-                            ->options(self::subscriptionStateOptions()),
-                    ])
-                    ->query(fn (Builder $query, array $data): Builder => self::applySubscriptionStateFilter($query, $data['state'] ?? null)),
                 Tables\Filters\Filter::make('created_at')
                     ->label(trans_message('widgets.organizations.created_period'))
                     ->schema([
@@ -435,35 +393,6 @@ class OrganizationResource extends Resource
             ->send();
     }
 
-    private static function applySubscriptionStateFilter(Builder $query, mixed $state): Builder
-    {
-        if (! is_string($state) || $state === '') {
-            return $query;
-        }
-
-        return match ($state) {
-            'active' => $query->where(function (Builder $query): void {
-                $query->where('subscription_expires_at', '>', now())
-                    ->orWhereHas('subscriptions', function (Builder $query): void {
-                        $query->whereIn('status', ['active', 'trial'])
-                            ->where(function (Builder $query): void {
-                                $query->whereNull('ends_at')
-                                    ->orWhere('ends_at', '>', now());
-                            });
-                    });
-            }),
-            'expired' => $query->where(function (Builder $query): void {
-                $query->where('subscription_expires_at', '<=', now())
-                    ->orWhereHas('subscriptions', function (Builder $query): void {
-                        $query->whereNotNull('ends_at')
-                            ->where('ends_at', '<=', now());
-                    });
-            }),
-            'none' => $query->whereNull('subscription_expires_at')->whereDoesntHave('subscriptions'),
-            default => $query->whereHas('subscriptions', fn (Builder $query): Builder => $query->where('status', $state)),
-        };
-    }
-
     /**
      * @param  array<string, mixed>  $data
      */
@@ -481,48 +410,6 @@ class OrganizationResource extends Resource
         }
 
         return $query;
-    }
-
-    private static function resolveSubscriptionState(Organization $organization): string
-    {
-        $subscription = $organization->currentSubscription;
-
-        if ($subscription instanceof OrganizationSubscription) {
-            if (
-                in_array($subscription->status, ['active', 'trial'], true)
-                && ($subscription->ends_at === null || $subscription->ends_at->isFuture())
-            ) {
-                return 'active';
-            }
-
-            if ($subscription->ends_at !== null && $subscription->ends_at->isPast()) {
-                return 'expired';
-            }
-
-            return $subscription->status;
-        }
-
-        if ($organization->subscription_expires_at !== null) {
-            return $organization->subscription_expires_at->isPast() ? 'expired' : 'active';
-        }
-
-        return 'none';
-    }
-
-    private static function subscriptionStateLabel(string $state): string
-    {
-        return self::subscriptionStateOptions()[$state] ?? $state;
-    }
-
-    private static function subscriptionStateColor(string $state): string
-    {
-        return match ($state) {
-            'active' => 'success',
-            'expired', 'canceled', 'failed' => 'danger',
-            'pending_payment' => 'warning',
-            'none' => 'gray',
-            default => 'info',
-        };
     }
 
     private static function verificationStatusLabel(?string $state): string
@@ -566,20 +453,6 @@ class OrganizationResource extends Resource
             'partially_verified' => trans_message('widgets.organizations.verification_partially_verified'),
             'needs_review' => trans_message('widgets.organizations.verification_needs_review'),
             'failed' => trans_message('widgets.organizations.verification_failed'),
-        ];
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    private static function subscriptionStateOptions(): array
-    {
-        return [
-            'active' => trans_message('widgets.organizations.subscription_active'),
-            'expired' => trans_message('widgets.organizations.subscription_expired'),
-            'pending_payment' => trans_message('widgets.organizations.subscription_pending_payment'),
-            'canceled' => trans_message('widgets.organizations.subscription_canceled'),
-            'none' => trans_message('widgets.organizations.no_subscription'),
         ];
     }
 }

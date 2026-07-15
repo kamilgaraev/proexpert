@@ -33,7 +33,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryWorker;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
@@ -690,6 +689,21 @@ final class DocumentProcessingUnitContractTest extends TestCase
     }
 
     #[Test]
+    public function retryable_unit_attempt_cannot_transition_the_whole_session(): void
+    {
+        $constructor = new \ReflectionMethod(ProcessDocumentUnit::class, '__construct');
+        $dependencies = array_map(
+            static fn (\ReflectionParameter $parameter): ?string => $parameter->getType() instanceof \ReflectionNamedType
+                ? $parameter->getType()->getName()
+                : null,
+            $constructor->getParameters(),
+        );
+
+        self::assertNotContains(\App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler::class, $dependencies);
+        self::assertContains(DocumentUnitExhaustionHandler::class, $dependencies);
+    }
+
+    #[Test]
     public function production_store_and_finalizer_keep_connection_and_source_fences(): void
     {
         $store = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Application/Documents/EloquentDocumentProcessingUnitStore.php');
@@ -702,6 +716,8 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertStringContainsString('setConnection($this->database->getName())', $store);
         self::assertStringContainsString("->where('organization_id', \$unit->organization_id)", $store);
         self::assertStringContainsString("->where('source_version', \$unit->source_version)", $store);
+        self::assertStringContainsString("'processing_stage' => 'preflight'", $store);
+        self::assertStringNotContainsString("'processing_stage' => 'processing'", $store);
         self::assertIsString($finalizer);
         self::assertStringContainsString("->whereIn('processing_unit_id', \$currentUnitIds)", $finalizer);
         self::assertStringContainsString("->where('source_version', \$sourceVersion)", $finalizer);
@@ -732,11 +748,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 return 0;
             }
         };
-        $workflow = new class implements FailureWorkflowHandler
-        {
-            public function handle(FailureData $failure, ?int $expectedStateVersion = null): void {}
-        };
 
-        return new ProcessDocumentUnit($store, $processor, $reconciler, new FailureRecorder($failures), $workflow, $exhaustion);
+        return new ProcessDocumentUnit($store, $processor, $reconciler, new FailureRecorder($failures), $exhaustion);
     }
 }

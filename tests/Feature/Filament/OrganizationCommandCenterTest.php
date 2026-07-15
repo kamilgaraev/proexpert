@@ -4,11 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Filament;
 
-use App\Filament\Resources\OrganizationResource;
 use App\Models\Activity\ActivityEvent;
 use App\Models\Organization;
-use App\Models\OrganizationSubscription;
-use App\Models\SubscriptionPlan;
 use App\Models\SystemAdmin;
 use App\Services\Filament\OrganizationAdminActionService;
 use App\Services\Security\SystemAdminRoleService;
@@ -100,31 +97,6 @@ class OrganizationCommandCenterTest extends TestCase
         $this->assertTrue($event->changes['after']['is_active']);
     }
 
-    public function test_organization_model_exposes_subscription_command_center_relation(): void
-    {
-        $organization = Organization::factory()->create();
-        $plan = SubscriptionPlan::query()->create([
-            'name' => 'Business',
-            'slug' => 'business-command-center-' . $organization->id,
-            'price' => 4900,
-            'currency' => 'RUB',
-            'is_active' => true,
-        ]);
-
-        OrganizationSubscription::query()->create([
-            'organization_id' => $organization->id,
-            'subscription_plan_id' => $plan->id,
-            'status' => 'active',
-            'starts_at' => now()->subDay(),
-            'ends_at' => now()->addMonth(),
-            'next_billing_at' => now()->addMonth(),
-        ]);
-
-        $organization->refresh()->load('currentSubscription.plan');
-
-        $this->assertSame('Business', $organization->currentSubscription?->plan?->name);
-    }
-
     public function test_organization_resource_exposes_command_center_surface(): void
     {
         $source = file_get_contents(app_path('Filament/Resources/OrganizationResource.php'));
@@ -136,7 +108,7 @@ class OrganizationCommandCenterTest extends TestCase
         $this->assertStringContainsString("Action::make('reactivate')", $source);
         $this->assertStringContainsString('FilamentPermission::ORGANIZATIONS_SUSPEND', $source);
         $this->assertStringContainsString('FilamentPermission::ORGANIZATIONS_REACTIVATE', $source);
-        $this->assertStringContainsString("Tables\\Filters\\Filter::make('subscription_state')", $source);
+        $this->assertStringNotContainsString('subscription_state', $source);
         $this->assertStringContainsString("Tables\\Columns\\TextColumn::make('users_count')", $source);
         $this->assertStringContainsString('->bulkActions([])', $source);
     }

@@ -2,23 +2,21 @@
 
 namespace App\Models;
 
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Traits\HasOnboardingDemo;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use App\Models\OrganizationBalance;
-use App\Models\OrganizationAccessPermission;
-use App\Domain\Authorization\Models\OrganizationCustomRole;
-use App\Domain\Authorization\Models\AuthorizationContext;
-use App\Domain\Authorization\Models\UserRoleAssignment;
-use App\Traits\HasOnboardingDemo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Organization extends Model
 {
-    use HasFactory, SoftDeletes, HasOnboardingDemo;
+    use HasFactory, HasOnboardingDemo, SoftDeletes;
 
     /**
      * Атрибуты, которые можно массово назначать.
@@ -39,7 +37,6 @@ class Organization extends Model
         'description',
         'logo_path',
         'is_active',
-        'subscription_expires_at',
         'is_verified',
         'is_onboarding_demo',
         'verified_at',
@@ -73,7 +70,6 @@ class Organization extends Model
      */
     protected $casts = [
         'is_active' => 'boolean',
-        'subscription_expires_at' => 'datetime',
         'is_verified' => 'boolean',
         'is_onboarding_demo' => 'boolean',
         'verified_at' => 'datetime',
@@ -157,16 +153,6 @@ class Organization extends Model
         return $this->hasOne(OrganizationBalance::class, 'organization_id');
     }
 
-    public function subscriptions(): HasMany
-    {
-        return $this->hasMany(OrganizationSubscription::class, 'organization_id');
-    }
-
-    public function currentSubscription(): HasOne
-    {
-        return $this->hasOne(OrganizationSubscription::class, 'organization_id')->latestOfMany();
-    }
-
     /**
      * Получить родительскую организацию.
      */
@@ -229,9 +215,9 @@ class Organization extends Model
             'organization_id',
             'project_id'
         )
-        ->using(\App\Models\ProjectOrganization::class)
-        ->withPivot(['role', 'role_new', 'is_active', 'added_by_user_id', 'invited_at', 'accepted_at', 'metadata'])
-        ->withTimestamps();
+            ->using(\App\Models\ProjectOrganization::class)
+            ->withPivot(['role', 'role_new', 'is_active', 'added_by_user_id', 'invited_at', 'accepted_at', 'metadata'])
+            ->withTimestamps();
     }
 
     /**
@@ -252,25 +238,11 @@ class Organization extends Model
     }
 
     /**
-     * Проверить, активна ли подписка организации.
-     *
-     * @return bool
-     */
-    public function hasActiveSubscription(): bool
-    {
-        return $this->is_active && 
-            ($this->subscription_expires_at === null || 
-            $this->subscription_expires_at->isFuture());
-    }
-
-    /**
      * Получить текстовое представление статуса верификации.
-     *
-     * @return string
      */
     public function getVerificationStatusTextAttribute(): string
     {
-        return match($this->verification_status) {
+        return match ($this->verification_status) {
             'verified' => 'Полностью верифицирована',
             'partially_verified' => 'Частично верифицирована',
             'needs_review' => 'Требует проверки',
@@ -282,22 +254,18 @@ class Organization extends Model
 
     /**
      * Проверить, может ли организация пройти автоматическую верификацию.
-     *
-     * @return bool
      */
     public function canBeVerified(): bool
     {
-        return !empty($this->tax_number) && !empty($this->address);
+        return ! empty($this->tax_number) && ! empty($this->address);
     }
 
     /**
      * Получить оценку верификации из данных верификации.
-     *
-     * @return int
      */
     public function getVerificationScoreAttribute(): int
     {
-        if (!$this->verification_data || !is_array($this->verification_data)) {
+        if (! $this->verification_data || ! is_array($this->verification_data)) {
             // Если верификация не проводилась, рассчитываем базовый рейтинг
             return app(\App\Services\OrganizationVerificationService::class)->calculateBasicScore($this);
         }

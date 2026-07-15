@@ -2,9 +2,9 @@
 
 namespace App\BusinessModules\Features\AIAssistant;
 
-use App\Modules\Contracts\ModuleInterface;
-use App\Enums\ModuleType;
 use App\Enums\BillingModel;
+use App\Enums\ModuleType;
+use App\Modules\Contracts\ModuleInterface;
 
 class AIAssistantModule implements ModuleInterface
 {
@@ -129,30 +129,14 @@ class AIAssistantModule implements ModuleInterface
         ];
     }
 
-    public function install(): void
-    {
-    }
+    public function install(): void {}
 
-    public function uninstall(): void
-    {
-    }
+    public function uninstall(): void {}
 
-    public function upgrade(string $fromVersion): void
-    {
-    }
+    public function upgrade(string $fromVersion): void {}
 
     public function canActivate(int $organizationId): bool
     {
-        $organization = \App\Models\Organization::find($organizationId);
-        
-        if (!$organization) {
-            return false;
-        }
-
-        $billingEngine = app(\App\Modules\Core\BillingEngine::class);
-        $module = \App\Models\Module::where('slug', $this->getSlug())->first();
-        
-        return $module ? $billingEngine->canAfford($organization, $module) : false;
+        return false;
     }
 }
-

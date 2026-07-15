@@ -4,323 +4,263 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Billing;
 
-use App\Models\BalanceTransaction;
+use App\Models\CommercialOrder;
+use App\Models\CommercialPayment;
 use App\Models\ContractorInvitation;
+use App\Models\ContractorReferralReward;
 use App\Models\Organization;
-use App\Models\OrganizationSubscription;
-use App\Models\SubscriptionPlan;
 use App\Models\User;
-use App\Services\Billing\BalanceService;
 use App\Services\Contractor\ContractorReferralRewardService;
-use App\Services\Landing\OrganizationSubscriptionService;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 final class ContractorReferralProgramTest extends TestCase
 {
-    private Organization $invitingOrganization;
-    private Organization $invitedOrganization;
-    private User $invitingUser;
-
-    public function refreshDatabase(): void
-    {
-    }
+    public function refreshDatabase(): void {}
 
     protected function setUp(): void
     {
         parent::setUp();
-
         $this->createSchema();
-
-        $this->invitingOrganization = Organization::query()->create([
-            'name' => 'Inviting contractor',
-            'tax_number' => '7701000001',
-            'email' => 'owner@inviting.test',
-            'phone' => '+79990000001',
-            'is_active' => true,
-        ]);
-
-        $this->invitedOrganization = Organization::query()->create([
-            'name' => 'Invited contractor',
-            'tax_number' => '7701000002',
-            'email' => 'owner@invited.test',
-            'phone' => '+79990000002',
-            'is_active' => true,
-        ]);
-
-        $this->invitingUser = User::query()->create([
-            'name' => 'Inviter',
-            'email' => 'inviter@example.test',
-            'password' => 'secret',
-            'current_organization_id' => $this->invitingOrganization->id,
-        ]);
-
-        SubscriptionPlan::query()->create([
-            'name' => 'Business',
-            'slug' => 'business',
-            'description' => 'Business plan',
-            'price' => 19900,
-            'currency' => 'RUB',
-            'duration_in_days' => 30,
-            'features' => [],
-            'included_packages' => [],
-            'is_active' => true,
-        ]);
-
-        app(BalanceService::class)->creditBalance(
-            $this->invitedOrganization,
-            3_000_000,
-            'Test balance'
-        );
     }
 
-    public function test_first_paid_subscription_creates_pending_referral_without_immediate_bonus(): void
+    public function test_first_authoritative_paid_purchase_creates_one_pending_reward(): void
     {
-        $this->createAcceptedInvitation();
+        [$order, $payment] = $this->scenario();
+        $service = app(ContractorReferralRewardService::class);
 
-        $subscription = app(OrganizationSubscriptionService::class)
-            ->subscribe($this->invitedOrganization->id, 'business', false, 30);
-
+        self::assertNotNull($service->handleFirstPaidOrder($order, $payment));
+        self::assertNull($service->handleFirstPaidOrder($order, $payment));
         $this->assertDatabaseHas('contractor_referral_rewards', [
-            'contractor_invitation_id' => ContractorInvitation::query()->value('id'),
-            'inviting_organization_id' => $this->invitingOrganization->id,
-            'invited_organization_id' => $this->invitedOrganization->id,
-            'invited_subscription_id' => $subscription->id,
+            'commercial_order_id' => $order->id,
+            'commercial_payment_id' => $payment->id,
             'status' => 'pending',
-            'inviting_reward_amount' => 600_000,
-            'invited_welcome_amount' => 400_000,
+            'eligible_at' => $order->period_end_at,
         ]);
-
-        $this->assertSame(0, BalanceTransaction::query()
-            ->where('type', BalanceTransaction::TYPE_CREDIT)
-            ->whereIn('amount', [400_000, 600_000])
-            ->whereIn('meta->type', ['contractor_referral_welcome', 'contractor_referral_reward'])
-            ->count());
     }
 
-    public function test_referral_bonuses_are_accrued_after_first_subscription_period_ends(): void
+    public function test_bonus_is_accrued_only_after_paid_period_end(): void
     {
-        $this->createAcceptedInvitation();
+        [$order, $payment] = $this->scenario();
+        $service = app(ContractorReferralRewardService::class);
+        $service->handleFirstPaidOrder($order, $payment);
 
-        $subscription = app(OrganizationSubscriptionService::class)
-            ->subscribe($this->invitedOrganization->id, 'business', false, 30);
-
-        Carbon::setTestNow($subscription->ends_at->copy()->subSecond());
-        $this->assertSame(0, app(ContractorReferralRewardService::class)->accrueEligibleRewards());
-
-        Carbon::setTestNow($subscription->ends_at->copy()->addSecond());
-        $this->assertSame(1, app(ContractorReferralRewardService::class)->accrueEligibleRewards());
-
-        $this->assertDatabaseHas('contractor_referral_rewards', [
-            'invited_subscription_id' => $subscription->id,
-            'status' => 'accrued',
-            'inviting_reward_amount' => 600_000,
-            'invited_welcome_amount' => 400_000,
-        ]);
-
-        $this->assertSame(1, BalanceTransaction::query()
-            ->where('type', BalanceTransaction::TYPE_CREDIT)
-            ->where('amount', 600_000)
-            ->where('meta->type', 'contractor_referral_reward')
-            ->count());
-
-        $this->assertSame(1, BalanceTransaction::query()
-            ->where('type', BalanceTransaction::TYPE_CREDIT)
-            ->where('amount', 400_000)
-            ->where('meta->type', 'contractor_referral_welcome')
-            ->count());
+        self::assertSame(0, $service->accrueEligibleRewards($order->period_end_at->subSecond()));
+        self::assertSame(1, $service->accrueEligibleRewards($order->period_end_at->addSecond()));
+        self::assertSame(2, Schema::getConnection()->table('balance_transactions')->count());
     }
 
-    public function test_referral_is_cancelled_when_organizations_share_tax_number(): void
+    public function test_refunded_order_never_accrues_bonus(): void
     {
-        $this->invitedOrganization->update(['tax_number' => $this->invitingOrganization->tax_number]);
-        $this->createAcceptedInvitation();
+        [$order, $payment] = $this->scenario();
+        $service = app(ContractorReferralRewardService::class);
+        $service->handleFirstPaidOrder($order, $payment);
+        $order->forceFill(['status' => 'refunded'])->save();
+        $payment->forceFill(['refunded_amount_minor' => 1])->save();
 
-        app(OrganizationSubscriptionService::class)
-            ->subscribe($this->invitedOrganization->id, 'business', false, 30);
-
+        self::assertSame(0, $service->accrueEligibleRewards($order->period_end_at->addSecond()));
         $this->assertDatabaseHas('contractor_referral_rewards', [
-            'inviting_organization_id' => $this->invitingOrganization->id,
-            'invited_organization_id' => $this->invitedOrganization->id,
+            'commercial_order_id' => $order->id,
             'status' => 'cancelled',
-            'cancellation_reason' => 'same_tax_number',
+            'cancellation_reason' => 'commercial_order_refunded',
         ]);
-
-        $this->assertSame(0, BalanceTransaction::query()
-            ->where('type', BalanceTransaction::TYPE_CREDIT)
-            ->whereIn('amount', [400_000, 600_000])
-            ->whereIn('meta->type', ['contractor_referral_welcome', 'contractor_referral_reward'])
-            ->count());
     }
 
-    public function test_inviting_reward_is_cancelled_if_subscription_is_cancelled_before_period_end(): void
+    public function test_differently_formatted_equal_phones_cancel_referral(): void
     {
-        $this->createAcceptedInvitation();
+        [$order, $payment] = $this->scenario('+7 (999) 000-00-00', '79990000000');
 
-        $subscription = app(OrganizationSubscriptionService::class)
-            ->subscribe($this->invitedOrganization->id, 'business', false, 30);
-
-        $subscription->update(['canceled_at' => $subscription->ends_at->copy()->subDay()]);
-
-        Carbon::setTestNow($subscription->ends_at->copy()->addSecond());
-        $this->assertSame(0, app(ContractorReferralRewardService::class)->accrueEligibleRewards());
+        app(ContractorReferralRewardService::class)->handleFirstPaidOrder($order, $payment);
 
         $this->assertDatabaseHas('contractor_referral_rewards', [
-            'invited_subscription_id' => $subscription->id,
-            'status' => 'cancelled',
-            'cancellation_reason' => 'subscription_cancelled_before_period_end',
+            'commercial_order_id' => $order->id,
+            'status' => ContractorReferralReward::STATUS_CANCELLED,
+            'cancellation_reason' => 'same_phone',
         ]);
-
-        $this->assertSame(0, BalanceTransaction::query()
-            ->where('type', BalanceTransaction::TYPE_CREDIT)
-            ->whereIn('amount', [400_000, 600_000])
-            ->whereIn('meta->type', ['contractor_referral_welcome', 'contractor_referral_reward'])
-            ->count());
     }
 
-    protected function tearDown(): void
+    public function test_accrual_links_exact_bonus_transactions_and_is_idempotent(): void
     {
-        Carbon::setTestNow();
+        [$order, $payment] = $this->scenario();
+        $service = app(ContractorReferralRewardService::class);
+        $reward = $service->handleFirstPaidOrder($order, $payment);
 
-        parent::tearDown();
+        self::assertNotNull($reward);
+        self::assertSame(1, $service->accrueEligibleRewards($order->period_end_at->addSecond()));
+        self::assertSame(0, $service->accrueEligibleRewards($order->period_end_at->addSeconds(2)));
+
+        $reward->refresh();
+        $invitedTransaction = Schema::getConnection()->table('balance_transactions')->find($reward->invited_balance_transaction_id);
+        $invitingTransaction = Schema::getConnection()->table('balance_transactions')->find($reward->inviting_balance_transaction_id);
+
+        self::assertSame('contractor_referral_welcome', json_decode($invitedTransaction->meta, true, flags: JSON_THROW_ON_ERROR)['type']);
+        self::assertSame('contractor_referral_reward', json_decode($invitingTransaction->meta, true, flags: JSON_THROW_ON_ERROR)['type']);
+        self::assertSame(2, Schema::getConnection()->table('balance_transactions')->count());
     }
 
-    private function createAcceptedInvitation(): ContractorInvitation
+    public function test_balance_credit_contract_locks_balance_and_returns_created_transaction(): void
     {
-        return ContractorInvitation::query()->create([
-            'organization_id' => $this->invitingOrganization->id,
-            'invited_organization_id' => $this->invitedOrganization->id,
-            'invited_by_user_id' => $this->invitingUser->id,
+        $root = dirname(__DIR__, 3);
+        $service = file_get_contents($root.'/app/Services/Billing/BalanceService.php');
+        $contract = file_get_contents($root.'/app/Interfaces/Billing/BalanceServiceInterface.php');
+        $referral = file_get_contents($root.'/app/Services/Contractor/ContractorReferralRewardService.php');
+
+        self::assertIsString($service);
+        self::assertIsString($contract);
+        self::assertIsString($referral);
+        self::assertStringContainsString('lockForUpdate()', $service);
+        self::assertStringContainsString('): BalanceTransaction', $contract);
+        self::assertStringContainsString("'invited_balance_transaction_id' => \$invitedTransaction->id", $referral);
+        self::assertStringContainsString("'inviting_balance_transaction_id' => \$invitingTransaction->id", $referral);
+        self::assertStringNotContainsString("latest('id')", $referral);
+    }
+
+    public function test_two_rewards_credit_same_inviter_balance_with_exact_distinct_transactions(): void
+    {
+        [$firstOrder, $firstPayment] = $this->scenario();
+        $invitingOrganizationId = (int) ContractorInvitation::query()
+            ->where('invited_organization_id', $firstOrder->organization_id)
+            ->value('organization_id');
+        [$secondOrder, $secondPayment] = $this->scenario();
+        ContractorInvitation::query()
+            ->where('invited_organization_id', $secondOrder->organization_id)
+            ->update(['organization_id' => $invitingOrganizationId]);
+
+        $service = app(ContractorReferralRewardService::class);
+        self::assertNotNull($service->handleFirstPaidOrder($firstOrder, $firstPayment));
+        self::assertNotNull($service->handleFirstPaidOrder($secondOrder, $secondPayment));
+        self::assertSame(2, $service->accrueEligibleRewards($firstOrder->period_end_at->addSecond()));
+
+        $rewards = ContractorReferralReward::query()->orderBy('id')->get();
+        self::assertCount(2, $rewards);
+        $transactionIds = $rewards->pluck('inviting_balance_transaction_id')->all();
+        self::assertCount(2, array_unique($transactionIds));
+
+        foreach ($rewards as $reward) {
+            $transaction = Schema::getConnection()->table('balance_transactions')
+                ->find($reward->inviting_balance_transaction_id);
+            self::assertNotNull($transaction);
+            self::assertSame(
+                $reward->id,
+                json_decode($transaction->meta, true, flags: JSON_THROW_ON_ERROR)['referral_reward_id'],
+            );
+        }
+
+        $balance = Schema::getConnection()->table('organization_balances')
+            ->where('organization_id', $invitingOrganizationId)
+            ->sole();
+        self::assertSame(1_200_000, $balance->balance);
+        self::assertSame([600_000, 1_200_000], Schema::getConnection()->table('balance_transactions')
+            ->where('organization_balance_id', $balance->id)
+            ->orderBy('id')
+            ->pluck('balance_after')
+            ->all());
+    }
+
+    private function scenario(?string $invitingPhone = null, ?string $invitedPhone = null): array
+    {
+        $inviting = Organization::query()->create(['name' => 'Inviting', 'tax_number' => '1', 'email' => 'a@test', 'phone' => $invitingPhone]);
+        $invited = Organization::query()->create(['name' => 'Invited', 'tax_number' => '2', 'email' => 'b@test', 'phone' => $invitedPhone]);
+        $user = User::query()->create(['name' => 'Inviter', 'email' => 'u@test', 'password' => 'secret']);
+        ContractorInvitation::query()->create([
+            'organization_id' => $inviting->id,
+            'invited_organization_id' => $invited->id,
+            'invited_by_user_id' => $user->id,
             'status' => ContractorInvitation::STATUS_ACCEPTED,
             'accepted_at' => now(),
-            'expires_at' => now()->addDays(7),
+            'expires_at' => now()->addDay(),
         ]);
+        $order = CommercialOrder::query()->create([
+            'public_id' => 'order-1', 'organization_id' => $invited->id, 'commercial_account_id' => 1,
+            'status' => 'paid', 'offer_type' => 'packages', 'quote_version' => 1,
+            'selected_package_slugs' => ['projects-processes'], 'current_package_slugs' => [],
+            'amount_minor' => 2_000_000, 'amount' => 20000, 'currency' => 'RUB',
+            'period_start_at' => CarbonImmutable::parse('2026-07-01'),
+            'period_end_at' => CarbonImmutable::parse('2026-08-01'),
+            'client_idempotency_key' => 'client-1', 'server_idempotency_key' => 'server-1', 'kind' => 'purchase',
+        ]);
+        $payment = CommercialPayment::query()->create([
+            'commercial_order_id' => $order->id, 'provider' => 'yookassa', 'provider_payment_id' => 'payment-1',
+            'provider_status' => 'succeeded', 'amount_minor' => 2_000_000, 'currency' => 'RUB',
+            'provider_idempotency_key' => 'provider-1', 'refunded_amount_minor' => 0, 'role' => 'initial', 'attempt_number' => 1,
+        ]);
+
+        return [$order, $payment];
     }
 
     private function createSchema(): void
     {
-        Schema::dropIfExists('contractor_referral_rewards');
-        Schema::dropIfExists('balance_transactions');
-        Schema::dropIfExists('organization_balances');
-        Schema::dropIfExists('contractor_invitations');
-        Schema::dropIfExists('organization_package_subscriptions');
-        Schema::dropIfExists('organization_module_activations');
-        Schema::dropIfExists('modules');
-        Schema::dropIfExists('organization_subscriptions');
-        Schema::dropIfExists('subscription_plans');
-        Schema::dropIfExists('organization_user');
-        Schema::dropIfExists('users');
-        Schema::dropIfExists('organizations');
-
+        foreach (['contractor_referral_rewards', 'balance_transactions', 'organization_balances', 'contractor_invitations', 'commercial_payments', 'commercial_orders', 'users', 'organizations'] as $table) {
+            Schema::dropIfExists($table);
+        }
         Schema::create('organizations', function (Blueprint $table): void {
             $table->id();
             $table->string('name');
             $table->string('tax_number')->nullable();
             $table->string('email')->nullable();
             $table->string('phone')->nullable();
-            $table->boolean('is_active')->default(true);
             $table->timestamps();
             $table->softDeletes();
         });
-
         Schema::create('users', function (Blueprint $table): void {
             $table->id();
             $table->string('name');
-            $table->string('email')->unique();
+            $table->string('email');
             $table->string('password');
             $table->foreignId('current_organization_id')->nullable();
             $table->timestamps();
         });
-
-        Schema::create('subscription_plans', function (Blueprint $table): void {
+        Schema::create('commercial_orders', function (Blueprint $table): void {
             $table->id();
-            $table->string('name');
-            $table->string('slug')->unique();
-            $table->text('description')->nullable();
-            $table->decimal('price', 10, 2)->default(0);
-            $table->string('currency', 3)->default('RUB');
-            $table->integer('duration_in_days')->default(30);
-            $table->integer('max_projects')->nullable();
-            $table->integer('max_storage_gb')->nullable();
-            $table->integer('max_users')->nullable();
-            $table->integer('max_contractor_invitations')->nullable();
-            $table->json('features')->nullable();
-            $table->json('included_packages')->nullable();
-            $table->boolean('is_active')->default(true);
-            $table->integer('display_order')->default(0);
-            $table->timestamps();
-        });
-
-        Schema::create('organization_subscriptions', function (Blueprint $table): void {
-            $table->id();
+            $table->string('public_id');
             $table->foreignId('organization_id');
-            $table->foreignId('subscription_plan_id');
-            $table->string('status')->default('active');
-            $table->timestamp('trial_ends_at')->nullable();
-            $table->timestamp('starts_at')->nullable();
-            $table->timestamp('ends_at')->nullable();
-            $table->timestamp('next_billing_at')->nullable();
-            $table->timestamp('canceled_at')->nullable();
-            $table->timestamp('payment_failure_notified_at')->nullable();
-            $table->string('payment_gateway_subscription_id')->nullable();
-            $table->string('payment_gateway_customer_id')->nullable();
-            $table->boolean('is_auto_payment_enabled')->default(true);
-            $table->json('enterprise_constructor_config')->nullable();
+            $table->foreignId('commercial_account_id');
+            $table->foreignId('user_id')->nullable();
+            $table->string('status');
+            $table->string('offer_type');
+            $table->integer('quote_version');
+            $table->json('selected_package_slugs');
+            $table->json('current_package_slugs');
+            $table->bigInteger('amount_minor');
+            $table->decimal('amount', 12, 2);
+            $table->string('currency', 3);
+            $table->timestamp('period_start_at');
+            $table->timestamp('period_end_at');
+            $table->boolean('auto_renew_consent')->default(false);
+            $table->string('client_idempotency_key');
+            $table->string('server_idempotency_key');
+            $table->string('kind');
             $table->timestamps();
         });
-
-        Schema::create('modules', function (Blueprint $table): void {
+        Schema::create('commercial_payments', function (Blueprint $table): void {
             $table->id();
-            $table->string('name');
-            $table->string('slug')->unique();
-            $table->boolean('is_active')->default(true);
-            $table->json('pricing_config')->nullable();
+            $table->foreignId('commercial_order_id');
+            $table->string('provider');
+            $table->string('provider_payment_id');
+            $table->string('provider_status');
+            $table->bigInteger('amount_minor');
+            $table->string('currency', 3);
+            $table->string('provider_idempotency_key');
+            $table->bigInteger('refunded_amount_minor')->default(0);
+            $table->string('role');
+            $table->integer('attempt_number');
+            $table->boolean('payment_method_saved')->default(false);
+            $table->boolean('reconciliation_required')->default(false);
             $table->timestamps();
         });
-
-        Schema::create('organization_module_activations', function (Blueprint $table): void {
-            $table->id();
-            $table->foreignId('organization_id');
-            $table->foreignId('module_id');
-            $table->foreignId('subscription_id')->nullable();
-            $table->boolean('is_bundled_with_plan')->default(false);
-            $table->string('status')->default('active');
-            $table->timestamp('expires_at')->nullable();
-            $table->timestamp('cancelled_at')->nullable();
-            $table->text('cancellation_reason')->nullable();
-            $table->timestamps();
-        });
-
-        Schema::create('organization_package_subscriptions', function (Blueprint $table): void {
-            $table->id();
-            $table->foreignId('organization_id');
-            $table->foreignId('subscription_id')->nullable();
-            $table->boolean('is_bundled_with_plan')->default(false);
-            $table->string('package_slug');
-            $table->string('tier');
-            $table->decimal('price_paid', 10, 2)->default(0);
-            $table->timestamp('activated_at')->nullable();
-            $table->timestamp('expires_at')->nullable();
-            $table->timestamps();
-        });
-
         Schema::create('contractor_invitations', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id');
             $table->foreignId('invited_organization_id');
             $table->foreignId('invited_by_user_id');
-            $table->string('token', 64)->unique();
-            $table->string('status')->default('pending');
+            $table->string('token')->nullable();
+            $table->string('status');
             $table->timestamp('expires_at');
             $table->timestamp('accepted_at')->nullable();
-            $table->foreignId('accepted_by_user_id')->nullable();
-            $table->text('invitation_message')->nullable();
-            $table->json('metadata')->nullable();
             $table->timestamps();
         });
-
         Schema::create('organization_balances', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id')->unique();
@@ -328,12 +268,9 @@ final class ContractorReferralProgramTest extends TestCase
             $table->string('currency', 3)->default('RUB');
             $table->timestamps();
         });
-
         Schema::create('balance_transactions', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_balance_id');
-            $table->foreignId('payment_id')->nullable();
-            $table->foreignId('organization_subscription_id')->nullable();
             $table->string('type');
             $table->bigInteger('amount');
             $table->bigInteger('balance_before');
@@ -342,20 +279,20 @@ final class ContractorReferralProgramTest extends TestCase
             $table->json('meta')->nullable();
             $table->timestamps();
         });
-
         Schema::create('contractor_referral_rewards', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('contractor_invitation_id');
             $table->foreignId('inviting_organization_id');
             $table->foreignId('invited_organization_id')->unique();
-            $table->foreignId('invited_subscription_id');
+            $table->foreignId('commercial_order_id')->unique();
+            $table->foreignId('commercial_payment_id');
             $table->foreignId('inviting_balance_transaction_id')->nullable();
             $table->foreignId('invited_balance_transaction_id')->nullable();
-            $table->string('status')->default('pending');
+            $table->string('status');
             $table->bigInteger('first_payment_amount');
             $table->bigInteger('inviting_reward_amount');
             $table->bigInteger('invited_welcome_amount');
-            $table->string('currency', 3)->default('RUB');
+            $table->string('currency', 3);
             $table->timestamp('eligible_at');
             $table->timestamp('invited_welcome_accrued_at')->nullable();
             $table->timestamp('accrued_at')->nullable();

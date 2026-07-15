@@ -6,15 +6,12 @@ namespace App\BusinessModules\Features\VideoMonitoring;
 
 use App\Enums\BillingModel;
 use App\Enums\ModuleType;
-use App\Models\Module;
-use App\Models\Organization;
 use App\Models\OrganizationModuleActivation;
 use App\Modules\Contracts\BillableInterface;
 use App\Modules\Contracts\ConfigurableInterface;
 use App\Modules\Contracts\ModuleInterface;
-use App\Modules\Core\BillingEngine;
 
-class VideoMonitoringModule implements ModuleInterface, BillableInterface, ConfigurableInterface
+class VideoMonitoringModule implements BillableInterface, ConfigurableInterface, ModuleInterface
 {
     public function getName(): string
     {
@@ -54,17 +51,11 @@ class VideoMonitoringModule implements ModuleInterface, BillableInterface, Confi
         );
     }
 
-    public function install(): void
-    {
-    }
+    public function install(): void {}
 
-    public function uninstall(): void
-    {
-    }
+    public function uninstall(): void {}
 
-    public function upgrade(string $fromVersion): void
-    {
-    }
+    public function upgrade(string $fromVersion): void {}
 
     public function canActivate(int $organizationId): bool
     {
@@ -155,16 +146,7 @@ class VideoMonitoringModule implements ModuleInterface, BillableInterface, Confi
 
     public function canAfford(int $organizationId): bool
     {
-        $organization = Organization::find($organizationId);
-
-        if (!$organization) {
-            return false;
-        }
-
-        $billingEngine = app(BillingEngine::class);
-        $module = Module::where('slug', $this->getSlug())->first();
-
-        return $module ? $billingEngine->canAfford($organization, $module) : false;
+        return false;
     }
 
     public function getDefaultSettings(): array
@@ -182,31 +164,31 @@ class VideoMonitoringModule implements ModuleInterface, BillableInterface, Confi
 
     public function validateSettings(array $settings): bool
     {
-        if (isset($settings['max_cameras']) && (!is_int($settings['max_cameras']) || $settings['max_cameras'] < 1)) {
+        if (isset($settings['max_cameras']) && (! is_int($settings['max_cameras']) || $settings['max_cameras'] < 1)) {
             return false;
         }
 
-        if (isset($settings['max_live_viewers']) && (!is_int($settings['max_live_viewers']) || $settings['max_live_viewers'] < 1)) {
+        if (isset($settings['max_live_viewers']) && (! is_int($settings['max_live_viewers']) || $settings['max_live_viewers'] < 1)) {
             return false;
         }
 
-        if (isset($settings['default_transport']) && !in_array($settings['default_transport'], ['tcp', 'udp', 'http', 'https'], true)) {
+        if (isset($settings['default_transport']) && ! in_array($settings['default_transport'], ['tcp', 'udp', 'http', 'https'], true)) {
             return false;
         }
 
-        if (isset($settings['allow_custom_playback_url']) && !is_bool($settings['allow_custom_playback_url'])) {
+        if (isset($settings['allow_custom_playback_url']) && ! is_bool($settings['allow_custom_playback_url'])) {
             return false;
         }
 
-        if (isset($settings['autofill_playback_url']) && !is_bool($settings['autofill_playback_url'])) {
+        if (isset($settings['autofill_playback_url']) && ! is_bool($settings['autofill_playback_url'])) {
             return false;
         }
 
-        if (isset($settings['preferred_live_protocol']) && !in_array($settings['preferred_live_protocol'], ['webrtc', 'hls'], true)) {
+        if (isset($settings['preferred_live_protocol']) && ! in_array($settings['preferred_live_protocol'], ['webrtc', 'hls'], true)) {
             return false;
         }
 
-        if (isset($settings['media_server_driver']) && !in_array($settings['media_server_driver'], ['none', 'mediamtx'], true)) {
+        if (isset($settings['media_server_driver']) && ! in_array($settings['media_server_driver'], ['none', 'mediamtx'], true)) {
             return false;
         }
 
@@ -215,7 +197,7 @@ class VideoMonitoringModule implements ModuleInterface, BillableInterface, Confi
 
     public function applySettings(int $organizationId, array $settings): void
     {
-        if (!$this->validateSettings($settings)) {
+        if (! $this->validateSettings($settings)) {
             throw new \InvalidArgumentException('Некорректные настройки модуля видеонаблюдения');
         }
 
@@ -226,7 +208,7 @@ class VideoMonitoringModule implements ModuleInterface, BillableInterface, Confi
             })
             ->first();
 
-        if (!$activation) {
+        if (! $activation) {
             return;
         }
 

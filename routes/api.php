@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\Landing\MultiOrganizationController;
 use App\Http\Controllers\Api\V1\Landing\UserInvitationController;
 use App\Http\Controllers\Api\V1\HoldingApiController;
 use App\Http\Controllers\Api\V1\System\GlitchTipController;
+use App\Http\Controllers\Api\V1\Webhook\YooKassaWebhookController;
 
 /*
 |--------------------------------------------------------------------------
@@ -39,6 +40,8 @@ Route::prefix('v1/blog')->name('api.v1.blog.')->group(function () {
 
 // Начинаем группу маршрутов API v1
 Route::prefix('v1')->name('api.v1.')->group(function () {
+    Route::post('webhooks/yookassa', YooKassaWebhookController::class)->name('webhooks.yookassa');
+
 
 Route::prefix('landing')->name('landing.')->group(function () {
     // Явно включаем маршруты для Landing API

@@ -71,10 +71,10 @@
   "routes": "routes.php",
   "migrations": "migrations/",
   
-  "auto_activate": true,
+  "auto_activate": false,
   "is_system_module": false,
   "marketplace_visible": false,
-  "can_deactivate": false,
+  "can_deactivate": true,
   "development_status": "development",
   "icon": "users-cog",
   "display_order": 30

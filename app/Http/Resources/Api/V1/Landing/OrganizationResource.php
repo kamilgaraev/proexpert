@@ -32,8 +32,7 @@ class OrganizationResource extends JsonResource
             'description' => $this->description,
             'logo_path' => $this->logo_path,
             'is_active' => $this->is_active,
-            'subscription_expires_at' => $this->subscription_expires_at?->toISOString(),
-            
+
             'verification' => [
                 'is_verified' => $this->is_verified ?? false,
                 'verified_at' => $this->verified_at?->toISOString(),
@@ -49,4 +48,4 @@ class OrganizationResource extends JsonResource
             'updated_at' => $this->updated_at?->toISOString(),
         ];
     }
-} 
+}

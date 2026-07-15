@@ -1,19 +1,18 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\Billing;
 
-use App\Interfaces\Billing\BalanceServiceInterface;
-use App\Models\Organization;
-use App\Models\OrganizationBalance;
-use App\Models\BalanceTransaction;
-use App\Models\Payment;
-use App\Models\OrganizationSubscription;
 use App\Exceptions\Billing\BalanceException;
 use App\Exceptions\Billing\InsufficientBalanceException;
+use App\Interfaces\Billing\BalanceServiceInterface;
+use App\Models\BalanceTransaction;
+use App\Models\Organization;
+use App\Models\OrganizationBalance;
 use App\Services\Logging\LoggingService;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class BalanceService implements BalanceServiceInterface
 {
@@ -36,23 +35,26 @@ class BalanceService implements BalanceServiceInterface
         Organization $organization,
         int $amount,
         string $description,
-        ?Payment $payment = null,
         array $meta = []
-    ): OrganizationBalance {
+    ): BalanceTransaction {
         if ($amount <= 0) {
             throw new BalanceException('Credit amount must be positive.');
         }
 
-        return DB::transaction(function () use ($organization, $amount, $description, $payment, $meta) {
-            $orgBalance = $this->getOrCreateOrganizationBalance($organization);
+        $this->getOrCreateOrganizationBalance($organization);
+
+        return DB::transaction(function () use ($organization, $amount, $description, $meta): BalanceTransaction {
+            $orgBalance = OrganizationBalance::query()
+                ->where('organization_id', $organization->id)
+                ->lockForUpdate()
+                ->firstOrFail();
             $balanceBefore = $orgBalance->balance;
-            
+
             $orgBalance->balance += $amount;
             $orgBalance->save();
 
             $transaction = BalanceTransaction::create([
                 'organization_balance_id' => $orgBalance->id,
-                'payment_id' => $payment?->id,
                 'type' => BalanceTransaction::TYPE_CREDIT,
                 'amount' => $amount,
                 'balance_before' => $balanceBefore,
@@ -65,7 +67,6 @@ class BalanceService implements BalanceServiceInterface
             $this->logging->business('billing.balance.credited', [
                 'organization_id' => $organization->id,
                 'transaction_id' => $transaction->id,
-                'payment_id' => $payment?->id,
                 'amount_cents' => $amount,
                 'amount_rubles' => round($amount / 100, 2),
                 'balance_before_cents' => $balanceBefore,
@@ -73,7 +74,7 @@ class BalanceService implements BalanceServiceInterface
                 'balance_after_rubles' => round($orgBalance->balance / 100, 2),
                 'description' => $description,
                 'currency' => $orgBalance->currency,
-                'meta' => $meta
+                'meta' => $meta,
             ]);
 
             // AUDIT: Финансовая операция для compliance и аудита
@@ -85,12 +86,11 @@ class BalanceService implements BalanceServiceInterface
                 'balance_change_cents' => $amount,
                 'performed_by' => request()->user()?->id ?? 'system',
                 'description' => $description,
-                'payment_reference' => $payment?->id
             ]);
 
             Cache::forget("organization_balance_{$organization->id}");
 
-            return $orgBalance->refresh();
+            return $transaction;
         });
     }
 
@@ -98,20 +98,24 @@ class BalanceService implements BalanceServiceInterface
         Organization $organization,
         int $amount,
         string $description,
-        ?OrganizationSubscription $subscription = null,
         array $meta = []
     ): OrganizationBalance {
         if ($amount <= 0) {
             throw new BalanceException('Debit amount must be positive.');
         }
 
-        return DB::transaction(function () use ($organization, $amount, $description, $subscription, $meta) {
-            $orgBalance = $this->getOrCreateOrganizationBalance($organization);
-            
+        $this->getOrCreateOrganizationBalance($organization);
+
+        return DB::transaction(function () use ($organization, $amount, $description, $meta) {
+            $orgBalance = OrganizationBalance::query()
+                ->where('organization_id', $organization->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
             if ($orgBalance->balance < $amount) {
                 $amountRubles = number_format($amount / 100, 2, '.', '');
                 $balanceRubles = number_format($orgBalance->balance / 100, 2, '.', '');
-                
+
                 // SECURITY: Попытка списания при недостаточном балансе - критично для fraud detection
                 $this->logging->security('billing.insufficient_balance.attempt', [
                     'organization_id' => $organization->id,
@@ -123,10 +127,9 @@ class BalanceService implements BalanceServiceInterface
                     'deficit_rubles' => round(($amount - $orgBalance->balance) / 100, 2),
                     'description' => $description,
                     'user_id' => request()->user()?->id,
-                    'subscription_id' => $subscription?->id,
-                    'potential_fraud' => $amount > ($orgBalance->balance * 10) // Флаг если попытка списать в 10+ раз больше баланса
+                    'potential_fraud' => $amount > ($orgBalance->balance * 10), // Флаг если попытка списать в 10+ раз больше баланса
                 ], 'warning');
-                
+
                 throw new InsufficientBalanceException(
                     "Недостаточно средств на балансе организации {$organization->id} для списания {$amountRubles} руб. Текущий баланс: {$balanceRubles} руб."
                 );
@@ -138,7 +141,6 @@ class BalanceService implements BalanceServiceInterface
 
             $transaction = BalanceTransaction::create([
                 'organization_balance_id' => $orgBalance->id,
-                'organization_subscription_id' => $subscription?->id,
                 'type' => BalanceTransaction::TYPE_DEBIT,
                 'amount' => $amount,
                 'balance_before' => $balanceBefore,
@@ -151,7 +153,6 @@ class BalanceService implements BalanceServiceInterface
             $this->logging->business('billing.balance.debited', [
                 'organization_id' => $organization->id,
                 'transaction_id' => $transaction->id,
-                'subscription_id' => $subscription?->id,
                 'amount_cents' => $amount,
                 'amount_rubles' => round($amount / 100, 2),
                 'balance_before_cents' => $balanceBefore,
@@ -161,7 +162,6 @@ class BalanceService implements BalanceServiceInterface
                 'description' => $description,
                 'currency' => $orgBalance->currency,
                 'meta' => $meta,
-                'is_subscription_payment' => $subscription !== null
             ]);
 
             // AUDIT: Финансовая операция для compliance и аудита
@@ -171,9 +171,8 @@ class BalanceService implements BalanceServiceInterface
                 'transaction_type' => 'debit',
                 'amount_cents' => $amount,
                 'balance_change_cents' => -$amount,
-                'subscription_reference' => $subscription?->id,
                 'performed_by' => request()->user()?->id ?? 'system',
-                'description' => $description
+                'description' => $description,
             ]);
 
             Cache::forget("organization_balance_{$organization->id}");
@@ -184,11 +183,15 @@ class BalanceService implements BalanceServiceInterface
 
     public function hasSufficientBalance(Organization $organization, int $amount): bool
     {
-        if ($amount < 0) return true; // Cannot debit a negative amount, consider balance sufficient
-        if ($amount == 0) return true;
-        
+        if ($amount < 0) {
+            return true;
+        } // Cannot debit a negative amount, consider balance sufficient
+        if ($amount == 0) {
+            return true;
+        }
+
         $orgBalance = $this->getOrCreateOrganizationBalance($organization);
+
         return $orgBalance->balance >= $amount;
     }
 }
- 

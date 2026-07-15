@@ -36,7 +36,7 @@ class BrickHouseDemoSeeder extends Seeder
         'accounts' => 0,
         'users' => 0,
         'custom_roles' => 0,
-        'subscriptions' => 0,
+        'commercial_packages' => 0,
         'projects' => 0,
         'contracts' => 0,
         'estimates' => 0,
@@ -67,17 +67,14 @@ class BrickHouseDemoSeeder extends Seeder
     {
         $this->now = now();
         $this->assertRequiredTables();
-        $profiPlan = $this->getProfiPlan();
 
-        $result = DB::transaction(function () use ($profiPlan): array {
+        $result = DB::transaction(function (): array {
             $general = $this->seedAccount($this->generalContractorAccount());
             $contractor = $this->seedAccount($this->contractorAccount());
 
-            $general['subscription_id'] = $this->seedProfiSubscription($general['organization_id'], $profiPlan);
-            $contractor['subscription_id'] = $this->seedProfiSubscription($contractor['organization_id'], $profiPlan);
-
             foreach ([$general, $contractor] as $account) {
-                $this->activateModules($account['organization_id'], (int) $account['subscription_id']);
+                $this->seedCommercialAccess($account['organization_id'], $account['user_id']);
+                $this->activateModules($account['organization_id']);
                 $this->seedSiteRequestStatuses($account['organization_id']);
             }
 
@@ -427,8 +424,8 @@ class BrickHouseDemoSeeder extends Seeder
             'payment_documents',
             'payment_document_site_requests',
             'activity_events',
-            'subscription_plans',
-            'organization_subscriptions',
+            'organization_commercial_accounts',
+            'organization_package_subscriptions',
             'budget_periods',
             'budget_scenarios',
             'responsibility_centers',
@@ -474,31 +471,6 @@ class BrickHouseDemoSeeder extends Seeder
     }
 
     /**
-     * @return array{id: int, duration_in_days: int, included_packages: array<int, array<string, mixed>>}
-     */
-    private function getProfiPlan(): array
-    {
-        if (!Schema::hasTable('subscription_plans')) {
-            throw new RuntimeException('BrickHouseDemoSeeder: Таблица subscription_plans не найдена.');
-        }
-
-        $plan = DB::table('subscription_plans')
-            ->where('slug', 'profi')
-            ->where('is_active', true)
-            ->first();
-
-        if (!$plan instanceof \stdClass) {
-            throw new RuntimeException('BrickHouseDemoSeeder: Не найден активный тариф "profi". Проверьте миграции и синхронизацию тарифов.');
-        }
-
-        return [
-            'id' => (int) $plan->id,
-            'duration_in_days' => (int) ($plan->duration_in_days ?: 30),
-            'included_packages' => $this->decodeJsonArray($plan->included_packages ?? null),
-        ];
-    }
-
-    /**
      * @param array<string, mixed> $account
      * @return array<string, mixed>
      */
@@ -519,7 +491,6 @@ class BrickHouseDemoSeeder extends Seeder
             'country' => 'RU',
             'description' => $account['description'],
             'is_active' => true,
-            'subscription_expires_at' => $this->now->copy()->addYear(),
             'is_verified' => true,
             'verified_at' => $this->now,
             'verification_status' => 'verified',
@@ -587,108 +558,56 @@ class BrickHouseDemoSeeder extends Seeder
         ];
     }
 
-    /**
-     * @param array{id: int, duration_in_days: int, included_packages: array<int, array<string, mixed>>} $profiPlan
-     */
-    private function seedProfiSubscription(int $organizationId, array $profiPlan): int
+    private function seedCommercialAccess(int $organizationId, int $responsibleUserId): void
     {
-        if (!Schema::hasTable('organization_subscriptions')) {
-            return 0;
-        }
-
-        $startsAt = $this->now->copy();
-        $endsAt = $startsAt->copy()->addDays(max(1, $profiPlan['duration_in_days']));
-        $subscriptionData = $this->filterColumns('organization_subscriptions', [
+        $periodEnd = $this->now->copy()->addYear();
+        $accountId = $this->upsert('organization_commercial_accounts', [
             'organization_id' => $organizationId,
-            'subscription_plan_id' => $profiPlan['id'],
+        ], [
+            'responsible_user_id' => $responsibleUserId,
             'status' => 'active',
-            'starts_at' => $startsAt,
-            'ends_at' => $endsAt,
-            'next_billing_at' => $endsAt,
-            'is_auto_payment_enabled' => true,
-            'canceled_at' => null,
-            'payment_gateway_subscription_id' => null,
-            'payment_gateway_customer_id' => null,
-            'payment_failure_notified_at' => null,
-            'trial_ends_at' => null,
+            'offer_type' => 'full_suite',
+            'quote_version' => 1,
+            'billing_anchor_at' => $this->now,
+            'current_period_start_at' => $this->now,
+            'current_period_end_at' => $periodEnd,
+            'auto_renew_enabled' => false,
+            'saved_payment_method_id' => null,
+            'saved_payment_method_at' => null,
+            'saved_payment_method_active' => false,
+            'auto_renew_consented_at' => null,
+            'auto_renew_terms_version' => null,
+            'grace_started_at' => null,
+            'grace_ends_at' => null,
         ]);
 
-        $currentSubscription = DB::table('organization_subscriptions')
-            ->where('organization_id', $organizationId)
-            ->where('subscription_plan_id', $profiPlan['id'])
-            ->orderByDesc('id')
-            ->first();
-
-        if (!$currentSubscription instanceof \stdClass) {
-            $subscriptionId = DB::table('organization_subscriptions')->insertGetId(
-                $this->withTimestamps('organization_subscriptions', $subscriptionData, false)
-            );
-
-            $this->deactivateOtherDemoSubscriptions($organizationId, $profiPlan['id']);
-            $this->seedPlanPackageSubscriptions($organizationId, (int) $subscriptionId, $profiPlan, $endsAt);
-            $this->totals['subscriptions']++;
-
-            return (int) $subscriptionId;
-        }
-
-        DB::table('organization_subscriptions')
-            ->where('id', $currentSubscription->id)
-            ->update(
-                $this->withTimestamps('organization_subscriptions', $subscriptionData, true)
-            );
-
-        $this->deactivateOtherDemoSubscriptions($organizationId, $profiPlan['id']);
-        $this->seedPlanPackageSubscriptions($organizationId, (int) $currentSubscription->id, $profiPlan, $endsAt);
-        $this->totals['subscriptions']++;
-
-        return (int) $currentSubscription->id;
-    }
-
-    /**
-     * @param array{id: int, duration_in_days: int, included_packages: array<int, array<string, mixed>>} $profiPlan
-     */
-    private function seedPlanPackageSubscriptions(
-        int $organizationId,
-        int $subscriptionId,
-        array $profiPlan,
-        Carbon $endsAt
-    ): void {
-        if (!Schema::hasTable('organization_package_subscriptions')) {
-            return;
-        }
-
-        foreach ($profiPlan['included_packages'] as $package) {
-            $packageSlug = $package['package_slug'] ?? $package['slug'] ?? null;
-            $tier = $package['tier'] ?? null;
-
-            if (!is_string($packageSlug) || !is_string($tier)) {
-                continue;
-            }
-
+        foreach ($this->commercialPackageSlugs() as $packageSlug) {
             $this->upsert('organization_package_subscriptions', [
                 'organization_id' => $organizationId,
                 'package_slug' => $packageSlug,
             ], [
-                'subscription_id' => $subscriptionId,
-                'is_bundled_with_plan' => true,
-                'tier' => $tier,
+                'commercial_account_id' => $accountId,
+                'status' => 'active',
+                'access_source' => 'full_suite',
+                'current_period_start_at' => $this->now,
+                'current_period_end_at' => $periodEnd,
+                'trial_started_at' => null,
+                'trial_ends_at' => null,
+                'cancel_at' => null,
+                'canceled_at' => null,
                 'price_paid' => 0,
-                'activated_at' => $this->now,
-                'expires_at' => $endsAt,
             ]);
+            $this->totals['commercial_packages']++;
         }
     }
 
-    private function deactivateOtherDemoSubscriptions(int $organizationId, int $activePlanId): void
+    /** @return array<int, string> */
+    private function commercialPackageSlugs(): array
     {
-        DB::table('organization_subscriptions')
-            ->where('organization_id', $organizationId)
-            ->where('subscription_plan_id', '!=', $activePlanId)
-            ->where('status', 'active')
-            ->update($this->withTimestamps('organization_subscriptions', [
-                'status' => 'canceled',
-                'canceled_at' => $this->now,
-            ], true));
+        return [
+            'projects-processes', 'planning-schedules', 'estimates-norms', 'quality-safety', 'pto-handover',
+            'supply-warehouse', 'finance-contracts', 'workforce-output', 'machinery', 'sales-contractors',
+        ];
     }
 
     /**
@@ -1199,7 +1118,7 @@ class BrickHouseDemoSeeder extends Seeder
         );
     }
 
-    private function activateModules(int $organizationId, int $subscriptionId): void
+    private function activateModules(int $organizationId): void
     {
         $modules = [
             ['slug' => 'project-management', 'name' => 'Управление проектами', 'type' => 'feature', 'category' => 'core'],
@@ -1258,18 +1177,13 @@ class BrickHouseDemoSeeder extends Seeder
                 'organization_id' => $organizationId,
                 'module_id' => $moduleId,
             ], [
-                'subscription_id' => $subscriptionId > 0 ? $subscriptionId : null,
                 'status' => 'active',
                 'activated_at' => $this->now->copy()->subMonths(5),
                 'expires_at' => null,
                 'trial_ends_at' => null,
                 'last_used_at' => $this->now->copy()->subHours(2),
-                'paid_amount' => 0,
-                'payment_details' => $this->json(['source' => 'brick_house_demo']),
                 'module_settings' => $this->json(['demo_enabled' => true]),
                 'usage_stats' => $this->json(['demo_records' => true]),
-                'is_bundled_with_plan' => true,
-                'is_auto_renew_enabled' => false,
             ]);
         }
     }
@@ -6987,21 +6901,4 @@ class BrickHouseDemoSeeder extends Seeder
         return json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
     }
 
-    /**
-     * @return array<int, array<string, mixed>>
-     */
-    private function decodeJsonArray(mixed $value): array
-    {
-        if (is_array($value)) {
-            return $value;
-        }
-
-        if (!is_string($value) || trim($value) === '') {
-            return [];
-        }
-
-        $decoded = json_decode($value, true);
-
-        return is_array($decoded) ? $decoded : [];
-    }
 }

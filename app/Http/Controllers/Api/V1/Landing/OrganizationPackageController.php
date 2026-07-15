@@ -4,29 +4,47 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Landing;
 
+use App\Exceptions\Billing\CorporateSelfServiceMutationException;
+use App\Exceptions\BusinessLogicException;
 use App\Http\Responses\LandingResponse;
+use App\Models\User;
+use App\Services\Billing\PackageTrialService;
 use App\Services\Landing\PackageService;
-use App\Exceptions\Billing\InsufficientBalanceException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Tymon\JWTAuth\Facades\JWTAuth;
+use Symfony\Component\HttpFoundation\Response;
 
 use function trans_message;
 
 class OrganizationPackageController
 {
     public function __construct(
-        private readonly PackageService $packageService
+        private readonly PackageService $packageService,
+        private readonly PackageTrialService $packageTrialService,
     ) {}
 
     public function index(Request $request): JsonResponse
     {
         try {
-            $user = JWTAuth::parseToken()->authenticate();
+            $user = $request->user();
+
+            if (! $user instanceof User) {
+                return LandingResponse::error(
+                    trans_message('landing.not_authenticated'),
+                    Response::HTTP_UNAUTHORIZED,
+                );
+            }
             $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
 
-            $packages = $this->packageService->getAllPackages($organizationId);
+            if (! is_numeric($organizationId)) {
+                return LandingResponse::error(
+                    trans_message('landing.organization_context_missing'),
+                    Response::HTTP_FORBIDDEN
+                );
+            }
+
+            $packages = $this->packageService->getAllPackages((int) $organizationId);
 
             return LandingResponse::success($packages, trans_message('landing.packages.loaded'));
         } catch (\Exception $e) {
@@ -38,64 +56,52 @@ class OrganizationPackageController
         }
     }
 
-    public function subscribe(Request $request): JsonResponse
+    public function startTrial(Request $request, string $packageSlug): JsonResponse
     {
-        $validated = $request->validate([
-            'package_slug' => 'required|string|max:100',
-            'tier' => 'required|in:base,pro,enterprise',
-            'duration_days' => 'nullable|integer|min:1|max:365',
-        ]);
-
         try {
-            $user = JWTAuth::parseToken()->authenticate();
+            $user = $request->user();
+
+            if (! $user instanceof User) {
+                return LandingResponse::error(
+                    trans_message('landing.not_authenticated'),
+                    Response::HTTP_UNAUTHORIZED,
+                );
+            }
             $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
 
-            $result = $this->packageService->subscribeToPackage(
-                $organizationId,
-                $validated['package_slug'],
-                $validated['tier'],
-                $validated['duration_days'] ?? 30
+            if (! is_numeric($organizationId)) {
+                return LandingResponse::error(
+                    trans_message('landing.organization_context_missing'),
+                    Response::HTTP_FORBIDDEN,
+                );
+            }
+
+            $subscription = $this->packageTrialService->start((int) $organizationId, $packageSlug, (int) $user->id);
+
+            return LandingResponse::success([
+                'package_slug' => $subscription->package_slug,
+                'status' => $subscription->status->value,
+                'access_source' => $subscription->access_source->value,
+                'trial_started_at' => $subscription->trial_started_at?->toISOString(),
+                'trial_ends_at' => $subscription->trial_ends_at?->toISOString(),
+                'duration_hours' => (int) config('commercial_offers.trial_hours', 72),
+            ], trans_message('landing.packages.trial_started'), Response::HTTP_CREATED);
+        } catch (CorporateSelfServiceMutationException $exception) {
+            return LandingResponse::error(
+                trans_message('billing.commercial.corporate_self_service_disabled'),
+                Response::HTTP_CONFLICT,
             );
-
-            return LandingResponse::success($result, trans_message('landing.packages.subscribe_success'));
-        } catch (\InvalidArgumentException $e) {
-            return LandingResponse::error(trans_message('errors.business_logic_error'), 422);
-        } catch (InsufficientBalanceException $e) {
-            return LandingResponse::error(trans_message('errors.insufficient_balance'), 402);
-        } catch (\RuntimeException $e) {
-            Log::error('PackageController@subscribe: '.$e->getMessage(), [
-                'request' => $request->all(),
-            ]);
-
-            return LandingResponse::error(trans_message('errors.resource_not_found'), 404);
-        } catch (\Exception $e) {
-            Log::error('PackageController@subscribe: '.$e->getMessage(), [
-                'request' => $request->all(),
-                'trace' => $e->getTraceAsString(),
-            ]);
-
-            return LandingResponse::error(trans_message('landing.packages.subscribe_error'), 500);
-        }
-    }
-
-    public function unsubscribe(Request $request, string $packageSlug): JsonResponse
-    {
-        try {
-            $user = JWTAuth::parseToken()->authenticate();
-            $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-
-            $this->packageService->unsubscribeFromPackage($organizationId, $packageSlug);
-
-            return LandingResponse::success(null, trans_message('landing.packages.unsubscribe_success'));
-        } catch (\RuntimeException $e) {
-            return LandingResponse::error(trans_message('errors.resource_not_found'), 404);
-        } catch (\Exception $e) {
-            Log::error('PackageController@unsubscribe: '.$e->getMessage(), [
+        } catch (BusinessLogicException $exception) {
+            return LandingResponse::error($exception->getMessage(), $exception->getCode());
+        } catch (\Throwable $exception) {
+            Log::error('PackageController@startTrial failed.', [
+                'organization_id' => $request->attributes->get('current_organization_id'),
                 'package_slug' => $packageSlug,
-                'trace' => $e->getTraceAsString(),
+                'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
             ]);
 
-            return LandingResponse::error(trans_message('landing.packages.unsubscribe_error'), 500);
+            return LandingResponse::error(trans_message('landing.packages.trial_start_error'), 500);
         }
     }
 }

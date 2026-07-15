@@ -79,7 +79,7 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
                 'organization_id' => $context->organizationId,
                 'project_id' => $context->projectId,
                 'base_input_version' => $context->baseInputVersion,
-                'dependency_versions' => json_encode($context->dependencyVersions, JSON_THROW_ON_ERROR),
+                'dependency_versions' => PipelineJson::object($context->dependencyVersions),
                 'status' => CheckpointStatus::Running->value,
                 'metrics' => '{}',
                 'warnings' => '[]',
@@ -123,7 +123,7 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
                 'status' => CheckpointStatus::Running,
                 'output_version' => null,
                 'output_payload' => null,
-                'metrics' => [],
+                'metrics' => (object) [],
                 'warnings' => [],
                 'attempt_count' => $checkpoint->attempt_count + 1,
                 'claim_token' => $token,
@@ -168,7 +168,8 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
                 || (int) $session->state_version !== $claim->context->stateVersion
                 || $session->status->value !== $claim->context->sessionStatus
                 || $claim->context->generationAttemptId === null
-                || ! hash_equals($claim->context->generationAttemptId, (string) ($session->input_payload['generation_attempt_id'] ?? ''))) {
+                || ($claim->context->documentId === null
+                    && ! hash_equals($claim->context->generationAttemptId, (string) ($session->input_payload['generation_attempt_id'] ?? '')))) {
                 return false;
             }
             $checkpoint = $this->query()

@@ -5,221 +5,181 @@ declare(strict_types=1);
 namespace App\Services\Contractor;
 
 use App\Interfaces\Billing\BalanceServiceInterface;
-use App\Models\BalanceTransaction;
+use App\Models\CommercialOrder;
+use App\Models\CommercialPayment;
 use App\Models\ContractorInvitation;
 use App\Models\ContractorReferralReward;
 use App\Models\Organization;
-use App\Models\OrganizationSubscription;
-use Illuminate\Support\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
-class ContractorReferralRewardService
+final class ContractorReferralRewardService
 {
-    public function __construct(
-        private readonly BalanceServiceInterface $balanceService
-    ) {
-    }
+    public function __construct(private readonly BalanceServiceInterface $balanceService) {}
 
-    public function handleFirstPaidSubscription(
-        OrganizationSubscription $subscription,
-        int $firstPaymentAmount
+    public function handleFirstPaidOrder(
+        CommercialOrder $order,
+        CommercialPayment $payment,
     ): ?ContractorReferralReward {
-        if (! $this->isEnabled() || $firstPaymentAmount <= 0 || ! $this->hasRequiredTables()) {
+        if (! $this->isEligiblePayment($order, $payment) || ! $this->hasRequiredTables()) {
             return null;
         }
 
-        if (ContractorReferralReward::query()
-            ->where('invited_organization_id', $subscription->organization_id)
-            ->exists()) {
+        $firstPaidOrderId = CommercialOrder::query()
+            ->where('organization_id', $order->organization_id)
+            ->where('kind', 'purchase')
+            ->where('status', 'paid')
+            ->orderBy('id')
+            ->value('id');
+        if ((int) $firstPaidOrderId !== $order->id
+            || ContractorReferralReward::query()->where('invited_organization_id', $order->organization_id)->exists()) {
             return null;
         }
 
         $invitation = ContractorInvitation::query()
-            ->where('invited_organization_id', $subscription->organization_id)
+            ->where('invited_organization_id', $order->organization_id)
             ->where('status', ContractorInvitation::STATUS_ACCEPTED)
             ->latest('accepted_at')
             ->first();
-
-        if (! $invitation) {
+        if ($invitation === null) {
             return null;
         }
 
-        return DB::transaction(function () use ($subscription, $firstPaymentAmount, $invitation): ContractorReferralReward {
-            $planSlug = (string) $subscription->plan?->slug;
-            $amounts = $this->calculateRewardAmounts($firstPaymentAmount, $planSlug);
+        return DB::transaction(function () use ($order, $payment, $invitation): ContractorReferralReward {
+            $amounts = $this->calculateRewardAmounts($payment->amount_minor);
             $fraudReason = $this->detectAntiFraudReason($invitation);
-            $status = $fraudReason === null
-                ? ContractorReferralReward::STATUS_PENDING
-                : ContractorReferralReward::STATUS_CANCELLED;
 
-            $reward = ContractorReferralReward::query()->create([
+            return ContractorReferralReward::query()->create([
                 'contractor_invitation_id' => $invitation->id,
                 'inviting_organization_id' => $invitation->organization_id,
                 'invited_organization_id' => $invitation->invited_organization_id,
-                'invited_subscription_id' => $subscription->id,
-                'status' => $status,
-                'first_payment_amount' => $firstPaymentAmount,
+                'commercial_order_id' => $order->id,
+                'commercial_payment_id' => $payment->id,
+                'status' => $fraudReason === null ? ContractorReferralReward::STATUS_PENDING : ContractorReferralReward::STATUS_CANCELLED,
+                'first_payment_amount' => $payment->amount_minor,
                 'inviting_reward_amount' => $amounts['inviting_reward_amount'],
                 'invited_welcome_amount' => $amounts['invited_welcome_amount'],
-                'currency' => (string) config('contractor_referrals.currency', 'RUB'),
-                'eligible_at' => $subscription->ends_at,
+                'currency' => $payment->currency,
+                'eligible_at' => $order->period_end_at,
                 'cancelled_at' => $fraudReason === null ? null : now(),
                 'cancellation_reason' => $fraudReason,
                 'meta' => [
-                    'plan_slug' => $planSlug,
-                    'rule' => $planSlug === 'start' ? 'start_fixed' : 'percent_with_caps',
-                    'accrual_policy' => 'after_first_subscription_period_end',
+                    'offer_type' => $order->offer_type->value,
+                    'accrual_policy' => 'after_first_paid_period_end',
                 ],
             ]);
-
-            return $reward->fresh() ?? $reward;
         });
     }
 
-    public function accrueEligibleRewards(?Carbon $now = null): int
+    public function accrueEligibleRewards(?CarbonInterface $now = null): int
     {
-        if (! $this->isEnabled() || ! $this->hasRequiredTables()) {
+        if (! $this->hasRequiredTables()) {
             return 0;
         }
 
-        $now ??= now();
-        $accruedCount = 0;
-
+        $accrued = 0;
         ContractorReferralReward::query()
-            ->with(['invitingOrganization', 'invitedSubscription'])
+            ->with(['commercialOrder', 'commercialPayment'])
             ->where('status', ContractorReferralReward::STATUS_PENDING)
-            ->where('eligible_at', '<=', $now)
+            ->where('eligible_at', '<=', $now ?? now())
             ->orderBy('id')
-            ->chunkById(100, function ($rewards) use (&$accruedCount): void {
+            ->chunkById(100, function ($rewards) use (&$accrued): void {
                 foreach ($rewards as $reward) {
-                    if ($this->subscriptionWasCancelledBeforeEligibility($reward)) {
-                        $this->cancelReward($reward, 'subscription_cancelled_before_period_end');
+                    $reason = $this->authoritativeCancellationReason($reward);
+                    if ($reason !== null) {
+                        $this->cancelReward($reward, $reason);
+
                         continue;
                     }
 
-                    $this->accrueReward($reward);
-                    $accruedCount++;
+                    if ($this->accrueReward($reward)) {
+                        $accrued++;
+                    }
                 }
             });
 
-        return $accruedCount;
+        return $accrued;
     }
 
-    public function calculateRewardAmounts(int $firstPaymentAmount, string $planSlug): array
+    public function calculateRewardAmounts(int $firstPaymentAmount): array
     {
-        if ($planSlug === 'start') {
-            return [
-                'inviting_reward_amount' => (int) config('contractor_referrals.start_plan.inviting_reward_cents', 200000),
-                'invited_welcome_amount' => (int) config('contractor_referrals.start_plan.invited_welcome_cents', 100000),
-            ];
-        }
-
         return [
             'inviting_reward_amount' => min(
                 $this->roundedPercent($firstPaymentAmount, (int) config('contractor_referrals.inviting_reward_percent', 30)),
-                (int) config('contractor_referrals.inviting_reward_max_cents', 3000000)
+                (int) config('contractor_referrals.inviting_reward_max_cents', 3_000_000),
             ),
             'invited_welcome_amount' => min(
                 $this->roundedPercent($firstPaymentAmount, (int) config('contractor_referrals.invited_welcome_percent', 20)),
-                (int) config('contractor_referrals.invited_welcome_max_cents', 2000000)
+                (int) config('contractor_referrals.invited_welcome_max_cents', 2_000_000),
             ),
         ];
     }
 
-    private function accrueReward(ContractorReferralReward $reward): void
+    private function accrueReward(ContractorReferralReward $reward): bool
     {
-        $invitingOrganization = Organization::query()->find($reward->inviting_organization_id);
-        $invitedOrganization = Organization::query()->find($reward->invited_organization_id);
+        $inviting = Organization::query()->find($reward->inviting_organization_id);
+        $invited = Organization::query()->find($reward->invited_organization_id);
+        if ($inviting === null || $invited === null) {
+            $this->cancelReward($reward, 'organization_not_found');
 
-        if (! $invitingOrganization) {
-            $this->cancelReward($reward, 'inviting_organization_not_found');
-            return;
+            return false;
         }
 
-        if (! $invitedOrganization) {
-            $this->cancelReward($reward, 'invited_organization_not_found');
-            return;
-        }
+        $this->balanceService->getOrCreateOrganizationBalance($invited);
+        $this->balanceService->getOrCreateOrganizationBalance($inviting);
 
-        DB::transaction(function () use ($reward, $invitingOrganization, $invitedOrganization): void {
-            $lockedReward = ContractorReferralReward::query()
-                ->whereKey($reward->id)
-                ->lockForUpdate()
-                ->first();
-
-            if (! $lockedReward || $lockedReward->status !== ContractorReferralReward::STATUS_PENDING) {
-                return;
+        return DB::transaction(function () use ($reward, $inviting, $invited): bool {
+            $locked = ContractorReferralReward::query()->whereKey($reward->id)->lockForUpdate()->first();
+            if ($locked === null || $locked->status !== ContractorReferralReward::STATUS_PENDING) {
+                return false;
             }
 
-            $invitedBalance = $this->balanceService->creditBalance(
-                $invitedOrganization,
-                $lockedReward->invited_welcome_amount,
-                'Welcome-бонус за регистрацию по приглашению подрядчика',
-                null,
-                [
-                    'type' => 'contractor_referral_welcome',
-                    'referral_reward_id' => $lockedReward->id,
-                    'contractor_invitation_id' => $lockedReward->contractor_invitation_id,
-                    'inviting_organization_id' => $lockedReward->inviting_organization_id,
-                    'eligible_at' => $lockedReward->eligible_at?->toIso8601String(),
-                ]
-            );
-
-            $invitedTransaction = BalanceTransaction::query()
-                ->where('organization_balance_id', $invitedBalance->id)
-                ->latest('id')
-                ->first();
-
-            $invitingBalance = $this->balanceService->creditBalance(
-                $invitingOrganization,
-                $lockedReward->inviting_reward_amount,
-                'Бонус за приглашенную организацию',
-                null,
-                [
-                    'type' => 'contractor_referral_reward',
-                    'referral_reward_id' => $lockedReward->id,
-                    'contractor_invitation_id' => $lockedReward->contractor_invitation_id,
-                    'invited_organization_id' => $lockedReward->invited_organization_id,
-                    'eligible_at' => $lockedReward->eligible_at?->toIso8601String(),
-                ]
-            );
-
-            $invitingTransaction = BalanceTransaction::query()
-                ->where('organization_balance_id', $invitingBalance->id)
-                ->latest('id')
-                ->first();
-
-            $lockedReward->update([
+            $invitedTransaction = $this->balanceService->creditBalance($invited, $locked->invited_welcome_amount, 'Бонус за приглашение подрядчика', ['type' => 'contractor_referral_welcome', 'referral_reward_id' => $locked->id]);
+            $invitingTransaction = $this->balanceService->creditBalance($inviting, $locked->inviting_reward_amount, 'Бонус за приглашённую организацию', ['type' => 'contractor_referral_reward', 'referral_reward_id' => $locked->id]);
+            $locked->update([
                 'status' => ContractorReferralReward::STATUS_ACCRUED,
-                'inviting_balance_transaction_id' => $invitingTransaction?->id,
-                'invited_balance_transaction_id' => $invitedTransaction?->id,
+                'invited_balance_transaction_id' => $invitedTransaction->id,
+                'inviting_balance_transaction_id' => $invitingTransaction->id,
                 'invited_welcome_accrued_at' => now(),
                 'accrued_at' => now(),
             ]);
+
+            return true;
         });
+    }
+
+    private function authoritativeCancellationReason(ContractorReferralReward $reward): ?string
+    {
+        $order = $reward->commercialOrder;
+        $payment = $reward->commercialPayment;
+        if ($order === null || $payment === null) {
+            return 'commercial_source_not_found';
+        }
+        if ($order->status->value === 'refunded' || $payment->refunded_amount_minor > 0) {
+            return 'commercial_order_refunded';
+        }
+        if ($order->status->value !== 'paid' || $payment->provider_status !== 'succeeded') {
+            return 'commercial_order_cancelled';
+        }
+
+        return null;
+    }
+
+    private function isEligiblePayment(CommercialOrder $order, CommercialPayment $payment): bool
+    {
+        return (bool) config('contractor_referrals.enabled', true)
+            && $order->kind === 'purchase'
+            && $order->status->value === 'paid'
+            && $payment->commercial_order_id === $order->id
+            && $payment->provider_status === 'succeeded'
+            && $payment->amount_minor > 0
+            && $payment->refunded_amount_minor === 0;
     }
 
     private function cancelReward(ContractorReferralReward $reward, string $reason): void
     {
-        $reward->update([
-            'status' => ContractorReferralReward::STATUS_CANCELLED,
-            'cancelled_at' => now(),
-            'cancellation_reason' => $reason,
-        ]);
-    }
-
-    private function subscriptionWasCancelledBeforeEligibility(ContractorReferralReward $reward): bool
-    {
-        $subscription = $reward->invitedSubscription;
-
-        if (! $subscription) {
-            $this->cancelReward($reward, 'subscription_not_found');
-            return true;
-        }
-
-        return $subscription->canceled_at !== null
-            && $subscription->canceled_at->lessThanOrEqualTo($reward->eligible_at);
+        $reward->update(['status' => ContractorReferralReward::STATUS_CANCELLED, 'cancelled_at' => now(), 'cancellation_reason' => $reason]);
     }
 
     private function detectAntiFraudReason(ContractorInvitation $invitation): ?string
@@ -227,23 +187,21 @@ class ContractorReferralRewardService
         if ($invitation->organization_id === $invitation->invited_organization_id) {
             return 'same_organization';
         }
-
         $inviting = $invitation->organization;
         $invited = $invitation->invitedOrganization;
-
-        if (! $inviting || ! $invited) {
+        if ($inviting === null || $invited === null) {
             return 'organization_not_found';
         }
-
-        if ($this->sameFilledValue($inviting->tax_number, $invited->tax_number)) {
-            return 'same_tax_number';
+        foreach (['tax_number', 'email'] as $field) {
+            $first = mb_strtolower(trim((string) $inviting->{$field}));
+            $second = mb_strtolower(trim((string) $invited->{$field}));
+            if ($first !== '' && $first === $second) {
+                return 'same_'.$field;
+            }
         }
-
-        if ($this->sameFilledValue($inviting->email, $invited->email)) {
-            return 'same_email';
-        }
-
-        if ($this->sameFilledValue($this->normalizePhone($inviting->phone), $this->normalizePhone($invited->phone))) {
+        $invitingPhone = $this->normalizePhone((string) $inviting->phone);
+        $invitedPhone = $this->normalizePhone((string) $invited->phone);
+        if ($invitingPhone !== '' && $invitingPhone === $invitedPhone) {
             return 'same_phone';
         }
 
@@ -252,39 +210,25 @@ class ContractorReferralRewardService
 
     private function roundedPercent(int $amount, int $percent): int
     {
-        $roundTo = (int) config('contractor_referrals.round_to_cents', 100000);
-        $rawAmount = (int) round($amount * $percent / 100);
+        $roundTo = (int) config('contractor_referrals.round_to_cents', 100_000);
+        $raw = (int) round($amount * $percent / 100);
 
-        if ($roundTo <= 0) {
-            return $rawAmount;
-        }
-
-        return (int) (round($rawAmount / $roundTo) * $roundTo);
+        return $roundTo > 0 ? (int) (round($raw / $roundTo) * $roundTo) : $raw;
     }
 
-    private function sameFilledValue(?string $first, ?string $second): bool
+    private function normalizePhone(string $phone): string
     {
-        $first = mb_strtolower(trim((string) $first));
-        $second = mb_strtolower(trim((string) $second));
-
-        return $first !== '' && $first === $second;
-    }
-
-    private function normalizePhone(?string $phone): string
-    {
-        return preg_replace('/\D+/', '', (string) $phone) ?? '';
-    }
-
-    private function isEnabled(): bool
-    {
-        return (bool) config('contractor_referrals.enabled', true);
+        return preg_replace('/\D+/', '', $phone) ?? '';
     }
 
     private function hasRequiredTables(): bool
     {
-        return Schema::hasTable('contractor_invitations')
-            && Schema::hasTable('contractor_referral_rewards')
-            && Schema::hasTable('organization_balances')
-            && Schema::hasTable('balance_transactions');
+        foreach (['contractor_invitations', 'contractor_referral_rewards', 'commercial_orders', 'commercial_payments', 'organization_balances', 'balance_transactions'] as $table) {
+            if (! Schema::hasTable($table)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Deployment;
 
+use App\Enums\Billing\PaymentProviderMode;
 use PHPUnit\Framework\TestCase;
 
 final class DockerComposeSecurityTest extends TestCase
@@ -52,6 +53,23 @@ final class DockerComposeSecurityTest extends TestCase
         self::assertStringContainsString("      - 'Dockerfile.prod'", $workflow);
         self::assertStringContainsString("      - '.dockerignore'", $workflow);
         self::assertStringContainsString("      - 'public/**'", $workflow);
+    }
+
+    public function test_backend_deploy_passes_yookassa_credentials_only_through_github_secrets(): void
+    {
+        $workflow = file_get_contents(dirname(__DIR__, 3).'/.github/workflows/deploy-backend.yml');
+
+        self::assertIsString($workflow);
+        self::assertStringContainsString('YOOKASSA_SHOP_ID: ${{ secrets.YOOKASSA_SHOP_ID }}', $workflow);
+        self::assertStringContainsString('YOOKASSA_SECRET_KEY: ${{ secrets.YOOKASSA_SECRET_KEY }}', $workflow);
+        self::assertStringContainsString('envs: YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS', $workflow);
+        self::assertStringContainsString('upsert_env YOOKASSA_SECRET_KEY "${YOOKASSA_SECRET_KEY}"', $workflow);
+        self::assertStringContainsString(
+            'upsert_env YOOKASSA_MODE '.PaymentProviderMode::YooKassaTest->value,
+            $workflow,
+        );
+        self::assertStringContainsString('upsert_env YOOKASSA_MODE disabled', $workflow);
+        self::assertStringNotContainsString('test_OH_', $workflow);
     }
 
     public function test_backend_image_reuses_runtime_layers_between_releases(): void

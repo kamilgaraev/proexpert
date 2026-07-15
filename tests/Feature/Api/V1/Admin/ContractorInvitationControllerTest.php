@@ -8,7 +8,6 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\ContractorInvitation;
 use App\Models\Organization;
 use App\Models\User;
-use App\Services\Billing\SubscriptionLimitsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Notification;
@@ -164,7 +163,6 @@ class ContractorInvitationControllerTest extends TestCase
     public function test_store_creates_pending_invitation_and_rejects_duplicate_active_invitation(): void
     {
         $this->allowAdminAccess();
-        $this->allowContractorInvitationLimit();
         $context = AdminApiTestContext::create();
         $targetOrganization = Organization::factory()->verified()->create([
             'name' => 'Target Contractor',
@@ -207,7 +205,6 @@ class ContractorInvitationControllerTest extends TestCase
     public function test_store_rejects_reverse_pending_invitation(): void
     {
         $this->allowAdminAccess();
-        $this->allowContractorInvitationLimit();
         $context = AdminApiTestContext::create();
         $targetOrganization = Organization::factory()->verified()->create([
             'name' => 'Reverse Pending Contractor',
@@ -243,7 +240,6 @@ class ContractorInvitationControllerTest extends TestCase
     public function test_store_uses_jwt_organization_context_not_user_current_organization_for_validation(): void
     {
         $this->allowAdminAccess();
-        $this->allowContractorInvitationLimit();
         $context = AdminApiTestContext::create();
         $jwtOrganization = $this->attachOrganizationContextToUser($context->user);
         $targetOrganization = Organization::factory()->verified()->create([
@@ -347,14 +343,6 @@ class ContractorInvitationControllerTest extends TestCase
         });
     }
 
-    private function allowContractorInvitationLimit(): void
-    {
-        $this->mock(SubscriptionLimitsService::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('canCreateContractorInvitation')->andReturn(true);
-            $mock->shouldReceive('canCreateContractorInvitationForOrganization')->andReturn(true);
-        });
-    }
-
     private function resetAdminGuard(): void
     {
         auth()->guard('api_admin')->forgetUser();
@@ -382,7 +370,7 @@ class ContractorInvitationControllerTest extends TestCase
     private function authHeadersFor(User $user, Organization $organization): array
     {
         return [
-            'Authorization' => 'Bearer ' . JWTAuth::claims([
+            'Authorization' => 'Bearer '.JWTAuth::claims([
                 'organization_id' => $organization->id,
             ])->fromUser($user),
             'Accept' => 'application/json',

@@ -105,7 +105,6 @@ final class OrganizationAdminActionService
         return [
             'is_active' => $organization->is_active,
             'verification_status' => $organization->verification_status,
-            'subscription_expires_at' => $organization->subscription_expires_at?->toISOString(),
             'storage_used_mb' => $organization->storage_used_mb,
         ];
     }

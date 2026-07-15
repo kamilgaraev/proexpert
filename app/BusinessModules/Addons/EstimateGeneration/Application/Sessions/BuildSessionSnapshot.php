@@ -76,7 +76,7 @@ final class BuildSessionSnapshot
             availableActions: $actions,
             blockingIssues: $blockers,
             warnings: $warnings,
-            nextAction: $actions[0]['action'] ?? null,
+            nextAction: $this->recommendedNextAction($status, $actions),
             readinessEvaluated: $readinessEvaluated,
             documentsSummary: $documentsSummary,
             estimateSummary: is_array($draft['quality_summary'] ?? null) ? $draft['quality_summary'] : [],
@@ -173,6 +173,28 @@ final class BuildSessionSnapshot
                 EstimateGenerationAction::Archive,
             ], true),
         ];
+    }
+
+    /** @param list<array{action: string, label: string, method: string, endpoint: string, requires_confirmation: bool}> $actions */
+    private function recommendedNextAction(EstimateGenerationStatus $status, array $actions): ?string
+    {
+        if ($status === EstimateGenerationStatus::ProcessingDocuments) {
+            return 'wait_documents';
+        }
+        if (in_array($status, [EstimateGenerationStatus::Cancelled, EstimateGenerationStatus::Archived], true)) {
+            return null;
+        }
+        if ($status === EstimateGenerationStatus::Applied) {
+            return 'open_estimate';
+        }
+
+        foreach ($actions as $action) {
+            if (! in_array($action['action'], ['cancel', 'archive'], true)) {
+                return $action['action'];
+            }
+        }
+
+        return null;
     }
 
     /** @return list<array<string, mixed>> */

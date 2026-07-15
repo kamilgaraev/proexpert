@@ -8,23 +8,39 @@ use App\Enums\ModuleDevelopmentStatus;
 use App\Services\Modules\PackageCatalogService;
 use App\Services\Modules\PackageCatalogValidator;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 class PackageCatalogValidatorTest extends TestCase
 {
     private string $basePath;
+
+    private string $temporaryPackagesPath;
 
     protected function setUp(): void
     {
         parent::setUp();
 
         $this->basePath = dirname(__DIR__, 3);
+        $this->temporaryPackagesPath = sys_get_temp_dir().'/most-package-catalog-'.bin2hex(random_bytes(8));
+        mkdir($this->temporaryPackagesPath);
     }
 
-    public function test_package_catalog_exposes_v2_contract_for_all_packages(): void
+    protected function tearDown(): void
+    {
+        foreach (glob($this->temporaryPackagesPath.'/*.json') ?: [] as $filePath) {
+            unlink($filePath);
+        }
+
+        rmdir($this->temporaryPackagesPath);
+
+        parent::tearDown();
+    }
+
+    public function test_package_catalog_exposes_single_standard_commercial_variant(): void
     {
         $packages = $this->catalog()->allPackages();
 
-        $this->assertCount(12, $packages);
+        $this->assertCount(10, $packages);
 
         foreach ($packages as $package) {
             $this->assertSame(2, $package['schema_version']);
@@ -33,11 +49,11 @@ class PackageCatalogValidatorTest extends TestCase
             $this->assertArrayHasKey('recommended_addons', $package);
             $this->assertArrayHasKey('business_outcomes', $package);
             $this->assertArrayHasKey('capabilities', $package);
+            $this->assertSame(['standard'], array_keys($package['tiers']));
 
-            foreach ($package['tiers'] as $tier) {
-                $this->assertNotEmpty($tier['included_modules']);
-                $this->assertSame($tier['modules'], $tier['included_modules']);
-            }
+            $standard = $package['tiers']['standard'];
+            $this->assertNotEmpty($standard['included_modules']);
+            $this->assertSame($standard['modules'], $standard['included_modules']);
         }
     }
 
@@ -48,16 +64,48 @@ class PackageCatalogValidatorTest extends TestCase
         $this->assertSame([], $result['errors']);
     }
 
-    public function test_one_c_basic_exchange_is_included_in_every_package_tier(): void
+    public function test_catalog_service_rejects_standard_combined_with_base(): void
     {
-        foreach ($this->catalog()->allPackages() as $package) {
-            foreach ($package['tiers'] as $tierKey => $tier) {
-                $this->assertContains(
-                    'one-c-basic-exchange',
-                    $tier['included_modules'],
-                    "{$package['slug']}/{$tierKey} must include 1C basic exchange"
-                );
-            }
+        $this->assertCatalogServiceRejectsTiers([
+            'standard' => ['modules' => []],
+            'base' => ['modules' => []],
+        ]);
+    }
+
+    public function test_catalog_service_rejects_legacy_unknown_and_missing_standard_tiers(): void
+    {
+        foreach (['pro', 'enterprise', 'unknown'] as $tierKey) {
+            $this->assertCatalogServiceRejectsTiers([
+                $tierKey => ['modules' => []],
+            ]);
+        }
+
+        $this->assertCatalogServiceRejectsTiers([]);
+    }
+
+    public function test_validator_rejects_any_tier_set_other_than_standard_only(): void
+    {
+        $invalidTierSets = [
+            [
+                'standard' => ['modules' => []],
+                'base' => ['modules' => []],
+            ],
+            ['pro' => ['modules' => []]],
+            ['enterprise' => ['modules' => []]],
+            ['unknown' => ['modules' => []]],
+            [],
+        ];
+
+        foreach ($invalidTierSets as $tiers) {
+            $result = $this->validator()->validate(
+                [['slug' => 'broken-package', 'tiers' => $tiers]],
+                [],
+                [],
+                []
+            );
+
+            $this->assertNotEmpty($result['errors']);
+            $this->assertStringContainsString('standard', $result['errors'][0]);
         }
     }
 
@@ -79,7 +127,7 @@ class PackageCatalogValidatorTest extends TestCase
 
     public function test_legacy_active_module_development_status_falls_back_to_stable(): void
     {
-        $module = new \App\Models\Module();
+        $module = new \App\Models\Module;
         $module->setRawAttributes([
             'development_status' => 'active',
         ]);
@@ -96,7 +144,7 @@ class PackageCatalogValidatorTest extends TestCase
             [[
                 'slug' => 'broken-package',
                 'tiers' => [
-                    'base' => [
+                    'standard' => [
                         'modules' => ['missing-module'],
                     ],
                 ],
@@ -118,7 +166,7 @@ class PackageCatalogValidatorTest extends TestCase
             [[
                 'slug' => 'broken-package',
                 'tiers' => [
-                    'base' => [
+                    'standard' => [
                         'modules' => ['child-module'],
                     ],
                 ],
@@ -150,7 +198,7 @@ class PackageCatalogValidatorTest extends TestCase
             [[
                 'slug' => 'empty-package',
                 'tiers' => [
-                    'base' => [
+                    'standard' => [
                         'modules' => [],
                     ],
                 ],
@@ -170,16 +218,94 @@ class PackageCatalogValidatorTest extends TestCase
         $this->assertStringContainsString('visible-addon', $result['errors'][0]);
     }
 
+    public function test_validator_rejects_commercial_module_without_a_package(): void
+    {
+        $result = $this->validator()->validate(
+            [[
+                'slug' => 'empty-package',
+                'tiers' => [
+                    'standard' => [
+                        'modules' => [],
+                    ],
+                ],
+            ]],
+            [
+                'forgotten-addon' => [
+                    'slug' => 'forgotten-addon',
+                    'dependencies' => [],
+                ],
+            ],
+            [],
+            ['forgotten-addon' => 'addon']
+        );
+
+        $this->assertNotEmpty($result['errors']);
+        $this->assertStringContainsString('forgotten-addon', $result['errors'][0]);
+    }
+
+    public function test_validator_rejects_unclassified_auto_module(): void
+    {
+        $result = $this->validator()->validate(
+            [[
+                'slug' => 'empty-package',
+                'tiers' => [
+                    'standard' => [
+                        'modules' => [],
+                    ],
+                ],
+            ]],
+            [
+                'forgotten-foundation' => [
+                    'slug' => 'forgotten-foundation',
+                    'auto_activate' => true,
+                    'dependencies' => [],
+                ],
+            ],
+            [],
+            []
+        );
+
+        $this->assertNotEmpty($result['errors']);
+        $this->assertStringContainsString('forgotten-foundation', $result['errors'][0]);
+    }
+
     private function catalog(): PackageCatalogService
     {
         return new PackageCatalogService(
-            $this->basePath . '/config/Packages',
-            $this->basePath . '/config/ModuleList'
+            $this->basePath.'/config/Packages',
+            $this->basePath.'/config/ModuleList'
         );
     }
 
     private function validator(): PackageCatalogValidator
     {
         return new PackageCatalogValidator($this->catalog());
+    }
+
+    private function assertCatalogServiceRejectsTiers(array $tiers): void
+    {
+        file_put_contents(
+            $this->temporaryPackagesPath.'/broken-package.json',
+            json_encode([
+                'slug' => 'broken-package',
+                'tiers' => $tiers,
+            ], JSON_THROW_ON_ERROR)
+        );
+
+        $catalog = new PackageCatalogService(
+            $this->temporaryPackagesPath,
+            $this->basePath.'/config/ModuleList'
+        );
+
+        $exception = null;
+
+        try {
+            $catalog->allPackages();
+        } catch (RuntimeException $caughtException) {
+            $exception = $caughtException;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $exception);
+        $this->assertStringContainsString('standard', $exception->getMessage());
     }
 }

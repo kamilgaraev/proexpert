@@ -1,0 +1,19 @@
+{
+    "slug": "finance-contracts",
+    "name": "Финансы и договоры",
+    "description": "Договоры, бюджетирование, акты и финансовый контроль строительных проектов.",
+    "sort_order": 7,
+    "schema_version": 2,
+    "business_outcomes": ["Финансовый план-факт по объектам", "Контроль договорных изменений", "Обмен данными с 1С"],
+    "tiers": {
+        "standard": {
+            "label": "Финансы и договоры",
+            "description": "Договоры, бюджетирование, акты и финансовый контроль.",
+            "price": 12900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": ["budget-estimates", "budgeting", "change-management", "advance-accounting", "one-c-basic-exchange"],
+            "highlights": ["Бюджетирование", "Изменения и претензии", "Подотчётные средства", "Обмен с 1С"]
+        }
+    }
+}

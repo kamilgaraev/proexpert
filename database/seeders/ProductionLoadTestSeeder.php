@@ -177,7 +177,6 @@ class ProductionLoadTestSeeder extends Seeder
             'country' => 'RU',
             'description' => 'Synthetic organization for production load testing before real customer onboarding.',
             'is_active' => true,
-            'subscription_expires_at' => $this->now->copy()->addYear(),
             'is_verified' => true,
             'verified_at' => $this->now,
             'verification_status' => 'verified',

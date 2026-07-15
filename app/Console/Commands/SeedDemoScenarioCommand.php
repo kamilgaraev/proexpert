@@ -40,7 +40,7 @@ final class SeedDemoScenarioCommand extends Command
         $reset = (bool) $this->option('reset');
         $dryRun = (bool) $this->option('dry-run');
         $verify = (bool) $this->option('verify');
-        $destructive = ($deleteOnly || $reset) && !$dryRun;
+        $destructive = ($deleteOnly || $reset) && ! $dryRun;
 
         if ($deleteOnly && $reset) {
             $this->error('Нельзя одновременно использовать --delete/--rollback и --reset.');
@@ -48,13 +48,13 @@ final class SeedDemoScenarioCommand extends Command
             return self::FAILURE;
         }
 
-        if ($destructive && app()->environment('production') && !$this->option('force')) {
+        if ($destructive && app()->environment('production') && ! $this->option('force')) {
             $this->error('Для удаления или сброса демо-контура в production нужен флаг --force.');
 
             return self::FAILURE;
         }
 
-        if ($verify && !$reset && !$deleteOnly && !$dryRun) {
+        if ($verify && ! $reset && ! $deleteOnly && ! $dryRun) {
             return $this->renderVerifyResult($this->scenarioService->verify());
         }
 
@@ -122,7 +122,7 @@ final class SeedDemoScenarioCommand extends Command
             )
         );
 
-        if (!$result['ok']) {
+        if (! $result['ok']) {
             $this->error('Проверка демо-контура не пройдена.');
 
             return self::FAILURE;

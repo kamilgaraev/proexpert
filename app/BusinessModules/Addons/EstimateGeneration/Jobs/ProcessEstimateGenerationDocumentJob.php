@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\HandleDocumentProcessingFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessEstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -59,6 +60,10 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
 
     public function failed(Throwable $error): void
     {
+        if ($error instanceof StaleEstimateGenerationState) {
+            return;
+        }
+
         app(HandleDocumentProcessingFailure::class)->handle(
             $this->documentId,
             $this->failureSnapshot,
