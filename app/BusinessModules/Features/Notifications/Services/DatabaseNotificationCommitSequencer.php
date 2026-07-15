@@ -14,12 +14,16 @@ final class DatabaseNotificationCommitSequencer implements NotificationCommitSeq
 {
     public function run(User $user, array $interfaces, Closure $callback): mixed
     {
-        return DB::transaction(function () use ($user, $interfaces, $callback): mixed {
-            if (DB::getDriverName() === 'pgsql') {
+        $driver = DB::getDriverName();
+        NotificationSequenceDriverGuard::assertSupported($driver, app()->environment('testing'));
+
+        return DB::transaction(function () use ($user, $interfaces, $callback, $driver): mixed {
+            if ($driver === 'pgsql') {
                 $interfaceValues = array_map(
                     static fn (NotificationInterface $interface): string => $interface->value,
                     $interfaces
                 );
+                $interfaceValues = array_values(array_unique($interfaceValues));
                 sort($interfaceValues, SORT_STRING);
 
                 foreach ($interfaceValues as $interface) {

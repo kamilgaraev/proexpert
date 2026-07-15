@@ -15,6 +15,12 @@
 - Endpoint `/notifications/unread-count` сохранён для обратной совместимости и теперь сам формирует все агрегаты в одном snapshot.
 - `/notifications/unread-count` возвращает `snapshot_sequence` из той же repeatable-read транзакции, что и unread-агрегаты.
 - `mark-all-read` возвращает совместимый `count` и новый `sequence_cut`; обновляются только видимые непрочитанные targets с `sequence <= sequence_cut`, поэтому уведомления, зафиксированные после cut, не помечаются прочитанными.
+- Организационные WebSocket-события публикуются только в канал `...{interface}.org.{organization_id}`, глобальные — только в `...{interface}.global`; прежний широкий user/interface канал удалён.
+- Авторизация организационного канала требует точного пользователя, разрешённого контуром endpoint-интерфейса и активного членства пользователя в организации.
+- `organization_id` в корне и `data` WebSocket-события всегда перезаписывается каноническим значением модели уведомления.
+- Cursor читается за O(1) из `notification_interface_cursors`; таблица создаётся и backfill-ится в ещё не развёрнутой миграции targets, а persistence продвигает cursor атомарно после вставки targets под advisory lock.
+- `mark-all-read` использует обычную READ COMMITTED `DB::transaction`: cursor фиксируется перед update, а условие `sequence <= sequence_cut` исключает более поздние вставки без риска repeatable-read serialization failure.
+- Production-драйверы кроме PostgreSQL завершаются fail-closed; детерминированная SQLite-ветка разрешена только в testing.
 - Элементы HTTP-списка и WebSocket-события содержат целочисленный `sequence`; клиент принимает из буфера только события с `sequence > snapshot_sequence`.
 
 ## Архитектура
@@ -31,11 +37,13 @@
 - RED: `NotificationAtomicSnapshotContractTest` — 3 ожидаемых падения до реализации.
 - RED review-wave: подтверждены отсутствие fail-closed для вложенной PostgreSQL-транзакции, стабильного tie-breaker, commit cursor, advisory lock и `sequence` в HTTP/WebSocket.
 - RED final-contract wave: подтверждены отсутствие cursor в `/unread-count` и отсутствие server cut в `mark-all-read`.
+- RED isolation/performance wave: подтверждены широкий WebSocket-канал, отсутствие проверки организации, исторический `MAX(sequence)`, repeatable-read mark-all и молчаливый non-PG fallback.
 - GREEN: весь `tests/Unit/Notifications` прошёл без ошибок.
-- Итоговый unit-прогон разделён из-за длительного AST inventory: 80 тестов / 328 assertions и 3 sender-contract теста / 5735 assertions; суммарно 83 теста / 6063 assertions, оба процесса завершились с exit code 0.
+- Итоговый unit-прогон разделён из-за длительного AST inventory: 91 тест / 378 assertions и 3 sender-contract теста / 5739 assertions; суммарно 94 теста / 6117 assertions, оба процесса завершились с exit code 0.
 - Дополнен DB-backed feature-тест `NotificationContourIsolationTest`: проверяет точную форму ответов админки/ЛК/mobile/customer/count, глобальную unread-сводку, `snapshot_sequence` и стабильную сортировку. Локально не запускался по запрету на DB-команды; предназначен для CI.
 - `php -l` — все изменённые PHP-файлы без синтаксических ошибок.
 - Laravel Pint — все изменённые PHP-файлы, успешно.
+- Добавлен opt-in PostgreSQL integration test `NotificationPostgresConcurrencyTest` (`RUN_NOTIFICATION_POSTGRES_TESTS=1`): через production `NotificationService`, два процесса и IPC/barriers проверяет advisory-lock commit order/cursor и параллельный mark-as-read/mark-all с исключением post-cut вставки. Локально не запускался по запрету на DB-команды.
 - PHPStan/Larastan — изменённый notification-модуль, ошибок нет.
 - `git diff --check` — ошибок нет.
 

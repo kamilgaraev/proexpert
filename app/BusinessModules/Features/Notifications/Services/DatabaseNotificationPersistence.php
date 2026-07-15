@@ -14,6 +14,8 @@ use Illuminate\Support\Facades\DB;
 
 final class DatabaseNotificationPersistence implements NotificationPersistence
 {
+    public function __construct(private readonly NotificationInterfaceCursorStore $cursorStore) {}
+
     public function persist(
         User $user,
         string $type,
@@ -22,7 +24,10 @@ final class DatabaseNotificationPersistence implements NotificationPersistence
         string $priority,
         NotificationDeliveryOptions $options,
     ): Notification {
-        return DB::transaction(function () use ($user, $type, $data, $notificationType, $priority, $options): Notification {
+        $driver = DB::getDriverName();
+        NotificationSequenceDriverGuard::assertSupported($driver, app()->environment('testing'));
+
+        return DB::transaction(function () use ($user, $type, $data, $notificationType, $priority, $options, $driver): Notification {
             $notification = Notification::create([
                 'type' => $type,
                 'notifiable_type' => User::class,
@@ -38,7 +43,7 @@ final class DatabaseNotificationPersistence implements NotificationPersistence
                 ],
             ]);
 
-            $nextSequence = DB::getDriverName() === 'pgsql'
+            $nextSequence = $driver === 'pgsql'
                 ? null
                 : ((int) NotificationTarget::query()->max('sequence')) + 1;
             $targets = array_map(
@@ -50,6 +55,7 @@ final class DatabaseNotificationPersistence implements NotificationPersistence
                 array_keys($options->interfaces),
             );
             $notification->targets()->createMany($targets);
+            $this->cursorStore->advance($user, $notification);
 
             return $notification;
         });

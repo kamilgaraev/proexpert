@@ -37,9 +37,8 @@ final class NotificationAtomicSnapshotContractTest extends TestCase
             (int) strpos($service, 'private function authenticatedUser')
                 - (int) strpos($service, 'private function snapshotSequenceFor')
         );
-        self::assertStringContainsString("where('interface', \$interface->value)", $cursorMethod);
-        self::assertStringContainsString('->forUser($user)', $cursorMethod);
-        self::assertStringContainsString("->max('sequence')", $cursorMethod);
+        self::assertStringContainsString('$this->cursorStore->latest($user, $interface)', $cursorMethod);
+        self::assertStringNotContainsString("->max('sequence')", $cursorMethod);
         self::assertStringNotContainsString('organization_id', $cursorMethod);
         self::assertStringNotContainsString('dismissed_at', $cursorMethod);
     }
@@ -86,7 +85,8 @@ final class NotificationAtomicSnapshotContractTest extends TestCase
         self::assertStringContainsString('$this->snapshotSequenceFor($user, $interface)', $unreadMethod);
 
         $markAllMethod = $this->methodSource($service, 'public function markAllAsRead', '/**');
-        self::assertStringContainsString('$this->snapshotTransactionRunner->run(', $markAllMethod);
+        self::assertStringContainsString('return DB::transaction(', $markAllMethod);
+        self::assertStringNotContainsString('$this->snapshotTransactionRunner->run(', $markAllMethod);
         self::assertStringContainsString('$sequenceCut = $this->snapshotSequenceFor($user, $interface)', $markAllMethod);
         self::assertStringContainsString("where('sequence', '<=', \$sequenceCut)", $markAllMethod);
         self::assertStringContainsString('new NotificationMarkAllReadResult(', $markAllMethod);

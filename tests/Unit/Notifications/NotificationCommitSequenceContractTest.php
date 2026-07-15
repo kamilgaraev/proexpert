@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Notifications;
 
+use App\BusinessModules\Features\Notifications\Services\NotificationSequenceDriverGuard;
+use LogicException;
 use PHPUnit\Framework\TestCase;
 
 final class NotificationCommitSequenceContractTest extends TestCase
@@ -15,7 +17,7 @@ final class NotificationCommitSequenceContractTest extends TestCase
         );
 
         self::assertStringContainsString('DB::transaction(', $source);
-        self::assertStringContainsString("DB::getDriverName() === 'pgsql'", $source);
+        self::assertStringContainsString("\$driver === 'pgsql'", $source);
         self::assertStringContainsString('sort($interfaceValues, SORT_STRING)', $source);
         self::assertStringContainsString(
             'pg_advisory_xact_lock(hashtextextended(CAST(? AS text), 0))',
@@ -45,6 +47,45 @@ final class NotificationCommitSequenceContractTest extends TestCase
         self::assertIsInt($dispatchPosition);
         self::assertLessThan($persistencePosition, $sequencePosition);
         self::assertLessThan($dispatchPosition, $persistencePosition);
+    }
+
+    public function test_unsupported_production_databases_fail_closed_and_sqlite_is_test_only(): void
+    {
+        $sequencer = $this->source(
+            'app/BusinessModules/Features/Notifications/Services/DatabaseNotificationCommitSequencer.php'
+        );
+        $persistence = $this->source(
+            'app/BusinessModules/Features/Notifications/Services/DatabaseNotificationPersistence.php'
+        );
+        $guard = $this->source(
+            'app/BusinessModules/Features/Notifications/Services/NotificationSequenceDriverGuard.php'
+        );
+
+        self::assertStringContainsString('NotificationSequenceDriverGuard::assertSupported(', $sequencer);
+        self::assertStringContainsString('NotificationSequenceDriverGuard::assertSupported(', $persistence);
+        self::assertStringContainsString("\$driver === 'pgsql'", $guard);
+        self::assertStringContainsString("\$driver === 'sqlite' && \$testing", $guard);
+        self::assertStringContainsString('throw new LogicException(', $guard);
+    }
+
+    public function test_driver_guard_accepts_postgres_and_test_sqlite(): void
+    {
+        NotificationSequenceDriverGuard::assertSupported('pgsql', false);
+        NotificationSequenceDriverGuard::assertSupported('sqlite', true);
+
+        self::addToAssertionCount(2);
+    }
+
+    public function test_driver_guard_rejects_non_postgres_production_and_non_sqlite_test_drivers(): void
+    {
+        foreach ([['sqlite', false], ['mysql', true], ['mysql', false]] as [$driver, $testing]) {
+            try {
+                NotificationSequenceDriverGuard::assertSupported($driver, $testing);
+                self::fail("Driver {$driver} unexpectedly accepted");
+            } catch (LogicException) {
+                self::addToAssertionCount(1);
+            }
+        }
     }
 
     private function source(string $path): string

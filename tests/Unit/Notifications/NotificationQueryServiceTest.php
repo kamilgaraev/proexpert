@@ -7,6 +7,7 @@ namespace Tests\Unit\Notifications;
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Services\LaravelNotificationSnapshotDatabase;
+use App\BusinessModules\Features\Notifications\Services\NotificationInterfaceCursorStore;
 use App\BusinessModules\Features\Notifications\Services\NotificationQueryService;
 use App\BusinessModules\Features\Notifications\Services\NotificationRequestInterfaceResolver;
 use App\BusinessModules\Features\Notifications\Services\NotificationSnapshotTransactionRunner;
@@ -74,7 +75,8 @@ final class NotificationQueryServiceTest extends TestCase
     {
         return new NotificationQueryService(
             new NotificationRequestInterfaceResolver,
-            new NotificationSnapshotTransactionRunner(new LaravelNotificationSnapshotDatabase)
+            new NotificationSnapshotTransactionRunner(new LaravelNotificationSnapshotDatabase),
+            new NotificationInterfaceCursorStore
         );
     }
 

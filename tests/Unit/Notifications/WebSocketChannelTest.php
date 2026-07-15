@@ -55,14 +55,18 @@ final class WebSocketChannelTest extends TestCase
         $notification = $this->notification(
             ['admin', 'lk'],
             readAt: [CarbonImmutable::parse('2026-07-15 10:00:00'), null],
+            organizationId: 17,
+            data: ['title' => 'Test', 'organization_id' => 999],
         );
 
         $this->channel($factory)->publish($notification, (object) ['id' => 42]);
 
+        $channelNames = array_map(static fn (array $broadcast): string => $broadcast['channels'][0], $broadcasts);
         self::assertSame([
-            'private-App.Models.User.42.admin',
-            'private-App.Models.User.42.lk',
-        ], array_map(static fn (array $broadcast): string => $broadcast['channels'][0], $broadcasts));
+            'private-App.Models.User.42.admin.org.17',
+            'private-App.Models.User.42.lk.org.17',
+        ], $channelNames);
+        self::assertNotContains('private-App.Models.User.42.admin', $channelNames);
         self::assertSame(['notification.new', 'notification.new'], array_column($broadcasts, 'event'));
         self::assertSame(['admin', 'lk'], array_column(array_column($broadcasts, 'payload'), 'interface'));
         self::assertSame(['admin', 'lk'], array_map(
@@ -74,9 +78,15 @@ final class WebSocketChannelTest extends TestCase
             static fn (array $broadcast): int => $broadcast['payload']['data']['sequence'],
             $broadcasts,
         ));
+        self::assertSame([17, 17], array_column(array_column($broadcasts, 'payload'), 'organization_id'));
+        self::assertSame([17, 17], array_map(
+            static fn (array $broadcast): int => $broadcast['payload']['data']['organization_id'],
+            $broadcasts,
+        ));
         self::assertSame('2026-07-15T10:00:00+00:00', $broadcasts[0]['payload']['read_at']);
         self::assertNull($broadcasts[1]['payload']['read_at']);
         self::assertArrayNotHasKey('interface', $notification->data);
+        self::assertSame(999, $notification->data['organization_id']);
         self::assertSame(
             ['sent', 'sent'],
             $notification->targets->map(static fn (InMemoryNotificationTarget $target): string => $target->fresh()->websocket_status)->all(),
@@ -89,7 +99,7 @@ final class WebSocketChannelTest extends TestCase
         $factory = $this->broadcastFactory(
             $broadcastChannels,
             static function (array $channels): void {
-                if (str_ends_with($channels[0], '.admin')) {
+                if (str_contains($channels[0], '.admin')) {
                     throw new RuntimeException('Admin broadcast unavailable');
                 }
             },
@@ -106,8 +116,8 @@ final class WebSocketChannelTest extends TestCase
         }
 
         self::assertSame([
-            'private-App.Models.User.42.admin',
-            'private-App.Models.User.42.lk',
+            'private-App.Models.User.42.admin.global',
+            'private-App.Models.User.42.lk.global',
         ], $broadcastChannels);
         self::assertSame('pending', $notification->targets[0]->fresh()->websocket_status);
         self::assertSame('sent', $notification->targets[1]->fresh()->websocket_status);
@@ -129,8 +139,8 @@ final class WebSocketChannelTest extends TestCase
         }
 
         self::assertSame([
-            'private-App.Models.User.42.admin',
-            'private-App.Models.User.42.lk',
+            'private-App.Models.User.42.admin.global',
+            'private-App.Models.User.42.lk.global',
         ], $broadcastChannels);
         self::assertSame('failed', $notification->targets[0]->fresh()->websocket_status);
         self::assertSame('sent', $notification->targets[1]->fresh()->websocket_status);
@@ -145,7 +155,7 @@ final class WebSocketChannelTest extends TestCase
 
         $this->channel($factory)->publish($notification, (object) ['id' => 42]);
 
-        self::assertSame(['private-App.Models.User.42.lk'], $broadcastChannels);
+        self::assertSame(['private-App.Models.User.42.lk.global'], $broadcastChannels);
         self::assertSame(
             ['sent', 'sent'],
             $notification->targets->map(static fn (InMemoryNotificationTarget $target): string => $target->fresh()->websocket_status)->all(),
@@ -221,7 +231,7 @@ final class WebSocketChannelTest extends TestCase
         $factory = $this->broadcastFactory(
             $broadcasts,
             static function (array $channels): void {
-                if (str_ends_with($channels[0], '.admin')) {
+                if (str_contains($channels[0], '.admin')) {
                     throw new RuntimeException('Admin broadcast unavailable');
                 }
             },
@@ -294,6 +304,8 @@ final class WebSocketChannelTest extends TestCase
         array $interfaces = ['lk'],
         array $statuses = [],
         array $readAt = [],
+        ?int $organizationId = null,
+        array $data = ['title' => 'Test'],
     ): Notification {
         $notification = new Notification;
         $notification->setRawAttributes([
@@ -301,7 +313,8 @@ final class WebSocketChannelTest extends TestCase
             'type' => 'system',
             'notification_type' => 'system',
             'priority' => 'normal',
-            'data' => json_encode(['title' => 'Test'], JSON_THROW_ON_ERROR),
+            'organization_id' => $organizationId,
+            'data' => json_encode($data, JSON_THROW_ON_ERROR),
             'created_at' => now(),
             'read_at' => now()->subDay(),
         ], true);

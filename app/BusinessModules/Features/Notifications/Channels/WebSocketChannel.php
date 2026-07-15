@@ -112,12 +112,19 @@ class WebSocketChannel
         NotificationTarget $target,
     ): void {
         $interface = $target->interface->value;
+        $organizationId = $notification->organization_id === null
+            ? null
+            : (int) $notification->organization_id;
         $data = $notification->data;
         $data['interface'] = $interface;
         $data['sequence'] = (int) $target->sequence;
+        $data['organization_id'] = $organizationId;
+        $channelScope = $organizationId === null
+            ? 'global'
+            : 'org.'.$organizationId;
 
         $this->broadcasting->connection('reverb')->broadcast(
-            ['private-App.Models.User.'.$notifiable->id.'.'.$interface],
+            ['private-App.Models.User.'.$notifiable->id.'.'.$interface.'.'.$channelScope],
             'notification.new',
             [
                 'id' => $notification->id,
@@ -126,6 +133,7 @@ class WebSocketChannel
                 'priority' => $notification->priority,
                 'interface' => $interface,
                 'sequence' => (int) $target->sequence,
+                'organization_id' => $organizationId,
                 'data' => $data,
                 'created_at' => $notification->created_at->toIso8601String(),
                 'read_at' => $target->read_at?->toIso8601String(),

@@ -21,7 +21,8 @@ final class NotificationQueryService
 {
     public function __construct(
         private readonly NotificationRequestInterfaceResolver $interfaceResolver,
-        private readonly NotificationSnapshotTransactionRunner $snapshotTransactionRunner
+        private readonly NotificationSnapshotTransactionRunner $snapshotTransactionRunner,
+        private readonly NotificationInterfaceCursorStore $cursorStore
     ) {}
 
     public function visibleTo(Request $request): Builder
@@ -56,10 +57,7 @@ final class NotificationQueryService
 
     private function snapshotSequenceFor(User $user, NotificationInterface $interface): int
     {
-        return (int) NotificationTarget::query()
-            ->where('interface', $interface->value)
-            ->whereHas('notification', static fn (Builder $query): Builder => $query->forUser($user))
-            ->max('sequence');
+        return $this->cursorStore->latest($user, $interface);
     }
 
     private function authenticatedUser(Request $request): User
@@ -166,7 +164,7 @@ final class NotificationQueryService
 
     public function markAllAsRead(Request $request): NotificationMarkAllReadResult
     {
-        return $this->snapshotTransactionRunner->run(function () use ($request): NotificationMarkAllReadResult {
+        return DB::transaction(function () use ($request): NotificationMarkAllReadResult {
             $user = $this->authenticatedUser($request);
             $interface = $this->interfaceResolver->resolve($request);
             $sequenceCut = $this->snapshotSequenceFor($user, $interface);
