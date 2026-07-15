@@ -85,6 +85,22 @@ final class SessionBuildingModelBridgeTest extends TestCase
         );
     }
 
+    #[Test]
+    public function first_pages_of_different_documents_keep_distinct_floor_identity(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
+        [$bridge] = $this->bridge();
+
+        $model = $bridge->store($context, [
+            $this->unkeyedVisionUnit(101, 501, 601, 'a', 'first'),
+            $this->unkeyedVisionUnit(102, 502, 602, 'b', 'second'),
+        ]);
+
+        self::assertNotNull($model);
+        self::assertSame(2, $model->metrics['floor_count']);
+        self::assertSame(['floor-document-501-page-1', 'floor-document-502-page-1'], array_column($model->toArray()['floors'], 'key'));
+    }
+
     /** @return array{SessionBuildingModelBridge, BuildingModelRepository} */
     private function bridge(): array
     {
@@ -175,5 +191,21 @@ final class SessionBuildingModelBridgeTest extends TestCase
                 ],
             ],
         ]);
+    }
+
+    private function unkeyedVisionUnit(int $unitId, int $documentId, int $pageId, string $hashCharacter, string $suffix): SessionBuildingModelUnitData
+    {
+        $source = 'sha256:'.str_repeat($hashCharacter, 64);
+        $payload = $this->visionUnit()->payload;
+        unset($payload['floor_key']);
+        $payload['vision_analysis']['evidence'][0]['key'] = 'vision-page-'.$suffix;
+        $payload['vision_analysis']['evidence'][0]['locator']['page_id'] = $pageId;
+        $payload['vision_analysis']['evidence'][0]['locator']['processing_unit_id'] = $unitId;
+        $payload['vision_analysis']['evidence'][0]['locator']['source_version'] = $source;
+        $payload['vision_analysis']['elements'][0]['key'] = 'vision-room-'.$suffix;
+        $payload['vision_analysis']['elements'][0]['evidence_ref'] = 'vision-page-'.$suffix;
+        $payload['vision_analysis']['scale_candidates'][0]['evidence_ref'] = 'vision-page-'.$suffix;
+
+        return new SessionBuildingModelUnitData($unitId, $documentId, $pageId, 'sketch', 1, $source, 0.95, $payload);
     }
 }

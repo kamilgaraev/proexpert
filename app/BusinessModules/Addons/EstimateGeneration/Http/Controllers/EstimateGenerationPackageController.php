@@ -53,7 +53,7 @@ final class EstimateGenerationPackageController extends Controller
                 $query->where('status', $validated['status']);
             }
             $perPage = (int) ($validated['per_page'] ?? 20);
-            $summary = $this->summaryQuery->summarize($query);
+            $summary = $this->summaryQuery->summarize($query->getQuery());
             $packages = $query->paginate($perPage);
             $payload = ['summary' => $summary];
             $payload['packages'] = collect($packages->items())

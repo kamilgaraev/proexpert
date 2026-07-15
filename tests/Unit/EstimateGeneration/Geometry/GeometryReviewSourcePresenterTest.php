@@ -25,7 +25,7 @@ final class GeometryReviewSourcePresenterTest extends TestCase
         $files = Mockery::mock(FileService::class);
         $files->expects('temporaryUrl')->once()->with(
             'org-7/estimate-generation/sessions/11/documents/13/manifests/source/page-00001.png',
-            5,
+            60,
             Mockery::on(static fn (Organization $organization): bool => (int) $organization->id === 7),
             ['ResponseContentType' => 'image/png'],
         )->andReturn('https://storage.example/signed-page');
@@ -73,7 +73,7 @@ final class GeometryReviewSourcePresenterTest extends TestCase
         $files = Mockery::mock(FileService::class);
         $files->expects('temporaryUrl')->once()->with(
             'org-7/estimate-generation/sessions/11/documents/source-image.jpg',
-            5,
+            60,
             Mockery::type(Organization::class),
             ['ResponseContentType' => 'image/jpeg'],
         )->andReturn('https://storage.example/signed-jpeg');

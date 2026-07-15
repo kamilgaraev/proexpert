@@ -41,5 +41,6 @@ final class EstimateGenerationPackageSummaryQueryTest extends TestCase
         self::assertIsString($controller);
         self::assertStringNotContainsString('summaryPackages', $controller);
         self::assertStringNotContainsString('->get()', $controller);
+        self::assertStringContainsString('summarize($query->getQuery())', $controller);
     }
 }

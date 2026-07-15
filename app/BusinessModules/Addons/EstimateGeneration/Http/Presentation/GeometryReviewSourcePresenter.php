@@ -46,7 +46,7 @@ final readonly class GeometryReviewSourcePresenter
 
         $organization = new Organization;
         $organization->forceFill(['id' => $organizationId]);
-        $url = $this->files->temporaryUrl($path, 5, $organization, ['ResponseContentType' => $contentType]);
+        $url = $this->files->temporaryUrl($path, 60, $organization, ['ResponseContentType' => $contentType]);
         if (! is_string($url) || trim($url) === '') {
             return null;
         }

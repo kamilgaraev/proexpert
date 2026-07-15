@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Geometry;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\BuildingGeometryMutator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryConfirmationCommand;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\AssumptionData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\OpeningData;
@@ -61,6 +62,33 @@ final class BuildingGeometryMutatorTest extends TestCase
     }
 
     #[Test]
+    public function scale_and_room_geometry_can_be_confirmed_in_one_command(): void
+    {
+        $command = new GeometryConfirmationCommand(
+            1,
+            2,
+            3,
+            4,
+            5,
+            'sha256:'.str_repeat('a', 64),
+            'sha256:'.str_repeat('b', 64),
+            ['pixel_start' => [0, 0], 'pixel_end' => [1000, 0], 'meters' => 10],
+            [[
+                'op' => 'replace',
+                'path' => '/floors/floor-1/rooms/room-1/polygon',
+                'value' => [[0, 0], [5, 0], [5, 4], [0, 4]],
+            ]],
+        );
+
+        $result = (new BuildingGeometryMutator)->mutate($this->unscaledModel(), $command, 99)->toArray();
+
+        self::assertSame('confirmed', $result['scale_status']);
+        self::assertSame(0.01, $result['scale_meters_per_unit']);
+        self::assertSame([[0.0, 0.0], [5.0, 0.0], [5.0, 4.0], [0.0, 4.0]], $result['floors'][0]['rooms'][0]['polygon']);
+        self::assertTrue($result['metrics']['complete']);
+    }
+
+    #[Test]
     #[DataProvider('legacyWallFields')]
     public function legacy_wall_without_new_fields_can_replace_each_field_independently(string $field, string $value): void
     {
@@ -94,5 +122,12 @@ final class BuildingGeometryMutatorTest extends TestCase
                 [new WallData('wall-1', [0, 0], [5, 0], 0.2, 3, [1], 1, 'confirmed')],
                 [new OpeningData('opening-1', 'wall-1', 'door', 1, 1, 2, [1], 1, 'confirmed')], [], [1], 1, 'confirmed'),
         ], [], 'building-model:v1'))->toArray();
+    }
+
+    private function unscaledModel(): array
+    {
+        return (new NormalizedBuildingModelData('m', 'unknown', null, [
+            new FloorData('floor-1', null, null, [new RoomData('room-1', 'Комната', null, [1], 1, 'unknown')], [], [], [], [1], 1, 'unknown'),
+        ], [new AssumptionData('scale_missing', 'blocking', ['floor-1'], [1], true)], 'building-model:v1'))->toArray();
     }
 }

@@ -204,6 +204,6 @@ final readonly class SessionBuildingModelBridge
             return 'floor-1';
         }
 
-        return 'floor-page-'.$unit->index;
+        return 'floor-document-'.$unit->documentId.'-page-'.$unit->index;
     }
 }

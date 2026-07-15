@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Geometry;
 
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\AssumptionData;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use InvalidArgumentException;
 
@@ -38,14 +40,14 @@ final class BuildingGeometryMutator
             }
             unset($floor);
         }
-        if ($evidenceId !== null) {
-            $model['evidence_ids'] = array_values(array_unique([...$model['evidence_ids'], $evidenceId]));
-            sort($model['evidence_ids'], SORT_NUMERIC);
-            $model['metrics']['evidence_count'] = count($model['evidence_ids']);
-        }
-        $model['metrics'] = NormalizedBuildingModelData::fromArray($model)->metrics;
-
-        return NormalizedBuildingModelData::fromArray($model);
+        return new NormalizedBuildingModelData(
+            $model['unit'],
+            $model['scale_status'],
+            $model['scale_meters_per_unit'],
+            array_map(static fn (array $floor): FloorData => FloorData::fromArray($floor), $model['floors']),
+            array_map(static fn (array $assumption): AssumptionData => AssumptionData::fromArray($assumption), $model['assumptions']),
+            $model['model_version'],
+        );
     }
 
     private function addEvidence(array &$item, ?int $evidenceId): void
