@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 return [
-    'customer_websocket_unsupported' => 'Отправка уведомлений в реальном времени для кабинета заказчика пока недоступна.',
+    'customer_channel_unsupported' => 'Выбранный канал недоступен для уведомлений заказчиков.',
     'templates_navigation_label' => 'Шаблоны',
     'template_model_label' => 'шаблон уведомления',
     'template_plural_model_label' => 'шаблоны уведомлений',

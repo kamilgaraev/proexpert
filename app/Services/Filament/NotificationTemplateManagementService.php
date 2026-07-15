@@ -19,6 +19,8 @@ class NotificationTemplateManagementService
 {
     private const AUDIT_RECIPIENT_SAMPLE_LIMIT = 20;
 
+    private const CUSTOMER_CHANNELS = ['email', 'telegram', 'in_app'];
+
     public function __construct(
         private readonly TemplateRenderer $templateRenderer,
         private readonly NotificationService $notificationService,
@@ -55,6 +57,8 @@ class NotificationTemplateManagementService
 
     public function sendToUsers(NotificationTemplate $template, SystemAdmin $systemAdmin, array $userIds): array
     {
+        $this->assertCustomerChannelSupported((string) $template->channel);
+
         $normalizedUserIds = $this->normalizeUserIds($userIds);
 
         if ($normalizedUserIds === []) {
@@ -75,7 +79,10 @@ class NotificationTemplateManagementService
 
     public function sendToAllUsers(NotificationTemplate $template, SystemAdmin $systemAdmin): array
     {
+        $this->assertCustomerChannelSupported((string) $template->channel);
+
         $sentCount = 0;
+        $suppressedCount = 0;
         $recipientSampleIds = [];
         $recipientIdsHash = hash_init('sha256');
         $hasRecipients = false;
@@ -87,12 +94,14 @@ class NotificationTemplateManagementService
                 $template,
                 $systemAdmin,
                 &$sentCount,
+                &$suppressedCount,
                 &$recipientSampleIds,
                 $recipientIdsHash,
                 &$hasRecipients,
             ): void {
                 $result = $this->sendToUserCollection($template, $systemAdmin, $users);
                 $sentCount += (int) $result['sent_count'];
+                $suppressedCount += (int) $result['suppressed_count'];
 
                 foreach ($result['recipient_ids'] as $recipientId) {
                     if ($hasRecipients) {
@@ -110,6 +119,7 @@ class NotificationTemplateManagementService
 
         $result = [
             'sent_count' => $sentCount,
+            'suppressed_count' => $suppressedCount,
             'recipient_sample_ids' => $recipientSampleIds,
             'recipient_sample_count' => count($recipientSampleIds),
             'omitted_recipient_count' => max(0, $sentCount - count($recipientSampleIds)),
@@ -140,6 +150,7 @@ class NotificationTemplateManagementService
     private function sendToUserCollection(NotificationTemplate $template, SystemAdmin $systemAdmin, Collection $users): array
     {
         $recipientIds = [];
+        $suppressedCount = 0;
         $channel = (string) $template->channel;
 
         $this->assertCustomerChannelSupported($channel);
@@ -156,7 +167,7 @@ class NotificationTemplateManagementService
                 ? (int) $template->organization_id
                 : (is_numeric($user->current_organization_id) ? (int) $user->current_organization_id : null);
 
-            $this->notificationService->send(
+            $notification = $this->notificationService->send(
                 user: $user,
                 type: (string) $template->type,
                 data: $data,
@@ -168,19 +179,26 @@ class NotificationTemplateManagementService
                 interfaces: ['customer'],
             );
 
+            if (! $notification->exists || (array) $notification->channels === []) {
+                $suppressedCount++;
+
+                continue;
+            }
+
             $recipientIds[] = (int) $user->id;
         }
 
         return [
             'sent_count' => count($recipientIds),
+            'suppressed_count' => $suppressedCount,
             'recipient_ids' => $recipientIds,
         ];
     }
 
     private function assertCustomerChannelSupported(string $channel): void
     {
-        if ($channel === 'websocket') {
-            throw new DomainException(trans_message('notifications.customer_websocket_unsupported'));
+        if (! in_array($channel, self::CUSTOMER_CHANNELS, true)) {
+            throw new DomainException(trans_message('notifications.customer_channel_unsupported'));
         }
     }
 
@@ -239,6 +257,7 @@ class NotificationTemplateManagementService
             ]),
             after: [
                 'sent_count' => (int) ($result['sent_count'] ?? 0),
+                'suppressed_count' => (int) ($result['suppressed_count'] ?? 0),
                 ...$recipientSummary,
             ],
             context: [
@@ -246,6 +265,8 @@ class NotificationTemplateManagementService
                 'audience' => $audience,
                 'template_type' => (string) $template->type,
                 'template_channel' => (string) $template->channel,
+                'sent_count' => (int) ($result['sent_count'] ?? 0),
+                'suppressed_count' => (int) ($result['suppressed_count'] ?? 0),
             ],
         );
     }

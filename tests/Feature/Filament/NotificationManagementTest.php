@@ -191,7 +191,7 @@ class NotificationManagementTest extends TestCase
             $this->fail('Customer websocket broadcasts must be rejected.');
         } catch (DomainException $exception) {
             $this->assertSame(
-                trans_message('notifications.customer_websocket_unsupported'),
+                trans_message('notifications.customer_channel_unsupported'),
                 $exception->getMessage(),
             );
         }
