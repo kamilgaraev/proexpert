@@ -15,10 +15,19 @@ return new class extends Migration
 
     public function up(): void
     {
-        Schema::create('notification_targets', function (Blueprint $table): void {
+        $usesIdentitySequence = DB::getDriverName() === 'pgsql';
+
+        Schema::create('notification_targets', function (Blueprint $table) use ($usesIdentitySequence): void {
             $table->uuid('id')->primary();
             $table->foreignUuid('notification_id')->constrained('notifications')->cascadeOnDelete();
             $table->string('interface', 20);
+
+            if ($usesIdentitySequence) {
+                $table->bigInteger('sequence')->generatedAs()->always();
+            } else {
+                $table->bigInteger('sequence');
+            }
+
             $table->timestampTz('read_at')->nullable();
             $table->timestampTz('dismissed_at')->nullable();
             $table->string('websocket_status', 20)->default('pending');
@@ -30,6 +39,7 @@ return new class extends Migration
             $table->index('notification_id');
             $table->index(['interface', 'dismissed_at', 'read_at']);
             $table->index(['interface', 'websocket_status']);
+            $table->index(['interface', 'sequence']);
         });
 
         if (DB::getDriverName() === 'pgsql') {
@@ -40,10 +50,12 @@ return new class extends Migration
             DB::statement('LOCK TABLE notifications IN SHARE ROW EXCLUSIVE MODE');
         }
 
+        $nextSequence = 1;
+
         DB::table('notifications')
             ->select(['id', 'data', 'read_at'])
             ->orderBy('id')
-            ->chunkById(500, static function (Collection $notifications): void {
+            ->chunkById(500, static function (Collection $notifications) use ($usesIdentitySequence, &$nextSequence): void {
                 $targets = [];
                 $timestamp = now();
 
@@ -78,7 +90,7 @@ return new class extends Migration
                         continue;
                     }
 
-                    $targets[] = [
+                    $target = [
                         'id' => (string) Str::uuid(),
                         'notification_id' => $notification->id,
                         'interface' => $interface,
@@ -87,6 +99,12 @@ return new class extends Migration
                         'created_at' => $timestamp,
                         'updated_at' => $timestamp,
                     ];
+
+                    if (! $usesIdentitySequence) {
+                        $target['sequence'] = $nextSequence++;
+                    }
+
+                    $targets[] = $target;
                 }
 
                 if ($targets !== []) {

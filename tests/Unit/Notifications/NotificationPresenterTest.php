@@ -74,6 +74,7 @@ final class NotificationPresenterTest extends TestCase
             'dismissed_at' => null,
             'websocket_status' => 'failed',
             'websocket_last_error' => 'internal',
+            'sequence' => 501,
         ]);
         $notification->setRelation('targets', new Collection([$target]));
 
@@ -82,6 +83,7 @@ final class NotificationPresenterTest extends TestCase
         self::assertSame('notification-id', $payload['id']);
         self::assertSame($targetReadAt->toJSON(), $payload['read_at']);
         self::assertNull($payload['dismissed_at']);
+        self::assertSame(501, $payload['sequence']);
         self::assertArrayNotHasKey('targets', $payload);
         self::assertStringNotContainsString('websocket', json_encode($payload, JSON_THROW_ON_ERROR));
         self::assertNotSame($legacyReadAt->toJSON(), $payload['read_at']);
@@ -112,6 +114,7 @@ final class NotificationPresenterTest extends TestCase
             'interface' => NotificationInterface::Customer,
             'read_at' => null,
             'dismissed_at' => null,
+            'sequence' => 601,
         ]);
         $notification->setRelation('targets', new Collection([$target]));
 
@@ -122,6 +125,7 @@ final class NotificationPresenterTest extends TestCase
         self::assertSame('Проверьте изменения', $payload['description']);
         self::assertSame('contract.updated', $payload['eventType']);
         self::assertTrue($payload['isUnread']);
+        self::assertSame(601, $payload['sequence']);
         self::assertSame('warning', $payload['tone']);
         self::assertSame(['id' => 15], $payload['project']);
         self::assertArrayHasKey('statusLabel', $payload);

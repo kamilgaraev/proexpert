@@ -19,6 +19,7 @@ final readonly class NotificationListSnapshot
      */
     public function __construct(
         public LengthAwarePaginator $notifications,
-        public array $unreadAggregates
+        public array $unreadAggregates,
+        public int $snapshotSequence
     ) {}
 }

@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Notifications\Channels\EmailChannel;
 use App\BusinessModules\Features\Notifications\Channels\InAppChannel;
 use App\BusinessModules\Features\Notifications\Channels\TelegramChannel;
 use App\BusinessModules\Features\Notifications\Channels\WebSocketChannel;
+use App\BusinessModules\Features\Notifications\Contracts\NotificationCommitSequencer;
 use App\BusinessModules\Features\Notifications\Contracts\NotificationPersistence;
 use App\BusinessModules\Features\Notifications\DTOs\NotificationDeliveryOptions;
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
@@ -30,6 +31,7 @@ class NotificationService
         private readonly NotificationRecipientPermissionResolver $permissionResolver,
         private readonly NotificationTargetResolver $targetResolver,
         private readonly NotificationPersistence $persistence,
+        private readonly NotificationCommitSequencer $commitSequencer,
     ) {
         $this->preferenceManager = $preferenceManager;
     }
@@ -90,7 +92,7 @@ class NotificationService
                 'notification_type' => $notificationType,
             ]);
 
-            return $this->persistence->persist(
+            return $this->persistInCommitSequence(
                 $user,
                 $type,
                 $data,
@@ -102,6 +104,7 @@ class NotificationService
                     $organizationId,
                     $requiredPermissions,
                 ),
+                false,
             );
         }
 
@@ -123,7 +126,7 @@ class NotificationService
 
         $this->assertWebSocketTargetsSupported($effectiveChannels, $resolvedInterfaces);
 
-        $notification = $this->persistence->persist(
+        return $this->persistInCommitSequence(
             $user,
             $type,
             $data,
@@ -135,11 +138,39 @@ class NotificationService
                 $organizationId,
                 $requiredPermissions,
             ),
+            true,
         );
+    }
 
-        $this->dispatch($notification);
+    private function persistInCommitSequence(
+        User $user,
+        string $type,
+        array $data,
+        string $notificationType,
+        string $priority,
+        NotificationDeliveryOptions $options,
+        bool $dispatch,
+    ): Notification {
+        return $this->commitSequencer->run(
+            $user,
+            $options->interfaces,
+            function () use ($user, $type, $data, $notificationType, $priority, $options, $dispatch): Notification {
+                $notification = $this->persistence->persist(
+                    $user,
+                    $type,
+                    $data,
+                    $notificationType,
+                    $priority,
+                    $options,
+                );
 
-        return $notification;
+                if ($dispatch) {
+                    $this->dispatch($notification);
+                }
+
+                return $notification;
+            }
+        );
     }
 
     public function sendBulk(Collection $users, string $type, array $data, array $options = []): Collection

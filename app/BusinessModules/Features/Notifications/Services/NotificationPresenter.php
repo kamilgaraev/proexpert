@@ -22,6 +22,7 @@ final class NotificationPresenter
 
         $payload['read_at'] = $target->read_at?->toJSON();
         $payload['dismissed_at'] = $target->dismissed_at?->toJSON();
+        $payload['sequence'] = (int) $target->sequence;
 
         return $payload;
     }
@@ -34,6 +35,7 @@ final class NotificationPresenter
 
         return [
             'id' => (string) $notification->id,
+            'sequence' => (int) $target->sequence,
             'title' => $this->firstNonEmptyString([
                 $data['title'] ?? null,
                 $data['subject'] ?? null,

@@ -55,7 +55,13 @@ class NotificationController extends Controller
                 $notifications->items()
             );
 
-            return $this->paginated($request, $items, $notifications, $snapshot->unreadAggregates);
+            return $this->paginated(
+                $request,
+                $items,
+                $notifications,
+                $snapshot->unreadAggregates,
+                $snapshot->snapshotSequence
+            );
         } catch (Throwable $e) {
             return $this->handleUnexpectedError('index', $e, $request, trans_message('notifications.load_error'));
         }
@@ -262,7 +268,8 @@ class NotificationController extends Controller
         Request $request,
         array $items,
         LengthAwarePaginator $notifications,
-        array $unreadAggregates
+        array $unreadAggregates,
+        int $snapshotSequence
     ): JsonResponse {
         $meta = [
             'current_page' => $notifications->currentPage(),
@@ -276,6 +283,7 @@ class NotificationController extends Controller
             'unread_by_category' => $unreadAggregates['by_category'],
             'unread_by_notification_type' => $unreadAggregates['by_notification_type'],
             'unread_by_type' => $unreadAggregates['by_type'],
+            'snapshot_sequence' => $snapshotSequence,
         ];
         $links = [
             'first' => $notifications->url(1),
@@ -303,7 +311,8 @@ class NotificationController extends Controller
             NotificationInterface::Customer => $this->customerPaginated(
                 $request,
                 $items,
-                $unreadAggregates
+                $unreadAggregates,
+                $snapshotSequence
             ),
         };
     }
@@ -311,7 +320,8 @@ class NotificationController extends Controller
     private function customerPaginated(
         Request $request,
         array $items,
-        array $unreadAggregates
+        array $unreadAggregates,
+        int $snapshotSequence
     ): JsonResponse {
         $filters = $request->query();
 
@@ -320,6 +330,7 @@ class NotificationController extends Controller
             'meta' => [
                 'organization_id' => $this->organizationId($request),
                 'unread_count' => $unreadAggregates['count'],
+                'snapshot_sequence' => $snapshotSequence,
                 'total' => count($items),
                 'filters' => $filters,
             ],

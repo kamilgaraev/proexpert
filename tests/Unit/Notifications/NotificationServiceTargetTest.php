@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Notifications;
 
+use App\BusinessModules\Features\Notifications\Contracts\NotificationCommitSequencer;
 use App\BusinessModules\Features\Notifications\Contracts\NotificationPersistence;
 use App\BusinessModules\Features\Notifications\DTOs\NotificationDeliveryOptions;
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
@@ -15,6 +16,7 @@ use App\BusinessModules\Features\Notifications\Services\NotificationTargetResolv
 use App\BusinessModules\Features\Notifications\Services\PreferenceManager;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
+use Closure;
 use DomainException;
 use Illuminate\Container\Container;
 use Illuminate\Support\Facades\Facade;
@@ -148,7 +150,7 @@ final class NotificationServiceTargetTest extends TestCase
             interfaces: ['admin'],
         );
 
-        self::assertSame(['persist', 'dispatch'], $events->entries);
+        self::assertSame(['sequence_lock', 'persist', 'dispatch'], $events->entries);
         self::assertSame(1, $service->dispatchCount);
         self::assertSame(
             ['notifications.receive.system'],
@@ -305,6 +307,31 @@ final class NotificationServiceTargetTest extends TestCase
         self::assertStringContainsString('$notification->targets()->createMany(', $source);
     }
 
+    public function test_all_runtime_target_inserts_flow_through_database_persistence(): void
+    {
+        $root = dirname(__DIR__, 3).'/app';
+        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root));
+        $targetInsertOwners = [];
+
+        foreach ($files as $file) {
+            if (! $file->isFile() || $file->getExtension() !== 'php') {
+                continue;
+            }
+
+            $source = (string) file_get_contents($file->getPathname());
+
+            if (str_contains($source, 'targets()->create') || str_contains($source, 'NotificationTarget::create')) {
+                $targetInsertOwners[] = str_replace('\\', '/', $file->getPathname());
+            }
+        }
+
+        self::assertCount(1, $targetInsertOwners);
+        self::assertStringEndsWith(
+            '/BusinessModules/Features/Notifications/Services/DatabaseNotificationPersistence.php',
+            $targetInsertOwners[0]
+        );
+    }
+
     private function service(
         ?PreferenceManager $preferences = null,
         ?Throwable $persistenceFailure = null,
@@ -322,6 +349,7 @@ final class NotificationServiceTargetTest extends TestCase
                 new NotificationRecipientPermissionResolver($authorization),
                 new NotificationTargetResolver,
                 $persistence,
+                new RecordingNotificationCommitSequencer($events),
                 $events,
             ),
             $persistence,
@@ -410,6 +438,7 @@ final class NotificationServiceProbe extends NotificationService
         NotificationRecipientPermissionResolver $permissionResolver,
         NotificationTargetResolver $targetResolver,
         NotificationPersistence $persistence,
+        NotificationCommitSequencer $commitSequencer,
         private readonly NotificationTestEventLog $events,
     ) {
         parent::__construct(
@@ -418,6 +447,7 @@ final class NotificationServiceProbe extends NotificationService
             $permissionResolver,
             $targetResolver,
             $persistence,
+            $commitSequencer,
         );
     }
 
@@ -425,5 +455,17 @@ final class NotificationServiceProbe extends NotificationService
     {
         $this->dispatchCount++;
         $this->events->entries[] = 'dispatch';
+    }
+}
+
+final readonly class RecordingNotificationCommitSequencer implements NotificationCommitSequencer
+{
+    public function __construct(private NotificationTestEventLog $events) {}
+
+    public function run(User $user, array $interfaces, Closure $callback): mixed
+    {
+        $this->events->entries[] = 'sequence_lock';
+
+        return $callback();
     }
 }

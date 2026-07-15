@@ -18,6 +18,7 @@ final class NotificationTargetMigrationContractTest extends TestCase
         self::assertStringContainsString("foreignUuid('notification_id')", $migration);
         self::assertStringContainsString('cascadeOnDelete()', $migration);
         self::assertStringContainsString("string('interface', 20)", $migration);
+        self::assertStringContainsString("bigInteger('sequence')->generatedAs()->always()", $migration);
         self::assertStringContainsString("timestampTz('read_at')->nullable()", $migration);
         self::assertStringContainsString("timestampTz('dismissed_at')->nullable()", $migration);
         self::assertStringContainsString("string('websocket_status', 20)->default('pending')", $migration);
@@ -26,6 +27,7 @@ final class NotificationTargetMigrationContractTest extends TestCase
         self::assertStringContainsString("unique(['notification_id', 'interface'])", $migration);
         self::assertStringContainsString("CHECK (interface IN ('admin', 'lk', 'mobile', 'customer'))", $migration);
         self::assertStringContainsString("index(['interface', 'dismissed_at', 'read_at'])", $migration);
+        self::assertStringContainsString("index(['interface', 'sequence'])", $migration);
         self::assertStringContainsString("index('notification_id')", $migration);
     }
 
@@ -42,6 +44,8 @@ final class NotificationTargetMigrationContractTest extends TestCase
         self::assertStringContainsString('continue;', $migration);
         self::assertStringContainsString("'read_at' => \$notification->read_at", $migration);
         self::assertStringContainsString('insertOrIgnore($targets)', $migration);
+        self::assertStringContainsString("->orderBy('id')", $migration);
+        self::assertStringContainsString("\$target['sequence'] = \$nextSequence++", $migration);
     }
 
     #[Test]

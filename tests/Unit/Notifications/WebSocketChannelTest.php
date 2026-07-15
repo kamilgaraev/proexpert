@@ -69,6 +69,11 @@ final class WebSocketChannelTest extends TestCase
             static fn (array $broadcast): string => $broadcast['payload']['data']['interface'],
             $broadcasts,
         ));
+        self::assertSame([101, 102], array_column(array_column($broadcasts, 'payload'), 'sequence'));
+        self::assertSame([101, 102], array_map(
+            static fn (array $broadcast): int => $broadcast['payload']['data']['sequence'],
+            $broadcasts,
+        ));
         self::assertSame('2026-07-15T10:00:00+00:00', $broadcasts[0]['payload']['read_at']);
         self::assertNull($broadcasts[1]['payload']['read_at']);
         self::assertArrayNotHasKey('interface', $notification->data);
@@ -305,6 +310,7 @@ final class WebSocketChannelTest extends TestCase
                 'interface' => NotificationInterface::from($interface),
                 'websocket_status' => $statuses[$index] ?? 'pending',
                 'read_at' => $readAt[$index] ?? null,
+                'sequence' => 101 + $index,
             ]),
             $interfaces,
             array_keys($interfaces),

@@ -16,6 +16,7 @@ class NotificationTarget extends Model
     protected $fillable = [
         'notification_id',
         'interface',
+        'sequence',
         'read_at',
         'dismissed_at',
         'websocket_status',
@@ -25,6 +26,7 @@ class NotificationTarget extends Model
 
     protected $casts = [
         'interface' => NotificationInterface::class,
+        'sequence' => 'integer',
         'read_at' => 'datetime',
         'dismissed_at' => 'datetime',
         'websocket_delivered_at' => 'datetime',

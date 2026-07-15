@@ -114,6 +114,7 @@ class WebSocketChannel
         $interface = $target->interface->value;
         $data = $notification->data;
         $data['interface'] = $interface;
+        $data['sequence'] = (int) $target->sequence;
 
         $this->broadcasting->connection('reverb')->broadcast(
             ['private-App.Models.User.'.$notifiable->id.'.'.$interface],
@@ -124,6 +125,7 @@ class WebSocketChannel
                 'notification_type' => $notification->notification_type,
                 'priority' => $notification->priority,
                 'interface' => $interface,
+                'sequence' => (int) $target->sequence,
                 'data' => $data,
                 'created_at' => $notification->created_at->toIso8601String(),
                 'read_at' => $target->read_at?->toIso8601String(),

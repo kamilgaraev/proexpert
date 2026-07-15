@@ -11,6 +11,8 @@ use App\BusinessModules\Features\Notifications\Services\NotificationQueryService
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Testing\TestResponse;
 use Tests\TestCase;
 
 final class NotificationContourIsolationTest extends TestCase
@@ -22,15 +24,18 @@ final class NotificationContourIsolationTest extends TestCase
         [$user, $adminNotification, $lkNotification] = $this->fixtures();
         $this->withoutMiddleware();
 
-        $this->actingAs($user, 'api_admin')
+        $adminList = $this->actingAs($user, 'api_admin')
             ->getJson('/api/v1/admin/notifications?interface=lk')
             ->assertOk()
             ->assertJsonPath('meta.total', 1)
             ->assertJsonPath('data.0.id', $adminNotification->id)
             ->assertJsonMissing(['id' => $lkNotification->id]);
-        $this->actingAs($user, 'api_admin')
+        $this->assertListResponseShape($adminList, NotificationInterface::Admin);
+        self::assertIsInt($adminList->json('data.0.sequence'));
+        $countResponse = $this->actingAs($user, 'api_admin')
             ->getJson('/api/v1/admin/notifications/unread-count?interface=lk')
             ->assertJsonPath('data.count', 1);
+        $this->assertCountResponseShape($countResponse);
         $this->assertForeignOperationsAreNotFound('api/v1/admin', 'api_admin', $user, $lkNotification);
 
         $this->actingAs($user, 'api_admin')
@@ -47,12 +52,14 @@ final class NotificationContourIsolationTest extends TestCase
         [$user, $adminNotification, $lkNotification] = $this->fixtures();
         $this->withoutMiddleware();
 
-        $this->actingAs($user, 'api_landing')
+        $lkList = $this->actingAs($user, 'api_landing')
             ->getJson('/api/v1/landing/notifications?interface=admin')
             ->assertOk()
             ->assertJsonPath('meta.total', 1)
             ->assertJsonPath('data.0.id', $lkNotification->id)
             ->assertJsonMissing(['id' => $adminNotification->id]);
+        $this->assertListResponseShape($lkList, NotificationInterface::Lk);
+        self::assertIsInt($lkList->json('data.0.sequence'));
         $this->actingAs($user, 'api_landing')
             ->getJson('/api/v1/landing/notifications/unread-count?interface=admin')
             ->assertJsonPath('data.count', 1);
@@ -147,8 +154,28 @@ final class NotificationContourIsolationTest extends TestCase
             ->assertJsonPath('meta.unread_by_category.procurement', 1)
             ->assertJsonPath('meta.unread_by_notification_type.system', 1)
             ->assertJsonPath('meta.unread_by_notification_type.procurement', 1);
+        self::assertGreaterThan(0, $response->json('meta.snapshot_sequence'));
         self::assertSame(1, $response->json('meta.unread_by_type')['system.notice']);
         self::assertSame(1, $response->json('meta.unread_by_type')['purchase_request.created']);
+    }
+
+    public function test_list_uses_id_as_stable_tiebreaker_for_equal_creation_time(): void
+    {
+        $organization = Organization::factory()->verified()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $first = $this->notification($user, $organization->id, [NotificationInterface::Admin]);
+        $second = $this->notification($user, $organization->id, [NotificationInterface::Admin]);
+        $createdAt = now()->startOfSecond();
+        $first->forceFill(['created_at' => $createdAt])->save();
+        $second->forceFill(['created_at' => $createdAt])->save();
+        $expectedIds = [$first->id, $second->id];
+        rsort($expectedIds, SORT_STRING);
+        $this->withoutMiddleware();
+
+        $response = $this->actingAs($user, 'api_admin')->getJson('/api/v1/admin/notifications');
+
+        $response->assertOk();
+        self::assertSame($expectedIds, collect($response->json('data'))->pluck('id')->all());
     }
 
     public function test_customer_v1_and_legacy_aliases_read_only_customer_targets(): void
@@ -170,7 +197,23 @@ final class NotificationContourIsolationTest extends TestCase
             $response->assertJsonPath('data.meta.unread_count', 1);
             $response->assertJsonPath('data.meta.filters.interface', 'admin');
             $response->assertJsonPath('data.items.0.isUnread', true);
+            $this->assertListResponseShape($response, NotificationInterface::Customer);
+            self::assertIsInt($response->json('data.items.0.sequence'));
         }
+    }
+
+    public function test_mobile_list_exposes_atomic_snapshot_meta_in_mobile_response_shape(): void
+    {
+        $organization = Organization::factory()->verified()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $notification = $this->notification($user, $organization->id, [NotificationInterface::Mobile]);
+        $this->withoutMiddleware();
+
+        $response = $this->actingAs($user, 'api_mobile')->getJson('/api/v1/mobile/notifications');
+
+        $response->assertOk()->assertJsonPath('data.0.id', $notification->id);
+        $this->assertListResponseShape($response, NotificationInterface::Mobile);
+        self::assertIsInt($response->json('data.0.sequence'));
     }
 
     public function test_missing_current_organization_exposes_only_global_notifications(): void
@@ -284,6 +327,50 @@ final class NotificationContourIsolationTest extends TestCase
         $this->actingAs($user, $guard)->deleteJson("/{$prefix}/notifications/{$foreign->id}")->assertNotFound();
     }
 
+    private function assertListResponseShape(TestResponse $response, NotificationInterface $interface): void
+    {
+        $rootKeys = array_keys($response->json());
+
+        if ($interface === NotificationInterface::Customer) {
+            self::assertEqualsCanonicalizing(['success', 'message', 'data'], $rootKeys);
+            self::assertEqualsCanonicalizing(['items', 'meta'], array_keys($response->json('data')));
+            self::assertEqualsCanonicalizing(
+                ['organization_id', 'unread_count', 'snapshot_sequence', 'total', 'filters'],
+                array_keys($response->json('data.meta'))
+            );
+
+            return;
+        }
+
+        $expectedRootKeys = $interface === NotificationInterface::Mobile
+            ? ['success', 'message', 'data', 'meta']
+            : ['success', 'message', 'data', 'meta', 'links'];
+        self::assertEqualsCanonicalizing($expectedRootKeys, $rootKeys);
+        self::assertEqualsCanonicalizing(
+            $interface === NotificationInterface::Mobile
+                ? [
+                    'current_page', 'from', 'last_page', 'path', 'per_page', 'to', 'total',
+                    'unread_count', 'unread_by_category', 'unread_by_notification_type',
+                    'unread_by_type', 'snapshot_sequence', 'links',
+                ]
+                : [
+                    'current_page', 'from', 'last_page', 'path', 'per_page', 'to', 'total',
+                    'unread_count', 'unread_by_category', 'unread_by_notification_type',
+                    'unread_by_type', 'snapshot_sequence',
+                ],
+            array_keys($response->json('meta'))
+        );
+    }
+
+    private function assertCountResponseShape(TestResponse $response): void
+    {
+        self::assertEqualsCanonicalizing(['success', 'message', 'data'], array_keys($response->json()));
+        self::assertEqualsCanonicalizing(
+            ['count', 'by_category', 'by_notification_type', 'by_type'],
+            array_keys($response->json('data'))
+        );
+    }
+
     private function fixtures(bool $sharedNotification = false): array
     {
         $organization = Organization::factory()->verified()->create();
@@ -319,9 +406,16 @@ final class NotificationContourIsolationTest extends TestCase
             'metadata' => [],
             'read_at' => null,
         ]);
+        $nextSequence = DB::getDriverName() === 'pgsql'
+            ? null
+            : ((int) NotificationTarget::query()->max('sequence')) + 1;
         $notification->targets()->createMany(array_map(
-            static fn (NotificationInterface $interface): array => ['interface' => $interface->value],
-            $interfaces
+            static fn (NotificationInterface $interface, int $index): array => [
+                'interface' => $interface->value,
+                ...($nextSequence === null ? [] : ['sequence' => $nextSequence + $index]),
+            ],
+            $interfaces,
+            array_keys($interfaces)
         ));
 
         return $notification;

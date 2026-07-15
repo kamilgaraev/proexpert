@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Notifications\Contracts\NotificationPersistence
 use App\BusinessModules\Features\Notifications\DTOs\NotificationDeliveryOptions;
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Models\Notification;
+use App\BusinessModules\Features\Notifications\Models\NotificationTarget;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
@@ -37,10 +38,18 @@ final class DatabaseNotificationPersistence implements NotificationPersistence
                 ],
             ]);
 
-            $notification->targets()->createMany(array_map(
-                static fn (NotificationInterface $interface): array => ['interface' => $interface->value],
+            $nextSequence = DB::getDriverName() === 'pgsql'
+                ? null
+                : ((int) NotificationTarget::query()->max('sequence')) + 1;
+            $targets = array_map(
+                static fn (NotificationInterface $interface, int $index): array => [
+                    'interface' => $interface->value,
+                    ...($nextSequence === null ? [] : ['sequence' => $nextSequence + $index]),
+                ],
                 $options->interfaces,
-            ));
+                array_keys($options->interfaces),
+            );
+            $notification->targets()->createMany($targets);
 
             return $notification;
         });

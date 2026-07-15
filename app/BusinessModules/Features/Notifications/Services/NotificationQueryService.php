@@ -19,16 +19,13 @@ use Illuminate\Support\Facades\DB;
 final class NotificationQueryService
 {
     public function __construct(
-        private readonly NotificationRequestInterfaceResolver $interfaceResolver
+        private readonly NotificationRequestInterfaceResolver $interfaceResolver,
+        private readonly NotificationSnapshotTransactionRunner $snapshotTransactionRunner
     ) {}
 
     public function visibleTo(Request $request): Builder
     {
-        $user = $request->user();
-
-        if (! $user instanceof User) {
-            throw new DomainException('Authenticated user is required');
-        }
+        $user = $this->authenticatedUser($request);
 
         $interface = $this->interfaceResolver->resolve($request);
         $organizationId = $this->organizationId($request, $user);
@@ -36,28 +33,43 @@ final class NotificationQueryService
         return $this->visibleFor($user, $interface, $organizationId);
     }
 
-    private function beginRepeatableReadSnapshot(): void
-    {
-        if (DB::getDriverName() === 'pgsql' && DB::transactionLevel() === 1) {
-            DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-        }
-    }
-
     public function listSnapshot(Request $request, Closure $configureList, int $perPage): NotificationListSnapshot
     {
-        return DB::transaction(function () use ($request, $configureList, $perPage): NotificationListSnapshot {
-            $this->beginRepeatableReadSnapshot();
-
-            $listQuery = $this->visibleTo($request)->orderByDesc('created_at');
+        return $this->snapshotTransactionRunner->run(function () use ($request, $configureList, $perPage): NotificationListSnapshot {
+            $user = $this->authenticatedUser($request);
+            $interface = $this->interfaceResolver->resolve($request);
+            $listQuery = $this->visibleTo($request)
+                ->orderByDesc('created_at')
+                ->orderByDesc('id');
             $configureList($listQuery);
             $notifications = $listQuery->paginate($perPage);
             $unreadQuery = $this->onlyUnread($this->visibleTo($request), $request);
 
             return new NotificationListSnapshot(
                 $notifications,
-                $this->unreadAggregatesForQuery($unreadQuery)
+                $this->unreadAggregatesForQuery($unreadQuery),
+                $this->snapshotSequenceFor($user, $interface)
             );
         });
+    }
+
+    private function snapshotSequenceFor(User $user, NotificationInterface $interface): int
+    {
+        return (int) NotificationTarget::query()
+            ->where('interface', $interface->value)
+            ->whereHas('notification', static fn (Builder $query): Builder => $query->forUser($user))
+            ->max('sequence');
+    }
+
+    private function authenticatedUser(Request $request): User
+    {
+        $user = $request->user();
+
+        if (! $user instanceof User) {
+            throw new DomainException('Authenticated user is required');
+        }
+
+        return $user;
     }
 
     /**
@@ -70,9 +82,7 @@ final class NotificationQueryService
      */
     public function unreadAggregatesTo(Request $request): array
     {
-        return DB::transaction(function () use ($request): array {
-            $this->beginRepeatableReadSnapshot();
-
+        return $this->snapshotTransactionRunner->run(function () use ($request): array {
             return $this->unreadAggregatesForQuery(
                 $this->onlyUnread($this->visibleTo($request), $request)
             );

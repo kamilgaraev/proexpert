@@ -13,20 +13,35 @@ final class NotificationAtomicSnapshotContractTest extends TestCase
         $service = $this->source(
             'app/BusinessModules/Features/Notifications/Services/NotificationQueryService.php'
         );
+        $runner = $this->source(
+            'app/BusinessModules/Features/Notifications/Services/NotificationSnapshotTransactionRunner.php'
+        );
 
         self::assertStringContainsString('function listSnapshot(', $service);
-        self::assertStringContainsString('DB::transaction(', $service);
-        self::assertStringContainsString("DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')", $service);
-        self::assertStringContainsString("DB::getDriverName() === 'pgsql'", $service);
+        self::assertStringContainsString('$this->snapshotTransactionRunner->run(', $service);
         self::assertStringContainsString('->paginate($perPage)', $service);
         self::assertStringContainsString('unreadAggregatesForQuery(', $service);
+        self::assertStringContainsString('snapshotSequenceFor(', $service);
+        self::assertStringContainsString('->transaction(', $runner);
+        self::assertStringContainsString("=== 'pgsql'", $runner);
+        self::assertStringContainsString('transactionLevel() !== 1', $runner);
+        self::assertStringContainsString("->statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')", $runner);
+        self::assertMatchesRegularExpression(
+            "/orderByDesc\\('created_at'\\)\\s*->orderByDesc\\('id'\\)/",
+            $service
+        );
 
-        $isolationPosition = strpos($service, "DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')");
-        $paginatePosition = strpos($service, '->paginate($perPage)');
-
-        self::assertIsInt($isolationPosition);
-        self::assertIsInt($paginatePosition);
-        self::assertLessThan($paginatePosition, $isolationPosition);
+        $cursorMethod = substr(
+            $service,
+            (int) strpos($service, 'private function snapshotSequenceFor'),
+            (int) strpos($service, 'private function authenticatedUser')
+                - (int) strpos($service, 'private function snapshotSequenceFor')
+        );
+        self::assertStringContainsString("where('interface', \$interface->value)", $cursorMethod);
+        self::assertStringContainsString('->forUser($user)', $cursorMethod);
+        self::assertStringContainsString("->max('sequence')", $cursorMethod);
+        self::assertStringNotContainsString('organization_id', $cursorMethod);
+        self::assertStringNotContainsString('dismissed_at', $cursorMethod);
     }
 
     public function test_controller_uses_atomic_snapshot_and_exposes_unread_aggregates_in_pagination_meta(): void
@@ -41,6 +56,7 @@ final class NotificationAtomicSnapshotContractTest extends TestCase
         self::assertStringContainsString("'unread_by_category' =>", $controller);
         self::assertStringContainsString("'unread_by_notification_type' =>", $controller);
         self::assertStringContainsString("'unread_by_type' =>", $controller);
+        self::assertStringContainsString("'snapshot_sequence' =>", $controller);
     }
 
     public function test_customer_pagination_reuses_snapshot_unread_count_without_an_extra_query(): void

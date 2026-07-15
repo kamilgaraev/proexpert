@@ -6,8 +6,10 @@ namespace Tests\Unit\Notifications;
 
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Models\Notification;
+use App\BusinessModules\Features\Notifications\Services\LaravelNotificationSnapshotDatabase;
 use App\BusinessModules\Features\Notifications\Services\NotificationQueryService;
 use App\BusinessModules\Features\Notifications\Services\NotificationRequestInterfaceResolver;
+use App\BusinessModules\Features\Notifications\Services\NotificationSnapshotTransactionRunner;
 use App\Models\User;
 use Illuminate\Database\ConnectionResolver;
 use Illuminate\Database\SQLiteConnection;
@@ -70,7 +72,10 @@ final class NotificationQueryServiceTest extends TestCase
 
     private function service(): NotificationQueryService
     {
-        return new NotificationQueryService(new NotificationRequestInterfaceResolver);
+        return new NotificationQueryService(
+            new NotificationRequestInterfaceResolver,
+            new NotificationSnapshotTransactionRunner(new LaravelNotificationSnapshotDatabase)
+        );
     }
 
     private function user(): User

@@ -35,6 +35,16 @@ class NotificationServiceProvider extends ServiceProvider
             \App\BusinessModules\Features\Notifications\Services\DatabaseNotificationPersistence::class,
         );
 
+        $this->app->bind(
+            \App\BusinessModules\Features\Notifications\Contracts\NotificationSnapshotDatabase::class,
+            \App\BusinessModules\Features\Notifications\Services\LaravelNotificationSnapshotDatabase::class,
+        );
+
+        $this->app->bind(
+            \App\BusinessModules\Features\Notifications\Contracts\NotificationCommitSequencer::class,
+            \App\BusinessModules\Features\Notifications\Services\DatabaseNotificationCommitSequencer::class,
+        );
+
         $this->app->singleton(
             \App\BusinessModules\Features\Notifications\Services\NotificationService::class
         );
