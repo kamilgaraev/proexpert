@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\Landing\Billing\CommercialBillingController;
 use App\Http\Controllers\Api\V1\Landing\Billing\CommercialCheckoutController;
 use App\Http\Controllers\Api\V1\Landing\Billing\CommercialManualPaymentController;
 use App\Http\Controllers\Api\V1\Landing\Billing\CommercialRenewalController;
+use App\Http\Controllers\Api\V1\Landing\Billing\EnterpriseInquiryController;
 use App\Http\Controllers\Api\V1\Landing\OrganizationDashboardController;
 use Illuminate\Support\Facades\Route;
 
@@ -21,6 +22,8 @@ Route::middleware(['interface:lk'])
             Route::get('commercial/history', [CommercialBillingController::class, 'history'])
                 ->name('commercial.history');
             Route::get('commercial/renewal', [CommercialRenewalController::class, 'show'])->name('commercial.renewal.show');
+            Route::post('commercial/enterprise-inquiries', EnterpriseInquiryController::class)
+                ->name('commercial.enterprise-inquiries.store');
             Route::get('balance', [BalanceController::class, 'show'])->name('balance.show');
             Route::get('balance/transactions', [BalanceController::class, 'getTransactions'])
                 ->name('balance.transactions');
