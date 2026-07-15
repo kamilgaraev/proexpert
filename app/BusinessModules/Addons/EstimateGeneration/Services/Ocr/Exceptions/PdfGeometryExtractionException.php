@@ -18,7 +18,7 @@ final class PdfGeometryExtractionException extends TypedFailureException
         public readonly array $context = [],
         ?Throwable $previous = null
     ) {
-        parent::__construct(self::category($message), self::code($message), [], $previous);
+        parent::__construct(self::category($message), self::code($message), $context, $previous);
     }
 
     private static function category(string $code): FailureCategory

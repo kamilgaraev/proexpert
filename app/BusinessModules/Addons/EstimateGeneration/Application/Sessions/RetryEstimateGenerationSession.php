@@ -116,7 +116,7 @@ final class RetryEstimateGenerationSession
         if ($actionRequired) {
             return $this->workflow->transition($session, EstimateGenerationEvent::DocumentsNeedReview, [
                 'processing_stage' => 'input_review_required',
-                'processing_progress' => 100,
+                'processing_progress' => 35,
             ]);
         }
 

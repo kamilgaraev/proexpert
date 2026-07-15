@@ -12,6 +12,55 @@ use Symfony\Component\Process\Process;
 
 final class PdfGeometryWorkerScriptTest extends TestCase
 {
+    public function test_worker_surfaces_structured_pdf_failure_code(): void
+    {
+        $script = tempnam(sys_get_temp_dir(), 'most_pdf_failure_');
+        self::assertIsString($script);
+        self::assertNotFalse(file_put_contents(
+            $script,
+            '<?php fwrite(STDERR, json_encode(["error" => "pdf_path_operator_unsupported"])); exit(2);',
+        ));
+
+        try {
+            (new PdfGeometryWorker(
+                scriptPath: $script,
+                pythonBinary: PHP_BINARY,
+                timeoutSeconds: 5,
+                maxPages: 1,
+                maxVectorElements: 1,
+            ))->extract(
+                '%PDF-1.7',
+                'unsupported-path.pdf',
+                static fn (): array => [],
+            );
+            self::fail('Structured worker failure was not surfaced.');
+        } catch (PdfGeometryExtractionException $exception) {
+            self::assertSame(
+                '{"error":"pdf_path_operator_unsupported"}',
+                $exception->context['stderr'] ?? null,
+                $exception->getPrevious() === null
+                    ? 'No previous process failure.'
+                    : $exception->getPrevious()::class.': '.$exception->getPrevious()->getMessage(),
+            );
+            self::assertSame('pdf_path_operator_unsupported', $exception->safeCode);
+        } finally {
+            @unlink($script);
+        }
+    }
+
+    public function test_pdf_failure_context_is_forwarded_to_typed_failure(): void
+    {
+        $exception = new PdfGeometryExtractionException(
+            'pdf_geometry_process_failed',
+            ['exit_code' => 2, 'stderr' => '{"error":"pdf_invalid"}'],
+        );
+
+        self::assertSame(
+            ['exit_code' => 2, 'stderr' => '{"error":"pdf_invalid"}'],
+            $exception->safeContext,
+        );
+    }
+
     #[DataProvider('committedPdfProvider')]
     public function test_worker_renders_committed_pdf_inside_private_workspace(string $relativePath): void
     {

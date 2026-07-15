@@ -49,7 +49,7 @@ COPY --from=geometry-runtime /opt/libredwg /opt/libredwg
 COPY --from=geometry-runtime /tmp/libredwg.tar.xz /usr/share/source/libredwg-0.13.4.tar.xz
 COPY docker/geometry/requirements.lock /tmp/geometry-requirements.lock
 COPY docker/geometry/geometry-sandbox.sh /usr/local/bin/geometry-sandbox
-RUN python3 -m venv /opt/geometry-venv \
+RUN python3 -m venv --copies /opt/geometry-venv \
     && /opt/geometry-venv/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/geometry-requirements.lock \
     && /opt/geometry-venv/bin/python -c "import pypdfium2" \
     && /opt/libredwg/bin/dwgread --version | grep "${LIBREDWG_VERSION}" \

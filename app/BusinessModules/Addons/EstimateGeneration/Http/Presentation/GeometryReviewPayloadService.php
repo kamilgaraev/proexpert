@@ -30,7 +30,9 @@ final readonly class GeometryReviewPayloadService implements GeometryReviewPaylo
                 : json_decode((string) $row->locator, true);
             $directRaster = in_array((string) $row->unit_type, ['raster_image', 'sketch'], true)
                 && in_array((string) $row->mime_type, ['image/png', 'image/jpeg'], true);
-            $generatedRaster = is_array($locator) && is_string($locator['artifact_path'] ?? null);
+            $generatedRaster = ! $directRaster
+                && is_array($locator)
+                && is_string($locator['artifact_path'] ?? null);
             $source = $this->sources->present([
                 'document_id' => $row->document_id,
                 'page_id' => $row->page_id,

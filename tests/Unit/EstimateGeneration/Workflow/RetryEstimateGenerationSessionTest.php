@@ -74,6 +74,7 @@ final class RetryEstimateGenerationSessionTest extends TestCase
         $result = $action->handle($this->command());
 
         self::assertSame(EstimateGenerationStatus::InputReviewRequired, $result->status);
+        self::assertSame(35, $result->processing_progress);
         self::assertSame([], $dispatcher->documents);
     }
 

@@ -95,7 +95,7 @@ class PdfGeometryWorker
                 $stdout = trim($process->getOutput());
 
                 throw new PdfGeometryExtractionException(
-                    $this->processFailureCode($stderr.$stdout),
+                    $this->processFailureCode($stderr, $stdout),
                     [
                         'exit_code' => $process->getExitCode(),
                         'stderr' => mb_substr($stderr, 0, 1000),
@@ -222,8 +222,17 @@ class PdfGeometryWorker
         return $published;
     }
 
-    private function processFailureCode(string $output): string
+    private function processFailureCode(string $stderr, string $stdout): string
     {
+        foreach ([$stderr, $stdout] as $output) {
+            $decoded = json_decode($output, true);
+            $code = is_array($decoded) ? ($decoded['error'] ?? $decoded['code'] ?? null) : null;
+            if (is_string($code) && preg_match('/\A(?:pdf_[a-z0-9_]{1,76}|pymupdf_unavailable)\z/D', $code) === 1) {
+                return $code;
+            }
+        }
+
+        $output = $stderr.$stdout;
         foreach ([
             'pymupdf_unavailable',
             'pdf_preview_invalid',

@@ -74,6 +74,10 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
         $dockerfile = $this->source(dirname(__DIR__, 2).'/Dockerfile.prod');
 
         self::assertStringContainsString(
+            'python3 -m venv --copies /opt/geometry-venv',
+            $dockerfile,
+        );
+        self::assertStringContainsString(
             'ESTIMATE_GENERATION_PDF_GEOMETRY_PYTHON="/opt/geometry-venv/bin/python"',
             $dockerfile,
         );

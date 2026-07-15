@@ -89,7 +89,10 @@ final class GeometryReviewPayloadServiceTest extends TestCase
             'mime_type' => 'image/png',
             'width' => 2000,
             'height' => 1000,
-            'locator' => null,
+            'locator' => [
+                'artifact_path' => "org-7/estimate-generation/sessions/11/documents/plan-{$index}.png",
+                'content_type' => 'image/png',
+            ],
             'normalized_payload' => [],
         ];
     }
