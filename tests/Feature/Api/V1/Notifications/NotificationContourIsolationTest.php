@@ -93,6 +93,7 @@ final class NotificationContourIsolationTest extends TestCase
             ->patchJson("/api/v1/admin/notifications/{$notification->id}/read")
             ->assertOk()
             ->assertJsonPath('data.id', $notification->id)
+            ->assertJsonPath('data.interface', 'admin')
             ->assertJsonMissingPath('data.targets')
             ->assertJsonMissingPath('data.websocket_status');
         $this->assertNotNull($this->target($notification, NotificationInterface::Admin)->fresh()->read_at);
@@ -114,7 +115,8 @@ final class NotificationContourIsolationTest extends TestCase
         $this->actingAs($user, 'api_landing')
             ->getJson("/api/v1/landing/notifications/{$notification->id}")
             ->assertOk()
-            ->assertJsonPath('data.id', $notification->id);
+            ->assertJsonPath('data.id', $notification->id)
+            ->assertJsonPath('data.interface', 'lk');
     }
 
     public function test_notifications_are_limited_to_current_organization_or_global(): void

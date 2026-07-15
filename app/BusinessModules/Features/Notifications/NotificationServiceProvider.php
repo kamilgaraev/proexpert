@@ -45,6 +45,11 @@ class NotificationServiceProvider extends ServiceProvider
             \App\BusinessModules\Features\Notifications\Services\DatabaseNotificationCommitSequencer::class,
         );
 
+        $this->app->bind(
+            \App\BusinessModules\Features\Notifications\Contracts\NotificationMarkAllReadGateway::class,
+            \App\BusinessModules\Features\Notifications\Services\DatabaseNotificationMarkAllReadGateway::class,
+        );
+
         $this->app->singleton(
             \App\BusinessModules\Features\Notifications\Services\NotificationService::class
         );

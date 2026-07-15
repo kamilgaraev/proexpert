@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Notifications\Services;
 
+use App\BusinessModules\Features\Notifications\Contracts\NotificationMarkAllReadGateway;
 use App\BusinessModules\Features\Notifications\DTOs\NotificationListSnapshot;
 use App\BusinessModules\Features\Notifications\DTOs\NotificationMarkAllReadResult;
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
@@ -22,7 +23,8 @@ final class NotificationQueryService
     public function __construct(
         private readonly NotificationRequestInterfaceResolver $interfaceResolver,
         private readonly NotificationSnapshotTransactionRunner $snapshotTransactionRunner,
-        private readonly NotificationInterfaceCursorStore $cursorStore
+        private readonly NotificationInterfaceCursorStore $cursorStore,
+        private readonly NotificationMarkAllReadGateway $markAllReadGateway
     ) {}
 
     public function visibleTo(Request $request): Builder
@@ -173,13 +175,11 @@ final class NotificationQueryService
                 $interface,
                 $this->organizationId($request, $user)
             )->select('notifications.id');
-            $updated = NotificationTarget::query()
-                ->where('interface', $interface->value)
-                ->where('sequence', '<=', $sequenceCut)
-                ->whereNull('dismissed_at')
-                ->whereNull('read_at')
-                ->whereIn('notification_id', $visibleNotificationIds)
-                ->update(['read_at' => now()]);
+            $updated = $this->markAllReadGateway->markAllAsRead(
+                $interface,
+                $sequenceCut,
+                $visibleNotificationIds
+            );
 
             return new NotificationMarkAllReadResult($updated, $sequenceCut);
         });

@@ -48,7 +48,6 @@ final class NotificationAtomicSnapshotContractTest extends TestCase
         $controller = $this->source(
             'app/BusinessModules/Features/Notifications/Http/Controllers/NotificationController.php'
         );
-
         self::assertStringContainsString('$this->queryService->listSnapshot(', $controller);
         self::assertStringNotContainsString('$query->paginate($perPage)', $controller);
         self::assertStringContainsString("'unread_count' =>", $controller);
@@ -78,6 +77,9 @@ final class NotificationAtomicSnapshotContractTest extends TestCase
         $controller = $this->source(
             'app/BusinessModules/Features/Notifications/Http/Controllers/NotificationController.php'
         );
+        $markAllGateway = $this->source(
+            'app/BusinessModules/Features/Notifications/Services/DatabaseNotificationMarkAllReadGateway.php'
+        );
 
         $unreadMethod = $this->methodSource($service, 'public function unreadAggregatesTo', 'public function visibleFor');
         self::assertStringContainsString('$this->snapshotTransactionRunner->run(', $unreadMethod);
@@ -88,7 +90,8 @@ final class NotificationAtomicSnapshotContractTest extends TestCase
         self::assertStringContainsString('return DB::transaction(', $markAllMethod);
         self::assertStringNotContainsString('$this->snapshotTransactionRunner->run(', $markAllMethod);
         self::assertStringContainsString('$sequenceCut = $this->snapshotSequenceFor($user, $interface)', $markAllMethod);
-        self::assertStringContainsString("where('sequence', '<=', \$sequenceCut)", $markAllMethod);
+        self::assertStringContainsString('$this->markAllReadGateway->markAllAsRead(', $markAllMethod);
+        self::assertStringContainsString("where('sequence', '<=', \$sequenceCut)", $markAllGateway);
         self::assertStringContainsString('new NotificationMarkAllReadResult(', $markAllMethod);
         self::assertStringContainsString("'sequence_cut' => \$result->sequenceCut", $controller);
     }

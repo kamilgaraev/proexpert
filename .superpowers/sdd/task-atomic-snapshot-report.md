@@ -56,3 +56,15 @@
 - Новая миграция не создавалась: обновлена существующая, ещё не развёрнутая миграция `notification_targets`.
 - Для PostgreSQL добавлен `BIGINT GENERATED ALWAYS AS IDENTITY sequence`; синтаксис `generatedAs()->always()` проверен по официальной документации Laravel 11 и установленному framework source.
 - Добавлен индекс `interface, sequence`; backfill присваивает sequence детерминированно в порядке notification UUID.
+
+## Финальная волна проверки контуров и конкуренции
+
+- `NotificationPresenter` всегда формирует корневой `interface` из текущего `NotificationTarget`, а не из общего `data`. Один notification ID корректно представляется как `admin` и `lk` для разных targets.
+- `mark-all-read` делегирует атомарное обновление отдельному `NotificationMarkAllReadGateway`. Это сохраняет production-запрос и позволяет поставить точный тестовый барьер после чтения cursor cut и непосредственно перед `UPDATE`.
+- PostgreSQL concurrency-тест больше не использует таймер как доказательство блокировки: ожидание второго отправителя подтверждается через `pg_stat_activity.wait_event_type = Lock` и `wait_event = advisory`.
+- Cleanup concurrency-тестов в `finally` освобождает IPC-барьеры, завершает зависшие дочерние процессы и обязательно вызывает `waitpid`.
+- Добавлен обязательный workflow `.github/workflows/notification-concurrency.yml` для pull request и push в `main`: PostgreSQL 16, PHP 8.2, миграции тестовой БД и точный запуск `NotificationPostgresConcurrencyTest` с `RUN_NOTIFICATION_POSTGRES_TESTS=1`.
+- RED подтверждён для presenter-контракта, mark-all gateway, детерминированных барьеров и отсутствующего CI workflow. После реализации целевые тесты: 11 тестов / 100 assertions.
+- Полный unit-набор уведомлений и авторизации канала: 97 тестов / 6147 assertions, exit code 0.
+- Workflow успешно разобран `Symfony Yaml`; source-контракт проверяет trigger, PostgreSQL service, PHP 8.2, opt-in flag и точную PHPUnit-команду. Поставляемый skill-валидатор `ci_monitor.cjs` отсутствует в ожидаемом каталоге, поэтому `--help` и `check-actions` недоступны; `gh` не использовался.
+- DB-backed feature- и PostgreSQL concurrency-тесты локально не запускались по запрету проекта на локальные DB-команды; они закреплены за выделенным CI workflow.

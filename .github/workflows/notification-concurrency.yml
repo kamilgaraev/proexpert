@@ -1,0 +1,94 @@
+name: Notification PostgreSQL Concurrency
+
+on:
+  pull_request:
+    paths:
+      - 'app/BusinessModules/Features/Notifications/**'
+      - 'app/Broadcasting/**'
+      - 'routes/channels.php'
+      - 'tests/Feature/Notifications/**'
+      - 'tests/Unit/Notifications/**'
+      - 'tests/Unit/Broadcasting/UserChannelTest.php'
+      - 'composer.json'
+      - 'composer.lock'
+      - '.github/workflows/notification-concurrency.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app/BusinessModules/Features/Notifications/**'
+      - 'app/Broadcasting/**'
+      - 'routes/channels.php'
+      - 'tests/Feature/Notifications/**'
+      - 'tests/Unit/Notifications/**'
+      - 'tests/Unit/Broadcasting/UserChannelTest.php'
+      - 'composer.json'
+      - 'composer.lock'
+      - '.github/workflows/notification-concurrency.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  notification-concurrency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: most_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d most_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      APP_DEBUG: false
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: most_test
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      CACHE_STORE: array
+      QUEUE_CONNECTION: sync
+      SESSION_DRIVER: array
+      MAIL_MAILER: array
+      RUN_NOTIFICATION_POSTGRES_TESTS: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+          extensions: mbstring, pcntl, pdo_pgsql
+          coverage: none
+          tools: composer:v2
+
+      - name: Resolve Composer cache
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare database
+        run: php artisan migrate --force
+
+      - name: Run notification concurrency contract
+        run: php vendor/bin/phpunit tests/Feature/Notifications/NotificationPostgresConcurrencyTest.php

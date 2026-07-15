@@ -4,15 +4,19 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Notifications;
 
+use App\BusinessModules\Features\Notifications\Contracts\NotificationMarkAllReadGateway;
 use App\BusinessModules\Features\Notifications\Contracts\NotificationPersistence;
 use App\BusinessModules\Features\Notifications\DTOs\NotificationDeliveryOptions;
+use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Models\NotificationTarget;
+use App\BusinessModules\Features\Notifications\Services\DatabaseNotificationMarkAllReadGateway;
 use App\BusinessModules\Features\Notifications\Services\DatabaseNotificationPersistence;
 use App\BusinessModules\Features\Notifications\Services\NotificationInterfaceCursorStore;
 use App\BusinessModules\Features\Notifications\Services\NotificationQueryService;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
@@ -29,7 +33,8 @@ final class NotificationPostgresConcurrencyTest extends TestCase
         if (getenv('RUN_NOTIFICATION_POSTGRES_TESTS') !== '1'
             || DB::getDriverName() !== 'pgsql'
             || ! function_exists('pcntl_fork')
-            || ! function_exists('stream_socket_pair')) {
+            || ! function_exists('stream_socket_pair')
+            || ! function_exists('posix_kill')) {
             $this->markTestSkipped('Requires opt-in PostgreSQL concurrency environment with pcntl.');
         }
     }
@@ -38,34 +43,45 @@ final class NotificationPostgresConcurrencyTest extends TestCase
     {
         Queue::fake();
         $user = User::factory()->create();
-        [$parentSocket, $childSocket] = $this->socketPair();
-        $pid = pcntl_fork();
+        $children = [];
+        $barriers = [];
+        [$firstParent, $firstChild] = $this->socketPair();
+        $firstPid = $this->fork();
 
-        if ($pid === 0) {
-            fclose($parentSocket);
-            $this->runBlockedNotificationSend((int) $user->getKey(), $childSocket, 'first');
+        if ($firstPid === 0) {
+            fclose($firstParent);
+            $this->runBlockedNotificationSend((int) $user->getKey(), $firstChild, 'first');
         }
 
-        fclose($childSocket);
+        fclose($firstChild);
+        $children[] = $firstPid;
+        $barriers[] = $firstParent;
 
         try {
-            self::assertSame('locked', $this->readLine($parentSocket));
+            self::assertSame('locked', $this->readLine($firstParent));
             [$secondParent, $secondChild] = $this->socketPair();
-            $secondPid = pcntl_fork();
+            $secondPid = $this->fork();
 
             if ($secondPid === 0) {
                 fclose($secondParent);
-                $this->runNotificationSend((int) $user->getKey(), $secondChild, 'second');
+                $this->runNotificationSend(
+                    (int) $user->getKey(),
+                    $secondChild,
+                    'second',
+                    'notification-send-worker'
+                );
             }
 
             fclose($secondChild);
+            $children[] = $secondPid;
+            $barriers[] = $secondParent;
             self::assertSame('started', $this->readLine($secondParent));
-            self::assertFalse($this->isReadable($secondParent, 0, 250000));
+            $this->waitForPostgresLock('notification-send-worker', 'advisory');
 
-            fwrite($parentSocket, "release\n");
-            self::assertSame('ok', $this->readLine($parentSocket));
+            fwrite($firstParent, "release\n");
+            self::assertSame('ok', $this->readLine($firstParent));
             self::assertSame('ok', $this->readLine($secondParent));
-            $this->waitForSuccessfulChild($pid);
+            $this->waitForSuccessfulChild($firstPid);
             $this->waitForSuccessfulChild($secondPid);
 
             $targets = NotificationTarget::query()
@@ -87,6 +103,9 @@ final class NotificationPostgresConcurrencyTest extends TestCase
                     ->value('latest_sequence')
             );
         } finally {
+            $this->releaseBarriers($barriers);
+            $this->terminateAndWaitChildren($children);
+            $this->closeBarriers($barriers);
             $this->deleteRecipientNotifications($user);
         }
     }
@@ -99,41 +118,51 @@ final class NotificationPostgresConcurrencyTest extends TestCase
         $second = $this->sendNotification($user, 'second');
         $firstTargetId = (string) $first->targets()->where('interface', 'admin')->value('id');
         $expectedCut = (int) $second->targets()->where('interface', 'admin')->value('sequence');
-        [$readParent, $readChild] = $this->socketPair();
-        $readPid = pcntl_fork();
+        $children = [];
+        $barriers = [];
+        [$allParent, $allChild] = $this->socketPair();
+        $allPid = $this->fork();
 
-        if ($readPid === 0) {
-            fclose($readParent);
-            $this->runHeldMarkAsRead($firstTargetId, $readChild);
+        if ($allPid === 0) {
+            fclose($allParent);
+            $this->runMarkAll((int) $user->getKey(), $allChild);
         }
 
-        fclose($readChild);
+        fclose($allChild);
+        $children[] = $allPid;
+        $barriers[] = $allParent;
 
         try {
-            self::assertSame('locked', $this->readLine($readParent));
-            [$allParent, $allChild] = $this->socketPair();
-            $allPid = pcntl_fork();
+            self::assertSame('cut:'.$expectedCut, $this->readLine($allParent));
+            [$readParent, $readChild] = $this->socketPair();
+            $readPid = $this->fork();
 
-            if ($allPid === 0) {
-                fclose($allParent);
-                $this->runMarkAll((int) $user->getKey(), $allChild);
+            if ($readPid === 0) {
+                fclose($readParent);
+                $this->runMarkAsRead($firstTargetId, $readChild);
             }
 
-            fclose($allChild);
-            self::assertSame('started', $this->readLine($allParent));
-            $this->waitForPostgresLock('notification-mark-all-worker');
-            $late = $this->sendNotification($user, 'post-cut');
-
-            fwrite($readParent, "release\n");
+            fclose($readChild);
+            $children[] = $readPid;
+            $barriers[] = $readParent;
+            self::assertSame('started', $this->readLine($readParent));
             self::assertSame('ok', $this->readLine($readParent));
+            $this->waitForSuccessfulChild($readPid);
+
+            $late = $this->sendNotification($user, 'post-cut');
+            fwrite($allParent, "release\n");
             $markAllResult = json_decode($this->readLine($allParent), true, flags: JSON_THROW_ON_ERROR);
             self::assertSame($expectedCut, $markAllResult['sequence_cut']);
-            self::assertGreaterThanOrEqual(1, $markAllResult['count']);
-            $this->waitForSuccessfulChild($readPid);
+            self::assertSame(1, $markAllResult['count']);
             $this->waitForSuccessfulChild($allPid);
 
+            self::assertNotNull($first->targets()->where('interface', 'admin')->value('read_at'));
+            self::assertNotNull($second->targets()->where('interface', 'admin')->value('read_at'));
             self::assertNull($late->targets()->where('interface', 'admin')->value('read_at'));
         } finally {
+            $this->releaseBarriers($barriers);
+            $this->terminateAndWaitChildren($children);
+            $this->closeBarriers($barriers);
             $this->deleteRecipientNotifications($user);
         }
     }
@@ -142,12 +171,11 @@ final class NotificationPostgresConcurrencyTest extends TestCase
     {
         $this->reconnectAfterFork();
         Queue::fake();
-        $cursorStore = app(NotificationInterfaceCursorStore::class);
         app()->forgetInstance(NotificationService::class);
         app()->instance(
             NotificationPersistence::class,
             new BarrierNotificationPersistence(
-                new DatabaseNotificationPersistence($cursorStore),
+                new DatabaseNotificationPersistence(app(NotificationInterfaceCursorStore::class)),
                 $socket
             )
         );
@@ -157,15 +185,19 @@ final class NotificationPostgresConcurrencyTest extends TestCase
             fwrite($socket, "ok\n");
             exit(0);
         } catch (Throwable $exception) {
-            fwrite($socket, 'error:'.$exception::class.':'.$exception->getMessage()."\n");
-            exit(1);
+            $this->exitWorkerWithError($socket, $exception);
         }
     }
 
-    private function runNotificationSend(int $userId, mixed $socket, string $label): never
-    {
+    private function runNotificationSend(
+        int $userId,
+        mixed $socket,
+        string $label,
+        string $applicationName
+    ): never {
         $this->reconnectAfterFork();
         Queue::fake();
+        DB::selectOne("SELECT set_config('application_name', ?, false)", [$applicationName]);
         fwrite($socket, "started\n");
 
         try {
@@ -173,39 +205,36 @@ final class NotificationPostgresConcurrencyTest extends TestCase
             fwrite($socket, "ok\n");
             exit(0);
         } catch (Throwable $exception) {
-            fwrite($socket, 'error:'.$exception::class.':'.$exception->getMessage()."\n");
-            exit(1);
+            $this->exitWorkerWithError($socket, $exception);
         }
     }
 
-    private function runHeldMarkAsRead(string $targetId, mixed $socket): never
+    private function runMarkAsRead(string $targetId, mixed $socket): never
     {
         $this->reconnectAfterFork();
+        fwrite($socket, "started\n");
 
         try {
-            DB::transaction(function () use ($targetId, $socket): void {
-                NotificationTarget::query()->findOrFail($targetId)->markAsRead();
-                fwrite($socket, "locked\n");
-
-                if ($this->readLine($socket) !== 'release') {
-                    throw new RuntimeException('Unexpected mark-as-read barrier command.');
-                }
-            });
+            NotificationTarget::query()->findOrFail($targetId)->markAsRead();
             fwrite($socket, "ok\n");
             exit(0);
         } catch (Throwable $exception) {
-            fwrite($socket, 'error:'.$exception::class.':'.$exception->getMessage()."\n");
-            exit(1);
+            $this->exitWorkerWithError($socket, $exception);
         }
     }
 
     private function runMarkAll(int $userId, mixed $socket): never
     {
         $this->reconnectAfterFork();
+        app()->instance(
+            NotificationMarkAllReadGateway::class,
+            new BarrierNotificationMarkAllReadGateway(
+                new DatabaseNotificationMarkAllReadGateway,
+                $socket
+            )
+        );
 
         try {
-            DB::statement("SET application_name = 'notification-mark-all-worker'");
-            fwrite($socket, "started\n");
             $user = User::query()->findOrFail($userId);
             $request = Request::create('/api/v1/admin/notifications/mark-all-read', 'POST');
             $request->setUserResolver(static fn (): User => $user);
@@ -216,8 +245,7 @@ final class NotificationPostgresConcurrencyTest extends TestCase
             ], JSON_THROW_ON_ERROR)."\n");
             exit(0);
         } catch (Throwable $exception) {
-            fwrite($socket, 'error:'.$exception::class.':'.$exception->getMessage()."\n");
-            exit(1);
+            $this->exitWorkerWithError($socket, $exception);
         }
     }
 
@@ -240,7 +268,7 @@ final class NotificationPostgresConcurrencyTest extends TestCase
         DB::reconnect();
     }
 
-    private function waitForPostgresLock(string $applicationName): void
+    private function waitForPostgresLock(string $applicationName, string $waitEvent): void
     {
         $deadline = microtime(true) + 5;
 
@@ -248,6 +276,7 @@ final class NotificationPostgresConcurrencyTest extends TestCase
             $waiting = DB::table('pg_stat_activity')
                 ->where('application_name', $applicationName)
                 ->where('wait_event_type', 'Lock')
+                ->where('wait_event', $waitEvent)
                 ->exists();
 
             if ($waiting) {
@@ -257,7 +286,7 @@ final class NotificationPostgresConcurrencyTest extends TestCase
             usleep(20000);
         } while (microtime(true) < $deadline);
 
-        self::fail('Mark-all worker did not reach the PostgreSQL row-lock barrier.');
+        self::fail("Worker {$applicationName} did not reach {$waitEvent} lock wait.");
     }
 
     private function socketPair(): array
@@ -271,9 +300,24 @@ final class NotificationPostgresConcurrencyTest extends TestCase
         return $pair;
     }
 
+    private function fork(): int
+    {
+        $pid = pcntl_fork();
+
+        if ($pid < 0) {
+            throw new RuntimeException('Unable to fork notification concurrency worker.');
+        }
+
+        return $pid;
+    }
+
     private function readLine(mixed $socket): string
     {
-        if (! $this->isReadable($socket, 5, 0)) {
+        $read = [$socket];
+        $write = null;
+        $except = null;
+
+        if (stream_select($read, $write, $except, 5, 0) !== 1) {
             throw new RuntimeException('Notification concurrency barrier timed out.');
         }
 
@@ -286,20 +330,56 @@ final class NotificationPostgresConcurrencyTest extends TestCase
         return trim($line);
     }
 
-    private function isReadable(mixed $socket, int $seconds, int $microseconds): bool
-    {
-        $read = [$socket];
-        $write = null;
-        $except = null;
-
-        return stream_select($read, $write, $except, $seconds, $microseconds) === 1;
-    }
-
     private function waitForSuccessfulChild(int $pid): void
     {
-        pcntl_waitpid($pid, $status);
+        $result = pcntl_waitpid($pid, $status);
+        self::assertSame($pid, $result);
         self::assertTrue(pcntl_wifexited($status));
         self::assertSame(0, pcntl_wexitstatus($status));
+    }
+
+    private function releaseBarriers(array $barriers): void
+    {
+        foreach ($barriers as $barrier) {
+            if (is_resource($barrier)) {
+                @fwrite($barrier, "release\n");
+            }
+        }
+    }
+
+    private function closeBarriers(array $barriers): void
+    {
+        foreach ($barriers as $barrier) {
+            if (is_resource($barrier)) {
+                fclose($barrier);
+            }
+        }
+    }
+
+    private function terminateAndWaitChildren(array $children): void
+    {
+        foreach ($children as $pid) {
+            $deadline = microtime(true) + 1;
+
+            do {
+                $result = pcntl_waitpid($pid, $status, WNOHANG);
+
+                if ($result === $pid || $result === -1) {
+                    continue 2;
+                }
+
+                usleep(10000);
+            } while (microtime(true) < $deadline);
+
+            posix_kill($pid, SIGTERM);
+            pcntl_waitpid($pid, $status);
+        }
+    }
+
+    private function exitWorkerWithError(mixed $socket, Throwable $exception): never
+    {
+        fwrite($socket, 'error:'.$exception::class.':'.$exception->getMessage()."\n");
+        exit(1);
     }
 
     private function deleteRecipientNotifications(User $user): void
@@ -340,5 +420,28 @@ final class BarrierNotificationPersistence implements NotificationPersistence
             $priority,
             $options,
         );
+    }
+}
+
+final class BarrierNotificationMarkAllReadGateway implements NotificationMarkAllReadGateway
+{
+    public function __construct(
+        private readonly NotificationMarkAllReadGateway $delegate,
+        private readonly mixed $socket,
+    ) {}
+
+    public function markAllAsRead(
+        NotificationInterface $interface,
+        int $sequenceCut,
+        Builder $visibleNotificationIds
+    ): int {
+        fwrite($this->socket, 'cut:'.$sequenceCut."\n");
+        $command = fgets($this->socket);
+
+        if ($command === false || trim($command) !== 'release') {
+            throw new RuntimeException('Unexpected mark-all barrier command.');
+        }
+
+        return $this->delegate->markAllAsRead($interface, $sequenceCut, $visibleNotificationIds);
     }
 }

@@ -84,6 +84,7 @@ final class NotificationPresenterTest extends TestCase
         self::assertSame($targetReadAt->toJSON(), $payload['read_at']);
         self::assertNull($payload['dismissed_at']);
         self::assertSame(501, $payload['sequence']);
+        self::assertSame('lk', $payload['interface']);
         self::assertArrayNotHasKey('targets', $payload);
         self::assertStringNotContainsString('websocket', json_encode($payload, JSON_THROW_ON_ERROR));
         self::assertNotSame($legacyReadAt->toJSON(), $payload['read_at']);
@@ -126,10 +127,39 @@ final class NotificationPresenterTest extends TestCase
         self::assertSame('contract.updated', $payload['eventType']);
         self::assertTrue($payload['isUnread']);
         self::assertSame(601, $payload['sequence']);
+        self::assertSame('customer', $payload['interface']);
         self::assertSame('warning', $payload['tone']);
         self::assertSame(['id' => 15], $payload['project']);
         self::assertArrayHasKey('statusLabel', $payload);
         self::assertArrayNotHasKey('targets', $payload);
         self::assertArrayNotHasKey('read_at', $payload);
+    }
+
+    public function test_same_notification_exposes_the_exact_loaded_target_interface(): void
+    {
+        $notification = new Notification;
+        $notification->forceFill([
+            'id' => 'shared-notification-id',
+            'data' => ['interface' => 'spoofed'],
+        ]);
+        $adminTarget = new NotificationTarget([
+            'interface' => NotificationInterface::Admin,
+            'sequence' => 701,
+        ]);
+        $lkTarget = new NotificationTarget([
+            'interface' => NotificationInterface::Lk,
+            'sequence' => 702,
+        ]);
+        $presenter = new NotificationPresenter;
+
+        $notification->setRelation('targets', new Collection([$adminTarget]));
+        $adminPayload = $presenter->present($notification);
+        $notification->setRelation('targets', new Collection([$lkTarget]));
+        $lkPayload = $presenter->present($notification);
+
+        self::assertSame('shared-notification-id', $adminPayload['id']);
+        self::assertSame('shared-notification-id', $lkPayload['id']);
+        self::assertSame('admin', $adminPayload['interface']);
+        self::assertSame('lk', $lkPayload['interface']);
     }
 }
