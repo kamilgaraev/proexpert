@@ -68,7 +68,8 @@ ENV PATH="/opt/geometry-venv/bin:/opt/libredwg/bin:${PATH}" \
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg
 
 # Установка PHP расширений
-RUN docker-php-ext-install pdo pdo_pgsql pgsql gd zip sockets pcntl opcache intl
+RUN docker-php-ext-install pdo pdo_pgsql pgsql gd zip sockets pcntl opcache intl bcmath \
+    && php -r "exit(function_exists('bcdiv') ? 0 : 1);"
 
 # Установка PECL расширений (Redis, Igbinary)
 RUN pecl install igbinary redis \
