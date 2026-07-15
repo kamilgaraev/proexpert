@@ -16,7 +16,14 @@ use Throwable;
 
 class WebSocketChannel
 {
-    public function __construct(private readonly Factory $broadcasting) {}
+    private readonly WebSocketAnalyticsRecorder $analyticsRecorder;
+
+    public function __construct(
+        private readonly Factory $broadcasting,
+        ?WebSocketAnalyticsRecorder $analyticsRecorder = null,
+    ) {
+        $this->analyticsRecorder = $analyticsRecorder ?? new WebSocketAnalyticsRecorder;
+    }
 
     public function send($notifiable, Notification $notification): bool
     {
@@ -24,15 +31,17 @@ class WebSocketChannel
             throw new RuntimeException('WebSocket channel requires the Reverb broadcasting connection');
         }
 
-        $analytics = NotificationAnalytics::create([
-            'notification_id' => $notification->id,
-            'channel' => 'websocket',
-            'status' => 'pending',
-        ]);
+        $analytics = $this->startAnalytics($notification);
+        $deliveryFailure = null;
 
         try {
             $this->broadcastNotification($notification, $notifiable);
-            $analytics->updateStatus('sent');
+        } catch (Throwable $exception) {
+            $deliveryFailure = $exception;
+        }
+
+        if ($deliveryFailure === null) {
+            $this->markAnalyticsSent($analytics, $notification);
 
             Log::info('WebSocket notification broadcasted', [
                 'notification_id' => $notification->id,
@@ -40,18 +49,17 @@ class WebSocketChannel
             ]);
 
             return true;
-        } catch (Throwable $exception) {
-            $analytics->updateStatus('failed');
-            $analytics->update(['error_message' => $exception->getMessage()]);
-
-            Log::warning('WebSocket notification failed', [
-                'notification_id' => $notification->id,
-                'notifiable_id' => $notifiable->id,
-                'exception' => $exception::class,
-            ]);
-
-            throw $exception;
         }
+
+        $this->markAnalyticsFailed($analytics, $notification, $deliveryFailure);
+
+        Log::warning('WebSocket notification failed', [
+            'notification_id' => $notification->id,
+            'notifiable_id' => $notifiable->id,
+            'exception' => $deliveryFailure::class,
+        ]);
+
+        throw $deliveryFailure;
     }
 
     protected function broadcastNotification(Notification $notification, object $notifiable): void
@@ -77,10 +85,19 @@ class WebSocketChannel
 
             try {
                 $this->broadcastTarget($notification, $notifiable, $target);
+            } catch (Throwable $exception) {
+                $firstFailure ??= $exception;
+                $this->markTargetFailed($notification, $target, $exception);
+
+                continue;
+            }
+
+            try {
                 $target->markWebSocketSent();
             } catch (Throwable $exception) {
-                $target->markWebSocketFailed($exception->getMessage());
                 $firstFailure ??= $exception;
+                $this->logTargetStateFailure($notification, $target, 'sent', $exception);
+                $this->markTargetFailed($notification, $target, $exception);
             }
         }
 
@@ -109,9 +126,88 @@ class WebSocketChannel
                 'interface' => $interface,
                 'data' => $data,
                 'created_at' => $notification->created_at->toIso8601String(),
-                'read_at' => $notification->read_at?->toIso8601String(),
+                'read_at' => $target->read_at?->toIso8601String(),
             ]
         );
+    }
+
+    private function markTargetFailed(
+        Notification $notification,
+        NotificationTarget $target,
+        Throwable $deliveryFailure,
+    ): void {
+        try {
+            $target->markWebSocketFailed($deliveryFailure->getMessage());
+        } catch (Throwable $stateFailure) {
+            $this->logTargetStateFailure($notification, $target, 'failed', $stateFailure);
+        }
+    }
+
+    private function logTargetStateFailure(
+        Notification $notification,
+        NotificationTarget $target,
+        string $transition,
+        Throwable $exception,
+    ): void {
+        Log::warning('WebSocket target state persistence failed', [
+            'notification_id' => $notification->id,
+            'target_id' => $target->id,
+            'interface' => $target->interface->value,
+            'transition' => $transition,
+            'exception' => $exception::class,
+        ]);
+    }
+
+    private function startAnalytics(Notification $notification): ?NotificationAnalytics
+    {
+        try {
+            return $this->analyticsRecorder->start($notification);
+        } catch (Throwable $exception) {
+            $this->logAnalyticsFailure($notification, 'start', $exception);
+
+            return null;
+        }
+    }
+
+    private function markAnalyticsSent(?NotificationAnalytics $analytics, Notification $notification): void
+    {
+        if ($analytics === null) {
+            return;
+        }
+
+        try {
+            $this->analyticsRecorder->markSent($analytics);
+        } catch (Throwable $exception) {
+            $this->logAnalyticsFailure($notification, 'sent', $exception);
+        }
+    }
+
+    private function markAnalyticsFailed(
+        ?NotificationAnalytics $analytics,
+        Notification $notification,
+        Throwable $deliveryFailure,
+    ): void {
+        if ($analytics === null) {
+            return;
+        }
+
+        try {
+            $this->analyticsRecorder->markFailed($analytics, $deliveryFailure);
+        } catch (Throwable $exception) {
+            $this->logAnalyticsFailure($notification, 'failed', $exception);
+        }
+    }
+
+    private function logAnalyticsFailure(
+        Notification $notification,
+        string $transition,
+        Throwable $exception,
+    ): void {
+        Log::warning('WebSocket analytics persistence failed', [
+            'notification_id' => $notification->id,
+            'transition' => $transition,
+            'exception' => $exception::class,
+        ]);
     }
 
     private function targets(Notification $notification): Collection

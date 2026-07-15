@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Notifications\Jobs;
 
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
@@ -90,9 +92,11 @@ class SendNotificationJob implements ShouldQueue
             return true;
         }
 
-        $targets = $this->notification->relationLoaded('targets')
-            ? $this->notification->targets
-            : $this->notification->targets()->get();
+        if (! $this->notification->relationLoaded('targets')) {
+            $this->notification->setRelation('targets', $this->notification->targets()->get());
+        }
+
+        $targets = $this->notification->targets;
 
         return $targets->isNotEmpty() && $targets->every(
             static fn ($target): bool => in_array(

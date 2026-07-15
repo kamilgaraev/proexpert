@@ -9,15 +9,16 @@ require_once dirname(__DIR__, 3).'/app/BusinessModules/Features/Notifications/Jo
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Jobs\SendNotificationJob;
 use App\BusinessModules\Features\Notifications\Models\Notification;
-use App\BusinessModules\Features\Notifications\Models\NotificationTarget;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Facade;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use RuntimeException;
+use Tests\Unit\Notifications\Support\InMemoryNotificationTarget;
 
 final class SendNotificationJobTest extends TestCase
 {
@@ -86,31 +87,76 @@ final class SendNotificationJobTest extends TestCase
         self::assertFalse(method_exists($job, 'retryUntil'));
     }
 
-    public function test_websocket_global_sent_status_does_not_mask_a_failed_target(): void
+    public function test_websocket_retry_loads_targets_once_transitions_failed_to_sent_and_then_skips(): void
     {
-        $notification = new Notification;
+        $failedTarget = new InMemoryNotificationTarget([
+            'interface' => NotificationInterface::Lk,
+            'websocket_status' => 'failed',
+        ]);
+        $relation = Mockery::mock(HasMany::class);
+        $relation->shouldReceive('get')->once()->andReturn(collect([$failedTarget]));
+        $relation->shouldReceive('getResults')->zeroOrMoreTimes()->andReturn(collect([$failedTarget]));
+        $notification = new class extends Notification
+        {
+            public int $targetRelationCalls = 0;
+
+            public ?HasMany $targetRelation = null;
+
+            public function targets(): HasMany
+            {
+                $this->targetRelationCalls++;
+
+                return $this->targetRelation ?? throw new RuntimeException('Target relation is not configured');
+            }
+        };
+        $notification->targetRelation = $relation;
         $notification->setRawAttributes([
             'id' => 'notification-id',
             'priority' => 'normal',
             'channels' => json_encode(['websocket', 'email'], JSON_THROW_ON_ERROR),
             'delivery_status' => json_encode(['websocket' => 'sent', 'email' => 'sent'], JSON_THROW_ON_ERROR),
         ], true);
-        $failedTarget = new NotificationTarget;
-        $failedTarget->forceFill([
-            'interface' => NotificationInterface::Lk,
-            'websocket_status' => 'failed',
-        ]);
-        $notification->setRelation('targets', collect([$failedTarget]));
+        $service = new TransitioningNotificationService;
+        $job = new SendNotificationJob($notification);
 
-        $service = Mockery::mock(NotificationService::class);
-        $service->shouldReceive('sendViaChannel')
-            ->once()
-            ->with($notification, 'websocket')
-            ->andReturnTrue();
-        $service->shouldNotReceive('sendViaChannel')->with($notification, 'email');
+        $job->handle($service);
+        $job->handle($service);
 
-        (new SendNotificationJob($notification))->handle($service);
+        self::assertSame(1, $service->websocketCalls);
+        self::assertSame(1, $notification->targetRelationCalls);
+        self::assertTrue($notification->relationLoaded('targets'));
+        self::assertSame('sent', $failedTarget->fresh()->websocket_status);
+    }
 
-        self::assertSame('failed', $failedTarget->websocket_status);
+    public function test_job_uses_strict_types(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 3).'/app/BusinessModules/Features/Notifications/Jobs/SendNotificationJob.php'
+        );
+
+        self::assertIsString($source);
+        self::assertStringContainsString('declare(strict_types=1);', $source);
+    }
+}
+
+final class TransitioningNotificationService extends NotificationService
+{
+    public int $websocketCalls = 0;
+
+    public function __construct() {}
+
+    public function sendViaChannel(Notification $notification, string $channel): bool
+    {
+        if ($channel === 'websocket') {
+            $this->websocketCalls++;
+
+            foreach ($notification->targets as $target) {
+                if ($target->websocket_status !== 'sent') {
+                    $target->markWebSocketSent();
+                }
+            }
+        }
+
+        return true;
     }
 }
