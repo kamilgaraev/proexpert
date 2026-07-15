@@ -23,6 +23,18 @@ final class NotificationConcurrencyCiContractTest extends TestCase
         self::assertStringContainsString('app(NotificationService::class)->send(', $source);
     }
 
+    public function test_opt_in_postgres_test_fails_instead_of_skipping_when_runtime_requirements_are_missing(): void
+    {
+        $source = $this->source(
+            'tests/Feature/Notifications/NotificationPostgresConcurrencyTest.php'
+        );
+
+        self::assertStringContainsString("if (getenv('RUN_NOTIFICATION_POSTGRES_TESTS') !== '1')", $source);
+        self::assertStringContainsString("\$this->markTestSkipped('PostgreSQL concurrency tests are not enabled.')", $source);
+        self::assertStringContainsString("self::fail('PostgreSQL concurrency environment is incomplete: '.implode(', ', \$missingRequirements))", $source);
+        self::assertStringNotContainsString("|| ! function_exists('pcntl_fork')", $source);
+    }
+
     public function test_dedicated_workflow_runs_the_opt_in_postgres_test_on_notification_changes(): void
     {
         $workflow = $this->source('.github/workflows/notification-concurrency.yml');

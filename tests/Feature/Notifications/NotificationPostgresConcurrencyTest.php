@@ -30,12 +30,22 @@ final class NotificationPostgresConcurrencyTest extends TestCase
     {
         parent::setUp();
 
-        if (getenv('RUN_NOTIFICATION_POSTGRES_TESTS') !== '1'
-            || DB::getDriverName() !== 'pgsql'
-            || ! function_exists('pcntl_fork')
-            || ! function_exists('stream_socket_pair')
-            || ! function_exists('posix_kill')) {
-            $this->markTestSkipped('Requires opt-in PostgreSQL concurrency environment with pcntl.');
+        if (getenv('RUN_NOTIFICATION_POSTGRES_TESTS') !== '1') {
+            $this->markTestSkipped('PostgreSQL concurrency tests are not enabled.');
+        }
+
+        $missingRequirements = array_keys(array_filter([
+            'pcntl_fork' => ! function_exists('pcntl_fork'),
+            'stream_socket_pair' => ! function_exists('stream_socket_pair'),
+            'posix_kill' => ! function_exists('posix_kill'),
+        ]));
+
+        if ($missingRequirements !== []) {
+            self::fail('PostgreSQL concurrency environment is incomplete: '.implode(', ', $missingRequirements));
+        }
+
+        if (DB::getDriverName() !== 'pgsql') {
+            self::fail('PostgreSQL concurrency tests require the pgsql database driver.');
         }
     }
 
