@@ -51,12 +51,14 @@ COPY docker/geometry/requirements.lock /tmp/geometry-requirements.lock
 COPY docker/geometry/geometry-sandbox.sh /usr/local/bin/geometry-sandbox
 RUN python3 -m venv /opt/geometry-venv \
     && /opt/geometry-venv/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/geometry-requirements.lock \
+    && /opt/geometry-venv/bin/python -c "import pypdfium2" \
     && /opt/libredwg/bin/dwgread --version | grep "${LIBREDWG_VERSION}" \
     && chmod 0555 /usr/local/bin/geometry-sandbox
 ENV PATH="/opt/geometry-venv/bin:/opt/libredwg/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/libredwg/lib" \
     GEOMETRY_SANDBOX_BINARY="/usr/local/bin/geometry-sandbox" \
     ESTIMATE_GENERATION_CAD_PYTHON="/opt/geometry-venv/bin/python" \
+    ESTIMATE_GENERATION_PDF_GEOMETRY_PYTHON="/opt/geometry-venv/bin/python" \
     ESTIMATE_GENERATION_CAD_DWGREAD="/opt/libredwg/bin/dwgread" \
     ESTIMATE_GENERATION_CAD_SANDBOX="/usr/local/bin/geometry-sandbox" \
     ESTIMATE_GENERATION_CAD_SCRIPT="/var/www/html/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py" \

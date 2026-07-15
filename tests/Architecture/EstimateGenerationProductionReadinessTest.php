@@ -69,6 +69,21 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
     }
 
     #[Test]
+    public function production_image_routes_pdf_geometry_through_the_pinned_python_runtime(): void
+    {
+        $dockerfile = $this->source(dirname(__DIR__, 2).'/Dockerfile.prod');
+
+        self::assertStringContainsString(
+            'ESTIMATE_GENERATION_PDF_GEOMETRY_PYTHON="/opt/geometry-venv/bin/python"',
+            $dockerfile,
+        );
+        self::assertStringContainsString(
+            '/opt/geometry-venv/bin/python -c "import pypdfium2"',
+            $dockerfile,
+        );
+    }
+
+    #[Test]
     public function plan_migrations_are_uniquely_ordered_and_reversible_in_reverse_dependency_order(): void
     {
         $directory = dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration/migrations';
