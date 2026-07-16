@@ -87,6 +87,7 @@ final class CadProductionRuntimeContractTest extends TestCase
         $workflow = file_get_contents($root.'/.github/workflows/deploy-backend.yml');
         $sandbox = file_get_contents($root.'/docker/geometry/geometry-sandbox.sh');
         $smoke = file_get_contents($root.'/docker/geometry/geometry-runtime-smoke.sh');
+        $networkFilter = file_get_contents($root.'/docker/geometry/network-deny.c');
 
         self::assertIsString($compose);
         self::assertIsString($dockerfile);
@@ -105,6 +106,9 @@ final class CadProductionRuntimeContractTest extends TestCase
         self::assertStringContainsString('--share-net', $sandbox);
         self::assertStringContainsString('--seccomp 3', $sandbox);
         self::assertStringContainsString('socket.socket()', $smoke);
+        self::assertStringContainsString('AF_INET', $networkFilter);
+        self::assertStringContainsString('AF_INET6', $networkFilter);
+        self::assertStringNotContainsString('SCMP_SYS(socketpair)', $networkFilter);
         self::assertStringContainsString(
             'docker compose run --rm --no-deps horizon /usr/local/bin/geometry-runtime-smoke',
             $workflow,

@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <seccomp.h>
 #include <stddef.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 int main(int argc, char **argv)
@@ -15,13 +16,21 @@ int main(int argc, char **argv)
         return 70;
     }
 
-    const int denied_syscalls[] = {
-        SCMP_SYS(socket),
-        SCMP_SYS(socketpair),
+    const int denied_domains[] = {
+        AF_INET,
+        AF_INET6,
+        AF_NETLINK,
+        AF_PACKET,
     };
 
-    for (size_t index = 0; index < sizeof(denied_syscalls) / sizeof(denied_syscalls[0]); index++) {
-        if (seccomp_rule_add(context, SCMP_ACT_ERRNO(EPERM), denied_syscalls[index], 0) < 0) {
+    for (size_t index = 0; index < sizeof(denied_domains) / sizeof(denied_domains[0]); index++) {
+        if (seccomp_rule_add(
+            context,
+            SCMP_ACT_ERRNO(EPERM),
+            SCMP_SYS(socket),
+            1,
+            SCMP_A0(SCMP_CMP_EQ, denied_domains[index])
+        ) < 0) {
             seccomp_release(context);
             return 70;
         }
