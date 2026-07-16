@@ -49,11 +49,12 @@ COPY --from=geometry-runtime /opt/libredwg /opt/libredwg
 COPY --from=geometry-runtime /tmp/libredwg.tar.xz /usr/share/source/libredwg-0.13.4.tar.xz
 COPY docker/geometry/requirements.lock /tmp/geometry-requirements.lock
 COPY docker/geometry/geometry-sandbox.sh /usr/local/bin/geometry-sandbox
+COPY docker/geometry/geometry-runtime-smoke.sh /usr/local/bin/geometry-runtime-smoke
 RUN python3 -m venv --copies /opt/geometry-venv \
     && /opt/geometry-venv/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/geometry-requirements.lock \
-    && /opt/geometry-venv/bin/python -c "import pypdfium2" \
+    && /opt/geometry-venv/bin/python -c "import pypdfium2; from PIL import Image" \
     && /opt/libredwg/bin/dwgread --version | grep "${LIBREDWG_VERSION}" \
-    && chmod 0555 /usr/local/bin/geometry-sandbox
+    && chmod 0555 /usr/local/bin/geometry-sandbox /usr/local/bin/geometry-runtime-smoke
 ENV PATH="/opt/geometry-venv/bin:/opt/libredwg/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/libredwg/lib" \
     GEOMETRY_SANDBOX_BINARY="/usr/local/bin/geometry-sandbox" \
@@ -64,7 +65,7 @@ ENV PATH="/opt/geometry-venv/bin:/opt/libredwg/bin:${PATH}" \
     ESTIMATE_GENERATION_CAD_SCRIPT="/var/www/html/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py" \
     ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK="/var/www/html/docker/geometry/requirements.lock" \
     ESTIMATE_GENERATION_CAD_SCRIPT_SHA256="dee9a3aa554e9aff7170c6c18f177ee9635c00f6fe3ef07f83664c2d905dc913" \
-    ESTIMATE_GENERATION_CAD_REQUIREMENTS_SHA256="361f194843f454173e791632b52088ea00e90001453eba78de448f4dbfa4e03e"
+    ESTIMATE_GENERATION_CAD_REQUIREMENTS_SHA256="073fbc2f9209418afbb415a46897e038a896260c7a3193d9367b8fdc8cd211dd"
 
 # Конфигурация расширений GD
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg

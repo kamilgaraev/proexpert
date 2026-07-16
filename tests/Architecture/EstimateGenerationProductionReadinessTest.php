@@ -71,7 +71,9 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
     #[Test]
     public function production_image_routes_pdf_geometry_through_the_pinned_python_runtime(): void
     {
-        $dockerfile = $this->source(dirname(__DIR__, 2).'/Dockerfile.prod');
+        $root = dirname(__DIR__, 2);
+        $dockerfile = $this->source($root.'/Dockerfile.prod');
+        $requirements = $this->source($root.'/docker/geometry/requirements.lock');
 
         self::assertStringContainsString(
             'python3 -m venv --copies /opt/geometry-venv',
@@ -82,9 +84,11 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
             $dockerfile,
         );
         self::assertStringContainsString(
-            '/opt/geometry-venv/bin/python -c "import pypdfium2"',
+            '/opt/geometry-venv/bin/python -c "import pypdfium2; from PIL import Image"',
             $dockerfile,
         );
+        self::assertStringContainsString('pillow==12.3.0', $requirements);
+        self::assertStringContainsString('from PIL import Image', $dockerfile);
     }
 
     #[Test]

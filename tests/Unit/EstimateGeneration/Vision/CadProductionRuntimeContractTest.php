@@ -60,8 +60,10 @@ final class CadProductionRuntimeContractTest extends TestCase
         self::assertStringContainsString('7e153ea4dac4cbf3dc9c50b9ef7a5604e09cdd4c5520bcf8017877bbe1422cd5', $dockerfile);
         self::assertStringContainsString('pypdfium2==5.8.0', $requirements);
         self::assertStringContainsString('ezdxf==1.4.4', $requirements);
+        self::assertStringContainsString('pillow==12.3.0', $requirements);
         self::assertStringContainsString('GPL-3.0-or-later', $notice);
         self::assertStringContainsString('MIT', $notice);
+        self::assertStringContainsString('HPND', $notice);
         self::assertMatchesRegularExpression('/FROM alpine:3\.20@sha256:[a-f0-9]{64}/', $dockerfile);
         self::assertMatchesRegularExpression('/FROM php:8\.2-cli-alpine@sha256:[a-f0-9]{64}/', $dockerfile);
         self::assertStringContainsString('bubblewrap', $dockerfile);
@@ -74,6 +76,37 @@ final class CadProductionRuntimeContractTest extends TestCase
         self::assertStringContainsString('runtime_platform_unsupported', file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Vision/Geometry/GeometryProcessRunner.php'));
         self::assertStringNotContainsString('apt download', file_get_contents($root.'/tests/Runtime/geometry-sandbox-runtime.sh'));
         self::assertStringContainsString('apt download', file_get_contents($root.'/tests/Runtime/bootstrap-geometry-sandbox-runtime.sh'));
+    }
+
+    #[Test]
+    public function production_worker_allows_nested_sandbox_and_deployment_executes_runtime_smoke(): void
+    {
+        $root = dirname(__DIR__, 4);
+        $compose = file_get_contents($root.'/docker-compose.yml');
+        $dockerfile = file_get_contents($root.'/Dockerfile.prod');
+        $workflow = file_get_contents($root.'/.github/workflows/deploy-backend.yml');
+
+        self::assertIsString($compose);
+        self::assertIsString($dockerfile);
+        self::assertIsString($workflow);
+        self::assertMatchesRegularExpression(
+            '/horizon:.*?security_opt:.*?seccomp=unconfined.*?cap_drop:.*?- ALL/s',
+            $compose,
+        );
+        self::assertStringContainsString('geometry-runtime-smoke', $dockerfile);
+        self::assertStringContainsString(
+            'docker compose run --rm --no-deps horizon /usr/local/bin/geometry-runtime-smoke',
+            $workflow,
+        );
+        self::assertStringContainsString("- 'docker/**'", $workflow);
+        self::assertStringContainsString(
+            'docker compose exec -T horizon /usr/local/bin/geometry-runtime-smoke',
+            $workflow,
+        );
+        self::assertStringContainsString('cat "$workspace/process.stderr" >&2', file_get_contents(
+            $root.'/docker/geometry/geometry-runtime-smoke.sh',
+        ));
+        self::assertStringContainsString('docker compose logs --tail=200 horizon', $workflow);
     }
 
     #[Test]

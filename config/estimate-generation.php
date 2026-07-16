@@ -44,7 +44,7 @@ return [
             'libredwg_version' => '0.13.4',
             'sandbox_binary' => env('ESTIMATE_GENERATION_CAD_SANDBOX', PHP_OS_FAMILY === 'Linux' ? '/usr/local/bin/geometry-sandbox' : ''),
             'requirements_lock_path' => env('ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK', base_path('docker/geometry/requirements.lock')),
-            'requirements_sha256' => $envValue('ESTIMATE_GENERATION_CAD_REQUIREMENTS_SHA256', '361f194843f454173e791632b52088ea00e90001453eba78de448f4dbfa4e03e'),
+            'requirements_sha256' => $envValue('ESTIMATE_GENERATION_CAD_REQUIREMENTS_SHA256', '073fbc2f9209418afbb415a46897e038a896260c7a3193d9367b8fdc8cd211dd'),
             'timeout_seconds' => (int) env('ESTIMATE_GENERATION_CAD_TIMEOUT', 45),
             'max_input_bytes' => (int) env('ESTIMATE_GENERATION_CAD_MAX_INPUT_BYTES', 52_428_800),
             'max_output_bytes' => (int) env('ESTIMATE_GENERATION_CAD_MAX_OUTPUT_BYTES', 16_777_216),
