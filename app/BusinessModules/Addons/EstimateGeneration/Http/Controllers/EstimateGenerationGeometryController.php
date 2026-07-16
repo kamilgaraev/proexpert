@@ -45,7 +45,7 @@ final class EstimateGenerationGeometryController extends Controller
                 $session,
                 (int) ($validated['sources_page'] ?? 1),
                 (int) ($validated['sources_per_page'] ?? 20),
-            ));
+            ))->withHeaders(['Cache-Control' => 'private, no-store']);
         } catch (NotFoundHttpException) {
             return AdminResponse::error(trans_message('estimate_generation.geometry_not_found'), 404);
         } catch (\Throwable $exception) {

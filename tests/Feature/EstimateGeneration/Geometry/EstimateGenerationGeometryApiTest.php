@@ -106,6 +106,7 @@ final class EstimateGenerationGeometryApiTest extends LaravelTestCase
         $response = $this->getJson('/_contract/geometry/projects/17/sessions/41?sources_page=2&sources_per_page=10');
 
         $response->assertOk()
+            ->assertHeader('Cache-Control', 'no-store, private')
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.sources_meta.current_page', 2)
             ->assertJsonPath('data.sources_meta.per_page', 10)
