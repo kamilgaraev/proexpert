@@ -74,7 +74,7 @@ ENV PATH="/opt/geometry-venv/bin:/opt/libredwg/bin:${PATH}" \
     ESTIMATE_GENERATION_CAD_SANDBOX="/usr/local/bin/geometry-sandbox" \
     ESTIMATE_GENERATION_CAD_SCRIPT="/var/www/html/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py" \
     ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK="/var/www/html/docker/geometry/requirements.lock" \
-    ESTIMATE_GENERATION_CAD_SCRIPT_SHA256="6dc9ae0ccf08cbbcec4295f908250e3c1703b127b277a33bf7b390f8d82695fa" \
+    ESTIMATE_GENERATION_CAD_SCRIPT_SHA256="208a3a60ada2fb826c71e670dbe70708d1a7498ff54d19bc160d7bbb53199847" \
     ESTIMATE_GENERATION_CAD_REQUIREMENTS_SHA256="073fbc2f9209418afbb415a46897e038a896260c7a3193d9367b8fdc8cd211dd"
 
 # Конфигурация расширений GD

@@ -37,6 +37,10 @@ final class CadProductionConfigurationTest extends TestCase
             hash_file('sha256', $basePath.'/docker/geometry/requirements.lock'),
             $runtime['requirements_sha256'],
         );
+        self::assertStringContainsString(
+            'ESTIMATE_GENERATION_CAD_SCRIPT_SHA256="'.$runtime['script_sha256'].'"',
+            (string) file_get_contents($basePath.'/Dockerfile.prod'),
+        );
         CadRuntimeConfiguration::fromArray(array_replace($runtime, [
             'python_binary' => $basePath.'/python',
             'dwgread_binary' => $basePath.'/dwgread',
