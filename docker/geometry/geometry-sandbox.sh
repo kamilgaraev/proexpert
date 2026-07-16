@@ -33,6 +33,7 @@ ulimit -n "$open_files"
 stdout_tmp="$(mktemp "$workspace/.geometry-stdout.XXXXXX")"
 stderr_tmp="$(mktemp "$workspace/.geometry-stderr.XXXXXX")"
 trap 'rm -f -- "$stdout_tmp" "$stderr_tmp"' EXIT HUP INT TERM
+exec 3</usr/local/share/geometry-network-deny.bpf
 
 set +e
 timeout -s KILL "$timeout_seconds" \
@@ -40,6 +41,8 @@ timeout -s KILL "$timeout_seconds" \
     --die-with-parent \
     --new-session \
     --unshare-all \
+    --share-net \
+    --seccomp 3 \
     --ro-bind / / \
     --bind "$workspace" "$workspace" \
     --chdir "$workspace" \

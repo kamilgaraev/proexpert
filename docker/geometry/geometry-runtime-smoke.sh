@@ -14,7 +14,23 @@ if ! /usr/local/bin/geometry-sandbox \
     4096 \
     64 \
     /opt/geometry-venv/bin/python \
-    -c 'import subprocess; import pypdfium2; from PIL import Image; assert "0.13.4" in subprocess.check_output(["/opt/libredwg/bin/dwgread", "--version"], text=True); print("geometry-runtime-smoke")'; then
+    -c '
+import socket
+import subprocess
+
+import pypdfium2
+from PIL import Image
+
+try:
+    socket.socket()
+except PermissionError:
+    pass
+else:
+    raise AssertionError("sandbox_network_available")
+
+assert "0.13.4" in subprocess.check_output(["/opt/libredwg/bin/dwgread", "--version"], text=True)
+print("geometry-runtime-smoke")
+'; then
     cat "$workspace/process.stderr" >&2
     exit 1
 fi

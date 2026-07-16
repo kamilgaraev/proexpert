@@ -85,15 +85,26 @@ final class CadProductionRuntimeContractTest extends TestCase
         $compose = file_get_contents($root.'/docker-compose.yml');
         $dockerfile = file_get_contents($root.'/Dockerfile.prod');
         $workflow = file_get_contents($root.'/.github/workflows/deploy-backend.yml');
+        $sandbox = file_get_contents($root.'/docker/geometry/geometry-sandbox.sh');
+        $smoke = file_get_contents($root.'/docker/geometry/geometry-runtime-smoke.sh');
 
         self::assertIsString($compose);
         self::assertIsString($dockerfile);
         self::assertIsString($workflow);
         self::assertMatchesRegularExpression(
-            '/horizon:.*?security_opt:.*?seccomp=unconfined.*?apparmor=unconfined.*?no-new-privileges:true.*?cap_drop:.*?- ALL.*?cap_add:.*?- NET_ADMIN/s',
+            '/horizon:.*?security_opt:.*?seccomp=unconfined.*?apparmor=unconfined.*?no-new-privileges:true.*?cap_drop:.*?- ALL/s',
             $compose,
         );
+        self::assertStringNotContainsString('cap_add:', substr(
+            $compose,
+            strpos($compose, '  horizon:'),
+            strpos($compose, '  worker-heavy:') - strpos($compose, '  horizon:'),
+        ));
         self::assertStringContainsString('geometry-runtime-smoke', $dockerfile);
+        self::assertStringContainsString('geometry-network-deny.bpf', $dockerfile);
+        self::assertStringContainsString('--share-net', $sandbox);
+        self::assertStringContainsString('--seccomp 3', $sandbox);
+        self::assertStringContainsString('socket.socket()', $smoke);
         self::assertStringContainsString(
             'docker compose run --rm --no-deps horizon /usr/local/bin/geometry-runtime-smoke',
             $workflow,
