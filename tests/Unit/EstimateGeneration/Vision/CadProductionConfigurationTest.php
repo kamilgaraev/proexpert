@@ -8,12 +8,42 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtr
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadConversionRuntime;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadRuntimeConfiguration;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadRuntimeReadinessInspector;
+use Illuminate\Container\Container;
+use Illuminate\Foundation\Application;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class CadProductionConfigurationTest extends TestCase
 {
+    #[Test]
+    public function production_defaults_include_verified_cad_artifact_hashes(): void
+    {
+        $basePath = dirname(__DIR__, 4);
+        $previousContainer = Container::getInstance();
+        Container::setInstance(new Application($basePath));
+        try {
+            $configuration = require $basePath.'/config/estimate-generation.php';
+        } finally {
+            Container::setInstance($previousContainer);
+        }
+        $runtime = $configuration['vision']['cad_runtime'];
+
+        self::assertSame(
+            hash_file('sha256', $basePath.'/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py'),
+            $runtime['script_sha256'],
+        );
+        self::assertSame(
+            hash_file('sha256', $basePath.'/docker/geometry/requirements.lock'),
+            $runtime['requirements_sha256'],
+        );
+        CadRuntimeConfiguration::fromArray(array_replace($runtime, [
+            'python_binary' => $basePath.'/python',
+            'dwgread_binary' => $basePath.'/dwgread',
+            'sandbox_binary' => $basePath.'/geometry-sandbox',
+        ]), true);
+    }
+
     /** @return array<string, array{string, bool}> */
     public static function libredwgOutputs(): array
     {

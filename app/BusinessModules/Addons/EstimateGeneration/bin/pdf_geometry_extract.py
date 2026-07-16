@@ -381,6 +381,67 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def raster_contract(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        import pypdfium2 as pdfium
+    except Exception as exception:
+        raise SafeFailure("pypdfium2_unavailable") from exception
+    try:
+        document = pdfium.PdfDocument(args.input)
+    except Exception as exception:
+        raise SafeFailure("pdf_invalid") from exception
+    if len(document) < 1 or len(document) > args.max_pages:
+        raise SafeFailure("pdf_page_limit_exceeded")
+    pages: list[dict[str, Any]] = []
+    for page_index in range(len(document)):
+        page = document[page_index]
+        media = safe_box(page.get_mediabox, [0.0, 0.0, *page.get_size()])
+        crop = safe_box(page.get_cropbox, media)
+        rotation = int(page.get_rotation()) % 360
+        width = crop[2] - crop[0]
+        height = crop[3] - crop[1]
+        displayed_width, displayed_height = (
+            (height, width) if rotation in (90, 270) else (width, height)
+        )
+        pages.append(
+            {
+                "page_number": page_index + 1,
+                "width": finite(displayed_width),
+                "height": finite(displayed_height),
+                "rotation": rotation,
+                "media_box": media,
+                "crop_box": crop,
+                "transform": page_transform(crop, rotation),
+                "classification": "raster",
+            }
+        )
+    return {
+        "schema_version": 1,
+        "runtime_version": "pdf-geometry:v1;pypdfium2:5.8.0",
+        "source_fingerprint": sha256_file(args.input),
+        "source_unit": None,
+        "unit_status": "unknown",
+        "bounds": [],
+        "layers": [{"name": "page", "visible": True}],
+        "blocks": [],
+        "entities": [],
+        "texts": [],
+        "dimensions": [],
+        "pages": pages,
+        "scale_candidates": [],
+        "warnings": ["pdf_vector_geometry_unavailable"],
+    }
+
+
+def extract_with_raster_fallback(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        return extract(args)
+    except Exception:
+        if args.contract_vector:
+            raise
+        return raster_contract(args)
+
+
 def legacy(contract: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     pages: list[dict[str, Any]] = []
     preview_total_bytes = 0
@@ -549,7 +610,7 @@ def main() -> int:
     ) != os.path.realpath(args.workspace):
         raise SafeFailure("pdf_path_invalid")
     args.input = real_input
-    contract = extract(args)
+    contract = extract_with_raster_fallback(args)
     payload = contract if args.contract_vector else legacy(contract, args)
     sys.stdout.write(
         json.dumps(payload, separators=(",", ":"), ensure_ascii=False, allow_nan=False)

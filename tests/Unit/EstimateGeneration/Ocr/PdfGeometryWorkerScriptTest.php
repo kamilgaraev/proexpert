@@ -174,6 +174,32 @@ final class PdfGeometryWorkerScriptTest extends TestCase
         self::assertSame('image/png', $payload['pages'][0]['preview']['content_type'] ?? null);
     }
 
+    public function test_vector_parser_failure_degrades_to_raster_contract_for_preview_processing(): void
+    {
+        $module = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py';
+        $pdf = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks/regression/replay-vector-pdf-001/input.pdf';
+        $script = <<<'PYTHON'
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("pdf_geometry_extract", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+args = module.parser().parse_args(["--input", sys.argv[2], "--render-preview"])
+module.extract = lambda _args: (_ for _ in ()).throw(RuntimeError("unsupported vector object"))
+print(json.dumps(module.extract_with_raster_fallback(args)))
+PYTHON;
+        $process = new Process(['python', '-c', $script, $module, $pdf]);
+        $process->mustRun();
+        $contract = json_decode($process->getOutput(), true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertNotEmpty($contract['pages'] ?? []);
+        self::assertSame([], $contract['entities'] ?? null);
+        self::assertSame([], $contract['texts'] ?? null);
+        self::assertContains('pdf_vector_geometry_unavailable', $contract['warnings'] ?? []);
+    }
+
     public function test_many_page_budget_breach_is_atomic_and_cleans_private_workspace(): void
     {
         $before = glob(sys_get_temp_dir().DIRECTORY_SEPARATOR.'prohelper_pdf_preview_*') ?: [];
