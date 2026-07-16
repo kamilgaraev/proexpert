@@ -27,6 +27,33 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
     }
 
     #[Test]
+    public function document_geometry_has_a_dedicated_hardened_worker(): void
+    {
+        $compose = $this->source(dirname(__DIR__, 2).'/docker-compose.yml');
+        $workerStart = strpos($compose, '  geometry-worker:');
+        $workerEnd = strpos($compose, '  worker-heavy:');
+
+        self::assertIsInt($workerStart);
+        self::assertIsInt($workerEnd);
+        $worker = substr($compose, $workerStart, $workerEnd - $workerStart);
+
+        self::assertStringContainsString('--queue=estimate-generation-documents', $worker);
+        self::assertStringContainsString('read_only: true', $worker);
+        self::assertStringContainsString('/tmp:rw,noexec,nosuid', $worker);
+        self::assertStringContainsString('no-new-privileges:true', $worker);
+        self::assertStringContainsString('cap_drop:', $worker);
+        self::assertStringContainsString('- ALL', $worker);
+        self::assertStringContainsString('pids_limit:', $worker);
+        self::assertStringNotContainsString('privileged:', $worker);
+        self::assertStringNotContainsString('docker.sock', $worker);
+        self::assertSame(1, substr_count($compose, '--queue=estimate-generation-documents'));
+        self::assertStringNotContainsString(
+            'estimate-generation-documents',
+            $this->source(dirname(__DIR__, 2).'/config/horizon.php'),
+        );
+    }
+
+    #[Test]
     public function durable_artifacts_use_s3_and_no_persistent_local_preview_path(): void
     {
         $root = dirname(__DIR__, 2);
@@ -52,7 +79,7 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
         self::assertStringContainsString('chown -R www-data:www-data ${APP_DIR}/storage ${APP_DIR}/bootstrap/cache', $dockerfile);
         self::assertStringContainsString('chmod 0555 "${ESTIMATE_GENERATION_CAD_SCRIPT}"', $dockerfile);
         self::assertStringContainsString('chmod 0444 "${ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK}"', $dockerfile);
-        self::assertStringContainsString('sha256sum /opt/geometry-venv/bin/python /opt/libredwg/bin/dwgread /usr/local/bin/geometry-sandbox', $dockerfile);
+        self::assertStringContainsString('sha256sum /opt/geometry-venv/bin/python /opt/libredwg/bin/dwgread /usr/local/bin/geometry-landlock-sandbox /usr/local/bin/geometry-sandbox', $dockerfile);
         self::assertStringContainsString('chmod 0444 /etc/most/cad-runtime.sha256', $dockerfile);
     }
 

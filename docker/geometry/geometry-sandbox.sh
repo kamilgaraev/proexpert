@@ -33,22 +33,14 @@ ulimit -n "$open_files"
 stdout_tmp="$(mktemp "$workspace/.geometry-stdout.XXXXXX")"
 stderr_tmp="$(mktemp "$workspace/.geometry-stderr.XXXXXX")"
 trap 'rm -f -- "$stdout_tmp" "$stderr_tmp"' EXIT HUP INT TERM
-exec 3</usr/local/share/geometry-network-deny.bpf
+landlock_sandbox="${GEOMETRY_LANDLOCK_SANDBOX_BINARY:-/usr/local/bin/geometry-landlock-sandbox}"
 
 set +e
 timeout -s KILL "$timeout_seconds" \
-    bwrap \
-    --die-with-parent \
-    --new-session \
-    --unshare-all \
-    --share-net \
-    --seccomp 3 \
-    --ro-bind / / \
-    --bind "$workspace" "$workspace" \
-    --chdir "$workspace" \
-    --dev /dev \
-    --proc /proc \
-    -- "$@" >"$stdout_tmp" 2>"$stderr_tmp"
+    "$landlock_sandbox" \
+    "$workspace" \
+    /usr/local/share/geometry-network-deny.bpf \
+    "$@" >"$stdout_tmp" 2>"$stderr_tmp"
 status=$?
 set -e
 

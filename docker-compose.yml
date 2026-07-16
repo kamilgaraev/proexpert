@@ -59,8 +59,6 @@ services:
     env_file: .env
     environment: *reverb-client-environment
     security_opt:
-      - seccomp=unconfined
-      - apparmor=unconfined
       - no-new-privileges:true
     cap_drop:
       - ALL
@@ -73,6 +71,31 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    logging: *json-logging
+
+  geometry-worker:
+    image: ${MOST_IMAGE_REF:-ghcr.io/kamilgaraev/proexpert/prohelper:${MOST_IMAGE_TAG:-latest}}
+    container_name: prohelper-geometry-worker
+    restart: unless-stopped
+    init: true
+    command: "php artisan queue:work redis_estimate_generation --queue=estimate-generation-documents --sleep=1 --tries=3 --timeout=1800 --memory=512 --max-time=3600"
+    env_file: .env
+    environment: *reverb-client-environment
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1073741824,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 1280m
+    cpus: 1.5
+    stop_grace_period: 30s
+    volumes:
+      - ./storage/logs:/var/www/html/storage/logs
+    networks:
+      - prohelper-network
     logging: *json-logging
 
   worker-heavy:

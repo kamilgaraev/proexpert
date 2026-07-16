@@ -27,6 +27,7 @@ function ConvertTo-WslPath([string] $Path) {
 
 $sandboxWindows = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\docker\geometry\geometry-sandbox.sh'))
 $sandbox = ConvertTo-WslPath $sandboxWindows
+$landlockAdapter = ConvertTo-WslPath ([System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'geometry-landlock-sandbox-bwrap-adapter.sh')))
 $workspacePath = ConvertTo-WslPath $Workspace
 $stdout = ConvertTo-WslPath $StdoutPath
 $stderr = ConvertTo-WslPath $StderrPath
@@ -37,7 +38,7 @@ $sandboxArguments = @(
     $workspacePath, $stdout, $stderr, $WallLimit, $MemoryLimit, $CpuLimit,
     $FileLimit, $OpenFileLimit
 ) + $Command
-$payloadJson = @{ path = $path; arguments = $sandboxArguments } | ConvertTo-Json -Compress
+$payloadJson = @{ path = $path; landlock_sandbox = $landlockAdapter; arguments = $sandboxArguments } | ConvertTo-Json -Compress
 $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payloadJson))
 $execHelper = ConvertTo-WslPath ([System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'geometry-sandbox-wsl-exec.py')))
 

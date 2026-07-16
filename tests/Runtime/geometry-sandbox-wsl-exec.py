@@ -15,4 +15,5 @@ if (
     raise SystemExit(125)
 environment = os.environ.copy()
 environment["PATH"] = payload["path"]
+environment["GEOMETRY_LANDLOCK_SANDBOX_BINARY"] = payload["landlock_sandbox"]
 os.execvpe(arguments[0], arguments, environment)

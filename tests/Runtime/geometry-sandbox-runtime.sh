@@ -18,6 +18,9 @@ bwrap --ro-bind / / --proc /proc --dev /dev --unshare-all -- sh -c 'exit 0'
 
 cp "$PROJECT_ROOT/docker/geometry/geometry-sandbox.sh" "$ROOT/sandbox"
 chmod 0755 "$ROOT/sandbox"
+cp "$PROJECT_ROOT/tests/Runtime/geometry-landlock-sandbox-bwrap-adapter.sh" "$ROOT/landlock-sandbox"
+chmod 0755 "$ROOT/landlock-sandbox"
+export GEOMETRY_LANDLOCK_SANDBOX_BINARY="$ROOT/landlock-sandbox"
 SANDBOX="$ROOT/sandbox"
 WORK="$ROOT/work"
 OUTSIDE="$ROOT/outside"

@@ -24,11 +24,11 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
 
     public const CONNECTION = 'redis_estimate_generation';
 
-    public const QUEUE = 'estimate-generation';
+    public const QUEUE = 'estimate-generation-documents';
 
     public int $tries = 3;
 
-    public int $timeout = 120;
+    public int $timeout = 1800;
 
     public function __construct(
         private readonly int $documentId,

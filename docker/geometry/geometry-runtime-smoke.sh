@@ -22,6 +22,13 @@ import pypdfium2
 from PIL import Image
 
 try:
+    open("/tmp/most-geometry-runtime-smoke-outside", "w").close()
+except PermissionError:
+    pass
+else:
+    raise AssertionError("sandbox_outside_write_available")
+
+try:
     socket.socket()
 except PermissionError:
     pass

@@ -66,10 +66,10 @@ final class CadProductionRuntimeContractTest extends TestCase
         self::assertStringContainsString('HPND', $notice);
         self::assertMatchesRegularExpression('/FROM alpine:3\.20@sha256:[a-f0-9]{64}/', $dockerfile);
         self::assertMatchesRegularExpression('/FROM php:8\.2-cli-alpine@sha256:[a-f0-9]{64}/', $dockerfile);
-        self::assertStringContainsString('bubblewrap', $dockerfile);
+        self::assertStringNotContainsString('bubblewrap', $dockerfile);
         self::assertStringContainsString('--require-hashes', $dockerfile);
         self::assertStringContainsString('geometry-sandbox', $dockerfile);
-        self::assertStringContainsString('--ro-bind / /', file_get_contents($root.'/docker/geometry/geometry-sandbox.sh'));
+        self::assertStringContainsString('geometry-landlock-sandbox', file_get_contents($root.'/docker/geometry/geometry-sandbox.sh'));
         self::assertStringContainsString('Corresponding Source', $notice);
         self::assertStringContainsString('memory_limit_kib', file_get_contents($root.'/config/estimate-generation.php'));
         self::assertStringContainsString('runtime_sandbox_unavailable', file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Vision/Geometry/GeometryProcessRunner.php'));
@@ -79,7 +79,7 @@ final class CadProductionRuntimeContractTest extends TestCase
     }
 
     #[Test]
-    public function production_worker_allows_nested_sandbox_and_deployment_executes_runtime_smoke(): void
+    public function production_worker_uses_landlock_sandbox_and_deployment_executes_runtime_smoke(): void
     {
         $root = dirname(__DIR__, 4);
         $compose = file_get_contents($root.'/docker-compose.yml');
@@ -88,12 +88,13 @@ final class CadProductionRuntimeContractTest extends TestCase
         $sandbox = file_get_contents($root.'/docker/geometry/geometry-sandbox.sh');
         $smoke = file_get_contents($root.'/docker/geometry/geometry-runtime-smoke.sh');
         $networkFilter = file_get_contents($root.'/docker/geometry/network-deny.c');
+        $landlockSandbox = file_get_contents($root.'/docker/geometry/landlock-sandbox.c');
 
         self::assertIsString($compose);
         self::assertIsString($dockerfile);
         self::assertIsString($workflow);
         self::assertMatchesRegularExpression(
-            '/horizon:.*?security_opt:.*?seccomp=unconfined.*?apparmor=unconfined.*?no-new-privileges:true.*?cap_drop:.*?- ALL/s',
+            '/horizon:.*?security_opt:.*?no-new-privileges:true.*?cap_drop:.*?- ALL/s',
             $compose,
         );
         self::assertStringNotContainsString('cap_add:', substr(
@@ -103,25 +104,33 @@ final class CadProductionRuntimeContractTest extends TestCase
         ));
         self::assertStringContainsString('geometry-runtime-smoke', $dockerfile);
         self::assertStringContainsString('geometry-network-deny.bpf', $dockerfile);
-        self::assertStringContainsString('--share-net', $sandbox);
-        self::assertStringContainsString('--seccomp 3', $sandbox);
+        self::assertStringContainsString('/usr/local/bin/geometry-landlock-sandbox', $sandbox);
+        self::assertStringNotContainsString('bwrap', $sandbox);
+        self::assertStringNotContainsString('seccomp=unconfined', substr(
+            $compose,
+            strpos($compose, '  horizon:'),
+            strpos($compose, '  worker-heavy:') - strpos($compose, '  horizon:'),
+        ));
+        self::assertStringContainsString('LANDLOCK_CREATE_RULESET_VERSION', $landlockSandbox);
+        self::assertStringContainsString('PR_SET_SECCOMP', $landlockSandbox);
+        self::assertStringContainsString('execvp', $landlockSandbox);
         self::assertStringContainsString('socket.socket()', $smoke);
         self::assertStringContainsString('AF_INET', $networkFilter);
         self::assertStringContainsString('AF_INET6', $networkFilter);
         self::assertStringNotContainsString('SCMP_SYS(socketpair)', $networkFilter);
         self::assertStringContainsString(
-            'docker compose run --rm --no-deps horizon /usr/local/bin/geometry-runtime-smoke',
+            'docker compose run --rm --no-deps geometry-worker /usr/local/bin/geometry-runtime-smoke',
             $workflow,
         );
         self::assertStringContainsString("- 'docker/**'", $workflow);
         self::assertStringContainsString(
-            'docker compose exec -T horizon /usr/local/bin/geometry-runtime-smoke',
+            'docker compose exec -T geometry-worker /usr/local/bin/geometry-runtime-smoke',
             $workflow,
         );
         self::assertStringContainsString('cat "$workspace/process.stderr" >&2', file_get_contents(
             $root.'/docker/geometry/geometry-runtime-smoke.sh',
         ));
-        self::assertStringContainsString('docker compose logs --tail=200 horizon', $workflow);
+        self::assertStringContainsString('docker compose logs --tail=200 geometry-worker', $workflow);
     }
 
     #[Test]
