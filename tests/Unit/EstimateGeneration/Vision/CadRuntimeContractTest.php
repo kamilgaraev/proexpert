@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadConversionRuntime;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\Attributes\WithoutErrorHandler;
@@ -227,7 +228,8 @@ PYTHON;
 
         self::assertCount(1, $result['entities']);
         self::assertSame('line', $result['entities'][0]['type']);
-        self::assertContains('cad_incomplete_entities_skipped', $result['warnings']);
+        self::assertSame('cad_incomplete_entities_skipped', $result['warnings'][0]['code']);
+        self::assertSame(1, $result['warnings'][0]['count']);
     }
 
     #[Test]
@@ -274,7 +276,25 @@ PYTHON;
 
         self::assertCount(1, $result['entities']);
         self::assertSame('line', $result['entities'][0]['type']);
-        self::assertContains('cad_unsupported_entities_skipped', $result['warnings']);
+        $geometry = VectorGeometryData::fromArray([
+            'schema_version' => 1,
+            'runtime_version' => 'cad-geometry:v1;libredwg:0.13.4',
+            'source_fingerprint' => 'sha256:'.str_repeat('a', 64),
+            'source_unit' => 'mm',
+            'unit_status' => 'confirmed',
+            'bounds' => [0, 0, 10, 0],
+            'layers' => [],
+            'blocks' => [],
+            'entities' => $result['entities'],
+            'texts' => [],
+            'dimensions' => [],
+            'pages' => [],
+            'scale_candidates' => [],
+            'warnings' => $result['warnings'],
+        ]);
+
+        self::assertSame('cad_unsupported_entities_skipped', $geometry->warnings[0]['code']);
+        self::assertSame(1, $geometry->warnings[0]['count']);
     }
 
     #[Test]

@@ -39,7 +39,7 @@ return [
         'cad_runtime' => [
             'python_binary' => env('ESTIMATE_GENERATION_CAD_PYTHON', PHP_OS_FAMILY === 'Windows' ? 'python' : '/opt/geometry-venv/bin/python'),
             'script_path' => env('ESTIMATE_GENERATION_CAD_SCRIPT', base_path('app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py')),
-            'script_sha256' => $envValue('ESTIMATE_GENERATION_CAD_SCRIPT_SHA256', '208a3a60ada2fb826c71e670dbe70708d1a7498ff54d19bc160d7bbb53199847'),
+            'script_sha256' => $envValue('ESTIMATE_GENERATION_CAD_SCRIPT_SHA256', '9802a1621a3584b65e52247d486d8ffa004c5d7fff2ab564ffcd71d7c1f7d202'),
             'dwgread_binary' => env('ESTIMATE_GENERATION_CAD_DWGREAD', PHP_OS_FAMILY === 'Windows' ? 'dwgread.exe' : '/opt/libredwg/bin/dwgread'),
             'libredwg_version' => '0.13.4',
             'sandbox_binary' => env('ESTIMATE_GENERATION_CAD_SANDBOX', PHP_OS_FAMILY === 'Linux' ? '/usr/local/bin/geometry-sandbox' : ''),
