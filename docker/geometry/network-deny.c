@@ -19,8 +19,6 @@ int main(int argc, char **argv)
     const int denied_domains[] = {
         AF_INET,
         AF_INET6,
-        AF_NETLINK,
-        AF_PACKET,
     };
 
     for (size_t index = 0; index < sizeof(denied_domains) / sizeof(denied_domains[0]); index++) {
