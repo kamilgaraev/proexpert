@@ -60,6 +60,7 @@ services:
     environment: *reverb-client-environment
     security_opt:
       - seccomp=unconfined
+      - apparmor=unconfined
       - no-new-privileges:true
     cap_drop:
       - ALL
