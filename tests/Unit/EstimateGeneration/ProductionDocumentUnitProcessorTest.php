@@ -19,6 +19,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvide
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\Models\Organization;
 use App\Services\Storage\FileService;
@@ -28,11 +29,41 @@ use PHPUnit\Framework\TestCase;
 final class ProductionDocumentUnitProcessorTest extends TestCase
 {
     #[Test]
+    public function typed_cad_failure_preserves_safe_reason_for_document_status(): void
+    {
+        $original = new GeometryExtractionException('cad_geometry_empty');
+        $processor = $this->cadFailureProcessor($original);
+
+        try {
+            $processor->process($this->cadContext());
+            self::fail('Typed CAD failure must be wrapped.');
+        } catch (DocumentUnitProcessingException $exception) {
+            self::assertSame('cad_geometry_empty', $exception->safeCode);
+            self::assertSame($original, $exception->getPrevious());
+        }
+    }
+
+    #[Test]
     public function unexpected_geometry_failure_keeps_original_exception_for_diagnostics(): void
     {
         $original = new \LogicException('geometry runtime failed');
+        $processor = $this->cadFailureProcessor($original);
+        $context = $this->cadContext();
+
+        try {
+            $processor->process($context);
+            self::fail('Geometry failure must be wrapped.');
+        } catch (DocumentUnitProcessingException $exception) {
+            self::assertSame('document_geometry_processing_failed', $exception->safeCode);
+            self::assertSame($original, $exception->getPrevious());
+        }
+    }
+
+    private function cadFailureProcessor(\Throwable $error): ProductionDocumentUnitProcessor
+    {
         $files = $this->createMock(FileService::class);
-        $processor = new ProductionDocumentUnitProcessor(
+
+        return new ProductionDocumentUnitProcessor(
             new OcrDocumentUnitProcessor(
                 new class implements DocumentUnitContentReader
                 {
@@ -50,7 +81,7 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
                 },
             ),
             $this->createMock(VisionProvider::class),
-            new class($original) implements CadGeometryProvider
+            new class($error) implements CadGeometryProvider
             {
                 public function __construct(private \Throwable $error) {}
 
@@ -62,19 +93,15 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
             new RasterPreprocessor($files, reader: new BoundedVersionedS3ObjectReader($files)),
             new BoundedVersionedS3ObjectReader($files),
         );
-        $context = new DocumentUnitExecutionContext(
+    }
+
+    private function cadContext(): DocumentUnitExecutionContext
+    {
+        return new DocumentUnitExecutionContext(
             1, 2, 3, 4, 5, DocumentUnitType::CadDrawing, 1,
             'sha256:'.str_repeat('a', 64), [], 'org-2/source.dxf', 'application/dxf', 'source.dxf',
             'claim', 1, 1, 'processing_documents', 6,
         );
-
-        try {
-            $processor->process($context);
-            self::fail('Geometry failure must be wrapped.');
-        } catch (DocumentUnitProcessingException $exception) {
-            self::assertSame('document_geometry_processing_failed', $exception->safeCode);
-            self::assertSame($original, $exception->getPrevious());
-        }
     }
 
     #[Test]

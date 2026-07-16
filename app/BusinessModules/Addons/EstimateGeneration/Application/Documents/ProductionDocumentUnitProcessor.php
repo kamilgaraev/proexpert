@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryPr
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\Models\Organization;
 use Throwable;
@@ -47,6 +48,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_integrity_failed', previous: $exception);
         } catch (S3ObjectTransportException $exception) {
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable', previous: $exception);
+        } catch (GeometryExtractionException $exception) {
+            throw new DocumentUnitProcessingException($exception->reason, $exception);
         } catch (Throwable $exception) {
             throw new DocumentUnitProcessingException('document_geometry_processing_failed', $exception);
         }

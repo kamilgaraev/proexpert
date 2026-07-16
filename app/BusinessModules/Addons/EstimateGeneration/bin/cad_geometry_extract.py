@@ -425,6 +425,7 @@ def parse_dwg(
     dimensions = []
     entity_records = 0
     unsupported_count = 0
+    incomplete_count = 0
     for item in object_records:
         if item.get("object") == "LAYER":
             layers.append(
@@ -464,7 +465,8 @@ def parse_dwg(
                 base["start_angle"] = number(item["start_angle"])
                 base["end_angle"] = number(item["end_angle"])
             elif entity_type == "ARC":
-                raise SafeFailure("cad_required_entity_incomplete")
+                incomplete_count += 1
+                continue
             entities.append(base)
         elif entity_type in {"TEXT", "MTEXT"} and "ins_pt" in item:
             texts.append(
@@ -479,7 +481,7 @@ def parse_dwg(
                 }
             )
         else:
-            raise SafeFailure("cad_required_entity_incomplete")
+            incomplete_count += 1
     if not entities and not texts and not dimensions:
         raise SafeFailure("dwg_geometry_empty")
     represented_records = len(entities) + len(texts) + len(dimensions)
@@ -495,7 +497,7 @@ def parse_dwg(
                 },
             },
         )
-    if represented_records != entity_records:
+    if represented_records + incomplete_count != entity_records:
         raise SafeFailure(
             "dwg_reconciliation_failed",
             context={
@@ -504,9 +506,10 @@ def parse_dwg(
                 "represented_records": represented_records,
             },
         )
+    warnings = ["cad_incomplete_entities_skipped"] if incomplete_count else []
     measurement = data.get("Template", {}).get("MEASUREMENT", 0)
     unit, status = ("mm", "confirmed") if measurement == 1 else (None, "unknown")
-    return unit, status, layers, [], entities, texts, dimensions, [], "libredwg:0.13.4"
+    return unit, status, layers, [], entities, texts, dimensions, warnings, "libredwg:0.13.4"
 
 
 def geometry_bounds(entities: list[dict[str, Any]]) -> list[float]:
