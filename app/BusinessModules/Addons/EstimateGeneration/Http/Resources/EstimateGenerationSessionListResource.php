@@ -18,11 +18,14 @@ final class EstimateGenerationSessionListResource extends JsonResource
         /** @var EstimateGenerationSession $session */
         $session = $this->resource;
 
-        return app(BuildSessionSnapshot::class)->handle(
-            session: $session,
-            permissions: self::permissions($request, $session),
-            readinessEvaluated: false,
-        )->toArray();
+        return [
+            ...app(BuildSessionSnapshot::class)->handle(
+                session: $session,
+                permissions: self::permissions($request, $session),
+                readinessEvaluated: false,
+            )->toArray(),
+            'documents_count' => (int) $session->getAttribute('documents_count'),
+        ];
     }
 
     /** @return list<string> */
@@ -33,7 +36,7 @@ final class EstimateGenerationSessionListResource extends JsonResource
             return [];
         }
 
-        $cacheKey = 'estimate_generation_permissions_' . (int) $session->project_id;
+        $cacheKey = 'estimate_generation_permissions_'.(int) $session->project_id;
         $cached = $request->attributes->get($cacheKey);
         if (is_array($cached)) {
             return array_values(array_filter($cached, 'is_string'));

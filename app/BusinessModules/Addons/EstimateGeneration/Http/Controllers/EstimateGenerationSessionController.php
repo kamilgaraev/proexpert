@@ -50,6 +50,7 @@ final class EstimateGenerationSessionController extends Controller
             $sessions = EstimateGenerationSession::query()
                 ->where('organization_id', $request->user()->current_organization_id)
                 ->where('project_id', $project->id)
+                ->withCount('documents')
                 ->orderByDesc('id')
                 ->paginate((int) ($validated['per_page'] ?? 10), ['*'], 'page', (int) ($validated['page'] ?? 1));
 

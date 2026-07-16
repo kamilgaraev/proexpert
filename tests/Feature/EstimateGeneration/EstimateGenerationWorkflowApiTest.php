@@ -155,13 +155,20 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
         $readiness = new CountingEstimatorReadinessService;
         $this->app->instance(EstimatorReadinessService::class, $readiness);
 
+        $firstSession = $this->makeSession(41);
+        $firstSession->setAttribute('documents_count', 8);
+        $secondSession = $this->makeSession(42);
+        $secondSession->setAttribute('documents_count', 0);
+
         $request = Request::create('/api/v1/admin/projects/17/estimate-generation/sessions', 'GET');
         $payload = EstimateGenerationSessionListResource::collection([
-            $this->makeSession(41),
-            $this->makeSession(42),
+            $firstSession,
+            $secondSession,
         ])->resolve($request);
 
         self::assertCount(2, $payload);
+        self::assertSame(8, $payload[0]['documents_count']);
+        self::assertSame(0, $payload[1]['documents_count']);
         self::assertSame([], $payload[0]['documents_summary']);
         self::assertSame([], $payload[0]['blocking_issues']);
         self::assertFalse($payload[0]['readiness_evaluated']);
