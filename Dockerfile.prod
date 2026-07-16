@@ -3,10 +3,7 @@ FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6
 
 ARG LIBREDWG_VERSION=0.13.4
 ARG LIBREDWG_SHA256=7e153ea4dac4cbf3dc9c50b9ef7a5604e09cdd4c5520bcf8017877bbe1422cd5
-COPY docker/geometry/network-deny.c /tmp/geometry-network-deny.c
-RUN apk add --no-cache autoconf automake build-base curl libseccomp-dev libtool pcre2-dev python3-dev texinfo xz-dev zlib-dev \
-    && cc -O2 -Wall -Wextra -Werror /tmp/geometry-network-deny.c -lseccomp -o /tmp/geometry-network-deny \
-    && /tmp/geometry-network-deny /tmp/geometry-network-deny.bpf \
+RUN apk add --no-cache autoconf automake build-base curl libtool pcre2-dev python3-dev texinfo xz-dev zlib-dev \
     && curl -fsSLo /tmp/libredwg.tar.xz "https://github.com/LibreDWG/libredwg/releases/download/${LIBREDWG_VERSION}/libredwg-${LIBREDWG_VERSION}.tar.xz" \
     && echo "${LIBREDWG_SHA256}  /tmp/libredwg.tar.xz" | sha256sum -c - \
     && mkdir /tmp/libredwg \
@@ -15,6 +12,13 @@ RUN apk add --no-cache autoconf automake build-base curl libseccomp-dev libtool 
     && ./configure --prefix=/opt/libredwg --disable-bindings \
     && make -j2 \
     && make install
+
+FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc AS geometry-seccomp
+
+COPY docker/geometry/network-deny.c /tmp/geometry-network-deny.c
+RUN apk add --no-cache build-base libseccomp-dev \
+    && cc -O2 -Wall -Wextra -Werror /tmp/geometry-network-deny.c -lseccomp -o /tmp/geometry-network-deny \
+    && /tmp/geometry-network-deny /tmp/geometry-network-deny.bpf
 
 FROM php:8.2-cli-alpine@sha256:4b5ef6e3127938834568a16a2f2861e531344a8bd89023822f32029dbedd7136
 
@@ -50,7 +54,7 @@ RUN apk add --no-cache \
 
 COPY --from=geometry-runtime /opt/libredwg /opt/libredwg
 COPY --from=geometry-runtime /tmp/libredwg.tar.xz /usr/share/source/libredwg-0.13.4.tar.xz
-COPY --from=geometry-runtime /tmp/geometry-network-deny.bpf /usr/local/share/geometry-network-deny.bpf
+COPY --from=geometry-seccomp /tmp/geometry-network-deny.bpf /usr/local/share/geometry-network-deny.bpf
 COPY docker/geometry/requirements.lock /tmp/geometry-requirements.lock
 COPY docker/geometry/geometry-sandbox.sh /usr/local/bin/geometry-sandbox
 COPY docker/geometry/geometry-runtime-smoke.sh /usr/local/bin/geometry-runtime-smoke
