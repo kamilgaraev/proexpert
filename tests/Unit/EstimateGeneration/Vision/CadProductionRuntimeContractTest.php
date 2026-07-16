@@ -90,7 +90,7 @@ final class CadProductionRuntimeContractTest extends TestCase
         self::assertIsString($dockerfile);
         self::assertIsString($workflow);
         self::assertMatchesRegularExpression(
-            '/horizon:.*?security_opt:.*?seccomp=unconfined.*?apparmor=unconfined.*?no-new-privileges:true.*?cap_drop:.*?- ALL/s',
+            '/horizon:.*?security_opt:.*?seccomp=unconfined.*?apparmor=unconfined.*?no-new-privileges:true.*?cap_drop:.*?- ALL.*?cap_add:.*?- NET_ADMIN/s',
             $compose,
         );
         self::assertStringContainsString('geometry-runtime-smoke', $dockerfile);
