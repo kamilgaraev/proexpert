@@ -231,6 +231,53 @@ PYTHON;
     }
 
     #[Test]
+    public function unsupported_dwg_entity_is_skipped_when_renderable_geometry_remains(): void
+    {
+        $script = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py';
+        $code = <<<'PYTHON'
+import importlib.util
+import json
+import os
+import sys
+import tempfile
+import types
+
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location('cad', sys.argv[1])
+cad = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cad)
+cad.checked_libredwg_version = lambda binary, workspace: None
+
+payload = {
+    'created_by': 'LibreDWG 0.13.4',
+    'OBJECTS': [
+        {'entity': 'LINE', 'handle': [1], 'layer': [0], 'start': [0, 0], 'end': [10, 0]},
+        {'entity': 'HATCH', 'handle': [2], 'layer': [0]},
+    ],
+    'Template': {'MEASUREMENT': 1},
+}
+
+def run(*args, **kwargs):
+    kwargs['stdout'].write(json.dumps(payload).encode('utf-8'))
+    return types.SimpleNamespace(returncode=0)
+
+cad.subprocess.run = run
+with tempfile.TemporaryDirectory() as workspace:
+    source = os.path.join(workspace, 'source.dwg')
+    open(source, 'wb').write(b'AC1027')
+    result = cad.parse_dwg(source, 'dwgread', workspace, 1024 * 1024)
+    print(json.dumps({'entities': result[4], 'warnings': result[7]}))
+PYTHON;
+        $process = new \Symfony\Component\Process\Process(['python', '-c', $code, $script]);
+        $process->mustRun();
+        $result = json_decode($process->getOutput(), true, 16, JSON_THROW_ON_ERROR);
+
+        self::assertCount(1, $result['entities']);
+        self::assertSame('line', $result['entities'][0]['type']);
+        self::assertContains('cad_unsupported_entities_skipped', $result['warnings']);
+    }
+
+    #[Test]
     public function blocking_decoder_counts_are_available_on_typed_failure(): void
     {
         $script = $this->temporaryScript("import json,sys\nsys.stderr.write(json.dumps({'code':'dwg_completeness_unproven','safe_message':'safe','retryable':False,'context':{'decoder_counts':{'unknown':2},'reconciliation':{'entity_records':5,'represented_records':3}}}))\nsys.exit(2)\n");

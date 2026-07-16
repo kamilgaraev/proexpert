@@ -485,19 +485,7 @@ def parse_dwg(
     if not entities and not texts and not dimensions:
         raise SafeFailure("dwg_geometry_empty")
     represented_records = len(entities) + len(texts) + len(dimensions)
-    if unsupported_count:
-        raise SafeFailure(
-            "cad_unsupported_entities",
-            context={
-                "decoder_counts": {"unknown": unsupported_count},
-                "reconciliation": {
-                    "object_records": len(object_records),
-                    "entity_records": entity_records,
-                    "represented_records": represented_records,
-                },
-            },
-        )
-    if represented_records + incomplete_count != entity_records:
+    if represented_records + incomplete_count + unsupported_count != entity_records:
         raise SafeFailure(
             "dwg_reconciliation_failed",
             context={
@@ -506,7 +494,11 @@ def parse_dwg(
                 "represented_records": represented_records,
             },
         )
-    warnings = ["cad_incomplete_entities_skipped"] if incomplete_count else []
+    warnings = []
+    if unsupported_count:
+        warnings.append("cad_unsupported_entities_skipped")
+    if incomplete_count:
+        warnings.append("cad_incomplete_entities_skipped")
     measurement = data.get("Template", {}).get("MEASUREMENT", 0)
     unit, status = ("mm", "confirmed") if measurement == 1 else (None, "unknown")
     return unit, status, layers, [], entities, texts, dimensions, warnings, "libredwg:0.13.4"
