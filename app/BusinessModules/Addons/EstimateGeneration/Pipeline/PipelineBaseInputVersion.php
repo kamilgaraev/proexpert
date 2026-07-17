@@ -9,12 +9,15 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 
 final class PipelineBaseInputVersion
 {
+    public const SCHEMA_VERSION = 2;
+
     /** @param list<array{id: int, source_version: string, status: string, derived_version: string}> $documents */
     public static function fromProjection(array $input, array $documents): string
     {
         unset($input['generation_attempt_id'], $input['generation_requested']);
 
         return 'sha256:'.hash('sha256', CanonicalPipelineJson::encode([
+            'schema_version' => self::SCHEMA_VERSION,
             'input' => $input,
             'documents' => $documents,
         ]));

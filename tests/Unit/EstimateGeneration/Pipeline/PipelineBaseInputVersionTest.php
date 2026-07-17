@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDrawi
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationQuantityTakeoff;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationScopeInference;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineBaseInputVersion;
 use Illuminate\Database\Eloquent\Collection;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -17,6 +18,25 @@ use PHPUnit\Framework\TestCase;
 
 final class PipelineBaseInputVersionTest extends TestCase
 {
+    public function test_schema_version_is_part_of_base_input_version(): void
+    {
+        $input = ['description' => 'Дом'];
+        $documents = [[
+            'id' => 10,
+            'source_version' => 'sha256:'.str_repeat('a', 64),
+            'status' => 'ready',
+            'derived_version' => 'sha256:'.str_repeat('b', 64),
+        ]];
+
+        $expected = 'sha256:'.hash('sha256', CanonicalPipelineJson::encode([
+            'schema_version' => PipelineBaseInputVersion::SCHEMA_VERSION,
+            'input' => $input,
+            'documents' => $documents,
+        ]));
+
+        self::assertSame($expected, PipelineBaseInputVersion::fromProjection($input, $documents));
+    }
+
     #[DataProvider('derivedMutations')]
     public function test_every_consumed_derived_source_changes_base_input_version(callable $mutate): void
     {
