@@ -37,33 +37,67 @@ class DocumentParsingService
             $documents->push($document);
         }
 
-        if ($documents->isNotEmpty()) {
-            $session = $this->documentReconciler->changed($session);
-
-            foreach ($documents as $document) {
-                $attemptId = (string) Str::uuid();
-                $document->forceFill([
-                    'meta' => [
-                        ...(is_array($document->meta) ? $document->meta : []),
-                        'processing_attempt_id' => $attemptId,
-                    ],
-                ])->saveQuietly();
-                ProcessEstimateGenerationDocumentJob::dispatch(
-                    $document->id,
-                    FailureExecutionSnapshot::capture(
-                        $session,
-                        'document_manifest',
-                        attemptId: $attemptId,
-                        documentId: (int) $document->getKey(),
-                        sourceVersion: DocumentSourceVersion::fromDocument($document),
-                    ),
-                )
-                    ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
-                    ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
-                    ->afterCommit();
-            }
-        }
+        $this->startProcessing($session, $documents);
 
         return $documents;
+    }
+
+    /**
+     * @param  Collection<int, EstimateGenerationDocument>  $sourceDocuments
+     * @return Collection<int, EstimateGenerationDocument>
+     */
+    public function reuseDocuments(EstimateGenerationSession $session, Collection $sourceDocuments, User $user): Collection
+    {
+        $this->documentReconciler->assertMutable($session);
+        $existingSourceIds = $session->documents()
+            ->get(['meta'])
+            ->map(static fn (EstimateGenerationDocument $document): int => (int) ($document->meta['reused_from_document_id'] ?? 0))
+            ->filter(static fn (int $documentId): bool => $documentId > 0)
+            ->all();
+        $documents = collect();
+
+        foreach ($sourceDocuments as $sourceDocument) {
+            if (in_array((int) $sourceDocument->id, $existingSourceIds, true)) {
+                continue;
+            }
+            $documents->push($this->storageService->storeReusedDocument($session, $sourceDocument, $user));
+        }
+
+        $this->startProcessing($session, $documents);
+
+        return $documents;
+    }
+
+    /** @param Collection<int, EstimateGenerationDocument> $documents */
+    private function startProcessing(EstimateGenerationSession $session, Collection $documents): void
+    {
+        if ($documents->isEmpty()) {
+            return;
+        }
+
+        $session = $this->documentReconciler->changed($session);
+
+        foreach ($documents as $document) {
+            $attemptId = (string) Str::uuid();
+            $document->forceFill([
+                'meta' => [
+                    ...(is_array($document->meta) ? $document->meta : []),
+                    'processing_attempt_id' => $attemptId,
+                ],
+            ])->saveQuietly();
+            ProcessEstimateGenerationDocumentJob::dispatch(
+                $document->id,
+                FailureExecutionSnapshot::capture(
+                    $session,
+                    'document_manifest',
+                    attemptId: $attemptId,
+                    documentId: (int) $document->getKey(),
+                    sourceVersion: DocumentSourceVersion::fromDocument($document),
+                ),
+            )
+                ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
+                ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
+                ->afterCommit();
+        }
     }
 }

@@ -6,12 +6,14 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\IgnoreEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryEstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReuseEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\UploadEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\IgnoreEstimateGenerationDocumentRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RetryEstimateGenerationDocumentRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ReuseEstimateGenerationDocumentsRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGenerationDocumentsRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
@@ -36,6 +38,7 @@ class EstimateGenerationDocumentController extends Controller
         private readonly RetryEstimateGenerationDocument $retryDocument,
         private readonly IgnoreEstimateGenerationDocument $ignoreDocument,
         private readonly UploadEstimateGenerationDocuments $uploadDocuments,
+        private readonly ReuseEstimateGenerationDocuments $reuseDocuments,
     ) {}
 
     public function upload(UploadEstimateGenerationDocumentsRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
@@ -85,6 +88,37 @@ class EstimateGenerationDocumentController extends Controller
                 'documents_summary' => $this->readinessService->summary($documents),
             ]);
         }, 'list documents', ['project_id' => $project->id, 'session_id' => $session->id]);
+    }
+
+    public function reuse(ReuseEstimateGenerationDocumentsRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    {
+        try {
+            $this->guardSession($request, $project, $session);
+            $result = $this->reuseDocuments->handle(
+                $session,
+                (int) $request->validated('state_version'),
+                (int) $request->validated('source_session_id'),
+                $request->user(),
+            );
+            $result->documents->each(static fn (EstimateGenerationDocument $document) => $document->setRelation('session', $session));
+
+            return AdminResponse::success([
+                'documents' => EstimateGenerationDocumentResource::collection($result->documents)->resolve(),
+                'documents_summary' => $result->summary,
+            ], trans_message('estimate_generation.documents_reused'));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());
+        } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (\Throwable $exception) {
+            Log::error('[EstimateGeneration] Failed to reuse documents', [
+                'failure_code' => 'document_reuse_failed',
+                'session_id' => $session->id,
+                'exception_class' => $exception::class,
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.documents_reuse_error'), 500);
+        }
     }
 
     public function show(

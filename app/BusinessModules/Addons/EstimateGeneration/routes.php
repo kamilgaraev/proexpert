@@ -27,6 +27,7 @@ Route::middleware([
         Route::post('/', [EstimateGenerationSessionController::class, 'store'])->middleware('authorize:estimate_generation.create,project,project')->name('store');
         Route::get('/{session}/documents', [EstimateGenerationDocumentController::class, 'index'])->middleware('authorize:estimate_generation.view,project,project')->name('documents.index');
         Route::post('/{session}/documents', [EstimateGenerationDocumentController::class, 'upload'])->middleware('authorize:estimate_generation.upload_documents,project,project')->name('documents.store');
+        Route::post('/{session}/documents/reuse', [EstimateGenerationDocumentController::class, 'reuse'])->middleware('authorize:estimate_generation.upload_documents,project,project')->name('documents.reuse');
         Route::get('/{session}/documents/{document}', [EstimateGenerationDocumentController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('documents.show');
         Route::post('/{session}/documents/{document}/retry', [EstimateGenerationDocumentController::class, 'retry'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.retry');
         Route::post('/{session}/documents/{document}/ignore', [EstimateGenerationDocumentController::class, 'ignore'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.ignore');

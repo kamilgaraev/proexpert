@@ -172,6 +172,39 @@ class FileService
         return ['size' => (int) $size, 'version_id' => $version];
     }
 
+    /** @return array{path:string,size:int,version_id:string} */
+    public function duplicateEstimateGenerationObject(string $sourcePath, string $destinationPath): array
+    {
+        $pattern = '#^org-([1-9][0-9]*)/estimate-generation/sessions/[1-9][0-9]*/documents/[A-Za-z0-9._-]+$#D';
+        if (
+            preg_match($pattern, $sourcePath, $sourceMatch) !== 1
+            || preg_match($pattern, $destinationPath, $destinationMatch) !== 1
+            || $sourceMatch[1] !== $destinationMatch[1]
+            || hash_equals($sourcePath, $destinationPath)
+        ) {
+            throw new \InvalidArgumentException('estimate_generation_copy_path_invalid');
+        }
+
+        $disk = $this->disk();
+        if ($disk->copy($sourcePath, $destinationPath) !== true) {
+            throw new VersionedObjectTransportException('s3_object_copy_failed');
+        }
+
+        try {
+            $head = $this->describeHead($destinationPath);
+            $this->tagEstimateGenerationObject($destinationPath, $head['version_id'], true);
+
+            return ['path' => $destinationPath, ...$head];
+        } catch (\Throwable $exception) {
+            try {
+                $disk->delete($destinationPath);
+            } catch (\Throwable) {
+            }
+
+            throw $exception;
+        }
+    }
+
     public function removeImmutable(string $path, ?string $versionId): void
     {
         $bucket = $this->disk()->getConfig()['bucket'] ?? null;
