@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 use Illuminate\Database\Connection;
+use Illuminate\Support\Facades\Log;
 
 final readonly class EloquentNormativeContextPinSource implements NormativeContextPinSource
 {
@@ -31,9 +32,13 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->exists();
 
         if (! $dataset || ! $prices) {
+            $this->telemetry('identity_rejected', ['dataset_ready' => $dataset, 'prices_ready' => $prices]);
+
             return null;
         }
         if ($intents === [] || count($intents) > 64) {
+            $this->telemetry('intents_rejected', ['intents_count' => count($intents)]);
+
             return null;
         }
         $norms = collect();
@@ -77,6 +82,8 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         }
         $selected = $this->ranker->select($norms->unique('id')->values()->all(), $intents);
         if ($selected === null || $selected === []) {
+            $this->telemetry('norms_rejected', ['intents_count' => count($intents), 'norms_count' => $norms->unique('id')->count()]);
+
             return null;
         }
         $norms = collect($selected);
@@ -98,6 +105,8 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'prices.id as price_id', 'prices.construction_resource_id as price_construction_resource_id', 'prices.price_type',
             ]);
         if ($resourceRows->count() > 10_000) {
+            $this->telemetry('resources_limit_exceeded', ['selected_count' => count($selected), 'resource_rows_count' => $resourceRows->count()]);
+
             return null;
         }
         $resources = [];
@@ -140,8 +149,11 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ];
         }
         if ($candidates === []) {
+            $this->telemetry('priced_candidates_empty', ['selected_count' => count($selected), 'resource_rows_count' => $resourceRows->count()]);
+
             return null;
         }
+        $this->telemetry('approved', ['intents_count' => count($intents), 'selected_count' => count($selected), 'resource_rows_count' => $resourceRows->count(), 'candidates_count' => count($candidates)]);
         $canonical = json_encode($candidates, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
 
         return new NormativeContextPinData(
@@ -150,5 +162,12 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             $requested->regionalPriceVersionId, $requested->priceVersion,
             $candidates, hash('sha256', $canonical),
         );
+    }
+
+    private function telemetry(string $phase, array $context): void
+    {
+        if (Log::getFacadeRoot() !== null) {
+            Log::info('estimate_generation.normative_pin_source', ['phase' => $phase, ...$context]);
+        }
     }
 }
