@@ -47,8 +47,9 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
             || ! hash_equals($claim->context->generationAttemptId, (string) ($session->input_payload['generation_attempt_id'] ?? ''))) {
             throw new StaleEstimateGenerationState($claim->context->sessionId, $claim->context->stateVersion);
         }
-        if (! is_string($draft['source_input_version'] ?? null)
-            || ! hash_equals($claim->context->inputVersion, $draft['source_input_version'])) {
+        if ($claim->context->baseInputVersion === null
+            || ! is_string($draft['source_input_version'] ?? null)
+            || ! hash_equals($claim->context->baseInputVersion, $draft['source_input_version'])) {
             throw new StaleEstimateGenerationState($claim->context->sessionId, $claim->context->stateVersion);
         }
         $inspection = $this->readiness->inspect($draft);

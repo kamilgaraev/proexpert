@@ -28,6 +28,8 @@ final class PipelinePersistenceContractTest extends TestCase
         $publisher = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/PublishValidatedDraft.php');
         self::assertIsString($publisher);
         self::assertStringContainsString('$result->transientData', $publisher);
+        self::assertStringContainsString('$claim->context->baseInputVersion', $publisher);
+        self::assertStringNotContainsString('$claim->context->inputVersion, $draft[\'source_input_version\']', $publisher);
         self::assertStringNotContainsString('->read(', $publisher);
     }
 }
