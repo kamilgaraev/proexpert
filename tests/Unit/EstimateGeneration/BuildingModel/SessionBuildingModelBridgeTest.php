@@ -142,6 +142,34 @@ final class SessionBuildingModelBridgeTest extends TestCase
     }
 
     #[Test]
+    public function unanchored_pdf_rooms_do_not_duplicate_primary_raster_floor_plans(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('c', 64));
+        $pdf = $this->pdfVectorUnit();
+        $payload = $pdf->payload;
+        unset($payload['floor_key']);
+        $payload['vision_analysis'] = $this->visionUnit()->payload['vision_analysis'];
+        $pdf = new SessionBuildingModelUnitData(
+            $pdf->unitId,
+            $pdf->documentId,
+            $pdf->pageId,
+            $pdf->type,
+            $pdf->index,
+            $pdf->sourceVersion,
+            $pdf->confidence,
+            $payload,
+        );
+
+        [$bridge] = $this->bridge();
+        $model = $bridge->store($context, [$this->visionUnit(), $pdf]);
+
+        self::assertNotNull($model);
+        self::assertSame(['floor-vision'], array_column($model->toArray()['floors'], 'key'));
+        self::assertSame(1, $model->metrics['room_count']);
+        self::assertSame(0, $model->metrics['wall_count']);
+    }
+
+    #[Test]
     public function malformed_production_pdf_geometry_wrapper_is_rejected_without_synthetic_bounds(): void
     {
         [$bridge] = $this->bridge();

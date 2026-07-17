@@ -58,7 +58,7 @@ final readonly class SessionBuildingModelBridge
     {
         $inputs = [];
         $unanchoredVectorInputs = [];
-        $hasRecognizedFloorPlan = false;
+        $hasPrimaryRecognizedFloorPlan = false;
         foreach ($units as $unit) {
             $visionPayload = $unit->payload['vision_analysis'] ?? null;
             $vectorPayload = $unit->payload['vector_geometry'] ?? null;
@@ -110,16 +110,18 @@ final readonly class SessionBuildingModelBridge
             }
             $input = $this->mapper->map($vision, $vector, $refs, $this->floorKey($unit));
             $hasDetectedRoom = $vision !== null && $this->hasDetectedRoom($visionPayload);
-            if ($hasDetectedRoom || is_string($unit->payload['floor_key'] ?? null)) {
+            $hasPrimaryDetectedRoom = $hasDetectedRoom
+                && in_array($unit->type->value, ['raster_image', 'sketch'], true);
+            if ($hasPrimaryDetectedRoom || is_string($unit->payload['floor_key'] ?? null)) {
                 $inputs[] = $input;
-                $hasRecognizedFloorPlan = $hasRecognizedFloorPlan || $hasDetectedRoom;
+                $hasPrimaryRecognizedFloorPlan = $hasPrimaryRecognizedFloorPlan || $hasPrimaryDetectedRoom;
 
                 continue;
             }
             $unanchoredVectorInputs[] = $input;
         }
 
-        return $hasRecognizedFloorPlan ? $inputs : [...$inputs, ...$unanchoredVectorInputs];
+        return $hasPrimaryRecognizedFloorPlan ? $inputs : [...$inputs, ...$unanchoredVectorInputs];
     }
 
     /** @param array<string, mixed> $payload */
