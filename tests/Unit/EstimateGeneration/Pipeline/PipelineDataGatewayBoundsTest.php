@@ -49,4 +49,14 @@ final class PipelineDataGatewayBoundsTest extends TestCase
         self::assertStringContainsString('->cursor()', $source);
         self::assertStringNotContainsString('->take(self::MAX', $source);
     }
+
+    #[Test]
+    public function source_projection_does_not_copy_heavy_structured_document_payload(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/EloquentGenerationPipelineDataGateway.php');
+
+        self::assertStringNotContainsString("'structured_payload' => \$this->json(\$row->structured_payload)", $source);
+        self::assertStringNotContainsString("'structured_payload', 'facts_summary'", $source);
+        self::assertStringContainsString("'facts_summary' => \$this->json(\$row->facts_summary)", $source);
+    }
 }

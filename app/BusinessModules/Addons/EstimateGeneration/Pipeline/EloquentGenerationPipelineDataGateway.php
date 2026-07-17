@@ -55,7 +55,7 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
         $documents = [];
         $bytes = 0;
         foreach ($this->documentQuery($context)->select([
-            'id', 'checksum_sha256', 'source_version', 'status', 'structured_payload', 'facts_summary',
+            'id', 'checksum_sha256', 'source_version', 'status', 'facts_summary',
             'quality_score', 'quality_level', 'quality_flags',
         ])->limit(self::MAX_DOCUMENTS + 1)->cursor() as $row) {
             if (count($documents) >= self::MAX_DOCUMENTS) {
@@ -65,7 +65,6 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
                 'id' => (int) $row->id,
                 'source_version' => $this->sourceVersion($row),
                 'status' => (string) $row->status,
-                'structured_payload' => $this->json($row->structured_payload),
                 'facts_summary' => $this->json($row->facts_summary),
                 'quality' => [
                     'score' => $row->quality_score === null ? null : (float) $row->quality_score,
