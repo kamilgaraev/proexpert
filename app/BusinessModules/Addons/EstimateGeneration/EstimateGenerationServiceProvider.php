@@ -28,6 +28,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\LaravelD
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\LaravelEstimateGenerationUnitJobDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\MetadataDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProductionDocumentUnitProcessor;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RecoverStalledEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\EloquentGeometryRegenerationIntentStore;
@@ -81,7 +82,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGeneration
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ReconcileAiBudgetReservationsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationPipelinesJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationUnitsJob;
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverStalledEstimateGenerationDocumentsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\BackfillNormativeRetrievalCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ClassifyEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
@@ -559,9 +559,11 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                     ->everyMinute()
                     ->withoutOverlapping();
                 $this->app->make(Schedule::class)
-                    ->job(new RecoverStalledEstimateGenerationDocumentsJob)
+                    ->call(fn (): int => $this->app->make(RecoverStalledEstimateGenerationDocuments::class)->handle())
+                    ->name('estimate-generation:recover-stalled-documents')
                     ->everyMinute()
-                    ->withoutOverlapping();
+                    ->withoutOverlapping(5)
+                    ->onOneServer();
                 $this->app->make(Schedule::class)
                     ->job(new RecoverEstimateGenerationPipelinesJob)
                     ->everyMinute()

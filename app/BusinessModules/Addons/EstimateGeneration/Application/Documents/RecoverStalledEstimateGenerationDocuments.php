@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGeneration
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 final class RecoverStalledEstimateGenerationDocuments
@@ -56,6 +57,12 @@ final class RecoverStalledEstimateGenerationDocuments
                 ],
             ])->saveQuietly();
             $dispatched++;
+        }
+
+        if ($dispatched > 0) {
+            Log::info('[EstimateGeneration] Recovered stalled document jobs', [
+                'count' => $dispatched,
+            ]);
         }
 
         return $dispatched;

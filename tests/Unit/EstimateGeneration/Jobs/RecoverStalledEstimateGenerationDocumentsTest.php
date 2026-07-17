@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Jobs;
 
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationUnitsJob;
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverStalledEstimateGenerationDocumentsJob;
 use PHPUnit\Framework\TestCase;
 
 final class RecoverStalledEstimateGenerationDocumentsTest extends TestCase
@@ -21,10 +19,10 @@ final class RecoverStalledEstimateGenerationDocumentsTest extends TestCase
         self::assertStringContainsString("->whereNull('ocr_started_at')", $recovery);
         self::assertStringContainsString('ProcessEstimateGenerationDocumentJob::CONNECTION', $recovery);
         self::assertStringContainsString('ProcessEstimateGenerationDocumentJob::QUEUE', $recovery);
-        self::assertStringContainsString('new RecoverStalledEstimateGenerationDocumentsJob', $provider);
-
-        $job = new RecoverStalledEstimateGenerationDocumentsJob;
-        self::assertSame(RecoverEstimateGenerationUnitsJob::CONNECTION, $job->connection);
-        self::assertSame(RecoverEstimateGenerationUnitsJob::QUEUE, $job->queue);
+        self::assertStringContainsString('RecoverStalledEstimateGenerationDocuments::class', $provider);
+        self::assertStringContainsString("->name('estimate-generation:recover-stalled-documents')", $provider);
+        self::assertStringContainsString('->onOneServer()', $provider);
+        self::assertStringNotContainsString('new RecoverStalledEstimateGenerationDocumentsJob', $provider);
+        self::assertStringContainsString('Recovered stalled document jobs', $recovery);
     }
 }
