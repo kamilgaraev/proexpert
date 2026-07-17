@@ -28,7 +28,7 @@ final readonly class PipelineStageOutput
     ): self {
         PipelineVersionValidator::assertSha256($inputVersion, 'stage input');
         $expected = array_map(static fn (ProcessingStage $dependency): string => $dependency->value, $definition->dependencies);
-        if (array_keys($dependencyVersions) !== $expected || $artifact->bytes > $definition->maxArtifactBytes) {
+        if (! self::hasExactKeys($dependencyVersions, $expected) || $artifact->bytes > $definition->maxArtifactBytes) {
             throw new InvalidArgumentException('Pipeline stage output dependency manifest or artifact bound is invalid.');
         }
         foreach ($dependencyVersions as $version) {
@@ -60,7 +60,7 @@ final readonly class PipelineStageOutput
     {
         $envelope = self::normalizeEnvelope($envelope);
 
-        if (array_keys($envelope) !== ['stage', 'schema_version', 'input_version', 'dependency_versions', 'artifact']
+        if (! self::hasExactKeys($envelope, ['stage', 'schema_version', 'input_version', 'dependency_versions', 'artifact'])
             || ! is_string($envelope['stage']) || ! is_int($envelope['schema_version'])
             || ! is_string($envelope['input_version']) || ! is_array($envelope['dependency_versions'])
             || ! is_array($envelope['artifact'])) {
@@ -119,5 +119,14 @@ final readonly class PipelineStageOutput
         $integer = (int) $value;
 
         return (string) $integer === $value ? $integer : $value;
+    }
+
+    private static function hasExactKeys(array $value, array $expected): bool
+    {
+        $actual = array_keys($value);
+        sort($actual, SORT_STRING);
+        sort($expected, SORT_STRING);
+
+        return $actual === $expected;
     }
 }

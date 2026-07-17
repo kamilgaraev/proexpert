@@ -33,7 +33,9 @@ final readonly class PipelineArtifactReference
 
     public static function fromArray(array $data): self
     {
-        if (array_keys($data) !== ['kind', 'object_key', 'content_version', 'bytes', 'version_id']
+        $keys = array_keys($data);
+        sort($keys, SORT_STRING);
+        if ($keys !== ['bytes', 'content_version', 'kind', 'object_key', 'version_id']
             || ! is_string($data['kind']) || ! is_string($data['object_key'])
             || ! is_string($data['content_version']) || ! is_int($data['bytes'])
             || ($data['version_id'] !== null && ! is_string($data['version_id']))) {

@@ -48,14 +48,42 @@ final class PipelineArtifactEnvelopeTest extends TestCase
             'version-1',
         );
         $output = PipelineStageOutput::create($definition, $input, [], $reference);
-        $envelope = $output->envelope();
-        $envelope['schema_version'] = (string) $envelope['schema_version'];
-        $envelope['artifact']['bytes'] = (string) $envelope['artifact']['bytes'];
+        $stored = $output->envelope();
+        $envelope = [
+            'stage' => $stored['stage'],
+            'artifact' => [
+                'kind' => $stored['artifact']['kind'],
+                'bytes' => (string) $stored['artifact']['bytes'],
+                'object_key' => $stored['artifact']['object_key'],
+                'version_id' => $stored['artifact']['version_id'],
+                'content_version' => $stored['artifact']['content_version'],
+            ],
+            'input_version' => $stored['input_version'],
+            'schema_version' => (string) $stored['schema_version'],
+            'dependency_versions' => $stored['dependency_versions'],
+        ];
 
         $restored = PipelineStageOutput::fromEnvelope($envelope, $output->version);
 
         self::assertSame($output->version, $restored->version);
         self::assertSame(973, $restored->artifact->bytes);
+    }
+
+    #[Test]
+    public function dependency_manifest_key_order_does_not_change_output_version(): void
+    {
+        $definition = PipelineDefinitionGraph::standard()->get(ProcessingStage::BuildDraft);
+        $input = 'sha256:'.str_repeat('a', 64);
+        $reference = new PipelineArtifactReference('memory_json_v1', 'build-draft', 'sha256:'.str_repeat('c', 64), 973);
+        $dependencies = [];
+        foreach ($definition->dependencies as $index => $dependency) {
+            $dependencies[$dependency->value] = 'sha256:'.str_repeat(dechex($index + 1), 64);
+        }
+
+        $ordered = PipelineStageOutput::create($definition, $input, $dependencies, $reference);
+        $reversed = PipelineStageOutput::create($definition, $input, array_reverse($dependencies, true), $reference);
+
+        self::assertSame($ordered->version, $reversed->version);
     }
 
     #[Test]
