@@ -85,12 +85,14 @@ final class RetryEstimateGenerationSession
             return $session;
         }
 
-        return $this->workflow->transition($session, EstimateGenerationEvent::DocumentsReady, [
+        $session = $this->workflow->transition($session, EstimateGenerationEvent::DocumentsReady, [
             'processing_stage' => 'ready_to_generate',
             'processing_progress' => 35,
             'last_error' => null,
             'failure_code' => null,
         ]);
+
+        return $this->startGeneration($session);
     }
 
     private function hasSufficientGenerationInput(EstimateGenerationSession $session): bool
@@ -133,15 +135,36 @@ final class RetryEstimateGenerationSession
             ->all();
 
         if ($documentIds === []) {
-            return $this->workflow->transition($session, EstimateGenerationEvent::DocumentsReady, [
+            $session = $this->workflow->transition($session, EstimateGenerationEvent::DocumentsReady, [
                 'processing_stage' => 'ready_to_generate',
                 'processing_progress' => 35,
                 'last_error' => null,
                 'failure_code' => null,
             ]);
+
+            return $this->startGeneration($session);
         }
 
         $this->dispatcher->dispatchDocuments($documentIds);
+
+        return $session;
+    }
+
+    private function startGeneration(EstimateGenerationSession $session): EstimateGenerationSession
+    {
+        $attemptId = ($this->attemptIdFactory)();
+        $session = $this->workflow->transition($session, EstimateGenerationEvent::GenerationStarted, [
+            'processing_stage' => 'generating',
+            'processing_progress' => 40,
+            'last_error' => null,
+            'failure_code' => null,
+            'input_payload' => [
+                ...($session->input_payload ?? []),
+                'generation_attempt_id' => $attemptId,
+                'generation_requested' => false,
+            ],
+        ]);
+        $this->dispatcher->dispatchGeneration((int) $session->getKey(), (int) $session->state_version, $attemptId);
 
         return $session;
     }

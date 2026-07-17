@@ -92,7 +92,7 @@ final class RetryEstimateGenerationSessionTest extends TestCase
     }
 
     #[Test]
-    public function ignored_documents_do_not_block_ready_transition(): void
+    public function ignored_documents_start_generation_without_an_extra_request(): void
     {
         $session = $this->failed(EstimateGenerationStatus::ProcessingDocuments);
         $session->setRelation('documents', collect([$this->document(5, 'ignored')]));
@@ -100,7 +100,9 @@ final class RetryEstimateGenerationSessionTest extends TestCase
 
         $result = $action->handle($this->command());
 
-        self::assertSame(EstimateGenerationStatus::ReadyToGenerate, $result->status);
+        self::assertSame(EstimateGenerationStatus::Generating, $result->status);
+        self::assertSame('attempt-new', $result->input_payload['generation_attempt_id']);
+        self::assertSame([[71, 6, 'attempt-new']], $dispatcher->generation);
         self::assertSame([], $dispatcher->documents);
     }
 
@@ -164,7 +166,7 @@ final class RetryEstimateGenerationSessionTest extends TestCase
     }
 
     #[Test]
-    public function input_review_with_only_ignored_documents_and_description_becomes_ready(): void
+    public function input_review_with_only_ignored_documents_and_description_starts_generation(): void
     {
         $session = $this->inputReview(['description' => 'Дом']);
         $session->setRelation('documents', collect([$this->document(11, 'ignored')]));
@@ -172,7 +174,9 @@ final class RetryEstimateGenerationSessionTest extends TestCase
 
         $result = $action->handle($this->command());
 
-        self::assertSame(EstimateGenerationStatus::ReadyToGenerate, $result->status);
+        self::assertSame(EstimateGenerationStatus::Generating, $result->status);
+        self::assertSame('attempt-new', $result->input_payload['generation_attempt_id']);
+        self::assertSame([[71, 6, 'attempt-new']], $dispatcher->generation);
         self::assertSame([], $dispatcher->documents);
     }
 
