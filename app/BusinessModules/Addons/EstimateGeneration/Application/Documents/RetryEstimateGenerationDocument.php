@@ -78,7 +78,7 @@ final class RetryEstimateGenerationDocument
             ),
         )
             ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
-            ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
+            ->onQueue(ProcessEstimateGenerationDocumentJob::RECOVERY_QUEUE)
             ->afterCommit();
         $session = $session->fresh(['documents']) ?? $session;
 

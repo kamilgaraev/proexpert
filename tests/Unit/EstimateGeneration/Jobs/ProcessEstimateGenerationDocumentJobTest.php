@@ -33,6 +33,7 @@ final class ProcessEstimateGenerationDocumentJobTest extends TestCase
         );
 
         self::assertSame('estimate-generation-documents', ProcessEstimateGenerationDocumentJob::QUEUE);
+        self::assertSame('estimate-generation-documents-recovery', ProcessEstimateGenerationDocumentJob::RECOVERY_QUEUE);
         self::assertSame(ProcessEstimateGenerationDocumentJob::QUEUE, $job->queue);
         self::assertSame(1800, $job->timeout);
     }

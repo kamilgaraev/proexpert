@@ -26,6 +26,8 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
 
     public const QUEUE = 'estimate-generation-documents';
 
+    public const RECOVERY_QUEUE = 'estimate-generation-documents-recovery';
+
     public int $tries = 3;
 
     public int $timeout = 1800;

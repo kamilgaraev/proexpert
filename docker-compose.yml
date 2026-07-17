@@ -78,7 +78,7 @@ services:
     container_name: prohelper-geometry-worker
     restart: unless-stopped
     init: true
-    command: "php artisan queue:work redis_estimate_generation --queue=estimate-generation-documents --sleep=1 --tries=3 --timeout=1800 --memory=512 --max-time=3600"
+    command: "php artisan queue:work redis_estimate_generation --queue=estimate-generation-documents-recovery,estimate-generation-documents --sleep=1 --tries=3 --timeout=1800 --memory=512 --max-time=3600"
     env_file: .env
     environment: *reverb-client-environment
     read_only: true

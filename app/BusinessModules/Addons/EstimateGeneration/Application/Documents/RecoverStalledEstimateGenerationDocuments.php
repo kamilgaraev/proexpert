@@ -47,7 +47,7 @@ final class RecoverStalledEstimateGenerationDocuments
                 ),
             )
                 ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
-                ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE);
+                ->onQueue(ProcessEstimateGenerationDocumentJob::RECOVERY_QUEUE);
 
             $document->forceFill([
                 'meta' => [

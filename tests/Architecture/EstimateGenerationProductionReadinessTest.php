@@ -37,7 +37,7 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
         self::assertIsInt($workerEnd);
         $worker = substr($compose, $workerStart, $workerEnd - $workerStart);
 
-        self::assertStringContainsString('--queue=estimate-generation-documents', $worker);
+        self::assertStringContainsString('--queue=estimate-generation-documents-recovery,estimate-generation-documents', $worker);
         self::assertStringContainsString('read_only: true', $worker);
         self::assertStringContainsString('/tmp:rw,noexec,nosuid', $worker);
         self::assertStringContainsString('no-new-privileges:true', $worker);

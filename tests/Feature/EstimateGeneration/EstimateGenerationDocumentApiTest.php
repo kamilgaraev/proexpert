@@ -94,7 +94,7 @@ class EstimateGenerationDocumentApiTest extends TestCase
         ]);
         Queue::assertPushed(
             ProcessEstimateGenerationDocumentJob::class,
-            static fn (ProcessEstimateGenerationDocumentJob $job): bool => $job->queue === ProcessEstimateGenerationDocumentJob::QUEUE
+            static fn (ProcessEstimateGenerationDocumentJob $job): bool => $job->queue === ProcessEstimateGenerationDocumentJob::RECOVERY_QUEUE
                 && $job->connection === ProcessEstimateGenerationDocumentJob::CONNECTION
         );
     }
