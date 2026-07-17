@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
+use Illuminate\Database\ConnectionInterface;
 use InvalidArgumentException;
 
 class NormativeContextPinResolver
 {
-    public function __construct(private readonly ?NormativeContextPinSource $source = null) {}
+    public function __construct(
+        private readonly ?NormativeContextPinSource $source = null,
+        private readonly ?ConnectionInterface $database = null,
+    ) {}
 
     public function resolve(array $regionalContext, array $workIntents = []): array
     {
@@ -20,8 +24,9 @@ class NormativeContextPinResolver
             'price_zone_id' => $regionalContext['price_zone_id'] ?? null,
             'period_id' => $regionalContext['period_id'] ?? null,
             'regional_price_version_id' => $regionalContext['estimate_regional_price_version_id'] ?? null,
-            'price_version' => $regionalContext['price_version'] ?? null,
+            'price_version' => $regionalContext['price_version'] ?? $regionalContext['version_key'] ?? null,
         ];
+        $values = $this->completeIdentity($values);
         if ($date === null) {
             return ['status' => 'review_required', 'blocking_issues' => ['normative_applicability_date_not_pinned']];
         }
@@ -67,6 +72,49 @@ class NormativeContextPinResolver
             ],
             'identity_version' => hash('sha256', json_encode($identity, JSON_THROW_ON_ERROR)),
         ];
+    }
+
+    private function completeIdentity(array $values): array
+    {
+        if ($this->database === null) {
+            return $values;
+        }
+        if (! is_int($values['dataset_id']) && is_string($values['dataset_version']) && $values['dataset_version'] !== '') {
+            $datasetId = $this->database->table('estimate_dataset_versions')
+                ->where('source_type', 'fsnb_2022')->where('status', 'parsed')
+                ->where('version_key', $values['dataset_version'])->value('id');
+            $values['dataset_id'] = is_numeric($datasetId) ? (int) $datasetId : null;
+        }
+        $versionQuery = $this->database->table('estimate_regional_price_versions')
+            ->whereIn('status', ['active', 'checked']);
+        if (is_int($values['regional_price_version_id'])) {
+            $versionQuery->where('id', $values['regional_price_version_id']);
+        } else {
+            if (! is_int($values['region_id'])) {
+                return $values;
+            }
+        }
+        foreach (['region_id', 'price_zone_id', 'period_id'] as $key) {
+            if (is_int($values[$key])) {
+                $versionQuery->where($key, $values[$key]);
+            }
+        }
+        if (is_string($values['price_version']) && $values['price_version'] !== '') {
+            $versionQuery->where('version_key', $values['price_version']);
+        }
+        $version = $versionQuery
+            ->orderByRaw("CASE status WHEN 'active' THEN 0 WHEN 'checked' THEN 1 ELSE 2 END")
+            ->orderByDesc('id')
+            ->first(['id', 'region_id', 'price_zone_id', 'period_id', 'version_key']);
+        if ($version !== null) {
+            $values['regional_price_version_id'] ??= (int) $version->id;
+            $values['region_id'] ??= (int) $version->region_id;
+            $values['price_zone_id'] ??= (int) $version->price_zone_id;
+            $values['period_id'] ??= (int) $version->period_id;
+            $values['price_version'] ??= (string) $version->version_key;
+        }
+
+        return $values;
     }
 
     private function date(array $context): ?string

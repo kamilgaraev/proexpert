@@ -64,6 +64,12 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                 'catalog_candidates_count' => is_array($pin['catalog_candidates'] ?? null) ? count($pin['catalog_candidates']) : 0,
                 'dataset_version_present' => is_string($datasetVersion) && $datasetVersion !== '',
                 'applicability_date_present' => is_string($applicabilityDate) && $applicabilityDate !== '',
+                'regional_version_present' => is_int($regionalContext['estimate_regional_price_version_id'] ?? null),
+                'region_present' => is_int($regionalContext['region_id'] ?? null),
+                'price_zone_present' => is_int($regionalContext['price_zone_id'] ?? null),
+                'period_present' => is_int($regionalContext['period_id'] ?? null),
+                'regional_version_key_present' => is_string($regionalContext['version_key'] ?? null),
+                'normative_dataset_version_present' => is_string($regionalContext['normative_dataset_version'] ?? null),
             ]);
         }
         $rerankRequested = is_array($regionalContext) && ($regionalContext['normative_rerank_requested'] ?? false) === true;

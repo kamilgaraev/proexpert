@@ -397,6 +397,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver::class, \App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentSessionBaseInputVersionResolver::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver::class, fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver(
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource::class),
+            $app->make('db')->connection(),
         ));
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService::class, fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService(
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\AuthoritativePackagePricingGuard::class),
