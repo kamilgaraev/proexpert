@@ -268,6 +268,36 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function it_accepts_a_json_object_wrapped_in_a_markdown_fence(): void
+    {
+        $response = $this->response();
+        $content = $response['choices'][0]['message']['content'];
+        $response['choices'][0]['message']['content'] = "```json\n{$content}\n```";
+        Http::fake(['*' => Http::response($response)]);
+
+        $analysis = $this->provider()->analyze($this->input());
+
+        self::assertSame('floor_plan', $analysis->sheetType);
+        self::assertSame('succeeded', $this->attempts[0]->status);
+    }
+
+    #[Test]
+    public function it_retries_invalid_json_from_the_provider(): void
+    {
+        $invalid = $this->response();
+        $invalid['choices'][0]['message']['content'] = '{invalid-json';
+        Http::fakeSequence()->push($invalid)->push($this->response());
+
+        $analysis = $this->provider()->analyze($this->input());
+
+        self::assertSame('floor_plan', $analysis->sheetType);
+        self::assertSame(['malformed_response', 'succeeded'], array_map(
+            fn (AiUsageData $row): string => $row->status,
+            $this->attempts,
+        ));
+    }
+
+    #[Test]
     public function it_fails_closed_for_unknown_keys_bad_geometry_duplicates_dangling_evidence_and_model_mismatch(): void
     {
         $invalid = [

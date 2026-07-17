@@ -154,7 +154,9 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 }
             } catch (VisionContractException $exception) {
                 $status = 'malformed_response';
-                $lastException = $exception;
+                $lastException = $exception->reason === 'vision_json_invalid' && $wireAttempt < $attempts
+                    ? new VisionProviderException($exception->reason, retryable: true, previous: $exception)
+                    : $exception;
             } catch (VisionProviderException $exception) {
                 $status = 'connection_failed';
                 $lastException = $exception;
@@ -296,6 +298,10 @@ final readonly class TimewebVisionProvider implements VisionProvider
         $content = Arr::get($response, 'choices.0.message.content');
         if (! is_string($content) || $content === '' || strlen($content) > max(1_024, (int) config('estimate-generation.vision.max_response_bytes', 1_000_000))) {
             throw new VisionContractException('vision_content_missing');
+        }
+        $content = preg_replace('/\A\xEF\xBB\xBF/', '', trim($content)) ?? $content;
+        if (preg_match('/\A```(?:json)?\s*(\{.*\})\s*```\z/isu', $content, $matches) === 1) {
+            $content = $matches[1];
         }
         try {
             $decoded = json_decode($content, true, max(4, min(64, (int) config('estimate-generation.vision.max_depth', 16))), JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
