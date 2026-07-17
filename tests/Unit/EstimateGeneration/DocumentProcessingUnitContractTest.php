@@ -750,8 +750,12 @@ final class DocumentProcessingUnitContractTest extends TestCase
     public function manual_retry_invalidates_previous_document_evidence_before_recreating_pages(): void
     {
         $retry = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Application/Documents/RetryEstimateGenerationDocument.php');
+        $actions = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Http/Presentation/EstimateGenerationDocumentActionBuilder.php');
 
         self::assertIsString($retry);
+        self::assertIsString($actions);
+        self::assertStringContainsString("['queued', 'processing', 'ready', 'failed', 'needs_review', 'ignored']", $retry);
+        self::assertStringContainsString("['queued', 'processing', 'ready', 'failed', 'needs_review', 'ignored']", $actions);
         self::assertStringContainsString('private EvidenceSourceReplacementInvalidator $evidenceInvalidator', $retry);
         self::assertStringContainsString('$this->evidenceInvalidator->invalidateReplacedDocumentSource(', $retry);
         self::assertLessThan(

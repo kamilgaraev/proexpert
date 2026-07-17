@@ -37,7 +37,7 @@ final class RetryEstimateGenerationDocument
                 ->findOrFail($document->getKey());
 
             $this->policy->documents($lockedSession, $expectedVersion);
-            if (! in_array((string) $lockedDocument->status, ['ready', 'failed', 'needs_review', 'ignored'], true)) {
+            if (! in_array((string) $lockedDocument->status, ['queued', 'processing', 'ready', 'failed', 'needs_review', 'ignored'], true)) {
                 throw ValidationException::withMessages(['document' => [trans_message('estimate_generation.document_retry_not_allowed')]]);
             }
 

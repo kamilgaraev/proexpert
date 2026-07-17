@@ -14,7 +14,7 @@ use function trans_message;
 
 final readonly class EstimateGenerationDocumentActionBuilder
 {
-    private const RETRY_STATUSES = ['ready', 'failed', 'needs_review', 'ignored'];
+    private const RETRY_STATUSES = ['queued', 'processing', 'ready', 'failed', 'needs_review', 'ignored'];
 
     private const IGNORE_STATUSES = ['ready', 'failed', 'needs_review'];
 
