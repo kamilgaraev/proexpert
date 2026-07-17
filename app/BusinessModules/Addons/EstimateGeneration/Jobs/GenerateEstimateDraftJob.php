@@ -27,7 +27,9 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public const QUEUE = 'estimate-generation';
 
-    public int $tries = 3;
+    public int $tries = 20;
+
+    public int $maxExceptions = 3;
 
     public int $timeout = 1800;
 
@@ -48,13 +50,9 @@ class GenerateEstimateDraftJob implements ShouldQueue
     public function middleware(): array
     {
         return [
-            (new WithoutOverlapping('estimate-generation:draft:session:'.$this->sessionId))
+            (new WithoutOverlapping('estimate-generation:draft:session:'.$this->sessionId.':attempt:'.$this->attemptId))
                 ->releaseAfter(60)
-                ->expireAfter($this->timeout + 300),
-            (new WithoutOverlapping('estimate-generation:draft:'.$this->rateLimitKey()))
-                ->shared()
-                ->releaseAfter(120)
-                ->expireAfter($this->timeout + 300),
+                ->expireAfter(360),
             new RateLimited('estimate-generation-drafts'),
         ];
     }

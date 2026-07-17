@@ -8,14 +8,17 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateGenerationQueueBackpressureTest extends TestCase
 {
-    public function test_draft_generation_job_has_session_and_organization_backpressure(): void
+    public function test_draft_generation_job_scopes_overlap_to_the_current_attempt(): void
     {
         $source = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Jobs/GenerateEstimateDraftJob.php'));
 
         self::assertIsString($source);
-        self::assertStringContainsString('WithoutOverlapping', $source);
-        self::assertStringContainsString('estimate-generation:draft:session:', $source);
-        self::assertStringContainsString('estimate-generation:draft:', $source);
+        self::assertSame(2, substr_count($source, 'WithoutOverlapping'));
+        self::assertStringContainsString("'estimate-generation:draft:session:'.\$this->sessionId.':attempt:'.\$this->attemptId", $source);
+        self::assertStringNotContainsString('->shared()', $source);
+        self::assertStringContainsString('public int $tries = 20;', $source);
+        self::assertStringContainsString('public int $maxExceptions = 3;', $source);
+        self::assertStringContainsString('->expireAfter(360)', $source);
         self::assertStringContainsString("new RateLimited('estimate-generation-drafts')", $source);
         self::assertStringContainsString('public function rateLimitKey(): string', $source);
     }
