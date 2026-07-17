@@ -128,6 +128,31 @@ final class SessionBuildingModelBridgeTest extends TestCase
         self::assertSame(['floor-document-501-page-1'], array_column($model->toArray()['floors'], 'key'));
     }
 
+    #[Test]
+    public function unknown_sheet_with_detected_rooms_remains_a_floor_source(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
+        [$bridge] = $this->bridge();
+        $unit = $this->unkeyedVisionUnit(101, 501, 601, 'a', 'unknown-room');
+        $payload = $unit->payload;
+        $payload['vision_analysis']['sheet_type'] = 'unknown';
+
+        $model = $bridge->store($context, [new SessionBuildingModelUnitData(
+            $unit->unitId,
+            $unit->documentId,
+            $unit->pageId,
+            $unit->type,
+            $unit->index,
+            $unit->sourceVersion,
+            $unit->confidence,
+            $payload,
+        )]);
+
+        self::assertNotNull($model);
+        self::assertSame(1, $model->metrics['floor_count']);
+        self::assertSame(1, $model->metrics['room_count']);
+    }
+
     /** @return array{SessionBuildingModelBridge, BuildingModelRepository} */
     private function bridge(): array
     {

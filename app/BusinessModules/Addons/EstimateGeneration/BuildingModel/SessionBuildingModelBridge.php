@@ -117,6 +117,10 @@ final readonly class SessionBuildingModelBridge
     {
         $sheetType = $payload['sheet_type'] ?? null;
 
+        if ($sheetType === 'unknown' && $this->hasDetectedRoom($payload)) {
+            return false;
+        }
+
         return is_string($sheetType) && in_array($sheetType, [
             'elevation',
             'section',
@@ -126,6 +130,23 @@ final readonly class SessionBuildingModelBridge
             'photo',
             'unknown',
         ], true);
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function hasDetectedRoom(array $payload): bool
+    {
+        $elements = $payload['elements'] ?? null;
+        if (! is_array($elements)) {
+            return false;
+        }
+
+        foreach ($elements as $element) {
+            if (is_array($element) && ($element['type'] ?? null) === 'room') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @param array<string, mixed> $payload */
