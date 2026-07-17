@@ -19,6 +19,8 @@ final class AcceptedQuantityEvidenceContractTest extends TestCase
         self::assertStringContainsString('AcceptedQuantityEvidenceMaterializer', $stage);
         self::assertStringNotContainsString('quantity_evidence_descriptor', $stage);
         self::assertStringContainsString("\$quantityOutput['building_quantities']['quantities']", $stage);
+        self::assertStringContainsString('WorkItemQuantityMapper', $stage);
+        self::assertStringContainsString('->map($quantityKey, $quantities)', $stage);
         self::assertStringContainsString("'quantity_evidence'", $stage);
         self::assertStringContainsString("'quantity_mapping_missing'", $stage);
         self::assertFileExists($root.'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/AcceptedQuantityEvidenceMaterializer.php');
@@ -99,7 +101,7 @@ final class AcceptedQuantityEvidenceContractTest extends TestCase
         $quantity = [
             'key' => 'finish.floor', 'unit' => 'm2', 'amount' => '123456789.123456789123456789',
             'formula_key' => 'floor.net_area', 'formula_version' => 'v2',
-            'formula_inputs' => ['gross' => '123456790'], 'source' => 'derived',
+            'formula_inputs' => ['gross' => '123456790'], 'source' => 'evidenced',
             'evidence_ids' => ['evidence:page:1'], 'model_version' => 'building-model:v1',
             'assumptions' => [], 'review_blockers' => [],
         ];

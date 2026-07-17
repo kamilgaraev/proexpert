@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 
 final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
 {
@@ -21,6 +22,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private WorkPlanCompiler $compiler,
         private StageResultFactory $results,
         private AcceptedQuantityEvidenceMaterializer $acceptedEvidence,
+        private WorkItemQuantityMapper $quantityMapper = new WorkItemQuantityMapper,
     ) {}
 
     public function stage(): ProcessingStage
@@ -48,9 +50,8 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
-                    $mapped = $this->attachCanonicalQuantity($item, $quantities);
-                    $quantityKey = $mapped['metadata']['quantity_key'] ?? null;
-                    $quantity = is_string($quantityKey) ? ($quantities[$quantityKey] ?? null) : null;
+                    $mapped = $this->attachCanonicalQuantity($item, $quantities, $this->quantityMapper);
+                    $quantity = $mapped['quantity_evidence'] ?? null;
                     if (is_array($quantity) && ($quantity['review_blockers'] ?? []) === []) {
                         $node = $this->acceptedEvidence->materialize($context, QuantityData::fromArray($quantity), $mapped);
                         $mapped['quantity_evidence_id'] = $node->id;
@@ -67,10 +68,15 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         ]);
     }
 
-    private function attachCanonicalQuantity(array $workItem, array $quantities): array
-    {
+    private function attachCanonicalQuantity(
+        array $workItem,
+        array $quantities,
+        ?WorkItemQuantityMapper $quantityMapper = null
+    ): array {
         $quantityKey = $workItem['metadata']['quantity_key'] ?? null;
-        $quantity = is_string($quantityKey) ? ($quantities[$quantityKey] ?? null) : null;
+        $quantity = is_string($quantityKey)
+            ? ($quantityMapper ?? new WorkItemQuantityMapper)->map($quantityKey, $quantities)?->toArray()
+            : null;
         if (! is_array($quantity)) {
             unset($workItem['quantity'], $workItem['quantity_evidence']);
             $workItem['pricing_status'] = 'not_calculated';
@@ -86,6 +92,14 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         $workItem['quantity'] = $quantity['amount'];
         $workItem['unit'] = $quantity['unit'];
         $workItem['quantity_evidence'] = $quantity;
+        $workItem['validation_flags'] = array_values(array_filter(
+            is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : [],
+            static fn (string $flag): bool => ! in_array($flag, [
+                'document_takeoff_required',
+                'quantity_mapping_missing',
+                'requires_quantity_review',
+            ], true)
+        ));
         if ($quantity['review_blockers'] !== []) {
             $workItem['pricing_status'] = 'not_calculated';
             $workItem['pricing_blocker'] = 'quantity_review_required';
@@ -94,6 +108,11 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 ...$quantity['review_blockers'],
                 'requires_quantity_review',
             ]));
+        } elseif (in_array($workItem['pricing_blocker'] ?? null, [
+            'quantity_mapping_missing',
+            'quantity_review_required',
+        ], true)) {
+            $workItem['pricing_blocker'] = 'normative_required';
         }
 
         return $workItem;
