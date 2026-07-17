@@ -215,6 +215,61 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         }
     }
 
+    public function test_house_ventilation_does_not_include_office_or_warehouse_air_distributors(): void
+    {
+        $localEstimate = $this->localEstimate('ventilation', 'Вентиляция', 'ventilation', 12);
+        $items = $this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'object' => [
+                    'object_type' => 'house_with_garage',
+                    'building_type' => 'custom',
+                    'description' => 'Индивидуальный жилой дом площадью 180 м2. Вентиляция. В служебном шаблоне упомянуты офис и склад.',
+                ],
+                'document_context' => [
+                    'context_text' => 'Вентиляция дома. В служебном шаблоне упомянуты офис и склад.',
+                    'scope_inferences' => [[
+                        'inference_type' => 'specification_takeoff',
+                        'scope_type' => 'ventilation',
+                        'title' => 'Воздухораспределители офиса',
+                        'confidence' => 0.91,
+                        'source_refs' => [[
+                            'type' => 'drawing',
+                            'filename' => 'ОВ.pdf',
+                            'page_number' => 2,
+                        ]],
+                        'normalized_payload' => [
+                            'quantity_key' => 'ventilation.office_points',
+                            'quantity_value' => 8,
+                            'unit' => 'шт',
+                        ],
+                    ]],
+                    'quantity_takeoffs' => [[
+                        'quantity_key' => 'ventilation.air_exchange',
+                        'name' => 'Приточно-вытяжная вентиляция',
+                        'unit' => 'м',
+                        'quantity' => 54,
+                        'source_refs' => [[
+                            'type' => 'drawing',
+                            'filename' => 'ОВ.pdf',
+                            'page_number' => 1,
+                        ]],
+                        'normalized_payload' => [
+                            'quantity_key' => 'ventilation.air_exchange',
+                            'review_required' => false,
+                        ],
+                    ]],
+                ],
+            ]
+        );
+        $names = array_column($items, 'name');
+
+        self::assertContains('Приточно-вытяжная вентиляция', $names);
+        self::assertNotContains('Воздухораспределители офиса', $names);
+        self::assertNotContains('Воздухораспределители склада', $names);
+    }
+
     public function test_unknown_custom_scope_does_not_create_generic_complex_work(): void
     {
         $localEstimate = $this->localEstimate('local-custom', 'Основные строительные работы', 'custom', 12);
@@ -355,6 +410,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             foreach ($pricedItems as $pricedItem) {
                 if (($pricedItem['metadata']['quantity_source'] ?? null) === 'planner_fallback') {
                     self::assertContains('document_takeoff_required', $pricedItem['validation_flags'], $packageKey);
+
                     continue;
                 }
 
@@ -390,7 +446,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                 self::assertNotSame(
                     $genericOperations,
                     array_values($item['work_composition'] ?? []),
-                    $packageKey . ':' . ($item['quantity_formula'] ?? $item['key'])
+                    $packageKey.':'.($item['quantity_formula'] ?? $item['key'])
                 );
             }
         }
@@ -1042,7 +1098,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             'target_items_min' => $targetMin,
             'target_items_max' => $targetMin + 20,
             'sections' => [[
-                'key' => $key . '-section',
+                'key' => $key.'-section',
                 'title' => $title,
                 'construction_part' => $scopeType,
                 'source_refs' => [],
@@ -1051,7 +1107,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
     }
 
     /**
-     * @param array<int, array<string, mixed>> $items
+     * @param  array<int, array<string, mixed>>  $items
      * @return array<int, array<string, mixed>>
      */
     private function pricedItems(array $items): array
@@ -1062,8 +1118,8 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
     private function planner(): NormativeWorkItemPlannerService
     {
         return new NormativeWorkItemPlannerService(
-            new ProjectDocumentNormativeReferenceExtractor(),
-            new EstimatorScopeInferenceService(),
+            new ProjectDocumentNormativeReferenceExtractor,
+            new EstimatorScopeInferenceService,
         );
     }
 
@@ -1143,7 +1199,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             'external_networks' => ['networks.external', 'м', 42.5],
             'siteworks' => ['siteworks.area', 'м2', 120],
             'roads' => ['warehouse.roads', 'м2', 180],
-            default => throw new \InvalidArgumentException('Unsupported package key: ' . $packageKey),
+            default => throw new \InvalidArgumentException('Unsupported package key: '.$packageKey),
         };
 
         return [

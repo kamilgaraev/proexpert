@@ -14,7 +14,7 @@ class PackagePlannerService
 {
     public function plan(ObjectProfileData $profile): PackagePlanData
     {
-        if ($this->isPlanOnlyGeometry($profile) && !$this->usesAiAssistedHouseExpansion($profile)) {
+        if ($this->isPlanOnlyGeometry($profile) && ! $this->usesAiAssistedHouseExpansion($profile)) {
             $packages = $this->floorPlanEvidencePackages($profile);
         } elseif ($this->isDocumentEvidenceOnly($profile)) {
             $packages = $this->documentEvidencePackages($profile);
@@ -58,7 +58,7 @@ class PackagePlannerService
     }
 
     /**
-     * @param array<string, mixed> $analysis
+     * @param  array<string, mixed>  $analysis
      */
     public function profileFromAnalysis(array $analysis): ObjectProfileData
     {
@@ -90,17 +90,15 @@ class PackagePlannerService
         $hasExplicitObjectType = $objectType !== '' && $objectType !== 'custom';
         $hasExplicitBuildingType = $buildingType !== '' && $buildingType !== 'custom';
 
-        if ($this->containsResidentialObjectSignal($buildingType)) {
+        if (ObjectTypeSignalClassifier::isResidential($buildingType) || ObjectTypeSignalClassifier::isResidential($type)) {
             $type = 'house';
         } elseif (str_contains($type, 'mixed_warehouse_office') || (($hasWarehouse || $hasIndustrial) && $hasOffice)) {
             $type = 'mixed_warehouse_office';
         } elseif ($hasWarehouse || $hasIndustrial || str_contains($type, 'industrial')) {
             $type = 'warehouse';
-        } elseif ($this->containsResidentialObjectSignal($type)) {
-            $type = 'house';
         } elseif (($planningSignals['plan_only_geometry'] ?? false) === true) {
             $type = 'floor_plan_geometry';
-        } elseif (!$hasExplicitObjectType && !$hasExplicitBuildingType && $this->hasDocumentQuantityEvidence($planningSignals)) {
+        } elseif (! $hasExplicitObjectType && ! $hasExplicitBuildingType && $this->hasDocumentQuantityEvidence($planningSignals)) {
             $type = 'document_evidence';
         }
 
@@ -151,7 +149,7 @@ class PackagePlannerService
     private function isHouse(ObjectProfileData $profile): bool
     {
         return mb_strtolower($profile->objectType) === 'house'
-            || $this->containsResidentialObjectSignal(mb_strtolower($profile->objectType));
+            || ObjectTypeSignalClassifier::isResidential($profile->objectType);
     }
 
     private function usesAiAssistedHouseExpansion(ObjectProfileData $profile): bool
@@ -166,7 +164,7 @@ class PackagePlannerService
     }
 
     /**
-     * @param array<string, mixed> $analysis
+     * @param  array<string, mixed>  $analysis
      */
     private function generationModeFromAnalysis(array $analysis): EstimateGenerationMode
     {
@@ -176,17 +174,12 @@ class PackagePlannerService
     }
 
     /**
-     * @param array<string, mixed> $planningSignals
+     * @param  array<string, mixed>  $planningSignals
      */
     private function hasDocumentQuantityEvidence(array $planningSignals): bool
     {
         return ($planningSignals['document_quantity_evidence'] ?? false) === true
             || (is_array($planningSignals['quantity_keys'] ?? null) && $planningSignals['quantity_keys'] !== []);
-    }
-
-    private function containsResidentialObjectSignal(string $text): bool
-    {
-        return preg_match('/(?:^|[^\p{L}\p{N}])(?:ижс|жил\p{L}*|дом|house|residential)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
     }
 
     private function containsWarehouseObjectSignal(string $text): bool
@@ -285,12 +278,12 @@ class PackagePlannerService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $packages
+     * @param  array<int, array<string, mixed>>  $packages
      * @return array<int, array<string, mixed>>
      */
     private function withOptionalSitePackages(array $packages, ObjectProfileData $profile): array
     {
-        if ($this->isPlanOnlyGeometry($profile) && !$this->usesAiAssistedHouseExpansion($profile)) {
+        if ($this->isPlanOnlyGeometry($profile) && ! $this->usesAiAssistedHouseExpansion($profile)) {
             return $packages;
         }
 
@@ -312,12 +305,12 @@ class PackagePlannerService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $packages
+     * @param  array<int, array<string, mixed>>  $packages
      * @return array<int, array<string, mixed>>
      */
     private function withReviewPackages(array $packages, ObjectProfileData $profile): array
     {
-        if (!$this->hasPlanningSignal($profile, 'unmapped_quantity_rows')) {
+        if (! $this->hasPlanningSignal($profile, 'unmapped_quantity_rows')) {
             return $packages;
         }
 
@@ -428,7 +421,7 @@ class PackagePlannerService
     }
 
     /**
-     * @param array<string, mixed> $analysis
+     * @param  array<string, mixed>  $analysis
      * @return array<string, mixed>
      */
     private function planningSignalsFromAnalysis(array $analysis, string $description): array
@@ -446,7 +439,7 @@ class PackagePlannerService
         }
 
         foreach (($detectedStructure['scopes'] ?? []) as $scope) {
-            if (!is_array($scope)) {
+            if (! is_array($scope)) {
                 continue;
             }
 
@@ -492,7 +485,7 @@ class PackagePlannerService
     }
 
     /**
-     * @param array<string, mixed> $analysis
+     * @param  array<string, mixed>  $analysis
      * @return array<int, string>
      */
     private function quantityKeysFromAnalysis(array $analysis): array
@@ -501,7 +494,7 @@ class PackagePlannerService
         $keys = [];
 
         foreach ($documentContext['quantity_takeoffs'] ?? [] as $takeoff) {
-            if (!is_array($takeoff)) {
+            if (! is_array($takeoff)) {
                 continue;
             }
 
@@ -514,7 +507,7 @@ class PackagePlannerService
         }
 
         foreach ($documentContext['scope_inferences'] ?? [] as $inference) {
-            if (!is_array($inference)) {
+            if (! is_array($inference)) {
                 continue;
             }
 
@@ -530,11 +523,11 @@ class PackagePlannerService
     }
 
     /**
-     * @param array<int, string> $quantityKeys
+     * @param  array<int, string>  $quantityKeys
      */
     private function hasPlanOnlyGeometryEvidence(array $quantityKeys, string $haystack): bool
     {
-        if (!$this->hasAnyQuantityKey($quantityKeys, ['rough.floor', 'finish.floor', 'rough.walls', 'finish.baseboard', 'office.ceiling'])) {
+        if (! $this->hasAnyQuantityKey($quantityKeys, ['rough.floor', 'finish.floor', 'rough.walls', 'finish.baseboard', 'office.ceiling'])) {
             return false;
         }
 
@@ -543,8 +536,8 @@ class PackagePlannerService
     }
 
     /**
-     * @param array<int, string> $quantityKeys
-     * @param array<int, string> $needles
+     * @param  array<int, string>  $quantityKeys
+     * @param  array<int, string>  $needles
      */
     private function hasAnyQuantityKey(array $quantityKeys, array $needles): bool
     {
@@ -552,7 +545,7 @@ class PackagePlannerService
     }
 
     /**
-     * @param array<int, string> $quantityKeys
+     * @param  array<int, string>  $quantityKeys
      */
     private function hasQuantityPrefix(array $quantityKeys, string $prefix): bool
     {
@@ -667,7 +660,7 @@ class PackagePlannerService
     }
 
     /**
-     * @param array<string, mixed> $package
+     * @param  array<string, mixed>  $package
      * @return array<string, mixed>
      */
     private function packagePayload(array $package, int $index): array
@@ -705,7 +698,7 @@ class PackagePlannerService
     }
 
     /**
-     * @param array<string, mixed> $regionalContext
+     * @param  array<string, mixed>  $regionalContext
      */
     private function quarterKey(array $regionalContext): ?string
     {
@@ -714,7 +707,7 @@ class PackagePlannerService
         }
 
         if (($regionalContext['year'] ?? null) !== null && ($regionalContext['quarter'] ?? null) !== null) {
-            return (int) $regionalContext['year'] . '-q' . (int) $regionalContext['quarter'];
+            return (int) $regionalContext['year'].'-q'.(int) $regionalContext['quarter'];
         }
 
         return null;

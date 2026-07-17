@@ -166,6 +166,30 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertNotContains('industrial_floor', $keys);
     }
 
+    public function test_profile_from_analysis_keeps_explicit_house_type_over_office_and_warehouse_context(): void
+    {
+        $analysis = [
+            'object' => [
+                'object_type' => 'house',
+                'building_type' => 'custom',
+                'description' => 'Индивидуальный жилой дом площадью 180 м2.',
+                'area' => 180,
+            ],
+            'document_context' => [
+                'context_text' => 'В документах встречаются служебные шаблоны офиса и склада.',
+            ],
+        ];
+
+        $profile = $this->planner()->profileFromAnalysis($analysis);
+        $plan = $this->planner()->plan($profile);
+        $keys = array_column($plan->packages, 'key');
+
+        $this->assertSame('house', $profile->objectType);
+        $this->assertContains('foundation', $keys);
+        $this->assertNotContains('industrial_floor', $keys);
+        $this->assertNotContains('office_partitions', $keys);
+    }
+
     public function test_plan_only_geometry_uses_only_evidence_backed_fitout_packages(): void
     {
         $analysis = [
@@ -388,7 +412,7 @@ class PackagePlannerServiceTest extends TestCase
 
     private function planner(): PackagePlannerService
     {
-        return new PackagePlannerService();
+        return new PackagePlannerService;
     }
 
     /**

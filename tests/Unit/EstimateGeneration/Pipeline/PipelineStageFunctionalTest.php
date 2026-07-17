@@ -69,7 +69,7 @@ final class PipelineStageFunctionalTest extends TestCase
 
             public function source(PipelineContext $context): array
             {
-                return ['input' => ['description' => 'Одноэтажный дом 80 м2'], 'documents' => [], 'user_id' => 7];
+                return ['input' => ['description' => 'Одноэтажный дом', 'area' => 80], 'documents' => [], 'user_id' => 7];
             }
         };
         $matcher = $this->createMock(ResourceAssemblyService::class);
@@ -137,6 +137,21 @@ final class PipelineStageFunctionalTest extends TestCase
             self::assertSame($context->stage, $result?->stage);
         }
         self::assertNull($resolver->next($seed));
+        $planned = $state->priorOutputs($seed)->payload(ProcessingStage::PlanWorkItems);
+        $floorItems = [];
+        foreach ($planned['local_estimates'] as $localEstimate) {
+            foreach ($localEstimate['sections'] as $section) {
+                foreach ($section['work_items'] as $workItem) {
+                    if (($workItem['metadata']['quantity_key'] ?? null) === 'finish.floor') {
+                        $floorItems[] = $workItem;
+                    }
+                }
+            }
+        }
+        self::assertNotEmpty($floorItems);
+        self::assertSame('80.000000', $floorItems[0]['quantity']);
+        self::assertSame('quantity_review_required', $floorItems[0]['pricing_blocker']);
+
         $payload = $state->priorOutputs($seed)->payload(ProcessingStage::ValidateDraft);
         self::assertArrayHasKey('quality_summary', $payload['draft']);
     }

@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\AnalysisFloorAreaQuantityFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 
@@ -23,6 +24,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private StageResultFactory $results,
         private AcceptedQuantityEvidenceMaterializer $acceptedEvidence,
         private WorkItemQuantityMapper $quantityMapper = new WorkItemQuantityMapper,
+        private AnalysisFloorAreaQuantityFactory $analysisFloorArea = new AnalysisFloorAreaQuantityFactory,
     ) {}
 
     public function stage(): ProcessingStage
@@ -46,6 +48,12 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             }
             $typed = QuantityData::fromArray($quantity)->toArray();
             $quantities[$typed['key']] = $typed;
+        }
+        if (! isset($quantities['floor_area'])) {
+            $floorArea = $this->analysisFloorArea->make($analysis);
+            if ($floorArea !== null) {
+                $quantities[$floorArea->key] = $floorArea->toArray();
+            }
         }
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {

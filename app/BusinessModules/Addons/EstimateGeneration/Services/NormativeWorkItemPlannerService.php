@@ -327,7 +327,27 @@ final class NormativeWorkItemPlannerService
             ),
         ];
 
-        return $definitions;
+        return array_values(array_filter(
+            $definitions,
+            fn (array $definition): bool => $this->definitionMatchesObject($definition, $analysis)
+        ));
+    }
+
+    private function definitionMatchesObject(array $definition, array $analysis): bool
+    {
+        $quantityKey = (string) ($definition['quantity_key'] ?? '');
+        if (! in_array($quantityKey, ['ventilation.office_points', 'ventilation.warehouse_points'], true)) {
+            return true;
+        }
+
+        $object = is_array($analysis['object'] ?? null) ? $analysis['object'] : [];
+        foreach ([$object['object_type'] ?? null, $object['building_type'] ?? null] as $type) {
+            if (is_string($type) && ObjectTypeSignalClassifier::isResidential($type)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
