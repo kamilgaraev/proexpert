@@ -10,7 +10,6 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Queue\Middleware\RateLimited;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Support\Facades\Log;
 
@@ -46,9 +45,8 @@ final class ProcessEstimateGenerationUnitJob implements ShouldQueue
     {
         return [
             (new WithoutOverlapping('estimate-generation:unit:'.$this->unitId))
-                ->releaseAfter(30)
+                ->dontRelease()
                 ->expireAfter($this->timeout + 120),
-            new RateLimited('estimate-generation-document-units'),
         ];
     }
 
@@ -77,7 +75,5 @@ final class ProcessEstimateGenerationUnitJob implements ShouldQueue
             'unit_id' => $this->unitId,
             'failure_fingerprint' => hash('sha256', $error::class),
         ]);
-
-        RecoverEstimateGenerationUnitsJob::dispatch()->delay(now()->addMinute());
     }
 }

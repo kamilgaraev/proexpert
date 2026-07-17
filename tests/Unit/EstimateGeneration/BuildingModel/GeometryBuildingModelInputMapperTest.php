@@ -152,4 +152,28 @@ final class GeometryBuildingModelInputMapperTest extends TestCase
         self::assertSame([502], $result->model->floors[0]->openings[0]->evidenceIds);
         self::assertTrue($result->model->metrics['complete']);
     }
+
+    public function test_degenerate_vector_lines_are_skipped_without_failing_the_document(): void
+    {
+        $vector = VectorGeometryData::fromArray([
+            'schema_version' => 1, 'runtime_version' => 'cad-geometry:v1;libredwg:0.13.4', 'source_fingerprint' => 'sha256:'.str_repeat('a', 64),
+            'source_unit' => 'm', 'unit_status' => 'confirmed', 'bounds' => [0, 0, 10, 10],
+            'layers' => [['name' => 'A-WALL', 'visible' => true]], 'blocks' => [],
+            'entities' => [
+                ['handle' => 'ZERO', 'type' => 'line', 'layer' => 'A-WALL', 'points' => [[5, 5], [5, 5]]],
+                ['handle' => 'ROOM', 'type' => 'lwpolyline', 'layer' => 'A-WALL', 'points' => [[0, 0], [4, 0], [4, 3], [0, 3]], 'closed' => true],
+            ],
+            'texts' => [], 'dimensions' => [], 'pages' => [], 'scale_candidates' => [], 'warnings' => [],
+        ]);
+
+        $result = (new GeometryBuildingModelInputMapper)->map(null, $vector, [
+            'vector:ZERO' => 601,
+            'vector:ROOM' => 602,
+        ]);
+
+        self::assertSame(['vector-room'], array_map(static fn ($element): string => $element->key, $result->geometry->elements));
+        self::assertSame('geometry_element_unsupported', $result->geometry->issues[0]['code']);
+        self::assertSame('vector-zero', $result->geometry->issues[0]['element_key']);
+        self::assertSame(['vector:ZERO'], $result->geometry->issues[0]['evidence_refs']);
+    }
 }

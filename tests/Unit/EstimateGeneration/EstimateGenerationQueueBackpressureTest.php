@@ -33,9 +33,11 @@ final class EstimateGenerationQueueBackpressureTest extends TestCase
         $unitSource = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Jobs/ProcessEstimateGenerationUnitJob.php'));
         self::assertIsString($unitSource);
         self::assertStringContainsString('estimate-generation:unit:', $unitSource);
-        self::assertStringContainsString("new RateLimited('estimate-generation-document-units')", $unitSource);
+        self::assertStringContainsString('->dontRelease()', $unitSource);
+        self::assertStringNotContainsString("new RateLimited('estimate-generation-document-units')", $unitSource);
         self::assertStringContainsString('private readonly int $unitId', $unitSource);
         self::assertStringContainsString('private readonly string $sourceVersion', $unitSource);
+        self::assertStringNotContainsString('RecoverEstimateGenerationUnitsJob::dispatch()', $unitSource);
     }
 
     public function test_module_provider_registers_queue_rate_limiters(): void

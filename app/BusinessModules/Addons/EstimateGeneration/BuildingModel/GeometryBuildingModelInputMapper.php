@@ -286,11 +286,15 @@ final readonly class GeometryBuildingModelInputMapper
 
                 continue;
             }
-            $elements[] = new FusedGeometryElementData(
-                $item->key, $item->type, $geometry, 'vision', $item->evidenceRef,
-                $locator['source_version'], $locator['page_number'], $locator['coordinate_space'],
-                'vision-contract:v1', $vision->modelVersion, $item->confidence, [], $locator['coordinate_space'],
-            );
+            try {
+                $elements[] = new FusedGeometryElementData(
+                    $item->key, $item->type, $geometry, 'vision', $item->evidenceRef,
+                    $locator['source_version'], $locator['page_number'], $locator['coordinate_space'],
+                    'vision-contract:v1', $vision->modelVersion, $item->confidence, [], $locator['coordinate_space'],
+                );
+            } catch (InvalidArgumentException) {
+                $issues[] = ['code' => 'geometry_element_unsupported', 'severity' => 'blocking', 'element_key' => $item->key, 'evidence_refs' => [$item->evidenceRef]];
+            }
         }
 
         return [$elements, $issues];
@@ -336,11 +340,16 @@ final readonly class GeometryBuildingModelInputMapper
             }
             $page = $this->vectorPageNumber($entity);
             $transform = 'source-units:v1';
-            $elements[] = new FusedGeometryElementData(
-                'vector-'.strtolower($entity['handle']), $geometryType, $geometry, 'vector', $reference,
-                $vector->sourceFingerprint, $page, 'source_units_v1', $vector->runtimeVersion,
-                $vector->runtimeVersion, 1.0, [], $transform,
-            );
+            $elementKey = 'vector-'.strtolower($entity['handle']);
+            try {
+                $elements[] = new FusedGeometryElementData(
+                    $elementKey, $geometryType, $geometry, 'vector', $reference,
+                    $vector->sourceFingerprint, $page, 'source_units_v1', $vector->runtimeVersion,
+                    $vector->runtimeVersion, 1.0, [], $transform,
+                );
+            } catch (InvalidArgumentException) {
+                $issues[] = ['code' => 'geometry_element_unsupported', 'severity' => 'blocking', 'element_key' => $elementKey, 'evidence_refs' => [$reference]];
+            }
         }
 
         return [$elements, $issues];
