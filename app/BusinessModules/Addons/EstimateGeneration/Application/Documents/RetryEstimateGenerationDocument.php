@@ -22,6 +22,7 @@ final class RetryEstimateGenerationDocument
         private EstimateGenerationMutationPolicy $policy,
         private ReconcileEstimateGenerationDocuments $reconciler,
         private DocumentGenerationReadinessService $readiness,
+        private EvidenceSourceReplacementInvalidator $evidenceInvalidator,
     ) {}
 
     public function handle(EstimateGenerationSession $session, EstimateGenerationDocument $document, int $expectedVersion, ?string $reason): DocumentActionResult
@@ -40,6 +41,16 @@ final class RetryEstimateGenerationDocument
                 throw ValidationException::withMessages(['document' => [trans_message('estimate_generation.document_retry_not_allowed')]]);
             }
 
+            $sourceVersion = (string) $lockedDocument->source_version;
+            if ($sourceVersion !== '') {
+                $this->evidenceInvalidator->invalidateReplacedDocumentSource(
+                    (int) $lockedDocument->organization_id,
+                    (int) $lockedDocument->project_id,
+                    (int) $lockedDocument->session_id,
+                    (int) $lockedDocument->getKey(),
+                    $sourceVersion,
+                );
+            }
             $lockedDocument->pages()->delete();
             $lockedDocument->processingUnits()->delete();
             $attemptId = (string) Str::uuid();

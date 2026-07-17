@@ -309,6 +309,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             || $this->database->table('estimate_generation_evidence')
                 ->where('organization_id', $page->organization_id)->where('project_id', $page->project_id)
                 ->where('session_id', $page->session_id)->whereNull('invalidated_at')
+                ->where('source_version', (string) $page->source_version)
                 ->whereRaw("locator->>'document_id' = ?", [(string) $page->document_id])
                 ->whereRaw("locator->>'page' = ?", [(string) $page->page_number])->exists();
     }

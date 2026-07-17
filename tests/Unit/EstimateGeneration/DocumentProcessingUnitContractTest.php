@@ -194,7 +194,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertStringNotContainsString('PipelineCheckpointStore', $source);
         self::assertStringContainsString('CreateDocumentProcessingUnits', $entrypoint);
         self::assertStringContainsString('DispatchDocumentProcessingUnits', $entrypoint);
-        self::assertStringContainsString('->forDocument($documentId, $baseInputVersion)', $entrypoint);
+        self::assertStringContainsString('->forDocument($documentId, $baseInputVersion, $priority)', $entrypoint);
         self::assertStringContainsString('PipelineCheckpointStore', $entrypoint);
         self::assertStringContainsString('PipelineStageOutput::create(', $entrypoint);
         self::assertStringContainsString('document_manifest_v1', $entrypoint);
@@ -744,6 +744,20 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertIsString($provider);
         self::assertStringContainsString('RecoverEstimateGenerationUnitsJob', $provider);
         self::assertStringContainsString('->everyMinute()', $provider);
+    }
+
+    #[Test]
+    public function manual_retry_invalidates_previous_document_evidence_before_recreating_pages(): void
+    {
+        $retry = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Application/Documents/RetryEstimateGenerationDocument.php');
+
+        self::assertIsString($retry);
+        self::assertStringContainsString('private EvidenceSourceReplacementInvalidator $evidenceInvalidator', $retry);
+        self::assertStringContainsString('$this->evidenceInvalidator->invalidateReplacedDocumentSource(', $retry);
+        self::assertLessThan(
+            strpos($retry, '$lockedDocument->pages()->delete()'),
+            strpos($retry, '$this->evidenceInvalidator->invalidateReplacedDocumentSource('),
+        );
     }
 
     private function processUnit(

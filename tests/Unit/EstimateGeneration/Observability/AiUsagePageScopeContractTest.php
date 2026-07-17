@@ -100,6 +100,7 @@ final class AiUsagePageScopeContractTest extends TestCase
         self::assertStringContainsString("throw new DocumentUnitProcessingException('unit_claim_lost')", (string) $source);
         self::assertStringContainsString('(new DocumentUnitExecutionOwnershipGuard)->assertOwned(', (string) $source);
         self::assertStringContainsString('(new DocumentUnitPageReservationPolicy)->assertReservable(', (string) $source);
+        self::assertStringContainsString("->where('source_version', (string) \$page->source_version)", (string) $source);
         self::assertStringContainsString("throw new DocumentUnitProcessingException('unit_page_lineage_conflict')", (string) $policy);
         self::assertStringNotContainsString('->updateOrCreate(', (string) $source);
         self::assertStringContainsString("throw new DocumentUnitProcessingException('unit_page_reservation_conflict')", (string) $policy);
