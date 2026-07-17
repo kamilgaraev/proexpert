@@ -19,7 +19,7 @@ final class BuildSessionSnapshot
         'processing_documents' => [EstimateGenerationAction::Cancel],
         'input_review_required' => [EstimateGenerationAction::ConfirmInput, EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel],
         'ready_to_generate' => [EstimateGenerationAction::Generate, EstimateGenerationAction::Cancel],
-        'generating' => [EstimateGenerationAction::Cancel],
+        'generating' => [EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel],
         'estimate_review_required' => [EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Cancel],
         'ready_to_apply' => [EstimateGenerationAction::Apply, EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Cancel],
         'failed' => [EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel, EstimateGenerationAction::Archive],

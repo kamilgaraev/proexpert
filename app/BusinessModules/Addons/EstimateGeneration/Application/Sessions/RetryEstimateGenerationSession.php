@@ -39,6 +39,9 @@ final class RetryEstimateGenerationSession
                 if ($session->status === EstimateGenerationStatus::InputReviewRequired) {
                     return $this->retryInputReview($session);
                 }
+                if ($session->status === EstimateGenerationStatus::Generating) {
+                    return $this->restartGeneration($session);
+                }
                 if ($session->status !== EstimateGenerationStatus::Failed) {
                     throw new InvalidEstimateGenerationState($session->status, 'retry');
                 }
@@ -147,6 +150,25 @@ final class RetryEstimateGenerationSession
     {
         $attemptId = ($this->attemptIdFactory)();
         $session = $this->workflow->transition($session, EstimateGenerationEvent::Retried, [
+            'processing_stage' => 'generating',
+            'processing_progress' => 40,
+            'last_error' => null,
+            'failure_code' => null,
+            'input_payload' => [
+                ...($session->input_payload ?? []),
+                'generation_attempt_id' => $attemptId,
+                'generation_requested' => false,
+            ],
+        ]);
+        $this->dispatcher->dispatchGeneration((int) $session->getKey(), (int) $session->state_version, $attemptId);
+
+        return $session;
+    }
+
+    private function restartGeneration(EstimateGenerationSession $session): EstimateGenerationSession
+    {
+        $attemptId = ($this->attemptIdFactory)();
+        $session = $this->workflow->update($session, [EstimateGenerationStatus::Generating], [
             'processing_stage' => 'generating',
             'processing_progress' => 40,
             'last_error' => null,

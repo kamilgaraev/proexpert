@@ -174,6 +174,18 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
+    public function generating_session_exposes_safe_restart_and_cancel(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::Generating),
+            permissions: ['estimate_generation.generate'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+
+        self::assertSame(['retry', 'cancel'], array_column($snapshot->availableActions, 'action'));
+    }
+
+    #[Test]
     public function applied_and_cancelled_sessions_expose_only_archive(): void
     {
         foreach ([EstimateGenerationStatus::Applied, EstimateGenerationStatus::Cancelled] as $status) {

@@ -35,6 +35,19 @@ final class RetryEstimateGenerationSessionTest extends TestCase
     }
 
     #[Test]
+    public function active_generating_session_can_be_restarted_with_a_new_fenced_attempt(): void
+    {
+        [$action, , $dispatcher] = $this->action($this->generating());
+
+        $result = $action->handle($this->command());
+
+        self::assertSame(EstimateGenerationStatus::Generating, $result->status);
+        self::assertSame(4, $result->state_version);
+        self::assertSame('attempt-new', $result->input_payload['generation_attempt_id']);
+        self::assertSame([[71, 4, 'attempt-new']], $dispatcher->generation);
+    }
+
+    #[Test]
     public function applying_retry_returns_to_ready_to_apply_without_dispatch(): void
     {
         [$action, , $dispatcher] = $this->action($this->failed(EstimateGenerationStatus::Applying));
@@ -222,6 +235,22 @@ final class RetryEstimateGenerationSessionTest extends TestCase
             'project_id' => 20,
             'status' => EstimateGenerationStatus::Failed,
             'resume_status' => $resume,
+            'state_version' => 3,
+            'input_payload' => ['generation_attempt_id' => 'attempt-old'],
+        ]);
+        $session->id = 71;
+        $session->exists = true;
+        $session->setRelation('documents', collect());
+
+        return $session;
+    }
+
+    private function generating(): EstimateGenerationSession
+    {
+        $session = new EstimateGenerationSession([
+            'organization_id' => 10,
+            'project_id' => 20,
+            'status' => EstimateGenerationStatus::Generating,
             'state_version' => 3,
             'input_payload' => ['generation_attempt_id' => 'attempt-old'],
         ]);
