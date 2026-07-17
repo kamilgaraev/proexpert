@@ -18,6 +18,8 @@ class NormativeCandidatePresenter
         return [
             'key' => $candidate['key'] ?? null,
             'norm_id' => $candidate['norm_id'] ?? null,
+            'catalog_source' => $candidate['catalog_source'] ?? 'estimate_norms',
+            'normative_rate_id' => $candidate['normative_rate_id'] ?? null,
             'code' => $candidate['code'] ?? null,
             'name' => $candidate['name'] ?? null,
             'unit' => $candidate['unit'] ?? null,

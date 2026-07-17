@@ -219,6 +219,9 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
             'position_number' => $position,
             'name' => $workItem['name'],
             'description' => $workItem['description'],
+            'normative_rate_id' => data_get($workItem, 'normative_match.catalog_source') === 'normative_rates'
+                ? data_get($workItem, 'normative_match.normative_rate_id')
+                : null,
             'normative_rate_code' => $this->draftService->normativeRateCode($workItem),
             'measurement_unit_id' => $this->resolveMeasurementUnitId((int) $session->organization_id, $workItem['unit']),
             'quantity' => $workItem['quantity'],

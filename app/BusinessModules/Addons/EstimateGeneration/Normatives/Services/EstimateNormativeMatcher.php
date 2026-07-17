@@ -39,16 +39,20 @@ class EstimateNormativeMatcher
 
     private readonly NormativeSearchProfileCatalog $searchProfileCatalog;
 
+    private readonly LegacyNormativeRateCatalogAdapter $legacyCatalogAdapter;
+
     public function __construct(
         ?NormativeCandidateSearchService $candidateSearchService = null,
         ?EstimateGenerationLearningEvidenceService $learningEvidenceService = null,
         ?WorkIntentClassifier $workIntentClassifier = null,
         ?NormativeSearchProfileCatalog $searchProfileCatalog = null,
+        ?LegacyNormativeRateCatalogAdapter $legacyCatalogAdapter = null,
     ) {
         $this->candidateSearchService = $candidateSearchService ?? app(NormativeCandidateSearchService::class);
         $this->learningEvidenceService = $learningEvidenceService ?? app(EstimateGenerationLearningEvidenceService::class);
         $this->workIntentClassifier = $workIntentClassifier ?? app(WorkIntentClassifier::class);
         $this->searchProfileCatalog = $searchProfileCatalog ?? app(NormativeSearchProfileCatalog::class);
+        $this->legacyCatalogAdapter = $legacyCatalogAdapter ?? app(LegacyNormativeRateCatalogAdapter::class);
     }
 
     /**
@@ -60,7 +64,7 @@ class EstimateNormativeMatcher
         $priceVersions = $this->latestPriceVersions($context);
 
         if ($version === null) {
-            return null;
+            return $this->legacyCatalogAdapter->search($workItem, $context, $limit);
         }
 
         $intent = $this->workIntentClassifier->classify($workItem, $context);
@@ -73,7 +77,7 @@ class EstimateNormativeMatcher
         $candidates = $this->candidateSearchService->search($version, $workItem, $context, $tokens, max($limit * 10, 50));
 
         if ($candidates->isEmpty()) {
-            return null;
+            return $this->legacyCatalogAdapter->search($workItem, $context, $limit);
         }
 
         $learningEvidence = $this->learningEvidenceService->summarizeForCandidates($candidates, $workItem, $context);
@@ -95,7 +99,7 @@ class EstimateNormativeMatcher
             ->all();
 
         if ($ranked === []) {
-            return null;
+            return $this->legacyCatalogAdapter->search($workItem, $context, $limit);
         }
 
         return [
@@ -133,7 +137,7 @@ class EstimateNormativeMatcher
         $priceVersions = $this->latestPriceVersions($context);
 
         if ($version === null) {
-            return null;
+            return $this->legacyCatalogAdapter->search($workItem, $context, $limit);
         }
 
         $intent = $this->workIntentClassifier->classify($workItem, $context);
@@ -155,7 +159,7 @@ class EstimateNormativeMatcher
         );
 
         if ($candidates->isEmpty()) {
-            return null;
+            return $this->legacyCatalogAdapter->search($workItem, $context, $limit);
         }
 
         $learningEvidence = $this->learningEvidenceService->summarizeForCandidates($candidates, $workItem, $context);
@@ -177,7 +181,7 @@ class EstimateNormativeMatcher
             ->all();
 
         if ($ranked === []) {
-            return null;
+            return $this->legacyCatalogAdapter->search($workItem, $context, $limit);
         }
 
         return [
@@ -215,7 +219,7 @@ class EstimateNormativeMatcher
         $priceVersions = $this->latestPriceVersions($context);
 
         if ($version === null) {
-            return null;
+            return $this->legacyCatalogAdapter->find($normId, $workItem, $context);
         }
 
         $norm = EstimateNorm::query()

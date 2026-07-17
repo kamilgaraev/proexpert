@@ -15,6 +15,11 @@ class ResolveRegionalPrice
 
     public function handle(array $resource, array $regionalContext): PriceSnapshotData
     {
+        $embeddedPrice = $resource['normative_ref']['embedded_price'] ?? null;
+        if (is_array($embeddedPrice)) {
+            return $this->embeddedCatalogPrice($resource, $regionalContext, $embeddedPrice);
+        }
+
         $priceId = $this->positiveInt($resource['price_id'] ?? $resource['normative_ref']['price_id'] ?? null);
         $regionId = $this->positiveInt($regionalContext['region_id'] ?? null);
         $zoneId = $this->positiveInt($regionalContext['price_zone_id'] ?? null);
@@ -48,6 +53,42 @@ class ResolveRegionalPrice
                 ->multipliedBy(BigDecimal::of((string) ($resource['quantity'] ?? '0')))
                 ->toScale(2, RoundingMode::HalfUp),
             currency: (string) ($payload['currency'] ?? 'RUB'),
+            capturedAt: now()->toIso8601String(),
+        );
+    }
+
+    /** @param array<string, mixed> $embeddedPrice */
+    private function embeddedCatalogPrice(array $resource, array $regionalContext, array $embeddedPrice): PriceSnapshotData
+    {
+        $sourceType = (string) ($embeddedPrice['source_type'] ?? '');
+        $rateId = $this->positiveInt($embeddedPrice['normative_rate_id'] ?? null);
+        $resourceId = $this->positiveInt($embeddedPrice['normative_rate_resource_id'] ?? null);
+        $baseAmount = BigDecimal::of((string) ($embeddedPrice['base_amount'] ?? '0'));
+
+        if ($sourceType !== 'normative_rate_base' || $rateId === null || $baseAmount->isLessThanOrEqualTo(0)) {
+            throw MissingRegionalPrice::forResource(0);
+        }
+
+        $quantity = BigDecimal::of((string) ($resource['quantity'] ?? '0'));
+
+        return new PriceSnapshotData(
+            regionId: $this->positiveInt($regionalContext['region_id'] ?? null) ?? 0,
+            zoneId: $this->positiveInt($regionalContext['price_zone_id'] ?? null) ?? 0,
+            periodId: $this->positiveInt($regionalContext['period_id'] ?? null) ?? 0,
+            versionId: $rateId,
+            sourceType: $sourceType,
+            sourceReference: $resourceId !== null
+                ? 'normative_rate_resources:'.$resourceId
+                : 'normative_rates:'.$rateId,
+            baseAmount: (string) $baseAmount->toScale(4, RoundingMode::HalfUp),
+            coefficients: [
+                'quantity' => (string) $quantity->toScale(6, RoundingMode::HalfUp),
+                'base_year' => $embeddedPrice['base_year'] ?? null,
+            ],
+            finalAmount: (string) $baseAmount
+                ->multipliedBy($quantity)
+                ->toScale(2, RoundingMode::HalfUp),
+            currency: (string) ($embeddedPrice['currency'] ?? 'RUB'),
             capturedAt: now()->toIso8601String(),
         );
     }
