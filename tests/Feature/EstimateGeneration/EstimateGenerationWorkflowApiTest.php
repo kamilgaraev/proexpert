@@ -176,6 +176,29 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
         self::assertSame(0, $readiness->evaluations);
     }
 
+    #[Test]
+    public function session_snapshot_exposes_confirm_input_for_user_with_review_permission(): void
+    {
+        $session = $this->makeSession(41);
+        $session->forceFill([
+            'status' => EstimateGenerationStatus::InputReviewRequired,
+            'processing_stage' => 'input_review_required',
+        ]);
+        $user = new TestPermissionUser(['estimate_generation.review']);
+        $request = Request::create('/api/v1/admin/projects/17/estimate-generation/sessions/41', 'GET');
+        $request->setUserResolver(static fn (): User => $user);
+
+        $permissions = EstimateGenerationSessionListResource::permissions($request, $session);
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $session,
+            permissions: $permissions,
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+
+        self::assertContains('estimate_generation.review', $permissions);
+        self::assertContains('confirm_input', array_column($snapshot->availableActions, 'action'));
+    }
+
     private function makeSession(int $id): EstimateGenerationSession
     {
         $session = new EstimateGenerationSession;

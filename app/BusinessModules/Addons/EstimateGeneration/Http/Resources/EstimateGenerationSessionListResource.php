@@ -46,6 +46,7 @@ final class EstimateGenerationSessionListResource extends JsonResource
         foreach ([
             'estimate_generation.upload_documents',
             'estimate_generation.generate',
+            'estimate_generation.review',
             'estimate_generation.view',
             'estimate_generation.apply',
             'estimate_generation.export',
