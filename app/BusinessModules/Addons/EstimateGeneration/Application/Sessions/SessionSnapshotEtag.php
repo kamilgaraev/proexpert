@@ -6,13 +6,16 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 final class SessionSnapshotEtag
 {
+    private const REPRESENTATION_VERSION = 'v2';
+
     public static function forRevision(int $organizationId, int $sessionId, string $revision): string
     {
         return sprintf(
-            '"eg-snapshot-%d-%d-%s"',
+            '"eg-snapshot-%s-%d-%d-%s"',
+            self::REPRESENTATION_VERSION,
             $organizationId,
             $sessionId,
-            hash('sha256', $organizationId."\0".$sessionId."\0".$revision),
+            hash('sha256', self::REPRESENTATION_VERSION."\0".$organizationId."\0".$sessionId."\0".$revision),
         );
     }
 

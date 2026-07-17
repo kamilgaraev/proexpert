@@ -16,7 +16,11 @@ final class SessionSnapshotEtagTest extends TestCase
     {
         $etag = SessionSnapshotEtag::forRevision(17, 41, 'sha256:'.str_repeat('a', 64));
 
-        self::assertMatchesRegularExpression('/^"eg-snapshot-17-41-[0-9a-f]{64}"$/', $etag);
+        self::assertMatchesRegularExpression('/^"eg-snapshot-v2-17-41-[0-9a-f]{64}"$/', $etag);
+        self::assertFalse(SessionSnapshotEtag::matches(
+            '"eg-snapshot-17-41-'.hash('sha256', "17\0"."41\0".'sha256:'.str_repeat('a', 64)).'"',
+            $etag,
+        ));
         self::assertNotSame($etag, SessionSnapshotEtag::forRevision(18, 41, 'sha256:'.str_repeat('a', 64)));
         self::assertNotSame($etag, SessionSnapshotEtag::forRevision(17, 42, 'sha256:'.str_repeat('a', 64)));
     }
