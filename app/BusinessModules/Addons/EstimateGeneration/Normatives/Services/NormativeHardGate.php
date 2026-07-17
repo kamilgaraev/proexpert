@@ -8,6 +8,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandid
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateSetData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\RejectedNormativeCandidateData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClassifier;
 
 final class NormativeHardGate
 {
@@ -41,27 +43,45 @@ final class NormativeHardGate
     /** @return list<string> */
     private function reasons(WorkIntentData $intent, NormativeCandidateData $candidate): array
     {
-        $checks = [
-            ['canonicalUnit', 'unit'], ['unitDimension', 'unit_dimension'], ['material', 'material'],
-            ['technology', 'technology'], ['structure', 'structure'], ['normativeSection', 'normative_section'],
-            ['objectType', 'object_type'], ['datasetVersion', 'dataset_version'], ['datasetStatus', 'dataset_status'],
-        ];
         $reasons = [];
-        foreach ($checks as [$property, $code]) {
-            if ($candidate->{$property} === null || $candidate->{$property} === '') {
+        if ($candidate->canonicalUnit === null || $candidate->canonicalUnit === '') {
+            $reasons[] = 'unit_unknown';
+        } elseif (! NormativeUnitNormalizer::compatible($intent->canonicalUnit, $candidate->canonicalUnit)) {
+            $reasons[] = 'unit_mismatch';
+        }
+        if ($candidate->unitDimension !== null && $candidate->unitDimension !== ''
+            && $intent->unitDimension !== '' && $candidate->unitDimension !== $intent->unitDimension) {
+            $reasons[] = 'unit_dimension_mismatch';
+        }
+        foreach ([
+            ['material', 'material'], ['technology', 'technology'], ['structure', 'structure'],
+        ] as [$property, $code]) {
+            if ($candidate->{$property} !== null && $candidate->{$property} !== ''
+                && $intent->{$property} !== '' && $candidate->{$property} !== $intent->{$property}) {
+                $reasons[] = $code.'_mismatch';
+            }
+        }
+        if ($candidate->normativeSection !== null && $candidate->normativeSection !== ''
+            && $intent->normativeSection !== ''
+            && ! str_starts_with($candidate->normativeSection, $intent->normativeSection)) {
+            $reasons[] = 'normative_section_mismatch';
+        }
+        if ($candidate->objectType !== null && $candidate->objectType !== '' && $intent->objectType !== ''
+            && ! ObjectTypeSignalClassifier::compatible($candidate->objectType, $intent->objectType)) {
+            $reasons[] = 'object_type_mismatch';
+        }
+        foreach ([['datasetVersion', 'dataset_version'], ['datasetStatus', 'dataset_status']] as [$property, $code]) {
+            if ($candidate->{$property} === '') {
                 $reasons[] = $code.'_unknown';
             } elseif ($candidate->{$property} !== $intent->{$property}) {
                 $reasons[] = $code.'_mismatch';
             }
         }
-        if ($intent->regionCode !== null && $candidate->regionCode === null) {
-            $reasons[] = 'region_unknown';
-        } elseif ($intent->regionCode !== null && $candidate->regionCode !== $intent->regionCode) {
+        if ($intent->regionCode !== null && $candidate->regionCode !== null && $candidate->regionCode !== $intent->regionCode) {
             $reasons[] = 'region_mismatch';
         }
-        if ($candidate->validFrom === null) {
-            $reasons[] = 'applicability_date_unknown';
-        } elseif ($candidate->validFrom > $intent->applicabilityDate || ($candidate->validTo !== null && $candidate->validTo < $intent->applicabilityDate)) {
+        if (($candidate->validFrom !== null && $candidate->validFrom > $intent->applicabilityDate)
+            || ($candidate->validTo !== null && $candidate->validTo < $intent->applicabilityDate)) {
             $reasons[] = 'applicability_date_mismatch';
         }
 

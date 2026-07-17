@@ -36,7 +36,10 @@ JOIN estimate_dataset_versions d ON d.id = c.dataset_version_id
 ORDER BY n.id
 SQL;
 
-    public function __construct(private ConnectionInterface $connection) {}
+    public function __construct(
+        private ConnectionInterface $connection,
+        private NormativeSearchQueryBuilder $queryBuilder = new NormativeSearchQueryBuilder,
+    ) {}
 
     public function find(int $organizationId, int $projectId, string $datasetVersion, string $query, int $limit, ?string $semanticIndexVersion): array
     {
@@ -45,10 +48,11 @@ SQL;
         if (! $ready) {
             throw new \RuntimeException('Normative retrieval rollout is incomplete.');
         }
+        $lexicalQuery = $this->queryBuilder->build($query);
         $rows = $this->connection->select(self::QUERY_CONTRACT, [
             'lexical_dataset_version' => $datasetVersion,
             'semantic_dataset_version' => $datasetVersion,
-            'query' => mb_substr($query, 0, 1000),
+            'query' => $lexicalQuery,
             'query_hash' => hash('sha256', mb_strtolower(trim($query))),
             'semantic_index_version' => $semanticIndexVersion,
             'lexical_limit' => min(128, max(1, $limit)),

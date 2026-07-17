@@ -32,7 +32,7 @@ final class NormativeHardGateTest extends TestCase
             'technology' => ['technology', 'монолитная', 'technology_mismatch'],
             'structure' => ['structure', 'фундамент', 'structure_mismatch'],
             'section' => ['normativeSection', '06', 'normative_section_mismatch'],
-            'object' => ['objectType', 'промышленный', 'object_type_mismatch'],
+            'object' => ['objectType', 'warehouse', 'object_type_mismatch'],
             'version' => ['datasetVersion', 'v2', 'dataset_version_mismatch'],
             'status' => ['datasetStatus', 'draft', 'dataset_status_mismatch'],
             'region' => ['regionCode', '77', 'region_mismatch'],
@@ -41,9 +41,69 @@ final class NormativeHardGateTest extends TestCase
 
     public function test_unknown_required_compatibility_data_is_rejected_closed(): void
     {
-        $set = (new NormativeHardGate)->filter($this->intent(), [$this->candidate(['material' => null])]);
+        $set = (new NormativeHardGate)->filter($this->intent(), [$this->candidate(['canonicalUnit' => null])]);
 
-        self::assertSame(['material_unknown'], $set->rejected[0]->reasonCodes);
+        self::assertSame(['unit_unknown'], $set->rejected[0]->reasonCodes);
+    }
+
+    public function test_scaled_compatible_unit_and_missing_optional_catalog_metadata_are_accepted(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'work-1', 'Разработка грунта под фундаменты', 'm3', 'volume', '',
+            'excavation', 'foundation', '01', 'residential', 'v1', 'published', '16',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'],
+        );
+        $candidate = $this->candidate([
+            'canonicalUnit' => '1000 м3', 'unitDimension' => null, 'material' => null,
+            'technology' => null, 'structure' => null, 'normativeSection' => null,
+            'objectType' => 'residential', 'regionCode' => null, 'validFrom' => null,
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
+        self::assertSame([], $set->rejected);
+    }
+
+    public function test_normative_subsection_is_compatible_with_preferred_section_prefix(): void
+    {
+        $set = (new NormativeHardGate)->filter($this->intent(), [$this->candidate([
+            'normativeSection' => '08-01',
+        ])]);
+
+        self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
+    }
+
+    public function test_house_and_residential_object_types_are_compatible(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'work-1', 'Кладка стены', 'м2', 'area', 'кирпич', 'кладка', 'стена',
+            '08', 'house', 'v1', 'published', '78', new DateTimeImmutable('2026-01-01'), ['doc:1'],
+        );
+
+        $set = (new NormativeHardGate)->filter($intent, [$this->candidate(['objectType' => 'residential'])]);
+
+        self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
+    }
+
+    public function test_mixed_office_warehouse_object_accepts_both_zone_norm_types(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'work-1', 'Монтаж вентиляции', 'м2', 'area', '', 'installation',
+            'engineering', '20', 'mixed_warehouse_office', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'],
+        );
+        $base = [
+            'material' => null, 'technology' => null, 'structure' => null,
+            'normativeSection' => '20-01',
+        ];
+
+        $set = (new NormativeHardGate)->filter($intent, [
+            $this->candidate([...$base, 'id' => 'office', 'objectType' => 'office']),
+            $this->candidate([...$base, 'id' => 'warehouse', 'objectType' => 'warehouse']),
+        ]);
+
+        self::assertSame(['office', 'warehouse'], array_map(static fn ($row): string => $row->id, $set->candidates));
     }
 
     public function test_combined_reasons_and_evidence_are_retained(): void

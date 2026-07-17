@@ -144,6 +144,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("'resources.id as norm_resource_id'", $source);
         self::assertStringContainsString('resolveForIntents', $source);
         self::assertStringNotContainsString("->orderBy('norms.id')->limit(129)", $source);
+        self::assertStringNotContainsString("->where('norms.canonical_unit', \$unit)", $source);
     }
 
     #[Test]
@@ -169,6 +170,49 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertNull((new NormativeIntentCandidateRanker)->select($candidates, [[
             'search_text' => 'roof waterproofing', 'unit' => 'm2', 'code' => null,
         ]]));
+    }
+
+    #[Test]
+    public function scaled_catalog_unit_is_compatible_with_work_item_unit(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([(object) [
+            'id' => 101,
+            'code' => '01-01-006-01',
+            'name' => 'Разработка грунта в котлованах',
+            'canonical_unit' => '1000 м3',
+            'unit' => '1000 м3',
+        ]], [[
+            'search_text' => 'Разработка грунта под фундаменты',
+            'unit' => 'm3',
+            'code' => null,
+        ]]);
+
+        self::assertNotNull($selected);
+        self::assertSame([101], array_map(static fn (object $candidate): int => (int) $candidate->id, $selected));
+    }
+
+    #[Test]
+    public function sixty_four_distinct_intents_keep_a_bounded_candidate_pool(): void
+    {
+        $candidates = [];
+        $intents = [];
+        for ($intent = 1; $intent <= 64; $intent++) {
+            $intents[] = ['search_text' => 'intentcode'.$intent, 'unit' => 'm2', 'code' => null];
+            for ($variant = 1; $variant <= 3; $variant++) {
+                $candidates[] = (object) [
+                    'id' => ($intent * 10) + $variant,
+                    'code' => 'code-'.$intent.'-'.$variant,
+                    'name' => 'intentcode'.$intent.' variant'.$variant,
+                    'canonical_unit' => '100 м2',
+                    'unit' => '100 м2',
+                ];
+            }
+        }
+
+        $selected = (new NormativeIntentCandidateRanker)->select($candidates, $intents);
+
+        self::assertNotNull($selected);
+        self::assertLessThanOrEqual(128, count($selected));
     }
 
     #[Test]

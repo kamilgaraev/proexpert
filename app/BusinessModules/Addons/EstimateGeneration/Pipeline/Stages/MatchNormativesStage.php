@@ -66,6 +66,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         'scope_type' => $localEstimate['scope_type'] ?? null,
                         'local_estimate_title' => $localEstimate['title'] ?? null,
                         'section_title' => $section['title'] ?? null,
+                        'object_type' => $data['object_profile']['object_type'] ?? null,
                         'source_refs' => $section['source_refs'] ?? $localEstimate['source_refs'] ?? [],
                         'regional_context' => $regionalContext,
                         'applicability_date' => $applicabilityDate,

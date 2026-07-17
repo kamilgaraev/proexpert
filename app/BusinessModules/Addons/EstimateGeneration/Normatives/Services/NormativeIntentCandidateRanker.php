@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
+
 final readonly class NormativeIntentCandidateRanker
 {
     /** @param list<object> $candidates @param non-empty-list<array{search_text: string, unit: string, code?: string|null}> $intents @return list<object>|null */
@@ -22,7 +24,7 @@ final readonly class NormativeIntentCandidateRanker
             if ($ranked === []) {
                 return null;
             }
-            foreach (array_slice($ranked, 0, 16) as $row) {
+            foreach (array_slice($ranked, 0, 2) as $row) {
                 $selected[(int) $row[2]->id] = $row[2];
             }
         }
@@ -37,8 +39,8 @@ final readonly class NormativeIntentCandidateRanker
     /** @param array{search_text: string, unit: string, code?: string|null} $intent */
     private function score(object $candidate, array $intent): ?int
     {
-        $unit = mb_strtolower((string) ($candidate->canonical_unit ?: $candidate->unit));
-        if ($unit !== mb_strtolower($intent['unit'])) {
+        $unit = (string) ($candidate->canonical_unit ?: $candidate->unit);
+        if (! NormativeUnitNormalizer::compatible($unit, $intent['unit'])) {
             return null;
         }
         $name = mb_strtolower((string) $candidate->name);

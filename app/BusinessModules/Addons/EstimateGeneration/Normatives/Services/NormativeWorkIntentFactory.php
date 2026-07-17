@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateDecisionContextData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClassifier;
 use DateTimeImmutable;
 
 final class NormativeWorkIntentFactory
@@ -33,7 +34,8 @@ final class NormativeWorkIntentFactory
             (string) ($item['normative_search_text'] ?? $item['name'] ?? ''), (string) ($item['unit'] ?? ''),
             (string) ($classified['expected_dimensions'][0] ?? ''), (string) ($classified['material'] ?? ''),
             (string) ($classified['action'] ?? ''), (string) ($classified['scope'] ?? ''),
-            (string) ($classified['preferred_section_prefixes'][0] ?? ''), (string) ($classified['object'] ?? ''),
+            (string) ($classified['preferred_section_prefixes'][0] ?? ''),
+            ObjectTypeSignalClassifier::canonical((string) ($context['object_type'] ?? '')),
             $datasetVersion, 'parsed', $this->region($context), new DateTimeImmutable((string) $context['applicability_date']),
             $evidence,
         );

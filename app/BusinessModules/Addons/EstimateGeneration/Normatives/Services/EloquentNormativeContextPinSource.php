@@ -60,12 +60,9 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                         $query->orWhereRaw('LOWER(norms.name) LIKE ?', ['%'.$token.'%']);
                     }
                 })
-                ->where(function ($query) use ($unit): void {
-                    $query->where('norms.canonical_unit', $unit)->orWhere('norms.unit', $unit);
-                })
                 ->orderByRaw('CASE WHEN LOWER(norms.code) = ? THEN 0 WHEN LOWER(norms.name) = ? THEN 1 ELSE 2 END', [$code, $search])
                 ->orderBy('norms.id')
-                ->limit(16)
+                ->limit(128)
                 ->get([
                     'norms.id', 'norms.code', 'norms.name', 'norms.canonical_unit', 'norms.unit',
                     'norms.section_code', 'norms.section_name', 'norms.work_composition',
