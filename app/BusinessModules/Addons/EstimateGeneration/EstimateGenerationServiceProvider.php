@@ -81,6 +81,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGeneration
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ReconcileAiBudgetReservationsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationPipelinesJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationUnitsJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverStalledEstimateGenerationDocumentsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\BackfillNormativeRetrievalCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ClassifyEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
@@ -555,6 +556,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $this->app->booted(function (): void {
                 $this->app->make(Schedule::class)
                     ->job(new RecoverEstimateGenerationUnitsJob)
+                    ->everyMinute()
+                    ->withoutOverlapping();
+                $this->app->make(Schedule::class)
+                    ->job(new RecoverStalledEstimateGenerationDocumentsJob)
                     ->everyMinute()
                     ->withoutOverlapping();
                 $this->app->make(Schedule::class)

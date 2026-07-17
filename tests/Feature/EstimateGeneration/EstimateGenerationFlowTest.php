@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RecoverStalledEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
@@ -13,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGener
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateGenerationDraftRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
@@ -105,6 +107,28 @@ final class EstimateGenerationFlowTest extends TestCase
         $this->assertSame('generating', $session->processing_stage);
         $this->assertSame(40, $session->processing_progress);
         Queue::assertPushed(GenerateEstimateDraftJob::class);
+    }
+
+    public function test_stalled_queued_document_is_redispatched_to_dedicated_queue(): void
+    {
+        Queue::fake();
+
+        [, , $session] = $this->makeSession('processing_documents', 'processing_documents', 5);
+        $document = $this->makeDocument($session, 'queued');
+        $document->forceFill(['checksum_sha256' => str_repeat('a', 64)])->save();
+        EstimateGenerationDocument::query()
+            ->whereKey($document->getKey())
+            ->update(['updated_at' => now()->subMinutes(5)]);
+
+        $recovered = app(RecoverStalledEstimateGenerationDocuments::class)->handle();
+
+        $this->assertSame(1, $recovered);
+        Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class, static function (
+            ProcessEstimateGenerationDocumentJob $job
+        ): bool {
+            return $job->connection === ProcessEstimateGenerationDocumentJob::CONNECTION
+                && $job->queue === ProcessEstimateGenerationDocumentJob::QUEUE;
+        });
     }
 
     public function test_status_returns_progress_stage_labels_and_user_action(): void
