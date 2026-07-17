@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\AcceptedNormativeDecisionData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchTelemetry;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PinnedNormativeCandidateFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
@@ -73,6 +74,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
             ]);
         }
         $rerankRequested = is_array($regionalContext) && ($regionalContext['normative_rerank_requested'] ?? false) === true;
+        $telemetry = new NormativeMatchTelemetry;
         foreach ($data['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $workItem) {
@@ -98,12 +100,15 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
 
                         continue;
                     }
+                    $telemetry->required();
                     if (! is_string($datasetVersion) || $datasetVersion === '') {
+                        $telemetry->blocked('dataset_not_pinned');
                         $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->blocked($workItem, 'review_required', 'normative_dataset_not_pinned');
 
                         continue;
                     }
                     if (! is_string($applicabilityDate) || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $applicabilityDate) !== 1) {
+                        $telemetry->blocked('applicability_date_not_pinned');
                         $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->blocked($workItem, 'review_required', 'normative_applicability_date_not_pinned');
 
                         continue;
@@ -113,12 +118,19 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                     $catalogCandidates = is_array($pin['catalog_candidates'] ?? null) ? $pin['catalog_candidates'] : [];
                     $pinnedCandidates = $this->pinnedCandidates->forWorkItem($catalogCandidates, $workItem);
                     if ($pinnedCandidates === []) {
+                        $telemetry->missingPinnedCandidate();
                         $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->blocked($workItem, 'review_required', 'normative_not_found');
 
                         continue;
                     }
+                    $telemetry->pinnedCandidatesFound(count($pinnedCandidates));
                     $result = $this->workflow->match($intent, $decision, $rerankRequested, $pinnedCandidates);
                     if (in_array($result->status, ['review_required', 'unavailable'], true)) {
+                        $reasonCodes = [];
+                        foreach ($result->candidateSet->rejected as $rejected) {
+                            $reasonCodes = [...$reasonCodes, ...$rejected->reasonCodes];
+                        }
+                        $telemetry->rejected(array_values(array_unique($reasonCodes)));
                         $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->blocked($workItem, $result->status, $result->blockingIssues[0] ?? 'normative_not_found');
 
                         continue;
@@ -131,6 +143,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         }
                     }
                     if ($catalogCandidate === null) {
+                        $telemetry->blocked('catalog_content_not_pinned');
                         $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->blocked($workItem, 'review_required', 'normative_catalog_content_not_pinned');
 
                         continue;
@@ -150,9 +163,18 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         'reranker_version' => $result->rerankResult?->schemaVersion,
                         'blocking_issues' => [],
                     ];
+                    $telemetry->matched();
                     $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $enriched;
                 }
             }
+        }
+
+        if (Log::getFacadeRoot() !== null) {
+            Log::info('estimate_generation.normative_match_outcomes', [
+                'session_id' => $context->sessionId,
+                'project_id' => $context->projectId,
+                ...$telemetry->context(),
+            ]);
         }
 
         return $this->results->make($context, $this->stage(), ['local_estimates' => $data['local_estimates']]);
