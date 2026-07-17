@@ -326,6 +326,10 @@ final class EstimateGenerationReviewItemService
         $localEstimateKey = (string) ($localEstimate['key'] ?? '');
         $sectionKey = (string) ($section['key'] ?? '');
         $workItemKey = (string) ($workItem['key'] ?? '');
+        $workItem['normative_candidates'] = array_values(array_filter(
+            $this->arrayValues($workItem['normative_candidates'] ?? []),
+            'is_array',
+        ));
 
         return [
             'key' => $this->reviewKey($localEstimateKey, $sectionKey, $workItemKey),

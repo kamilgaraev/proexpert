@@ -14,6 +14,21 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateGenerationReviewItemServiceTest extends TestCase
 {
+    public function test_review_queue_normalizes_missing_normative_candidates_to_a_list(): void
+    {
+        $result = $this->service()->forSession(new EstimateGenerationSession([
+            'draft_payload' => $this->draft([$this->workItem([
+                'key' => 'candidate-contract',
+                'pricing_status' => 'not_calculated',
+                'pricing_blocker' => 'normative_required',
+                'validation_flags' => ['safe_norm_required'],
+                'normative_candidates' => null,
+            ])]),
+        ]));
+
+        self::assertSame([], $result['items'][0]['work_item']['normative_candidates']);
+    }
+
     public function test_existing_session_with_stale_projection_uses_legacy_draft_fallback(): void
     {
         $session = new EstimateGenerationSession([
