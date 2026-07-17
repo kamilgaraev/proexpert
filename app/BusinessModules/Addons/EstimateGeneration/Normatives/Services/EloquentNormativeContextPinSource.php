@@ -90,7 +90,8 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         $ids = $norms->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
         $resourceRows = $this->database->table('estimate_norm_resources as resources')
             ->join('estimate_resource_prices as prices', function ($join) use ($requested): void {
-                $join->on('prices.construction_resource_id', '=', 'resources.construction_resource_id')
+                $join->on('prices.resource_code', '=', 'resources.resource_code')
+                    ->on('prices.price_type', '=', 'resources.resource_type')
                     ->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
                     ->where('prices.region_id', $requested->regionId)
                     ->where('prices.price_zone_id', $requested->priceZoneId)
@@ -102,7 +103,8 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->get([
                 'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
                 'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
-                'prices.id as price_id', 'prices.construction_resource_id as price_construction_resource_id', 'prices.price_type',
+                'prices.id as price_id', 'prices.construction_resource_id as price_construction_resource_id',
+                'prices.resource_code as price_resource_code', 'prices.price_type',
             ]);
         if ($resourceRows->count() > 10_000) {
             $this->telemetry('resources_limit_exceeded', ['selected_count' => count($selected), 'resource_rows_count' => $resourceRows->count()]);

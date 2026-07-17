@@ -21,25 +21,29 @@ final readonly class NormativeResourceRowData
         $linkedResourceId = self::positiveInt($row->construction_resource_id ?? null);
         $priceResourceId = self::positiveInt($row->price_construction_resource_id ?? null);
         $priceId = self::positiveInt($row->price_id ?? null);
-        if ($normId === null || $normResourceId === null || $linkedResourceId === null
-            || $priceResourceId === null || $priceId === null || $linkedResourceId !== $priceResourceId) {
+        $resourceCode = trim((string) ($row->resource_code ?? ''));
+        $priceResourceCode = trim((string) ($row->price_resource_code ?? ''));
+        $identityMatches = $linkedResourceId !== null && $priceResourceId !== null
+            ? $linkedResourceId === $priceResourceId
+            : $resourceCode !== '' && hash_equals($resourceCode, $priceResourceCode);
+        if ($normId === null || $normResourceId === null || $priceId === null || ! $identityMatches) {
             throw new InvalidArgumentException('normative_resource_price_relation_invalid');
         }
         $group = match ((string) ($row->resource_type ?? '')) {
-            'material' => 'materials',
-            'labor' => 'labor',
+            'material', 'equipment' => 'materials',
+            'labor', 'machine_labor' => 'labor',
             'machine', 'machinery' => 'machinery',
             default => 'other',
         };
 
         return new self($normId, $group, [
-            'code' => (string) ($row->resource_code ?? ''),
+            'code' => $resourceCode,
             'name' => (string) ($row->resource_name ?? ''),
             'unit' => (string) ($row->unit ?? ''),
             'quantity' => (float) ($row->quantity ?? 0),
             'price_id' => $priceId,
             'price_source' => 'regional_catalog',
-            'linked_resource_id' => $linkedResourceId,
+            'linked_resource_id' => $linkedResourceId ?? $priceResourceId,
             'norm_resource_id' => $normResourceId,
         ]);
     }

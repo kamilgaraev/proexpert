@@ -278,6 +278,26 @@ final class NormativeContextPinResolverTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('normative_resource_price_relation_invalid');
-        NormativeResourceRowData::fromDatabaseRow((object) [...(array) $row, 'price_construction_resource_id' => 502]);
+        NormativeResourceRowData::fromDatabaseRow((object) [
+            ...(array) $row,
+            'price_construction_resource_id' => 502,
+            'price_resource_code' => '01.7.01',
+        ]);
+    }
+
+    #[Test]
+    public function exact_resource_code_links_norm_resource_to_regional_price_without_internal_resource_id(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101, 'norm_resource_id' => 7001,
+            'construction_resource_id' => null, 'price_construction_resource_id' => null,
+            'price_id' => 9001, 'resource_type' => 'material',
+            'resource_code' => '01.7.01', 'price_resource_code' => '01.7.01',
+            'resource_name' => 'Кирпич', 'unit' => 'шт', 'quantity' => 50,
+        ]);
+
+        self::assertSame(101, $mapped->estimateNormId);
+        self::assertSame(9001, $mapped->resource['price_id']);
+        self::assertNull($mapped->resource['linked_resource_id']);
     }
 }
