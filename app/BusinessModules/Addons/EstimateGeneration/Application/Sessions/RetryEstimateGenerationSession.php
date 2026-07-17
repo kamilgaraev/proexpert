@@ -42,6 +42,9 @@ final class RetryEstimateGenerationSession
                 if ($session->status === EstimateGenerationStatus::Generating) {
                     return $this->restartGeneration($session);
                 }
+                if ($session->status === EstimateGenerationStatus::ReadyToGenerate) {
+                    return $this->startGeneration($session);
+                }
                 if ($session->status !== EstimateGenerationStatus::Failed) {
                     throw new InvalidEstimateGenerationState($session->status, 'retry');
                 }
