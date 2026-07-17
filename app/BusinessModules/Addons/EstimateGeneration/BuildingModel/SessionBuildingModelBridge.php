@@ -57,6 +57,8 @@ final readonly class SessionBuildingModelBridge
     private function inputs(BuildingModelOperationContext $context, array $units): array
     {
         $inputs = [];
+        $unanchoredVectorInputs = [];
+        $hasRecognizedFloorPlan = false;
         foreach ($units as $unit) {
             $visionPayload = $unit->payload['vision_analysis'] ?? null;
             $vectorPayload = $unit->payload['vector_geometry'] ?? null;
@@ -106,10 +108,18 @@ final readonly class SessionBuildingModelBridge
                     }
                 }
             }
-            $inputs[] = $this->mapper->map($vision, $vector, $refs, $this->floorKey($unit));
+            $input = $this->mapper->map($vision, $vector, $refs, $this->floorKey($unit));
+            if ($vision !== null || is_string($unit->payload['floor_key'] ?? null)) {
+                $inputs[] = $input;
+                $hasRecognizedFloorPlan = $hasRecognizedFloorPlan
+                    || ($vision !== null && $this->hasDetectedRoom($visionPayload));
+
+                continue;
+            }
+            $unanchoredVectorInputs[] = $input;
         }
 
-        return $inputs;
+        return $hasRecognizedFloorPlan ? $inputs : [...$inputs, ...$unanchoredVectorInputs];
     }
 
     /** @param array<string, mixed> $payload */

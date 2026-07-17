@@ -71,6 +71,46 @@ final class SessionBuildingModelBridgeTest extends TestCase
     }
 
     #[Test]
+    public function unanchored_vector_sources_do_not_create_extra_floors_when_recognized_floor_plans_exist(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('c', 64));
+        $cad = $this->vectorUnit();
+        $cadPayload = $cad->payload;
+        unset($cadPayload['floor_key']);
+        $cad = new SessionBuildingModelUnitData(
+            $cad->unitId,
+            $cad->documentId,
+            $cad->pageId,
+            $cad->type,
+            $cad->index,
+            $cad->sourceVersion,
+            $cad->confidence,
+            $cadPayload,
+        );
+        $pdf = $this->pdfVectorUnit();
+        $pdfPayload = $pdf->payload;
+        unset($pdfPayload['floor_key']);
+        $pdf = new SessionBuildingModelUnitData(
+            $pdf->unitId,
+            $pdf->documentId,
+            $pdf->pageId,
+            $pdf->type,
+            $pdf->index,
+            $pdf->sourceVersion,
+            $pdf->confidence,
+            $pdfPayload,
+        );
+
+        [$bridge] = $this->bridge();
+        $model = $bridge->store($context, [$this->visionUnit(), $cad, $pdf]);
+
+        self::assertNotNull($model);
+        self::assertSame(['floor-vision'], array_column($model->toArray()['floors'], 'key'));
+        self::assertSame(1, $model->metrics['room_count']);
+        self::assertSame(0, $model->metrics['wall_count']);
+    }
+
+    #[Test]
     public function malformed_production_pdf_geometry_wrapper_is_rejected_without_synthetic_bounds(): void
     {
         [$bridge] = $this->bridge();
