@@ -100,7 +100,7 @@ final class GeometryBuildingModelInputMapperTest extends TestCase
             (new GeometryBuildingModelInputMapper)->map($vision, null, ['wall-evidence' => 403, 'opening-evidence' => 404]),
         );
 
-        self::assertSame('wall-1', $result->model->floors[0]->openings[0]->wallKey);
+        self::assertSame('floor-1-wall-1', $result->model->floors[0]->openings[0]->wallKey);
         self::assertSame([404], $result->model->floors[0]->openings[0]->evidenceIds);
     }
 
@@ -148,7 +148,7 @@ final class GeometryBuildingModelInputMapperTest extends TestCase
             (new GeometryBuildingModelInputMapper)->map(null, $vector, ['vector:W1' => 501, 'vector:O1' => 502]),
         );
 
-        self::assertSame('vector-w1', $result->model->floors[0]->openings[0]->wallKey);
+        self::assertSame('floor-1-vector-w1', $result->model->floors[0]->openings[0]->wallKey);
         self::assertSame([502], $result->model->floors[0]->openings[0]->evidenceIds);
         self::assertTrue($result->model->metrics['complete']);
     }
@@ -171,7 +171,7 @@ final class GeometryBuildingModelInputMapperTest extends TestCase
             'vector:ROOM' => 602,
         ]);
 
-        self::assertSame(['vector-room'], array_map(static fn ($element): string => $element->key, $result->geometry->elements));
+        self::assertSame(['floor-1-vector-room'], array_map(static fn ($element): string => $element->key, $result->geometry->elements));
         self::assertSame('geometry_element_unsupported', $result->geometry->issues[0]['code']);
         self::assertSame('vector-zero', $result->geometry->issues[0]['element_key']);
         self::assertSame(['vector:ZERO'], $result->geometry->issues[0]['evidence_refs']);

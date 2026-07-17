@@ -99,6 +99,8 @@ final class SessionBuildingModelBridgeTest extends TestCase
         self::assertNotNull($model);
         self::assertSame(2, $model->metrics['floor_count']);
         self::assertSame(['floor-document-501-page-1', 'floor-document-502-page-1'], array_column($model->toArray()['floors'], 'key'));
+        $roomKeys = array_column(array_merge(...array_column($model->toArray()['floors'], 'rooms')), 'key');
+        self::assertCount(2, array_unique($roomKeys));
     }
 
     #[Test]
@@ -254,7 +256,7 @@ final class SessionBuildingModelBridgeTest extends TestCase
         $payload['vision_analysis']['evidence'][0]['locator']['page_id'] = $pageId;
         $payload['vision_analysis']['evidence'][0]['locator']['processing_unit_id'] = $unitId;
         $payload['vision_analysis']['evidence'][0]['locator']['source_version'] = $source;
-        $payload['vision_analysis']['elements'][0]['key'] = 'vision-room-'.$suffix;
+        $payload['vision_analysis']['elements'][0]['key'] = 'vision-room';
         $payload['vision_analysis']['elements'][0]['evidence_ref'] = 'vision-page-'.$suffix;
         $payload['vision_analysis']['scale_candidates'][0]['evidence_ref'] = 'vision-page-'.$suffix;
 

@@ -58,6 +58,8 @@ final readonly class GeometryBuildingModelInputMapper
             $visionScales = $this->visionScaleCandidates($vision);
         }
 
+        $elements = $this->namespaceElements($elements, $floorKey);
+
         $fused = $this->fusion->fuse($elements);
         $geometry = new GeometryFusionResult($fused->elements, $fused->sourceElements, [...$fused->issues, ...$issues]);
 
@@ -375,6 +377,50 @@ final readonly class GeometryBuildingModelInputMapper
         }
 
         return 1;
+    }
+
+    /** @param list<FusedGeometryElementData> $elements @return list<FusedGeometryElementData> */
+    private function namespaceElements(array $elements, string $floorKey): array
+    {
+        $keys = [];
+        foreach ($elements as $element) {
+            $keys[$element->key] = $this->namespacedElementKey($floorKey, $element->key);
+        }
+
+        return array_map(static function (FusedGeometryElementData $element) use ($keys): FusedGeometryElementData {
+            $geometry = $element->geometry;
+            if ($element->type === 'opening' && isset($keys[$geometry['wall_key']])) {
+                $geometry['wall_key'] = $keys[$geometry['wall_key']];
+            }
+            if ($element->type === 'engineering_element' && is_string($geometry['room_key'] ?? null) && isset($keys[$geometry['room_key']])) {
+                $geometry['room_key'] = $keys[$geometry['room_key']];
+            }
+
+            return new FusedGeometryElementData(
+                $keys[$element->key],
+                $element->type,
+                $geometry,
+                $element->sourceType,
+                $element->evidenceRef,
+                $element->sourceFingerprint,
+                $element->pageNumber,
+                $element->coordinateSpace,
+                $element->runtimeVersion,
+                $element->modelVersion,
+                $element->confidence,
+                $element->provenance,
+                $element->coordinateTransform,
+            );
+        }, $elements);
+    }
+
+    private function namespacedElementKey(string $floorKey, string $elementKey): string
+    {
+        $key = $floorKey.'-'.$elementKey;
+
+        return strlen($key) <= 128
+            ? $key
+            : substr($key, 0, 115).'-'.substr(hash('sha256', $key), 0, 12);
     }
 
     /** @param list<FusedGeometryElementData> $elements @return list<ScaleCandidateData> */
