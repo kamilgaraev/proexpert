@@ -13,6 +13,8 @@ final class BoundedSourceVersionHasher
 
     public const MAX_BYTES = 6_291_456;
 
+    private const MAX_INLINE_STRING_BYTES = 256;
+
     private int $bytes = 0;
 
     /** @var array<int, HashContext> */
@@ -36,7 +38,7 @@ final class BoundedSourceVersionHasher
         if (! isset($this->hashes[$documentId])) {
             return;
         }
-        $encoded = CanonicalPipelineJson::encode($projection);
+        $encoded = CanonicalPipelineJson::encode($this->boundedValue($projection));
         $this->bytes += strlen($encoded);
         if ($this->bytes > self::MAX_BYTES) {
             $this->tooLarge();
@@ -48,6 +50,28 @@ final class BoundedSourceVersionHasher
     public function finish(): array
     {
         return array_map(static fn (HashContext $context): string => 'sha256:'.hash_final($context), $this->hashes);
+    }
+
+    private function boundedValue(mixed $value): mixed
+    {
+        if (is_string($value) && strlen($value) > self::MAX_INLINE_STRING_BYTES) {
+            return [
+                '__pipeline_bounded_string' => [
+                    'bytes' => strlen($value),
+                    'sha256' => hash('sha256', $value),
+                ],
+            ];
+        }
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        $bounded = [];
+        foreach ($value as $key => $item) {
+            $bounded[$key] = $this->boundedValue($item);
+        }
+
+        return $bounded;
     }
 
     private function tooLarge(): never

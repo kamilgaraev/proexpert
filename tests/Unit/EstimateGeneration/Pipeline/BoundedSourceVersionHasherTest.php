@@ -30,7 +30,7 @@ final class BoundedSourceVersionHasherTest extends TestCase
     }
 
     #[Test]
-    public function overflow_is_rejected_before_any_row_is_consumed_and_bytes_are_bounded(): void
+    public function row_overflow_is_rejected_before_any_row_is_consumed_and_structure_bytes_are_bounded(): void
     {
         $hasher = new BoundedSourceVersionHasher;
         try {
@@ -43,6 +43,21 @@ final class BoundedSourceVersionHasherTest extends TestCase
         $hasher = new BoundedSourceVersionHasher;
         $hasher->assertCounts(1, 1);
         $this->expectException(PipelineStageException::class);
-        $hasher->start(1, ['payload' => str_repeat('x', BoundedSourceVersionHasher::MAX_BYTES)]);
+        $hasher->start(1, [str_repeat('key', intdiv(BoundedSourceVersionHasher::MAX_BYTES, 3)) => 'value']);
+    }
+
+    #[Test]
+    public function large_opaque_payload_is_hashed_without_rejecting_valid_pipeline_input(): void
+    {
+        $digest = static function (string $suffix): string {
+            $hasher = new BoundedSourceVersionHasher;
+            $hasher->assertCounts(1, 1);
+            $hasher->start(1, ['structured_payload' => str_repeat('x', BoundedSourceVersionHasher::MAX_BYTES).$suffix]);
+
+            return $hasher->finish()[1];
+        };
+
+        self::assertSame($digest('a'), $digest('a'));
+        self::assertNotSame($digest('a'), $digest('b'));
     }
 }
