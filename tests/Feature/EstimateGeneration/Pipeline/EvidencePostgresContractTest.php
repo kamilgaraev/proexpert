@@ -74,6 +74,28 @@ final class EvidencePostgresContractTest extends TestCase
     }
 
     #[Test]
+    public function recording_identical_evidence_after_invalidation_reactivates_the_node(): void
+    {
+        $repository = app(EloquentEvidenceRepository::class);
+        $data = $this->data('document:reactivation');
+        $node = $repository->insertOrGet($data);
+        $repository->invalidate(
+            $node->organizationId,
+            $node->projectId,
+            $node->sessionId,
+            [$node->id],
+            'document_retry',
+        );
+
+        $reactivated = $repository->insertOrGet($data);
+
+        self::assertSame($node->id, $reactivated->id);
+        self::assertNull($reactivated->invalidatedAt);
+        self::assertNull($reactivated->invalidationReason);
+        self::assertSame(0, $reactivated->invalidationVersion);
+    }
+
+    #[Test]
     public function deleting_a_node_cascades_edges_while_invalidation_preserves_nodes(): void
     {
         $repository = app(EloquentEvidenceRepository::class);

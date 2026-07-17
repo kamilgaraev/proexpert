@@ -53,6 +53,23 @@ final readonly class EloquentEvidenceRepository implements EvidenceRepository
         if ($model === null) {
             throw new RuntimeException('estimate_generation.evidence_record_failed');
         }
+        if ($model->invalidated_at !== null) {
+            $this->database->table('estimate_generation_evidence')
+                ->where('id', (int) $model->id)
+                ->whereNotNull('invalidated_at')
+                ->update([
+                    'invalidated_at' => null,
+                    'invalidation_reason' => null,
+                    'invalidation_version' => 0,
+                    'updated_at' => now(),
+                ]);
+            $model = $this->database->table('estimate_generation_evidence')
+                ->where('id', (int) $model->id)
+                ->first();
+            if ($model === null) {
+                throw new RuntimeException('estimate_generation.evidence_record_failed');
+            }
+        }
 
         return $this->map($model);
     }

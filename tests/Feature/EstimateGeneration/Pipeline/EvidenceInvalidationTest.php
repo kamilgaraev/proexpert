@@ -123,6 +123,23 @@ final class EvidenceInvalidationTest extends TestCase
     }
 
     #[Test]
+    public function recording_identical_evidence_after_retry_reactivates_the_existing_node(): void
+    {
+        $repository = new InMemoryEvidenceRepository;
+        $data = $this->data(self::OLD_VERSION, 'document:44');
+        $node = $repository->insertOrGet($data);
+        $repository->invalidate(1, 10, 100, [$node->id], 'document_retry');
+
+        $reactivated = $repository->insertOrGet($data);
+
+        self::assertSame($node->id, $reactivated->id);
+        self::assertNull($reactivated->invalidatedAt);
+        self::assertNull($reactivated->invalidationReason);
+        self::assertSame(0, $reactivated->invalidationVersion);
+        self::assertSame([$reactivated], $repository->activeNodesForUpdate(1, 10, 100, [$reactivated->id]));
+    }
+
+    #[Test]
     public function traversal_reaches_active_descendants_through_an_already_invalidated_node(): void
     {
         $repository = new InMemoryEvidenceRepository;

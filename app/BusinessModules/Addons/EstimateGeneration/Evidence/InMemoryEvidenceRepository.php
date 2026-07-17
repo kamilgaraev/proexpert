@@ -28,7 +28,10 @@ final class InMemoryEvidenceRepository implements EvidenceRepository
     {
         $fingerprint = $data->fingerprint();
         if (isset($this->fingerprints[$fingerprint])) {
-            return $this->nodes[$this->fingerprints[$fingerprint]];
+            $id = $this->fingerprints[$fingerprint];
+            $this->nodes[$id] = $this->nodes[$id]->reactivate();
+
+            return $this->nodes[$id];
         }
         $node = new EvidenceNode($this->nextId++, $data, $fingerprint);
         $this->nodes[$node->id] = $node;

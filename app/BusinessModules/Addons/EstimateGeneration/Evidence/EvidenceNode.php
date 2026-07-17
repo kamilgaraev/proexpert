@@ -60,4 +60,11 @@ final readonly class EvidenceNode
             ? new self($this->id, $this->data, $this->fingerprint, $at, $reason, $this->invalidationVersion + 1)
             : $this;
     }
+
+    public function reactivate(): self
+    {
+        return $this->invalidatedAt === null
+            ? $this
+            : new self($this->id, $this->data, $this->fingerprint);
+    }
 }
