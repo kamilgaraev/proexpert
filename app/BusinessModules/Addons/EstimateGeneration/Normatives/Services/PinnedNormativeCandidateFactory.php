@@ -26,6 +26,7 @@ final readonly class PinnedNormativeCandidateFactory
                 'id' => $id, 'code' => (string) ($candidate['code'] ?? ''),
                 'name' => (string) ($candidate['name'] ?? ''),
                 'canonical_unit' => (string) ($candidate['unit'] ?? ''), 'unit' => (string) ($candidate['unit'] ?? ''),
+                'section_name' => (string) ($candidate['section']['name'] ?? ''),
             ];
         }
         $selected = $this->ranker->select($rankable, [[

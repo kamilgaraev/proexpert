@@ -74,6 +74,15 @@ final class NormativeHardGateTest extends TestCase
         self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
     }
 
+    public function test_equivalent_numeric_section_formats_are_compatible(): void
+    {
+        $set = (new NormativeHardGate)->filter($this->intent(), [$this->candidate([
+            'normativeSection' => '8.1',
+        ])]);
+
+        self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
+    }
+
     public function test_house_and_residential_object_types_are_compatible(): void
     {
         $intent = new WorkIntentData(

@@ -141,9 +141,24 @@ final class NormativeContextPinResolverTest extends TestCase
 
         self::assertStringNotContainsString('latest(', $source);
         self::assertStringNotContainsString('first(', $source);
-        self::assertStringNotContainsString('orderByDesc(', $source);
+        self::assertStringNotContainsString("->orderByDesc('norms.id')", $source);
         self::assertStringContainsString("->where('id', \$requested->datasetId)", $source);
         self::assertStringContainsString("->where('prices.regional_price_version_id', \$requested->regionalPriceVersionId)", $source);
+        self::assertStringContainsString('->whereExists(function ($priced) use ($requested)', $source);
+        self::assertStringContainsString("->where('pin_prices.base_price', '>', 0)", $source);
+        self::assertStringContainsString("->whereColumn('pin_resources.construction_resource_id', 'pin_prices.construction_resource_id')", $source);
+        self::assertStringContainsString('->whereNotExists(function ($unpriced) use ($requested)', $source);
+        self::assertStringContainsString('->whereNotExists(function ($validPrice) use ($requested)', $source);
+        self::assertStringContainsString('->whereNotExists(function ($invalidQuantity)', $source);
+        self::assertStringContainsString("->orWhere('invalid_resources.quantity', '<=', 0)", $source);
+        self::assertStringContainsString("->whereColumn('valid_prices.resource_code', 'required_resources.resource_code')", $source);
+        self::assertStringNotContainsString("->where('resources.quantity', '>', 0)", $source);
+        self::assertStringContainsString('$this->ranker->select($query->all(), [$intent])', $source);
+        self::assertStringContainsString("norms.search_vector @@ websearch_to_tsquery('russian', ?)", $source);
+        self::assertStringContainsString("ts_rank_cd(norms.search_vector, websearch_to_tsquery('russian', ?)) AS pin_lexical_score", $source);
+        self::assertStringContainsString("->orderByDesc('pin_lexical_score')", $source);
+        self::assertStringContainsString('->limit(32)', $source);
+        self::assertStringNotContainsString('LOWER(CAST(norms.work_composition AS TEXT)) LIKE ?', $source);
         self::assertStringContainsString("->where('source_type', 'fsnb_2022')", $source);
         self::assertStringContainsString("'resources.id as norm_resource_id'", $source);
         self::assertStringContainsString('resolveForIntents', $source);
@@ -193,6 +208,26 @@ final class NormativeContextPinResolverTest extends TestCase
 
         self::assertNotNull($selected);
         self::assertSame([101], array_map(static fn (object $candidate): int => (int) $candidate->id, $selected));
+    }
+
+    #[Test]
+    public function russian_stems_match_inflected_norm_name(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([(object) [
+            'id' => 202,
+            'code' => '07-05-016-01',
+            'name' => 'Монтаж лестничных маршей и площадок',
+            'section_name' => 'Лестницы',
+            'canonical_unit' => '100 шт',
+            'unit' => '100 шт',
+        ]], [[
+            'search_text' => 'Устройство лестничных маршей',
+            'unit' => 'шт',
+            'code' => null,
+        ]]);
+
+        self::assertNotNull($selected);
+        self::assertSame([202], array_map(static fn (object $candidate): int => (int) $candidate->id, $selected));
     }
 
     #[Test]

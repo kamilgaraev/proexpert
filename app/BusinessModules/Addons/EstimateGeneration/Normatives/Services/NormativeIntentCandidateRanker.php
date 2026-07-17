@@ -53,9 +53,33 @@ final readonly class NormativeIntentCandidateRanker
         if ($name === $search) {
             return 1;
         }
-        $tokens = array_values(array_filter(preg_split('/[^\pL\pN.-]+/u', $search) ?: [], static fn (string $token): bool => mb_strlen($token) >= 3));
-        $matches = count(array_filter($tokens, static fn (string $token): bool => str_contains($name, $token)));
+        $haystack = mb_strtolower(implode(' ', [
+            $name,
+            (string) ($candidate->section_name ?? ''),
+        ]));
+        $tokens = $this->tokens($search);
+        $matches = count(array_filter($tokens, static fn (string $token): bool => str_contains($haystack, $token)));
 
         return $matches > 0 ? 100 - min(99, $matches) : null;
+    }
+
+    /** @return list<string> */
+    public function tokens(string $search): array
+    {
+        $tokens = [];
+        foreach (preg_split('/[^\pL\pN.-]+/u', mb_strtolower($search)) ?: [] as $token) {
+            if (mb_strlen($token) < 3 || in_array($token, ['монтаж', 'устройство', 'работы', 'система', 'системы'], true)) {
+                continue;
+            }
+            $tokens[$token] = true;
+            foreach (['иями', 'ями', 'ами', 'ого', 'его', 'ыми', 'ими', 'иях', 'ах', 'ях', 'ов', 'ев', 'ий', 'ый', 'ой', 'ая', 'ое', 'ые', 'ых', 'их', 'ка', 'ки', 'ку', 'ом', 'ем', 'ам', 'ям', 'ия', 'ие', 'ей', 'а', 'ы', 'и', 'е', 'у'] as $suffix) {
+                if (str_ends_with($token, $suffix) && mb_strlen($token) - mb_strlen($suffix) >= 4) {
+                    $tokens[mb_substr($token, 0, mb_strlen($token) - mb_strlen($suffix))] = true;
+                    break;
+                }
+            }
+        }
+
+        return array_keys($tokens);
     }
 }

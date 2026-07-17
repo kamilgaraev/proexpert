@@ -12,6 +12,8 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
     public function __construct(
         private Connection $database,
         private NormativeIntentCandidateRanker $ranker = new NormativeIntentCandidateRanker,
+        private NormativeSearchQueryBuilder $queryBuilder = new NormativeSearchQueryBuilder,
+        private NormativeResourceCoverage $resourceCoverage = new NormativeResourceCoverage,
     ) {}
 
     public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
@@ -42,6 +44,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             return null;
         }
         $norms = collect();
+        $poolCandidatesCount = 0;
         foreach ($intents as $intent) {
             $search = mb_strtolower(trim((string) ($intent['search_text'] ?? '')));
             $unit = trim((string) ($intent['unit'] ?? ''));
@@ -49,45 +52,100 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             if ($search === '' || $unit === '') {
                 return null;
             }
-            $tokens = array_values(array_filter(
-                preg_split('/[^\pL\pN.-]+/u', $search) ?: [],
-                static fn (string $token): bool => mb_strlen($token) >= 3,
-            ));
+            $lexicalQuery = $this->queryBuilder->build($search);
             $query = $this->database->table('estimate_norms as norms')
                 ->join('estimate_norm_collections as collections', 'collections.id', '=', 'norms.collection_id')
                 ->where('collections.dataset_version_id', $requested->datasetId)
-                ->where(function ($query) use ($search, $code, $tokens): void {
+                ->whereExists(function ($priced) use ($requested): void {
+                    $priced->selectRaw('1')
+                        ->from('estimate_norm_resources as pin_resources')
+                        ->join('estimate_resource_prices as pin_prices', function ($join) use ($requested): void {
+                            $join->on('pin_prices.resource_code', '=', 'pin_resources.resource_code')
+                                ->on('pin_prices.price_type', '=', 'pin_resources.resource_type')
+                                ->where('pin_prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                                ->where('pin_prices.region_id', $requested->regionId)
+                                ->where('pin_prices.price_zone_id', $requested->priceZoneId)
+                                ->where('pin_prices.period_id', $requested->periodId);
+                        })
+                        ->whereColumn('pin_resources.estimate_norm_id', 'norms.id')
+                        ->where('pin_prices.base_price', '>', 0)
+                        ->where(function ($identity): void {
+                            $identity->whereColumn('pin_resources.construction_resource_id', 'pin_prices.construction_resource_id')
+                                ->orWhereNull('pin_resources.construction_resource_id')
+                                ->orWhereNull('pin_prices.construction_resource_id');
+                        });
+                })
+                ->whereNotExists(function ($invalidQuantity): void {
+                    $invalidQuantity->selectRaw('1')
+                        ->from('estimate_norm_resources as invalid_resources')
+                        ->whereColumn('invalid_resources.estimate_norm_id', 'norms.id')
+                        ->where(function ($invalid): void {
+                            $invalid->whereNull('invalid_resources.quantity')
+                                ->orWhere('invalid_resources.quantity', '<=', 0);
+                        });
+                })
+                ->whereNotExists(function ($unpriced) use ($requested): void {
+                    $unpriced->selectRaw('1')
+                        ->from('estimate_norm_resources as required_resources')
+                        ->whereColumn('required_resources.estimate_norm_id', 'norms.id')
+                        ->whereNotExists(function ($validPrice) use ($requested): void {
+                            $validPrice->selectRaw('1')
+                                ->from('estimate_resource_prices as valid_prices')
+                                ->whereColumn('valid_prices.resource_code', 'required_resources.resource_code')
+                                ->whereColumn('valid_prices.price_type', 'required_resources.resource_type')
+                                ->where('valid_prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                                ->where('valid_prices.region_id', $requested->regionId)
+                                ->where('valid_prices.price_zone_id', $requested->priceZoneId)
+                                ->where('valid_prices.period_id', $requested->periodId)
+                                ->where('valid_prices.base_price', '>', 0)
+                                ->where(function ($identity): void {
+                                    $identity->whereColumn('required_resources.construction_resource_id', 'valid_prices.construction_resource_id')
+                                        ->orWhereNull('required_resources.construction_resource_id')
+                                        ->orWhereNull('valid_prices.construction_resource_id');
+                                });
+                        });
+                })
+                ->where(function ($query) use ($code, $lexicalQuery): void {
                     if ($code !== '') {
                         $query->orWhereRaw('LOWER(norms.code) = ?', [$code]);
                     }
-                    $query->orWhereRaw('LOWER(norms.name) = ?', [$search]);
-                    foreach (array_slice($tokens, 0, 8) as $token) {
-                        $query->orWhereRaw('LOWER(norms.name) LIKE ?', ['%'.$token.'%']);
-                    }
+                    $query->orWhereRaw("norms.search_vector @@ websearch_to_tsquery('russian', ?)", [$lexicalQuery]);
                 })
-                ->orderByRaw('CASE WHEN LOWER(norms.code) = ? THEN 0 WHEN LOWER(norms.name) = ? THEN 1 ELSE 2 END', [$code, $search])
-                ->orderBy('norms.id')
-                ->limit(128)
-                ->get([
+                ->select([
                     'norms.id', 'norms.code', 'norms.name', 'norms.canonical_unit', 'norms.unit',
                     'norms.unit_dimension', 'norms.material', 'norms.technology', 'norms.structure',
                     'norms.object_type', 'norms.region_code', 'norms.valid_from', 'norms.valid_to',
                     'norms.section_code', 'norms.section_name', 'norms.work_composition',
                     'collections.code as collection_code', 'collections.name as collection_name', 'collections.norm_type',
-                ]);
+                ])
+                ->selectRaw("ts_rank_cd(norms.search_vector, websearch_to_tsquery('russian', ?)) AS pin_lexical_score", [$lexicalQuery])
+                ->orderByRaw('CASE WHEN LOWER(norms.code) = ? THEN 0 ELSE 1 END', [$code])
+                ->orderByDesc('pin_lexical_score')
+                ->orderBy('norms.id')
+                ->limit(32)
+                ->get();
             if ($query->isEmpty()) {
                 continue;
             }
-            $norms = $norms->concat($query);
+            $poolCandidatesCount += $query->count();
+            $selectedForIntent = $this->ranker->select($query->all(), [$intent]);
+            if ($selectedForIntent !== null) {
+                $norms = $norms->concat($selectedForIntent);
+            }
         }
-        $selected = $this->ranker->select($norms->unique('id')->values()->all(), $intents);
-        if ($selected === null || $selected === []) {
-            $this->telemetry('norms_rejected', ['intents_count' => count($intents), 'norms_count' => $norms->unique('id')->count()]);
+        $norms = $norms->unique('id')->values();
+        if ($norms->isEmpty()) {
+            $this->telemetry('norms_rejected', ['intents_count' => count($intents), 'norms_count' => $poolCandidatesCount]);
 
             return null;
         }
-        $norms = collect($selected);
         $ids = $norms->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
+        $expectedResourceCounts = $this->database->table('estimate_norm_resources')
+            ->whereIn('estimate_norm_id', $ids)
+            ->groupBy('estimate_norm_id')
+            ->get(['estimate_norm_id', $this->database->raw('COUNT(*) AS resource_count')])
+            ->mapWithKeys(static fn (object $row): array => [(int) $row->estimate_norm_id => (int) $row->resource_count])
+            ->all();
         $resourceRows = $this->database->table('estimate_norm_resources as resources')
             ->join('estimate_resource_prices as prices', function ($join) use ($requested): void {
                 $join->on('prices.resource_code', '=', 'resources.resource_code')
@@ -98,6 +156,12 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     ->where('prices.period_id', $requested->periodId);
             })
             ->whereIn('resources.estimate_norm_id', $ids)
+            ->where('prices.base_price', '>', 0)
+            ->where(function ($identity): void {
+                $identity->whereColumn('resources.construction_resource_id', 'prices.construction_resource_id')
+                    ->orWhereNull('resources.construction_resource_id')
+                    ->orWhereNull('prices.construction_resource_id');
+            })
             ->orderBy('resources.estimate_norm_id')->orderBy('resources.id')
             ->limit(10_001)
             ->get([
@@ -107,7 +171,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'prices.resource_code as price_resource_code', 'prices.price_type',
             ]);
         if ($resourceRows->count() > 10_000) {
-            $this->telemetry('resources_limit_exceeded', ['selected_count' => count($selected), 'resource_rows_count' => $resourceRows->count()]);
+            $this->telemetry('resources_limit_exceeded', ['selected_count' => $norms->count(), 'resource_rows_count' => $resourceRows->count()]);
 
             return null;
         }
@@ -127,7 +191,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'materials' => $groups['materials'] ?? [], 'labor' => $groups['labor'] ?? [],
                 'machinery' => $groups['machinery'] ?? [], 'other' => $groups['other'] ?? [],
             ];
-            if (array_sum(array_map('count', $groups)) === 0) {
+            if (! $this->resourceCoverage->complete((int) ($expectedResourceCounts[(int) $norm->id] ?? 0), $groups)) {
                 continue;
             }
             $composition = is_array($norm->work_composition)
@@ -151,11 +215,11 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ];
         }
         if ($candidates === []) {
-            $this->telemetry('priced_candidates_empty', ['selected_count' => count($selected), 'resource_rows_count' => $resourceRows->count()]);
+            $this->telemetry('priced_candidates_empty', ['selected_count' => $norms->count(), 'resource_rows_count' => $resourceRows->count()]);
 
             return null;
         }
-        $this->telemetry('approved', ['intents_count' => count($intents), 'selected_count' => count($selected), 'resource_rows_count' => $resourceRows->count(), 'candidates_count' => count($candidates)]);
+        $this->telemetry('approved', ['intents_count' => count($intents), 'selected_count' => $norms->count(), 'resource_rows_count' => $resourceRows->count(), 'candidates_count' => count($candidates)]);
         $canonical = json_encode($candidates, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
 
         return new NormativeContextPinData(

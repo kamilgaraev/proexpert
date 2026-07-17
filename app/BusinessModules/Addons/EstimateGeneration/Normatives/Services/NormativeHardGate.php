@@ -63,7 +63,7 @@ final class NormativeHardGate
         }
         if ($candidate->normativeSection !== null && $candidate->normativeSection !== ''
             && $intent->normativeSection !== ''
-            && ! str_starts_with($candidate->normativeSection, $intent->normativeSection)) {
+            && ! $this->sectionCompatible($candidate->normativeSection, $intent->normativeSection)) {
             $reasons[] = 'normative_section_mismatch';
         }
         if ($candidate->objectType !== null && $candidate->objectType !== '' && $intent->objectType !== ''
@@ -86,5 +86,24 @@ final class NormativeHardGate
         }
 
         return $reasons;
+    }
+
+    private function sectionCompatible(string $candidate, string $preferred): bool
+    {
+        if (str_starts_with($candidate, $preferred)) {
+            return true;
+        }
+        $candidateParts = array_values(array_map('intval', array_filter(
+            preg_split('/\D+/', $candidate) ?: [],
+            static fn (string $part): bool => $part !== '',
+        )));
+        $preferredParts = array_values(array_map('intval', array_filter(
+            preg_split('/\D+/', $preferred) ?: [],
+            static fn (string $part): bool => $part !== '',
+        )));
+
+        return $preferredParts !== []
+            && count($candidateParts) >= count($preferredParts)
+            && array_slice($candidateParts, 0, count($preferredParts)) === $preferredParts;
     }
 }

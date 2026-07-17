@@ -56,7 +56,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
         $pin = is_array($data['normative_context_pin'] ?? null) ? $data['normative_context_pin'] : [];
         $datasetVersion = $pin['dataset_version'] ?? null;
         $applicabilityDate = $pin['applicability_date'] ?? null;
-        if (Log::getFacadeRoot() !== null) {
+        if ($this->canLog()) {
             Log::info('estimate_generation.normative_pin_loaded', [
                 'session_id' => $context->sessionId,
                 'project_id' => $context->projectId,
@@ -169,7 +169,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
             }
         }
 
-        if (Log::getFacadeRoot() !== null) {
+        if ($this->canLog()) {
             Log::info('estimate_generation.normative_match_outcomes', [
                 'session_id' => $context->sessionId,
                 'project_id' => $context->projectId,
@@ -193,5 +193,12 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
     {
         return ($workItem['skip_normative_matching'] ?? false) !== true
             && ! in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note', 'quantity_review'], true);
+    }
+
+    private function canLog(): bool
+    {
+        $application = Log::getFacadeApplication();
+
+        return $application !== null && $application->bound('log') && $application->bound('config');
     }
 }
