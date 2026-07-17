@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
@@ -48,11 +49,25 @@ class DocumentGenerationReadinessService
                 (int) $session->getKey(),
             );
         $summary = $this->summary($documents, $effective);
+        $reviewAcknowledged = in_array($session->status, [
+            EstimateGenerationStatus::ReadyToGenerate,
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+        ], true);
+        $canGenerate = $summary['can_generate'] || (
+            $reviewAcknowledged
+            && $summary['ready_count'] > 0
+            && $summary['pending_count'] === 0
+            && $summary['failed_count'] === 0
+            && $summary['needs_review_count'] === 0
+        );
+        $summary['review_acknowledged'] = $reviewAcknowledged;
+        $summary['can_generate'] = $canGenerate;
 
         return [
             'can_analyze' => $summary['can_analyze'],
-            'can_generate' => $summary['can_generate'],
-            'blocking_message_key' => $this->blockingMessageKey($summary),
+            'can_generate' => $canGenerate,
+            'blocking_message_key' => $canGenerate ? null : $this->blockingMessageKey($summary),
             'summary' => $summary,
         ];
     }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
@@ -64,6 +65,42 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
         self::assertSame(['classification_low_confidence'], $strict['items'][0]['quality_review_reasons']);
         self::assertTrue($relaxed['can_generate']);
         self::assertTrue($disabled['can_generate']);
+    }
+
+    public function test_confirmed_input_allows_generation_with_reviewable_ready_document(): void
+    {
+        $settings = $this->settings(true, '0.7000');
+        $store = new class($settings) implements EffectiveSettingsOperationStore
+        {
+            public function __construct(private readonly EffectiveEstimateGenerationSettings $settings) {}
+
+            public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
+            {
+                return new EffectiveSettingsPair($this->settings, $this->settings);
+            }
+        };
+        $session = new EstimateGenerationSession;
+        $session->forceFill([
+            'id' => 55,
+            'organization_id' => 7,
+            'state_version' => 3,
+            'status' => EstimateGenerationStatus::ReadyToGenerate,
+        ]);
+        $session->exists = true;
+        $session->setRelation('documents', collect([
+            $this->qualitySignalDocument([
+                'classification' => ['confidence' => 0.69],
+                'geometry' => ['confidence' => 0.81],
+            ]),
+        ]));
+
+        $result = (new DocumentGenerationReadinessService(new EffectiveSettingsResolver($store)))
+            ->evaluate($session);
+
+        self::assertSame(1, $result['summary']['quality_review_count']);
+        self::assertTrue($result['summary']['review_acknowledged']);
+        self::assertTrue($result['summary']['can_generate']);
+        self::assertTrue($result['can_generate']);
     }
 
     public function test_geometry_hard_blocker_cannot_be_disabled(): void
