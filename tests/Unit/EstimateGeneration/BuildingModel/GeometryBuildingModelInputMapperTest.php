@@ -176,4 +176,28 @@ final class GeometryBuildingModelInputMapperTest extends TestCase
         self::assertSame('vector-zero', $result->geometry->issues[0]['element_key']);
         self::assertSame(['vector:ZERO'], $result->geometry->issues[0]['evidence_refs']);
     }
+
+    public function test_large_vector_drawings_are_bounded_before_building_model_assembly(): void
+    {
+        $entities = [];
+        $evidence = [];
+        for ($index = 1; $index <= 2001; $index++) {
+            $handle = 'W'.$index;
+            $entities[] = ['handle' => $handle, 'type' => 'line', 'layer' => 'A-WALL', 'points' => [[$index, 0], [$index, 1]]];
+            $evidence['vector:'.$handle] = 700 + $index;
+        }
+        $vector = VectorGeometryData::fromArray([
+            'schema_version' => 1, 'runtime_version' => 'cad-geometry:v1;libredwg:0.13.4', 'source_fingerprint' => 'sha256:'.str_repeat('b', 64),
+            'source_unit' => 'm', 'unit_status' => 'confirmed', 'bounds' => [0, 0, 3000, 10],
+            'layers' => [['name' => 'A-WALL', 'visible' => true]], 'blocks' => [], 'entities' => $entities,
+            'texts' => [], 'dimensions' => [], 'pages' => [], 'scale_candidates' => [], 'warnings' => [],
+        ]);
+
+        $input = (new GeometryBuildingModelInputMapper)->map(null, $vector, $evidence);
+        $model = (new \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler)->assembleVision($input)->model;
+
+        self::assertCount(2000, $model->floors[0]->walls);
+        self::assertSame('geometry_element_unsupported', $input->geometry->issues[0]['code']);
+        self::assertSame('vector-w2001', $input->geometry->issues[0]['element_key']);
+    }
 }

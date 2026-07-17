@@ -17,6 +17,8 @@ use InvalidArgumentException;
 
 final readonly class GeometryBuildingModelInputMapper
 {
+    private const MAX_AUTOMATIC_VECTOR_ELEMENTS = 2_000;
+
     public function __construct(
         private GeometryFusionService $fusion = new GeometryFusionService,
         private ScaleResolver $scaleResolver = new ScaleResolver,
@@ -317,6 +319,16 @@ final readonly class GeometryBuildingModelInputMapper
         $issues = [];
         foreach ($vector->entities as $entity) {
             $reference = 'vector:'.$entity['handle'];
+            if (count($elements) >= self::MAX_AUTOMATIC_VECTOR_ELEMENTS) {
+                $issues[] = [
+                    'code' => 'geometry_element_unsupported',
+                    'severity' => 'blocking',
+                    'element_key' => 'vector-'.strtolower($entity['handle']),
+                    'evidence_refs' => [$reference],
+                ];
+
+                break;
+            }
             $type = $entity['type'];
             $geometryType = null;
             $geometry = null;
