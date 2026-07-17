@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use Illuminate\Support\Facades\Log;
 
 final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
 {
@@ -54,6 +55,17 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
         $pin = is_array($data['normative_context_pin'] ?? null) ? $data['normative_context_pin'] : [];
         $datasetVersion = $pin['dataset_version'] ?? null;
         $applicabilityDate = $pin['applicability_date'] ?? null;
+        if (Log::getFacadeRoot() !== null) {
+            Log::info('estimate_generation.normative_pin_loaded', [
+                'session_id' => $context->sessionId,
+                'project_id' => $context->projectId,
+                'status' => $pin['status'] ?? 'missing',
+                'blocking_issues' => is_array($pin['blocking_issues'] ?? null) ? $pin['blocking_issues'] : [],
+                'catalog_candidates_count' => is_array($pin['catalog_candidates'] ?? null) ? count($pin['catalog_candidates']) : 0,
+                'dataset_version_present' => is_string($datasetVersion) && $datasetVersion !== '',
+                'applicability_date_present' => is_string($applicabilityDate) && $applicabilityDate !== '',
+            ]);
+        }
         $rerankRequested = is_array($regionalContext) && ($regionalContext['normative_rerank_requested'] ?? false) === true;
         foreach ($data['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
