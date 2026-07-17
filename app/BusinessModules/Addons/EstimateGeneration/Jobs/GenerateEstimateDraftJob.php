@@ -6,13 +6,14 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\HandleEstimateGenerationDraftFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\RateLimited;
-use Illuminate\Queue\Middleware\WithoutOverlapping;
+use Illuminate\Queue\Middleware\Skip;
 use Illuminate\Queue\SerializesModels;
 use Throwable;
 
@@ -50,9 +51,7 @@ class GenerateEstimateDraftJob implements ShouldQueue
     public function middleware(): array
     {
         return [
-            (new WithoutOverlapping('estimate-generation:draft:session:'.$this->sessionId.':attempt:'.$this->attemptId))
-                ->releaseAfter(60)
-                ->expireAfter(360),
+            Skip::when(fn (): bool => $this->isStale()),
             new RateLimited('estimate-generation-drafts'),
         ];
     }
@@ -70,5 +69,20 @@ class GenerateEstimateDraftJob implements ShouldQueue
     public function failed(Throwable $error): void
     {
         app(HandleEstimateGenerationDraftFailure::class)->handle($this->failureSnapshot, $error);
+    }
+
+    private function isStale(): bool
+    {
+        if ($this->expectedStateVersion !== $this->failureSnapshot->stateVersion
+            || ! hash_equals($this->attemptId, $this->failureSnapshot->attemptId)) {
+            return true;
+        }
+
+        $current = EstimateGenerationSession::query()->find($this->sessionId);
+
+        return ! $current instanceof EstimateGenerationSession
+            || (int) $current->state_version !== $this->expectedStateVersion
+            || $current->status->value !== $this->failureSnapshot->status
+            || ! hash_equals($this->attemptId, (string) ($current->input_payload['generation_attempt_id'] ?? ''));
     }
 }
