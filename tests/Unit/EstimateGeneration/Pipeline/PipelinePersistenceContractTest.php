@@ -29,6 +29,7 @@ final class PipelinePersistenceContractTest extends TestCase
         self::assertIsString($publisher);
         self::assertStringContainsString('$result->transientData', $publisher);
         self::assertStringContainsString('$claim->context->baseInputVersion', $publisher);
+        self::assertStringContainsString('$this->packages->syncFromDraft($session, $draft, $claim->context->baseInputVersion)', $publisher);
         self::assertStringNotContainsString('$claim->context->inputVersion, $draft[\'source_input_version\']', $publisher);
         self::assertStringNotContainsString('->read(', $publisher);
     }

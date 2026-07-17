@@ -23,11 +23,11 @@ class EstimateGenerationPackagePersistenceService
     /**
      * @param  array<string, mixed>  $draft
      */
-    public function syncFromDraft(EstimateGenerationSession $session, array $draft): void
+    public function syncFromDraft(EstimateGenerationSession $session, array $draft, ?string $verifiedInputVersion = null): void
     {
         $sourceInputVersion = $draft['source_input_version'] ?? null;
-        DB::transaction(function () use ($session, $draft, $sourceInputVersion): void {
-            $inputVersion = $this->baseInputVersions?->resolve($session);
+        DB::transaction(function () use ($session, $draft, $sourceInputVersion, $verifiedInputVersion): void {
+            $inputVersion = $verifiedInputVersion ?? $this->baseInputVersions?->resolve($session);
             $sourceInputCurrent = $this->sourceInputCurrent($sourceInputVersion, $inputVersion);
             $activePackageKeys = $this->draftPackageKeys($draft);
 
