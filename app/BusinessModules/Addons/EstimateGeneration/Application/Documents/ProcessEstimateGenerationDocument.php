@@ -23,6 +23,7 @@ final readonly class ProcessEstimateGenerationDocument
 {
     public function __construct(
         private CreateDocumentProcessingUnits $creator,
+        private DispatchDocumentProcessingUnits $dispatcher,
         private PipelineCheckpointStore $checkpoints,
         private PipelineDefinitionGraph $definitions,
     ) {}
@@ -57,6 +58,11 @@ final readonly class ProcessEstimateGenerationDocument
             $now,
             $now->modify('+180 seconds'),
         );
+        if ($claim->status === CheckpointClaimStatus::AlreadyCompleted) {
+            $this->dispatcher->forDocument($documentId, $baseInputVersion);
+
+            return;
+        }
         if ($claim->status !== CheckpointClaimStatus::Acquired) {
             return;
         }
@@ -82,6 +88,7 @@ final readonly class ProcessEstimateGenerationDocument
             ), new DateTimeImmutable)) {
                 throw new RuntimeException('estimate_generation.document_manifest_claim_lost');
             }
+            $this->dispatcher->forDocument($documentId, $baseInputVersion);
         } catch (Throwable $error) {
             $this->checkpoints->fail($claim, $error, new DateTimeImmutable);
             throw $error;

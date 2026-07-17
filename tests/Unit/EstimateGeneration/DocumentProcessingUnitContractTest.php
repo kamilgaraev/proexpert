@@ -193,6 +193,8 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertStringNotContainsString('FileService', $source);
         self::assertStringNotContainsString('PipelineCheckpointStore', $source);
         self::assertStringContainsString('CreateDocumentProcessingUnits', $entrypoint);
+        self::assertStringContainsString('DispatchDocumentProcessingUnits', $entrypoint);
+        self::assertStringContainsString('->forDocument($documentId, $baseInputVersion)', $entrypoint);
         self::assertStringContainsString('PipelineCheckpointStore', $entrypoint);
         self::assertStringContainsString('PipelineStageOutput::create(', $entrypoint);
         self::assertStringContainsString('document_manifest_v1', $entrypoint);

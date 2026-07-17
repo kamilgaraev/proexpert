@@ -16,7 +16,7 @@ final class RecoverStalledEstimateGenerationDocumentsTest extends TestCase
 
         self::assertIsString($recovery);
         self::assertStringContainsString("->where('status', 'queued')", $recovery);
-        self::assertStringContainsString("->whereNull('ocr_started_at')", $recovery);
+        self::assertStringNotContainsString("->whereNull('ocr_started_at')", $recovery);
         self::assertStringContainsString('ProcessEstimateGenerationDocumentJob::CONNECTION', $recovery);
         self::assertStringContainsString('ProcessEstimateGenerationDocumentJob::QUEUE', $recovery);
         self::assertStringContainsString('RecoverStalledEstimateGenerationDocuments::class', $provider);

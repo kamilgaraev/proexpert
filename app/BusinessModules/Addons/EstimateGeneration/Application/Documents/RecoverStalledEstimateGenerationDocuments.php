@@ -18,7 +18,6 @@ final class RecoverStalledEstimateGenerationDocuments
         $documents = EstimateGenerationDocument::query()
             ->with('session')
             ->where('status', 'queued')
-            ->whereNull('ocr_started_at')
             ->where('updated_at', '<=', now()->subSeconds(max(30, $minimumAgeSeconds)))
             ->orderBy('id')
             ->limit(max(1, $limit))
