@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Normatives;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeHardGate;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeIntentCandidateRanker;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeResourceRowData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PinnedNormativeCandidateFactory;
+use DateTimeImmutable;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -213,6 +217,46 @@ final class NormativeContextPinResolverTest extends TestCase
 
         self::assertNotNull($selected);
         self::assertLessThanOrEqual(128, count($selected));
+    }
+
+    #[Test]
+    public function unavailable_intent_does_not_discard_candidates_for_supported_intents(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([(object) [
+            'id' => 101,
+            'code' => '01-01-006-01',
+            'name' => 'Разработка грунта в котлованах',
+            'canonical_unit' => '1000 м3',
+            'unit' => '1000 м3',
+        ]], [
+            ['search_text' => 'Разработка грунта под фундаменты', 'unit' => 'm3', 'code' => null],
+            ['search_text' => 'Несуществующая специальная работа', 'unit' => 'компл', 'code' => null],
+        ]);
+
+        self::assertNotNull($selected);
+        self::assertSame([101], array_map(static fn (object $candidate): int => (int) $candidate->id, $selected));
+    }
+
+    #[Test]
+    public function pinned_candidate_preserves_object_type_for_residential_hard_gate(): void
+    {
+        $candidates = (new PinnedNormativeCandidateFactory)->forWorkItem([[
+            'candidate_id' => '101', 'normative_id' => 101, 'dataset_id' => 77,
+            'dataset_version' => 'v1', 'dataset_status' => 'parsed', 'code' => '20-01-001-01',
+            'name' => 'Монтаж вентиляции офиса', 'unit' => 'м', 'section' => ['code' => '20'],
+            'retrieval_metadata' => ['unit_dimension' => 'length', 'object_type' => 'office'],
+        ]], ['name' => 'Монтаж вентиляции', 'normative_search_text' => 'Монтаж вентиляции', 'unit' => 'м']);
+
+        self::assertSame('office', $candidates[0]->objectType);
+
+        $intent = new WorkIntentData(
+            1, 2, 3, 'work', 'Монтаж вентиляции', 'м', 'length', '', '', '', '',
+            'residential', 'v1', 'parsed', null, new DateTimeImmutable('2026-07-01'), [],
+        );
+        $result = (new NormativeHardGate)->filter($intent, $candidates);
+
+        self::assertSame([], $result->candidates);
+        self::assertContains('object_type_mismatch', $result->rejected[0]->reasonCodes);
     }
 
     #[Test]

@@ -22,13 +22,13 @@ final readonly class NormativeIntentCandidateRanker
             }
             usort($ranked, static fn (array $left, array $right): int => [$left[0], $left[1]] <=> [$right[0], $right[1]]);
             if ($ranked === []) {
-                return null;
+                continue;
             }
             foreach (array_slice($ranked, 0, 2) as $row) {
                 $selected[(int) $row[2]->id] = $row[2];
             }
         }
-        if (count($selected) > 128) {
+        if ($selected === [] || count($selected) > 128) {
             return null;
         }
         ksort($selected, SORT_NUMERIC);

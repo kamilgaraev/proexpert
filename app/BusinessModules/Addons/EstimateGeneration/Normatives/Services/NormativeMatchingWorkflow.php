@@ -14,9 +14,10 @@ readonly class NormativeMatchingWorkflow
 {
     public function __construct(private NormativeRetrievalService $retrieval, private NormativeCandidateRerankerInterface $reranker) {}
 
-    public function match(WorkIntentData $intent, NormativeCandidateDecisionContextData $context, bool $rerankRequested): NormativeWorkflowResultData
+    /** @param list<\App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateData> $pinnedCandidates */
+    public function match(WorkIntentData $intent, NormativeCandidateDecisionContextData $context, bool $rerankRequested, array $pinnedCandidates = []): NormativeWorkflowResultData
     {
-        $set = $this->retrieval->retrieve($intent);
+        $set = $this->retrieval->retrieve($intent, $pinnedCandidates);
         if ($set->candidates === []) {
             return new NormativeWorkflowResultData('review_required', $set, null, ['normative_not_found']);
         }

@@ -21,6 +21,33 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeMatchingWorkflowTest extends TestCase
 {
+    public function test_retrieval_is_limited_to_candidates_pinned_for_the_intent(): void
+    {
+        $preferred = new NormativeCandidateData('2', 2, 1, 'v1', 'parsed', '08-02', 'Кладка стен', 'м2', 'area', 'кирпич', 'кладка', 'стена', '08', 'жилой', '78', new DateTimeImmutable('2025-01-01'), null, 0.5, null, 'lex-v1', null, ['norm:2']);
+        $source = new class([$this->candidate()]) implements NormativeCandidateSource
+        {
+            public function __construct(private array $candidates) {}
+
+            public function find(int $organizationId, int $projectId, string $datasetVersion, string $query, int $limit, ?string $semanticIndexVersion): array
+            {
+                return $this->candidates;
+            }
+        };
+        $reranker = new class implements NormativeCandidateRerankerInterface
+        {
+            public function rerank(WorkIntentData $workItem, NormativeCandidateDecisionContextData $context, NormativeCandidateSetData $candidateSet): NormativeRerankResultData
+            {
+                throw new \LogicException('Reranking is not expected.');
+            }
+        };
+        $workflow = new NormativeMatchingWorkflow(new NormativeRetrievalService($source, new NormativeHardGate, 16, null), $reranker);
+
+        $result = $workflow->match($this->intent(), $this->context(), false, [$preferred]);
+
+        self::assertSame('2', $result->selectedCandidateId());
+        self::assertSame(['2'], array_map(static fn (NormativeCandidateData $candidate): string => $candidate->id, $result->candidateSet->candidates));
+    }
+
     #[DataProvider('statuses')]
     public function test_all_workflow_statuses_without_fallback(string $mode, bool $requested, string $expected, int $expectedCalls): void
     {

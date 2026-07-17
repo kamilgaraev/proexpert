@@ -43,7 +43,9 @@ final readonly class AcceptedNormativeDecisionData
                 break;
             }
         }
-        if ($selected === null || ! self::exactKeys($catalogCandidate, self::CATALOG_KEYS)
+        $catalogIdentity = $catalogCandidate;
+        unset($catalogIdentity['retrieval_metadata']);
+        if ($selected === null || ! self::exactKeys($catalogIdentity, self::CATALOG_KEYS)
             || ($catalogCandidate['candidate_id'] ?? null) !== $selected->id
             || ($catalogCandidate['normative_id'] ?? null) !== $selected->normativeId
             || ($catalogCandidate['dataset_id'] ?? null) !== $selected->datasetId) {

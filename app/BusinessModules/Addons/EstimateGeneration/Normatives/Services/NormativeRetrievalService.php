@@ -22,9 +22,10 @@ final readonly class NormativeRetrievalService
         }
     }
 
-    public function retrieve(WorkIntentData $intent): NormativeCandidateSetData
+    /** @param list<\App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateData> $pinnedCandidates */
+    public function retrieve(WorkIntentData $intent, array $pinnedCandidates = []): NormativeCandidateSetData
     {
-        $candidates = $this->source->find(
+        $candidates = $pinnedCandidates !== [] ? $pinnedCandidates : $this->source->find(
             $intent->organizationId, $intent->projectId, $intent->datasetVersion,
             $intent->intent, min(128, max(64, $this->limit * 4)), $this->semanticIndexVersion,
         );
@@ -35,13 +36,14 @@ final readonly class NormativeRetrievalService
         $candidates = array_map(static fn (array $score) => $byId[$score['id']], $ranked);
 
         $gated = $this->hardGate->filter($intent, $candidates);
+        $accepted = $gated->candidates;
 
         return new NormativeCandidateSetData(
             $gated->organizationId, $gated->projectId, $gated->sessionId, $gated->workItemId,
             $gated->datasetVersion, $gated->lexicalAlgorithmVersion, $gated->semanticIndexVersion,
-            array_slice($gated->candidates, 0, $this->limit), array_slice($gated->rejected, 0, 128),
-            $gated->candidates === [] ? 'review_required' : 'retrieval_only',
-            $gated->candidates === [] ? ['normative_not_found'] : [],
+            array_slice($accepted, 0, $this->limit), array_slice($gated->rejected, 0, 128),
+            $accepted === [] ? 'review_required' : 'retrieval_only',
+            $accepted === [] ? ['normative_not_found'] : [],
         );
     }
 }

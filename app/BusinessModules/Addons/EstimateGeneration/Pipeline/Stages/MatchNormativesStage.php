@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\AcceptedNormativeDecisionData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PinnedNormativeCandidateFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineLeaseHeartbeat;
@@ -24,6 +25,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
         private NormativeMatchingWorkflow $workflow,
         private NormativeWorkIntentFactory $intentFactory,
         private StageResultFactory $results,
+        private PinnedNormativeCandidateFactory $pinnedCandidates = new PinnedNormativeCandidateFactory,
     ) {}
 
     public function stage(): ProcessingStage
@@ -90,13 +92,19 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                     }
                     $intent = $this->intentFactory->intent($workItem, $decisionContext, $datasetVersion);
                     $decision = $this->intentFactory->decision($workItem, $decisionContext);
-                    $result = $this->workflow->match($intent, $decision, $rerankRequested);
+                    $catalogCandidates = is_array($pin['catalog_candidates'] ?? null) ? $pin['catalog_candidates'] : [];
+                    $pinnedCandidates = $this->pinnedCandidates->forWorkItem($catalogCandidates, $workItem);
+                    if ($pinnedCandidates === []) {
+                        $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->blocked($workItem, 'review_required', 'normative_not_found');
+
+                        continue;
+                    }
+                    $result = $this->workflow->match($intent, $decision, $rerankRequested, $pinnedCandidates);
                     if (in_array($result->status, ['review_required', 'unavailable'], true)) {
                         $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->blocked($workItem, $result->status, $result->blockingIssues[0] ?? 'normative_not_found');
 
                         continue;
                     }
-                    $catalogCandidates = is_array($pin['catalog_candidates'] ?? null) ? $pin['catalog_candidates'] : [];
                     $catalogCandidate = null;
                     foreach ($catalogCandidates as $candidate) {
                         if (is_array($candidate) && ($candidate['candidate_id'] ?? null) === $result->selectedCandidateId()) {
