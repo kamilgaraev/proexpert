@@ -29,7 +29,7 @@ final readonly class PipelinePlanResolver
             $inputVersion = PipelineInputVersion::for($definition, (string) $seed->baseInputVersion, $dependencies);
             $current = $prior->get($definition->stage);
             if ($current !== null && hash_equals($inputVersion, $current->inputVersion)
-                && $current->dependencyVersions === $dependencies) {
+                && self::sameDependencies($current->dependencyVersions, $dependencies)) {
                 continue;
             }
             if ($current !== null) {
@@ -46,5 +46,13 @@ final readonly class PipelinePlanResolver
         }
 
         return null;
+    }
+
+    private static function sameDependencies(array $stored, array $expected): bool
+    {
+        ksort($stored, SORT_STRING);
+        ksort($expected, SORT_STRING);
+
+        return $stored === $expected;
     }
 }
