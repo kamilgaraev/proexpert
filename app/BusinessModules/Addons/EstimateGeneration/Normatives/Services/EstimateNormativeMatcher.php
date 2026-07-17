@@ -273,6 +273,7 @@ class EstimateNormativeMatcher
         return EstimateDatasetVersion::query()
             ->where('source_type', EstimateSourceType::FSNB_2022->value)
             ->where('status', EstimateImportStatus::PARSED->value)
+            ->whereHas('normCollections.norms')
             ->latest('id')
             ->first();
     }

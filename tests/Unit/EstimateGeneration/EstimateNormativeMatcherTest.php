@@ -21,6 +21,20 @@ use Tests\TestCase;
 
 class EstimateNormativeMatcherTest extends TestCase
 {
+    public function test_latest_fsnb_version_skips_newer_empty_import(): void
+    {
+        $populatedVersionId = $this->createVersion('fsnb_2022', '2026-05-06');
+        $collectionId = $this->createCollection($populatedVersionId);
+        $sectionId = $this->createSection($collectionId, 'Земляные работы');
+        $this->createNorm($collectionId, $sectionId, '01-01-001-01', 'Разработка грунта', '1000 м3');
+        $this->createVersion('fsnb_2022', '2026-05-07');
+
+        $version = app(EstimateNormativeMatcher::class)->latestFsnbVersion();
+
+        $this->assertNotNull($version);
+        $this->assertSame($populatedVersionId, $version->id);
+    }
+
     public function test_matcher_selects_best_norm_and_groups_resources(): void
     {
         $versionId = $this->createVersion('fsnb_2022', '2026-05-07');
