@@ -37,7 +37,7 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
         self::assertIsInt($workerEnd);
         $worker = substr($compose, $workerStart, $workerEnd - $workerStart);
 
-        self::assertStringContainsString('--queue=estimate-generation-documents-recovery,estimate-generation-documents', $worker);
+        self::assertStringContainsString('--queue=estimate-generation-documents ', $worker);
         self::assertStringContainsString('read_only: true', $worker);
         self::assertStringContainsString('/tmp:rw,noexec,nosuid', $worker);
         self::assertStringContainsString('no-new-privileges:true', $worker);
@@ -46,7 +46,19 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
         self::assertStringContainsString('pids_limit:', $worker);
         self::assertStringNotContainsString('privileged:', $worker);
         self::assertStringNotContainsString('docker.sock', $worker);
-        self::assertSame(1, substr_count($compose, '--queue=estimate-generation-documents'));
+        $recoveryStart = strpos($compose, '  geometry-recovery-worker:');
+        self::assertIsInt($recoveryStart);
+        $recovery = substr($compose, $recoveryStart, $workerEnd - $recoveryStart);
+        self::assertStringContainsString('--queue=estimate-generation-documents-recovery ', $recovery);
+        self::assertStringContainsString('read_only: true', $recovery);
+        self::assertStringContainsString('no-new-privileges:true', $recovery);
+        self::assertStringContainsString('cap_drop:', $recovery);
+        self::assertStringContainsString('- ALL', $recovery);
+        self::assertSame(2, substr_count($compose, '--queue=estimate-generation-documents'));
+        self::assertStringContainsString(
+            'geometry-worker geometry-recovery-worker worker-heavy',
+            $this->source(dirname(__DIR__, 2).'/.github/workflows/deploy-backend.yml'),
+        );
         self::assertStringNotContainsString(
             'estimate-generation-documents',
             $this->source(dirname(__DIR__, 2).'/config/horizon.php'),

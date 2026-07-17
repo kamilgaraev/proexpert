@@ -91,7 +91,7 @@ jobs:
             IMAGE_REPO="${{ steps.meta.outputs.image_repo }}"
             IMAGE_DIGEST="${{ steps.build.outputs.digest }}"
             IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"
-            BACKEND_SERVICES="api websockets horizon geometry-worker worker-heavy worker-ifc scheduler"
+            BACKEND_SERVICES="api websockets horizon geometry-worker geometry-recovery-worker worker-heavy worker-ifc scheduler"
             REVERB_APP_KEY="${{ secrets.REVERB_APP_KEY }}"
 
             [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
