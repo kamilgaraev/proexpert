@@ -109,10 +109,10 @@ final readonly class SessionBuildingModelBridge
                 }
             }
             $input = $this->mapper->map($vision, $vector, $refs, $this->floorKey($unit));
-            if ($vision !== null || is_string($unit->payload['floor_key'] ?? null)) {
+            $hasDetectedRoom = $vision !== null && $this->hasDetectedRoom($visionPayload);
+            if ($hasDetectedRoom || is_string($unit->payload['floor_key'] ?? null)) {
                 $inputs[] = $input;
-                $hasRecognizedFloorPlan = $hasRecognizedFloorPlan
-                    || ($vision !== null && $this->hasDetectedRoom($visionPayload));
+                $hasRecognizedFloorPlan = $hasRecognizedFloorPlan || $hasDetectedRoom;
 
                 continue;
             }
