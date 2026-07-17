@@ -58,6 +58,8 @@ final readonly class PipelineStageOutput
 
     public static function fromEnvelope(array $envelope, string $expectedVersion): self
     {
+        $envelope = self::normalizeEnvelope($envelope);
+
         if (array_keys($envelope) !== ['stage', 'schema_version', 'input_version', 'dependency_versions', 'artifact']
             || ! is_string($envelope['stage']) || ! is_int($envelope['schema_version'])
             || ! is_string($envelope['input_version']) || ! is_array($envelope['dependency_versions'])
@@ -94,5 +96,28 @@ final readonly class PipelineStageOutput
             'dependency_versions' => $this->dependencyVersions,
             'artifact' => $this->artifact->toArray(),
         ];
+    }
+
+    private static function normalizeEnvelope(array $envelope): array
+    {
+        if (isset($envelope['schema_version']) && is_string($envelope['schema_version'])) {
+            $envelope['schema_version'] = self::numericStringToInt($envelope['schema_version']);
+        }
+        if (isset($envelope['artifact']) && is_array($envelope['artifact'])
+            && isset($envelope['artifact']['bytes']) && is_string($envelope['artifact']['bytes'])) {
+            $envelope['artifact']['bytes'] = self::numericStringToInt($envelope['artifact']['bytes']);
+        }
+
+        return $envelope;
+    }
+
+    private static function numericStringToInt(string $value): int|string
+    {
+        if ($value === '' || preg_match('/\A(?:0|[1-9][0-9]*)\z/', $value) !== 1) {
+            return $value;
+        }
+        $integer = (int) $value;
+
+        return (string) $integer === $value ? $integer : $value;
     }
 }

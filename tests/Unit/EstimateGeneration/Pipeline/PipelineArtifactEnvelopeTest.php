@@ -36,6 +36,29 @@ final class PipelineArtifactEnvelopeTest extends TestCase
     }
 
     #[Test]
+    public function persisted_output_accepts_jsonb_numeric_strings_without_changing_version(): void
+    {
+        $definition = PipelineDefinitionGraph::standard()->get(ProcessingStage::UnderstandDocuments);
+        $input = 'sha256:'.str_repeat('a', 64);
+        $reference = new PipelineArtifactReference(
+            's3_json_v1',
+            'org-2/estimate-generation/sessions/1/pipeline/attempts/123e4567-e89b-12d3-a456-426614174000/understand_documents.json',
+            'sha256:'.str_repeat('c', 64),
+            973,
+            'version-1',
+        );
+        $output = PipelineStageOutput::create($definition, $input, [], $reference);
+        $envelope = $output->envelope();
+        $envelope['schema_version'] = (string) $envelope['schema_version'];
+        $envelope['artifact']['bytes'] = (string) $envelope['artifact']['bytes'];
+
+        $restored = PipelineStageOutput::fromEnvelope($envelope, $output->version);
+
+        self::assertSame($output->version, $restored->version);
+        self::assertSame(973, $restored->artifact->bytes);
+    }
+
+    #[Test]
     public function wrong_dependency_manifest_is_rejected_before_hydration(): void
     {
         $definition = PipelineDefinitionGraph::standard()->get(ProcessingStage::UnderstandObject);
