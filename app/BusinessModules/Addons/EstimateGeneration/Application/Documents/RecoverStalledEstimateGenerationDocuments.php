@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use RuntimeException;
 
 final class RecoverStalledEstimateGenerationDocuments
@@ -37,11 +38,26 @@ final class RecoverStalledEstimateGenerationDocuments
                 continue;
             }
 
+            $meta = is_array($document->meta) ? $document->meta : [];
+            $attemptId = $meta['processing_attempt_id'] ?? null;
+            if (! is_string($attemptId) || ! Str::isUuid($attemptId)) {
+                $attemptId = (string) Str::uuid();
+            }
+
+            $document->forceFill([
+                'meta' => [
+                    ...$meta,
+                    'processing_attempt_id' => $attemptId,
+                    'recovery_dispatched_at' => now()->toISOString(),
+                ],
+            ])->saveQuietly();
+
             ProcessEstimateGenerationDocumentJob::dispatch(
                 (int) $document->getKey(),
                 FailureExecutionSnapshot::capture(
                     $session,
                     'document_manifest_recovery',
+                    attemptId: $attemptId,
                     documentId: (int) $document->getKey(),
                     sourceVersion: $sourceVersion,
                 ),
@@ -49,12 +65,6 @@ final class RecoverStalledEstimateGenerationDocuments
                 ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
                 ->onQueue(ProcessEstimateGenerationDocumentJob::RECOVERY_QUEUE);
 
-            $document->forceFill([
-                'meta' => [
-                    ...(is_array($document->meta) ? $document->meta : []),
-                    'recovery_dispatched_at' => now()->toISOString(),
-                ],
-            ])->saveQuietly();
             $dispatched++;
         }
 

@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGeneration
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
+use Illuminate\Support\Str;
 
 final class LaravelEstimateGenerationRetryDispatcher implements EstimateGenerationRetryDispatcher
 {
@@ -20,11 +21,19 @@ final class LaravelEstimateGenerationRetryDispatcher implements EstimateGenerati
             if (! $document instanceof EstimateGenerationDocument || ! $document->session instanceof EstimateGenerationSession) {
                 continue;
             }
+            $attemptId = (string) Str::uuid();
+            $document->forceFill([
+                'meta' => [
+                    ...(is_array($document->meta) ? $document->meta : []),
+                    'processing_attempt_id' => $attemptId,
+                ],
+            ])->saveQuietly();
             ProcessEstimateGenerationDocumentJob::dispatch(
                 $documentId,
                 FailureExecutionSnapshot::capture(
                     $document->session,
                     'document_manifest',
+                    attemptId: $attemptId,
                     documentId: (int) $document->getKey(),
                     sourceVersion: DocumentSourceVersion::fromDocument($document),
                 ),

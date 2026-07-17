@@ -43,11 +43,16 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
     public function middleware(): array
     {
         return [
-            (new WithoutOverlapping('estimate-generation:document-dispatch:'.$this->documentId))
+            (new WithoutOverlapping($this->overlapKey()))
                 ->releaseAfter(15)
                 ->expireAfter($this->timeout + 60),
             new RateLimited('estimate-generation-ocr-documents'),
         ];
+    }
+
+    public function overlapKey(): string
+    {
+        return 'estimate-generation:document-dispatch:'.$this->documentId.':'.$this->failureSnapshot->attemptId;
     }
 
     public function rateLimitKey(): string

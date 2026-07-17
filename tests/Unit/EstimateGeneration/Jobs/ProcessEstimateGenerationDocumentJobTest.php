@@ -36,6 +36,10 @@ final class ProcessEstimateGenerationDocumentJobTest extends TestCase
         self::assertSame('estimate-generation-documents-recovery', ProcessEstimateGenerationDocumentJob::RECOVERY_QUEUE);
         self::assertSame(ProcessEstimateGenerationDocumentJob::QUEUE, $job->queue);
         self::assertSame(1800, $job->timeout);
+        self::assertSame(
+            'estimate-generation:document-dispatch:20:018f4a20-3f4c-7a11-8a22-123456789abc',
+            $job->overlapKey(),
+        );
     }
 
     #[Test]

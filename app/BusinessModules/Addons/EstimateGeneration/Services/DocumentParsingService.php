@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrDocumentStorag
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 class DocumentParsingService
 {
@@ -40,11 +41,19 @@ class DocumentParsingService
             $session = $this->documentReconciler->changed($session);
 
             foreach ($documents as $document) {
+                $attemptId = (string) Str::uuid();
+                $document->forceFill([
+                    'meta' => [
+                        ...(is_array($document->meta) ? $document->meta : []),
+                        'processing_attempt_id' => $attemptId,
+                    ],
+                ])->saveQuietly();
                 ProcessEstimateGenerationDocumentJob::dispatch(
                     $document->id,
                     FailureExecutionSnapshot::capture(
                         $session,
                         'document_manifest',
+                        attemptId: $attemptId,
                         documentId: (int) $document->getKey(),
                         sourceVersion: DocumentSourceVersion::fromDocument($document),
                     ),

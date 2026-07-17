@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -25,7 +26,7 @@ final class RetryEstimateGenerationDocument
 
     public function handle(EstimateGenerationSession $session, EstimateGenerationDocument $document, int $expectedVersion, ?string $reason): DocumentActionResult
     {
-        [$session, $document] = DB::transaction(function () use ($session, $document, $expectedVersion, $reason): array {
+        [$session, $document, $attemptId] = DB::transaction(function () use ($session, $document, $expectedVersion, $reason): array {
             $lockedSession = EstimateGenerationSession::query()->lockForUpdate()->findOrFail($session->getKey());
             $lockedDocument = EstimateGenerationDocument::query()
                 ->where('organization_id', $lockedSession->organization_id)
@@ -41,6 +42,7 @@ final class RetryEstimateGenerationDocument
 
             $lockedDocument->pages()->delete();
             $lockedDocument->processingUnits()->delete();
+            $attemptId = (string) Str::uuid();
             $lockedDocument->forceFill([
                 'status' => 'queued',
                 'processing_stage' => 'stored',
@@ -62,10 +64,11 @@ final class RetryEstimateGenerationDocument
                     ...(is_array($lockedDocument->meta) ? $lockedDocument->meta : []),
                     'retry_requested_at' => now()->toISOString(),
                     'retry_reason' => is_string($reason) && $reason !== '' ? mb_substr($reason, 0, 500) : null,
+                    'processing_attempt_id' => $attemptId,
                 ],
             ])->save();
 
-            return [$this->reconciler->changed($lockedSession), $lockedDocument];
+            return [$this->reconciler->changed($lockedSession), $lockedDocument, $attemptId];
         }, 3);
 
         ProcessEstimateGenerationDocumentJob::dispatch(
@@ -73,6 +76,7 @@ final class RetryEstimateGenerationDocument
             FailureExecutionSnapshot::capture(
                 $session,
                 'document_manifest',
+                attemptId: $attemptId,
                 documentId: (int) $document->getKey(),
                 sourceVersion: DocumentSourceVersion::fromDocument($document),
             ),
