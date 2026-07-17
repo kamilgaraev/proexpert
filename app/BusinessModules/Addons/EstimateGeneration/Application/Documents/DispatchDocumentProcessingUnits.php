@@ -15,9 +15,12 @@ final readonly class DispatchDocumentProcessingUnits
         private EstimateGenerationUnitJobDispatcher $jobs,
     ) {}
 
-    public function forDocument(int $documentId, string $sourceVersion): int
+    public function forDocument(int $documentId, string $sourceVersion, bool $priority = false): int
     {
-        return $this->dispatch($this->store->dueForDocument($documentId, $sourceVersion, now()->toDateTimeImmutable(), self::BATCH_SIZE));
+        return $this->dispatch(
+            $this->store->dueForDocument($documentId, $sourceVersion, now()->toDateTimeImmutable(), self::BATCH_SIZE),
+            $priority,
+        );
     }
 
     public function recover(): int
@@ -26,12 +29,12 @@ final readonly class DispatchDocumentProcessingUnits
     }
 
     /** @param list<DocumentUnitDispatchCandidate> $candidates */
-    private function dispatch(array $candidates): int
+    private function dispatch(array $candidates, ?bool $priority = null): int
     {
         $count = 0;
 
         foreach ($candidates as $candidate) {
-            $this->jobs->dispatch($candidate->unitId, $candidate->sourceVersion);
+            $this->jobs->dispatch($candidate->unitId, $candidate->sourceVersion, $priority ?? $candidate->priority);
             $now = now()->toDateTimeImmutable();
             $this->store->markDispatched(
                 $candidate->unitId,

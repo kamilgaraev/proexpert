@@ -24,6 +24,8 @@ final class ProcessEstimateGenerationUnitJob implements ShouldQueue
 
     public const QUEUE = 'estimate-generation-units';
 
+    public const RECOVERY_QUEUE = 'estimate-generation-units-recovery';
+
     public int $tries = 20;
 
     public int $timeout = 1800;

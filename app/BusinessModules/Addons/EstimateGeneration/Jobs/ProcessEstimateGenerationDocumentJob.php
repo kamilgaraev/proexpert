@@ -62,7 +62,11 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
 
     public function handle(ProcessEstimateGenerationDocument $documents): void
     {
-        $documents->handle($this->documentId, $this->failureSnapshot);
+        $documents->handle(
+            $this->documentId,
+            $this->failureSnapshot,
+            $this->queue === self::RECOVERY_QUEUE,
+        );
     }
 
     public function failed(Throwable $error): void

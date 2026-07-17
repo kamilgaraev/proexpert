@@ -6,5 +6,5 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 interface EstimateGenerationUnitJobDispatcher
 {
-    public function dispatch(int $unitId, string $sourceVersion): void;
+    public function dispatch(int $unitId, string $sourceVersion, bool $priority = false): void;
 }

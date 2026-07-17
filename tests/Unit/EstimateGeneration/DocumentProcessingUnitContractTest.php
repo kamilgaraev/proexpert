@@ -563,7 +563,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
 
             public function __construct()
             {
-                $this->due = [new DocumentUnitDispatchCandidate(1, 'source'), new DocumentUnitDispatchCandidate(2, 'source')];
+                $this->due = [new DocumentUnitDispatchCandidate(1, 'source'), new DocumentUnitDispatchCandidate(2, 'source', true)];
             }
 
             public function dueForDocument(int $documentId, string $sourceVersion, DateTimeImmutable $now, int $limit): array
@@ -586,15 +586,19 @@ final class DocumentProcessingUnitContractTest extends TestCase
             /** @var list<int> */
             public array $ids = [];
 
+            /** @var list<bool> */
+            public array $priorities = [];
+
             public bool $failSecond = true;
 
-            public function dispatch(int $unitId, string $sourceVersion): void
+            public function dispatch(int $unitId, string $sourceVersion, bool $priority = false): void
             {
                 if ($unitId === 2 && $this->failSecond) {
                     throw new \RuntimeException('queue unavailable');
                 }
 
                 $this->ids[] = $unitId;
+                $this->priorities[] = $priority;
             }
         };
         $dispatcher = new DispatchDocumentProcessingUnits($store, $jobs);
@@ -609,6 +613,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
 
         self::assertSame(1, $recovered);
         self::assertSame([1, 2], $jobs->ids);
+        self::assertSame([false, true], $jobs->priorities);
         self::assertSame([1, 2], $store->marked);
     }
 

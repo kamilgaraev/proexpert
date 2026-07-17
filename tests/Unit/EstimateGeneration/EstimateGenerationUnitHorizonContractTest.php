@@ -18,6 +18,7 @@ final class EstimateGenerationUnitHorizonContractTest extends TestCase
         $config = require dirname(__DIR__, 3).'/config/horizon.php';
         foreach (['production', 'local'] as $environment) {
             $unitSupervisor = $config['environments'][$environment]['supervisor-estimate-generation-units'];
+            $recoverySupervisor = $config['environments'][$environment]['supervisor-estimate-generation-units-recovery'];
             $maintenanceSupervisor = $config['environments'][$environment]['supervisor-estimate-generation-unit-maintenance'];
 
             self::assertSame(ProcessEstimateGenerationUnitJob::CONNECTION, $unitSupervisor['connection']);
@@ -25,6 +26,9 @@ final class EstimateGenerationUnitHorizonContractTest extends TestCase
             self::assertSame((new ProcessEstimateGenerationUnitJob(1, 'source'))->tries, $unitSupervisor['tries']);
             self::assertGreaterThanOrEqual((new ProcessEstimateGenerationUnitJob(1, 'source'))->timeout, $unitSupervisor['timeout']);
             self::assertSame(512, $unitSupervisor['memory']);
+            self::assertSame(ProcessEstimateGenerationUnitJob::CONNECTION, $recoverySupervisor['connection']);
+            self::assertSame([ProcessEstimateGenerationUnitJob::RECOVERY_QUEUE], $recoverySupervisor['queue']);
+            self::assertSame(1, $recoverySupervisor['processes']);
             self::assertSame(RecoverEstimateGenerationUnitsJob::CONNECTION, $maintenanceSupervisor['connection']);
             self::assertSame([RecoverEstimateGenerationUnitsJob::QUEUE], $maintenanceSupervisor['queue']);
             self::assertSame((new RecoverEstimateGenerationUnitsJob)->tries, $maintenanceSupervisor['tries']);
@@ -37,6 +41,7 @@ final class EstimateGenerationUnitHorizonContractTest extends TestCase
         self::assertGreaterThanOrEqual(1, $config['environments']['local']['supervisor-estimate-generation-units']['processes']);
         self::assertGreaterThanOrEqual(1, $config['environments']['local']['supervisor-estimate-generation-unit-maintenance']['processes']);
         self::assertArrayHasKey('redis_estimate_generation:'.ProcessEstimateGenerationUnitJob::QUEUE, $config['waits']);
+        self::assertArrayHasKey('redis_estimate_generation:'.ProcessEstimateGenerationUnitJob::RECOVERY_QUEUE, $config['waits']);
         self::assertArrayHasKey('redis_estimate_generation:'.RecoverEstimateGenerationUnitsJob::QUEUE, $config['waits']);
     }
 
@@ -48,6 +53,7 @@ final class EstimateGenerationUnitHorizonContractTest extends TestCase
 
         self::assertSame(ProcessEstimateGenerationUnitJob::CONNECTION, $unit->connection);
         self::assertSame(ProcessEstimateGenerationUnitJob::QUEUE, $unit->queue);
+        self::assertSame('estimate-generation-units-recovery', ProcessEstimateGenerationUnitJob::RECOVERY_QUEUE);
         self::assertSame(RecoverEstimateGenerationUnitsJob::CONNECTION, $recovery->connection);
         self::assertSame(RecoverEstimateGenerationUnitsJob::QUEUE, $recovery->queue);
         self::assertSame(20, $unit->tries);

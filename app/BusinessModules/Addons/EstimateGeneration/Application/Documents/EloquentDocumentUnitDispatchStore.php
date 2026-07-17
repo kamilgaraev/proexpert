@@ -69,8 +69,16 @@ final readonly class EloquentDocumentUnitDispatchStore implements DocumentUnitDi
      */
     private function candidates(Builder $query, int $limit): array
     {
-        return $query->orderBy('id')->limit($limit)->get(['id', 'source_version'])
-            ->map(static fn (EstimateGenerationProcessingUnit $unit): DocumentUnitDispatchCandidate => new DocumentUnitDispatchCandidate((int) $unit->id, (string) $unit->source_version))
+        return $query->with('document:id,meta')->orderBy('id')->limit($limit)->get(['id', 'document_id', 'source_version'])
+            ->map(static function (EstimateGenerationProcessingUnit $unit): DocumentUnitDispatchCandidate {
+                $meta = is_array($unit->document?->meta) ? $unit->document->meta : [];
+
+                return new DocumentUnitDispatchCandidate(
+                    (int) $unit->id,
+                    (string) $unit->source_version,
+                    is_string($meta['retry_requested_at'] ?? null),
+                );
+            })
             ->all();
     }
 

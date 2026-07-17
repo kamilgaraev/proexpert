@@ -8,11 +8,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGeneration
 
 final class LaravelEstimateGenerationUnitJobDispatcher implements EstimateGenerationUnitJobDispatcher
 {
-    public function dispatch(int $unitId, string $sourceVersion): void
+    public function dispatch(int $unitId, string $sourceVersion, bool $priority = false): void
     {
         ProcessEstimateGenerationUnitJob::dispatch($unitId, $sourceVersion)
             ->onConnection(ProcessEstimateGenerationUnitJob::CONNECTION)
-            ->onQueue(ProcessEstimateGenerationUnitJob::QUEUE)
+            ->onQueue($priority ? ProcessEstimateGenerationUnitJob::RECOVERY_QUEUE : ProcessEstimateGenerationUnitJob::QUEUE)
             ->afterCommit();
     }
 }

@@ -28,7 +28,7 @@ final readonly class ProcessEstimateGenerationDocument
         private PipelineDefinitionGraph $definitions,
     ) {}
 
-    public function handle(int $documentId, FailureExecutionSnapshot $snapshot): void
+    public function handle(int $documentId, FailureExecutionSnapshot $snapshot, bool $priority = false): void
     {
         $document = EstimateGenerationDocument::query()->with('session')->find($documentId);
         if (! $document instanceof EstimateGenerationDocument || in_array($document->status, ['ready', 'ignored'], true)) {
@@ -59,7 +59,7 @@ final readonly class ProcessEstimateGenerationDocument
             $now->modify('+180 seconds'),
         );
         if ($claim->status === CheckpointClaimStatus::AlreadyCompleted) {
-            $this->dispatcher->forDocument($documentId, $baseInputVersion);
+            $this->dispatcher->forDocument($documentId, $baseInputVersion, $priority);
 
             return;
         }
@@ -88,7 +88,7 @@ final readonly class ProcessEstimateGenerationDocument
             ), new DateTimeImmutable)) {
                 throw new RuntimeException('estimate_generation.document_manifest_claim_lost');
             }
-            $this->dispatcher->forDocument($documentId, $baseInputVersion);
+            $this->dispatcher->forDocument($documentId, $baseInputVersion, $priority);
         } catch (Throwable $error) {
             $this->checkpoints->fail($claim, $error, new DateTimeImmutable);
             throw $error;
