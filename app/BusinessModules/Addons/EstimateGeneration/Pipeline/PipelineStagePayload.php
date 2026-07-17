@@ -24,7 +24,11 @@ final readonly class PipelineStagePayload
 
     public static function from(ProcessingStage $stage, array $data): self
     {
-        if (array_keys($data) !== self::KEYS[$stage->value]) {
+        $actualKeys = array_keys($data);
+        $expectedKeys = self::KEYS[$stage->value];
+        sort($actualKeys);
+        sort($expectedKeys);
+        if ($actualKeys !== $expectedKeys) {
             throw new InvalidArgumentException('Pipeline stage payload schema is invalid.');
         }
         match ($stage) {
