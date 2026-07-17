@@ -56,9 +56,10 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
         return $connection->transaction(function () use ($connection, $organizationId, $projectId, $sessionId, $permissions, $snapshotAt): SessionSnapshotData {
             $this->beginConsistentRead($connection);
             $session = $this->session($connection, $organizationId, $projectId, $sessionId);
+            $generationAttemptId = $this->generationAttemptId($session);
             $documents = $this->documents($connection, $organizationId, $projectId, $sessionId);
-            $checkpoint = $this->currentCheckpoint($connection, $organizationId, $projectId, $sessionId, $snapshotAt);
-            $checkpoints = $this->checkpoints($connection, $organizationId, $projectId, $sessionId, $snapshotAt);
+            $checkpoint = $this->currentCheckpoint($connection, $organizationId, $projectId, $sessionId, $snapshotAt, $generationAttemptId);
+            $checkpoints = $this->checkpoints($connection, $organizationId, $projectId, $sessionId, $snapshotAt, $generationAttemptId);
             $units = $this->units($connection, $organizationId, $projectId, $sessionId, $snapshotAt);
             $evidence = $this->evidence($connection, $organizationId, $projectId, $sessionId);
             $usage = $this->usage($connection, $organizationId, $projectId, $sessionId);
@@ -157,30 +158,46 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
     }
 
     /** @return array<string, mixed> */
-    private function currentCheckpoint(Connection $connection, int $organizationId, int $projectId, int $sessionId, CarbonImmutable $snapshotAt): array
+    private function currentCheckpoint(Connection $connection, int $organizationId, int $projectId, int $sessionId, CarbonImmutable $snapshotAt, ?string $generationAttemptId): array
     {
-        $row = $connection->table('estimate_generation_pipeline_checkpoints')
+        $query = $connection->table('estimate_generation_pipeline_checkpoints')
             ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
             ->select(['stage', 'status', 'attempt_count', 'lease_expires_at', 'started_at', 'completed_at', 'updated_at'])
             ->selectRaw(
                 'CASE WHEN status = ? AND lease_expires_at <= ? THEN TRUE ELSE FALSE END AS lease_expired',
                 [CheckpointStatus::Running->value, $snapshotAt],
-            )
-            ->orderByDesc('updated_at')->orderByDesc('id')->first();
+            );
+        if ($generationAttemptId !== null) {
+            $query->where('generation_attempt_id', $generationAttemptId);
+        }
+        $row = $query->orderByDesc('updated_at')->orderByDesc('id')->first();
 
         return $row instanceof stdClass ? $this->row($row) : [];
     }
 
     /** @return array<string, mixed> */
-    private function checkpoints(Connection $connection, int $organizationId, int $projectId, int $sessionId, CarbonImmutable $snapshotAt): array
+    private function checkpoints(Connection $connection, int $organizationId, int $projectId, int $sessionId, CarbonImmutable $snapshotAt, ?string $generationAttemptId): array
     {
-        return $this->aggregate($connection->table('estimate_generation_pipeline_checkpoints')
+        $query = $connection->table('estimate_generation_pipeline_checkpoints')
             ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
             ->selectRaw('COUNT(*) AS total, MAX(id) AS max_id, MAX(updated_at) AS max_updated_at, COALESCE(SUM(attempt_count), 0) AS attempts')
             ->selectRaw('0 AS pending')
             ->selectRaw('SUM(CASE WHEN status = ? AND lease_expires_at > ? THEN 1 ELSE 0 END) AS running', [CheckpointStatus::Running->value, $snapshotAt])
             ->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS failed', [CheckpointStatus::Failed->value])
-            ->selectRaw('SUM(CASE WHEN status = ? AND lease_expires_at <= ? THEN 1 ELSE 0 END) AS expired', [CheckpointStatus::Running->value, $snapshotAt]));
+            ->selectRaw('SUM(CASE WHEN status = ? AND lease_expires_at <= ? THEN 1 ELSE 0 END) AS expired', [CheckpointStatus::Running->value, $snapshotAt]);
+        if ($generationAttemptId !== null) {
+            $query->where('generation_attempt_id', $generationAttemptId);
+        }
+
+        return $this->aggregate($query);
+    }
+
+    private function generationAttemptId(array $session): ?string
+    {
+        $input = $this->json($session['input_payload'] ?? []);
+        $attemptId = $input['generation_attempt_id'] ?? null;
+
+        return is_string($attemptId) && $attemptId !== '' ? $attemptId : null;
     }
 
     /** @return array<string, mixed> */

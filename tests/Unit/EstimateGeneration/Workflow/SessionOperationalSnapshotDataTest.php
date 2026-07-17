@@ -12,6 +12,18 @@ use PHPUnit\Framework\TestCase;
 final class SessionOperationalSnapshotDataTest extends TestCase
 {
     #[Test]
+    public function operational_checkpoint_queries_are_scoped_to_the_active_generation_attempt(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Application/Sessions/BuildSessionOperationalSnapshot.php',
+        );
+
+        self::assertIsString($source);
+        self::assertGreaterThanOrEqual(2, substr_count($source, "->where('generation_attempt_id', \$generationAttemptId)"));
+        self::assertStringContainsString('$generationAttemptId = $this->generationAttemptId($session);', $source);
+    }
+
+    #[Test]
     public function operational_contract_keeps_exact_money_and_only_safe_summaries(): void
     {
         $snapshot = new SessionSnapshotData(
