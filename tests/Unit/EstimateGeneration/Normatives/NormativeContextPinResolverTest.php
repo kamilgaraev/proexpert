@@ -178,8 +178,10 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('CAST(norms.work_composition AS TEXT)', $source);
         self::assertStringContainsString("->where('source_type', 'fsnb_2022')", $source);
         self::assertStringContainsString("\$allowedSections->{\$method}('norms.section_code', 'like', \$section.'%')", $source);
-        self::assertStringContainsString("->where('source_type', 'fsbc')", $source);
+        self::assertStringContainsString("latestPriceDatasetId('fsbc', true)", $source);
+        self::assertStringContainsString("latestPriceDatasetId('fgis_labor_prices', false)", $source);
         self::assertStringContainsString('$fsbcBasePriceDatasetId,', $source);
+        self::assertStringContainsString('$fgisLaborPriceDatasetId,', $source);
         self::assertStringContainsString('$requested->datasetId,', $source);
         self::assertStringContainsString("->whereIn('pin_prices.dataset_version_id', \$basePriceDatasetIds)", $source);
         self::assertStringContainsString("->whereIn('valid_prices.dataset_version_id', \$basePriceDatasetIds)", $source);
@@ -513,5 +515,23 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertSame('412.370000', $mapped->resource['unit_price']);
         self::assertSame('fsnb_base', $mapped->resource['price_source']);
         self::assertSame('2022.4', $mapped->resource['price_source_version']);
+    }
+
+    #[Test]
+    public function database_resource_row_preserves_fgis_labor_price_and_source(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101, 'norm_resource_id' => 7001,
+            'construction_resource_id' => null, 'price_construction_resource_id' => null,
+            'price_id' => 9001, 'resource_type' => 'labor',
+            'resource_code' => '1-100-01', 'price_resource_code' => '1-100-01',
+            'resource_name' => 'Рабочий', 'unit' => 'чел.-ч', 'price_unit' => 'чел.-ч',
+            'quantity' => '2.500000', 'unit_price' => '412.370000',
+            'regional_price_version_id' => null, 'regional_price_version_key' => null,
+            'price_dataset_source_type' => 'fgis_labor_prices', 'price_dataset_version' => '2026.2',
+        ]);
+
+        self::assertSame('fgis_labor_base', $mapped->resource['price_source']);
+        self::assertSame('2026.2', $mapped->resource['price_source_version']);
     }
 }

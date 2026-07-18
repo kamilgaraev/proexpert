@@ -252,6 +252,7 @@ class NormativeCandidatePresenter
                     'regional_catalog' => 'regional',
                     'fsbc_base' => 'fsbc_base',
                     'fsnb_base' => 'fsnb_base',
+                    'fgis_labor_base' => 'fgis_labor_base',
                     default => null,
                 };
                 if ($code === '' || $name === '' || ! is_numeric($amount) || (float) $amount <= 0 || $source === null) {

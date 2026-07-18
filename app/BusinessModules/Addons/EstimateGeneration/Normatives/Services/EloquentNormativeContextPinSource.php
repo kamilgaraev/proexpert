@@ -47,21 +47,10 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
 
             return null;
         }
-        $fsbcBasePriceDatasetId = $this->database->table('estimate_dataset_versions')
-            ->where('source_type', 'fsbc')
-            ->where('status', 'parsed')
-            ->whereExists(function ($resourcePrices): void {
-                $resourcePrices->selectRaw('1')
-                    ->from('estimate_resource_prices')
-                    ->whereColumn('estimate_resource_prices.dataset_version_id', 'estimate_dataset_versions.id')
-                    ->whereNull('regional_price_version_id')
-                    ->where('base_price', '>', 0);
-            })
-            ->orderByDesc('id')
-            ->limit(1)
-            ->value('id');
-        $fsbcBasePriceDatasetId = is_numeric($fsbcBasePriceDatasetId) ? (int) $fsbcBasePriceDatasetId : 0;
+        $fsbcBasePriceDatasetId = $this->latestPriceDatasetId('fsbc', true);
+        $fgisLaborPriceDatasetId = $this->latestPriceDatasetId('fgis_labor_prices', false);
         $basePriceDatasetIds = array_values(array_unique(array_filter([
+            $fgisLaborPriceDatasetId,
             $fsbcBasePriceDatasetId,
             $requested->datasetId,
         ], static fn (int $id): bool => $id > 0)));
@@ -300,6 +289,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                       ))
                     ORDER BY CASE WHEN candidate_prices.regional_price_version_id = ? THEN 0 ELSE 1 END,
                       CASE WHEN candidate_prices.dataset_version_id = ? THEN 0 ELSE 1 END,
+                      CASE WHEN candidate_prices.dataset_version_id = ? THEN 0 ELSE 1 END,
                       CASE WHEN candidate_prices.unit IS NOT DISTINCT FROM resources.unit THEN 0 ELSE 1 END, candidate_prices.id
                     LIMIT 1)',
                 [
@@ -309,6 +299,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     $requested->periodId,
                     ...$basePriceDatasetIds,
                     $requested->regionalPriceVersionId,
+                    $fgisLaborPriceDatasetId,
                     $fsbcBasePriceDatasetId,
                 ],
             )
@@ -389,6 +380,25 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         if (Log::getFacadeRoot() !== null) {
             Log::info('estimate_generation.normative_pin_source', ['phase' => $phase, ...$context]);
         }
+    }
+
+    private function latestPriceDatasetId(string $sourceType, bool $baseOnly): int
+    {
+        $datasetId = $this->database->table('estimate_dataset_versions')
+            ->where('source_type', $sourceType)
+            ->where('status', 'parsed')
+            ->whereExists(function ($resourcePrices) use ($baseOnly): void {
+                $resourcePrices->selectRaw('1')
+                    ->from('estimate_resource_prices')
+                    ->whereColumn('estimate_resource_prices.dataset_version_id', 'estimate_dataset_versions.id')
+                    ->when($baseOnly, static fn ($prices) => $prices->whereNull('regional_price_version_id'))
+                    ->where('base_price', '>', 0);
+            })
+            ->orderByDesc('id')
+            ->limit(1)
+            ->value('id');
+
+        return is_numeric($datasetId) ? (int) $datasetId : 0;
     }
 
     private function coverageDiagnostics(NormativeContextPinData $requested, array $basePriceDatasetIds, array $intents): array

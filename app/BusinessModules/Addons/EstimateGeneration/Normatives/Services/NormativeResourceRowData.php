@@ -30,6 +30,7 @@ final readonly class NormativeResourceRowData
             $regionalPriceVersionId !== null => 'regional_catalog',
             $datasetSourceType === 'fsbc' => 'fsbc_base',
             $datasetSourceType === 'fsnb_2022' => 'fsnb_base',
+            $datasetSourceType === 'fgis_labor_prices' => 'fgis_labor_base',
             default => null,
         };
         $priceSourceVersion = trim((string) (
