@@ -61,6 +61,9 @@ final readonly class NormativeIntentCandidateRanker
         $haystack = mb_strtolower(implode(' ', [
             $name,
             (string) ($candidate->section_name ?? ''),
+            is_array($candidate->work_composition ?? null)
+                ? implode(' ', array_filter($candidate->work_composition, 'is_string'))
+                : (string) ($candidate->work_composition ?? ''),
         ]));
         $tokens = $this->tokens($search);
         $matches = count(array_filter($tokens, static fn (string $token): bool => str_contains($haystack, $token)));
@@ -73,7 +76,9 @@ final readonly class NormativeIntentCandidateRanker
     {
         $tokens = [];
         foreach (preg_split('/[^\pL\pN.-]+/u', mb_strtolower($search)) ?: [] as $token) {
-            if (mb_strlen($token) < 3 || in_array($token, ['монтаж', 'устройство', 'работы', 'система', 'системы'], true)) {
+            if (mb_strlen($token) < 3 || in_array($token, [
+                'монтаж', 'устройство', 'отделка', 'работа', 'работы', 'система', 'системы',
+            ], true)) {
                 continue;
             }
             $tokens[$token] = true;
