@@ -144,14 +144,26 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringNotContainsString("->orderByDesc('norms.id')", $source);
         self::assertStringContainsString("->where('id', \$requested->datasetId)", $source);
         self::assertStringContainsString("->where('prices.regional_price_version_id', \$requested->regionalPriceVersionId)", $source);
+        self::assertStringContainsString("->where('status', 'active')", $source);
         self::assertStringContainsString('->whereExists(function ($priced) use ($requested)', $source);
         self::assertStringContainsString("->where('pin_prices.base_price', '>', 0)", $source);
-        self::assertStringContainsString("->whereColumn('pin_resources.construction_resource_id', 'pin_prices.construction_resource_id')", $source);
+        self::assertStringNotContainsString("->whereColumn('pin_resources.construction_resource_id', 'pin_prices.construction_resource_id')", $source);
+        self::assertStringNotContainsString("->on('pin_prices.price_type', '=', 'pin_resources.resource_type')", $source);
         self::assertStringContainsString('->whereNotExists(function ($unpriced) use ($requested)', $source);
         self::assertStringContainsString('->whereNotExists(function ($validPrice) use ($requested)', $source);
-        self::assertStringContainsString('->whereNotExists(function ($invalidQuantity)', $source);
-        self::assertStringContainsString("->orWhere('invalid_resources.quantity', '<=', 0)", $source);
+        self::assertStringContainsString('->whereExists(function ($positiveQuantity)', $source);
+        self::assertStringContainsString("->where('positive_resources.quantity', '>', 0)", $source);
+        self::assertStringContainsString('->whereNotExists(function ($negativeQuantity)', $source);
+        self::assertStringContainsString("->where('negative_resources.quantity', '<', 0)", $source);
         self::assertStringContainsString("->whereColumn('valid_prices.resource_code', 'required_resources.resource_code')", $source);
+        self::assertStringContainsString('estimate_generation_unit_conversions as valid_conversions', $source);
+        self::assertStringContainsString("->where('valid_conversions.version', 1)", $source);
+        self::assertStringContainsString("->where('valid_conversions.is_active', true)", $source);
+        self::assertStringContainsString("->where('valid_conversions.factor', '>', 0)", $source);
+        self::assertStringContainsString('pin_prices.unit IS NOT DISTINCT FROM pin_resources.unit', $source);
+        self::assertStringContainsString('valid_prices.unit IS NOT DISTINCT FROM required_resources.unit', $source);
+        self::assertStringContainsString('candidate_prices.unit IS NOT DISTINCT FROM resources.unit', $source);
+        self::assertStringContainsString("'prices.unit as price_unit'", $source);
         self::assertStringNotContainsString("->where('resources.quantity', '>', 0)", $source);
         self::assertStringContainsString('$this->ranker->select($query->all(), [$intent])', $source);
         self::assertStringContainsString("norms.search_vector @@ websearch_to_tsquery('russian', ?)", $source);
@@ -295,12 +307,13 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
-    public function exact_database_resource_row_preserves_positive_identities_and_rejects_relation_mismatch(): void
+    public function database_resource_row_uses_the_authoritative_resource_code_relation(): void
     {
         $row = (object) [
             'estimate_norm_id' => 101, 'norm_resource_id' => 7001,
-            'construction_resource_id' => 501, 'price_construction_resource_id' => 501,
+            'construction_resource_id' => 501, 'price_construction_resource_id' => 502,
             'price_id' => 9001, 'resource_type' => 'material', 'resource_code' => '01.7.01',
+            'price_resource_code' => '01.7.01', 'price_unit' => '100 pcs',
             'resource_name' => 'Кирпич', 'unit' => 'pcs', 'quantity' => 50,
         ];
         $mapped = NormativeResourceRowData::fromDatabaseRow($row);
@@ -310,13 +323,13 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertSame(7001, $mapped->resource['norm_resource_id']);
         self::assertSame(9001, $mapped->resource['price_id']);
         self::assertSame(501, $mapped->resource['linked_resource_id']);
+        self::assertSame('100 pcs', $mapped->resource['price_unit']);
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('normative_resource_price_relation_invalid');
         NormativeResourceRowData::fromDatabaseRow((object) [
             ...(array) $row,
-            'price_construction_resource_id' => 502,
-            'price_resource_code' => '01.7.01',
+            'price_resource_code' => '01.7.02',
         ]);
     }
 

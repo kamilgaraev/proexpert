@@ -23,9 +23,7 @@ final readonly class NormativeResourceRowData
         $priceId = self::positiveInt($row->price_id ?? null);
         $resourceCode = trim((string) ($row->resource_code ?? ''));
         $priceResourceCode = trim((string) ($row->price_resource_code ?? ''));
-        $identityMatches = $linkedResourceId !== null && $priceResourceId !== null
-            ? $linkedResourceId === $priceResourceId
-            : $resourceCode !== '' && hash_equals($resourceCode, $priceResourceCode);
+        $identityMatches = $resourceCode !== '' && hash_equals($resourceCode, $priceResourceCode);
         if ($normId === null || $normResourceId === null || $priceId === null || ! $identityMatches) {
             throw new InvalidArgumentException('normative_resource_price_relation_invalid');
         }
@@ -40,6 +38,7 @@ final readonly class NormativeResourceRowData
             'code' => $resourceCode,
             'name' => (string) ($row->resource_name ?? ''),
             'unit' => (string) ($row->unit ?? ''),
+            'price_unit' => (string) ($row->price_unit ?? $row->unit ?? ''),
             'quantity' => (float) ($row->quantity ?? 0),
             'price_id' => $priceId,
             'price_source' => 'regional_catalog',

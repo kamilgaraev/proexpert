@@ -586,6 +586,7 @@ class ResourceAssemblyService
                     'name' => $resource['name'] ?? $resource['code'] ?? 'resource',
                     'resource_type' => $targetType,
                     'unit' => $resource['unit'],
+                    'price_unit' => $resource['price_unit'] ?? $resource['unit'],
                     'quantity' => $quantity,
                     'quantity_per_unit' => $quantityPerUnit,
                     'quantity_basis' => 'normative_resource',

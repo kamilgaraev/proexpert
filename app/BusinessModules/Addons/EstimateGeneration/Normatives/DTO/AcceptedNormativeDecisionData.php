@@ -64,6 +64,7 @@ final readonly class AcceptedNormativeDecisionData
             || self::resourceCount($resources) === 0) {
             throw new InvalidArgumentException('accepted_normative_resources_missing');
         }
+        $hasPositiveQuantity = false;
         foreach ($resources as $records) {
             if (! is_array($records) || ! array_is_list($records)) {
                 throw new InvalidArgumentException('accepted_normative_resources_invalid');
@@ -71,10 +72,14 @@ final readonly class AcceptedNormativeDecisionData
             foreach ($records as $resource) {
                 if (! is_array($resource) || ! is_int($resource['price_id'] ?? null) || $resource['price_id'] <= 0
                     || ! is_string($resource['code'] ?? null) || ! is_string($resource['unit'] ?? null)
-                    || ! is_numeric($resource['quantity'] ?? null) || (float) $resource['quantity'] <= 0) {
+                    || ! is_numeric($resource['quantity'] ?? null) || (float) $resource['quantity'] < 0) {
                     throw new InvalidArgumentException('accepted_normative_resources_invalid');
                 }
+                $hasPositiveQuantity = $hasPositiveQuantity || (float) $resource['quantity'] > 0;
             }
+        }
+        if (! $hasPositiveQuantity) {
+            throw new InvalidArgumentException('accepted_normative_resources_invalid');
         }
 
         return new self(

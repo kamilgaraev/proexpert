@@ -30,7 +30,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->where('price_zone_id', $requested->priceZoneId)
             ->where('period_id', $requested->periodId)
             ->where('version_key', $requested->priceVersion)
-            ->whereIn('status', ['checked', 'active'])
+            ->where('status', 'active')
             ->exists();
 
         if (! $dataset || ! $prices) {
@@ -61,7 +61,6 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                         ->from('estimate_norm_resources as pin_resources')
                         ->join('estimate_resource_prices as pin_prices', function ($join) use ($requested): void {
                             $join->on('pin_prices.resource_code', '=', 'pin_resources.resource_code')
-                                ->on('pin_prices.price_type', '=', 'pin_resources.resource_type')
                                 ->where('pin_prices.regional_price_version_id', $requested->regionalPriceVersionId)
                                 ->where('pin_prices.region_id', $requested->regionId)
                                 ->where('pin_prices.price_zone_id', $requested->priceZoneId)
@@ -69,20 +68,30 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                         })
                         ->whereColumn('pin_resources.estimate_norm_id', 'norms.id')
                         ->where('pin_prices.base_price', '>', 0)
-                        ->where(function ($identity): void {
-                            $identity->whereColumn('pin_resources.construction_resource_id', 'pin_prices.construction_resource_id')
-                                ->orWhereNull('pin_resources.construction_resource_id')
-                                ->orWhereNull('pin_prices.construction_resource_id');
+                        ->where(function ($compatibleUnit): void {
+                            $compatibleUnit->whereRaw('pin_prices.unit IS NOT DISTINCT FROM pin_resources.unit')
+                                ->orWhereExists(function ($conversion): void {
+                                    $conversion->selectRaw('1')
+                                        ->from('estimate_generation_unit_conversions as pin_conversions')
+                                        ->whereColumn('pin_conversions.from_unit', 'pin_resources.unit')
+                                        ->whereColumn('pin_conversions.to_unit', 'pin_prices.unit')
+                                        ->where('pin_conversions.version', 1)
+                                        ->where('pin_conversions.is_active', true)
+                                        ->where('pin_conversions.factor', '>', 0);
+                                });
                         });
                 })
-                ->whereNotExists(function ($invalidQuantity): void {
-                    $invalidQuantity->selectRaw('1')
-                        ->from('estimate_norm_resources as invalid_resources')
-                        ->whereColumn('invalid_resources.estimate_norm_id', 'norms.id')
-                        ->where(function ($invalid): void {
-                            $invalid->whereNull('invalid_resources.quantity')
-                                ->orWhere('invalid_resources.quantity', '<=', 0);
-                        });
+                ->whereExists(function ($positiveQuantity): void {
+                    $positiveQuantity->selectRaw('1')
+                        ->from('estimate_norm_resources as positive_resources')
+                        ->whereColumn('positive_resources.estimate_norm_id', 'norms.id')
+                        ->where('positive_resources.quantity', '>', 0);
+                })
+                ->whereNotExists(function ($negativeQuantity): void {
+                    $negativeQuantity->selectRaw('1')
+                        ->from('estimate_norm_resources as negative_resources')
+                        ->whereColumn('negative_resources.estimate_norm_id', 'norms.id')
+                        ->where('negative_resources.quantity', '<', 0);
                 })
                 ->whereNotExists(function ($unpriced) use ($requested): void {
                     $unpriced->selectRaw('1')
@@ -92,16 +101,22 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                             $validPrice->selectRaw('1')
                                 ->from('estimate_resource_prices as valid_prices')
                                 ->whereColumn('valid_prices.resource_code', 'required_resources.resource_code')
-                                ->whereColumn('valid_prices.price_type', 'required_resources.resource_type')
                                 ->where('valid_prices.regional_price_version_id', $requested->regionalPriceVersionId)
                                 ->where('valid_prices.region_id', $requested->regionId)
                                 ->where('valid_prices.price_zone_id', $requested->priceZoneId)
                                 ->where('valid_prices.period_id', $requested->periodId)
                                 ->where('valid_prices.base_price', '>', 0)
-                                ->where(function ($identity): void {
-                                    $identity->whereColumn('required_resources.construction_resource_id', 'valid_prices.construction_resource_id')
-                                        ->orWhereNull('required_resources.construction_resource_id')
-                                        ->orWhereNull('valid_prices.construction_resource_id');
+                                ->where(function ($compatibleUnit): void {
+                                    $compatibleUnit->whereRaw('valid_prices.unit IS NOT DISTINCT FROM required_resources.unit')
+                                        ->orWhereExists(function ($conversion): void {
+                                            $conversion->selectRaw('1')
+                                                ->from('estimate_generation_unit_conversions as valid_conversions')
+                                                ->whereColumn('valid_conversions.from_unit', 'required_resources.unit')
+                                                ->whereColumn('valid_conversions.to_unit', 'valid_prices.unit')
+                                                ->where('valid_conversions.version', 1)
+                                                ->where('valid_conversions.is_active', true)
+                                                ->where('valid_conversions.factor', '>', 0);
+                                        });
                                 });
                         });
                 })
@@ -149,7 +164,6 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         $resourceRows = $this->database->table('estimate_norm_resources as resources')
             ->join('estimate_resource_prices as prices', function ($join) use ($requested): void {
                 $join->on('prices.resource_code', '=', 'resources.resource_code')
-                    ->on('prices.price_type', '=', 'resources.resource_type')
                     ->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
                     ->where('prices.region_id', $requested->regionId)
                     ->where('prices.price_zone_id', $requested->priceZoneId)
@@ -157,18 +171,31 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             })
             ->whereIn('resources.estimate_norm_id', $ids)
             ->where('prices.base_price', '>', 0)
-            ->where(function ($identity): void {
-                $identity->whereColumn('resources.construction_resource_id', 'prices.construction_resource_id')
-                    ->orWhereNull('resources.construction_resource_id')
-                    ->orWhereNull('prices.construction_resource_id');
-            })
+            ->whereRaw(
+                'prices.id = (SELECT candidate_prices.id FROM estimate_resource_prices AS candidate_prices
+                    WHERE candidate_prices.resource_code = resources.resource_code
+                      AND candidate_prices.regional_price_version_id = ?
+                      AND candidate_prices.region_id = ? AND candidate_prices.price_zone_id = ?
+                      AND candidate_prices.period_id = ? AND candidate_prices.base_price > 0
+                      AND (candidate_prices.unit IS NOT DISTINCT FROM resources.unit OR EXISTS (
+                          SELECT 1 FROM estimate_generation_unit_conversions AS candidate_conversions
+                          WHERE candidate_conversions.from_unit = resources.unit
+                            AND candidate_conversions.to_unit = candidate_prices.unit
+                            AND candidate_conversions.version = 1
+                            AND candidate_conversions.is_active = TRUE
+                            AND candidate_conversions.factor > 0
+                      ))
+                    ORDER BY CASE WHEN candidate_prices.unit IS NOT DISTINCT FROM resources.unit THEN 0 ELSE 1 END, candidate_prices.id
+                    LIMIT 1)',
+                [$requested->regionalPriceVersionId, $requested->regionId, $requested->priceZoneId, $requested->periodId],
+            )
             ->orderBy('resources.estimate_norm_id')->orderBy('resources.id')
             ->limit(10_001)
             ->get([
                 'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
                 'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
                 'prices.id as price_id', 'prices.construction_resource_id as price_construction_resource_id',
-                'prices.resource_code as price_resource_code', 'prices.price_type',
+                'prices.resource_code as price_resource_code', 'prices.price_type', 'prices.unit as price_unit',
             ]);
         if ($resourceRows->count() > 10_000) {
             $this->telemetry('resources_limit_exceeded', ['selected_count' => $norms->count(), 'resource_rows_count' => $resourceRows->count()]);

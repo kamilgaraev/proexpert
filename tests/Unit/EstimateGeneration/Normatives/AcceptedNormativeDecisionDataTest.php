@@ -44,6 +44,31 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
     }
 
     #[Test]
+    public function accepts_zero_quantity_service_rows_that_are_part_of_the_authoritative_norm_set(): void
+    {
+        $record = $this->catalogCandidate();
+        $record['resources']['other'][] = [
+            'code' => '2', 'name' => 'Summary', 'unit' => 'h', 'quantity' => 0,
+            'price_id' => 9002, 'price_source' => 'regional_catalog', 'linked_resource_id' => null,
+        ];
+
+        $decision = AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
+
+        self::assertSame(0, $decision->resources['other'][0]['quantity']);
+    }
+
+    #[Test]
+    public function rejects_a_normative_resource_set_without_a_positive_cost_contribution(): void
+    {
+        $record = $this->catalogCandidate();
+        $record['resources']['materials'][0]['quantity'] = 0;
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('accepted_normative_resources_invalid');
+        AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
+    }
+
+    #[Test]
     public function rejects_unit_mismatch_and_missing_resources_fail_closed(): void
     {
         $record = $this->catalogCandidate();
@@ -75,6 +100,7 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
 
         self::assertSame('matched', $item['normative_match']['status']);
         self::assertSame(9001, $item['materials'][0]['normative_ref']['price_id']);
+        self::assertSame('pcs', $item['materials'][0]['price_unit']);
         self::assertSame(0.0, $item['materials'][0]['unit_price']);
         self::assertSame('prices-2026.06', $item['price_dataset']['version_key']);
         $priced = (new EstimatePricingService(new ResolveRegionalPrice(static fn (int $priceId): array => [
@@ -109,6 +135,7 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
             'resources' => ['materials' => [[
                 'code' => '01.7.01', 'name' => 'Кирпич', 'unit' => 'pcs', 'quantity' => 50,
                 'price_id' => 9001, 'price_source' => 'fsbc', 'linked_resource_id' => 501,
+                'price_unit' => 'pcs',
             ]], 'labor' => [], 'machinery' => [], 'other' => []],
         ];
     }
