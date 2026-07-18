@@ -28,16 +28,21 @@ final class NormativeWorkIntentFactory
         }
         $evidence = $this->evidence($context['source_refs'] ?? []);
 
+        $preferredSections = array_values(array_filter(
+            $classified['preferred_section_prefixes'] ?? [],
+            static fn (mixed $section): bool => is_string($section) && $section !== '',
+        ));
+
         return new WorkIntentData(
             (int) $context['organization_id'], (int) $context['project_id'], (int) $context['session_id'],
             (string) ($item['key'] ?? $item['id'] ?? hash('sha256', json_encode($item, JSON_THROW_ON_ERROR))),
             (string) ($item['normative_search_text'] ?? $item['name'] ?? ''), (string) ($item['unit'] ?? ''),
             (string) ($classified['expected_dimensions'][0] ?? ''), (string) ($classified['material'] ?? ''),
             (string) ($classified['action'] ?? ''), (string) ($classified['scope'] ?? ''),
-            (string) ($classified['preferred_section_prefixes'][0] ?? ''),
+            count($preferredSections) === 1 ? $preferredSections[0] : '',
             ObjectTypeSignalClassifier::canonical((string) ($context['object_type'] ?? '')),
             $datasetVersion, 'parsed', $this->region($context), new DateTimeImmutable((string) $context['applicability_date']),
-            $evidence,
+            $evidence, $preferredSections,
         );
     }
 

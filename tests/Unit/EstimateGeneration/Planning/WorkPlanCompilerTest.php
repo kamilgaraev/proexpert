@@ -96,6 +96,7 @@ final class WorkPlanCompilerTest extends TestCase
                 'unit' => 'm2',
                 'code' => null,
                 'normative_section' => '11',
+                'normative_sections' => ['11'],
             ]])
             ->willReturn(['status' => 'pinned']);
         $compiler = new WorkPlanCompiler(
@@ -117,6 +118,46 @@ final class WorkPlanCompilerTest extends TestCase
                 ]],
             ]],
         ]]);
+
+        self::assertSame(['status' => 'pinned'], $pin);
+    }
+
+    public function test_normative_pin_preserves_every_allowed_section_prefix(): void
+    {
+        $pins = $this->createMock(NormativeContextPinResolver::class);
+        $pins->expects(self::once())
+            ->method('resolve')
+            ->with([], [[
+                'search_text' => 'Бетонирование фундаментов',
+                'unit' => 'm3',
+                'code' => null,
+                'normative_section' => null,
+                'normative_sections' => ['01', '06'],
+            ]])
+            ->willReturn(['status' => 'pinned']);
+
+        $compiler = new WorkPlanCompiler(
+            new PackagePlannerService,
+            new EstimateDecompositionService,
+            new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService),
+            $pins,
+        );
+        $pin = $compiler->resolveNormativeContextPin([], [
+            [
+                'sections' => [
+                    [
+                        'work_items' => [
+                            [
+                                'item_type' => 'priced_work',
+                                'name' => 'Бетонирование фундаментов',
+                                'unit' => 'm3',
+                                'work_intent' => ['preferred_section_prefixes' => ['01', '06']],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
 
         self::assertSame(['status' => 'pinned'], $pin);
     }

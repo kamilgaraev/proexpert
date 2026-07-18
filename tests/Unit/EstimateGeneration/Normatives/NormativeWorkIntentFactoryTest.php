@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use PHPUnit\Framework\TestCase;
 
 final class NormativeWorkIntentFactoryTest extends TestCase
@@ -34,5 +36,38 @@ final class NormativeWorkIntentFactoryTest extends TestCase
 
         self::assertSame('residential', $intent->objectType);
         self::assertSame('foundation', $intent->structure);
+    }
+
+    public function test_multiple_allowed_sections_do_not_collapse_to_the_first_prefix(): void
+    {
+        $intent = (new NormativeWorkIntentFactory)->intent([
+            'key' => 'foundation.concrete', 'name' => 'Бетонирование фундаментов', 'unit' => 'm3',
+            'work_intent' => [
+                'material' => 'concrete', 'action' => 'concreting', 'scope' => 'foundation',
+                'object' => 'foundation', 'expected_dimensions' => ['volume'],
+                'preferred_section_prefixes' => ['01', '06'],
+            ],
+        ], [
+            'organization_id' => 1, 'project_id' => 89, 'session_id' => 58,
+            'object_type' => 'house', 'applicability_date' => '2026-07-17', 'source_refs' => ['doc:1'],
+        ], 'fsnb-2026.1');
+
+        self::assertSame('', $intent->normativeSection);
+        self::assertSame(['01', '06'], $intent->normativeSections);
+    }
+
+    public function test_unrecorded_work_intent_keeps_all_sections_from_classifier(): void
+    {
+        $factory = new NormativeWorkIntentFactory(new WorkIntentClassifier(new NormativeScopeRuleCatalog));
+
+        $intent = $factory->intent([
+            'key' => 'foundation.concrete', 'name' => 'Бетонирование фундаментов', 'unit' => 'm3',
+        ], [
+            'organization_id' => 1, 'project_id' => 89, 'session_id' => 58, 'scope_type' => 'foundation',
+            'object_type' => 'house', 'applicability_date' => '2026-07-17', 'source_refs' => ['doc:1'],
+        ], 'fsnb-2026.1');
+
+        self::assertSame('', $intent->normativeSection);
+        self::assertSame(['01', '06'], $intent->normativeSections);
     }
 }

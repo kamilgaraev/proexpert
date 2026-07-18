@@ -83,6 +83,23 @@ final class NormativeHardGateTest extends TestCase
         self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
     }
 
+    public function test_candidate_must_belong_to_one_of_all_allowed_sections(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'foundation.concrete', 'Бетонирование фундаментов', 'm3', 'volume', '',
+            '', '', '', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'], ['01', '06'],
+        );
+
+        $set = (new NormativeHardGate)->filter($intent, [
+            $this->candidate(['id' => 'allowed', 'canonicalUnit' => 'm3', 'unitDimension' => 'volume', 'normativeSection' => '06-01']),
+            $this->candidate(['id' => 'foreign', 'canonicalUnit' => 'm3', 'unitDimension' => 'volume', 'normativeSection' => '09-01']),
+        ]);
+
+        self::assertSame(['allowed'], array_map(static fn ($row): string => $row->id, $set->candidates));
+        self::assertSame(['normative_section_mismatch'], $set->rejected[0]->reasonCodes);
+    }
+
     public function test_house_and_residential_object_types_are_compatible(): void
     {
         $intent = new WorkIntentData(

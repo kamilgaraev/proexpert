@@ -8,7 +8,10 @@ use DateTimeImmutable;
 
 final readonly class WorkIntentData
 {
-    /** @param list<string> $sourceEvidence */
+    /**
+     * @param  list<string>  $sourceEvidence
+     * @param  list<string>  $normativeSections
+     */
     public function __construct(
         public int $organizationId,
         public int $projectId,
@@ -27,6 +30,7 @@ final readonly class WorkIntentData
         public ?string $regionCode,
         public DateTimeImmutable $applicabilityDate,
         public array $sourceEvidence,
+        public array $normativeSections = [],
     ) {
         EvidenceBounds::assert($sourceEvidence);
     }

@@ -8,7 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeU
 
 final readonly class NormativeIntentCandidateRanker
 {
-    /** @param list<object> $candidates @param non-empty-list<array{search_text: string, unit: string, code?: string|null, normative_section?: string|null}> $intents @return list<object>|null */
+    /** @param list<object> $candidates @param non-empty-list<array{search_text: string, unit: string, code?: string|null, normative_section?: string|null, normative_sections?: list<string>}> $intents @return list<object>|null */
     public function select(array $candidates, array $intents): ?array
     {
         $selected = [];
@@ -36,16 +36,30 @@ final readonly class NormativeIntentCandidateRanker
         return array_values($selected);
     }
 
-    /** @param array{search_text: string, unit: string, code?: string|null, normative_section?: string|null} $intent */
+    /** @param array{search_text: string, unit: string, code?: string|null, normative_section?: string|null, normative_sections?: list<string>} $intent */
     private function score(object $candidate, array $intent): ?int
     {
         $unit = (string) ($candidate->canonical_unit ?: $candidate->unit);
         if (! NormativeUnitNormalizer::compatible($unit, $intent['unit'])) {
             return null;
         }
+        $preferredSections = array_values(array_filter(
+            $intent['normative_sections'] ?? [],
+            static fn (mixed $section): bool => is_string($section) && $section !== '',
+        ));
         $preferredSection = trim((string) ($intent['normative_section'] ?? ''));
+        if ($preferredSections === [] && $preferredSection !== '') {
+            $preferredSections = [$preferredSection];
+        }
         $candidateSection = trim((string) ($candidate->section_code ?? ''));
-        if ($preferredSection !== '' && ! str_starts_with($candidateSection, $preferredSection)) {
+        $sectionMatches = false;
+        foreach ($preferredSections as $section) {
+            if (str_starts_with($candidateSection, $section)) {
+                $sectionMatches = true;
+                break;
+            }
+        }
+        if ($preferredSections !== [] && ! $sectionMatches) {
             return null;
         }
         $name = mb_strtolower((string) $candidate->name);

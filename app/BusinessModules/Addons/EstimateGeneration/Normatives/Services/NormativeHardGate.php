@@ -61,9 +61,20 @@ final class NormativeHardGate
                 $reasons[] = $code.'_mismatch';
             }
         }
-        if ($candidate->normativeSection !== null && $candidate->normativeSection !== ''
-            && $intent->normativeSection !== ''
-            && ! $this->sectionCompatible($candidate->normativeSection, $intent->normativeSection)) {
+        $preferredSections = $intent->normativeSections;
+        if ($preferredSections === [] && $intent->normativeSection !== '') {
+            $preferredSections = [$intent->normativeSection];
+        }
+        $sectionMatches = $preferredSections === [];
+        foreach ($preferredSections as $preferredSection) {
+            if ($candidate->normativeSection !== null && $candidate->normativeSection !== ''
+                && $this->sectionCompatible($candidate->normativeSection, $preferredSection)) {
+                $sectionMatches = true;
+
+                break;
+            }
+        }
+        if ($candidate->normativeSection !== null && $candidate->normativeSection !== '' && ! $sectionMatches) {
             $reasons[] = 'normative_section_mismatch';
         }
         if ($candidate->objectType !== null && $candidate->objectType !== '' && $intent->objectType !== ''

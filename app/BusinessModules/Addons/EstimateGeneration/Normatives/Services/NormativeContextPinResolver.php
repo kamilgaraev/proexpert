@@ -134,7 +134,7 @@ class NormativeContextPinResolver
         return null;
     }
 
-    /** @return list<array{search_text: string, unit: string, code?: string|null, normative_section?: string|null}>|null */
+    /** @return list<array{search_text: string, unit: string, code?: string|null, normative_section?: string|null, normative_sections?: list<string>}>|null */
     private function intents(array $workIntents): ?array
     {
         $resolved = [];
@@ -146,15 +146,29 @@ class NormativeContextPinResolver
             $unit = trim((string) ($intent['unit'] ?? ''));
             $code = isset($intent['code']) ? trim((string) $intent['code']) : null;
             $normativeSection = isset($intent['normative_section']) ? trim((string) $intent['normative_section']) : null;
+            $normativeSections = is_array($intent['normative_sections'] ?? null)
+                ? array_values(array_unique(array_filter(array_map(
+                    static fn (mixed $section): string => is_string($section) ? trim($section) : '',
+                    $intent['normative_sections'],
+                ))))
+                : [];
+            if ($normativeSections === [] && $normativeSection !== null && $normativeSection !== '') {
+                $normativeSections = [$normativeSection];
+            }
             if ($search === '' || mb_strlen($search) > 500 || $unit === '' || mb_strlen($unit) > 32
                 || ($code !== null && mb_strlen($code) > 80)
-                || ($normativeSection !== null && mb_strlen($normativeSection) > 32)) {
+                || ($normativeSection !== null && mb_strlen($normativeSection) > 32)
+                || count($normativeSections) > 8
+                || array_filter($normativeSections, static fn (string $section): bool => mb_strlen($section) > 32) !== []) {
                 continue;
             }
-            $key = mb_strtolower($search).'|'.mb_strtolower($unit).'|'.mb_strtolower((string) $code).'|'.mb_strtolower((string) $normativeSection);
+            $key = mb_strtolower($search).'|'.mb_strtolower($unit).'|'.mb_strtolower((string) $code).'|'.mb_strtolower(implode(',', $normativeSections));
             $resolved[$key] = ['search_text' => $search, 'unit' => $unit, 'code' => $code];
-            if ($normativeSection !== null && $normativeSection !== '') {
-                $resolved[$key]['normative_section'] = $normativeSection;
+            if ($normativeSections !== []) {
+                $resolved[$key]['normative_sections'] = $normativeSections;
+                if (count($normativeSections) === 1) {
+                    $resolved[$key]['normative_section'] = $normativeSections[0];
+                }
             }
             if (count($resolved) > 64) {
                 return null;

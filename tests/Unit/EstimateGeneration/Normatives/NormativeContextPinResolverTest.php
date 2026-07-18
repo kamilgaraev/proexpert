@@ -177,7 +177,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('->limit(32)', $source);
         self::assertStringNotContainsString('LOWER(CAST(norms.work_composition AS TEXT)) LIKE ?', $source);
         self::assertStringContainsString("->where('source_type', 'fsnb_2022')", $source);
-        self::assertStringContainsString("->where('norms.section_code', 'like', \$normativeSection.'%')", $source);
+        self::assertStringContainsString("\$allowedSections->{\$method}('norms.section_code', 'like', \$section.'%')", $source);
         self::assertStringContainsString("->whereIn('source_type', ['fsbc', 'fsnb_2022'])", $source);
         self::assertStringContainsString("CASE WHEN source_type = 'fsbc' THEN 0 ELSE 1 END", $source);
         self::assertStringContainsString("->whereNull('regional_price_version_id')", $source);
@@ -205,6 +205,20 @@ final class NormativeContextPinResolverTest extends TestCase
 
         $selected = (new NormativeIntentCandidateRanker)->select($candidates, [[
             'search_text' => 'Устройство покрытий', 'unit' => 'm2', 'code' => null, 'normative_section' => '11',
+        ]]);
+
+        self::assertSame([2], array_column($selected ?? [], 'id'));
+    }
+
+    #[Test]
+    public function ranker_accepts_a_relevant_candidate_from_any_allowed_section(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([
+            (object) ['id' => 1, 'code' => '09-01-001-01', 'name' => 'Установка лестничных маршей', 'canonical_unit' => '100 pcs', 'unit' => '100 pcs', 'section_code' => '09'],
+            (object) ['id' => 2, 'code' => '07-01-001-01', 'name' => 'Установка лестничных маршей', 'canonical_unit' => '100 pcs', 'unit' => '100 pcs', 'section_code' => '07'],
+        ], [[
+            'search_text' => 'Установка лестничных маршей', 'unit' => 'pcs', 'code' => null,
+            'normative_sections' => ['06', '07', '08'],
         ]]);
 
         self::assertSame([2], array_column($selected ?? [], 'id'));
