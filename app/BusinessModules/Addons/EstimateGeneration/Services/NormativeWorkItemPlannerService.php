@@ -425,7 +425,21 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Устройство перемычек', 'walls', 'устройство перемычек над проемами', 'walls.lintels'),
                 $this->definition('Офисные перегородки', 'walls', 'монтаж офисных перегородок', 'office.partitions'),
             ],
-            'slabs', 'industrial_floor' => [
+            'slabs' => [
+                $this->definition(
+                    'Бетонирование монолитного перекрытия',
+                    'slabs',
+                    'бетонирование монолитного железобетонного перекрытия жилого здания',
+                    'slabs.concrete'
+                ),
+                $this->definition(
+                    'Армирование монолитного перекрытия',
+                    'slabs',
+                    'армирование монолитного железобетонного перекрытия жилого здания',
+                    'slabs.rebar'
+                ),
+            ],
+            'industrial_floor' => [
                 $this->definition('Устройство плиты пола', 'slabs', 'устройство железобетонной плиты пола', 'warehouse.floor_concrete'),
                 $this->definition('Армирование плиты пола', 'slabs', 'армирование железобетонной плиты пола', 'warehouse.floor_rebar'),
                 $this->definition('Топпинг промышленного пола', 'industrial_floor', 'упрочнение верхнего слоя промышленного пола', 'warehouse.floor_hardener'),

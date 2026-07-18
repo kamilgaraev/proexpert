@@ -114,8 +114,17 @@ final class WorkItemQuantityMapper
             'rough.floor', 'finish.floor', 'office.ceiling', 'warehouse.floor_hardener',
             'earth.plan', 'siteworks.area', 'warehouse.roads' => $floorArea(),
 
-            'rough.walls', 'finish.paint', 'facade.area', 'walls.internal',
+            'rough.walls', 'finish.paint', 'walls.internal',
             'office.partitions', 'warehouse.wall_panels', 'warehouse.panel_flashings' => $wallArea(),
+
+            'facade.area' => [
+                'sources' => [
+                    ['key' => 'net_wall_area', 'factor' => '1'],
+                    ['key' => 'gross_wall_area', 'factor' => '1'],
+                    ['key' => 'floor_area', 'factor' => '1.4'],
+                ],
+                'unit' => 'm2',
+            ],
 
             'earth.trench' => ['sources' => [['key' => 'floor_area', 'factor' => '0.45']], 'unit' => 'm3'],
             'earth.backfill' => ['sources' => [['key' => 'floor_area', 'factor' => '0.30']], 'unit' => 'm3'],
@@ -144,6 +153,8 @@ final class WorkItemQuantityMapper
             ],
             'warehouse.floor_concrete' => ['sources' => [['key' => 'floor_area', 'factor' => '0.12']], 'unit' => 'm3'],
             'warehouse.floor_rebar' => ['sources' => [['key' => 'floor_area', 'factor' => '9']], 'unit' => 'kg'],
+            'slabs.concrete' => ['sources' => [['key' => 'floor_area', 'factor' => '0.12']], 'unit' => 'm3'],
+            'slabs.rebar' => ['sources' => [['key' => 'floor_area', 'factor' => '12']], 'unit' => 'kg'],
             'warehouse.frame_weight' => ['sources' => [['key' => 'floor_area', 'factor' => '35']], 'unit' => 'kg'],
             'warehouse.columns', 'warehouse.beams' => ['sources' => [['key' => 'floor_area', 'factor' => '18']], 'unit' => 'kg'],
 
@@ -159,16 +170,20 @@ final class WorkItemQuantityMapper
             'site.fence' => $floorLength('0.35'),
             'warehouse.floor_joints' => $floorLength('0.25'),
             'stairs.railings' => $floorLength('0.08'),
+            'stairs.flights' => $floorArea('0.05'),
+            'stairs.landings' => $floorArea('0.015'),
             'networks.external' => $floorLength('0.20'),
 
-            'openings.windows', 'openings.doors', 'walls.lintels' => [
+            'openings.windows' => [
                 'sources' => [
-                    ['key' => 'opening_area', 'factor' => '0.5'],
-                    ['key' => 'floor_area', 'factor' => '0.04'],
+                    ['key' => 'opening_area', 'factor' => '0.55'],
+                    ['key' => 'floor_area', 'factor' => '0.08'],
                 ],
                 'unit' => 'pcs',
                 'minimum' => '1',
             ],
+            'openings.doors' => $floorCount('0.07'),
+            'walls.lintels' => $floorCount('0.12'),
             'warehouse.gates', 'warehouse.loading_nodes' => $floorCount('0.005'),
 
             'electrical.main_cable' => $engineeringLength('electrical', '0.40'),

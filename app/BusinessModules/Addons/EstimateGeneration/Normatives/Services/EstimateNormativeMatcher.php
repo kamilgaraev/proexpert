@@ -18,6 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateReso
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSearchProfileCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSemanticCompatibilityService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use Illuminate\Database\Eloquent\Builder;
@@ -41,18 +42,22 @@ class EstimateNormativeMatcher
 
     private readonly LegacyNormativeRateCatalogAdapter $legacyCatalogAdapter;
 
+    private readonly NormativeSemanticCompatibilityService $semanticCompatibilityService;
+
     public function __construct(
         ?NormativeCandidateSearchService $candidateSearchService = null,
         ?EstimateGenerationLearningEvidenceService $learningEvidenceService = null,
         ?WorkIntentClassifier $workIntentClassifier = null,
         ?NormativeSearchProfileCatalog $searchProfileCatalog = null,
         ?LegacyNormativeRateCatalogAdapter $legacyCatalogAdapter = null,
+        ?NormativeSemanticCompatibilityService $semanticCompatibilityService = null,
     ) {
         $this->candidateSearchService = $candidateSearchService ?? app(NormativeCandidateSearchService::class);
         $this->learningEvidenceService = $learningEvidenceService ?? app(EstimateGenerationLearningEvidenceService::class);
         $this->workIntentClassifier = $workIntentClassifier ?? app(WorkIntentClassifier::class);
         $this->searchProfileCatalog = $searchProfileCatalog ?? app(NormativeSearchProfileCatalog::class);
         $this->legacyCatalogAdapter = $legacyCatalogAdapter ?? app(LegacyNormativeRateCatalogAdapter::class);
+        $this->semanticCompatibilityService = $semanticCompatibilityService ?? new NormativeSemanticCompatibilityService;
     }
 
     /**
@@ -476,6 +481,24 @@ class EstimateNormativeMatcher
             $reasons[] = 'search_profile_terms';
         }
 
+        $semanticMismatch = ! $this->semanticCompatibilityService->isCompatible(
+            $name.' '.$composition,
+            $workName,
+            [
+                'scope' => $intent->scope,
+                'action' => $intent->action,
+                'system' => $intent->system,
+                'object' => $intent->object,
+            ],
+            $profile->forbiddenDomainTerms,
+        );
+        if ($semanticMismatch) {
+            $score -= 300;
+            $reasons[] = 'semantic_mismatch';
+        } else {
+            $reasons[] = 'semantic_compatible';
+        }
+
         $learningScore = (float) ($learningEvidence['learning_score'] ?? 0);
         $learningPositiveCount = (int) ($learningEvidence['learning_positive_count'] ?? 0);
         $learningNegativeCount = (int) ($learningEvidence['learning_negative_count'] ?? 0);
@@ -535,7 +558,8 @@ class EstimateNormativeMatcher
                 $pricedCount,
                 ! $unitMatches,
                 $scopeMismatch,
-                $learningNegativeCount
+                $learningNegativeCount,
+                $semanticMismatch,
             ),
             'resources' => $resources,
             'learning_positive_count' => $learningPositiveCount,
@@ -703,7 +727,8 @@ class EstimateNormativeMatcher
         int $pricedCount,
         bool $unitMismatch,
         bool $scopeMismatch,
-        int $learningNegativeCount = 0
+        int $learningNegativeCount = 0,
+        bool $semanticMismatch = false,
     ): array {
         $warnings = [];
 
@@ -729,6 +754,10 @@ class EstimateNormativeMatcher
 
         if ($scopeMismatch) {
             $warnings[] = 'scope_mismatch';
+        }
+
+        if ($semanticMismatch) {
+            $warnings[] = 'semantic_mismatch';
         }
 
         if ($learningNegativeCount > 0) {

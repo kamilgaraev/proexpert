@@ -61,10 +61,36 @@ final class WorkItemQuantityMapperTest extends TestCase
 
         foreach ([
             'site.setup', 'site.geodesy', 'foundation.prep', 'sanitary.tile',
-            'facade.area', 'heating.radiators', 'heating.unit', 'openings.doors', 'openings.windows',
-            'stairs.flights', 'stairs.landings', 'stairs.railings', 'ventilation.air_exchange', 'walls.lintels',
+            'heating.radiators', 'heating.unit', 'ventilation.air_exchange', 'walls.lintels',
         ] as $key) {
             self::assertNull((new WorkItemQuantityMapper)->map($key, $quantities), $key);
+        }
+    }
+
+    #[Test]
+    public function confirmed_house_area_produces_preliminary_quantities_for_visible_residential_sections(): void
+    {
+        $quantities = ['floor_area' => $this->quantity('floor_area', 'm2', '180.000000')];
+        $expected = [
+            'slabs.concrete' => ['21.600000', 'm3'],
+            'slabs.rebar' => ['2160.000000', 'kg'],
+            'stairs.flights' => ['9.000000', 'm2'],
+            'stairs.landings' => ['2.700000', 'm2'],
+            'stairs.railings' => ['14.400000', 'm'],
+            'openings.windows' => ['14.000000', 'pcs'],
+            'openings.doors' => ['13.000000', 'pcs'],
+            'facade.area' => ['252.000000', 'm2'],
+        ];
+
+        foreach ($expected as $key => [$amount, $unit]) {
+            $quantity = (new WorkItemQuantityMapper)->map($key, $quantities);
+
+            self::assertNotNull($quantity, $key);
+            self::assertSame($amount, $quantity->amount, $key);
+            self::assertSame($unit, $quantity->unit, $key);
+            self::assertSame(QuantitySource::Estimated, $quantity->source, $key);
+            self::assertSame(['page:plan:1'], $quantity->evidenceIds, $key);
+            self::assertSame([], $quantity->reviewBlockers, $key);
         }
     }
 
