@@ -7,6 +7,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Planning;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
 
@@ -17,6 +19,7 @@ final readonly class WorkPlanCompiler
         private EstimateDecompositionService $decomposition,
         private NormativeWorkItemPlannerService $workItemPlanner,
         private NormativeContextPinResolver $normativePins,
+        private ?WorkIntentClassifier $intentClassifier = null,
     ) {}
 
     /** @param array<string, mixed> $analysis
@@ -90,20 +93,33 @@ final readonly class WorkPlanCompiler
         ];
     }
 
-    /** @return list<array{search_text: string, unit: string, code: string|null}> */
+    /** @return list<array{search_text: string, unit: string, code: string|null, normative_section: string|null}> */
     private function normativeIntents(array $localEstimates): array
     {
         $intents = [];
+        $classifier = $this->intentClassifier ?? new WorkIntentClassifier(new NormativeScopeRuleCatalog);
         foreach ($localEstimates as $localEstimate) {
             foreach ($localEstimate['sections'] ?? [] as $section) {
                 foreach ($section['work_items'] ?? [] as $item) {
                     if (! is_array($item) || in_array((string) ($item['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note', 'quantity_review'], true)) {
                         continue;
                     }
+                    $recordedIntent = is_array($item['work_intent'] ?? null) ? $item['work_intent'] : null;
+                    $classified = $recordedIntent === null
+                        ? $classifier->classify($item, [
+                            'scope_type' => $localEstimate['scope_type'] ?? null,
+                            'section_title' => $section['title'] ?? null,
+                            'local_estimate_title' => $localEstimate['title'] ?? null,
+                        ])
+                        : null;
+                    $normativeSection = $recordedIntent === null
+                        ? ($classified?->preferredSectionPrefixes[0] ?? null)
+                        : ($recordedIntent['preferred_section_prefixes'][0] ?? null);
                     $intents[] = [
                         'search_text' => (string) ($item['normative_search_text'] ?? $item['name'] ?? ''),
                         'unit' => (string) ($item['unit'] ?? ''),
                         'code' => is_string($item['normative_rate_code'] ?? null) ? $item['normative_rate_code'] : null,
+                        'normative_section' => is_string($normativeSection) ? $normativeSection : null,
                     ];
                 }
             }

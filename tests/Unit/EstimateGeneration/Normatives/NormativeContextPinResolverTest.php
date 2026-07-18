@@ -177,6 +177,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('->limit(32)', $source);
         self::assertStringNotContainsString('LOWER(CAST(norms.work_composition AS TEXT)) LIKE ?', $source);
         self::assertStringContainsString("->where('source_type', 'fsnb_2022')", $source);
+        self::assertStringContainsString("->where('norms.section_code', 'like', \$normativeSection.'%')", $source);
         self::assertStringContainsString("->whereIn('source_type', ['fsbc', 'fsnb_2022'])", $source);
         self::assertStringContainsString("CASE WHEN source_type = 'fsbc' THEN 0 ELSE 1 END", $source);
         self::assertStringContainsString("->whereNull('regional_price_version_id')", $source);
@@ -192,6 +193,21 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('resolveForIntents', $source);
         self::assertStringNotContainsString("->orderBy('norms.id')->limit(129)", $source);
         self::assertStringNotContainsString("->where('norms.canonical_unit', \$unit)", $source);
+    }
+
+    #[Test]
+    public function ranker_selects_candidate_from_the_preferred_normative_section(): void
+    {
+        $candidates = [
+            (object) ['id' => 1, 'code' => '08-01-001-01', 'name' => 'Устройство покрытий', 'canonical_unit' => 'm2', 'unit' => 'm2', 'section_code' => '08'],
+            (object) ['id' => 2, 'code' => '11-01-001-01', 'name' => 'Устройство покрытий', 'canonical_unit' => 'm2', 'unit' => 'm2', 'section_code' => '11'],
+        ];
+
+        $selected = (new NormativeIntentCandidateRanker)->select($candidates, [[
+            'search_text' => 'Устройство покрытий', 'unit' => 'm2', 'code' => null, 'normative_section' => '11',
+        ]]);
+
+        self::assertSame([2], array_column($selected ?? [], 'id'));
     }
 
     #[Test]

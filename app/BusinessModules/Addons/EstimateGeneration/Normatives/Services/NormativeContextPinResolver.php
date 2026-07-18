@@ -134,7 +134,7 @@ class NormativeContextPinResolver
         return null;
     }
 
-    /** @return list<array{search_text: string, unit: string, code?: string|null}>|null */
+    /** @return list<array{search_text: string, unit: string, code?: string|null, normative_section?: string|null}>|null */
     private function intents(array $workIntents): ?array
     {
         $resolved = [];
@@ -145,12 +145,17 @@ class NormativeContextPinResolver
             $search = trim((string) ($intent['search_text'] ?? ''));
             $unit = trim((string) ($intent['unit'] ?? ''));
             $code = isset($intent['code']) ? trim((string) $intent['code']) : null;
+            $normativeSection = isset($intent['normative_section']) ? trim((string) $intent['normative_section']) : null;
             if ($search === '' || mb_strlen($search) > 500 || $unit === '' || mb_strlen($unit) > 32
-                || ($code !== null && mb_strlen($code) > 80)) {
+                || ($code !== null && mb_strlen($code) > 80)
+                || ($normativeSection !== null && mb_strlen($normativeSection) > 32)) {
                 continue;
             }
-            $key = mb_strtolower($search).'|'.mb_strtolower($unit).'|'.mb_strtolower((string) $code);
+            $key = mb_strtolower($search).'|'.mb_strtolower($unit).'|'.mb_strtolower((string) $code).'|'.mb_strtolower((string) $normativeSection);
             $resolved[$key] = ['search_text' => $search, 'unit' => $unit, 'code' => $code];
+            if ($normativeSection !== null && $normativeSection !== '') {
+                $resolved[$key]['normative_section'] = $normativeSection;
+            }
             if (count($resolved) > 64) {
                 return null;
             }

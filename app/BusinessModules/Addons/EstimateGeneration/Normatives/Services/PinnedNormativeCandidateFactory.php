@@ -12,7 +12,7 @@ final readonly class PinnedNormativeCandidateFactory
     public function __construct(private NormativeIntentCandidateRanker $ranker = new NormativeIntentCandidateRanker) {}
 
     /** @return list<NormativeCandidateData> */
-    public function forWorkItem(array $catalogCandidates, array $workItem): array
+    public function forWorkItem(array $catalogCandidates, array $workItem, ?string $normativeSection = null): array
     {
         $rankable = [];
         $byId = [];
@@ -27,12 +27,14 @@ final readonly class PinnedNormativeCandidateFactory
                 'name' => (string) ($candidate['name'] ?? ''),
                 'canonical_unit' => (string) ($candidate['unit'] ?? ''), 'unit' => (string) ($candidate['unit'] ?? ''),
                 'section_name' => (string) ($candidate['section']['name'] ?? ''),
+                'section_code' => (string) ($candidate['section']['code'] ?? ''),
             ];
         }
         $selected = $this->ranker->select($rankable, [[
             'search_text' => (string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''),
             'unit' => (string) ($workItem['unit'] ?? ''),
             'code' => is_string($workItem['normative_rate_code'] ?? null) ? $workItem['normative_rate_code'] : null,
+            'normative_section' => $normativeSection,
         ]]);
         if ($selected === null) {
             return [];

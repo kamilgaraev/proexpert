@@ -116,7 +116,11 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                     $intent = $this->intentFactory->intent($workItem, $decisionContext, $datasetVersion);
                     $decision = $this->intentFactory->decision($workItem, $decisionContext);
                     $catalogCandidates = is_array($pin['catalog_candidates'] ?? null) ? $pin['catalog_candidates'] : [];
-                    $pinnedCandidates = $this->pinnedCandidates->forWorkItem($catalogCandidates, $workItem);
+                    $pinnedCandidates = $this->pinnedCandidates->forWorkItem(
+                        $catalogCandidates,
+                        $workItem,
+                        $intent->normativeSection,
+                    );
                     if ($pinnedCandidates === []) {
                         $telemetry->missingPinnedCandidate();
                         $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->blocked($workItem, 'review_required', 'normative_not_found');

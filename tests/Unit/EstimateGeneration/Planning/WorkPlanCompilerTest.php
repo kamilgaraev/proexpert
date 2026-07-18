@@ -95,6 +95,7 @@ final class WorkPlanCompilerTest extends TestCase
                 'search_text' => 'Устройство полов',
                 'unit' => 'm2',
                 'code' => null,
+                'normative_section' => '11',
             ]])
             ->willReturn(['status' => 'pinned']);
         $compiler = new WorkPlanCompiler(
@@ -112,6 +113,7 @@ final class WorkPlanCompilerTest extends TestCase
                     'normative_search_text' => 'Устройство полов',
                     'unit' => 'm2',
                     'normative_rate_code' => null,
+                    'work_intent' => ['preferred_section_prefixes' => ['11']],
                 ]],
             ]],
         ]]);
