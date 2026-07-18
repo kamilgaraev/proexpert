@@ -10,6 +10,16 @@ use PHPUnit\Framework\TestCase;
 
 class NormativeSemanticCompatibilityServiceTest extends TestCase
 {
+    public function test_exposes_the_same_action_vocabulary_for_retrieval_and_validation(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertNotEmpty($service->markersForAction('insulation'));
+        self::assertNotEmpty($service->markersForAction('concreting'));
+        self::assertNotEmpty($service->markersForAction('fence_installation'));
+        self::assertSame([], $service->markersForAction('unknown_action'));
+    }
+
     #[DataProvider('incompatibleResidentialNorms')]
     public function test_rejects_norms_that_do_not_match_residential_work_semantics(
         string $workText,

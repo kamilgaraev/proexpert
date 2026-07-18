@@ -174,8 +174,8 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("norms.search_vector @@ websearch_to_tsquery('russian', ?)", $source);
         self::assertStringContainsString("ts_rank_cd(norms.search_vector, websearch_to_tsquery('russian', ?)) AS pin_lexical_score", $source);
         self::assertStringContainsString("->orderByDesc('pin_lexical_score')", $source);
-        self::assertStringContainsString('->limit(32)', $source);
-        self::assertStringNotContainsString('LOWER(CAST(norms.work_composition AS TEXT)) LIKE ?', $source);
+        self::assertStringContainsString('->limit(self::CANDIDATE_POOL_LIMIT)', $source);
+        self::assertStringContainsString('CAST(norms.work_composition AS TEXT)', $source);
         self::assertStringContainsString("->where('source_type', 'fsnb_2022')", $source);
         self::assertStringContainsString("\$allowedSections->{\$method}('norms.section_code', 'like', \$section.'%')", $source);
         self::assertStringContainsString("->whereIn('source_type', ['fsbc', 'fsnb_2022'])", $source);
@@ -191,6 +191,9 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("REGEXP_REPLACE(COALESCE(diagnostic_normalized_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString("'resources.id as norm_resource_id'", $source);
         self::assertStringContainsString('resolveForIntents', $source);
+        self::assertStringContainsString('CANDIDATE_POOL_LIMIT = 128', $source);
+        self::assertStringContainsString('markersForAction', $source);
+        self::assertStringContainsString('pin_semantic_priority', $source);
         self::assertStringNotContainsString("->orderBy('norms.id')->limit(129)", $source);
         self::assertStringNotContainsString("->where('norms.canonical_unit', \$unit)", $source);
     }

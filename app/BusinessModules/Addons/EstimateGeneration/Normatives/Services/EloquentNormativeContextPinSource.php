@@ -4,16 +4,20 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSemanticCompatibilityService;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\Log;
 
 final readonly class EloquentNormativeContextPinSource implements NormativeContextPinSource
 {
+    private const CANDIDATE_POOL_LIMIT = 128;
+
     public function __construct(
         private Connection $database,
         private NormativeIntentCandidateRanker $ranker = new NormativeIntentCandidateRanker,
         private NormativeSearchQueryBuilder $queryBuilder = new NormativeSearchQueryBuilder,
         private NormativeResourceCoverage $resourceCoverage = new NormativeResourceCoverage,
+        private NormativeSemanticCompatibilityService $semanticCompatibility = new NormativeSemanticCompatibilityService,
     ) {}
 
     public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
@@ -78,6 +82,18 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 return null;
             }
             $lexicalQuery = $this->queryBuilder->build($search);
+            $actionMarkers = $this->semanticCompatibility->markersForAction((string) ($intent['action'] ?? ''));
+            $semanticPrioritySql = '0 AS pin_semantic_priority';
+            $semanticPriorityBindings = [];
+            if ($actionMarkers !== []) {
+                $semanticConditions = [];
+                foreach ($actionMarkers as $marker) {
+                    $semanticConditions[] = "(LOWER(COALESCE(norms.name, '')) LIKE ? OR LOWER(COALESCE(CAST(norms.work_composition AS TEXT), '')) LIKE ?)";
+                    $semanticPriorityBindings[] = '%'.mb_strtolower($marker).'%';
+                    $semanticPriorityBindings[] = '%'.mb_strtolower($marker).'%';
+                }
+                $semanticPrioritySql = 'CASE WHEN '.implode(' OR ', $semanticConditions).' THEN 0 ELSE 1 END AS pin_semantic_priority';
+            }
             $query = $this->database->table('estimate_norms as norms')
                 ->join('estimate_norm_collections as collections', 'collections.id', '=', 'norms.collection_id')
                 ->where('collections.dataset_version_id', $requested->datasetId)
@@ -186,10 +202,12 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     'collections.code as collection_code', 'collections.name as collection_name', 'collections.norm_type',
                 ])
                 ->selectRaw("ts_rank_cd(norms.search_vector, websearch_to_tsquery('russian', ?)) AS pin_lexical_score", [$lexicalQuery])
+                ->selectRaw($semanticPrioritySql, $semanticPriorityBindings)
                 ->orderByRaw('CASE WHEN LOWER(norms.code) = ? THEN 0 ELSE 1 END', [$code])
+                ->orderBy('pin_semantic_priority')
                 ->orderByDesc('pin_lexical_score')
                 ->orderBy('norms.id')
-                ->limit(32)
+                ->limit(self::CANDIDATE_POOL_LIMIT)
                 ->get();
             if ($query->isEmpty()) {
                 $this->telemetry('intent_candidates_empty', [
