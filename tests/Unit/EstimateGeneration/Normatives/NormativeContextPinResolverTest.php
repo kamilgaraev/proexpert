@@ -135,6 +135,51 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
+    public function structured_work_context_is_preserved_and_participates_in_deduplication(): void
+    {
+        $source = new class implements NormativeContextPinSource
+        {
+            public array $intents = [];
+
+            public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
+            {
+                $this->intents = $intents;
+
+                return new NormativeContextPinData(
+                    $requested->datasetId, $requested->datasetVersion, $requested->applicabilityDate,
+                    $requested->regionId, $requested->priceZoneId, $requested->periodId,
+                    $requested->regionalPriceVersionId, $requested->priceVersion,
+                    [['candidate_id' => '101']], str_repeat('a', 64),
+                );
+            }
+        };
+        $resolver = new NormativeContextPinResolver($source);
+        $context = [
+            'normative_dataset_id' => 77, 'normative_dataset_version' => 'fsnb-2026.1',
+            'region_id' => 16, 'price_zone_id' => 3, 'period_id' => 8,
+            'estimate_regional_price_version_id' => 11, 'price_version' => 'prices-2026.07',
+            'business_date' => '2026-07-01',
+        ];
+
+        $pin = $resolver->resolve($context, [
+            [
+                'search_text' => 'Монтаж блоков', 'unit' => 'pcs', 'action' => 'window_installation',
+                'scope' => 'openings', 'system' => null, 'object' => 'window',
+            ],
+            [
+                'search_text' => 'Монтаж блоков', 'unit' => 'pcs', 'action' => 'window_installation',
+                'scope' => 'openings', 'system' => null, 'object' => 'door',
+            ],
+        ]);
+
+        self::assertSame('pinned', $pin['status']);
+        self::assertCount(2, $source->intents);
+        self::assertSame('window', $source->intents[0]['object']);
+        self::assertSame('door', $source->intents[1]['object']);
+        self::assertSame('openings', $source->intents[0]['scope']);
+    }
+
+    #[Test]
     public function production_source_keeps_norm_dataset_exact_and_combines_authoritative_base_prices(): void
     {
         $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Normatives/Services/EloquentNormativeContextPinSource.php');
@@ -386,6 +431,26 @@ final class NormativeContextPinResolverTest extends TestCase
 
         self::assertNotNull($selected);
         self::assertSame([202], array_map(static fn (object $candidate): int => (int) $candidate->id, $selected));
+    }
+
+    #[Test]
+    public function candidate_composition_does_not_replace_title_for_strong_action(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([(object) [
+            'id' => 203,
+            'code' => '16-02-001-01',
+            'name' => 'Трубопровод стальной 219 мм',
+            'work_composition' => ['Прокладка кабеля в защитной трубе'],
+            'canonical_unit' => 'm',
+            'unit' => 'm',
+        ]], [[
+            'search_text' => 'Прокладка кабельных линий',
+            'unit' => 'm',
+            'code' => null,
+            'action' => 'cable_installation',
+        ]]);
+
+        self::assertNull($selected);
     }
 
     #[Test]

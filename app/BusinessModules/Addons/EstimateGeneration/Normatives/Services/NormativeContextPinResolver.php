@@ -134,7 +134,7 @@ class NormativeContextPinResolver
         return null;
     }
 
-    /** @return list<array{search_text: string, unit: string, code?: string|null, action?: string|null, normative_section?: string|null, normative_sections?: list<string>}>|null */
+    /** @return list<array{search_text: string, unit: string, code?: string|null, action?: string|null, scope?: string|null, system?: string|null, object?: string|null, normative_section?: string|null, normative_sections?: list<string>}>|null */
     private function intents(array $workIntents): ?array
     {
         $resolved = [];
@@ -146,6 +146,9 @@ class NormativeContextPinResolver
             $unit = trim((string) ($intent['unit'] ?? ''));
             $code = isset($intent['code']) ? trim((string) $intent['code']) : null;
             $action = isset($intent['action']) ? trim((string) $intent['action']) : null;
+            $scope = isset($intent['scope']) ? trim((string) $intent['scope']) : null;
+            $system = isset($intent['system']) ? trim((string) $intent['system']) : null;
+            $object = isset($intent['object']) ? trim((string) $intent['object']) : null;
             $normativeSection = isset($intent['normative_section']) ? trim((string) $intent['normative_section']) : null;
             $normativeSections = is_array($intent['normative_sections'] ?? null)
                 ? array_values(array_unique(array_filter(array_map(
@@ -159,15 +162,23 @@ class NormativeContextPinResolver
             if ($search === '' || mb_strlen($search) > 500 || $unit === '' || mb_strlen($unit) > 32
                 || ($code !== null && mb_strlen($code) > 80)
                 || ($action !== null && mb_strlen($action) > 80)
+                || ($scope !== null && mb_strlen($scope) > 80)
+                || ($system !== null && mb_strlen($system) > 80)
+                || ($object !== null && mb_strlen($object) > 80)
                 || ($normativeSection !== null && mb_strlen($normativeSection) > 32)
                 || count($normativeSections) > 8
                 || array_filter($normativeSections, static fn (string $section): bool => mb_strlen($section) > 32) !== []) {
                 continue;
             }
-            $key = mb_strtolower($search).'|'.mb_strtolower($unit).'|'.mb_strtolower((string) $code).'|'.mb_strtolower((string) $action).'|'.mb_strtolower(implode(',', $normativeSections));
+            $key = implode('|', array_map(mb_strtolower(...), [
+                $search, $unit, (string) $code, (string) $action, (string) $scope,
+                (string) $system, (string) $object, implode(',', $normativeSections),
+            ]));
             $resolved[$key] = ['search_text' => $search, 'unit' => $unit, 'code' => $code];
-            if ($action !== null && $action !== '') {
-                $resolved[$key]['action'] = $action;
+            foreach (['action' => $action, 'scope' => $scope, 'system' => $system, 'object' => $object] as $field => $value) {
+                if ($value !== null && $value !== '') {
+                    $resolved[$key][$field] = $value;
+                }
             }
             if ($normativeSections !== []) {
                 $resolved[$key]['normative_sections'] = $normativeSections;

@@ -31,7 +31,9 @@ final class NormativeSearchProfileCatalog
             $specific->allowedSectionPrefixes !== [] ? $specific->allowedSectionPrefixes : $base->allowedSectionPrefixes,
             array_values(array_unique([...$base->forbiddenSectionPrefixes, ...$specific->forbiddenSectionPrefixes])),
             array_values(array_unique([...$base->forbiddenDomainTerms, ...$specific->forbiddenDomainTerms])),
-            array_values(array_unique([...$base->allowedAnalogActions, ...$specific->allowedAnalogActions])),
+            $specific->allowedAnalogActions !== []
+                ? $specific->allowedAnalogActions
+                : $base->allowedAnalogActions,
         );
     }
 
@@ -50,7 +52,7 @@ final class NormativeSearchProfileCatalog
         }
 
         return match ($scope) {
-            'foundation' => $this->profile($scope, $action, $system, ['фундамент'], ['бетон', 'арматур', 'опалуб', 'грунт'], ['01', '06'], [], ['железнодорож', 'кран портальн'], ['excavation', 'backfill', 'formwork', 'reinforcement', 'concreting', 'waterproofing']),
+            'foundation' => $this->profile($scope, $action, $system, ['фундамент'], ['бетон', 'арматур', 'опалуб', 'грунт'], ['01', '06'], [], ['железнодорож', 'кран портальн'], ['excavation', 'backfill', 'soil_haulage', 'formwork', 'reinforcement', 'concreting', 'waterproofing']),
             'walls' => $this->profile($scope, $action, $system, ['стен', 'кладк'], ['блок', 'кирпич', 'перегород'], ['08'], ['01', '03', '05', '09', '27', '28'], ['землян', 'шпунт', 'взрыв', 'бурен'], ['masonry']),
             'slabs' => $this->profile($scope, $action, $system, ['перекрыт', 'бетон'], ['опалуб', 'арматур', 'плит'], ['06', '07'], ['01', '03', '05', '09', '27', '28'], ['землян', 'шпунт', 'взрыв'], ['formwork', 'reinforcement', 'concreting']),
             'stairs' => $this->profile($scope, $action, $system, ['лестниц'], ['марш', 'площадк', 'огражд', 'бетон'], ['06', '07', '08'], ['01', '03', '05', '09', '16', '18', '20', '27', '28'], ['землян', 'шпунт', 'взрыв', 'бурен', 'кабел', 'труб', 'кран портальн'], ['general_work']),
@@ -59,7 +61,7 @@ final class NormativeSearchProfileCatalog
             'openings' => $this->profile($scope, $action, $system, ['окн', 'двер'], ['проем', 'блок', 'ворот'], ['10', '15'], ['01', '03', '05', '09', '16', '18', '20', '27', '28'], ['землян', 'шпунт', 'взрыв'], ['window_installation']),
             'finishing' => $this->profile($scope, $action, $system, ['отделк'], ['штукатур', 'окраск', 'плитк', 'облицов', 'стяжк', 'покрыт', 'плинтус', 'потол'], ['15'], ['01', '03', '05', '09', '16', '18', '20', '27', '28'], ['землян', 'шпунт', 'взрыв'], ['plastering', 'painting', 'tiling', 'floor_covering', 'ceiling_finishing', 'baseboard_installation']),
             'temporary' => $this->profile($scope, $action, $system, ['временн', 'огражд'], ['забор', 'стройплощад'], ['09'], ['01', '03', '05', '27', '28'], ['железнодорож', 'земляное полотн', 'взрыв', 'бурен'], ['fence_installation']),
-            'site' => $this->profile($scope, $action, $system, ['площадк'], ['благоустрой', 'планиров', 'дорог', 'грунт'], ['01', '27'], [], ['железнодорож'], ['planning', 'excavation', 'backfill']),
+            'site' => $this->profile($scope, $action, $system, ['площадк'], ['благоустрой', 'планиров', 'дорог', 'грунт'], ['01', '27'], [], ['железнодорож'], ['planning', 'excavation', 'backfill', 'soil_haulage']),
             default => $this->profile($scope, $action, $system, [], [], [], [], [], []),
         };
     }
@@ -69,6 +71,7 @@ final class NormativeSearchProfileCatalog
         return match ($action) {
             'excavation' => $this->profile($scope, $action, $system, ['грунт', 'котлован', 'транше'], ['разработк', 'выемк'], ['01'], [], ['железнодорож'], ['excavation']),
             'backfill' => $this->profile($scope, $action, $system, ['засып', 'грунт'], ['уплотн'], ['01'], [], ['железнодорож'], ['backfill']),
+            'soil_haulage' => $this->profile($scope, $action, $system, ['грунт', 'перевоз'], ['вывоз', 'транспортир'], ['01'], [], ['железнодорож'], ['soil_haulage']),
             'concreting' => $this->profile($scope, $action, $system, ['бетон', 'монолит'], ['укладк', 'фундамент'], ['01', '06'], [], [], ['concreting']),
             'reinforcement' => $this->profile($scope, $action, $system, ['арматур', 'армиров'], ['каркас', 'сетк'], ['01', '06'], [], [], ['reinforcement']),
             'formwork' => $this->profile($scope, $action, $system, ['опалуб'], ['устройств', 'демонтаж'], ['01', '06'], [], [], ['formwork']),
@@ -93,12 +96,12 @@ final class NormativeSearchProfileCatalog
     }
 
     /**
-     * @param array<int, string> $requiredTerms
-     * @param array<int, string> $synonymTerms
-     * @param array<int, string> $allowedSectionPrefixes
-     * @param array<int, string> $forbiddenSectionPrefixes
-     * @param array<int, string> $forbiddenDomainTerms
-     * @param array<int, string> $allowedAnalogActions
+     * @param  array<int, string>  $requiredTerms
+     * @param  array<int, string>  $synonymTerms
+     * @param  array<int, string>  $allowedSectionPrefixes
+     * @param  array<int, string>  $forbiddenSectionPrefixes
+     * @param  array<int, string>  $forbiddenDomainTerms
+     * @param  array<int, string>  $allowedAnalogActions
      */
     private function profile(
         string $scope,
@@ -125,7 +128,7 @@ final class NormativeSearchProfileCatalog
     }
 
     /**
-     * @param array<int, string> $values
+     * @param  array<int, string>  $values
      * @return array<int, string>
      */
     private function normalizeList(array $values): array

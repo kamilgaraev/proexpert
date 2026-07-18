@@ -189,7 +189,7 @@ class NormativeMatchDecisionService
         return $service->isCompatible(
             $candidateText,
             $this->workText($workItem),
-            $intent,
+            [...$intent, 'candidate_title' => (string) ($candidate['name'] ?? '')],
             $profile->forbiddenDomainTerms,
         );
     }
@@ -262,7 +262,7 @@ class NormativeMatchDecisionService
         if (
             $this->containsAny($candidateText, ['землян', 'разработк грунт', 'котлован', 'транше'])
             && ! in_array($scope, ['foundation', 'site'], true)
-            && ! in_array($action, ['excavation', 'backfill'], true)
+            && ! in_array($action, ['excavation', 'backfill', 'soil_haulage'], true)
         ) {
             return true;
         }
@@ -307,7 +307,7 @@ class NormativeMatchDecisionService
             'openings' => ['10', '15'],
             'temporary' => ['08', '09'],
             'site' => ['01', '27'],
-            'foundation' => in_array($action, ['excavation', 'backfill'], true)
+            'foundation' => in_array($action, ['excavation', 'backfill', 'soil_haulage'], true)
                 ? ['01']
                 : (match ($action) {
                     'concreting', 'reinforcement', 'formwork' => ['01', '06'],

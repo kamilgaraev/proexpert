@@ -179,6 +179,40 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertNotContains('site.setup', array_column($pricedItems, 'quantity_formula'));
     }
 
+    public function test_separate_water_supply_package_does_not_duplicate_sewerage_pipe(): void
+    {
+        $localEstimate = $this->localEstimate('water_supply', 'Водоснабжение', 'engineering', 12);
+        $items = $this->pricedItems($this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'quantity_takeoffs' => [
+                        [
+                            'quantity_key' => 'plumbing.pipe',
+                            'name' => 'Трубы водоснабжения',
+                            'unit' => 'м',
+                            'quantity' => 63,
+                            'source_refs' => [['type' => 'drawing', 'filename' => 'ВК.pdf', 'page_number' => 1]],
+                            'normalized_payload' => ['review_required' => false],
+                        ],
+                        [
+                            'quantity_key' => 'sewerage.pipe',
+                            'name' => 'Трубы канализации',
+                            'unit' => 'м',
+                            'quantity' => 45,
+                            'source_refs' => [['type' => 'drawing', 'filename' => 'ВК.pdf', 'page_number' => 1]],
+                            'normalized_payload' => ['review_required' => false],
+                        ],
+                    ],
+                ],
+            ],
+        ));
+
+        self::assertContains('Прокладка труб водоснабжения', array_column($items, 'name'));
+        self::assertNotContains('Прокладка труб канализации', array_column($items, 'name'));
+    }
+
     public function test_unknown_engineering_package_does_not_fall_back_to_electrical_or_generic_work(): void
     {
         $localEstimate = $this->localEstimate('unclassified_engineering', 'Инженерные системы', 'engineering', 12);

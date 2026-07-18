@@ -70,4 +70,24 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         self::assertSame('', $intent->normativeSection);
         self::assertSame(['01', '06'], $intent->normativeSections);
     }
+
+    public function test_partial_recorded_intent_is_completed_from_work_semantics(): void
+    {
+        $factory = new NormativeWorkIntentFactory(new WorkIntentClassifier(new NormativeScopeRuleCatalog));
+
+        $intent = $factory->intent([
+            'key' => 'earth.backfill',
+            'name' => 'Обратная засыпка пазух с уплотнением',
+            'unit' => 'm3',
+            'work_intent' => ['scope' => 'foundation'],
+        ], [
+            'organization_id' => 1, 'project_id' => 89, 'session_id' => 58,
+            'scope_type' => 'foundation', 'object_type' => 'house',
+            'applicability_date' => '2026-07-17', 'source_refs' => ['doc:1'],
+        ], 'fsnb-2026.1');
+
+        self::assertSame('backfill', $intent->technology);
+        self::assertSame('foundation', $intent->structure);
+        self::assertSame(['01'], $intent->normativeSections);
+    }
 }

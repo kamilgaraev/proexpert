@@ -489,6 +489,7 @@ class EstimateNormativeMatcher
                 'action' => $intent->action,
                 'system' => $intent->system,
                 'object' => $intent->object,
+                'candidate_title' => $name,
             ],
             $profile->forbiddenDomainTerms,
         );

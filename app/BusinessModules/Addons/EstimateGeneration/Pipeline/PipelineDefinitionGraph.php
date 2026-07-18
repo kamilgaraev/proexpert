@@ -35,10 +35,10 @@ final readonly class PipelineDefinitionGraph
     {
         return new self([
             new StageDefinition(ProcessingStage::UnderstandDocuments, 1, [], 131_072),
-            new StageDefinition(ProcessingStage::UnderstandObject, 2, [ProcessingStage::UnderstandDocuments], 1_048_576),
+            new StageDefinition(ProcessingStage::UnderstandObject, 3, [ProcessingStage::UnderstandDocuments], 1_048_576),
             new StageDefinition(ProcessingStage::ExtractQuantities, 2, [ProcessingStage::UnderstandObject], 262_144),
-            new StageDefinition(ProcessingStage::PlanWorkItems, 33, [ProcessingStage::UnderstandObject, ProcessingStage::ExtractQuantities], 1_310_720),
-            new StageDefinition(ProcessingStage::MatchNormatives, 10, [ProcessingStage::PlanWorkItems], 1_310_720),
+            new StageDefinition(ProcessingStage::PlanWorkItems, 34, [ProcessingStage::UnderstandObject, ProcessingStage::ExtractQuantities], 1_310_720),
+            new StageDefinition(ProcessingStage::MatchNormatives, 11, [ProcessingStage::PlanWorkItems], 1_310_720),
             new StageDefinition(ProcessingStage::AssembleResources, 2, [ProcessingStage::MatchNormatives], 1_048_576),
             new StageDefinition(ProcessingStage::ResolvePrices, 3, [ProcessingStage::AssembleResources], 1_441_792),
             new StageDefinition(ProcessingStage::BuildDraft, 1, [ProcessingStage::UnderstandDocuments, ProcessingStage::UnderstandObject, ProcessingStage::PlanWorkItems, ProcessingStage::ResolvePrices], 1_572_864),

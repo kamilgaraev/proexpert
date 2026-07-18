@@ -99,7 +99,7 @@ final class NormativeScopeRuleCatalog
     private function foundationActionRules(?string $action): array
     {
         return match ($action) {
-            'excavation', 'backfill' => $this->rule(['gesn_earthwork'], [], ['01'], []),
+            'excavation', 'backfill', 'soil_haulage' => $this->rule(['gesn_earthwork'], [], ['01'], []),
             'concreting', 'reinforcement', 'formwork' => $this->rule(['gesn_concrete'], [], ['01', '06'], []),
             'waterproofing' => $this->rule(['gesn_building'], [], ['08', '12'], []),
             default => $this->rule([], [], [], []),
@@ -150,10 +150,10 @@ final class NormativeScopeRuleCatalog
     }
 
     /**
-     * @param array<int, string> $preferredNormTypes
-     * @param array<int, string> $forbiddenNormTypes
-     * @param array<int, string> $preferredSectionPrefixes
-     * @param array<int, string> $forbiddenSectionPrefixes
+     * @param  array<int, string>  $preferredNormTypes
+     * @param  array<int, string>  $forbiddenNormTypes
+     * @param  array<int, string>  $preferredSectionPrefixes
+     * @param  array<int, string>  $forbiddenSectionPrefixes
      * @return array{
      *     preferred_norm_types: array<int, string>,
      *     forbidden_norm_types: array<int, string>,
@@ -176,8 +176,8 @@ final class NormativeScopeRuleCatalog
     }
 
     /**
-     * @param array<string, array<int, string>> $base
-     * @param array<string, array<int, string>> $extra
+     * @param  array<string, array<int, string>>  $base
+     * @param  array<string, array<int, string>>  $extra
      * @return array<string, array<int, string>>
      */
     private function mergeRules(array $base, array $extra): array

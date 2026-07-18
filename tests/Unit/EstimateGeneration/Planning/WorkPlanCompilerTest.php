@@ -95,6 +95,10 @@ final class WorkPlanCompilerTest extends TestCase
                 'search_text' => 'Устройство полов',
                 'unit' => 'm2',
                 'code' => null,
+                'action' => 'general_work',
+                'scope' => 'general',
+                'system' => null,
+                'object' => null,
                 'normative_section' => '11',
                 'normative_sections' => ['11'],
             ]])
@@ -131,6 +135,10 @@ final class WorkPlanCompilerTest extends TestCase
                 'search_text' => 'Бетонирование фундаментов',
                 'unit' => 'm3',
                 'code' => null,
+                'action' => 'concreting',
+                'scope' => 'foundation',
+                'system' => null,
+                'object' => 'foundation',
                 'normative_section' => null,
                 'normative_sections' => ['01', '06'],
             ]])

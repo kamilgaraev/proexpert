@@ -13,8 +13,8 @@ final class WorkIntentClassifier
     ) {}
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $context
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $context
      */
     public function classify(array $workItem, array $context = []): WorkIntentData
     {
@@ -45,8 +45,8 @@ final class WorkIntentClassifier
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $context
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $context
      */
     private function text(array $workItem, array $context): string
     {
@@ -64,7 +64,7 @@ final class WorkIntentClassifier
     }
 
     /**
-     * @param array<int, string> $signals
+     * @param  array<int, string>  $signals
      */
     private function scope(string $text, string $contextScope, array &$signals): string
     {
@@ -92,7 +92,7 @@ final class WorkIntentClassifier
             return 'finishing';
         }
 
-        if (!in_array($contextScope, [
+        if (! in_array($contextScope, [
             'facade',
             'roof',
             'walls',
@@ -138,7 +138,7 @@ final class WorkIntentClassifier
             'site' => ['благоустрой', 'планировк', 'вывоз грунта'],
         ] as $scope => $needles) {
             if ($this->containsAny($text, $needles)) {
-                $signals[] = 'scope_' . $scope;
+                $signals[] = 'scope_'.$scope;
 
                 return $scope;
             }
@@ -156,7 +156,7 @@ final class WorkIntentClassifier
     }
 
     /**
-     * @param array<int, string> $signals
+     * @param  array<int, string>  $signals
      */
     private function system(string $text, array &$signals): ?string
     {
@@ -168,7 +168,7 @@ final class WorkIntentClassifier
             'ventilation' => ['вентиляц', 'воздуховод'],
         ] as $system => $needles) {
             if ($this->containsAny($text, $needles)) {
-                $signals[] = 'system_' . $system;
+                $signals[] = 'system_'.$system;
 
                 return $system;
             }
@@ -178,7 +178,7 @@ final class WorkIntentClassifier
     }
 
     /**
-     * @param array<int, string> $signals
+     * @param  array<int, string>  $signals
      */
     private function action(string $text, ?string $system, string $scope, array &$signals): string
     {
@@ -192,6 +192,19 @@ final class WorkIntentClassifier
             $signals[] = 'action_pipe_layout';
 
             return 'pipe_layout';
+        }
+
+        if ($this->containsAny($text, ['вывоз'])
+            || ($this->containsAny($text, ['перевоз', 'транспортир']) && $this->containsAny($text, ['грунт']))) {
+            $signals[] = 'action_soil_haulage';
+
+            return 'soil_haulage';
+        }
+
+        if ($this->containsAny($text, ['обратн']) && $this->containsAny($text, ['засып'])) {
+            $signals[] = 'action_backfill';
+
+            return 'backfill';
         }
 
         foreach ([
@@ -219,7 +232,7 @@ final class WorkIntentClassifier
             'planning' => ['планировк'],
         ] as $action => $needles) {
             if ($this->containsAny($text, $needles)) {
-                $signals[] = 'action_' . $action;
+                $signals[] = 'action_'.$action;
 
                 return $action;
             }
@@ -324,14 +337,14 @@ final class WorkIntentClassifier
             'window_installation', 'heating_equipment' => ['piece'],
             'fence_installation' => ['length'],
             'baseboard_installation' => ['length'],
-            'concreting', 'excavation', 'backfill' => ['volume'],
+            'concreting', 'excavation', 'backfill', 'soil_haulage' => ['volume'],
             'reinforcement' => ['mass'],
             default => ['piece'],
         };
     }
 
     /**
-     * @param array<int, string> $signals
+     * @param  array<int, string>  $signals
      */
     private function confidence(array $signals, string $scope, string $action): float
     {
@@ -363,7 +376,7 @@ final class WorkIntentClassifier
     }
 
     /**
-     * @param array<int, string> $needles
+     * @param  array<int, string>  $needles
      */
     private function containsAny(string $text, array $needles): bool
     {
