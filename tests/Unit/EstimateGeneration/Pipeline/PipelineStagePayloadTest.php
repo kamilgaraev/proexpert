@@ -23,4 +23,17 @@ final class PipelineStagePayloadTest extends TestCase
 
         self::assertSame($data, $payload->data);
     }
+
+    #[Test]
+    public function pricing_pipeline_preserves_the_pinned_regional_context(): void
+    {
+        $data = [
+            'regional_context' => ['region_id' => 16, 'price_zone_id' => 3, 'period_id' => 8],
+            'local_estimates' => [],
+        ];
+
+        foreach ([ProcessingStage::MatchNormatives, ProcessingStage::AssembleResources, ProcessingStage::ResolvePrices] as $stage) {
+            self::assertSame($data, PipelineStagePayload::from($stage, $data)->data);
+        }
+    }
 }

@@ -181,7 +181,10 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
             ]);
         }
 
-        return $this->results->make($context, $this->stage(), ['local_estimates' => $data['local_estimates']]);
+        return $this->results->make($context, $this->stage(), [
+            'regional_context' => $regionalContext,
+            'local_estimates' => $data['local_estimates'],
+        ]);
     }
 
     private function blocked(array $workItem, string $status, string $issue): array

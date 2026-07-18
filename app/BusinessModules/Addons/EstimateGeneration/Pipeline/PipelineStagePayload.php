@@ -13,9 +13,9 @@ final readonly class PipelineStagePayload
         'understand_object' => ['analysis'],
         'extract_quantities' => ['quantity_learning_hints', 'building_quantities'],
         'plan_work_items' => ['object_profile', 'package_plan', 'document_requirements', 'generation_mode', 'regional_context', 'normative_context_pin', 'local_estimates'],
-        'match_normatives' => ['local_estimates'],
-        'assemble_resources' => ['local_estimates'],
-        'resolve_prices' => ['local_estimates'],
+        'match_normatives' => ['regional_context', 'local_estimates'],
+        'assemble_resources' => ['regional_context', 'local_estimates'],
+        'resolve_prices' => ['regional_context', 'local_estimates'],
         'build_draft' => ['draft'],
         'validate_draft' => ['draft', 'requires_review'],
     ];
@@ -38,13 +38,19 @@ final readonly class PipelineStagePayload
             ProcessingStage::PlanWorkItems => self::assertPlanning($data),
             ProcessingStage::MatchNormatives,
             ProcessingStage::AssembleResources,
-            ProcessingStage::ResolvePrices => self::assertList($data['local_estimates']),
+            ProcessingStage::ResolvePrices => self::assertPricedWorkItems($data),
             ProcessingStage::BuildDraft => self::assertArray($data['draft']),
             ProcessingStage::ValidateDraft => self::assertValidatedDraft($data),
         };
         CanonicalPipelineJson::encode($data);
 
         return new self($stage, $data);
+    }
+
+    private static function assertPricedWorkItems(array $data): void
+    {
+        self::assertArray($data['regional_context']);
+        self::assertList($data['local_estimates']);
     }
 
     private static function assertDocumentManifest(array $data): void

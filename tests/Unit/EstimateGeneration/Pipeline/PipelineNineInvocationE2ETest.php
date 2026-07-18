@@ -78,7 +78,7 @@ final class PipelineNineInvocationE2ETest extends TestCase
             ProcessingStage::UnderstandObject => ['analysis' => []],
             ProcessingStage::ExtractQuantities => ['quantity_learning_hints' => [], 'building_quantities' => []],
             ProcessingStage::PlanWorkItems => ['object_profile' => [], 'package_plan' => [], 'document_requirements' => [], 'generation_mode' => 'complete', 'regional_context' => [], 'normative_context_pin' => ['status' => 'review_required', 'blocking_issues' => ['normative_dataset_not_pinned']], 'local_estimates' => []],
-            ProcessingStage::MatchNormatives, ProcessingStage::AssembleResources, ProcessingStage::ResolvePrices => ['local_estimates' => []],
+            ProcessingStage::MatchNormatives, ProcessingStage::AssembleResources, ProcessingStage::ResolvePrices => ['regional_context' => [], 'local_estimates' => []],
             ProcessingStage::BuildDraft => ['draft' => []],
             ProcessingStage::ValidateDraft => ['draft' => [], 'requires_review' => true],
         };

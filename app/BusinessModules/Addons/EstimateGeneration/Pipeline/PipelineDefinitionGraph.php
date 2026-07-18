@@ -38,9 +38,9 @@ final readonly class PipelineDefinitionGraph
             new StageDefinition(ProcessingStage::UnderstandObject, 1, [ProcessingStage::UnderstandDocuments], 1_048_576),
             new StageDefinition(ProcessingStage::ExtractQuantities, 2, [ProcessingStage::UnderstandObject], 262_144),
             new StageDefinition(ProcessingStage::PlanWorkItems, 17, [ProcessingStage::UnderstandObject, ProcessingStage::ExtractQuantities], 1_310_720),
-            new StageDefinition(ProcessingStage::MatchNormatives, 5, [ProcessingStage::PlanWorkItems], 1_310_720),
-            new StageDefinition(ProcessingStage::AssembleResources, 1, [ProcessingStage::MatchNormatives], 1_048_576),
-            new StageDefinition(ProcessingStage::ResolvePrices, 1, [ProcessingStage::AssembleResources], 1_441_792),
+            new StageDefinition(ProcessingStage::MatchNormatives, 6, [ProcessingStage::PlanWorkItems], 1_310_720),
+            new StageDefinition(ProcessingStage::AssembleResources, 2, [ProcessingStage::MatchNormatives], 1_048_576),
+            new StageDefinition(ProcessingStage::ResolvePrices, 2, [ProcessingStage::AssembleResources], 1_441_792),
             new StageDefinition(ProcessingStage::BuildDraft, 1, [ProcessingStage::UnderstandDocuments, ProcessingStage::UnderstandObject, ProcessingStage::PlanWorkItems, ProcessingStage::ResolvePrices], 1_572_864),
             new StageDefinition(ProcessingStage::ValidateDraft, 1, [ProcessingStage::BuildDraft], 1_572_864),
         ]);
