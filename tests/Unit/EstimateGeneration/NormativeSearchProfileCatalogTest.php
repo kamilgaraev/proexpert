@@ -81,6 +81,24 @@ final class NormativeSearchProfileCatalogTest extends TestCase
         $this->assertContains('кабел', $profile->forbiddenDomainTerms);
     }
 
+    public function test_floor_preparation_profile_searches_screeds_and_underlayers(): void
+    {
+        $profile = (new NormativeSearchProfileCatalog)->forIntent('finishing', 'floor_preparation', null);
+
+        self::assertSame(['11'], $profile->allowedSectionPrefixes);
+        self::assertContains('стяжк', $profile->synonymTerms);
+        self::assertSame(['floor_preparation'], $profile->allowedAnalogActions);
+    }
+
+    public function test_grounding_profile_is_not_treated_as_cable_installation(): void
+    {
+        $profile = (new NormativeSearchProfileCatalog)->forIntent('engineering', 'grounding_installation', 'electrical');
+
+        self::assertSame(['08'], $profile->allowedSectionPrefixes);
+        self::assertContains('заземл', $profile->requiredTerms);
+        self::assertSame(['grounding_installation'], $profile->allowedAnalogActions);
+    }
+
     public function test_soil_haulage_profile_requires_transport_in_earthwork_section(): void
     {
         $profile = (new NormativeSearchProfileCatalog)->forIntent('foundation', 'soil_haulage', null);

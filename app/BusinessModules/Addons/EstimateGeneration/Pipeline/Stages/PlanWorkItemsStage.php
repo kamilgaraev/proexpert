@@ -70,6 +70,9 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         $payload['normative_context_pin'] = $this->compiler->resolveNormativeContextPin(
             $regionalContext,
             $payload['local_estimates'],
+            is_string($payload['object_profile']['object_type'] ?? null)
+                ? $payload['object_profile']['object_type']
+                : null,
         );
         if ($this->canLog()) {
             Log::info('estimate_generation.quantity_evidence_plan_outcomes', [

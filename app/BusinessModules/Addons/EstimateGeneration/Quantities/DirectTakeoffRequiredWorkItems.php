@@ -13,6 +13,9 @@ final class DirectTakeoffRequiredWorkItems
         'heating.radiators',
         'heating.unit',
         'sanitary.tile',
+        'sewerage.outlets',
+        'sewerage.risers',
+        'sewerage.revisions',
         'ventilation.air_exchange',
         'walls.lintels',
     ];

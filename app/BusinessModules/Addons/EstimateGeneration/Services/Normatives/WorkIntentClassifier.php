@@ -174,6 +174,12 @@ final class WorkIntentClassifier
             }
         }
 
+        if ($this->containsAny($text, ['заземл'])) {
+            $signals[] = 'system_electrical';
+
+            return 'electrical';
+        }
+
         return null;
     }
 
@@ -182,6 +188,54 @@ final class WorkIntentClassifier
      */
     private function action(string $text, ?string $system, string $scope, array &$signals): string
     {
+        if ($this->containsAny($text, ['заземл'])) {
+            $signals[] = 'action_grounding_installation';
+
+            return 'grounding_installation';
+        }
+
+        if ($this->containsAny($text, ['чернов', 'подготов', 'стяжк', 'подстилающ'])
+            && $this->containsAny($text, ['пол'])) {
+            $signals[] = 'action_floor_preparation';
+
+            return 'floor_preparation';
+        }
+
+        foreach ([
+            'sewer_revision_installation' => ['ревиз'],
+            'sewer_riser_installation' => ['стояк'],
+            'sewer_outlet_installation' => ['выпуск'],
+        ] as $sewerAction => $markers) {
+            if ($system === 'sewerage' && $this->containsAny($text, $markers)) {
+                $signals[] = 'action_'.$sewerAction;
+
+                return $sewerAction;
+            }
+        }
+
+        if ($this->containsAny($text, ['кабел'])
+            && $this->containsAny($text, ['лотк'])
+            && $this->containsAny($text, ['монтаж', 'установк', 'устройств'])) {
+            $signals[] = 'action_cable_tray_installation';
+
+            return 'cable_tray_installation';
+        }
+
+        if (($this->containsAny($text, ['сантехническ']) && $this->containsAny($text, ['точ']))
+            || ($this->containsAny($text, ['санитарно-техническ']) && $this->containsAny($text, ['прибор']))
+            || $this->containsAny($text, ['сантехприбор'])) {
+            $signals[] = 'action_sanitary_fixture_installation';
+
+            return 'sanitary_fixture_installation';
+        }
+
+        if (($this->containsAny($text, ['дверн']) && $this->containsAny($text, ['блок']))
+            || $this->containsAny($text, ['монтаж двер', 'установк двер'])) {
+            $signals[] = 'action_door_installation';
+
+            return 'door_installation';
+        }
+
         if ($scope === 'engineering' && in_array($system, ['water_supply', 'sewerage'], true) && $this->containsAny($text, ['арматур', 'сантехническ', 'канализац'])) {
             $signals[] = 'action_pipe_layout';
 
@@ -330,11 +384,12 @@ final class WorkIntentClassifier
         }
 
         return match ($action) {
-            'cable_installation', 'pipe_layout' => ['length'],
+            'cable_installation', 'cable_tray_installation', 'grounding_installation', 'pipe_layout' => ['length'],
             'insulation', 'formwork', 'waterproofing' => ['area'],
             'masonry' => ['volume'],
-            'plastering', 'painting', 'tiling', 'floor_covering', 'ceiling_finishing', 'ventilation_installation' => ['area'],
-            'window_installation', 'heating_equipment' => ['piece'],
+            'plastering', 'painting', 'tiling', 'floor_preparation', 'floor_covering', 'ceiling_finishing', 'ventilation_installation' => ['area'],
+            'window_installation', 'door_installation', 'sanitary_fixture_installation', 'sewer_revision_installation', 'heating_equipment' => ['piece'],
+            'sewer_riser_installation', 'sewer_outlet_installation' => ['length'],
             'fence_installation' => ['length'],
             'baseboard_installation' => ['length'],
             'concreting', 'excavation', 'backfill', 'soil_haulage' => ['volume'],

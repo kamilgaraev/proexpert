@@ -61,7 +61,8 @@ final class WorkItemQuantityMapperTest extends TestCase
 
         foreach ([
             'site.setup', 'site.geodesy', 'foundation.prep', 'sanitary.tile',
-            'heating.radiators', 'heating.unit', 'ventilation.air_exchange', 'walls.lintels',
+            'heating.radiators', 'heating.unit', 'sewerage.outlets', 'sewerage.risers',
+            'sewerage.revisions', 'ventilation.air_exchange', 'walls.lintels',
         ] as $key) {
             self::assertNull((new WorkItemQuantityMapper)->map($key, $quantities), $key);
         }
@@ -77,8 +78,8 @@ final class WorkItemQuantityMapperTest extends TestCase
             'stairs.flights' => ['9.000000', 'm2'],
             'stairs.landings' => ['2.700000', 'm2'],
             'stairs.railings' => ['14.400000', 'm'],
-            'openings.windows' => ['14.000000', 'pcs'],
-            'openings.doors' => ['13.000000', 'pcs'],
+            'openings.windows' => ['14.400000', 'm2'],
+            'openings.doors' => ['21.600000', 'm2'],
             'facade.area' => ['252.000000', 'm2'],
         ];
 
@@ -150,7 +151,7 @@ final class WorkItemQuantityMapperTest extends TestCase
             'networks.external', 'office.ceiling', 'office.network_points', 'office.partitions',
             'plumbing.pipe', 'roof.area', 'roof.flat_area', 'roof.gutter',
             'rough.floor', 'rough.walls', 'sanitary.points', 'server.room',
-            'sewerage.outlets', 'sewerage.pipe', 'sewerage.revisions', 'sewerage.risers',
+            'sewerage.pipe',
             'siteworks.area',
             'ventilation.office_points', 'ventilation.warehouse_points',
             'walls.external_volume', 'walls.internal',
@@ -183,7 +184,7 @@ final class WorkItemQuantityMapperTest extends TestCase
             'opening_area' => $this->quantity('opening_area', 'm2', '32.000000'),
         ];
 
-        foreach (['sanitary.points', 'sewerage.outlets'] as $key) {
+        foreach (['sanitary.points'] as $key) {
             $quantity = (new WorkItemQuantityMapper)->map($key, $quantities);
 
             self::assertNotNull($quantity);

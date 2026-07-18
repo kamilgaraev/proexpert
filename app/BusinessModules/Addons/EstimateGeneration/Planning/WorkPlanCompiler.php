@@ -49,14 +49,26 @@ final readonly class WorkPlanCompiler
             'regional_context' => $analysis['regional_context'] ?? [],
             'normative_context_pin' => $deferNormativePin
                 ? ['status' => 'pending', 'blocking_issues' => []]
-                : $this->resolveNormativeContextPin($regionalContext, $localEstimates),
+                : $this->resolveNormativeContextPin(
+                    $regionalContext,
+                    $localEstimates,
+                    is_string($profile->toArray()['object_type'] ?? null)
+                        ? $profile->toArray()['object_type']
+                        : null,
+                ),
             'local_estimates' => $localEstimates,
         ];
     }
 
-    public function resolveNormativeContextPin(array $regionalContext, array $localEstimates): array
-    {
-        return $this->normativePins->resolve($regionalContext, $this->normativeIntents($localEstimates));
+    public function resolveNormativeContextPin(
+        array $regionalContext,
+        array $localEstimates,
+        ?string $objectType = null,
+    ): array {
+        return $this->normativePins->resolve(
+            $regionalContext,
+            $this->normativeIntents($localEstimates, $objectType),
+        );
     }
 
     /** @param array<string, mixed> $intent
@@ -93,8 +105,8 @@ final readonly class WorkPlanCompiler
         ];
     }
 
-    /** @return list<array{search_text: string, unit: string, code: string|null, action: string, scope: string, system: string|null, object: string|null, normative_section: string|null, normative_sections: list<string>}> */
-    private function normativeIntents(array $localEstimates): array
+    /** @return list<array{search_text: string, unit: string, code: string|null, action: string, scope: string, system: string|null, object: string|null, object_type?: string, normative_section: string|null, normative_sections: list<string>}> */
+    private function normativeIntents(array $localEstimates, ?string $objectType = null): array
     {
         $intents = [];
         $classifier = $this->intentClassifier ?? new WorkIntentClassifier(new NormativeScopeRuleCatalog);
@@ -118,7 +130,7 @@ final readonly class WorkPlanCompiler
                         static fn (mixed $section): bool => is_string($section) && $section !== '',
                     )));
                     $normativeSection = count($normativeSections) === 1 ? $normativeSections[0] : null;
-                    $intents[] = [
+                    $resolvedIntent = [
                         'search_text' => (string) ($item['normative_search_text'] ?? $item['name'] ?? ''),
                         'unit' => (string) ($item['unit'] ?? ''),
                         'code' => is_string($item['normative_rate_code'] ?? null) ? $item['normative_rate_code'] : null,
@@ -129,6 +141,10 @@ final readonly class WorkPlanCompiler
                         'normative_section' => is_string($normativeSection) ? $normativeSection : null,
                         'normative_sections' => $normativeSections,
                     ];
+                    if (is_string($objectType) && trim($objectType) !== '') {
+                        $resolvedIntent['object_type'] = trim($objectType);
+                    }
+                    $intents[] = $resolvedIntent;
                 }
             }
         }

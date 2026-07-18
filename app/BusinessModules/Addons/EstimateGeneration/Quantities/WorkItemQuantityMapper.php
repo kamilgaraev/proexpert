@@ -9,7 +9,7 @@ use Brick\Math\RoundingMode;
 
 final class WorkItemQuantityMapper
 {
-    public const FORMULA_VERSION = '1.1.0';
+    public const FORMULA_VERSION = '1.2.0';
 
     public function map(string $workItemKey, array $quantities): ?QuantityData
     {
@@ -178,10 +178,15 @@ final class WorkItemQuantityMapper
                     ['key' => 'opening_area', 'factor' => '0.55'],
                     ['key' => 'floor_area', 'factor' => '0.08'],
                 ],
-                'unit' => 'pcs',
-                'minimum' => '1',
+                'unit' => 'm2',
             ],
-            'openings.doors' => $floorCount('0.07'),
+            'openings.doors' => [
+                'sources' => [
+                    ['key' => 'opening_area', 'factor' => '0.45'],
+                    ['key' => 'floor_area', 'factor' => '0.12'],
+                ],
+                'unit' => 'm2',
+            ],
             'walls.lintels' => $floorCount('0.12'),
             'warehouse.gates', 'warehouse.loading_nodes' => $floorCount('0.005'),
 

@@ -134,7 +134,7 @@ class NormativeContextPinResolver
         return null;
     }
 
-    /** @return list<array{search_text: string, unit: string, code?: string|null, action?: string|null, scope?: string|null, system?: string|null, object?: string|null, normative_section?: string|null, normative_sections?: list<string>}>|null */
+    /** @return list<array{search_text: string, unit: string, code?: string|null, action?: string|null, scope?: string|null, system?: string|null, object?: string|null, object_type?: string|null, normative_section?: string|null, normative_sections?: list<string>}>|null */
     private function intents(array $workIntents): ?array
     {
         $resolved = [];
@@ -149,6 +149,7 @@ class NormativeContextPinResolver
             $scope = isset($intent['scope']) ? trim((string) $intent['scope']) : null;
             $system = isset($intent['system']) ? trim((string) $intent['system']) : null;
             $object = isset($intent['object']) ? trim((string) $intent['object']) : null;
+            $objectType = isset($intent['object_type']) ? trim((string) $intent['object_type']) : null;
             $normativeSection = isset($intent['normative_section']) ? trim((string) $intent['normative_section']) : null;
             $normativeSections = is_array($intent['normative_sections'] ?? null)
                 ? array_values(array_unique(array_filter(array_map(
@@ -165,6 +166,7 @@ class NormativeContextPinResolver
                 || ($scope !== null && mb_strlen($scope) > 80)
                 || ($system !== null && mb_strlen($system) > 80)
                 || ($object !== null && mb_strlen($object) > 80)
+                || ($objectType !== null && mb_strlen($objectType) > 80)
                 || ($normativeSection !== null && mb_strlen($normativeSection) > 32)
                 || count($normativeSections) > 8
                 || array_filter($normativeSections, static fn (string $section): bool => mb_strlen($section) > 32) !== []) {
@@ -173,9 +175,10 @@ class NormativeContextPinResolver
             $key = implode('|', array_map(mb_strtolower(...), [
                 $search, $unit, (string) $code, (string) $action, (string) $scope,
                 (string) $system, (string) $object, implode(',', $normativeSections),
+                (string) $objectType,
             ]));
             $resolved[$key] = ['search_text' => $search, 'unit' => $unit, 'code' => $code];
-            foreach (['action' => $action, 'scope' => $scope, 'system' => $system, 'object' => $object] as $field => $value) {
+            foreach (['action' => $action, 'scope' => $scope, 'system' => $system, 'object' => $object, 'object_type' => $objectType] as $field => $value) {
                 if ($value !== null && $value !== '') {
                     $resolved[$key][$field] = $value;
                 }

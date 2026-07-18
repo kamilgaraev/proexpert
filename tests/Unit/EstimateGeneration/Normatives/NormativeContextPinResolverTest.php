@@ -164,11 +164,11 @@ final class NormativeContextPinResolverTest extends TestCase
         $pin = $resolver->resolve($context, [
             [
                 'search_text' => 'Монтаж блоков', 'unit' => 'pcs', 'action' => 'window_installation',
-                'scope' => 'openings', 'system' => null, 'object' => 'window',
+                'scope' => 'openings', 'system' => null, 'object' => 'window', 'object_type' => 'house',
             ],
             [
                 'search_text' => 'Монтаж блоков', 'unit' => 'pcs', 'action' => 'window_installation',
-                'scope' => 'openings', 'system' => null, 'object' => 'door',
+                'scope' => 'openings', 'system' => null, 'object' => 'door', 'object_type' => 'house',
             ],
         ]);
 
@@ -177,6 +177,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertSame('window', $source->intents[0]['object']);
         self::assertSame('door', $source->intents[1]['object']);
         self::assertSame('openings', $source->intents[0]['scope']);
+        self::assertSame('house', $source->intents[0]['object_type']);
     }
 
     #[Test]
@@ -451,6 +452,40 @@ final class NormativeContextPinResolverTest extends TestCase
         ]]);
 
         self::assertNull($selected);
+    }
+
+    #[Test]
+    public function residential_pipe_intent_rejects_industrial_diameter_before_pinning(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([
+            (object) [
+                'id' => 204,
+                'code' => '16-02-005-08',
+                'name' => 'Прокладка трубопроводов водоснабжения из стальных труб диаметром 200 мм',
+                'canonical_unit' => '100 m',
+                'unit' => '100 m',
+                'section_code' => '16',
+            ],
+            (object) [
+                'id' => 205,
+                'code' => '16-02-005-01',
+                'name' => 'Прокладка трубопроводов водоснабжения из стальных труб диаметром 32 мм',
+                'canonical_unit' => '100 m',
+                'unit' => '100 m',
+                'section_code' => '16',
+            ],
+        ], [[
+            'search_text' => 'Прокладка труб водоснабжения',
+            'unit' => 'm',
+            'code' => null,
+            'action' => 'pipe_layout',
+            'scope' => 'engineering',
+            'system' => 'water_supply',
+            'object_type' => 'house',
+            'normative_section' => '16',
+        ]]);
+
+        self::assertSame([205], array_column($selected ?? [], 'id'));
     }
 
     #[Test]
