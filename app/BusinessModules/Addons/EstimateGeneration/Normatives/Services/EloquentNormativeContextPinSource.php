@@ -192,12 +192,32 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 ->limit(32)
                 ->get();
             if ($query->isEmpty()) {
+                $this->telemetry('intent_candidates_empty', [
+                    'search_text' => $search,
+                    'action' => $intent['action'] ?? null,
+                    'unit' => $unit,
+                    'normative_sections' => $normativeSections,
+                ]);
+
                 continue;
             }
             $poolCandidatesCount += $query->count();
             $selectedForIntent = $this->ranker->select($query->all(), [$intent]);
             if ($selectedForIntent !== null) {
                 $norms = $norms->concat($selectedForIntent);
+            } else {
+                $this->telemetry('intent_candidates_rejected', [
+                    'search_text' => $search,
+                    'action' => $intent['action'] ?? null,
+                    'unit' => $unit,
+                    'normative_sections' => $normativeSections,
+                    'candidates' => $query->take(8)->map(static fn (object $candidate): array => [
+                        'code' => (string) $candidate->code,
+                        'name' => (string) $candidate->name,
+                        'unit' => (string) ($candidate->canonical_unit ?: $candidate->unit),
+                        'section' => (string) $candidate->section_code,
+                    ])->all(),
+                ]);
             }
         }
         $norms = $norms->unique('id')->values();
