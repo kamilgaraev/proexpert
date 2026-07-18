@@ -120,6 +120,9 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                         ->where('pin_prices.base_price', '>', 0)
                         ->where(function ($compatibleUnit): void {
                             $compatibleUnit->whereRaw('pin_prices.unit IS NOT DISTINCT FROM pin_resources.unit')
+                                ->orWhereRaw(
+                                    "LOWER(REGEXP_REPLACE(COALESCE(pin_prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(pin_resources.unit, ''), '[[:space:].,-]+', '', 'g'))"
+                                )
                                 ->orWhereExists(function ($conversion): void {
                                     $conversion->selectRaw('1')
                                         ->from('estimate_generation_unit_conversions as pin_conversions')
@@ -168,6 +171,9 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                                 ->where('valid_prices.base_price', '>', 0)
                                 ->where(function ($compatibleUnit): void {
                                     $compatibleUnit->whereRaw('valid_prices.unit IS NOT DISTINCT FROM required_resources.unit')
+                                        ->orWhereRaw(
+                                            "LOWER(REGEXP_REPLACE(COALESCE(valid_prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(required_resources.unit, ''), '[[:space:].,-]+', '', 'g'))"
+                                        )
                                         ->orWhereExists(function ($conversion): void {
                                             $conversion->selectRaw('1')
                                                 ->from('estimate_generation_unit_conversions as valid_conversions')
@@ -250,6 +256,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->mapWithKeys(static fn (object $row): array => [(int) $row->estimate_norm_id => (int) $row->resource_count])
             ->all();
         $basePricePlaceholders = implode(', ', array_fill(0, count($basePriceDatasetIds), '?'));
+        $normalizedCandidateUnitSql = "LOWER(REGEXP_REPLACE(COALESCE(candidate_prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(resources.unit, ''), '[[:space:].,-]+', '', 'g'))";
         $resourceRows = $this->database->table('estimate_norm_resources as resources')
             ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
                 $join->on('prices.resource_code', '=', 'resources.resource_code')
@@ -279,7 +286,9 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                         AND candidate_prices.period_id = ?)
                         OR (candidate_prices.dataset_version_id IN ('.$basePricePlaceholders.') AND candidate_prices.regional_price_version_id IS NULL))
                       AND candidate_prices.base_price > 0
-                      AND (candidate_prices.unit IS NOT DISTINCT FROM resources.unit OR EXISTS (
+                      AND (candidate_prices.unit IS NOT DISTINCT FROM resources.unit
+                        OR '.$normalizedCandidateUnitSql.'
+                        OR EXISTS (
                           SELECT 1 FROM estimate_generation_unit_conversions AS candidate_conversions
                           WHERE candidate_conversions.from_unit = resources.unit
                             AND candidate_conversions.to_unit = candidate_prices.unit

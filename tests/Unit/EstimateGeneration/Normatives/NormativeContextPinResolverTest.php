@@ -164,8 +164,11 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("->where('valid_conversions.is_active', true)", $source);
         self::assertStringContainsString("->where('valid_conversions.factor', '>', 0)", $source);
         self::assertStringContainsString('pin_prices.unit IS NOT DISTINCT FROM pin_resources.unit', $source);
+        self::assertStringContainsString("REGEXP_REPLACE(COALESCE(pin_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString('valid_prices.unit IS NOT DISTINCT FROM required_resources.unit', $source);
+        self::assertStringContainsString("REGEXP_REPLACE(COALESCE(valid_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString('candidate_prices.unit IS NOT DISTINCT FROM resources.unit', $source);
+        self::assertStringContainsString("REGEXP_REPLACE(COALESCE(candidate_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString("'prices.unit as price_unit'", $source);
         self::assertStringContainsString("->where('resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('resources.resource_type', '<>', 'summary')", $source);
