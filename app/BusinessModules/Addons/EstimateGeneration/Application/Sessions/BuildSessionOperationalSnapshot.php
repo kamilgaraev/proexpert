@@ -290,7 +290,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
                 ))
                 SQL)
             ->selectRaw('COUNT(DISTINCT packages.id) AS packages, MAX(packages.id) AS max_package_id, MAX(packages.updated_at) AS max_package_updated_at')
-            ->selectRaw('COUNT(items.id) AS items, MAX(items.id) AS max_item_id, MAX(items.updated_at) AS max_item_updated_at')
+            ->selectRaw("COUNT(items.id) FILTER (WHERE items.item_type NOT IN ('operation','resource_note','review_note')) AS items, MAX(items.id) AS max_item_id, MAX(items.updated_at) AS max_item_updated_at")
             ->selectRaw("COALESCE(SUM(CASE WHEN items.item_type NOT IN ('operation','resource_note','review_note') THEN items.total_cost ELSE 0 END), 0)::numeric(30,8)::text AS total_cost")
             ->selectRaw("SUM(CASE WHEN items.item_type = 'quantity_review' THEN 1 ELSE 0 END) AS review_items")
             ->selectRaw("SUM(CASE WHEN items.normative_status IN ('candidate','rejected','requires_review','not_found','unmatched','low_confidence') THEN 1 ELSE 0 END) AS normative_review")

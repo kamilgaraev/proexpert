@@ -34,6 +34,7 @@ final class SessionOperationalSnapshotDataTest extends TestCase
         self::assertStringContainsString('items.id IS NULL OR items.id = (', $source);
         self::assertStringContainsString('COALESCE(latest.logical_key, latest.key) = COALESCE(items.logical_key, items.key)', $source);
         self::assertStringContainsString('ORDER BY latest.revision DESC NULLS LAST, latest.id DESC', $source);
+        self::assertStringContainsString("COUNT(items.id) FILTER (WHERE items.item_type NOT IN ('operation','resource_note','review_note')) AS items", $source);
     }
 
     #[Test]
