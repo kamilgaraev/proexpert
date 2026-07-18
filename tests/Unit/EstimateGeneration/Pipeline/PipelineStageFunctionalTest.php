@@ -95,7 +95,13 @@ final class PipelineStageFunctionalTest extends TestCase
         $stages = [
             new UnderstandDocumentsStage($gateway, $results),
             new UnderstandObjectStage(new ConstructionSemanticParser, $gateway, $results),
-            new ExtractQuantitiesStage(new EstimateGenerationQuantityLearningEvidenceService, $results),
+            new ExtractQuantitiesStage(
+                new EstimateGenerationQuantityLearningEvidenceService,
+                $results,
+                new \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomAnnotationFloorAreaQuantityFactory(
+                    new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository,
+                ),
+            ),
             new PlanWorkItemsStage(new \App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler(new PackagePlannerService, new EstimateDecompositionService, new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService), new NormativeContextPinResolver), $results, new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceMaterializer(new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository)),
             new MatchNormativesStage($matcher, $workflow, new NormativeWorkIntentFactory, $results),
             new AssembleResourcesStage(new AssembleMatchedResources, $results),

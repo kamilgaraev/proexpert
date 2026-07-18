@@ -32,6 +32,7 @@ final readonly class GeometryBuildingModelInputMapper
         array $evidenceIdsByRef,
         string $floorKey = 'floor-1',
         ?GeometryConfirmationData $confirmation = null,
+        array $roomAreaEvidenceIdsByElementKey = [],
     ): VisionBuildingModelInputData {
         if ($vision === null && $vector === null) {
             throw new InvalidArgumentException('Geometry source is required.');
@@ -60,6 +61,12 @@ final readonly class GeometryBuildingModelInputMapper
         }
 
         $elements = $this->namespaceElements($elements, $floorKey);
+        $roomAreaEvidenceIdsByRoomKey = [];
+        foreach ($roomAreaEvidenceIdsByElementKey as $elementKey => $evidenceId) {
+            if (is_string($elementKey) && is_int($evidenceId) && $evidenceId > 0) {
+                $roomAreaEvidenceIdsByRoomKey[$this->namespacedElementKey($floorKey, $elementKey)] = $evidenceId;
+            }
+        }
 
         $fused = $this->fusion->fuse($elements);
         $geometry = new GeometryFusionResult($fused->elements, $fused->sourceElements, [...$fused->issues, ...$issues]);
@@ -72,6 +79,7 @@ final readonly class GeometryBuildingModelInputMapper
             $evidenceIdsByRef,
             'geometry-input-mapper:v1',
             $floorKey,
+            $roomAreaEvidenceIdsByRoomKey,
         );
     }
 

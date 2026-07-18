@@ -35,8 +35,8 @@ final readonly class PipelineDefinitionGraph
     {
         return new self([
             new StageDefinition(ProcessingStage::UnderstandDocuments, 1, [], 131_072),
-            new StageDefinition(ProcessingStage::UnderstandObject, 5, [ProcessingStage::UnderstandDocuments], 1_048_576),
-            new StageDefinition(ProcessingStage::ExtractQuantities, 3, [ProcessingStage::UnderstandObject], 262_144),
+            new StageDefinition(ProcessingStage::UnderstandObject, 6, [ProcessingStage::UnderstandDocuments], 1_048_576),
+            new StageDefinition(ProcessingStage::ExtractQuantities, 4, [ProcessingStage::UnderstandObject], 262_144),
             new StageDefinition(ProcessingStage::PlanWorkItems, 45, [ProcessingStage::UnderstandObject, ProcessingStage::ExtractQuantities], 1_310_720),
             new StageDefinition(ProcessingStage::MatchNormatives, 17, [ProcessingStage::PlanWorkItems], 1_310_720),
             new StageDefinition(ProcessingStage::AssembleResources, 5, [ProcessingStage::MatchNormatives], 1_048_576),

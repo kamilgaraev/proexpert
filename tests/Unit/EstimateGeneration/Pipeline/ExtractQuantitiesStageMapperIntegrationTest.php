@@ -59,6 +59,9 @@ final class ExtractQuantitiesStageMapperIntegrationTest extends TestCase
         $stage = new ExtractQuantitiesStage(
             new EstimateGenerationQuantityLearningEvidenceService,
             new StageResultFactory($artifacts, $graph),
+            new \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomAnnotationFloorAreaQuantityFactory(
+                new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository,
+            ),
             $mapper,
         );
 
@@ -102,6 +105,9 @@ final class ExtractQuantitiesStageMapperIntegrationTest extends TestCase
         $stage = new ExtractQuantitiesStage(
             new EstimateGenerationQuantityLearningEvidenceService,
             new StageResultFactory($artifacts, $graph),
+            new \App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomAnnotationFloorAreaQuantityFactory(
+                new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository,
+            ),
         );
 
         $result = $stage->execute($context);
