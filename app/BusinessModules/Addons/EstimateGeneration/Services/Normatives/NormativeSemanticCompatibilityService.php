@@ -55,6 +55,10 @@ final class NormativeSemanticCompatibilityService
             'гидротехническ',
             'карьерн',
             'горнопроход',
+            'горн выработ',
+            'горным выработ',
+            'шахтн',
+            'рудник',
             'метрополитен',
             'тоннел',
             'железнодорож',
@@ -205,8 +209,12 @@ final class NormativeSemanticCompatibilityService
                 return true;
             }
 
+            $explicitInstallation = $this->containsAny($candidateTitle, ['проклад', 'прокладыв', 'уклад', 'затягив', 'протяж']);
+            $catalogInstallationForm = $this->containsAny($candidateTitle, ['кабел'])
+                && $this->containsAny($candidateTitle, ['по установленн конструкц', 'по установленн лотк', 'по установленным конструкциям', 'по установленным лоткам']);
+
             return $this->containsAny($candidateTitle, ['кабел', 'электропровод', 'провод'])
-                && $this->containsAny($candidateTitle, ['проклад', 'прокладыв', 'уклад', 'затягив', 'протяж']);
+                && ($explicitInstallation || $catalogInstallationForm);
         }
 
         if ($action === 'sanitary_fixture_installation') {
@@ -403,10 +411,40 @@ final class NormativeSemanticCompatibilityService
             return false;
         }
 
-        if (($intent['scope'] ?? null) === 'facade'
-            && str_contains($candidateTitle, 'терразит')
-            && ! str_contains($workText, 'терразит')) {
+        if (! $this->facadeMaterialCompatible($candidateTitle, $workText, $intent)) {
             return false;
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function facadeMaterialCompatible(string $candidateTitle, string $workText, array $intent): bool
+    {
+        $objectType = trim((string) ($intent['object_type'] ?? ''));
+        if (($intent['scope'] ?? null) !== 'facade'
+            || ($objectType !== '' && ! ObjectTypeSignalClassifier::isResidential($objectType))) {
+            return true;
+        }
+
+        $evidenceText = $workText.' '.$this->normalize((string) ($intent['material'] ?? ''));
+        $materialMarkerGroups = [
+            ['фиброцемент', 'fiber_cement'],
+            ['хризотилцемент', 'chrysotile_cement', 'asbestos_cement'],
+            ['керамогранит', 'porcelain_stoneware', 'porcelain_tile'],
+            ['сайдинг'],
+            ['металлокассет', 'металлическими кассет', 'metal_cassette'],
+            ['композитн', 'composite_panel'],
+            ['стеклянной крош', 'стеклянная крош', 'стеклянную крош', 'glass_crumb'],
+            ['терразит', 'terrazite', 'terrazzo'],
+            ['природным кам', 'природного кам', 'каменн облицов', 'natural_stone'],
+        ];
+
+        foreach ($materialMarkerGroups as $markers) {
+            if ($this->containsAny($candidateTitle, $markers)
+                && ! $this->containsAny($evidenceText, $markers)) {
+                return false;
+            }
         }
 
         return true;
@@ -495,11 +533,6 @@ final class NormativeSemanticCompatibilityService
                 && $this->containsAny($workText, ['обдел']))
             || $this->containsAny($workText, ['водосточн', 'водосток']);
         if ($candidateHasFacadeAccessories && ! $workHasFacadeAccessories) {
-            return false;
-        }
-
-        if ($this->containsAny($candidateTitle, ['стеклянн крошк', 'стеклянной крошк'])
-            && ! $this->containsAny($workText, ['стеклянн крошк', 'стеклянной крошк'])) {
             return false;
         }
 

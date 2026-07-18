@@ -225,6 +225,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             $localEstimate,
             $localEstimate['sections'][0],
             [
+                'object' => ['manual_description' => 'Помещения дома: Душ, Ванна.'],
                 'document_context' => [
                     'facts_summary' => ['total_area_m2' => 180],
                     'scale_validation' => ['confirmed' => true],
@@ -235,6 +236,258 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertNotContains('Монтаж канализационных выпусков', array_column($items, 'name'));
         self::assertNotContains('Монтаж канализационных стояков', array_column($items, 'name'));
         self::assertNotContains('Монтаж ревизий канализации', array_column($items, 'name'));
+    }
+
+    public function test_sanitary_points_are_not_invented_from_floor_area_and_room_labels(): void
+    {
+        $localEstimate = $this->localEstimate('water_sewerage', 'Водоснабжение и канализация', 'plumbing', 12);
+
+        $items = $this->pricedItems($this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'facts_summary' => ['total_area_m2' => 180],
+                    'facts' => [
+                        ['label' => 'Санузел первого этажа'],
+                        ['label' => 'Ванная второго этажа'],
+                        ['label' => 'Душ'],
+                        ['label' => 'Ванна'],
+                    ],
+                    'drawing_elements' => [
+                        ['type' => 'room', 'label' => 'Душ'],
+                        ['type' => 'room', 'label' => 'Ванна'],
+                    ],
+                    'quantity_takeoffs' => [[
+                        'quantity_key' => 'floor_area',
+                        'name' => 'Общая площадь дома по планам этажей',
+                        'unit' => 'м2',
+                        'quantity' => 180,
+                        'source_refs' => [['type' => 'drawing', 'filename' => 'АР.pdf', 'page_number' => 1]],
+                        'normalized_payload' => ['review_required' => false],
+                    ]],
+                ],
+                'source_documents' => [[
+                    'id' => 90,
+                    'filename' => 'план-этажа.pdf',
+                    'status' => 'ready',
+                    'quality' => ['level' => 'good'],
+                    'text' => 'Душ Ванна',
+                    'document_understanding' => ['role_for_estimation' => 'geometry_source'],
+                ]],
+            ],
+        ));
+
+        $quantityKeys = array_column($items, 'quantity_formula');
+
+        self::assertNotContains('sanitary.points', $quantityKeys);
+        self::assertContains('plumbing.pipe', $quantityKeys);
+        self::assertContains('sewerage.pipe', $quantityKeys);
+    }
+
+    public function test_explicit_fixture_evidence_or_direct_takeoff_keeps_sanitary_points(): void
+    {
+        $localEstimate = $this->localEstimate('water_sewerage', 'Водоснабжение и канализация', 'plumbing', 12);
+        $planner = $this->planner();
+
+        foreach ([
+            'унитаза',
+            'раковиной',
+            'ванны',
+            'душем',
+            'смесителей',
+            'биде',
+            'писсуара',
+            'душевой поддон',
+            'душевая кабина',
+            'мойки',
+        ] as $fixture) {
+            $fixtureMentions = $this->pricedItems($planner->build(
+                $localEstimate,
+                $localEstimate['sections'][0],
+                [
+                    'document_context' => ['facts_summary' => ['total_area_m2' => 180]],
+                    'source_documents' => [[
+                        'id' => 91,
+                        'filename' => 'спецификация-ВК.pdf',
+                        'status' => 'ready',
+                        'quality' => ['level' => 'good'],
+                        'text' => 'Спецификацией предусмотрена установка '.$fixture.'.',
+                        'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+                    ]],
+                ],
+            ));
+
+            self::assertContains('sanitary.points', array_column($fixtureMentions, 'quantity_formula'), $fixture);
+        }
+
+        foreach (['Установка ванны.', 'Монтаж ванной.', 'Подключение ванны.'] as $statement) {
+            $projectStatement = $this->pricedItems($planner->build(
+                $localEstimate,
+                $localEstimate['sections'][0],
+                [
+                    'object' => ['manual_description' => $statement],
+                    'document_context' => ['facts_summary' => ['total_area_m2' => 180]],
+                ],
+            ));
+
+            self::assertContains('sanitary.points', array_column($projectStatement, 'quantity_formula'), $statement);
+        }
+
+        $nestedUnderstanding = $this->pricedItems($planner->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => ['facts_summary' => ['total_area_m2' => 180]],
+                'source_documents' => [[
+                    'id' => 92,
+                    'filename' => 'спецификация-ВК-2.pdf',
+                    'status' => 'ready',
+                    'quality' => ['level' => 'good'],
+                    'text' => 'Установка ванны — 1 шт.',
+                    'facts_summary' => [
+                        'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+                    ],
+                ]],
+            ],
+        ));
+
+        self::assertContains('sanitary.points', array_column($nestedUnderstanding, 'quantity_formula'));
+
+        $directTakeoff = $this->pricedItems($planner->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'facts' => [['label' => 'Санузел первого этажа']],
+                    'quantity_takeoffs' => [[
+                        'quantity_key' => 'sanitary.points',
+                        'name' => 'Сантехнические приборы по спецификации ВК',
+                        'unit' => 'шт',
+                        'quantity' => 5,
+                        'source_refs' => [['type' => 'document', 'filename' => 'ВК.pdf', 'page_number' => 4]],
+                        'normalized_payload' => ['review_required' => false],
+                    ]],
+                ],
+            ],
+        ));
+
+        self::assertContains('sanitary.points', array_column($directTakeoff, 'quantity_formula'));
+        self::assertSame(5.0, (float) array_values(array_filter(
+            $directTakeoff,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'sanitary.points'
+        ))[0]['quantity']);
+    }
+
+    public function test_fixture_action_must_be_local_and_room_wording_is_not_a_fixture(): void
+    {
+        $localEstimate = $this->localEstimate('water_sewerage', 'Водоснабжение и канализация', 'plumbing', 12);
+
+        foreach ([
+            'Предусмотрена установка розеток в ванной комнате.',
+            'Установка розеток. Ванная комната.',
+            'Установка розеток. Ванна.',
+            'Предусмотрен теплый пол в ванной.',
+            'Количество розеток в ванной: 4 шт.',
+            'Предусмотрен светильник для ванной.',
+            'Монтаж розетки на ванной.',
+        ] as $text) {
+            $items = $this->pricedItems($this->planner()->build(
+                $localEstimate,
+                $localEstimate['sections'][0],
+                [
+                    'document_context' => ['facts_summary' => ['total_area_m2' => 180]],
+                    'source_documents' => [[
+                        'id' => 93,
+                        'filename' => 'техническое-описание.pdf',
+                        'status' => 'ready',
+                        'quality' => ['level' => 'good'],
+                        'text' => $text,
+                        'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+                    ]],
+                ],
+            ));
+
+            self::assertNotContains('sanitary.points', array_column($items, 'quantity_formula'), $text);
+        }
+    }
+
+    public function test_direct_sanitary_takeoff_is_detected_outside_package_local_definitions(): void
+    {
+        $localEstimate = $this->localEstimate('custom-plumbing', 'Специальные работы ВК', 'plumbing', 12);
+
+        $items = $this->pricedItems($this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'quantity_takeoffs' => [[
+                        'quantity_key' => 'sanitary.points',
+                        'name' => 'Приборы по спецификации ВК',
+                        'unit' => 'шт',
+                        'quantity' => 6,
+                        'source_refs' => [['type' => 'document', 'filename' => 'ВК.pdf', 'page_number' => 4]],
+                        'normalized_payload' => ['review_required' => false],
+                    ]],
+                    'scope_inferences' => [[
+                        'inference_type' => 'specification_takeoff',
+                        'scope_type' => 'plumbing',
+                        'title' => 'Монтаж сантехнических приборов',
+                        'confidence' => 0.91,
+                        'source_refs' => [['type' => 'document', 'filename' => 'ВК.pdf', 'page_number' => 4]],
+                        'review_required' => false,
+                        'normalized_payload' => [
+                            'quantity_key' => 'sanitary.points',
+                            'quantity_value' => 6,
+                            'unit' => 'шт',
+                        ],
+                    ]],
+                ],
+            ],
+        ));
+
+        $sanitaryItem = array_values(array_filter(
+            $items,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'sanitary.points'
+        ))[0] ?? null;
+
+        self::assertIsArray($sanitaryItem);
+        self::assertSame(6.0, (float) $sanitaryItem['quantity']);
+    }
+
+    public function test_singular_source_ref_supports_provenance_aware_fixture_inference(): void
+    {
+        $localEstimate = $this->localEstimate('custom-plumbing', 'Специальные работы ВК', 'plumbing', 12);
+
+        $items = $this->pricedItems($this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'scope_inferences' => [[
+                        'inference_type' => 'specification_takeoff',
+                        'scope_type' => 'plumbing',
+                        'title' => 'Установка биде',
+                        'confidence' => 0.91,
+                        'source_ref' => ['type' => 'document', 'filename' => 'ВК.pdf', 'page_number' => 4],
+                        'review_required' => false,
+                        'normalized_payload' => [
+                            'quantity_key' => 'sanitary.points',
+                            'quantity_value' => 2,
+                            'unit' => 'шт',
+                        ],
+                    ]],
+                ],
+            ],
+        ));
+
+        $sanitaryItem = array_values(array_filter(
+            $items,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'sanitary.points'
+        ))[0] ?? null;
+
+        self::assertIsArray($sanitaryItem);
+        self::assertSame(2.0, (float) $sanitaryItem['quantity']);
     }
 
     public function test_unknown_engineering_package_does_not_fall_back_to_electrical_or_generic_work(): void

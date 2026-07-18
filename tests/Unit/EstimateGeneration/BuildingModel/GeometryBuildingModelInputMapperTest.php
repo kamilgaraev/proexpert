@@ -61,7 +61,7 @@ final class GeometryBuildingModelInputMapperTest extends TestCase
         self::assertSame($fingerprint, $input->geometry->elements[0]->sourceFingerprint);
     }
 
-    public function test_room_with_non_schema_display_label_remains_in_model_without_invented_name(): void
+    public function test_room_with_safe_display_punctuation_preserves_exact_name(): void
     {
         $fingerprint = 'sha256:'.str_repeat('b', 64);
         $vision = VisionAnalysisData::fromProviderArray([
@@ -99,7 +99,7 @@ final class GeometryBuildingModelInputMapperTest extends TestCase
         $model = (new BuildingModelAssembler)->assembleVision($input)->model;
 
         self::assertCount(1, $model->floors[0]->rooms);
-        self::assertNull($model->floors[0]->rooms[0]->name);
+        self::assertSame('Санузел (1 этаж)', $model->floors[0]->rooms[0]->name);
         self::assertSame([101], $model->floors[0]->rooms[0]->evidenceIds);
     }
 

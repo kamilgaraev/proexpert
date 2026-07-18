@@ -145,6 +145,72 @@ final class NormativeIntentCandidateRankerTest extends TestCase
         self::assertSame([80240201], array_column($selected, 'id'));
     }
 
+    public function test_generic_residential_facade_prefers_plaster_and_paint_over_unconfirmed_cladding(): void
+    {
+        $candidates = [
+            $this->candidate(
+                150106401,
+                '15-01-064-01',
+                'Облицовка фасадов фиброцементными и хризотилцементными плитами',
+                '100 m2',
+                '15-01',
+            ),
+            $this->candidate(
+                150102001,
+                '15-02-001-01',
+                'Оштукатуривание фасадов цементно-известковым раствором',
+                '100 m2',
+                '15-02',
+            ),
+            $this->candidate(
+                150401001,
+                '15-04-001-01',
+                'Окраска фасадов водно-дисперсионными красками',
+                '100 m2',
+                '15-04',
+            ),
+        ];
+
+        $selected = (new NormativeIntentCandidateRanker)->select($candidates, [[
+            'search_text' => 'Отделка фасада',
+            'unit' => 'm2',
+            'action' => 'general_work',
+            'scope' => 'facade',
+            'object_type' => 'residential',
+            'normative_sections' => ['15'],
+        ]]);
+
+        self::assertNotNull($selected);
+        self::assertEqualsCanonicalizing([150102001, 150401001], array_column($selected, 'id'));
+    }
+
+    public function test_residential_facade_uses_explicit_material_from_structured_intent(): void
+    {
+        $candidate = $this->candidate(
+            150106401,
+            '15-01-064-01',
+            'Облицовка фасадов фиброцементными плитами',
+            '100 m2',
+            '15-01',
+        );
+        $intent = [
+            'search_text' => 'Отделка фасада',
+            'unit' => 'm2',
+            'action' => 'general_work',
+            'scope' => 'facade',
+            'object_type' => 'residential',
+            'normative_sections' => ['15'],
+        ];
+
+        self::assertNull((new NormativeIntentCandidateRanker)->select([$candidate], [$intent]));
+
+        $intent['material'] = 'фиброцементные плиты';
+        self::assertSame(
+            [150106401],
+            array_column((new NormativeIntentCandidateRanker)->select([$candidate], [$intent]) ?? [], 'id'),
+        );
+    }
+
     private function candidate(
         int $id,
         string $code,

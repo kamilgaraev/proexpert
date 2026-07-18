@@ -55,6 +55,7 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
     {
         $statuses = [];
         $blockers = [];
+        $blockerDetails = [];
         $evidenceRejections = [];
         $pricedItems = 0;
         $totalCost = 0.0;
@@ -70,6 +71,9 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
                     $blocker = (string) ($workItem['pricing_blocker'] ?? 'none');
                     $statuses[$status] = ($statuses[$status] ?? 0) + 1;
                     $blockers[$blocker] = ($blockers[$blocker] ?? 0) + 1;
+                    if ($blocker !== '' && $blocker !== 'none' && count($blockerDetails) < 20) {
+                        $blockerDetails[] = $this->pricingBlockerDetail($workItem, $blocker);
+                    }
                     if ($blocker === 'quantity_evidence_not_accepted') {
                         $reason = $this->pricing->quantityEvidenceRejectionReason($context, $workItem) ?? 'unknown';
                         $evidenceRejections[$reason] = ($evidenceRejections[$reason] ?? 0) + 1;
@@ -88,9 +92,45 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
             'priced_items_count' => $pricedItems,
             'pricing_status_counts' => $statuses,
             'pricing_blocker_counts' => $blockers,
+            'pricing_blocker_details' => $blockerDetails,
             'quantity_evidence_rejection_counts' => $evidenceRejections,
             'total_cost' => round($totalCost, 2),
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $workItem
+     * @return array<string, mixed>
+     */
+    private function pricingBlockerDetail(array $workItem, string $blocker): array
+    {
+        $match = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
+        $abstractResources = is_array($match['unpriced_abstract_resources'] ?? null)
+            ? array_slice($match['unpriced_abstract_resources'], 0, 8)
+            : [];
+
+        return [
+            'work_key' => $this->summaryText($workItem['key'] ?? null),
+            'work_name' => $this->summaryText($workItem['name'] ?? null),
+            'quantity' => $this->summaryText($workItem['quantity'] ?? null),
+            'unit' => $this->summaryText($workItem['unit'] ?? null),
+            'blocker' => $this->summaryText($blocker),
+            'norm_code' => $this->summaryText($match['code'] ?? null),
+            'norm_name' => $this->summaryText($match['name'] ?? null),
+            'unpriced_abstract_resources' => array_values(array_map(fn (mixed $resource): array => [
+                'resource_code' => $this->summaryText(is_array($resource) ? ($resource['resource_code'] ?? null) : null),
+                'name' => $this->summaryText(is_array($resource) ? ($resource['name'] ?? null) : null),
+                'unit' => $this->summaryText(is_array($resource) ? ($resource['unit'] ?? null) : null),
+                'quantity' => is_array($resource) && is_numeric($resource['quantity'] ?? null)
+                    ? (float) $resource['quantity']
+                    : 0.0,
+            ], $abstractResources)),
+        ];
+    }
+
+    private function summaryText(mixed $value): string
+    {
+        return mb_substr(trim(is_scalar($value) ? (string) $value : ''), 0, 240);
     }
 
     private function canLog(): bool

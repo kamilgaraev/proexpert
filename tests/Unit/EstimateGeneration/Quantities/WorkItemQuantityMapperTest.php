@@ -14,14 +14,14 @@ use PHPUnit\Framework\TestCase;
 final class WorkItemQuantityMapperTest extends TestCase
 {
     #[Test]
-    public function floor_finishing_uses_confirmed_floor_area_as_estimation_basis(): void
+    public function finish_floor_uses_confirmed_floor_area_as_estimation_basis(): void
     {
-        $quantity = (new WorkItemQuantityMapper)->map('rough.floor', [
+        $quantity = (new WorkItemQuantityMapper)->map('finish.floor', [
             'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
         ]);
 
         self::assertNotNull($quantity);
-        self::assertSame('rough.floor', $quantity->key);
+        self::assertSame('finish.floor', $quantity->key);
         self::assertSame('180.000000', $quantity->amount);
         self::assertSame('m2', $quantity->unit);
         self::assertSame(QuantitySource::Estimated, $quantity->source);
@@ -85,6 +85,8 @@ final class WorkItemQuantityMapperTest extends TestCase
             'site.setup', 'site.geodesy', 'foundation.prep', 'sanitary.tile',
             'heating.radiators', 'heating.unit', 'sewerage.outlets', 'sewerage.risers',
             'sewerage.revisions', 'ventilation.air_exchange', 'walls.lintels',
+            'earth.export', 'electrical.grounding', 'rough.floor', 'stairs.flights',
+            'stairs.landings',
         ] as $key) {
             self::assertNull((new WorkItemQuantityMapper)->map($key, $quantities), $key);
         }
@@ -97,8 +99,6 @@ final class WorkItemQuantityMapperTest extends TestCase
         $expected = [
             'slabs.concrete' => ['21.600000', 'm3'],
             'slabs.rebar' => ['2160.000000', 'kg'],
-            'stairs.flights' => ['9.000000', 'm2'],
-            'stairs.landings' => ['2.700000', 'm2'],
             'stairs.railings' => ['14.400000', 'm'],
             'openings.windows' => ['14.400000', 'm2'],
             'openings.doors' => ['21.600000', 'm2'],
@@ -165,14 +165,14 @@ final class WorkItemQuantityMapperTest extends TestCase
             'opening_area' => $this->quantity('opening_area', 'm2', '32.000000'),
         ];
         $keys = [
-            'earth.backfill', 'earth.export', 'earth.plan', 'earth.trench',
-            'electrical.grounding', 'electrical.main_cable', 'electrical.power_lines', 'electrical.trays',
+            'earth.backfill', 'earth.plan', 'earth.trench',
+            'electrical.main_cable', 'electrical.power_lines', 'electrical.trays',
             'finish.baseboard', 'finish.floor', 'finish.paint',
             'foundation.concrete', 'foundation.formwork', 'foundation.rebar', 'foundation.waterproofing',
             'heating.air_curtains', 'heating.pipe', 'lighting.lines',
             'networks.external', 'office.ceiling', 'office.network_points', 'office.partitions',
             'plumbing.pipe', 'roof.area', 'roof.flat_area', 'roof.gutter',
-            'rough.floor', 'rough.walls', 'sanitary.points', 'server.room',
+            'rough.walls', 'sanitary.points', 'server.room',
             'sewerage.pipe',
             'siteworks.area',
             'ventilation.office_points', 'ventilation.warehouse_points',

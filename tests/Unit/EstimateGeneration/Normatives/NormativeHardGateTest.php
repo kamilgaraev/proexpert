@@ -321,6 +321,30 @@ final class NormativeHardGateTest extends TestCase
         self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
     }
 
+    public function test_explicit_facade_material_reaches_semantic_safety_gate(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'facade-finish', 'Отделка фасада', 'm2', 'area',
+            'fiber_cement', 'general_work', 'facade', '15', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'], ['15'],
+        );
+        $candidate = $this->candidate([
+            'name' => 'Облицовка фасадов фиброцементными плитами',
+            'canonicalUnit' => 'm2',
+            'unitDimension' => 'area',
+            'material' => null,
+            'technology' => null,
+            'structure' => null,
+            'normativeSection' => '15-01',
+            'objectType' => null,
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
+        self::assertSame([], $set->rejected);
+    }
+
     private function intent(): WorkIntentData
     {
         return new WorkIntentData(1, 2, 3, 'work-1', 'кладка стены', 'м2', 'area', 'кирпич', 'кладка', 'стена', '08', 'жилой', 'v1', 'published', '78', new DateTimeImmutable('2026-01-01'), ['doc:1']);

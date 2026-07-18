@@ -11,7 +11,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\AnalysisFloorAreaQuantityFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityResolver;
 use Illuminate\Support\Facades\Log;
@@ -25,7 +24,6 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private StageResultFactory $results,
         private AcceptedQuantityEvidenceMaterializer $acceptedEvidence,
         private WorkItemQuantityResolver $quantityResolver = new WorkItemQuantityResolver,
-        private AnalysisFloorAreaQuantityFactory $analysisFloorArea = new AnalysisFloorAreaQuantityFactory,
     ) {}
 
     public function stage(): ProcessingStage
@@ -50,7 +48,6 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             $typed = QuantityData::fromArray($quantity)->toArray();
             $quantities[$typed['key']] = $typed;
         }
-        $quantities = $this->withPreferredAnalysisFloorArea($quantities, $analysis);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
@@ -132,25 +129,6 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
 
         return $workItem;
-    }
-
-    private function withPreferredAnalysisFloorArea(
-        array $quantities,
-        array $analysis,
-        ?AnalysisFloorAreaQuantityFactory $factory = null,
-    ): array {
-        $candidate = ($factory ?? $this->analysisFloorArea)->make($analysis);
-        if ($candidate === null) {
-            return $quantities;
-        }
-        $existing = isset($quantities[$candidate->key]) && is_array($quantities[$candidate->key])
-            ? QuantityData::fromArray($quantities[$candidate->key])
-            : null;
-        if ($existing === null || ($existing->reviewBlockers !== [] && $candidate->reviewBlockers === [])) {
-            $quantities[$candidate->key] = $candidate->toArray();
-        }
-
-        return $quantities;
     }
 
     private function quantityEvidenceSummary(array $localEstimates): array
