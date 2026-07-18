@@ -348,6 +348,24 @@ final class NormativeSemanticCompatibilityService
     /** @param array<string, mixed> $intent */
     private function specializationCompatible(string $candidateTitle, string $workText, array $intent): bool
     {
+        if (($intent['action'] ?? null) === 'floor_covering'
+            && $this->hasUnconfirmedSpecialization(
+                $candidateTitle,
+                $workText,
+                ['полиуретан', 'полимер', 'наливн']
+            )) {
+            return false;
+        }
+
+        if (($intent['scope'] ?? null) === 'roof'
+            && $this->hasUnconfirmedSpecialization(
+                $candidateTitle,
+                $workText,
+                ['плоск', 'полиуретан', 'полимер', 'антикорроз', 'наливн']
+            )) {
+            return false;
+        }
+
         if (($intent['scope'] ?? null) === 'roof'
             && str_contains($candidateTitle, 'мастик')
             && ! str_contains($workText, 'мастик')) {
@@ -361,6 +379,18 @@ final class NormativeSemanticCompatibilityService
         }
 
         return true;
+    }
+
+    /** @param array<int, string> $markers */
+    private function hasUnconfirmedSpecialization(string $candidateTitle, string $workText, array $markers): bool
+    {
+        foreach ($markers as $marker) {
+            if (str_contains($candidateTitle, $marker) && ! str_contains($workText, $marker)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function operationCompatible(string $candidateTitle, string $workText): bool

@@ -114,6 +114,35 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
     }
 
     #[Test]
+    public function accepts_a_strong_semantic_regional_project_resource_selection_with_an_unrelated_catalog_code(): void
+    {
+        $record = $this->catalogCandidate();
+        $record['resources']['materials'][0] = [
+            ...$record['resources']['materials'][0],
+            'code' => '18.2.07.01',
+            'name' => 'Трубопроводы с гильзами',
+            'price_source' => 'regional_catalog',
+            'unit_price' => '245.500000',
+            'project_resource_selection' => [
+                'group_code' => '18.2.07.01',
+                'selected_resource_code' => '73.9.44.08',
+                'selected_resource_name' => 'Труба ВГП стальная оцинкованная Ду 15',
+                'price_source' => 'regional_catalog',
+                'price_source_version' => 'prices-2026.06',
+                'policy' => 'regional_semantic_pipe_hard_attributes_median:v1',
+                'candidates_count' => 3,
+            ],
+        ];
+
+        $decision = AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
+
+        self::assertSame(
+            '73.9.44.08',
+            $decision->resources['materials'][0]['project_resource_selection']['selected_resource_code'],
+        );
+    }
+
+    #[Test]
     public function accepts_an_explicitly_marked_project_resource_selection_from_the_fsbc_base_catalog(): void
     {
         $record = $this->catalogCandidate();

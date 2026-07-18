@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSemanticCompatibilityService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClassifier;
 
 final readonly class NormativeIntentCandidateRanker
 {
@@ -99,7 +100,38 @@ final readonly class NormativeIntentCandidateRanker
         $tokens = $this->tokens($search);
         $matches = count(array_filter($tokens, static fn (string $token): bool => str_contains($haystack, $token)));
 
-        return $matches > 0 ? 100 - min(99, $matches) : null;
+        return $matches > 0
+            ? 100 - min(99, $matches) + $this->objectContextPriority($name, $search, $intent)
+            : null;
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function objectContextPriority(string $candidateName, string $search, array $intent): int
+    {
+        if (! ObjectTypeSignalClassifier::isResidential((string) ($intent['object_type'] ?? ''))
+            || ($intent['action'] ?? null) !== 'pipe_layout') {
+            return 0;
+        }
+        if ($this->containsAny($search, ['наружн', 'транше', 'выпуск'])) {
+            return 0;
+        }
+        if (str_contains($candidateName, 'внутренн')) {
+            return -10;
+        }
+
+        return $this->containsAny($candidateName, ['наружн', 'транше']) ? 10 : 0;
+    }
+
+    /** @param list<string> $markers */
+    private function containsAny(string $text, array $markers): bool
+    {
+        foreach ($markers as $marker) {
+            if (str_contains($text, $marker)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @return list<string> */

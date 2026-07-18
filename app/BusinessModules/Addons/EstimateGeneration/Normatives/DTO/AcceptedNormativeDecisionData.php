@@ -164,19 +164,27 @@ final readonly class AcceptedNormativeDecisionData
         }
         $selection = $resource['project_resource_selection'];
         $groupCode = $resource['code'] ?? null;
+        $policy = is_array($selection) ? ($selection['policy'] ?? null) : null;
+        $selectedResourceCode = is_array($selection) ? ($selection['selected_resource_code'] ?? null) : null;
+        $isSemanticSelection = $policy === 'regional_semantic_pipe_hard_attributes_median:v1'
+            && ($selection['price_source'] ?? null) === 'regional_catalog'
+            && is_string($selectedResourceCode)
+            && trim($selectedResourceCode) !== '';
+        $isExactGroupSelection = is_string($groupCode)
+            && is_string($selectedResourceCode)
+            && in_array($policy, ['regional_child_median:v1', 'fsbc_base_child_median:v1', 'fsnb_base_child_median:v1'], true)
+            && preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', $selectedResourceCode) === 1;
         if (! is_array($selection)
             || ! is_string($groupCode)
             || preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}$/D', $groupCode) !== 1
             || ($selection['group_code'] ?? null) !== $groupCode
-            || ! is_string($selection['selected_resource_code'] ?? null)
-            || preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', $selection['selected_resource_code']) !== 1
+            || ! ($isExactGroupSelection || $isSemanticSelection)
             || ! is_string($selection['selected_resource_name'] ?? null)
             || trim($selection['selected_resource_name']) === ''
             || ! in_array(($selection['price_source'] ?? null), ['regional_catalog', 'fsbc_base', 'fsnb_base'], true)
             || ($resource['price_source'] ?? null) !== ($selection['price_source'] ?? null)
             || ! is_string($selection['price_source_version'] ?? null)
             || trim($selection['price_source_version']) === ''
-            || ! in_array(($selection['policy'] ?? null), ['regional_child_median:v1', 'fsbc_base_child_median:v1', 'fsnb_base_child_median:v1'], true)
             || ! is_int($selection['candidates_count'] ?? null)
             || $selection['candidates_count'] <= 0) {
             throw new InvalidArgumentException('accepted_normative_project_resource_selection_invalid');

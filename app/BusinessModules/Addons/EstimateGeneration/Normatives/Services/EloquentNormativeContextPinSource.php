@@ -21,6 +21,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         private NormativeCandidatePriceCoverageAnalyzer $priceCoverageAnalyzer = new NormativeCandidatePriceCoverageAnalyzer,
         private AbstractNormativeResourcePriceSelector $abstractResourcePriceSelector = new AbstractNormativeResourcePriceSelector,
         private AbstractResourceCoverageDiagnostics $abstractResourceCoverageDiagnostics = new AbstractResourceCoverageDiagnostics,
+        private AbstractResourceSemanticPriceSelector $abstractResourceSemanticPriceSelector = new AbstractResourceSemanticPriceSelector,
     ) {}
 
     public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
@@ -442,6 +443,133 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             $selection['row']->project_resource_price_policy = $selection['policy'];
             $selectedAbstractRows->push($selection['row']);
         }
+        $abstractDefinitions = $this->database->table('estimate_norm_resources')
+            ->whereIn('estimate_norm_id', $ids)
+            ->where('quantity', '>', 0)
+            ->where('resource_type', '<>', 'summary')
+            ->whereRaw("LOWER(COALESCE(raw_payload->>'source_tag', '')) = 'abstractresource'")
+            ->orderBy('estimate_norm_id')
+            ->orderBy('id')
+            ->get(['id', 'estimate_norm_id', 'construction_resource_id', 'resource_code', 'resource_name', 'unit', 'quantity', 'resource_type']);
+        $unresolvedAbstractDefinitions = $abstractDefinitions->reject(static fn (object $row): bool => $selectedAbstractRows->contains(
+            static fn (object $selected): bool => (int) $selected->norm_resource_id === (int) $row->id,
+        ));
+        $semanticRequiredUnits = $unresolvedAbstractDefinitions
+            ->pluck('unit')
+            ->filter(static fn (mixed $unit): bool => is_string($unit) && $unit !== '')
+            ->unique()
+            ->values()
+            ->all();
+        $normsById = $norms->keyBy('id');
+        $semanticSearchHints = $unresolvedAbstractDefinitions
+            ->map(function (object $definition) use ($normsById): ?array {
+                $norm = $normsById->get((int) $definition->estimate_norm_id);
+
+                return is_object($norm) ? $this->abstractResourceSemanticPriceSelector->queryHints(
+                    (string) $norm->name,
+                    (string) ($definition->resource_name ?: $definition->resource_code),
+                ) : null;
+            })
+            ->filter()
+            ->unique(static fn (array $hint): string => implode(':', [
+                $hint['material'],
+                $hint['polarity'] ?? '-',
+                (string) $hint['diameter'],
+            ]))
+            ->values()
+            ->all();
+        $semanticProjectPrices = $semanticRequiredUnits === [] || $semanticSearchHints === [] ? collect() : $this->database
+            ->table('estimate_resource_prices as semantic_project_prices')
+            ->join(
+                'estimate_regional_price_versions as semantic_project_versions',
+                'semantic_project_versions.id',
+                '=',
+                'semantic_project_prices.regional_price_version_id',
+            )
+            ->whereIn('semantic_project_prices.unit', $semanticRequiredUnits)
+            ->where('semantic_project_prices.regional_price_version_id', $requested->regionalPriceVersionId)
+            ->where('semantic_project_prices.region_id', $requested->regionId)
+            ->where('semantic_project_prices.price_zone_id', $requested->priceZoneId)
+            ->where('semantic_project_prices.period_id', $requested->periodId)
+            ->where('semantic_project_prices.base_price', '>', 0)
+            ->where(function ($pipeFamily): void {
+                $pipeFamily->where('semantic_project_prices.resource_name', 'ilike', '%труб%')
+                    ->orWhere('semantic_project_prices.resource_name', 'ilike', '%пнд%')
+                    ->orWhere('semantic_project_prices.resource_name', 'ilike', '%hdpe%');
+            })
+            ->where(function ($targets) use ($semanticSearchHints): void {
+                foreach ($semanticSearchHints as $index => $hint) {
+                    $method = $index === 0 ? 'where' : 'orWhere';
+                    $targets->{$method}(function ($target) use ($hint): void {
+                        $target->where('semantic_project_prices.resource_name', 'ilike', '%'.$hint['diameter'].'%')
+                            ->where(function ($material) use ($hint): void {
+                                if ($hint['material'] === 'steel') {
+                                    $material->where('semantic_project_prices.resource_name', 'ilike', '%стал%')
+                                        ->orWhere('semantic_project_prices.resource_name', 'ilike', '%вгп%')
+                                        ->orWhere('semantic_project_prices.resource_name', 'ilike', '%водогазопровод%');
+
+                                    return;
+                                }
+                                $material->where('semantic_project_prices.resource_name', 'ilike', '%полиэтилен%')
+                                    ->orWhere('semantic_project_prices.resource_name', 'ilike', '%пнд%')
+                                    ->orWhere('semantic_project_prices.resource_name', 'ilike', '%hdpe%');
+                            });
+                        if ($hint['polarity'] === 'galvanized') {
+                            $target->where('semantic_project_prices.resource_name', 'ilike', '%оцинк%')
+                                ->where('semantic_project_prices.resource_name', 'not ilike', '%неоцинк%');
+                        } elseif ($hint['polarity'] === 'non_galvanized') {
+                            $target->where(function ($polarity): void {
+                                $polarity->where('semantic_project_prices.resource_name', 'ilike', '%неоцинк%')
+                                    ->orWhere('semantic_project_prices.resource_name', 'ilike', '%черн%');
+                            });
+                        }
+                    });
+                }
+            })
+            ->orderBy('semantic_project_prices.id')
+            ->limit(5_001)
+            ->get([
+                'semantic_project_prices.id as price_id',
+                'semantic_project_prices.construction_resource_id as price_construction_resource_id',
+                'semantic_project_prices.resource_code as price_resource_code',
+                'semantic_project_prices.resource_name as price_resource_name',
+                'semantic_project_prices.unit as price_unit',
+                'semantic_project_prices.base_price as unit_price',
+                'semantic_project_prices.base_price',
+                'semantic_project_prices.regional_price_version_id',
+                'semantic_project_versions.version_key as regional_price_version_key',
+            ]);
+        if ($semanticProjectPrices->count() <= 5_000) {
+            foreach ($unresolvedAbstractDefinitions as $definition) {
+                $norm = $normsById->get((int) $definition->estimate_norm_id);
+                if (! is_object($norm)) {
+                    continue;
+                }
+                $selection = $this->abstractResourceSemanticPriceSelector->select(
+                    (string) $norm->name,
+                    (string) ($definition->resource_name ?: $definition->resource_code),
+                    (string) $definition->unit,
+                    $requested->regionalPriceVersionId,
+                    $semanticProjectPrices->all(),
+                );
+                if ($selection === null) {
+                    continue;
+                }
+                $selected = clone $selection['row'];
+                $selected->norm_resource_id = (int) $definition->id;
+                $selected->estimate_norm_id = (int) $definition->estimate_norm_id;
+                $selected->construction_resource_id = $definition->construction_resource_id;
+                $selected->resource_code = (string) $definition->resource_code;
+                $selected->resource_name = (string) $definition->resource_name;
+                $selected->unit = (string) $definition->unit;
+                $selected->quantity = $definition->quantity;
+                $selected->resource_type = (string) $definition->resource_type;
+                $selected->raw_source_tag = 'AbstractResource';
+                $selected->project_resource_candidates_count = $selection['candidates_count'];
+                $selected->project_resource_price_policy = $selection['policy'];
+                $selectedAbstractRows->push($selected);
+            }
+        }
         $selectedAbstractCounts = $selectedAbstractRows
             ->groupBy('estimate_norm_id')
             ->map(static fn ($rows): int => $rows->count());
@@ -455,14 +583,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             }
             $resources[$mapped->estimateNormId][$mapped->group][] = $mapped->resource;
         }
-        $unpricedAbstractResources = $this->database->table('estimate_norm_resources')
-            ->whereIn('estimate_norm_id', $ids)
-            ->where('quantity', '>', 0)
-            ->where('resource_type', '<>', 'summary')
-            ->whereRaw("LOWER(COALESCE(raw_payload->>'source_tag', '')) = 'abstractresource'")
-            ->orderBy('estimate_norm_id')
-            ->orderBy('id')
-            ->get(['id', 'estimate_norm_id', 'resource_code', 'resource_name', 'unit', 'quantity'])
+        $unpricedAbstractResources = $abstractDefinitions
             ->reject(static fn (object $row): bool => $selectedAbstractRows->contains(
                 static fn (object $selected): bool => (int) $selected->norm_resource_id === (int) $row->id,
             ))

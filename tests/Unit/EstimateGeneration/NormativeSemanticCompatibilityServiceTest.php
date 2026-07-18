@@ -576,6 +576,50 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         ));
     }
 
+    public function test_generic_residential_floor_covering_rejects_industrial_polyurethane_poured_floor(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $intent = ['action' => 'floor_covering', 'scope' => 'finishing'];
+
+        self::assertFalse($service->isCompatible(
+            'Устройство полимерных наливных полов из полиуретана: с толщиной покрытия 2 мм',
+            'Чистовое покрытие пола',
+            $intent,
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство полимерных наливных полов из полиуретана: усиленных стеклотканью с толщиной покрытия 3 мм',
+            'Чистовое покрытие пола',
+            $intent,
+        ));
+        self::assertTrue($service->isCompatible(
+            'Устройство полимерных наливных полов из полиуретана: с толщиной покрытия 2 мм',
+            'Устройство полимерного наливного полиуретанового покрытия пола',
+            $intent,
+        ));
+    }
+
+    public function test_generic_residential_roof_covering_rejects_flat_anticorrosion_polymer_poured_coating(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $intent = ['action' => 'general_work', 'scope' => 'roof'];
+
+        self::assertFalse($service->isCompatible(
+            'Устройство кровель плоских: Устройство защитного антикоррозийного полимерного наливного покрытия',
+            'Монтаж кровельного покрытия',
+            $intent,
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство кровель плоских: Устройство защитного антикоррозийного полимерного наливного покрытия',
+            'Устройство плоской кровли из наливного полимерного покрытия',
+            $intent,
+        ));
+        self::assertTrue($service->isCompatible(
+            'Устройство кровель плоских: Устройство защитного антикоррозийного полимерного наливного покрытия',
+            'Устройство плоской кровли из защитного антикоррозийного полимерного наливного покрытия',
+            $intent,
+        ));
+    }
+
     public function test_generic_residential_work_does_not_invent_special_material_or_suboperation(): void
     {
         $service = new NormativeSemanticCompatibilityService;
