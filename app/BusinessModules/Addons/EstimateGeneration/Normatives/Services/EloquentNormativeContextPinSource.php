@@ -183,7 +183,11 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         }
         $norms = $norms->unique('id')->values();
         if ($norms->isEmpty()) {
-            $this->telemetry('norms_rejected', ['intents_count' => count($intents), 'norms_count' => $poolCandidatesCount]);
+            $this->telemetry('norms_rejected', [
+                'intents_count' => count($intents),
+                'norms_count' => $poolCandidatesCount,
+                ...$this->coverageDiagnostics($requested, $basePriceDatasetId),
+            ]);
 
             return null;
         }
@@ -309,5 +313,57 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         if (Log::getFacadeRoot() !== null) {
             Log::info('estimate_generation.normative_pin_source', ['phase' => $phase, ...$context]);
         }
+    }
+
+    private function coverageDiagnostics(NormativeContextPinData $requested, int $basePriceDatasetId): array
+    {
+        $eligible = $this->database->table('estimate_norm_resources as diagnostic_resources')
+            ->join('estimate_norms as diagnostic_norms', 'diagnostic_norms.id', '=', 'diagnostic_resources.estimate_norm_id')
+            ->join('estimate_norm_collections as diagnostic_collections', 'diagnostic_collections.id', '=', 'diagnostic_norms.collection_id')
+            ->where('diagnostic_collections.dataset_version_id', $requested->datasetId)
+            ->where('diagnostic_resources.quantity', '>', 0)
+            ->where('diagnostic_resources.resource_type', '<>', 'summary');
+        $codeMatched = (clone $eligible)->whereExists(function ($prices) use ($requested, $basePriceDatasetId): void {
+            $prices->selectRaw('1')
+                ->from('estimate_resource_prices as diagnostic_prices')
+                ->whereColumn('diagnostic_prices.resource_code', 'diagnostic_resources.resource_code')
+                ->where('diagnostic_prices.base_price', '>', 0)
+                ->where(function ($context) use ($requested, $basePriceDatasetId): void {
+                    $context->where(function ($regional) use ($requested): void {
+                        $regional->where('diagnostic_prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                            ->where('diagnostic_prices.region_id', $requested->regionId)
+                            ->where('diagnostic_prices.price_zone_id', $requested->priceZoneId)
+                            ->where('diagnostic_prices.period_id', $requested->periodId);
+                    })->orWhere(function ($base) use ($basePriceDatasetId): void {
+                        $base->where('diagnostic_prices.dataset_version_id', $basePriceDatasetId)
+                            ->whereNull('diagnostic_prices.regional_price_version_id');
+                    });
+                });
+        });
+        $unitMatched = (clone $codeMatched)->whereExists(function ($prices) use ($requested, $basePriceDatasetId): void {
+            $prices->selectRaw('1')
+                ->from('estimate_resource_prices as diagnostic_unit_prices')
+                ->whereColumn('diagnostic_unit_prices.resource_code', 'diagnostic_resources.resource_code')
+                ->where('diagnostic_unit_prices.base_price', '>', 0)
+                ->where(function ($context) use ($requested, $basePriceDatasetId): void {
+                    $context->where(function ($regional) use ($requested): void {
+                        $regional->where('diagnostic_unit_prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                            ->where('diagnostic_unit_prices.region_id', $requested->regionId)
+                            ->where('diagnostic_unit_prices.price_zone_id', $requested->priceZoneId)
+                            ->where('diagnostic_unit_prices.period_id', $requested->periodId);
+                    })->orWhere(function ($base) use ($basePriceDatasetId): void {
+                        $base->where('diagnostic_unit_prices.dataset_version_id', $basePriceDatasetId)
+                            ->whereNull('diagnostic_unit_prices.regional_price_version_id');
+                    });
+                })
+                ->whereRaw('diagnostic_unit_prices.unit IS NOT DISTINCT FROM diagnostic_resources.unit');
+        });
+
+        return [
+            'base_price_dataset_id' => $basePriceDatasetId,
+            'eligible_resource_rows_count' => (clone $eligible)->count(),
+            'code_matched_resource_rows_count' => $codeMatched->count(),
+            'exact_unit_matched_resource_rows_count' => $unitMatched->count(),
+        ];
     }
 }

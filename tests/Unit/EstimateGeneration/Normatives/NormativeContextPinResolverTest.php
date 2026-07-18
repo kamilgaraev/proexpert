@@ -180,6 +180,8 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("->where('source_type', 'fsbc')", $source);
         self::assertStringContainsString("->whereNull('regional_price_version_id')", $source);
         self::assertStringContainsString('basePriceDatasetId', $source);
+        self::assertStringContainsString('code_matched_resource_rows_count', $source);
+        self::assertStringContainsString('exact_unit_matched_resource_rows_count', $source);
         self::assertStringContainsString("'resources.id as norm_resource_id'", $source);
         self::assertStringContainsString('resolveForIntents', $source);
         self::assertStringNotContainsString("->orderBy('norms.id')->limit(129)", $source);
