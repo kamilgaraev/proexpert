@@ -154,6 +154,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                         ->whereColumn('required_resources.estimate_norm_id', 'norms.id')
                         ->where('required_resources.quantity', '>', 0)
                         ->where('required_resources.resource_type', '<>', 'summary')
+                        ->whereRaw("LOWER(COALESCE(required_resources.raw_payload->>'source_tag', '')) <> 'abstractresource'")
                         ->whereNotExists(function ($validPrice) use ($requested, $basePriceDatasetIds): void {
                             $validPrice->selectRaw('1')
                                 ->from('estimate_resource_prices as valid_prices')
@@ -272,6 +273,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->whereIn('estimate_norm_id', $ids)
             ->where('quantity', '>', 0)
             ->where('resource_type', '<>', 'summary')
+            ->whereRaw("LOWER(COALESCE(raw_payload->>'source_tag', '')) <> 'abstractresource'")
             ->groupBy('estimate_norm_id')
             ->get(['estimate_norm_id', $this->database->raw('COUNT(*) AS resource_count')])
             ->mapWithKeys(static fn (object $row): array => [(int) $row->estimate_norm_id => (int) $row->resource_count])
@@ -298,6 +300,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->whereIn('resources.estimate_norm_id', $ids)
             ->where('resources.quantity', '>', 0)
             ->where('resources.resource_type', '<>', 'summary')
+            ->whereRaw("LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) <> 'abstractresource'")
             ->where('prices.base_price', '>', 0)
             ->whereRaw(
                 'prices.id = (SELECT candidate_prices.id FROM estimate_resource_prices AS candidate_prices
@@ -359,6 +362,23 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             }
             $resources[$mapped->estimateNormId][$mapped->group][] = $mapped->resource;
         }
+        $unpricedAbstractResources = $this->database->table('estimate_norm_resources')
+            ->whereIn('estimate_norm_id', $ids)
+            ->where('quantity', '>', 0)
+            ->where('resource_type', '<>', 'summary')
+            ->whereRaw("LOWER(COALESCE(raw_payload->>'source_tag', '')) = 'abstractresource'")
+            ->orderBy('estimate_norm_id')
+            ->orderBy('id')
+            ->get(['estimate_norm_id', 'resource_code', 'resource_name', 'unit', 'quantity'])
+            ->groupBy('estimate_norm_id')
+            ->map(static fn ($rows): array => $rows->map(static fn (object $row): array => [
+                'resource_code' => trim((string) $row->resource_code),
+                'name' => trim((string) ($row->resource_name ?: $row->resource_code)),
+                'unit' => trim((string) $row->unit),
+                'quantity' => (float) $row->quantity,
+                'reason' => 'project_resource_selection_required',
+            ])->values()->all())
+            ->all();
         $candidates = [];
         foreach ($norms as $norm) {
             $groups = $resources[(int) $norm->id] ?? [];
@@ -382,6 +402,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     'technology' => $norm->technology, 'structure' => $norm->structure,
                     'object_type' => $norm->object_type, 'region_code' => $norm->region_code,
                     'valid_from' => $norm->valid_from, 'valid_to' => $norm->valid_to,
+                    'unpriced_abstract_resources' => $unpricedAbstractResources[(int) $norm->id] ?? [],
                 ],
                 'collection' => ['code' => (string) $norm->collection_code, 'name' => (string) $norm->collection_name, 'norm_type' => (string) $norm->norm_type],
                 'section' => ['code' => (string) $norm->section_code, 'name' => (string) $norm->section_name],

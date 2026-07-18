@@ -635,5 +635,50 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
             'Разработка грунта под фундаменты',
             ['action' => 'excavation', 'scope' => 'foundation'],
         ));
+        self::assertFalse($service->isCompatible(
+            'Дополнительная транспортировка грунта стационарными землесосными станциями перекачки при работе с плавучими землесосными снарядами',
+            'Вывоз излишнего грунта',
+            ['action' => 'soil_haulage', 'scope' => 'site'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Разработка вечномерзлых грунтов с разрыхлением отбойными молотками',
+            'Разработка грунта под фундаменты',
+            ['action' => 'excavation', 'scope' => 'foundation'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство кровли с применением мастики с двухслойным покрытием',
+            'Монтаж кровельного покрытия',
+            ['action' => 'general_work', 'scope' => 'roof'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Заземление: прокладка заземляющего проводника на шпалах с покрытием лаком',
+            'Устройство заземления',
+            ['action' => 'grounding_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Подготовка сварных швов аппаратов, сосудов и трубопроводов под химические покрытия',
+            'Прокладка труб водоснабжения',
+            ['action' => 'pipe_layout', 'scope' => 'engineering', 'system' => 'water_supply'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Кабель по установленным конструкциям и лоткам с креплением на поворотах',
+            'Монтаж кабельных лотков',
+            ['action' => 'cable_tray_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Третья шпатлевка при высококачественной окраске по дереву стен',
+            'Окраска стен',
+            ['action' => 'painting', 'scope' => 'finishing'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство покрытий поливинилацетатно-цементобетонных толщиной 20 мм',
+            'Чистовое покрытие пола',
+            ['action' => 'floor_covering', 'scope' => 'finishing'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Высококачественная штукатурка фасадов терразитовым раствором',
+            'Отделка фасада',
+            ['action' => 'general_work', 'scope' => 'facade'],
+        ));
     }
 }

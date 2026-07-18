@@ -406,7 +406,7 @@ class ResourceAssemblyService
             throw new \InvalidArgumentException('accepted_normative_decision_mismatch');
         }
 
-        return $this->applyNormativeResources($workItem, $match, $selectedByUser, $decision);
+        return $this->applyNormativeResources($workItem, $match, $accepted, $selectedByUser, $decision);
     }
 
     /**
@@ -414,8 +414,13 @@ class ResourceAssemblyService
      * @param  array<string, mixed>  $match
      * @return array<string, mixed>
      */
-    private function applyNormativeResources(array $workItem, array $match, bool $selectedByUser = false, ?array $decision = null): array
-    {
+    private function applyNormativeResources(
+        array $workItem,
+        array $match,
+        AcceptedNormativeDecisionData $accepted,
+        bool $selectedByUser = false,
+        ?array $decision = null,
+    ): array {
         $selected = $match['selected'];
         $version = $match['version'];
         $priceVersion = $match['price_version'] ?? null;
@@ -451,9 +456,11 @@ class ResourceAssemblyService
             : 'calculated';
         $workItem['pricing_blocker'] = null;
         $workItem['pricing_blocker_message'] = null;
+        $unpricedAbstractResources = $accepted->unpricedAbstractResources;
         $warnings = array_values(array_unique([
             ...($selected['warnings'] ?? []),
             ...($decision['warnings'] ?? []),
+            ...($unpricedAbstractResources !== [] ? ['project_resource_selection_required'] : []),
         ]));
 
         $workItem['normative_match'] = [
@@ -477,6 +484,7 @@ class ResourceAssemblyService
             'decision' => $decision,
             'resources_count' => $this->resourcesCount($resources),
             'priced_resources_count' => $this->pricedResourcesCount($resources),
+            'unpriced_abstract_resources' => $unpricedAbstractResources,
             'work_composition' => $this->normalizeComposition($selected['work_composition'] ?? []),
         ];
         $workItem = $this->applyNormativeComposition($workItem, $selected);

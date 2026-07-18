@@ -33,6 +33,42 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
     }
 
     #[Test]
+    public function preserves_project_selected_abstract_resources_without_inventing_a_price(): void
+    {
+        $record = $this->catalogCandidate();
+        $record['retrieval_metadata'] = [
+            'unpriced_abstract_resources' => [[
+                'resource_code' => '04.1.02.05',
+                'name' => 'Смеси бетонные тяжелого бетона',
+                'unit' => 'м3',
+                'quantity' => 101.5,
+                'reason' => 'project_resource_selection_required',
+            ]],
+        ];
+
+        $decision = AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
+
+        self::assertSame('04.1.02.05', $decision->unpricedAbstractResources[0]['resource_code']);
+
+        $service = new ResourceAssemblyService(
+            $this->createMock(EstimateNormativeMatcher::class),
+            new NormativeMatchDecisionService,
+            new NormativeCandidatePresenter,
+        );
+        $item = $service->assembleFromDecision(
+            ['key' => 'work-1', 'name' => 'Монтаж стены', 'unit' => 'm2', 'quantity' => '2', 'confidence' => 0.8],
+            $decision,
+            ['dataset_id' => 77, 'dataset_version' => 'fsnb-2026.1', 'region_id' => 77,
+                'price_zone_id' => 1, 'period_id' => 202606, 'price_version' => 'prices-2026.06',
+                'estimate_regional_price_version_id' => 8],
+        );
+
+        self::assertSame('04.1.02.05', $item['normative_match']['unpriced_abstract_resources'][0]['resource_code']);
+        self::assertContains('project_resource_selection_required', $item['normative_match']['warnings']);
+        self::assertNotContains('missing_resources', $item['validation_flags']);
+    }
+
+    #[Test]
     public function rejects_cross_dataset_catalog_records(): void
     {
         $record = $this->catalogCandidate();
