@@ -19,6 +19,8 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         private NormativeResourceCoverage $resourceCoverage = new NormativeResourceCoverage,
         private NormativeSemanticCompatibilityService $semanticCompatibility = new NormativeSemanticCompatibilityService,
         private NormativeCandidatePriceCoverageAnalyzer $priceCoverageAnalyzer = new NormativeCandidatePriceCoverageAnalyzer,
+        private AbstractNormativeResourcePriceSelector $abstractResourcePriceSelector = new AbstractNormativeResourcePriceSelector,
+        private AbstractResourceCoverageDiagnostics $abstractResourceCoverageDiagnostics = new AbstractResourceCoverageDiagnostics,
     ) {}
 
     public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
@@ -102,18 +104,26 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     $priced->selectRaw('1')
                         ->from('estimate_norm_resources as pin_resources')
                         ->join('estimate_resource_prices as pin_prices', function ($join) use ($requested, $basePriceDatasetIds): void {
-                            $join->on('pin_prices.resource_code', '=', 'pin_resources.resource_code')
-                                ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
-                                    $priceContext->where(function ($regional) use ($requested): void {
-                                        $regional->where('pin_prices.regional_price_version_id', $requested->regionalPriceVersionId)
-                                            ->where('pin_prices.region_id', $requested->regionId)
-                                            ->where('pin_prices.price_zone_id', $requested->priceZoneId)
-                                            ->where('pin_prices.period_id', $requested->periodId);
-                                    })->orWhere(function ($base) use ($basePriceDatasetIds): void {
-                                        $base->whereIn('pin_prices.dataset_version_id', $basePriceDatasetIds)
-                                            ->whereNull('pin_prices.regional_price_version_id');
+                            $join->where(function ($resourceRelation) use ($requested): void {
+                                $resourceRelation->whereColumn('pin_prices.resource_code', 'pin_resources.resource_code')
+                                    ->orWhere(function ($projectResource) use ($requested): void {
+                                        $projectResource->whereRaw("LOWER(COALESCE(pin_resources.raw_payload->>'source_tag', '')) = 'abstractresource'")
+                                            ->whereRaw("pin_resources.resource_code ~ '^[0-9]{2}\\.[0-9]\\.[0-9]{2}\\.[0-9]{2}$'")
+                                            ->whereRaw("pin_prices.resource_code LIKE (pin_resources.resource_code || '-____')")
+                                            ->whereRaw("RIGHT(pin_prices.resource_code, 4) ~ '^[0-9]{4}$'")
+                                            ->where('pin_prices.regional_price_version_id', $requested->regionalPriceVersionId);
                                     });
+                            })->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
+                                $priceContext->where(function ($regional) use ($requested): void {
+                                    $regional->where('pin_prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                                        ->where('pin_prices.region_id', $requested->regionId)
+                                        ->where('pin_prices.price_zone_id', $requested->priceZoneId)
+                                        ->where('pin_prices.period_id', $requested->periodId);
+                                })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                                    $base->whereIn('pin_prices.dataset_version_id', $basePriceDatasetIds)
+                                        ->whereNull('pin_prices.regional_price_version_id');
                                 });
+                            });
                         })
                         ->whereColumn('pin_resources.estimate_norm_id', 'norms.id')
                         ->where('pin_resources.quantity', '>', 0)
@@ -273,7 +283,6 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->whereIn('estimate_norm_id', $ids)
             ->where('quantity', '>', 0)
             ->where('resource_type', '<>', 'summary')
-            ->whereRaw("LOWER(COALESCE(raw_payload->>'source_tag', '')) <> 'abstractresource'")
             ->groupBy('estimate_norm_id')
             ->get(['estimate_norm_id', $this->database->raw('COUNT(*) AS resource_count')])
             ->mapWithKeys(static fn (object $row): array => [(int) $row->estimate_norm_id => (int) $row->resource_count])
@@ -348,11 +357,95 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'price_datasets.source_type as price_dataset_source_type',
                 'price_datasets.version_key as price_dataset_version',
             ]);
-        if ($resourceRows->count() > 10_000) {
-            $this->telemetry('resources_limit_exceeded', ['selected_count' => $norms->count(), 'resource_rows_count' => $resourceRows->count()]);
+        $abstractResourceRows = $this->database->table('estimate_norm_resources as resources')
+            ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
+                $join->whereRaw("prices.resource_code LIKE (resources.resource_code || '-____')")
+                    ->whereRaw("RIGHT(prices.resource_code, 4) ~ '^[0-9]{4}$'")
+                    ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
+                        $priceContext->where(function ($regional) use ($requested): void {
+                            $regional->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                                ->where('prices.region_id', $requested->regionId)
+                                ->where('prices.price_zone_id', $requested->priceZoneId)
+                                ->where('prices.period_id', $requested->periodId);
+                        })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                            $base->whereIn('prices.dataset_version_id', $basePriceDatasetIds)
+                                ->whereNull('prices.regional_price_version_id');
+                        });
+                    });
+            })
+            ->leftJoin('estimate_dataset_versions as price_datasets', 'price_datasets.id', '=', 'prices.dataset_version_id')
+            ->leftJoin('estimate_regional_price_versions as price_regional_versions', 'price_regional_versions.id', '=', 'prices.regional_price_version_id')
+            ->whereIn('resources.estimate_norm_id', $ids)
+            ->where('resources.quantity', '>', 0)
+            ->where('resources.resource_type', '<>', 'summary')
+            ->whereRaw("LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) = 'abstractresource'")
+            ->whereRaw("resources.resource_code ~ '^[0-9]{2}\\.[0-9]\\.[0-9]{2}\\.[0-9]{2}$'")
+            ->where('prices.base_price', '>', 0)
+            ->where(function ($compatibleUnit): void {
+                $compatibleUnit->whereRaw('prices.unit IS NOT DISTINCT FROM resources.unit')
+                    ->orWhereRaw(
+                        "LOWER(REGEXP_REPLACE(COALESCE(prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(resources.unit, ''), '[[:space:].,-]+', '', 'g'))"
+                    )
+                    ->orWhereExists(function ($conversion): void {
+                        $conversion->selectRaw('1')
+                            ->from('estimate_generation_unit_conversions as abstract_conversions')
+                            ->whereColumn('abstract_conversions.from_unit', 'resources.unit')
+                            ->whereColumn('abstract_conversions.to_unit', 'prices.unit')
+                            ->where('abstract_conversions.version', 1)
+                            ->where('abstract_conversions.is_active', true)
+                            ->where('abstract_conversions.factor', '>', 0);
+                    });
+            })
+            ->orderBy('resources.estimate_norm_id')
+            ->orderBy('resources.id')
+            ->orderBy('prices.base_price')
+            ->orderBy('prices.resource_code')
+            ->orderBy('prices.id')
+            ->limit(10_001)
+            ->get([
+                'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
+                'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
+                'prices.id as price_id', 'prices.dataset_version_id', 'prices.construction_resource_id as price_construction_resource_id',
+                'prices.resource_code as price_resource_code', 'prices.resource_name as price_resource_name',
+                'prices.price_type', 'prices.unit as price_unit', 'prices.base_price as unit_price',
+                'prices.base_price', 'prices.regional_price_version_id',
+                'price_regional_versions.version_key as regional_price_version_key',
+                'price_datasets.source_type as price_dataset_source_type',
+                'price_datasets.version_key as price_dataset_version',
+                $this->database->raw("'AbstractResource' AS raw_source_tag"),
+            ]);
+        if ($resourceRows->count() + $abstractResourceRows->count() > 10_000) {
+            $this->telemetry('resources_limit_exceeded', [
+                'selected_count' => $norms->count(),
+                'resource_rows_count' => $resourceRows->count() + $abstractResourceRows->count(),
+            ]);
 
             return null;
         }
+        $selectedAbstractRows = collect();
+        foreach ($abstractResourceRows->groupBy('norm_resource_id') as $candidateRows) {
+            $candidateRowList = $candidateRows->values()->all();
+            $representative = $candidateRowList[0] ?? null;
+            if (! is_object($representative)) {
+                continue;
+            }
+            $selection = $this->abstractResourcePriceSelector->select(
+                trim((string) $representative->resource_code),
+                $requested->regionalPriceVersionId,
+                $candidateRowList,
+                $basePriceDatasetIds,
+            );
+            if ($selection === null) {
+                continue;
+            }
+            $selection['row']->project_resource_candidates_count = $selection['candidates_count'];
+            $selection['row']->project_resource_price_policy = $selection['policy'];
+            $selectedAbstractRows->push($selection['row']);
+        }
+        $selectedAbstractCounts = $selectedAbstractRows
+            ->groupBy('estimate_norm_id')
+            ->map(static fn ($rows): int => $rows->count());
+        $resourceRows = $resourceRows->concat($selectedAbstractRows);
         $resources = [];
         foreach ($resourceRows as $row) {
             try {
@@ -369,7 +462,10 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->whereRaw("LOWER(COALESCE(raw_payload->>'source_tag', '')) = 'abstractresource'")
             ->orderBy('estimate_norm_id')
             ->orderBy('id')
-            ->get(['estimate_norm_id', 'resource_code', 'resource_name', 'unit', 'quantity'])
+            ->get(['id', 'estimate_norm_id', 'resource_code', 'resource_name', 'unit', 'quantity'])
+            ->reject(static fn (object $row): bool => $selectedAbstractRows->contains(
+                static fn (object $selected): bool => (int) $selected->norm_resource_id === (int) $row->id,
+            ))
             ->groupBy('estimate_norm_id')
             ->map(static fn ($rows): array => $rows->map(static fn (object $row): array => [
                 'resource_code' => trim((string) $row->resource_code),
@@ -379,6 +475,62 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'reason' => 'project_resource_selection_required',
             ])->values()->all())
             ->all();
+        if ($unpricedAbstractResources !== []) {
+            $unpricedGroupCodes = collect($unpricedAbstractResources)
+                ->flatten(1)
+                ->pluck('resource_code')
+                ->filter(static fn (mixed $code): bool => is_string($code) && $code !== '')
+                ->unique()
+                ->values();
+            $relatedCatalogRows = $this->database->table('estimate_resource_prices as unresolved_prices')
+                ->leftJoin('estimate_dataset_versions as unresolved_datasets', 'unresolved_datasets.id', '=', 'unresolved_prices.dataset_version_id')
+                ->where(function ($related) use ($unpricedGroupCodes): void {
+                    foreach ($unpricedGroupCodes as $groupCode) {
+                        $related->orWhere('unresolved_prices.resource_code', 'like', $groupCode.'-%')
+                            ->orWhereRaw("unresolved_prices.raw_payload->>'group_code' = ?", [$groupCode]);
+                    }
+                })
+                ->where('unresolved_prices.base_price', '>', 0)
+                ->limit(2_001)
+                ->get([
+                    $this->database->raw("COALESCE(unresolved_prices.raw_payload->>'group_code', REGEXP_REPLACE(unresolved_prices.resource_code, '-[0-9]{4}$', '')) AS group_code"),
+                    'unresolved_prices.unit', 'unresolved_prices.dataset_version_id',
+                    'unresolved_prices.regional_price_version_id', 'unresolved_prices.region_id',
+                    'unresolved_prices.price_zone_id', 'unresolved_prices.period_id',
+                    'unresolved_datasets.source_type', 'unresolved_datasets.version_key as dataset_version',
+                ]);
+            $normsById = $norms->keyBy('id');
+            $requirements = collect($unpricedAbstractResources)
+                ->flatMap(static function (array $resources, int $normId) use ($normsById): array {
+                    $norm = $normsById->get($normId);
+
+                    return array_map(static fn (array $resource): array => [
+                        'norm_code' => trim((string) ($norm->code ?? '')),
+                        'norm_name' => trim((string) ($norm->name ?? '')),
+                        'group_code' => $resource['resource_code'],
+                        'group_name' => $resource['name'],
+                        'required_unit' => $resource['unit'],
+                        'required_quantity' => (float) $resource['quantity'],
+                    ], $resources);
+                })
+                ->values()
+                ->all();
+            $coverageDetails = $this->abstractResourceCoverageDiagnostics->build(
+                $requirements,
+                $relatedCatalogRows->all(),
+                $requested->regionalPriceVersionId,
+                $requested->regionId,
+                $requested->priceZoneId,
+                $requested->periodId,
+                $basePriceDatasetIds,
+            );
+            $this->telemetry('unpriced_abstract_resources', [
+                'groups_count' => $unpricedGroupCodes->count(),
+                'group_codes' => $unpricedGroupCodes->take(30)->all(),
+                'related_catalog_rows_count' => $relatedCatalogRows->count(),
+                'coverage_details' => array_slice($coverageDetails, 0, 30),
+            ]);
+        }
         $candidates = [];
         foreach ($norms as $norm) {
             $groups = $resources[(int) $norm->id] ?? [];
@@ -386,7 +538,11 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'materials' => $groups['materials'] ?? [], 'labor' => $groups['labor'] ?? [],
                 'machinery' => $groups['machinery'] ?? [], 'other' => $groups['other'] ?? [],
             ];
-            if (! $this->resourceCoverage->complete((int) ($expectedResourceCounts[(int) $norm->id] ?? 0), $groups)) {
+            $selectedAbstractCount = (int) ($selectedAbstractCounts[(int) $norm->id] ?? 0);
+            $unpricedAbstractCount = count($unpricedAbstractResources[(int) $norm->id] ?? []);
+            $pricedExpectedCount = (int) ($expectedResourceCounts[(int) $norm->id] ?? 0) - $unpricedAbstractCount;
+            if ($pricedExpectedCount < $selectedAbstractCount
+                || ! $this->resourceCoverage->complete($pricedExpectedCount, $groups)) {
                 continue;
             }
             $composition = is_array($norm->work_composition)

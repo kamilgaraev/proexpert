@@ -151,6 +151,25 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
         self::assertStringNotContainsString('pricing_evidence_unit_precedence_rollback_contract_changed', $repair);
     }
 
+    #[Test]
+    public function project_selected_resource_price_keeps_the_abstract_norm_resource_in_the_database_formula(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000800_price_project_selected_resources.php');
+
+        self::assertIsString($migration);
+        self::assertStringContainsString('eg_expected_package_item_price_v3', $migration);
+        self::assertStringContainsString("\"'norm_measurement:v2'\"", $migration);
+        self::assertStringContainsString("\"'project_resource:v3'\"", $migration);
+        self::assertStringContainsString("LOWER(COALESCE(nr.raw_payload->>'source_tag', '')) = 'abstractresource'", $migration);
+        self::assertStringContainsString("nr.resource_code !~ '^[0-9]{2}\\\\.[0-9]\\\\.[0-9]{2}\\\\.[0-9]{2}$'", $migration);
+        self::assertStringContainsString("replace(nr.resource_code, '.', '\\\\.')", $migration);
+        self::assertStringContainsString("'-[0-9]{4}$'", $migration);
+        self::assertStringContainsString('public.eg_expected_package_item_price_closed_v3(p_item_id)', $migration);
+        self::assertStringContainsString("='project_resource:v3'", $migration);
+        self::assertStringContainsString('estimate_generation.project_resource_formula_rollback_blocked', $migration);
+        self::assertStringContainsString('REVOKE ALL ON FUNCTION public.eg_expected_package_item_price_v3(bigint) FROM PUBLIC', $migration);
+    }
+
     private function source(): string
     {
         return (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001200_harden_estimate_generation_pricing_boundary.php');

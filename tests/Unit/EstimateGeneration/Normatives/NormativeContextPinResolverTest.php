@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\AbstractNormativeResourcePriceSelector;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource;
@@ -19,6 +20,36 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeContextPinResolverTest extends TestCase
 {
+    #[Test]
+    public function abstract_resource_selector_uses_deterministic_lower_median_of_regional_children(): void
+    {
+        $selection = (new AbstractNormativeResourcePriceSelector)->select('04.1.02.05', 11, [
+            (object) ['price_id' => 4, 'price_resource_code' => '04.1.02.05-0004', 'base_price' => '900', 'regional_price_version_id' => 11],
+            (object) ['price_id' => 2, 'price_resource_code' => '04.1.02.05-0002', 'base_price' => '300', 'regional_price_version_id' => 11],
+            (object) ['price_id' => 3, 'price_resource_code' => '04.1.02.05-0003', 'base_price' => '700', 'regional_price_version_id' => 11],
+            (object) ['price_id' => 1, 'price_resource_code' => '04.1.02.05-0001', 'base_price' => '100', 'regional_price_version_id' => 11],
+            (object) ['price_id' => 5, 'price_resource_code' => '04.1.02.05-0005', 'base_price' => '500', 'regional_price_version_id' => null],
+            (object) ['price_id' => 6, 'price_resource_code' => '04.1.02.06-0001', 'base_price' => '500', 'regional_price_version_id' => 11],
+        ]);
+
+        self::assertNotNull($selection);
+        self::assertSame(2, $selection['row']->price_id);
+        self::assertSame(4, $selection['candidates_count']);
+    }
+
+    #[Test]
+    public function abstract_resource_selector_uses_explicit_base_catalog_fallback_when_regional_children_are_absent(): void
+    {
+        $selection = (new AbstractNormativeResourcePriceSelector)->select('04.1.02.05', 11, [
+            (object) ['price_id' => 1, 'dataset_version_id' => 154, 'price_dataset_source_type' => 'fsbc', 'price_resource_code' => '04.1.02.05-0001', 'base_price' => '500', 'regional_price_version_id' => null],
+            (object) ['price_id' => 2, 'dataset_version_id' => 154, 'price_dataset_source_type' => 'fsbc', 'price_resource_code' => '04.1.02.05-0002', 'base_price' => '900', 'regional_price_version_id' => null],
+        ], [154]);
+
+        self::assertNotNull($selection);
+        self::assertSame(1, $selection['row']->price_id);
+        self::assertSame('fsbc_base_child_median:v1', $selection['policy']);
+    }
+
     #[Test]
     public function exact_catalog_and_regional_price_identity_is_resolved_by_production_source_contract(): void
     {
@@ -586,6 +617,57 @@ final class NormativeContextPinResolverTest extends TestCase
         NormativeResourceRowData::fromDatabaseRow((object) [
             ...(array) $row,
             'price_resource_code' => '01.7.02',
+        ]);
+    }
+
+    #[Test]
+    public function abstract_resource_row_keeps_original_norm_resource_and_documents_selected_regional_child(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101, 'norm_resource_id' => 7001,
+            'construction_resource_id' => null, 'price_construction_resource_id' => 502,
+            'price_id' => 9001, 'resource_type' => 'abstract',
+            'resource_code' => '04.1.02.05', 'price_resource_code' => '04.1.02.05-0123',
+            'resource_name' => 'Смеси бетонные по проекту', 'price_resource_name' => 'Бетон В25 П4 F150 W6',
+            'unit' => 'м3', 'price_unit' => 'м3', 'quantity' => '1.020000',
+            'unit_price' => '7450.250000', 'regional_price_version_id' => 11,
+            'regional_price_version_key' => 'regional-2026-q2',
+            'price_dataset_source_type' => null, 'price_dataset_version' => null,
+            'raw_source_tag' => 'AbstractResource', 'project_resource_candidates_count' => 7,
+        ]);
+
+        self::assertSame(7001, $mapped->resource['norm_resource_id']);
+        self::assertSame(9001, $mapped->resource['price_id']);
+        self::assertSame('04.1.02.05', $mapped->resource['code']);
+        self::assertSame(502, $mapped->resource['linked_resource_id']);
+        self::assertSame([
+            'group_code' => '04.1.02.05',
+            'selected_resource_code' => '04.1.02.05-0123',
+            'selected_resource_name' => 'Бетон В25 П4 F150 W6',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => 'regional-2026-q2',
+            'policy' => 'regional_child_median:v1',
+            'candidates_count' => 7,
+        ], $mapped->resource['project_resource_selection']);
+    }
+
+    #[Test]
+    public function abstract_resource_row_rejects_child_outside_the_exact_group(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('normative_resource_price_relation_invalid');
+
+        NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101, 'norm_resource_id' => 7001,
+            'construction_resource_id' => null, 'price_construction_resource_id' => 502,
+            'price_id' => 9001, 'resource_type' => 'abstract',
+            'resource_code' => '04.1.02.05', 'price_resource_code' => '04.1.02.06-0123',
+            'resource_name' => 'Смеси бетонные по проекту', 'price_resource_name' => 'Чужой бетон',
+            'unit' => 'м3', 'price_unit' => 'м3', 'quantity' => '1.020000',
+            'unit_price' => '7450.250000', 'regional_price_version_id' => 11,
+            'regional_price_version_key' => 'regional-2026-q2',
+            'price_dataset_source_type' => null, 'price_dataset_version' => null,
+            'raw_source_tag' => 'AbstractResource', 'project_resource_candidates_count' => 1,
         ]);
     }
 

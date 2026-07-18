@@ -38,7 +38,18 @@ final readonly class NormativeResourceRowData
                 ? ($row->regional_price_version_key ?? '')
                 : ($row->price_dataset_version ?? '')
         ));
-        $identityMatches = $resourceCode !== '' && hash_equals($resourceCode, $priceResourceCode);
+        $projectResourceCandidatesCount = self::positiveInt($row->project_resource_candidates_count ?? null);
+        $isAbstractResource = strcasecmp(trim((string) ($row->raw_source_tag ?? '')), 'AbstractResource') === 0;
+        $projectResourcePricePolicy = trim((string) ($row->project_resource_price_policy
+            ?? ($regionalPriceVersionId !== null ? 'regional_child_median:v1' : '')));
+        $isProjectResourceSelection = $isAbstractResource
+            && $projectResourceCandidatesCount !== null
+            && in_array($projectResourcePricePolicy, ['regional_child_median:v1', 'fsbc_base_child_median:v1', 'fsnb_base_child_median:v1'], true)
+            && preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}$/D', $resourceCode) === 1
+            && preg_match('/^'.preg_quote($resourceCode, '/').'-\d{4}$/D', $priceResourceCode) === 1;
+        $identityMatches = $resourceCode !== '' && (
+            hash_equals($resourceCode, $priceResourceCode) || $isProjectResourceSelection
+        );
         if (
             $normId === null || $normResourceId === null || $priceId === null || ! $identityMatches
             || $priceSource === null || $priceSourceVersion === '' || ! is_numeric($unitPrice) || (float) $unitPrice <= 0
@@ -52,7 +63,7 @@ final readonly class NormativeResourceRowData
             default => 'other',
         };
 
-        return new self($normId, $group, [
+        $resource = [
             'code' => $resourceCode,
             'name' => (string) ($row->resource_name ?? ''),
             'unit' => (string) ($row->unit ?? ''),
@@ -62,9 +73,24 @@ final readonly class NormativeResourceRowData
             'unit_price' => $unitPrice,
             'price_source' => $priceSource,
             'price_source_version' => $priceSourceVersion,
-            'linked_resource_id' => $linkedResourceId ?? $priceResourceId,
+            'linked_resource_id' => $isProjectResourceSelection
+                ? $priceResourceId
+                : ($linkedResourceId ?? $priceResourceId),
             'norm_resource_id' => $normResourceId,
-        ]);
+        ];
+        if ($isProjectResourceSelection) {
+            $resource['project_resource_selection'] = [
+                'group_code' => $resourceCode,
+                'selected_resource_code' => $priceResourceCode,
+                'selected_resource_name' => (string) ($row->price_resource_name ?? ''),
+                'price_source' => $priceSource,
+                'price_source_version' => $priceSourceVersion,
+                'policy' => $projectResourcePricePolicy,
+                'candidates_count' => $projectResourceCandidatesCount,
+            ];
+        }
+
+        return new self($normId, $group, $resource);
     }
 
     private static function positiveInt(mixed $value): ?int

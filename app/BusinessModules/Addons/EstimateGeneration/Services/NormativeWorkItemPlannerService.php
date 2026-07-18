@@ -466,7 +466,7 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Гидроизоляционный ковер кровли', 'roof', 'устройство рулонной гидроизоляции кровли', 'roof.flat_area'),
                 $this->definition('Водоотвод плоской кровли', 'roof', 'устройство внутреннего водостока кровли', 'roof.gutter'),
             ] : [
-                $this->definition('Монтаж стропильной системы', 'roof', 'монтаж стропильной системы кровли', 'roof.area'),
+                $this->definition('Монтаж стропильной системы', 'roof', 'монтаж стропильной системы кровли', 'roof.rafters'),
                 $this->definition('Утепление кровли', 'roof', 'утепление скатной кровли', 'roof.area'),
                 $this->definition('Монтаж кровельного покрытия', 'roof', 'монтаж кровельного покрытия', 'roof.area'),
                 $this->definition('Водосточная система кровли', 'roof', 'монтаж водосточной системы кровли', 'roof.gutter'),

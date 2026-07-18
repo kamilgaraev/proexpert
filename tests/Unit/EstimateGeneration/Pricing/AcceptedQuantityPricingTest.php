@@ -105,4 +105,13 @@ final class AcceptedQuantityPricingTest extends TestCase
 
         self::assertTrue((new AcceptedQuantityEvidenceVerifier($evidence))->verify($context, $item));
     }
+
+    #[Test]
+    public function package_persistence_never_finalizes_a_work_item_with_an_unresolved_price_blocker(): void
+    {
+        $persistence = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationPackagePersistenceService.php');
+
+        self::assertStringContainsString("is_string(\$pricingStatus) && ! in_array(\$pricingStatus, ['calculated', 'calculated_review_required'], true)", $persistence);
+        self::assertStringContainsString("(\$workItem['pricing_blocker'] ?? null) !== null", $persistence);
+    }
 }

@@ -11,10 +11,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersi
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class EstimateGenerationPackagePersistenceService
 {
-    private const CURRENT_PRICING_FORMULA_VERSION = 'norm_measurement:v2';
+    private const CURRENT_PRICING_FORMULA_VERSION = 'project_resource:v3';
 
     public function __construct(
         private readonly ?AuthoritativePackagePricingGuard $pricingGuard = null,
@@ -340,7 +341,44 @@ class EstimateGenerationPackagePersistenceService
                 'updated_at' => now(),
             ]);
         }
+        $this->reportPricingInputCardinalityMismatch($item, $pricing['inputs'], $workItem);
         DB::select('SELECT public.eg_finalize_package_item_price(?)', [$item->id]);
+    }
+
+    /** @param list<array<string, int|null>> $inputs @param array<string, mixed> $workItem */
+    private function reportPricingInputCardinalityMismatch(
+        EstimateGenerationPackageItem $item,
+        array $inputs,
+        array $workItem,
+    ): void {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+        $expectedIds = DB::table('estimate_norm_resources')
+            ->where('estimate_norm_id', $item->estimate_norm_id)
+            ->where('quantity', '>', 0)
+            ->where('resource_type', '<>', 'summary')
+            ->orderBy('id')
+            ->pluck('id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+        $actualIds = array_map(static fn (array $input): int => (int) $input['norm_resource_id'], $inputs);
+        sort($actualIds, SORT_NUMERIC);
+
+        if ($expectedIds === $actualIds) {
+            return;
+        }
+
+        Log::warning('estimate_generation.pricing_input_cardinality_mismatch', [
+            'package_item_id' => $item->id,
+            'estimate_norm_id' => $item->estimate_norm_id,
+            'norm_code' => data_get($workItem, 'normative_match.code'),
+            'work_name' => $workItem['name'] ?? null,
+            'expected_count' => count($expectedIds),
+            'actual_count' => count($actualIds),
+            'missing_norm_resource_ids' => array_values(array_diff($expectedIds, $actualIds)),
+            'unexpected_norm_resource_ids' => array_values(array_diff($actualIds, $expectedIds)),
+        ]);
     }
 
     /** @param array{item: array<string, mixed>, inputs: list<array<string, int|null>>} $pricing */
@@ -369,6 +407,11 @@ class EstimateGenerationPackagePersistenceService
     private function authoritativePricing(EstimateGenerationPackage $package, array $workItem, string $logicalKey): ?array
     {
         if ((string) ($workItem['item_type'] ?? 'priced_work') !== 'priced_work') {
+            return null;
+        }
+        $pricingStatus = $workItem['pricing_status'] ?? null;
+        if (($workItem['pricing_blocker'] ?? null) !== null
+            || (is_string($pricingStatus) && ! in_array($pricingStatus, ['calculated', 'calculated_review_required'], true))) {
             return null;
         }
         $snapshot = is_array($workItem['price_snapshot'] ?? null) ? $workItem['price_snapshot'] : [];

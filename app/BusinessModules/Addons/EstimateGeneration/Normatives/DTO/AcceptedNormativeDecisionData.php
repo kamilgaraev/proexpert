@@ -82,6 +82,7 @@ final readonly class AcceptedNormativeDecisionData
                     || ! is_numeric($resource['quantity'] ?? null) || (float) $resource['quantity'] < 0) {
                     throw new InvalidArgumentException('accepted_normative_resources_invalid');
                 }
+                self::assertProjectResourceSelection($resource);
                 $hasPositiveQuantity = $hasPositiveQuantity || (float) $resource['quantity'] > 0;
             }
         }
@@ -153,6 +154,33 @@ final readonly class AcceptedNormativeDecisionData
     private static function resourceCount(array $resources): int
     {
         return array_sum(array_map(static fn (mixed $items): int => is_array($items) ? count($items) : 0, $resources));
+    }
+
+    /** @param array<string, mixed> $resource */
+    private static function assertProjectResourceSelection(array $resource): void
+    {
+        if (! array_key_exists('project_resource_selection', $resource)) {
+            return;
+        }
+        $selection = $resource['project_resource_selection'];
+        $groupCode = $resource['code'] ?? null;
+        if (! is_array($selection)
+            || ! is_string($groupCode)
+            || preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}$/D', $groupCode) !== 1
+            || ($selection['group_code'] ?? null) !== $groupCode
+            || ! is_string($selection['selected_resource_code'] ?? null)
+            || preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', $selection['selected_resource_code']) !== 1
+            || ! is_string($selection['selected_resource_name'] ?? null)
+            || trim($selection['selected_resource_name']) === ''
+            || ! in_array(($selection['price_source'] ?? null), ['regional_catalog', 'fsbc_base', 'fsnb_base'], true)
+            || ($resource['price_source'] ?? null) !== ($selection['price_source'] ?? null)
+            || ! is_string($selection['price_source_version'] ?? null)
+            || trim($selection['price_source_version']) === ''
+            || ! in_array(($selection['policy'] ?? null), ['regional_child_median:v1', 'fsbc_base_child_median:v1', 'fsnb_base_child_median:v1'], true)
+            || ! is_int($selection['candidates_count'] ?? null)
+            || $selection['candidates_count'] <= 0) {
+            throw new InvalidArgumentException('accepted_normative_project_resource_selection_invalid');
+        }
     }
 
     private static function record(mixed $value): array
