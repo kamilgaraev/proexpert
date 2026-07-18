@@ -8,29 +8,43 @@ final readonly class AbstractNormativeResourcePriceSelector
 {
     /**
      * @param  list<object>  $candidates
-     * @return array{row: object, candidates_count: int}|null
+     * @param  list<int>  $baseDatasetIds
+     * @return array{row: object, candidates_count: int, policy: string}|null
      */
-    public function select(string $groupCode, int $regionalPriceVersionId, array $candidates): ?array
+    public function select(string $groupCode, int $regionalPriceVersionId, array $candidates, array $baseDatasetIds = []): ?array
     {
         if (preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}$/D', $groupCode) !== 1 || $regionalPriceVersionId <= 0) {
             return null;
         }
 
-        $eligible = array_values(array_filter(
+        $related = array_values(array_filter(
             $candidates,
-            static function (object $candidate) use ($groupCode, $regionalPriceVersionId): bool {
+            static function (object $candidate) use ($groupCode): bool {
                 $price = $candidate->base_price ?? null;
 
-                return (int) ($candidate->regional_price_version_id ?? 0) === $regionalPriceVersionId
-                    && preg_match(
-                        '/^'.preg_quote($groupCode, '/').'-\d{4}$/D',
-                        trim((string) ($candidate->price_resource_code ?? '')),
-                    ) === 1
+                return preg_match(
+                    '/^'.preg_quote($groupCode, '/').'-\d{4}$/D',
+                    trim((string) ($candidate->price_resource_code ?? '')),
+                ) === 1
                     && is_numeric($price)
                     && (float) $price > 0
                     && (int) ($candidate->price_id ?? 0) > 0;
             },
         ));
+        $regional = array_values(array_filter(
+            $related,
+            static fn (object $candidate): bool => (int) ($candidate->regional_price_version_id ?? 0) === $regionalPriceVersionId,
+        ));
+        $eligible = $regional;
+        $policy = 'regional_child_median:v1';
+        if ($eligible === []) {
+            $eligible = array_values(array_filter(
+                $related,
+                static fn (object $candidate): bool => in_array((int) ($candidate->dataset_version_id ?? 0), $baseDatasetIds, true)
+                    && ($candidate->regional_price_version_id ?? null) === null,
+            ));
+            $policy = 'fsbc_base_child_median:v1';
+        }
         if ($eligible === []) {
             return null;
         }
@@ -48,6 +62,7 @@ final readonly class AbstractNormativeResourcePriceSelector
         return [
             'row' => $eligible[intdiv(count($eligible) - 1, 2)],
             'candidates_count' => count($eligible),
+            'policy' => $policy,
         ];
     }
 }

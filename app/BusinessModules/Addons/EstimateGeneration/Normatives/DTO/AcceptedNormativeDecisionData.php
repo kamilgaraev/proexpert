@@ -172,11 +172,11 @@ final readonly class AcceptedNormativeDecisionData
             || preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', $selection['selected_resource_code']) !== 1
             || ! is_string($selection['selected_resource_name'] ?? null)
             || trim($selection['selected_resource_name']) === ''
-            || ($selection['price_source'] ?? null) !== 'regional_catalog'
-            || ($resource['price_source'] ?? null) !== 'regional_catalog'
+            || ! in_array(($selection['price_source'] ?? null), ['regional_catalog', 'fsbc_base'], true)
+            || ($resource['price_source'] ?? null) !== ($selection['price_source'] ?? null)
             || ! is_string($selection['price_source_version'] ?? null)
             || trim($selection['price_source_version']) === ''
-            || ($selection['policy'] ?? null) !== 'regional_child_median:v1'
+            || ! in_array(($selection['policy'] ?? null), ['regional_child_median:v1', 'fsbc_base_child_median:v1'], true)
             || ! is_int($selection['candidates_count'] ?? null)
             || $selection['candidates_count'] <= 0) {
             throw new InvalidArgumentException('accepted_normative_project_resource_selection_invalid');

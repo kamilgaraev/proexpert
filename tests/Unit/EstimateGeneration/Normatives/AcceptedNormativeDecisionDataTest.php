@@ -114,26 +114,29 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
     }
 
     #[Test]
-    public function rejects_a_project_resource_selection_from_a_base_price_source(): void
+    public function accepts_an_explicitly_marked_project_resource_selection_from_the_fsbc_base_catalog(): void
     {
         $record = $this->catalogCandidate();
         $record['resources']['materials'][0] = [
             ...$record['resources']['materials'][0],
             'code' => '04.1.02.05',
+            'price_source' => 'fsbc_base',
+            'price_source_version' => 'fsbc-2026',
             'project_resource_selection' => [
                 'group_code' => '04.1.02.05',
                 'selected_resource_code' => '04.1.02.05-0123',
                 'selected_resource_name' => 'Бетон В25',
                 'price_source' => 'fsbc_base',
                 'price_source_version' => 'fsbc-2026',
-                'policy' => 'regional_child_median:v1',
+                'policy' => 'fsbc_base_child_median:v1',
                 'candidates_count' => 1,
             ],
         ];
 
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('accepted_normative_project_resource_selection_invalid');
-        AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
+        $decision = AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
+
+        self::assertSame('fsbc_base', $decision->resources['materials'][0]['project_resource_selection']['price_source']);
+        self::assertSame('fsbc_base_child_median:v1', $decision->resources['materials'][0]['project_resource_selection']['policy']);
     }
 
     #[Test]

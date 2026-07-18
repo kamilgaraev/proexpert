@@ -351,6 +351,9 @@ class EstimateGenerationPackagePersistenceService
         array $inputs,
         array $workItem,
     ): void {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
         $expectedIds = DB::table('estimate_norm_resources')
             ->where('estimate_norm_id', $item->estimate_norm_id)
             ->where('quantity', '>', 0)
@@ -404,6 +407,11 @@ class EstimateGenerationPackagePersistenceService
     private function authoritativePricing(EstimateGenerationPackage $package, array $workItem, string $logicalKey): ?array
     {
         if ((string) ($workItem['item_type'] ?? 'priced_work') !== 'priced_work') {
+            return null;
+        }
+        $pricingStatus = $workItem['pricing_status'] ?? null;
+        if (($workItem['pricing_blocker'] ?? null) !== null
+            || (is_string($pricingStatus) && ! in_array($pricingStatus, ['calculated', 'calculated_review_required'], true))) {
             return null;
         }
         $snapshot = is_array($workItem['price_snapshot'] ?? null) ? $workItem['price_snapshot'] : [];

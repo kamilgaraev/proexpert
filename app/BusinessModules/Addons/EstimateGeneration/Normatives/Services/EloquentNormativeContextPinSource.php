@@ -357,15 +357,23 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'price_datasets.version_key as price_dataset_version',
             ]);
         $abstractResourceRows = $this->database->table('estimate_norm_resources as resources')
-            ->join('estimate_resource_prices as prices', function ($join) use ($requested): void {
+            ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
                 $join->whereRaw("prices.resource_code LIKE (resources.resource_code || '-____')")
                     ->whereRaw("RIGHT(prices.resource_code, 4) ~ '^[0-9]{4}$'")
-                    ->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
-                    ->where('prices.region_id', $requested->regionId)
-                    ->where('prices.price_zone_id', $requested->priceZoneId)
-                    ->where('prices.period_id', $requested->periodId);
+                    ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
+                        $priceContext->where(function ($regional) use ($requested): void {
+                            $regional->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                                ->where('prices.region_id', $requested->regionId)
+                                ->where('prices.price_zone_id', $requested->priceZoneId)
+                                ->where('prices.period_id', $requested->periodId);
+                        })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                            $base->whereIn('prices.dataset_version_id', $basePriceDatasetIds)
+                                ->whereNull('prices.regional_price_version_id');
+                        });
+                    });
             })
-            ->join('estimate_regional_price_versions as price_regional_versions', 'price_regional_versions.id', '=', 'prices.regional_price_version_id')
+            ->leftJoin('estimate_dataset_versions as price_datasets', 'price_datasets.id', '=', 'prices.dataset_version_id')
+            ->leftJoin('estimate_regional_price_versions as price_regional_versions', 'price_regional_versions.id', '=', 'prices.regional_price_version_id')
             ->whereIn('resources.estimate_norm_id', $ids)
             ->where('resources.quantity', '>', 0)
             ->where('resources.resource_type', '<>', 'summary')
@@ -396,11 +404,13 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->get([
                 'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
                 'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
-                'prices.id as price_id', 'prices.construction_resource_id as price_construction_resource_id',
+                'prices.id as price_id', 'prices.dataset_version_id', 'prices.construction_resource_id as price_construction_resource_id',
                 'prices.resource_code as price_resource_code', 'prices.resource_name as price_resource_name',
                 'prices.price_type', 'prices.unit as price_unit', 'prices.base_price as unit_price',
                 'prices.base_price', 'prices.regional_price_version_id',
                 'price_regional_versions.version_key as regional_price_version_key',
+                'price_datasets.source_type as price_dataset_source_type',
+                'price_datasets.version_key as price_dataset_version',
                 $this->database->raw("'AbstractResource' AS raw_source_tag"),
             ]);
         if ($resourceRows->count() + $abstractResourceRows->count() > 10_000) {
@@ -422,11 +432,13 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 trim((string) $representative->resource_code),
                 $requested->regionalPriceVersionId,
                 $candidateRowList,
+                $basePriceDatasetIds,
             );
             if ($selection === null) {
                 continue;
             }
             $selection['row']->project_resource_candidates_count = $selection['candidates_count'];
+            $selection['row']->project_resource_price_policy = $selection['policy'];
             $selectedAbstractRows->push($selection['row']);
         }
         $selectedAbstractCounts = $selectedAbstractRows
