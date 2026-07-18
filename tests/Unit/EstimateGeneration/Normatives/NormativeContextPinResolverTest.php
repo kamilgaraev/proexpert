@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\AbstractNormativeResourcePriceSelector;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\AbstractResourceSemanticPriceSelector;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource;
@@ -20,6 +21,89 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeContextPinResolverTest extends TestCase
 {
+    #[Test]
+    public function semantic_project_resource_selector_requires_pipe_material_polarity_and_exact_diameter(): void
+    {
+        $selection = (new AbstractResourceSemanticPriceSelector)->select(
+            'Прокладка водопровода из стальных водогазопроводных оцинкованных труб диаметром 15 мм',
+            'Трубопроводы с гильзами',
+            'м',
+            11,
+            [
+                $this->semanticPrice(901, '81.4.07.11', 'Труба ВГП стальная оцинкованная Ду 15 мм', '100', 11),
+                $this->semanticPrice(902, '37.8.19.03', 'Оцинкованная стальная водогазопроводная труба DN15', '300', 11),
+                $this->semanticPrice(903, '91.2.01.04', 'Труба стальная черная неоцинкованная 15 мм', '10', 11),
+                $this->semanticPrice(904, '44.1.02.08', 'Труба стальная оцинкованная диаметром 20 мм', '20', 11),
+                $this->semanticPrice(905, '55.6.03.02', 'Труба стальная оцинкованная для газопровода Ø15 мм', '30', 11),
+                $this->semanticPrice(906, '63.2.08.10', 'Труба стальная оцинкованная 15 мм', '40', 11, 'кг'),
+            ],
+        );
+
+        self::assertNotNull($selection);
+        self::assertSame(901, $selection['row']->price_id);
+        self::assertSame(2, $selection['candidates_count']);
+        self::assertSame('regional_semantic_pipe_hard_attributes_median:v1', $selection['policy']);
+    }
+
+    #[Test]
+    public function semantic_project_resource_selector_matches_non_galvanized_and_hdpe_wording_without_code_hints(): void
+    {
+        $selector = new AbstractResourceSemanticPriceSelector;
+        $steel = $selector->select(
+            'Монтаж отопления из стальных водогазопроводных неоцинкованных труб, диаметр 15 мм',
+            'Трубопроводы с гильзами',
+            'м',
+            11,
+            [
+                $this->semanticPrice(911, '70.1.11.09', 'Черная стальная труба ВГП ДУ 15', '125', 11),
+                $this->semanticPrice(912, '70.1.11.10', 'Стальная оцинкованная труба ДУ 15', '90', 11),
+            ],
+        );
+        $hdpe = $selector->select(
+            'Прокладка канализации из полиэтиленовых труб высокой плотности диаметром 50 мм',
+            'Трубопроводы канализации с гильзами',
+            'м',
+            11,
+            [
+                $this->semanticPrice(921, '62.9.01.17', 'Канализационная труба ПНД DN 50', '75', 11),
+                $this->semanticPrice(922, '62.9.01.18', 'Дренажная труба HDPE Ø50', '60', 11),
+                $this->semanticPrice(923, '62.9.01.19', 'Труба ПНД питьевая напорная DN 50', '55', 11),
+            ],
+        );
+
+        self::assertSame(911, $steel['row']->price_id ?? null);
+        self::assertSame(921, $hdpe['row']->price_id ?? null);
+    }
+
+    #[Test]
+    public function semantic_project_resource_selector_fails_closed_without_all_hard_attributes(): void
+    {
+        self::assertNull((new AbstractResourceSemanticPriceSelector)->select(
+            'Прокладка трубопровода',
+            'Трубы по проекту',
+            'м',
+            11,
+            [$this->semanticPrice(931, '88.1.01.01', 'Труба стальная оцинкованная 15 мм', '100', 11)],
+        ));
+    }
+
+    #[Test]
+    public function semantic_project_resource_query_hints_bound_the_catalog_pool_by_hard_attributes(): void
+    {
+        self::assertSame([
+            'material' => 'steel',
+            'polarity' => 'galvanized',
+            'diameter' => 15,
+        ], (new AbstractResourceSemanticPriceSelector)->queryHints(
+            'Прокладка водоснабжения из стальных оцинкованных труб диаметром 15 мм',
+            'Трубопроводы с гильзами',
+        ));
+        self::assertNull((new AbstractResourceSemanticPriceSelector)->queryHints(
+            'Прокладка трубопровода',
+            'Трубы по проекту',
+        ));
+    }
+
     #[Test]
     public function abstract_resource_selector_uses_deterministic_lower_median_of_regional_children(): void
     {
@@ -250,6 +334,12 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("REGEXP_REPLACE(COALESCE(valid_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString('candidate_prices.unit IS NOT DISTINCT FROM resources.unit', $source);
         self::assertStringContainsString("REGEXP_REPLACE(COALESCE(candidate_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
+        self::assertStringContainsString("table('estimate_resource_prices as semantic_project_prices')", $source);
+        self::assertStringContainsString("->whereIn('semantic_project_prices.unit', \$semanticRequiredUnits)", $source);
+        self::assertStringContainsString("->where('semantic_project_prices.regional_price_version_id', \$requested->regionalPriceVersionId)", $source);
+        self::assertStringContainsString('->limit(5_001)', $source);
+        self::assertStringContainsString('->unique(static fn (array $hint): string', $source);
+        self::assertStringContainsString("'%'.\$hint['diameter'].'%'", $source);
         self::assertStringContainsString("'prices.unit as price_unit'", $source);
         self::assertStringContainsString("->where('resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('resources.resource_type', '<>', 'summary')", $source);
@@ -672,6 +762,35 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
+    public function semantic_abstract_resource_row_keeps_group_identity_and_real_regional_price(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101, 'norm_resource_id' => 7001,
+            'construction_resource_id' => null, 'price_construction_resource_id' => 502,
+            'price_id' => 9001, 'resource_type' => 'material',
+            'resource_code' => '18.2.07.01', 'price_resource_code' => '73.9.44.08',
+            'resource_name' => 'Трубопроводы с гильзами',
+            'price_resource_name' => 'Труба ВГП стальная оцинкованная Ду 15',
+            'unit' => 'м', 'price_unit' => 'м', 'quantity' => '100.000000',
+            'unit_price' => '245.500000', 'regional_price_version_id' => 11,
+            'regional_price_version_key' => 'regional-2026-q2',
+            'price_dataset_source_type' => null, 'price_dataset_version' => null,
+            'raw_source_tag' => 'AbstractResource', 'project_resource_candidates_count' => 3,
+            'project_resource_price_policy' => 'regional_semantic_pipe_hard_attributes_median:v1',
+        ]);
+
+        self::assertSame('18.2.07.01', $mapped->resource['code']);
+        self::assertSame(7001, $mapped->resource['norm_resource_id']);
+        self::assertSame(9001, $mapped->resource['price_id']);
+        self::assertSame(502, $mapped->resource['linked_resource_id']);
+        self::assertSame('73.9.44.08', $mapped->resource['project_resource_selection']['selected_resource_code']);
+        self::assertSame(
+            'regional_semantic_pipe_hard_attributes_median:v1',
+            $mapped->resource['project_resource_selection']['policy'],
+        );
+    }
+
+    #[Test]
     public function exact_resource_code_links_norm_resource_to_regional_price_without_internal_resource_id(): void
     {
         $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
@@ -725,5 +844,23 @@ final class NormativeContextPinResolverTest extends TestCase
 
         self::assertSame('fgis_labor_base', $mapped->resource['price_source']);
         self::assertSame('2026.2', $mapped->resource['price_source_version']);
+    }
+
+    private function semanticPrice(
+        int $priceId,
+        string $code,
+        string $name,
+        string $price,
+        int $regionalPriceVersionId,
+        string $unit = 'м',
+    ): object {
+        return (object) [
+            'price_id' => $priceId,
+            'price_resource_code' => $code,
+            'price_resource_name' => $name,
+            'price_unit' => $unit,
+            'base_price' => $price,
+            'regional_price_version_id' => $regionalPriceVersionId,
+        ];
     }
 }

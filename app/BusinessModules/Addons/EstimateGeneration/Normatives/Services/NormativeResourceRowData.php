@@ -42,11 +42,20 @@ final readonly class NormativeResourceRowData
         $isAbstractResource = strcasecmp(trim((string) ($row->raw_source_tag ?? '')), 'AbstractResource') === 0;
         $projectResourcePricePolicy = trim((string) ($row->project_resource_price_policy
             ?? ($regionalPriceVersionId !== null ? 'regional_child_median:v1' : '')));
+        $isSemanticProjectSelection = $projectResourcePricePolicy === 'regional_semantic_pipe_hard_attributes_median:v1'
+            && $regionalPriceVersionId !== null
+            && $priceResourceCode !== ''
+            && trim((string) ($row->price_resource_name ?? '')) !== '';
+        $isExactGroupProjectSelection = in_array($projectResourcePricePolicy, [
+            'regional_child_median:v1',
+            'fsbc_base_child_median:v1',
+            'fsnb_base_child_median:v1',
+        ], true)
+            && preg_match('/^'.preg_quote($resourceCode, '/').'-\d{4}$/D', $priceResourceCode) === 1;
         $isProjectResourceSelection = $isAbstractResource
             && $projectResourceCandidatesCount !== null
-            && in_array($projectResourcePricePolicy, ['regional_child_median:v1', 'fsbc_base_child_median:v1', 'fsnb_base_child_median:v1'], true)
             && preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}$/D', $resourceCode) === 1
-            && preg_match('/^'.preg_quote($resourceCode, '/').'-\d{4}$/D', $priceResourceCode) === 1;
+            && ($isExactGroupProjectSelection || $isSemanticProjectSelection);
         $identityMatches = $resourceCode !== '' && (
             hash_equals($resourceCode, $priceResourceCode) || $isProjectResourceSelection
         );
