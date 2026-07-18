@@ -19,7 +19,7 @@ final readonly class DocumentTotalAreaConstraintResolver
         $floorCounts = [];
         foreach ($documents as $document) {
             $summary = is_array($document['facts_summary'] ?? null) ? $document['facts_summary'] : [];
-            $hasAreaClaim = array_key_exists('total_area_m2', $summary) || array_key_exists('floor_count', $summary);
+            $hasAreaClaim = array_key_exists('total_area_m2', $summary);
             if (! $hasAreaClaim) {
                 continue;
             }
