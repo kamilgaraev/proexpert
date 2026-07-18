@@ -20,6 +20,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         private NormativeSemanticCompatibilityService $semanticCompatibility = new NormativeSemanticCompatibilityService,
         private NormativeCandidatePriceCoverageAnalyzer $priceCoverageAnalyzer = new NormativeCandidatePriceCoverageAnalyzer,
         private AbstractNormativeResourcePriceSelector $abstractResourcePriceSelector = new AbstractNormativeResourcePriceSelector,
+        private AbstractResourceCoverageDiagnostics $abstractResourceCoverageDiagnostics = new AbstractResourceCoverageDiagnostics,
     ) {}
 
     public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
@@ -481,26 +482,53 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 ->filter(static fn (mixed $code): bool => is_string($code) && $code !== '')
                 ->unique()
                 ->values();
-            $allRelatedPrices = $this->database->table('estimate_resource_prices')
+            $relatedCatalogRows = $this->database->table('estimate_resource_prices as unresolved_prices')
+                ->leftJoin('estimate_dataset_versions as unresolved_datasets', 'unresolved_datasets.id', '=', 'unresolved_prices.dataset_version_id')
                 ->where(function ($related) use ($unpricedGroupCodes): void {
                     foreach ($unpricedGroupCodes as $groupCode) {
-                        $related->orWhere('resource_code', 'like', $groupCode.'-%')
-                            ->orWhereRaw("raw_payload->>'group_code' = ?", [$groupCode]);
+                        $related->orWhere('unresolved_prices.resource_code', 'like', $groupCode.'-%')
+                            ->orWhereRaw("unresolved_prices.raw_payload->>'group_code' = ?", [$groupCode]);
                     }
                 })
-                ->selectRaw('COUNT(*) AS total')
-                ->selectRaw('COUNT(*) FILTER (WHERE regional_price_version_id = ?) AS pinned_version', [$requested->regionalPriceVersionId])
-                ->selectRaw('COUNT(*) FILTER (WHERE regional_price_version_id = ? AND region_id = ? AND price_zone_id = ? AND period_id = ?) AS pinned_context', [
-                    $requested->regionalPriceVersionId, $requested->regionId, $requested->priceZoneId, $requested->periodId,
-                ])
-                ->get()
-                ->get(0);
+                ->where('unresolved_prices.base_price', '>', 0)
+                ->limit(2_001)
+                ->get([
+                    $this->database->raw("COALESCE(unresolved_prices.raw_payload->>'group_code', REGEXP_REPLACE(unresolved_prices.resource_code, '-[0-9]{4}$', '')) AS group_code"),
+                    'unresolved_prices.unit', 'unresolved_prices.dataset_version_id',
+                    'unresolved_prices.regional_price_version_id', 'unresolved_prices.region_id',
+                    'unresolved_prices.price_zone_id', 'unresolved_prices.period_id',
+                    'unresolved_datasets.source_type', 'unresolved_datasets.version_key as dataset_version',
+                ]);
+            $normsById = $norms->keyBy('id');
+            $requirements = collect($unpricedAbstractResources)
+                ->flatMap(static function (array $resources, int $normId) use ($normsById): array {
+                    $norm = $normsById->get($normId);
+
+                    return array_map(static fn (array $resource): array => [
+                        'norm_code' => trim((string) ($norm->code ?? '')),
+                        'norm_name' => trim((string) ($norm->name ?? '')),
+                        'group_code' => $resource['resource_code'],
+                        'group_name' => $resource['name'],
+                        'required_unit' => $resource['unit'],
+                        'required_quantity' => (float) $resource['quantity'],
+                    ], $resources);
+                })
+                ->values()
+                ->all();
+            $coverageDetails = $this->abstractResourceCoverageDiagnostics->build(
+                $requirements,
+                $relatedCatalogRows->all(),
+                $requested->regionalPriceVersionId,
+                $requested->regionId,
+                $requested->priceZoneId,
+                $requested->periodId,
+                $basePriceDatasetIds,
+            );
             $this->telemetry('unpriced_abstract_resources', [
                 'groups_count' => $unpricedGroupCodes->count(),
                 'group_codes' => $unpricedGroupCodes->take(30)->all(),
-                'related_prices_count' => (int) ($allRelatedPrices->total ?? 0),
-                'pinned_version_prices_count' => (int) ($allRelatedPrices->pinned_version ?? 0),
-                'pinned_context_prices_count' => (int) ($allRelatedPrices->pinned_context ?? 0),
+                'related_catalog_rows_count' => $relatedCatalogRows->count(),
+                'coverage_details' => array_slice($coverageDetails, 0, 30),
             ]);
         }
         $candidates = [];
