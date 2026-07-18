@@ -50,10 +50,13 @@ final readonly class AcceptedQuantityEvidenceVerifier
         string $sourceVersion,
         array $workItem,
     ): ?string {
-        $id = $workItem['quantity_evidence_id'] ?? null;
+        $id = $this->positiveId($workItem['quantity_evidence_id'] ?? null);
         $fingerprint = $workItem['quantity_evidence_fingerprint'] ?? null;
-        if (! is_int($id) || $id < 1 || ! is_string($fingerprint) || preg_match('/^[a-f0-9]{64}$/D', $fingerprint) !== 1) {
-            return 'identity_invalid';
+        if ($id === null) {
+            return 'id_invalid';
+        }
+        if (! is_string($fingerprint) || preg_match('/^[a-f0-9]{64}$/D', $fingerprint) !== 1) {
+            return 'fingerprint_invalid';
         }
         $node = $this->evidence->node($organizationId, $projectId, $sessionId, $id);
         if ($node === null) {
@@ -82,5 +85,19 @@ final readonly class AcceptedQuantityEvidenceVerifier
         } catch (Throwable) {
             return 'quantity_invalid';
         }
+    }
+
+    private function positiveId(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value > 0 ? $value : null;
+        }
+        if (! is_string($value) || preg_match('/^[1-9][0-9]*$/D', $value) !== 1) {
+            return null;
+        }
+
+        $id = (int) $value;
+
+        return $id > 0 && (string) $id === $value ? $id : null;
     }
 }

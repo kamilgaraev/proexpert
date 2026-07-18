@@ -29,7 +29,7 @@ final class PipelineDefinitionGraphTest extends TestCase
         self::assertSame([ProcessingStage::MatchNormatives], $graph->get(ProcessingStage::AssembleResources)->dependencies);
         self::assertSame(2, $graph->get(ProcessingStage::AssembleResources)->schemaVersion);
         self::assertSame([ProcessingStage::AssembleResources], $graph->get(ProcessingStage::ResolvePrices)->dependencies);
-        self::assertSame(2, $graph->get(ProcessingStage::ResolvePrices)->schemaVersion);
+        self::assertSame(3, $graph->get(ProcessingStage::ResolvePrices)->schemaVersion);
         self::assertSame([ProcessingStage::UnderstandDocuments, ProcessingStage::UnderstandObject, ProcessingStage::PlanWorkItems, ProcessingStage::ResolvePrices], $graph->get(ProcessingStage::BuildDraft)->dependencies);
         self::assertSame(1_572_864, $graph->get(ProcessingStage::BuildDraft)->maxArtifactBytes);
         self::assertSame([ProcessingStage::BuildDraft], $graph->get(ProcessingStage::ValidateDraft)->dependencies);

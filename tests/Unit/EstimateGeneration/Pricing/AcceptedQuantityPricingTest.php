@@ -83,4 +83,26 @@ final class AcceptedQuantityPricingTest extends TestCase
         self::assertStringNotContainsString("['quantity_evidence_source_version']", $persistence);
         self::assertStringContainsString('$package->input_version', $persistence);
     }
+
+    #[Test]
+    public function canonical_database_identifier_string_survives_pipeline_json_boundary(): void
+    {
+        $evidence = new InMemoryEvidenceRepository;
+        $context = new PipelineContext(
+            30, 10, 20, 1, 'sha256:'.str_repeat('a', 64), 'generating',
+            baseInputVersion: 'sha256:'.str_repeat('b', 64),
+        );
+        $quantity = QuantityData::fromArray([
+            'key' => 'floor_area', 'unit' => 'm2', 'amount' => '12.000000',
+            'formula_key' => 'floor.net_area', 'formula_version' => 'v1', 'formula_inputs' => [],
+            'source' => 'evidenced', 'evidence_ids' => ['1'], 'model_version' => 'building-model:v1',
+            'assumptions' => [], 'review_blockers' => [],
+        ]);
+        $item = ['key' => 'floor-finish', 'quantity' => '12.000000', 'unit' => 'm2'];
+        $node = (new AcceptedQuantityEvidenceMaterializer($evidence))->materialize($context, $quantity, $item);
+        $item['quantity_evidence_id'] = (string) $node->id;
+        $item['quantity_evidence_fingerprint'] = $node->fingerprint;
+
+        self::assertTrue((new AcceptedQuantityEvidenceVerifier($evidence))->verify($context, $item));
+    }
 }
