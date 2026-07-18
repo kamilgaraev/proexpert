@@ -1117,6 +1117,19 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertSame([], $items);
     }
 
+    public function test_preconstruction_does_not_invent_temporary_fence_from_building_area(): void
+    {
+        $localEstimate = $this->localEstimate('preconstruction', 'Preconstruction', 'site', 2);
+
+        $items = $this->planner()->build($localEstimate, $localEstimate['sections'][0], [
+            'document_context' => [
+                'facts_summary' => ['total_area_m2' => 180],
+            ],
+        ]);
+
+        self::assertNotContains('site.fence', array_column($items, 'quantity_formula'));
+    }
+
     public function test_optional_site_package_uses_document_quantity_takeoff_when_available(): void
     {
         $localEstimate = $this->localEstimate('external_networks', 'External networks', 'site', 12);

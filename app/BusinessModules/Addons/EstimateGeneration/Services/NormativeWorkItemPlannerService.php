@@ -402,7 +402,6 @@ final class NormativeWorkItemPlannerService
         return match ($definitionKey) {
             'preconstruction', 'site_preparation' => [
                 $this->definition('Подготовка строительной площадки', 'site', 'подготовка строительной площадки', 'site.setup'),
-                $this->definition('Временное ограждение площадки', 'site', 'устройство временного ограждения строительной площадки', 'site.fence'),
                 $this->definition('Геодезическая разбивка осей', 'site', 'геодезическая разбивка осей здания', 'site.geodesy'),
                 $this->definition('Планировка основания площадки', 'earthworks', 'планировка площадки механизированным способом', 'earth.plan'),
             ],
