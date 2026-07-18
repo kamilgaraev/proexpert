@@ -29,8 +29,10 @@ final readonly class AcceptedQuantityEvidenceMaterializer
         $sourceIds = $quantity->evidenceIds;
         sort($sourceIds, SORT_STRING);
         $sourceEvidenceHash = hash('sha256', self::canonical($sourceIds));
-        $itemIdentity = hash('sha256', self::canonical([
-            'key' => (string) ($workItem['logical_key'] ?? $workItem['key'] ?? ''),
+        $logicalKey = (string) ($workItem['logical_key'] ?? $workItem['key'] ?? '');
+        $itemIdentity = hash('sha256', $logicalKey);
+        $workCodeIdentity = hash('sha256', self::canonical([
+            'key' => $logicalKey,
             'quantity_key' => $quantity->key,
             'formula_hash' => $formulaHash,
             'source_evidence_hash' => $sourceEvidenceHash,
@@ -46,7 +48,7 @@ final readonly class AcceptedQuantityEvidenceMaterializer
             sourceVersion: (string) $context->baseInputVersion,
             locator: ['item_key' => 'item:'.$itemIdentity],
             value: [
-                'work_code' => 'work_type:'.$itemIdentity,
+                'work_code' => 'work_type:'.$workCodeIdentity,
                 'quantity' => $quantity->amount,
                 'unit' => $quantity->unit,
             ],

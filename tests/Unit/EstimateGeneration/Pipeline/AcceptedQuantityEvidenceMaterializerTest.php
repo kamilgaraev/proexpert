@@ -44,6 +44,7 @@ final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
             $accepted,
         ));
         self::assertSame(['quantity', 'unit', 'work_code'], array_keys($first->value));
+        self::assertSame('item:'.hash('sha256', 'floor-finish'), $first->locator['item_key']);
 
         $changedFormula = QuantityData::fromArray([
             ...$quantity->toArray(),
@@ -52,5 +53,7 @@ final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
         $changed = $materializer->materialize($context, $changedFormula, $item);
 
         self::assertNotSame($first->fingerprint, $changed->fingerprint);
+        self::assertNotSame($first->value['work_code'], $changed->value['work_code']);
+        self::assertSame($first->locator, $changed->locator);
     }
 }
