@@ -506,11 +506,12 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->whereIn('estimate_norm_id', $ids)
             ->where('quantity', '>', 0)
             ->where('resource_type', '<>', 'summary')
-            ->get(['estimate_norm_id', 'resource_code', 'unit'])
+            ->get(['estimate_norm_id', 'resource_code', 'unit', 'resource_type'])
             ->map(static fn (object $row): array => [
                 'estimate_norm_id' => (int) $row->estimate_norm_id,
                 'resource_code' => is_string($row->resource_code) ? $row->resource_code : null,
                 'unit' => is_string($row->unit) ? $row->unit : null,
+                'resource_type' => (string) $row->resource_type,
             ])
             ->all();
         $resourceCodes = collect($resources)

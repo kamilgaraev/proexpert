@@ -15,11 +15,11 @@ final class NormativeCandidatePriceCoverageAnalyzerTest extends TestCase
     {
         $result = (new NormativeCandidatePriceCoverageAnalyzer)->analyze(
             [
-                ['estimate_norm_id' => 10, 'resource_code' => null, 'unit' => 'kg'],
-                ['estimate_norm_id' => 10, 'resource_code' => 'ABSENT', 'unit' => 'kg'],
-                ['estimate_norm_id' => 10, 'resource_code' => 'MISMATCH', 'unit' => 'kg'],
-                ['estimate_norm_id' => 10, 'resource_code' => 'NORMALIZED', 'unit' => 'маш.-ч'],
-                ['estimate_norm_id' => 10, 'resource_code' => 'CONVERTED', 'unit' => '100 m2'],
+                ['estimate_norm_id' => 10, 'resource_code' => null, 'unit' => 'kg', 'resource_type' => 'material'],
+                ['estimate_norm_id' => 10, 'resource_code' => 'ABSENT', 'unit' => 'kg', 'resource_type' => 'material'],
+                ['estimate_norm_id' => 10, 'resource_code' => 'MISMATCH', 'unit' => 'kg', 'resource_type' => 'machinery'],
+                ['estimate_norm_id' => 10, 'resource_code' => 'NORMALIZED', 'unit' => 'маш.-ч', 'resource_type' => 'machinery'],
+                ['estimate_norm_id' => 10, 'resource_code' => 'CONVERTED', 'unit' => '100 m2', 'resource_type' => 'labor'],
             ],
             [
                 ['resource_code' => 'MISMATCH', 'unit' => 'm3'],
@@ -39,6 +39,11 @@ final class NormativeCandidatePriceCoverageAnalyzerTest extends TestCase
                 'missing_resource_code' => 1,
                 'absent_from_selected_sources' => 1,
                 'unit_mismatch' => 1,
+            ],
+            'missing_resources' => [
+                ['resource_code' => null, 'resource_type' => 'material', 'unit' => 'kg', 'reason' => 'missing_resource_code'],
+                ['resource_code' => 'ABSENT', 'resource_type' => 'material', 'unit' => 'kg', 'reason' => 'absent_from_selected_sources'],
+                ['resource_code' => 'MISMATCH', 'resource_type' => 'machinery', 'unit' => 'kg', 'reason' => 'unit_mismatch'],
             ],
         ], $result[10]);
     }

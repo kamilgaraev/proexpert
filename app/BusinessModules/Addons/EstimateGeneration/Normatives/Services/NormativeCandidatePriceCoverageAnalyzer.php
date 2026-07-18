@@ -7,14 +7,15 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 final class NormativeCandidatePriceCoverageAnalyzer
 {
     /**
-     * @param  array<int, array{estimate_norm_id: int, resource_code: ?string, unit: ?string}>  $resources
+     * @param  array<int, array{estimate_norm_id: int, resource_code: ?string, unit: ?string, resource_type: string}>  $resources
      * @param  array<int, array{resource_code: string, unit: ?string}>  $prices
      * @param  array<int, array{from_unit: string, to_unit: string}>  $conversions
      * @return array<int, array{
      *     positive_resources: int,
      *     priced_resources: int,
      *     unpriced_resources: int,
-     *     reasons: array{missing_resource_code: int, absent_from_selected_sources: int, unit_mismatch: int}
+     *     reasons: array{missing_resource_code: int, absent_from_selected_sources: int, unit_mismatch: int},
+     *     missing_resources: array<int, array{resource_code: ?string, resource_type: string, unit: ?string, reason: string}>
      * }>
      */
     public function analyze(array $resources, array $prices, array $conversions): array
@@ -40,6 +41,7 @@ final class NormativeCandidatePriceCoverageAnalyzer
                     'absent_from_selected_sources' => 0,
                     'unit_mismatch' => 0,
                 ],
+                'missing_resources' => [],
             ];
             $coverage[$normId]['positive_resources']++;
 
@@ -47,6 +49,7 @@ final class NormativeCandidatePriceCoverageAnalyzer
             if ($code === '') {
                 $coverage[$normId]['unpriced_resources']++;
                 $coverage[$normId]['reasons']['missing_resource_code']++;
+                $this->appendMissingResource($coverage[$normId], $resource, 'missing_resource_code');
 
                 continue;
             }
@@ -55,6 +58,7 @@ final class NormativeCandidatePriceCoverageAnalyzer
             if ($candidateUnits === []) {
                 $coverage[$normId]['unpriced_resources']++;
                 $coverage[$normId]['reasons']['absent_from_selected_sources']++;
+                $this->appendMissingResource($coverage[$normId], $resource, 'absent_from_selected_sources');
 
                 continue;
             }
@@ -76,9 +80,25 @@ final class NormativeCandidatePriceCoverageAnalyzer
 
             $coverage[$normId]['unpriced_resources']++;
             $coverage[$normId]['reasons']['unit_mismatch']++;
+            $this->appendMissingResource($coverage[$normId], $resource, 'unit_mismatch');
         }
 
         return $coverage;
+    }
+
+    private function appendMissingResource(array &$coverage, array $resource, string $reason): void
+    {
+        if (count($coverage['missing_resources']) >= 8) {
+            return;
+        }
+
+        $code = trim((string) $resource['resource_code']);
+        $coverage['missing_resources'][] = [
+            'resource_code' => $code !== '' ? $code : null,
+            'resource_type' => $resource['resource_type'],
+            'unit' => $resource['unit'],
+            'reason' => $reason,
+        ];
     }
 
     /** @param array<string, true> $conversionPairs */
