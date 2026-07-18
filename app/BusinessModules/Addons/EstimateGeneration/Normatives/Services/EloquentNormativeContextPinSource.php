@@ -67,6 +67,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                                 ->where('pin_prices.period_id', $requested->periodId);
                         })
                         ->whereColumn('pin_resources.estimate_norm_id', 'norms.id')
+                        ->where('pin_resources.quantity', '>', 0)
                         ->where('pin_prices.base_price', '>', 0)
                         ->where(function ($compatibleUnit): void {
                             $compatibleUnit->whereRaw('pin_prices.unit IS NOT DISTINCT FROM pin_resources.unit')
@@ -97,6 +98,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     $unpriced->selectRaw('1')
                         ->from('estimate_norm_resources as required_resources')
                         ->whereColumn('required_resources.estimate_norm_id', 'norms.id')
+                        ->where('required_resources.quantity', '>', 0)
                         ->whereNotExists(function ($validPrice) use ($requested): void {
                             $validPrice->selectRaw('1')
                                 ->from('estimate_resource_prices as valid_prices')
@@ -157,6 +159,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         $ids = $norms->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
         $expectedResourceCounts = $this->database->table('estimate_norm_resources')
             ->whereIn('estimate_norm_id', $ids)
+            ->where('quantity', '>', 0)
             ->groupBy('estimate_norm_id')
             ->get(['estimate_norm_id', $this->database->raw('COUNT(*) AS resource_count')])
             ->mapWithKeys(static fn (object $row): array => [(int) $row->estimate_norm_id => (int) $row->resource_count])
@@ -170,6 +173,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     ->where('prices.period_id', $requested->periodId);
             })
             ->whereIn('resources.estimate_norm_id', $ids)
+            ->where('resources.quantity', '>', 0)
             ->where('prices.base_price', '>', 0)
             ->whereRaw(
                 'prices.id = (SELECT candidate_prices.id FROM estimate_resource_prices AS candidate_prices

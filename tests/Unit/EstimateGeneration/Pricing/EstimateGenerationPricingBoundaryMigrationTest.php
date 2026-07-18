@@ -75,6 +75,16 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
         );
     }
 
+    #[Test]
+    public function zero_quantity_normative_rows_do_not_require_price_inputs(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000100_price_only_positive_normative_resources.php');
+
+        self::assertStringContainsString('quantity>0', $source);
+        self::assertStringContainsString('expected_price_resource_count_contract_changed', $source);
+        self::assertStringContainsString("pg_get_functiondef('public.eg_expected_package_item_price(bigint)'::regprocedure)", $source);
+    }
+
     private function source(): string
     {
         return (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001200_harden_estimate_generation_pricing_boundary.php');
