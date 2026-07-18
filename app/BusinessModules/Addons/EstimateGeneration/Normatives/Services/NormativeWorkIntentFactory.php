@@ -43,6 +43,9 @@ final class NormativeWorkIntentFactory
             ObjectTypeSignalClassifier::canonical((string) ($context['object_type'] ?? '')),
             $datasetVersion, 'parsed', $this->region($context), new DateTimeImmutable((string) $context['applicability_date']),
             $evidence, $preferredSections,
+            is_string($item['normative_rate_code'] ?? null) && $item['normative_rate_code'] !== ''
+                ? $item['normative_rate_code']
+                : null,
         );
     }
 

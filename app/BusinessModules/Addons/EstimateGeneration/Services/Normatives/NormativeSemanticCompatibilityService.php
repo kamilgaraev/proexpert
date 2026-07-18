@@ -23,10 +23,6 @@ final class NormativeSemanticCompatibilityService
             return false;
         }
 
-        if (preg_match('/[а-яё]/u', $workText) !== 1) {
-            return true;
-        }
-
         $specializedDomains = array_values(array_unique([
             ...$forbiddenDomainTerms,
             'реактор',
@@ -86,7 +82,7 @@ final class NormativeSemanticCompatibilityService
         return [
             'fence_installation' => ['огражд', 'забор'],
             'backfill' => ['засып', 'уплотнен'],
-            'excavation' => ['разработк грунт', 'выемк', 'котлован', 'транше'],
+            'excavation' => ['разработк', 'выемк', 'котлован', 'транше'],
             'planning' => ['планиров'],
             'concreting' => ['бетонир', 'бетонн', 'укладк бетон'],
             'reinforcement' => ['арматур', 'армирован'],

@@ -8,11 +8,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandid
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateSetData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\RejectedNormativeCandidateData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSemanticCompatibilityService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClassifier;
 
 final class NormativeHardGate
 {
+    public function __construct(
+        private readonly NormativeSemanticCompatibilityService $semanticCompatibility = new NormativeSemanticCompatibilityService,
+    ) {}
+
     /** @param list<NormativeCandidateData> $candidates */
     public function filter(WorkIntentData $workItem, array $candidates): NormativeCandidateSetData
     {
@@ -94,6 +99,15 @@ final class NormativeHardGate
         if (($candidate->validFrom !== null && $candidate->validFrom > $intent->applicabilityDate)
             || ($candidate->validTo !== null && $candidate->validTo < $intent->applicabilityDate)) {
             $reasons[] = 'applicability_date_mismatch';
+        }
+        $requestedCodeMatches = $intent->requestedNormativeCode !== null
+            && mb_strtolower($intent->requestedNormativeCode) === mb_strtolower($candidate->code);
+        if (! $requestedCodeMatches && ! $this->semanticCompatibility->isCompatible(
+            implode(' ', [$candidate->name, ...$candidate->workComposition]),
+            $intent->intent,
+            ['action' => $intent->technology],
+        )) {
+            $reasons[] = 'semantic_mismatch';
         }
 
         return $reasons;

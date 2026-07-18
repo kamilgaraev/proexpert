@@ -225,6 +225,65 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
+    public function ranker_keeps_relevance_order_instead_of_catalog_identifier_order(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([
+            (object) [
+                'id' => 1, 'code' => '08-01-001-01', 'name' => 'Устройство конструкций стен',
+                'canonical_unit' => 'm3', 'unit' => 'm3', 'section_code' => '08',
+            ],
+            (object) [
+                'id' => 200, 'code' => '08-01-002-01', 'name' => 'Кладка наружных стен из газобетонных блоков',
+                'canonical_unit' => 'm3', 'unit' => 'm3', 'section_code' => '08',
+            ],
+        ], [[
+            'search_text' => 'Кладка наружных стен из газобетонных блоков',
+            'unit' => 'm3', 'code' => null, 'normative_section' => '08',
+        ]]);
+
+        self::assertSame([200, 1], array_column($selected ?? [], 'id'));
+    }
+
+    #[Test]
+    public function ranker_excludes_semantically_foreign_candidates_before_bounding_the_pinned_pool(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([
+            (object) [
+                'id' => 1, 'code' => '09-01-001-01',
+                'name' => 'Прокладка заземляющего проводника по строительным основаниям',
+                'canonical_unit' => 'm', 'unit' => 'm', 'section_code' => '09',
+            ],
+            (object) [
+                'id' => 2, 'code' => '09-01-002-01',
+                'name' => 'Устройство временного ограждения строительной площадки',
+                'canonical_unit' => 'm', 'unit' => 'm', 'section_code' => '09',
+            ],
+        ], [[
+            'search_text' => 'Временное ограждение строительной площадки',
+            'unit' => 'm', 'code' => null, 'action' => 'fence_installation',
+            'normative_section' => '09',
+        ]]);
+
+        self::assertSame([2], array_column($selected ?? [], 'id'));
+    }
+
+    #[Test]
+    public function explicitly_requested_normative_code_precedes_automatic_semantic_filter(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([
+            (object) [
+                'id' => 10, 'code' => '09-01-001-01', 'name' => 'Специальная проектная норма',
+                'canonical_unit' => 'm', 'unit' => 'm', 'section_code' => '09',
+            ],
+        ], [[
+            'search_text' => 'Устройство временного ограждения', 'unit' => 'm',
+            'code' => '09-01-001-01', 'action' => 'fence_installation', 'normative_section' => '09',
+        ]]);
+
+        self::assertSame([10], array_column($selected ?? [], 'id'));
+    }
+
+    #[Test]
     public function generic_finishing_word_cannot_match_wet_zone_tiling_to_facade_norm(): void
     {
         $selected = (new NormativeIntentCandidateRanker)->select([

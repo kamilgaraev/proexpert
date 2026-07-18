@@ -4,11 +4,16 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSemanticCompatibilityService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 
 final readonly class NormativeIntentCandidateRanker
 {
-    /** @param list<object> $candidates @param non-empty-list<array{search_text: string, unit: string, code?: string|null, normative_section?: string|null, normative_sections?: list<string>}> $intents @return list<object>|null */
+    public function __construct(
+        private NormativeSemanticCompatibilityService $semanticCompatibility = new NormativeSemanticCompatibilityService,
+    ) {}
+
+    /** @param list<object> $candidates @param non-empty-list<array{search_text: string, unit: string, code?: string|null, action?: string|null, normative_section?: string|null, normative_sections?: list<string>}> $intents @return list<object>|null */
     public function select(array $candidates, array $intents): ?array
     {
         $selected = [];
@@ -31,12 +36,11 @@ final readonly class NormativeIntentCandidateRanker
         if ($selected === [] || count($selected) > 128) {
             return null;
         }
-        ksort($selected, SORT_NUMERIC);
 
         return array_values($selected);
     }
 
-    /** @param array{search_text: string, unit: string, code?: string|null, normative_section?: string|null, normative_sections?: list<string>} $intent */
+    /** @param array{search_text: string, unit: string, code?: string|null, action?: string|null, normative_section?: string|null, normative_sections?: list<string>} $intent */
     private function score(object $candidate, array $intent): ?int
     {
         $unit = (string) ($candidate->canonical_unit ?: $candidate->unit);
@@ -68,6 +72,19 @@ final readonly class NormativeIntentCandidateRanker
         $requestedCode = mb_strtolower((string) ($intent['code'] ?? ''));
         if ($requestedCode !== '' && $code === $requestedCode) {
             return 0;
+        }
+        $semanticText = implode(' ', [
+            (string) ($candidate->name ?? ''),
+            is_array($candidate->work_composition ?? null)
+                ? implode(' ', array_filter($candidate->work_composition, 'is_string'))
+                : (string) ($candidate->work_composition ?? ''),
+        ]);
+        if (! $this->semanticCompatibility->isCompatible(
+            $semanticText,
+            $intent['search_text'],
+            ['action' => (string) ($intent['action'] ?? '')],
+        )) {
+            return null;
         }
         if ($name === $search) {
             return 1;

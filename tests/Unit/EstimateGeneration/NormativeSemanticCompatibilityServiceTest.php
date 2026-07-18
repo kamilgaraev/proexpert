@@ -112,4 +112,20 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
             ],
         ];
     }
+
+    public function test_known_action_is_checked_even_when_work_title_uses_english_words(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Прокладка заземляющего проводника',
+            'Temporary site fence installation',
+            ['action' => 'fence_installation'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Устройство временного ограждения строительной площадки',
+            'Temporary site fence installation',
+            ['action' => 'fence_installation'],
+        ));
+    }
 }

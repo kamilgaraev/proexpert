@@ -31,6 +31,7 @@ final readonly class WorkIntentData
         public DateTimeImmutable $applicabilityDate,
         public array $sourceEvidence,
         public array $normativeSections = [],
+        public ?string $requestedNormativeCode = null,
     ) {
         EvidenceBounds::assert($sourceEvidence);
     }

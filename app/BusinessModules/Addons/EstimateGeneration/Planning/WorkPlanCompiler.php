@@ -93,7 +93,7 @@ final readonly class WorkPlanCompiler
         ];
     }
 
-    /** @return list<array{search_text: string, unit: string, code: string|null, normative_section: string|null, normative_sections: list<string>}> */
+    /** @return list<array{search_text: string, unit: string, code: string|null, action: string|null, normative_section: string|null, normative_sections: list<string>}> */
     private function normativeIntents(array $localEstimates): array
     {
         $intents = [];
@@ -124,6 +124,9 @@ final readonly class WorkPlanCompiler
                         'search_text' => (string) ($item['normative_search_text'] ?? $item['name'] ?? ''),
                         'unit' => (string) ($item['unit'] ?? ''),
                         'code' => is_string($item['normative_rate_code'] ?? null) ? $item['normative_rate_code'] : null,
+                        'action' => is_string($recordedIntent['action'] ?? null)
+                            ? $recordedIntent['action']
+                            : $classified?->action,
                         'normative_section' => is_string($normativeSection) ? $normativeSection : null,
                         'normative_sections' => $normativeSections,
                     ];
