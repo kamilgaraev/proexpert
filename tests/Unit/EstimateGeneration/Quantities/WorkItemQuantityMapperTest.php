@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Quantities;
 
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
@@ -108,6 +109,23 @@ final class WorkItemQuantityMapperTest extends TestCase
 
         foreach ($keys as $key) {
             self::assertNotNull((new WorkItemQuantityMapper)->map($key, $quantities), $key);
+        }
+    }
+
+    #[Test]
+    public function every_mapped_count_uses_a_persistable_evidence_unit(): void
+    {
+        $quantities = [
+            'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
+            'opening_area' => $this->quantity('opening_area', 'm2', '32.000000'),
+        ];
+
+        foreach (['openings.windows', 'stairs.flights', 'sanitary.points', 'heating.unit'] as $key) {
+            $quantity = (new WorkItemQuantityMapper)->map($key, $quantities);
+
+            self::assertNotNull($quantity);
+            self::assertNotNull(EvidenceUnit::tryFrom($quantity->unit), $key);
+            self::assertSame(EvidenceUnit::Piece->value, $quantity->unit, $key);
         }
     }
 

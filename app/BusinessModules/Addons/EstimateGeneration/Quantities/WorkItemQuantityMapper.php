@@ -84,7 +84,7 @@ final class WorkItemQuantityMapper
         $floorLength = fn (string $factor): array => ['sources' => [['key' => 'floor_area', 'factor' => $factor]], 'unit' => 'm'];
         $floorCount = fn (string $factor): array => [
             'sources' => [['key' => 'floor_area', 'factor' => $factor]],
-            'unit' => 'шт',
+            'unit' => 'pcs',
             'minimum' => '1',
         ];
         $engineeringLength = fn (string $system, string $factor): array => [
@@ -99,7 +99,7 @@ final class WorkItemQuantityMapper
                 ['key' => 'engineering.'.$system.'.point', 'factor' => '1'],
                 ['key' => 'floor_area', 'factor' => $factor],
             ],
-            'unit' => 'шт',
+            'unit' => 'pcs',
             'minimum' => '1',
         ];
 
@@ -161,7 +161,7 @@ final class WorkItemQuantityMapper
                     ['key' => 'opening_area', 'factor' => '0.5'],
                     ['key' => 'floor_area', 'factor' => '0.04'],
                 ],
-                'unit' => 'шт',
+                'unit' => 'pcs',
                 'minimum' => '1',
             ],
             'stairs.flights', 'stairs.landings' => $floorCount('0.01'),
@@ -188,7 +188,7 @@ final class WorkItemQuantityMapper
 
             'heating.unit', 'server.room' => [
                 'sources' => [['key' => 'floor_area', 'factor' => '0.001']],
-                'unit' => 'компл',
+                'unit' => 'pcs',
                 'minimum' => '1',
             ],
             default => null,
