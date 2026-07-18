@@ -432,7 +432,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 trim((string) $representative->resource_code),
                 $requested->regionalPriceVersionId,
                 $candidateRowList,
-                $fsbcBasePriceDatasetId > 0 ? [$fsbcBasePriceDatasetId] : [],
+                $basePriceDatasetIds,
             );
             if ($selection === null) {
                 continue;

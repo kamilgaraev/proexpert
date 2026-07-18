@@ -44,7 +44,7 @@ final readonly class NormativeResourceRowData
             ?? ($regionalPriceVersionId !== null ? 'regional_child_median:v1' : '')));
         $isProjectResourceSelection = $isAbstractResource
             && $projectResourceCandidatesCount !== null
-            && in_array($projectResourcePricePolicy, ['regional_child_median:v1', 'fsbc_base_child_median:v1'], true)
+            && in_array($projectResourcePricePolicy, ['regional_child_median:v1', 'fsbc_base_child_median:v1', 'fsnb_base_child_median:v1'], true)
             && preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}$/D', $resourceCode) === 1
             && preg_match('/^'.preg_quote($resourceCode, '/').'-\d{4}$/D', $priceResourceCode) === 1;
         $identityMatches = $resourceCode !== '' && (
