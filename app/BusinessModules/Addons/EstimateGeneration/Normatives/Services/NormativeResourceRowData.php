@@ -40,9 +40,11 @@ final readonly class NormativeResourceRowData
         ));
         $projectResourceCandidatesCount = self::positiveInt($row->project_resource_candidates_count ?? null);
         $isAbstractResource = strcasecmp(trim((string) ($row->raw_source_tag ?? '')), 'AbstractResource') === 0;
+        $projectResourcePricePolicy = trim((string) ($row->project_resource_price_policy
+            ?? ($regionalPriceVersionId !== null ? 'regional_child_median:v1' : '')));
         $isProjectResourceSelection = $isAbstractResource
-            && $regionalPriceVersionId !== null
             && $projectResourceCandidatesCount !== null
+            && in_array($projectResourcePricePolicy, ['regional_child_median:v1', 'fsbc_base_child_median:v1'], true)
             && preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}$/D', $resourceCode) === 1
             && preg_match('/^'.preg_quote($resourceCode, '/').'-\d{4}$/D', $priceResourceCode) === 1;
         $identityMatches = $resourceCode !== '' && (
@@ -83,7 +85,7 @@ final readonly class NormativeResourceRowData
                 'selected_resource_name' => (string) ($row->price_resource_name ?? ''),
                 'price_source' => $priceSource,
                 'price_source_version' => $priceSourceVersion,
-                'policy' => 'regional_child_median:v1',
+                'policy' => $projectResourcePricePolicy,
                 'candidates_count' => $projectResourceCandidatesCount,
             ];
         }

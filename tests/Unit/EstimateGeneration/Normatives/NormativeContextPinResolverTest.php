@@ -38,11 +38,16 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
-    public function abstract_resource_selector_does_not_fallback_to_base_catalog(): void
+    public function abstract_resource_selector_uses_explicit_base_catalog_fallback_when_regional_children_are_absent(): void
     {
-        self::assertNull((new AbstractNormativeResourcePriceSelector)->select('04.1.02.05', 11, [
-            (object) ['price_id' => 1, 'price_resource_code' => '04.1.02.05-0001', 'base_price' => '500', 'regional_price_version_id' => null],
-        ]));
+        $selection = (new AbstractNormativeResourcePriceSelector)->select('04.1.02.05', 11, [
+            (object) ['price_id' => 1, 'dataset_version_id' => 154, 'price_resource_code' => '04.1.02.05-0001', 'base_price' => '500', 'regional_price_version_id' => null],
+            (object) ['price_id' => 2, 'dataset_version_id' => 154, 'price_resource_code' => '04.1.02.05-0002', 'base_price' => '900', 'regional_price_version_id' => null],
+        ], [154]);
+
+        self::assertNotNull($selection);
+        self::assertSame(1, $selection['row']->price_id);
+        self::assertSame('fsbc_base_child_median:v1', $selection['policy']);
     }
 
     #[Test]
