@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
 use DateTimeImmutable;
 
 final readonly class PinnedNormativeCandidateFactory
@@ -12,8 +13,12 @@ final readonly class PinnedNormativeCandidateFactory
     public function __construct(private NormativeIntentCandidateRanker $ranker = new NormativeIntentCandidateRanker) {}
 
     /** @return list<NormativeCandidateData> */
-    public function forWorkItem(array $catalogCandidates, array $workItem, array $normativeSections = []): array
-    {
+    public function forWorkItem(
+        array $catalogCandidates,
+        array $workItem,
+        array $normativeSections = [],
+        ?WorkIntentData $canonicalIntent = null,
+    ): array {
         $rankable = [];
         $byId = [];
         foreach ($catalogCandidates as $candidate) {
@@ -37,18 +42,19 @@ final readonly class PinnedNormativeCandidateFactory
             'search_text' => (string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''),
             'unit' => (string) ($workItem['unit'] ?? ''),
             'code' => is_string($workItem['normative_rate_code'] ?? null) ? $workItem['normative_rate_code'] : null,
-            'action' => is_string($workItem['work_intent']['action'] ?? null)
+            'action' => $canonicalIntent?->technology ?? (is_string($workItem['work_intent']['action'] ?? null)
                 ? $workItem['work_intent']['action']
-                : null,
-            'scope' => is_string($workItem['work_intent']['scope'] ?? null)
+                : null),
+            'scope' => $canonicalIntent?->structure ?? (is_string($workItem['work_intent']['scope'] ?? null)
                 ? $workItem['work_intent']['scope']
-                : null,
-            'system' => is_string($workItem['work_intent']['system'] ?? null)
+                : null),
+            'system' => $canonicalIntent?->system ?? (is_string($workItem['work_intent']['system'] ?? null)
                 ? $workItem['work_intent']['system']
-                : null,
-            'object' => is_string($workItem['work_intent']['object'] ?? null)
+                : null),
+            'object' => $canonicalIntent?->workObject ?? (is_string($workItem['work_intent']['object'] ?? null)
                 ? $workItem['work_intent']['object']
-                : null,
+                : null),
+            'object_type' => $canonicalIntent?->objectType,
             'normative_sections' => $normativeSections,
         ]]);
         if ($selected === null) {

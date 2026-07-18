@@ -90,4 +90,27 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         self::assertSame('foundation', $intent->structure);
         self::assertSame(['01'], $intent->normativeSections);
     }
+
+    public function test_recorded_model_intent_cannot_override_strong_deterministic_semantics(): void
+    {
+        $factory = new NormativeWorkIntentFactory(new WorkIntentClassifier(new NormativeScopeRuleCatalog));
+
+        $intent = $factory->intent([
+            'key' => 'electrical.trays',
+            'name' => 'Монтаж кабельных лотков',
+            'unit' => 'm',
+            'work_intent' => [
+                'scope' => 'engineering',
+                'action' => 'cable_installation',
+                'system' => 'electrical',
+            ],
+        ], [
+            'organization_id' => 1, 'project_id' => 89, 'session_id' => 58,
+            'scope_type' => 'engineering', 'object_type' => 'house',
+            'applicability_date' => '2026-07-17', 'source_refs' => ['doc:1'],
+        ], 'fsnb-2026.1');
+
+        self::assertSame('cable_tray_installation', $intent->technology);
+        self::assertSame('electrical', $intent->system);
+    }
 }

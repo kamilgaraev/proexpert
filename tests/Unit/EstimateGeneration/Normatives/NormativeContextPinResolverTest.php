@@ -331,7 +331,7 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
-    public function explicitly_requested_normative_code_precedes_automatic_semantic_filter(): void
+    public function explicitly_requested_normative_code_cannot_bypass_automatic_semantic_filter(): void
     {
         $selected = (new NormativeIntentCandidateRanker)->select([
             (object) [
@@ -343,7 +343,7 @@ final class NormativeContextPinResolverTest extends TestCase
             'code' => '09-01-001-01', 'action' => 'fence_installation', 'normative_section' => '09',
         ]]);
 
-        self::assertSame([10], array_column($selected ?? [], 'id'));
+        self::assertNull($selected);
     }
 
     #[Test]

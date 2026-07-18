@@ -9,7 +9,7 @@ use Brick\Math\RoundingMode;
 
 final class WorkItemQuantityMapper
 {
-    public const FORMULA_VERSION = '1.2.0';
+    public const FORMULA_VERSION = '1.3.0';
 
     public function map(string $workItemKey, array $quantities): ?QuantityData
     {
@@ -80,11 +80,11 @@ final class WorkItemQuantityMapper
     private function rule(string $key): ?array
     {
         $floorArea = fn (string $factor = '1'): array => ['sources' => [['key' => 'floor_area', 'factor' => $factor]], 'unit' => 'm2'];
-        $wallArea = fn (string $factor = '1'): array => [
+        $wallArea = fn (string $factor = '1', string $floorAreaFallbackFactor = '1'): array => [
             'sources' => [
                 ['key' => 'net_wall_area', 'factor' => $factor],
                 ['key' => 'gross_wall_area', 'factor' => $factor],
-                ['key' => 'floor_area', 'factor' => $factor],
+                ['key' => 'floor_area', 'factor' => $floorAreaFallbackFactor],
             ],
             'unit' => 'm2',
         ];
@@ -114,8 +114,10 @@ final class WorkItemQuantityMapper
             'rough.floor', 'finish.floor', 'office.ceiling', 'warehouse.floor_hardener',
             'earth.plan', 'siteworks.area', 'warehouse.roads' => $floorArea(),
 
-            'rough.walls', 'finish.paint', 'walls.internal',
-            'office.partitions', 'warehouse.wall_panels', 'warehouse.panel_flashings' => $wallArea(),
+            'rough.walls', 'finish.paint' => $wallArea('1', '3'),
+
+            'walls.internal', 'office.partitions',
+            'warehouse.wall_panels', 'warehouse.panel_flashings' => $wallArea(),
 
             'facade.area' => [
                 'sources' => [

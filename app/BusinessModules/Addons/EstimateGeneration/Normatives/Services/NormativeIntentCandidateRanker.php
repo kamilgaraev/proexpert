@@ -70,9 +70,6 @@ final readonly class NormativeIntentCandidateRanker
         $code = mb_strtolower((string) $candidate->code);
         $search = mb_strtolower($intent['search_text']);
         $requestedCode = mb_strtolower((string) ($intent['code'] ?? ''));
-        if ($requestedCode !== '' && $code === $requestedCode) {
-            return 0;
-        }
         $semanticText = implode(' ', [
             (string) ($candidate->name ?? ''),
             is_array($candidate->work_composition ?? null)
@@ -85,6 +82,9 @@ final readonly class NormativeIntentCandidateRanker
             [...$intent, 'candidate_title' => (string) ($candidate->name ?? '')],
         )) {
             return null;
+        }
+        if ($requestedCode !== '' && $code === $requestedCode) {
+            return 0;
         }
         if ($name === $search) {
             return 1;

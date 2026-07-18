@@ -26,6 +26,9 @@ final class NormativeWorkIntentFactory
         ];
         foreach ($recorded as $key => $value) {
             if ((is_string($value) && trim($value) !== '') || (is_array($value) && $value !== [])) {
+                if ($this->hasStrongClassifiedValue($key, $classified[$key] ?? null)) {
+                    continue;
+                }
                 $classified[$key] = $value;
             }
         }
@@ -71,6 +74,19 @@ final class NormativeWorkIntentFactory
         $value = $regional['region_code'] ?? null;
 
         return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    private function hasStrongClassifiedValue(string $key, mixed $value): bool
+    {
+        if (! in_array($key, ['action', 'scope', 'object', 'expected_dimensions', 'preferred_section_prefixes'], true)) {
+            return false;
+        }
+
+        if (is_array($value)) {
+            return $value !== [];
+        }
+
+        return is_string($value) && $value !== '' && ! in_array($value, ['general', 'general_work'], true);
     }
 
     private function evidence(mixed $evidence): array
