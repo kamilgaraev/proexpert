@@ -102,6 +102,16 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
         self::assertStringContainsString('eg_pricing_provenance', $source);
     }
 
+    #[Test]
+    public function parsed_fsbc_prices_are_validated_when_regional_resource_price_is_absent(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000400_allow_pinned_fsbc_resource_prices.php');
+
+        self::assertStringContainsString("source_type NOT IN ('fsbc','fsnb_2022')", $source);
+        self::assertStringContainsString("status <> 'parsed'", $source);
+        self::assertStringContainsString('LEFT JOIN public.estimate_regional_price_versions rv', $source);
+    }
+
     private function source(): string
     {
         return (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001200_harden_estimate_generation_pricing_boundary.php');

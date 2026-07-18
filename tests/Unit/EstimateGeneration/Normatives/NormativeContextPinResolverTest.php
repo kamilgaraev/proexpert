@@ -145,13 +145,13 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("->where('id', \$requested->datasetId)", $source);
         self::assertStringContainsString("->where('prices.regional_price_version_id', \$requested->regionalPriceVersionId)", $source);
         self::assertStringContainsString("->where('status', 'active')", $source);
-        self::assertStringContainsString('->whereExists(function ($priced) use ($requested)', $source);
+        self::assertStringContainsString('->whereExists(function ($priced) use ($requested, $basePriceDatasetId)', $source);
         self::assertStringContainsString("->where('pin_resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('pin_prices.base_price', '>', 0)", $source);
         self::assertStringNotContainsString("->whereColumn('pin_resources.construction_resource_id', 'pin_prices.construction_resource_id')", $source);
         self::assertStringNotContainsString("->on('pin_prices.price_type', '=', 'pin_resources.resource_type')", $source);
-        self::assertStringContainsString('->whereNotExists(function ($unpriced) use ($requested)', $source);
-        self::assertStringContainsString('->whereNotExists(function ($validPrice) use ($requested)', $source);
+        self::assertStringContainsString('->whereNotExists(function ($unpriced) use ($requested, $basePriceDatasetId)', $source);
+        self::assertStringContainsString('->whereNotExists(function ($validPrice) use ($requested, $basePriceDatasetId)', $source);
         self::assertStringContainsString("->where('required_resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('required_resources.resource_type', '<>', 'summary')", $source);
         self::assertStringContainsString('->whereExists(function ($positiveQuantity)', $source);
@@ -177,6 +177,9 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('->limit(32)', $source);
         self::assertStringNotContainsString('LOWER(CAST(norms.work_composition AS TEXT)) LIKE ?', $source);
         self::assertStringContainsString("->where('source_type', 'fsnb_2022')", $source);
+        self::assertStringContainsString("->where('source_type', 'fsbc')", $source);
+        self::assertStringContainsString("->whereNull('regional_price_version_id')", $source);
+        self::assertStringContainsString('basePriceDatasetId', $source);
         self::assertStringContainsString("'resources.id as norm_resource_id'", $source);
         self::assertStringContainsString('resolveForIntents', $source);
         self::assertStringNotContainsString("->orderBy('norms.id')->limit(129)", $source);
