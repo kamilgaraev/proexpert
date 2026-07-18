@@ -24,6 +24,19 @@ final class SessionOperationalSnapshotDataTest extends TestCase
     }
 
     #[Test]
+    public function estimate_summary_aggregates_only_latest_logical_item_revisions(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Application/Sessions/BuildSessionOperationalSnapshot.php',
+        );
+
+        self::assertIsString($source);
+        self::assertStringContainsString('items.id IS NULL OR items.id = (', $source);
+        self::assertStringContainsString('COALESCE(latest.logical_key, latest.key) = COALESCE(items.logical_key, items.key)', $source);
+        self::assertStringContainsString('ORDER BY latest.revision DESC NULLS LAST, latest.id DESC', $source);
+    }
+
+    #[Test]
     public function operational_contract_keeps_exact_money_and_only_safe_summaries(): void
     {
         $snapshot = new SessionSnapshotData(

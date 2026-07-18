@@ -279,6 +279,16 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             ->where('sessions.organization_id', $organizationId)
             ->where('sessions.project_id', $projectId)
             ->where('packages.session_id', $sessionId)
+            ->whereRaw(<<<'SQL'
+                (items.id IS NULL OR items.id = (
+                    SELECT latest.id
+                    FROM estimate_generation_package_items AS latest
+                    WHERE latest.package_id = items.package_id
+                      AND COALESCE(latest.logical_key, latest.key) = COALESCE(items.logical_key, items.key)
+                    ORDER BY latest.revision DESC NULLS LAST, latest.id DESC
+                    LIMIT 1
+                ))
+                SQL)
             ->selectRaw('COUNT(DISTINCT packages.id) AS packages, MAX(packages.id) AS max_package_id, MAX(packages.updated_at) AS max_package_updated_at')
             ->selectRaw('COUNT(items.id) AS items, MAX(items.id) AS max_item_id, MAX(items.updated_at) AS max_item_updated_at')
             ->selectRaw("COALESCE(SUM(CASE WHEN items.item_type NOT IN ('operation','resource_note','review_note') THEN items.total_cost ELSE 0 END), 0)::numeric(30,8)::text AS total_cost")
