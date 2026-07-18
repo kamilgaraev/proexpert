@@ -97,7 +97,7 @@ final readonly class SessionBuildingModelBridge
     {
         $inputs = [];
         $unanchoredVectorInputs = [];
-        $hasPrimaryRecognizedFloorPlan = false;
+        $hasPrimaryRecognizedFloorPlan = $this->hasPrimaryRecognizedFloorPlan($units);
         foreach ($units as $unit) {
             $visionPayload = $unit->payload['vision_analysis'] ?? null;
             $vectorPayload = $unit->payload['vector_geometry'] ?? null;
@@ -147,13 +147,16 @@ final readonly class SessionBuildingModelBridge
                     }
                 }
             }
-            $input = $this->mapper->map($vision, $vector, $refs, $this->floorKey($unit));
             $hasDetectedRoom = $vision !== null && $this->hasDetectedRoom($visionPayload);
             $hasPrimaryDetectedRoom = $hasDetectedRoom
                 && in_array($unit->type->value, ['raster_image', 'sketch'], true);
-            if ($hasPrimaryDetectedRoom || is_string($unit->payload['floor_key'] ?? null)) {
+            $hasExplicitFloorKey = is_string($unit->payload['floor_key'] ?? null);
+            $roomAreaEvidenceIds = $vision !== null && $hasPrimaryDetectedRoom
+                ? $this->roomAreaEvidence($context, $unit, $vision)
+                : [];
+            $input = $this->mapper->map($vision, $vector, $refs, $this->floorKey($unit), null, $roomAreaEvidenceIds);
+            if ($hasPrimaryDetectedRoom || $hasExplicitFloorKey) {
                 $inputs[] = $input;
-                $hasPrimaryRecognizedFloorPlan = $hasPrimaryRecognizedFloorPlan || $hasPrimaryDetectedRoom;
 
                 continue;
             }
@@ -161,6 +164,79 @@ final readonly class SessionBuildingModelBridge
         }
 
         return $hasPrimaryRecognizedFloorPlan ? $inputs : [...$inputs, ...$unanchoredVectorInputs];
+    }
+
+    /** @param list<SessionBuildingModelUnitData> $units */
+    private function hasPrimaryRecognizedFloorPlan(array $units): bool
+    {
+        foreach ($units as $unit) {
+            $payload = $unit->payload['vision_analysis'] ?? null;
+            if (in_array($unit->type->value, ['raster_image', 'sketch'], true)
+                && is_array($payload)
+                && ! $this->isNonFloorVisionSource($payload)
+                && $this->hasDetectedRoom($payload)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @return array<string, int> */
+    private function roomAreaEvidence(
+        BuildingModelOperationContext $context,
+        SessionBuildingModelUnitData $unit,
+        VisionAnalysisData $vision,
+    ): array {
+        $parser = new RoomAreaAnnotationParser;
+        $ids = [];
+        foreach ($vision->elements as $element) {
+            if ($element->type !== 'room') {
+                continue;
+            }
+            $annotation = $parser->parse($element->label);
+            if ($annotation === null) {
+                continue;
+            }
+            $node = $this->evidence->insertOrGet(new EvidenceData(
+                organizationId: $context->organizationId,
+                projectId: $context->projectId,
+                sessionId: $context->sessionId,
+                type: EvidenceType::Extracted,
+                sourceType: EvidenceSourceType::DocumentUnit,
+                sourceRef: 'document:'.$unit->documentId,
+                sourceVersion: $unit->sourceVersion,
+                locator: [
+                    'document_id' => $unit->documentId,
+                    'unit_type' => $unit->type->value,
+                    'unit_index' => $unit->index,
+                    'page' => $unit->index,
+                    'region_key' => 'region:'.hash('sha256', $unit->unitId.'|'.$element->key),
+                    'element_key' => 'element:'.hash('sha256', $unit->unitId.'|'.$element->key),
+                    'bbox' => $this->polygonBbox($element->polygon),
+                ],
+                value: [
+                    'field_key' => 'room_area',
+                    'field_value' => $annotation['area_m2'],
+                    'unit' => 'm2',
+                ],
+                confidence: min($unit->confidence, $element->confidence),
+                producerName: EvidenceProducer::DrawingAnalyzer->value,
+                producerVersion: 'model:v2',
+            ));
+            $ids[$element->key] = $node->id;
+        }
+
+        return $ids;
+    }
+
+    /** @param list<array{0: float, 1: float}> $polygon @return array{float, float, float, float} */
+    private function polygonBbox(array $polygon): array
+    {
+        $x = array_column($polygon, 0);
+        $y = array_column($polygon, 1);
+
+        return [(float) min($x), (float) min($y), (float) max($x), (float) max($y)];
     }
 
     /** @param array<string, mixed> $payload */
