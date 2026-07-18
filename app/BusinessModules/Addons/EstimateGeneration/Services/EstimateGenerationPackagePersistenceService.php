@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersi
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class EstimateGenerationPackagePersistenceService
 {
@@ -340,7 +341,41 @@ class EstimateGenerationPackagePersistenceService
                 'updated_at' => now(),
             ]);
         }
+        $this->reportPricingInputCardinalityMismatch($item, $pricing['inputs'], $workItem);
         DB::select('SELECT public.eg_finalize_package_item_price(?)', [$item->id]);
+    }
+
+    /** @param list<array<string, int|null>> $inputs @param array<string, mixed> $workItem */
+    private function reportPricingInputCardinalityMismatch(
+        EstimateGenerationPackageItem $item,
+        array $inputs,
+        array $workItem,
+    ): void {
+        $expectedIds = DB::table('estimate_norm_resources')
+            ->where('estimate_norm_id', $item->estimate_norm_id)
+            ->where('quantity', '>', 0)
+            ->where('resource_type', '<>', 'summary')
+            ->orderBy('id')
+            ->pluck('id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+        $actualIds = array_map(static fn (array $input): int => (int) $input['norm_resource_id'], $inputs);
+        sort($actualIds, SORT_NUMERIC);
+
+        if ($expectedIds === $actualIds) {
+            return;
+        }
+
+        Log::warning('estimate_generation.pricing_input_cardinality_mismatch', [
+            'package_item_id' => $item->id,
+            'estimate_norm_id' => $item->estimate_norm_id,
+            'norm_code' => data_get($workItem, 'normative_match.code'),
+            'work_name' => $workItem['name'] ?? null,
+            'expected_count' => count($expectedIds),
+            'actual_count' => count($actualIds),
+            'missing_norm_resource_ids' => array_values(array_diff($expectedIds, $actualIds)),
+            'unexpected_norm_resource_ids' => array_values(array_diff($actualIds, $expectedIds)),
+        ]);
     }
 
     /** @param array{item: array<string, mixed>, inputs: list<array<string, int|null>>} $pricing */

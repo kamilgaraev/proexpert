@@ -462,6 +462,35 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'reason' => 'project_resource_selection_required',
             ])->values()->all())
             ->all();
+        if ($unpricedAbstractResources !== []) {
+            $unpricedGroupCodes = collect($unpricedAbstractResources)
+                ->flatten(1)
+                ->pluck('resource_code')
+                ->filter(static fn (mixed $code): bool => is_string($code) && $code !== '')
+                ->unique()
+                ->values();
+            $allRelatedPrices = $this->database->table('estimate_resource_prices')
+                ->where(function ($related) use ($unpricedGroupCodes): void {
+                    foreach ($unpricedGroupCodes as $groupCode) {
+                        $related->orWhere('resource_code', 'like', $groupCode.'-%')
+                            ->orWhereRaw("raw_payload->>'group_code' = ?", [$groupCode]);
+                    }
+                })
+                ->selectRaw('COUNT(*) AS total')
+                ->selectRaw('COUNT(*) FILTER (WHERE regional_price_version_id = ?) AS pinned_version', [$requested->regionalPriceVersionId])
+                ->selectRaw('COUNT(*) FILTER (WHERE regional_price_version_id = ? AND region_id = ? AND price_zone_id = ? AND period_id = ?) AS pinned_context', [
+                    $requested->regionalPriceVersionId, $requested->regionId, $requested->priceZoneId, $requested->periodId,
+                ])
+                ->get()
+                ->get(0);
+            $this->telemetry('unpriced_abstract_resources', [
+                'groups_count' => $unpricedGroupCodes->count(),
+                'group_codes' => $unpricedGroupCodes->take(30)->all(),
+                'related_prices_count' => (int) ($allRelatedPrices->total ?? 0),
+                'pinned_version_prices_count' => (int) ($allRelatedPrices->pinned_version ?? 0),
+                'pinned_context_prices_count' => (int) ($allRelatedPrices->pinned_context ?? 0),
+            ]);
+        }
         $candidates = [];
         foreach ($norms as $norm) {
             $groups = $resources[(int) $norm->id] ?? [];
