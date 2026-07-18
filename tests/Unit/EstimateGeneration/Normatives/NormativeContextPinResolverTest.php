@@ -211,6 +211,30 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
+    public function generic_finishing_word_cannot_match_wet_zone_tiling_to_facade_norm(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([
+            (object) [
+                'id' => 1, 'code' => '15-02-009-01',
+                'name' => 'Фактурная отделка фасадов стеклянной крошкой',
+                'section_name' => 'Отделочные работы', 'section_code' => '15',
+                'canonical_unit' => '100 m2', 'unit' => '100 m2',
+            ],
+            (object) [
+                'id' => 2, 'code' => '15-01-019-05',
+                'name' => 'Облицовка стен керамическими плитками',
+                'section_name' => 'Отделочные работы', 'section_code' => '15',
+                'canonical_unit' => '100 m2', 'unit' => '100 m2',
+            ],
+        ], [[
+            'search_text' => 'Отделка мокрых зон плиткой',
+            'unit' => 'm2', 'code' => null, 'normative_section' => '15',
+        ]]);
+
+        self::assertSame([2], array_column($selected ?? [], 'id'));
+    }
+
+    #[Test]
     public function exact_relevant_norm_above_first_128_is_selected_before_unrelated_candidates_are_bounded(): void
     {
         $candidates = [];
