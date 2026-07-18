@@ -30,14 +30,18 @@ class ResolveRegionalPrice
             throw MissingRegionalPrice::forResource($priceId ?? 0);
         }
 
-        $price = $this->lookup !== null ? ($this->lookup)($priceId) : $this->find($priceId, $regionId, $zoneId, $periodId, $versionId);
+        $price = $this->lookup !== null ? ($this->lookup)($priceId) : $this->find($priceId);
         $payload = $this->payload($price);
-        if ($payload === null
-            || (int) ($payload['region_id'] ?? 0) !== $regionId
-            || (int) ($payload['price_zone_id'] ?? 0) !== $zoneId
-            || (int) ($payload['period_id'] ?? 0) !== $periodId
-            || (int) ($payload['regional_price_version_id'] ?? 0) !== $versionId) {
+        $regionalPrice = $payload !== null && $this->matchesRegionalContext($payload, $regionId, $zoneId, $periodId, $versionId);
+        $baseCatalogPrice = $payload !== null && $this->isApprovedBaseCatalogPrice($payload);
+        if ($payload === null || (! $regionalPrice && ! $baseCatalogPrice) || ! $this->hasPositivePrice($payload)) {
             throw MissingRegionalPrice::forResource($priceId);
+        }
+
+        $coefficients = ['quantity' => $this->decimal($resource['quantity'] ?? 0, 6)];
+        if ($baseCatalogPrice) {
+            $coefficients['price_kind'] = 'base_catalog';
+            $coefficients['dataset_version_id'] = (int) $payload['dataset_version_id'];
         }
 
         return new PriceSnapshotData(
@@ -48,7 +52,7 @@ class ResolveRegionalPrice
             sourceType: (string) ($payload['source_type'] ?? 'regional_catalog'),
             sourceReference: 'estimate_resource_prices:'.$priceId,
             baseAmount: $this->decimal($payload['base_price'] ?? 0, 4),
-            coefficients: ['quantity' => $this->decimal($resource['quantity'] ?? 0, 6)],
+            coefficients: $coefficients,
             finalAmount: (string) BigDecimal::of((string) ($payload['base_price'] ?? '0'))
                 ->multipliedBy(BigDecimal::of((string) ($resource['quantity'] ?? '0')))
                 ->toScale(2, RoundingMode::HalfUp),
@@ -93,15 +97,11 @@ class ResolveRegionalPrice
         );
     }
 
-    private function find(int $priceId, int $regionId, int $zoneId, int $periodId, int $versionId): ?EstimateResourcePrice
+    private function find(int $priceId): ?EstimateResourcePrice
     {
         return EstimateResourcePrice::query()
             ->with('datasetVersion')
             ->whereKey($priceId)
-            ->where('region_id', $regionId)
-            ->where('price_zone_id', $zoneId)
-            ->where('period_id', $periodId)
-            ->where('regional_price_version_id', $versionId)
             ->first();
     }
 
@@ -117,8 +117,40 @@ class ResolveRegionalPrice
         return [
             ...$price->getAttributes(),
             'source_type' => $price->datasetVersion?->source_type?->value ?? 'regional_catalog',
+            'dataset_status' => $price->datasetVersion?->status?->value ?? $price->datasetVersion?->status,
             'currency' => is_array($price->raw_payload) ? ($price->raw_payload['currency'] ?? 'RUB') : 'RUB',
         ];
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function matchesRegionalContext(array $payload, int $regionId, int $zoneId, int $periodId, int $versionId): bool
+    {
+        return (int) ($payload['region_id'] ?? 0) === $regionId
+            && (int) ($payload['price_zone_id'] ?? 0) === $zoneId
+            && (int) ($payload['period_id'] ?? 0) === $periodId
+            && (int) ($payload['regional_price_version_id'] ?? 0) === $versionId;
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function isApprovedBaseCatalogPrice(array $payload): bool
+    {
+        return $this->positiveInt($payload['dataset_version_id'] ?? null) !== null
+            && ($payload['dataset_status'] ?? null) === 'parsed'
+            && in_array($payload['source_type'] ?? null, ['fsbc', 'fsnb_2022'], true)
+            && ($payload['regional_price_version_id'] ?? null) === null
+            && ($payload['region_id'] ?? null) === null
+            && ($payload['price_zone_id'] ?? null) === null
+            && ($payload['period_id'] ?? null) === null;
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function hasPositivePrice(array $payload): bool
+    {
+        try {
+            return BigDecimal::of((string) ($payload['base_price'] ?? '0'))->isGreaterThan(0);
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     private function positiveInt(mixed $value): ?int

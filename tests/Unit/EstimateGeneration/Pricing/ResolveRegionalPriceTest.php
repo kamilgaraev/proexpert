@@ -56,6 +56,50 @@ final class ResolveRegionalPriceTest extends TestCase
     }
 
     #[Test]
+    public function parsed_fsnb_base_price_is_allowed_without_regional_identity(): void
+    {
+        $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [
+            'id' => $priceId,
+            'dataset_version_id' => 6,
+            'dataset_status' => 'parsed',
+            'region_id' => null,
+            'price_zone_id' => null,
+            'period_id' => null,
+            'regional_price_version_id' => null,
+            'base_price' => '100.0000',
+            'source_type' => 'fsnb_2022',
+        ]);
+
+        $snapshot = $resolver->handle($this->resource(), $this->context());
+
+        self::assertSame('fsnb_2022', $snapshot->sourceType);
+        self::assertSame(11, $snapshot->versionId);
+        self::assertSame('100.0000', $snapshot->baseAmount);
+        self::assertSame('250.00', $snapshot->finalAmount);
+        self::assertSame(6, $snapshot->coefficients['dataset_version_id']);
+        self::assertSame('base_catalog', $snapshot->coefficients['price_kind']);
+    }
+
+    #[Test]
+    public function base_price_from_unapproved_dataset_is_never_used(): void
+    {
+        $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [
+            'id' => $priceId,
+            'dataset_version_id' => 6,
+            'dataset_status' => 'importing',
+            'region_id' => null,
+            'price_zone_id' => null,
+            'period_id' => null,
+            'regional_price_version_id' => null,
+            'base_price' => '100.0000',
+            'source_type' => 'fsnb_2022',
+        ]);
+
+        $this->expectException(MissingRegionalPrice::class);
+        $resolver->handle($this->resource(), $this->context());
+    }
+
+    #[Test]
     public function catalog_price_is_the_only_money_source(): void
     {
         $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [
