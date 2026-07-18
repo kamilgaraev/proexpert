@@ -100,14 +100,14 @@ final class NormativeHardGate
             || ($candidate->validTo !== null && $candidate->validTo < $intent->applicabilityDate)) {
             $reasons[] = 'applicability_date_mismatch';
         }
-        $requestedCodeMatches = $intent->requestedNormativeCode !== null
-            && mb_strtolower($intent->requestedNormativeCode) === mb_strtolower($candidate->code);
-        if (! $requestedCodeMatches && ! $this->semanticCompatibility->isCompatible(
+        if (! $this->semanticCompatibility->isCompatible(
             implode(' ', [$candidate->name, ...$candidate->workComposition]),
             $intent->intent,
             [
                 'action' => $intent->technology,
-                'object' => $intent->structure,
+                'scope' => $intent->structure,
+                'system' => $intent->system,
+                'object' => $intent->workObject,
                 'object_type' => $intent->objectType,
                 'candidate_title' => $candidate->name,
             ],

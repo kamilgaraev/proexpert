@@ -168,6 +168,25 @@ final class NormativeSemanticCompatibilityService
 
     private function actionCompatible(string $action, string $system, string $candidateTitle, string $workText): bool
     {
+        if ($action === 'window_installation') {
+            if ($this->containsAny($candidateTitle, ['откос']) && ! $this->containsAny($workText, ['откос'])) {
+                return false;
+            }
+
+            return $this->containsAny($candidateTitle, ['установ', 'монтаж', 'заполнен', 'блок']);
+        }
+
+        if ($action === 'door_installation') {
+            if ($this->containsAny($candidateTitle, ['конопат', 'уплотнен'])
+                && ! $this->containsAny($workText, ['конопат', 'уплотнен'])) {
+                return false;
+            }
+
+            if (! $this->containsAny($candidateTitle, ['установ', 'монтаж', 'заполнен', 'блок'])) {
+                return false;
+            }
+        }
+
         if ($action === 'cable_tray_installation') {
             $candidateInstallsTray = $this->containsAny($candidateTitle, ['монтаж', 'установк', 'устройств'])
                 && $this->containsAny($candidateTitle, ['лотк']);
@@ -199,6 +218,14 @@ final class NormativeSemanticCompatibilityService
             && trim($system) === 'sewerage'
             && $this->containsAny($candidateTitle, ['транше'])
             && ! $this->containsAny($workText, ['транше', 'наружн'])) {
+            return false;
+        }
+
+        if ($action === 'pipe_layout'
+            && in_array(trim($system), ['water_supply', 'heating'], true)
+            && ($this->containsAny($candidateTitle, ['канализац'])
+                || ($this->containsAny($candidateTitle, ['транше'])
+                    && ! $this->containsAny($workText, ['транше', 'наружн'])))) {
             return false;
         }
 
@@ -331,6 +358,10 @@ final class NormativeSemanticCompatibilityService
         $candidateHasRoofCovering = $this->containsAny($candidateText, ['кров'])
             && $this->containsAny($candidateText, ['покрыт']);
         $candidateHasRafters = $this->containsAny($candidateText, ['стропил']);
+
+        if ($workIsRoofCovering && ! $candidateHasRoofCovering) {
+            return false;
+        }
 
         if (($workIsRoofCovering && ! $workIsRafterInstallation && $candidateHasRafters)
             || ($workIsRafterInstallation && ! $workIsRoofCovering && $candidateHasRoofCovering)) {
