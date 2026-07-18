@@ -21,6 +21,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNormResource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNormSection;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeResourceUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -517,15 +518,16 @@ class EstimateSourceImportService
     private function storeNormResource(EstimateNorm $estimateNorm, FsnbNormResourceDTO $resource): void
     {
         $resourceCode = $resource->code !== null ? $this->normalizeCode($resource->code) : null;
+        $resourceType = $this->normalizeResourceType($resource->resourceType, $resourceCode, $resource->name, $resource->rawData);
 
         EstimateNormResource::query()->create([
             'estimate_norm_id' => $estimateNorm->id,
             'construction_resource_id' => $resourceCode !== null ? $this->findConstructionResourceId($resourceCode) : null,
             'resource_code' => $resourceCode ?? '',
             'resource_name' => $resource->name,
-            'unit' => $resource->unit,
+            'unit' => NormativeResourceUnitNormalizer::normalize($resource->unit, $resourceType),
             'quantity' => $resource->quantity,
-            'resource_type' => $this->normalizeResourceType($resource->resourceType, $resourceCode, $resource->name, $resource->rawData),
+            'resource_type' => $resourceType,
             'raw_payload' => $resource->rawData,
         ]);
     }
