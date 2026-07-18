@@ -14,7 +14,7 @@ use PHPUnit\Framework\TestCase;
 final class WorkItemQuantityMapperTest extends TestCase
 {
     #[Test]
-    public function floor_finishing_uses_evidenced_floor_area(): void
+    public function floor_finishing_uses_confirmed_floor_area_as_estimation_basis(): void
     {
         $quantity = (new WorkItemQuantityMapper)->map('rough.floor', [
             'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
@@ -24,7 +24,7 @@ final class WorkItemQuantityMapperTest extends TestCase
         self::assertSame('rough.floor', $quantity->key);
         self::assertSame('180.000000', $quantity->amount);
         self::assertSame('m2', $quantity->unit);
-        self::assertSame(QuantitySource::Evidenced, $quantity->source);
+        self::assertSame(QuantitySource::Estimated, $quantity->source);
         self::assertSame([], $quantity->reviewBlockers);
         self::assertSame(['page:plan:1'], $quantity->evidenceIds);
     }
@@ -52,6 +52,34 @@ final class WorkItemQuantityMapperTest extends TestCase
         self::assertNull((new WorkItemQuantityMapper)->map('unknown.work', [
             'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
         ]));
+    }
+
+    #[Test]
+    public function floor_area_does_not_substitute_direct_technological_takeoffs(): void
+    {
+        $quantities = ['floor_area' => $this->quantity('floor_area', 'm2', '180.000000')];
+
+        foreach ([
+            'site.setup', 'site.geodesy', 'foundation.prep', 'sanitary.tile',
+            'facade.area', 'heating.radiators', 'heating.unit', 'openings.doors', 'openings.windows',
+            'stairs.flights', 'stairs.landings', 'stairs.railings', 'ventilation.air_exchange', 'walls.lintels',
+        ] as $key) {
+            self::assertNull((new WorkItemQuantityMapper)->map($key, $quantities), $key);
+        }
+    }
+
+    #[Test]
+    public function direct_ventilation_takeoff_keeps_its_evidence(): void
+    {
+        $direct = $this->quantity('ventilation.air_exchange', 'm2', '54.000000');
+
+        $quantity = (new WorkItemQuantityMapper)->map('ventilation.air_exchange', [
+            'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
+            'ventilation.air_exchange' => $direct,
+        ]);
+
+        self::assertSame($direct, $quantity);
+        self::assertSame(QuantitySource::Evidenced, $quantity->source);
     }
 
     #[Test]
@@ -90,17 +118,16 @@ final class WorkItemQuantityMapperTest extends TestCase
         $keys = [
             'earth.backfill', 'earth.export', 'earth.plan', 'earth.trench',
             'electrical.grounding', 'electrical.main_cable', 'electrical.power_lines', 'electrical.trays',
-            'facade.area', 'finish.baseboard', 'finish.floor', 'finish.paint',
-            'foundation.concrete', 'foundation.formwork', 'foundation.prep', 'foundation.rebar', 'foundation.waterproofing',
-            'heating.air_curtains', 'heating.pipe', 'heating.radiators', 'heating.unit', 'lighting.lines',
+            'finish.baseboard', 'finish.floor', 'finish.paint',
+            'foundation.concrete', 'foundation.formwork', 'foundation.rebar', 'foundation.waterproofing',
+            'heating.air_curtains', 'heating.pipe', 'lighting.lines',
             'networks.external', 'office.ceiling', 'office.network_points', 'office.partitions',
-            'openings.doors', 'openings.windows', 'plumbing.pipe', 'roof.area', 'roof.flat_area', 'roof.gutter',
-            'rough.floor', 'rough.walls', 'sanitary.points', 'sanitary.tile', 'server.room',
+            'plumbing.pipe', 'roof.area', 'roof.flat_area', 'roof.gutter',
+            'rough.floor', 'rough.walls', 'sanitary.points', 'server.room',
             'sewerage.outlets', 'sewerage.pipe', 'sewerage.revisions', 'sewerage.risers',
-            'site.fence', 'site.geodesy', 'site.setup', 'siteworks.area',
-            'stairs.flights', 'stairs.landings', 'stairs.railings',
-            'ventilation.air_exchange', 'ventilation.office_points', 'ventilation.warehouse_points',
-            'walls.external_volume', 'walls.internal', 'walls.lintels',
+            'site.fence', 'siteworks.area',
+            'ventilation.office_points', 'ventilation.warehouse_points',
+            'walls.external_volume', 'walls.internal',
             'warehouse.beams', 'warehouse.columns', 'warehouse.fire', 'warehouse.floor_concrete',
             'warehouse.floor_hardener', 'warehouse.floor_joints', 'warehouse.floor_rebar',
             'warehouse.frame_weight', 'warehouse.gates', 'warehouse.lighting', 'warehouse.loading_nodes',
@@ -120,7 +147,7 @@ final class WorkItemQuantityMapperTest extends TestCase
             'opening_area' => $this->quantity('opening_area', 'm2', '32.000000'),
         ];
 
-        foreach (['openings.windows', 'stairs.flights', 'sanitary.points', 'heating.unit'] as $key) {
+        foreach (['sanitary.points', 'sewerage.outlets'] as $key) {
             $quantity = (new WorkItemQuantityMapper)->map($key, $quantities);
 
             self::assertNotNull($quantity);
@@ -130,10 +157,23 @@ final class WorkItemQuantityMapperTest extends TestCase
     }
 
     #[Test]
-    public function ventilation_duct_takeoff_uses_area_required_by_fsnb_norms(): void
+    public function estimated_piece_quantities_are_whole_items(): void
+    {
+        $quantity = (new WorkItemQuantityMapper)->map('sanitary.points', [
+            'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
+        ]);
+
+        self::assertNotNull($quantity);
+        self::assertSame('7.000000', $quantity->amount);
+        self::assertSame('pcs', $quantity->unit);
+    }
+
+    #[Test]
+    public function ventilation_duct_takeoff_uses_direct_area_required_by_fsnb_norms(): void
     {
         $quantity = (new WorkItemQuantityMapper)->map('ventilation.air_exchange', [
             'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
+            'ventilation.air_exchange' => $this->quantity('ventilation.air_exchange', 'm2', '54.000000'),
         ]);
 
         self::assertNotNull($quantity);

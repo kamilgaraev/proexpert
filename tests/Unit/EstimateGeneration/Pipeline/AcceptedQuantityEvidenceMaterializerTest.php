@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvide
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -55,5 +56,19 @@ final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
         self::assertNotSame($first->fingerprint, $changed->fingerprint);
         self::assertNotSame($first->value['work_code'], $changed->value['work_code']);
         self::assertSame($first->locator, $changed->locator);
+
+        $estimated = $materializer->materialize($context, new QuantityData(
+            key: 'finish.floor',
+            unit: 'm2',
+            amount: '12.000000',
+            formulaKey: 'work_item.quantity.finish.floor',
+            formulaVersion: '1.1.0',
+            formulaInputs: ['factor' => '1'],
+            source: QuantitySource::Estimated,
+            evidenceIds: ['1'],
+            modelVersion: 'building-model:v1',
+        ), ['key' => 'estimated-floor']);
+
+        self::assertSame(0.65, $estimated->confidence);
     }
 }

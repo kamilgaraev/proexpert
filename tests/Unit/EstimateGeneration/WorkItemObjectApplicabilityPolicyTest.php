@@ -17,6 +17,23 @@ final class WorkItemObjectApplicabilityPolicyTest extends TestCase
 
         self::assertFalse(WorkItemObjectApplicabilityPolicy::allows('warehouse.wall_panels', $analysis));
         self::assertFalse(WorkItemObjectApplicabilityPolicy::allows('warehouse.panel_flashings', $analysis));
+        self::assertFalse(WorkItemObjectApplicabilityPolicy::allows('warehouse.floor_concrete', $analysis));
+        self::assertFalse(WorkItemObjectApplicabilityPolicy::allows('warehouse.floor_rebar', $analysis));
+        self::assertFalse(WorkItemObjectApplicabilityPolicy::allows('office.ceiling', $analysis));
+        self::assertTrue(WorkItemObjectApplicabilityPolicy::allows('facade.area', $analysis));
+    }
+
+    #[Test]
+    public function residential_description_is_used_when_object_type_is_generic(): void
+    {
+        $analysis = ['object' => [
+            'object_type' => 'custom',
+            'building_type' => 'custom',
+            'description' => 'Индивидуальный жилой дом площадью 180 м2',
+        ]];
+
+        self::assertFalse(WorkItemObjectApplicabilityPolicy::allows('warehouse.wall_panels', $analysis));
+        self::assertFalse(WorkItemObjectApplicabilityPolicy::allows('warehouse.panel_flashings', $analysis));
         self::assertTrue(WorkItemObjectApplicabilityPolicy::allows('facade.area', $analysis));
     }
 }

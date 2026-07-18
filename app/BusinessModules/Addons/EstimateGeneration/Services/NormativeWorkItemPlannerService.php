@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\DirectTakeoffRequiredWorkItems;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Throwable;
 
@@ -317,20 +318,46 @@ final class NormativeWorkItemPlannerService
         $packageKey = (string) ($localEstimate['key'] ?? '');
         $scopeType = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
         $packageDefinitions = $this->packageDefinitions($packageKey, $scopeType, $quantityModel);
+        $sourceBackedQuantityKeys = $this->sourceBackedPackageQuantityKeys($packageDefinitions, $quantityModel);
         $definitions = [
             ...$packageDefinitions,
             ...$this->scopeInferenceDefinitions(
                 $analysis,
                 $scopeType,
                 $packageKey,
-                $this->sourceBackedPackageQuantityKeys($packageDefinitions, $quantityModel)
+                $sourceBackedQuantityKeys
             ),
         ];
 
         return array_values(array_filter(
             $definitions,
             fn (array $definition): bool => $this->definitionMatchesObject($definition, $analysis)
+                && $this->definitionHasRequiredTakeoff($definition, $sourceBackedQuantityKeys)
         ));
+    }
+
+    /** @param array<string, bool> $sourceBackedQuantityKeys */
+    private function definitionHasRequiredTakeoff(array $definition, array $sourceBackedQuantityKeys): bool
+    {
+        $quantityKey = (string) ($definition['quantity_key'] ?? '');
+        if (! DirectTakeoffRequiredWorkItems::contains($quantityKey)) {
+            return true;
+        }
+
+        if (isset($sourceBackedQuantityKeys[$quantityKey])) {
+            return true;
+        }
+
+        $inference = is_array($definition['metadata']['scope_inference'] ?? null)
+            ? $definition['metadata']['scope_inference']
+            : [];
+        $payload = is_array($inference['normalized_payload'] ?? null)
+            ? $inference['normalized_payload']
+            : [];
+
+        return isset($payload['quantity_value'])
+            && $this->sourceRefsFromScopeInference($inference) !== []
+            && ($inference['review_required'] ?? true) === false;
     }
 
     private function definitionMatchesObject(array $definition, array $analysis): bool

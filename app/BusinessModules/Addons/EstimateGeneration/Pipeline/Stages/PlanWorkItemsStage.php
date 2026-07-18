@@ -13,7 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\AnalysisFloorAreaQuantityFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityResolver;
 use Illuminate\Support\Facades\Log;
 
 final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
@@ -24,7 +24,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private WorkPlanCompiler $compiler,
         private StageResultFactory $results,
         private AcceptedQuantityEvidenceMaterializer $acceptedEvidence,
-        private WorkItemQuantityMapper $quantityMapper = new WorkItemQuantityMapper,
+        private WorkItemQuantityResolver $quantityResolver = new WorkItemQuantityResolver,
         private AnalysisFloorAreaQuantityFactory $analysisFloorArea = new AnalysisFloorAreaQuantityFactory,
     ) {}
 
@@ -54,7 +54,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
-                    $mapped = $this->attachCanonicalQuantity($item, $quantities, $this->quantityMapper);
+                    $mapped = $this->attachCanonicalQuantity($item, $quantities, $this->quantityResolver);
                     $quantity = $mapped['quantity_evidence'] ?? null;
                     if (is_array($quantity) && ($quantity['review_blockers'] ?? []) === []) {
                         $node = $this->acceptedEvidence->materialize($context, QuantityData::fromArray($quantity), $mapped);
@@ -87,12 +87,9 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
     private function attachCanonicalQuantity(
         array $workItem,
         array $quantities,
-        ?WorkItemQuantityMapper $quantityMapper = null
+        ?WorkItemQuantityResolver $quantityResolver = null
     ): array {
-        $quantityKey = $workItem['metadata']['quantity_key'] ?? null;
-        $quantity = is_string($quantityKey)
-            ? ($quantityMapper ?? new WorkItemQuantityMapper)->map($quantityKey, $quantities)?->toArray()
-            : null;
+        $quantity = ($quantityResolver ?? new WorkItemQuantityResolver)->resolve($workItem, $quantities)?->toArray();
         if (! is_array($quantity)) {
             unset($workItem['quantity'], $workItem['quantity_evidence']);
             $workItem['pricing_status'] = 'not_calculated';

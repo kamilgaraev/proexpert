@@ -9,13 +9,17 @@ use Brick\Math\RoundingMode;
 
 final class WorkItemQuantityMapper
 {
-    public const FORMULA_VERSION = '1.0.0';
+    public const FORMULA_VERSION = '1.1.0';
 
     public function map(string $workItemKey, array $quantities): ?QuantityData
     {
         $direct = $this->quantity($quantities[$workItemKey] ?? null);
         if ($direct !== null) {
             return $direct;
+        }
+
+        if (DirectTakeoffRequiredWorkItems::contains($workItemKey)) {
+            return null;
         }
 
         $rule = $this->rule($workItemKey);
@@ -35,6 +39,9 @@ final class WorkItemQuantityMapper
             if ($amount->isLessThan($minimum)) {
                 $amount = $minimum;
             }
+            if ($rule['unit'] === 'pcs') {
+                $amount = $amount->toScale(0, RoundingMode::HalfUp);
+            }
 
             return new QuantityData(
                 key: $workItemKey,
@@ -47,7 +54,7 @@ final class WorkItemQuantityMapper
                     'factor' => $candidate['factor'],
                     'minimum' => $rule['minimum'] ?? null,
                 ],
-                source: $source->source,
+                source: QuantitySource::Estimated,
                 evidenceIds: $source->evidenceIds,
                 modelVersion: $source->modelVersion,
                 assumptions: array_values(array_unique([
@@ -105,8 +112,7 @@ final class WorkItemQuantityMapper
 
         return match ($key) {
             'rough.floor', 'finish.floor', 'office.ceiling', 'warehouse.floor_hardener',
-            'earth.plan', 'site.setup', 'site.geodesy', 'siteworks.area', 'warehouse.roads',
-            'sanitary.tile' => $floorArea(),
+            'earth.plan', 'siteworks.area', 'warehouse.roads' => $floorArea(),
 
             'rough.walls', 'finish.paint', 'facade.area', 'walls.internal',
             'office.partitions', 'warehouse.wall_panels', 'warehouse.panel_flashings' => $wallArea(),
@@ -121,7 +127,6 @@ final class WorkItemQuantityMapper
                 ],
                 'unit' => 'm3',
             ],
-            'foundation.prep' => $floorArea('0.45'),
             'foundation.formwork', 'foundation.waterproofing' => $floorArea('0.75'),
             'foundation.rebar' => [
                 'sources' => [
@@ -164,7 +169,6 @@ final class WorkItemQuantityMapper
                 'unit' => 'pcs',
                 'minimum' => '1',
             ],
-            'stairs.flights', 'stairs.landings' => $floorCount('0.01'),
             'warehouse.gates', 'warehouse.loading_nodes' => $floorCount('0.005'),
 
             'electrical.main_cable' => $engineeringLength('electrical', '0.40'),
@@ -178,7 +182,6 @@ final class WorkItemQuantityMapper
             'ventilation.air_exchange' => [
                 'sources' => [
                     ['key' => 'engineering.ventilation.area', 'factor' => '1'],
-                    ['key' => 'floor_area', 'factor' => '0.30'],
                 ],
                 'unit' => 'm2',
             ],
