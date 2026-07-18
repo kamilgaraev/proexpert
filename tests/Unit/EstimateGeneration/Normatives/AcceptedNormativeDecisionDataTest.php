@@ -66,6 +66,74 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
         self::assertSame('04.1.02.05', $item['normative_match']['unpriced_abstract_resources'][0]['resource_code']);
         self::assertContains('project_resource_selection_required', $item['normative_match']['warnings']);
         self::assertNotContains('missing_resources', $item['validation_flags']);
+        self::assertSame('not_calculated', $item['pricing_status']);
+        self::assertSame('project_resource_selection_required', $item['pricing_blocker']);
+        self::assertContains('project_resource_selection_required', $item['validation_flags']);
+    }
+
+    #[Test]
+    public function exposes_the_concrete_regional_price_used_for_a_project_resource_group(): void
+    {
+        $record = $this->catalogCandidate();
+        $record['resources']['materials'][0] = [
+            ...$record['resources']['materials'][0],
+            'code' => '04.1.02.05',
+            'name' => 'Смеси бетонные по проекту',
+            'unit_price' => '7450.250000',
+            'norm_resource_id' => 7001,
+            'price_source' => 'regional_catalog',
+            'project_resource_selection' => [
+                'group_code' => '04.1.02.05',
+                'selected_resource_code' => '04.1.02.05-0123',
+                'selected_resource_name' => 'Бетон В25 П4 F150 W6',
+                'price_source' => 'regional_catalog',
+                'price_source_version' => 'prices-2026.06',
+                'policy' => 'regional_child_median:v1',
+                'candidates_count' => 7,
+            ],
+        ];
+        $service = new ResourceAssemblyService(
+            $this->createMock(EstimateNormativeMatcher::class),
+            new NormativeMatchDecisionService,
+            new NormativeCandidatePresenter,
+        );
+
+        $item = $service->assembleFromDecision(
+            ['key' => 'work-1', 'name' => 'Устройство конструкции', 'unit' => 'm2', 'quantity' => '2', 'confidence' => 0.8],
+            AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record),
+            ['dataset_id' => 77, 'dataset_version' => 'fsnb-2026.1', 'region_id' => 77,
+                'price_zone_id' => 1, 'period_id' => 202606, 'price_version' => 'prices-2026.06',
+                'estimate_regional_price_version_id' => 8],
+        );
+
+        self::assertContains('project_resource_price_assumption', $item['normative_match']['warnings']);
+        self::assertSame('04.1.02.05-0123', $item['materials'][0]['project_resource_selection']['selected_resource_code']);
+        self::assertSame('04.1.02.05-0123', $item['materials'][0]['normative_ref']['project_resource_selection']['selected_resource_code']);
+        self::assertSame(9001, $item['normative_match']['project_resource_selections'][0]['price_id']);
+        self::assertSame('7450.250000', $item['normative_match']['project_resource_selections'][0]['applied_unit_price']);
+    }
+
+    #[Test]
+    public function rejects_a_project_resource_selection_from_a_base_price_source(): void
+    {
+        $record = $this->catalogCandidate();
+        $record['resources']['materials'][0] = [
+            ...$record['resources']['materials'][0],
+            'code' => '04.1.02.05',
+            'project_resource_selection' => [
+                'group_code' => '04.1.02.05',
+                'selected_resource_code' => '04.1.02.05-0123',
+                'selected_resource_name' => 'Бетон В25',
+                'price_source' => 'fsbc_base',
+                'price_source_version' => 'fsbc-2026',
+                'policy' => 'regional_child_median:v1',
+                'candidates_count' => 1,
+            ],
+        ];
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('accepted_normative_project_resource_selection_invalid');
+        AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
     }
 
     #[Test]

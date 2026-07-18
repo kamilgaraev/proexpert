@@ -803,7 +803,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertStringContainsString('требуется проверка', $reviewItem['quantity_basis']);
     }
 
-    public function test_summary_area_without_source_refs_requires_quantity_review(): void
+    public function test_summary_area_without_source_refs_does_not_invent_a_rough_floor_construction(): void
     {
         $localEstimate = $this->localEstimate('rough_finishing', 'Черновая отделка', 'finishing', 6);
         $items = $this->planner()->build(
@@ -823,17 +823,49 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'rough.floor'
         ))[0] ?? null;
 
-        self::assertIsArray($reviewItem);
-        self::assertSame('quantity_review', $reviewItem['item_type']);
-        self::assertSame(87.14, (float) $reviewItem['quantity']);
-        self::assertSame([], $reviewItem['source_refs']);
-        self::assertSame('facts_summary_area', $reviewItem['metadata']['quantity_source']);
-        self::assertContains('quantity_review_required', $reviewItem['validation_flags']);
-        self::assertSame('quantity_review_required', $reviewItem['pricing_blocker']);
+        self::assertNull($reviewItem);
 
         foreach ($items as $item) {
             if (($item['metadata']['quantity_source'] ?? null) === 'planner_fallback') {
                 self::assertContains('document_takeoff_required', $item['validation_flags']);
+            }
+        }
+    }
+
+    public function test_underspecified_works_require_direct_confirmed_takeoffs(): void
+    {
+        $planner = $this->planner();
+        $cases = [
+            'earthworks' => ['foundation', ['earth.export']],
+            'stairs' => ['stairs', ['stairs.flights', 'stairs.landings']],
+            'roof' => ['roof', ['roof.rafters']],
+            'electrical' => ['electrical', ['electrical.grounding']],
+            'rough_finishing' => ['finishing', ['rough.floor']],
+        ];
+
+        foreach ($cases as $packageKey => [$scopeType, $quantityKeys]) {
+            $localEstimate = $this->localEstimate($packageKey, $packageKey, $scopeType, 4);
+            $withoutTakeoff = $planner->build($localEstimate, $localEstimate['sections'][0], [
+                'document_context' => ['facts_summary' => ['total_area_m2' => 180]],
+            ]);
+            $withoutTakeoffFormulas = array_column($withoutTakeoff, 'quantity_formula');
+
+            foreach ($quantityKeys as $quantityKey) {
+                self::assertNotContains($quantityKey, $withoutTakeoffFormulas, $quantityKey);
+            }
+
+            $withTakeoff = $planner->build($localEstimate, $localEstimate['sections'][0], [
+                'document_context' => [
+                    'quantity_takeoffs' => array_map(
+                        fn (string $quantityKey): array => $this->confirmedTakeoff($quantityKey, 12.5, 'm'),
+                        $quantityKeys,
+                    ),
+                ],
+            ]);
+            $withTakeoffFormulas = array_column($withTakeoff, 'quantity_formula');
+
+            foreach ($quantityKeys as $quantityKey) {
+                self::assertContains($quantityKey, $withTakeoffFormulas, $quantityKey);
             }
         }
     }

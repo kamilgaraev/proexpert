@@ -23,4 +23,18 @@ final class GenerationEntrypointsContractTest extends TestCase
         self::assertStringContainsString('GenerateEstimateDraftJob::dispatch(', $rebuild);
         self::assertStringContainsString('generationStarted(', $rebuild);
     }
+
+    public function test_generation_rebuilds_the_derived_building_model_before_starting_the_attempt(): void
+    {
+        $request = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Application/Generation/RequestEstimateGeneration.php');
+
+        self::assertIsString($request);
+        self::assertStringContainsString('EloquentSessionBuildingModelBridge $buildingModels', $request);
+        $rebuild = strpos($request, '$this->buildingModels->rebuild(');
+        $start = strpos($request, '$this->advance->generationStarted(');
+
+        self::assertIsInt($rebuild);
+        self::assertIsInt($start);
+        self::assertLessThan($start, $rebuild);
+    }
 }

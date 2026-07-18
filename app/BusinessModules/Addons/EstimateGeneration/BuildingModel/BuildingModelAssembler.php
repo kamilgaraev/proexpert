@@ -37,7 +37,7 @@ final class BuildingModelAssembler
             $detections[] = new BuildingModelDetectionData(
                 $input->producerVersion,
                 $model->scaleStatus,
-                $model->scaleMetersPerUnit,
+                $model->scaleStatus === 'confirmed' ? 1.0 : $model->scaleMetersPerUnit,
                 $model->floors,
                 $model->evidenceIds,
             );
