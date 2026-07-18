@@ -108,6 +108,7 @@ final class NormativeHardGate
             [
                 'action' => $intent->technology,
                 'object' => $intent->structure,
+                'object_type' => $intent->objectType,
                 'candidate_title' => $candidate->name,
             ],
         )) {

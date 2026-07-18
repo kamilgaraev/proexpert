@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClassifier;
+
 final class NormativeSemanticCompatibilityService
 {
     /**
@@ -29,7 +31,10 @@ final class NormativeSemanticCompatibilityService
         }
 
         if (! $this->additiveCompatible($candidateTitle, $workText)
-            || ! $this->openingObjectCompatible($candidateTitle, $workText)) {
+            || ! $this->openingObjectCompatible($candidateTitle, $workText)
+            || ! $this->targetCompatible($candidateTitle, $workText)
+            || ! $this->separateWorkCompatible($candidateText, $workText, $intent)
+            || ! $this->residentialEngineeringCompatible($candidateTitle, $workText, $intent)) {
             return false;
         }
 
@@ -53,6 +58,8 @@ final class NormativeSemanticCompatibilityService
             'железнодорож',
             'электростанц',
             'дизельн',
+            'радиоактивн',
+            'ядерн',
         ]));
 
         foreach ($specializedDomains as $term) {
@@ -72,7 +79,7 @@ final class NormativeSemanticCompatibilityService
         $action = trim((string) ($intent['action'] ?? ''));
         $actionMarkers = $this->markersForAction($action);
 
-        if (! $this->actionCompatible($action, $candidateTitle, $workText)) {
+        if (! $this->actionCompatible($action, (string) ($intent['system'] ?? ''), $candidateTitle, $workText)) {
             return false;
         }
 
@@ -89,8 +96,15 @@ final class NormativeSemanticCompatibilityService
             'planning',
             'concreting',
             'cable_installation',
+            'grounding_installation',
             'pipe_layout',
             'window_installation',
+            'door_installation',
+            'cable_tray_installation',
+            'sanitary_fixture_installation',
+            'sewer_revision_installation',
+            'sewer_riser_installation',
+            'sewer_outlet_installation',
         ], true);
     }
 
@@ -133,19 +147,61 @@ final class NormativeSemanticCompatibilityService
             'painting' => ['окраск', 'покраск'],
             'tiling' => ['плитк', 'облицов'],
             'floor_covering' => ['покрыт', 'пол', 'линолеум', 'ламинат', 'паркет'],
+            'floor_preparation' => ['подготов', 'стяжк', 'подстилающ', 'основани пола'],
             'ceiling_finishing' => ['потол', 'подвесн'],
             'baseboard_installation' => ['плинтус', 'галтел'],
             'cable_installation' => ['кабел', 'электропровод', 'проводк', 'лотк'],
+            'cable_tray_installation' => ['лотк'],
+            'grounding_installation' => ['заземл', 'заземляющ', 'электрод'],
             'socket_installation' => ['розет', 'выключател'],
             'pipe_layout' => ['труб', 'трубопровод'],
             'heating_equipment' => ['отопл', 'радиатор', 'котел', 'конвектор', 'теплов'],
             'ventilation_installation' => ['вентиляц', 'воздуховод'],
             'window_installation' => ['окон', 'окн', 'двер', 'ворот'],
+            'door_installation' => ['двер'],
+            'sanitary_fixture_installation' => ['санитарно-техническ', 'сантехническ', 'сантехприбор', 'умывальник', 'раковин', 'мойк', 'унитаз', 'ванн', 'душев', 'смесител'],
+            'sewer_revision_installation' => ['ревиз'],
+            'sewer_riser_installation' => ['стояк'],
+            'sewer_outlet_installation' => ['выпуск'],
         ][$action] ?? [];
     }
 
-    private function actionCompatible(string $action, string $candidateTitle, string $workText): bool
+    private function actionCompatible(string $action, string $system, string $candidateTitle, string $workText): bool
     {
+        if ($action === 'cable_tray_installation') {
+            $candidateInstallsTray = $this->containsAny($candidateTitle, ['монтаж', 'установк', 'устройств'])
+                && $this->containsAny($candidateTitle, ['лотк']);
+            $candidateLaysCable = $this->containsAny($candidateTitle, ['прокладк', 'укладк'])
+                && $this->containsAny($candidateTitle, ['кабел']);
+
+            return $this->containsAny($candidateTitle, ['лотк'])
+                && ! ($candidateLaysCable && ! $candidateInstallsTray);
+        }
+
+        if ($action === 'sanitary_fixture_installation') {
+            return ! $this->containsAny($candidateTitle, ['манометр', 'термометр', 'датчик давлен']);
+        }
+
+        if ($action === 'door_installation') {
+            return ! ($this->containsAny($candidateTitle, ['шкафн', 'шкафов', 'шкафа'])
+                && ! $this->containsAny($workText, ['шкафн', 'шкафов', 'шкафа']));
+        }
+
+        if (in_array($action, [
+            'sewer_revision_installation',
+            'sewer_riser_installation',
+            'sewer_outlet_installation',
+        ], true) && $this->containsAny($candidateTitle, ['врезк', 'подключен к действующ'])) {
+            return false;
+        }
+
+        if ($action === 'pipe_layout'
+            && trim($system) === 'sewerage'
+            && $this->containsAny($candidateTitle, ['транше'])
+            && ! $this->containsAny($workText, ['транше', 'наружн'])) {
+            return false;
+        }
+
         if ($action === 'soil_haulage') {
             return $this->containsAny($candidateTitle, ['вывоз', 'перевоз', 'транспортир']);
         }
@@ -234,6 +290,110 @@ final class NormativeSemanticCompatibilityService
         }
 
         return ! ($workHasDoor && ! $workHasWindow && $candidateHasWindow && ! $candidateHasDoor);
+    }
+
+    private function targetCompatible(string $candidateTitle, string $workText): bool
+    {
+        $candidateHasGlassBlocks = $this->containsAny($candidateTitle, ['стеклоблок'])
+            || ($this->containsAny($candidateTitle, ['стеклянн']) && $this->containsAny($candidateTitle, ['блок']));
+        $workHasGlassBlocks = $this->containsAny($workText, ['стеклоблок'])
+            || ($this->containsAny($workText, ['стеклянн']) && $this->containsAny($workText, ['блок']));
+        if ($candidateHasGlassBlocks && ! $workHasGlassBlocks) {
+            return false;
+        }
+
+        $candidateHasFacadeAccessories = ($this->containsAny($candidateTitle, ['стальн', 'металлическ'])
+                && $this->containsAny($candidateTitle, ['обдел']))
+            || ($this->containsAny($candidateTitle, ['водосточн']) && $this->containsAny($candidateTitle, ['труб']));
+        $workHasFacadeAccessories = ($this->containsAny($workText, ['стальн', 'металлическ'])
+                && $this->containsAny($workText, ['обдел']))
+            || ($this->containsAny($workText, ['водосточн']) && $this->containsAny($workText, ['труб']));
+        if ($candidateHasFacadeAccessories && ! $workHasFacadeAccessories) {
+            return false;
+        }
+
+        $workHasStairPlatform = $this->containsAny($workText, ['лестничн']) && $this->containsAny($workText, ['площад']);
+        $candidateHasStairPlatform = ($this->containsAny($candidateTitle, ['лестничн'])
+                && $this->containsAny($candidateTitle, ['площад']))
+            || ($this->containsAny($candidateTitle, ['площад']) && $this->containsAny($candidateTitle, ['лестниц']));
+        if ($workHasStairPlatform && ! $candidateHasStairPlatform) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function separateWorkCompatible(string $candidateText, string $workText, array $intent): bool
+    {
+        $workIsRoofCovering = $this->containsAny($workText, ['кров']) && $this->containsAny($workText, ['покрыт']);
+        $workIsRafterInstallation = $this->containsAny($workText, ['стропил']);
+        $candidateHasRoofCovering = $this->containsAny($candidateText, ['кров'])
+            && $this->containsAny($candidateText, ['покрыт']);
+        $candidateHasRafters = $this->containsAny($candidateText, ['стропил']);
+
+        if (($workIsRoofCovering && ! $workIsRafterInstallation && $candidateHasRafters)
+            || ($workIsRafterInstallation && ! $workIsRoofCovering && $candidateHasRoofCovering)) {
+            return false;
+        }
+
+        $concepts = $intent['separate_work_concepts'] ?? [];
+        if (! is_array($concepts)) {
+            return true;
+        }
+
+        foreach ($concepts as $concept) {
+            $concept = $this->normalize((string) $concept);
+            if ($concept !== '' && str_contains($candidateText, $concept)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function residentialEngineeringCompatible(string $candidateTitle, string $workText, array $intent): bool
+    {
+        if (! ObjectTypeSignalClassifier::isResidential((string) ($intent['object_type'] ?? ''))
+            || (string) ($intent['action'] ?? '') !== 'pipe_layout') {
+            return true;
+        }
+
+        $candidateDiameter = $this->diameterMillimeters($candidateTitle);
+        if ($candidateDiameter === null) {
+            return true;
+        }
+
+        $workDiameter = $this->diameterMillimeters($workText);
+        if ($workDiameter !== null) {
+            return abs($candidateDiameter - $workDiameter) < 0.001;
+        }
+
+        $system = (string) ($intent['system'] ?? '');
+        if ($system === '') {
+            $system = match (true) {
+                $this->containsAny($workText, ['водоснаб', 'хвс', 'гвс']) => 'water_supply',
+                $this->containsAny($workText, ['отоплен', 'теплоснаб']) => 'heating',
+                $this->containsAny($workText, ['канализац']) => 'sewerage',
+                default => '',
+            };
+        }
+
+        return match ($system) {
+            'water_supply', 'heating' => $candidateDiameter <= 50,
+            'sewerage' => $candidateDiameter <= 110,
+            default => true,
+        };
+    }
+
+    private function diameterMillimeters(string $text): ?float
+    {
+        if (preg_match('/диаметр\p{L}*\s*:?\s*(\d+(?:[.,]\d+)?)\s*мм/u', $text, $matches) !== 1) {
+            return null;
+        }
+
+        return (float) str_replace(',', '.', $matches[1]);
     }
 
     /** @param array<int, string> $constructionMarkers */

@@ -99,6 +99,7 @@ final class WorkPlanCompilerTest extends TestCase
                 'scope' => 'general',
                 'system' => null,
                 'object' => null,
+                'object_type' => 'house',
                 'normative_section' => '11',
                 'normative_sections' => ['11'],
             ]])
@@ -121,7 +122,7 @@ final class WorkPlanCompilerTest extends TestCase
                     'work_intent' => ['preferred_section_prefixes' => ['11']],
                 ]],
             ]],
-        ]]);
+        ]], 'house');
 
         self::assertSame(['status' => 'pinned'], $pin);
     }

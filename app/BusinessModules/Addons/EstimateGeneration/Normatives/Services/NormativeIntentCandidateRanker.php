@@ -13,7 +13,7 @@ final readonly class NormativeIntentCandidateRanker
         private NormativeSemanticCompatibilityService $semanticCompatibility = new NormativeSemanticCompatibilityService,
     ) {}
 
-    /** @param list<object> $candidates @param non-empty-list<array{search_text: string, unit: string, code?: string|null, action?: string|null, scope?: string|null, system?: string|null, object?: string|null, normative_section?: string|null, normative_sections?: list<string>}> $intents @return list<object>|null */
+    /** @param list<object> $candidates @param non-empty-list<array{search_text: string, unit: string, code?: string|null, action?: string|null, scope?: string|null, system?: string|null, object?: string|null, object_type?: string|null, normative_section?: string|null, normative_sections?: list<string>}> $intents @return list<object>|null */
     public function select(array $candidates, array $intents): ?array
     {
         $selected = [];
@@ -40,7 +40,7 @@ final readonly class NormativeIntentCandidateRanker
         return array_values($selected);
     }
 
-    /** @param array{search_text: string, unit: string, code?: string|null, action?: string|null, scope?: string|null, system?: string|null, object?: string|null, normative_section?: string|null, normative_sections?: list<string>} $intent */
+    /** @param array{search_text: string, unit: string, code?: string|null, action?: string|null, scope?: string|null, system?: string|null, object?: string|null, object_type?: string|null, normative_section?: string|null, normative_sections?: list<string>} $intent */
     private function score(object $candidate, array $intent): ?int
     {
         $unit = (string) ($candidate->canonical_unit ?: $candidate->unit);

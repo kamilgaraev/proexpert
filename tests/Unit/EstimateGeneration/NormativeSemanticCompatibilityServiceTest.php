@@ -328,4 +328,190 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
             ['action' => 'cable_installation', 'candidate_title' => 'Прокладка кабеля в трубе'],
         ));
     }
+
+    public function test_specialized_radioactive_storage_norm_is_not_used_for_residential_slab(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Армирование перекрытий хранилищ радиоактивных отходов',
+            'Армирование монолитного перекрытия жилого дома',
+            ['action' => 'reinforcement', 'scope' => 'slabs'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Армирование монолитных перекрытий жилых зданий',
+            'Армирование монолитного перекрытия жилого дома',
+            ['action' => 'reinforcement', 'scope' => 'slabs'],
+        ));
+    }
+
+    public function test_tray_installation_is_not_cable_laying_on_trays(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Прокладка кабеля по установленным лоткам',
+            'Монтаж кабельных лотков',
+            ['action' => 'cable_tray_installation', 'scope' => 'engineering'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Монтаж металлических кабельных лотков',
+            'Монтаж кабельных лотков',
+            ['action' => 'cable_tray_installation', 'scope' => 'engineering'],
+        ));
+    }
+
+    public function test_plumbing_points_are_not_pressure_gauges(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Установка манометров с трехходовым краном',
+            'Монтаж сантехнических точек',
+            ['action' => 'sanitary_fixture_installation', 'scope' => 'engineering'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Установка санитарно-технических приборов: умывальников',
+            'Монтаж сантехнических точек',
+            ['action' => 'sanitary_fixture_installation', 'scope' => 'engineering'],
+        ));
+    }
+
+    public function test_building_doors_are_not_cabinet_doors(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Установка дверных блоков шкафных',
+            'Монтаж дверных блоков дома',
+            ['action' => 'door_installation', 'scope' => 'openings'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Установка дверных блоков в проемы стен',
+            'Монтаж дверных блоков дома',
+            ['action' => 'door_installation', 'scope' => 'openings'],
+        ));
+    }
+
+    public function test_generic_partitions_do_not_assume_glass_blocks(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Кладка перегородок из стеклянных блоков',
+            'Устройство внутренних перегородок',
+            ['action' => 'masonry', 'scope' => 'walls'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Кладка перегородок из стеклянных блоков',
+            'Устройство внутренних перегородок из стеклоблоков',
+            ['action' => 'masonry', 'scope' => 'walls'],
+        ));
+    }
+
+    public function test_generic_facade_finishing_does_not_use_steel_trim_painting(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Окраска стальных обделок фасада и водосточных труб суриком',
+            'Наружная отделка фасада',
+            ['action' => 'general_work', 'scope' => 'facade'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Окраска стальных обделок фасада и водосточных труб суриком',
+            'Окраска стальных обделок фасада и водосточных труб',
+            ['action' => 'painting', 'scope' => 'facade'],
+        ));
+    }
+
+    public function test_stair_platform_does_not_use_march_only_norm(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Устройство опалубки лестничных маршей',
+            'Устройство лестничных площадок',
+            ['action' => 'general_work', 'scope' => 'stairs'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Устройство лестничных площадок',
+            'Устройство лестничных площадок',
+            ['action' => 'general_work', 'scope' => 'stairs'],
+        ));
+    }
+
+    public function test_separate_roof_work_rejects_bundle_with_another_planned_operation(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Устройство кровельного покрытия. Состав работ: установка стропил и укладка покрытия',
+            'Устройство кровельного покрытия',
+            [
+                'action' => 'general_work',
+                'scope' => 'roof',
+                'candidate_title' => 'Устройство кровельного покрытия',
+            ],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Устройство кровельного покрытия. Состав работ: укладка покрытия и устройство примыканий',
+            'Устройство кровельного покрытия',
+            [
+                'action' => 'general_work',
+                'scope' => 'roof',
+                'candidate_title' => 'Устройство кровельного покрытия',
+            ],
+        ));
+    }
+
+    #[DataProvider('sewerComponentCompatibilityProvider')]
+    public function test_sewer_components_do_not_use_network_tie_in_norm(
+        string $action,
+        string $work,
+        string $relevantCandidate,
+    ): void {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Врезка в действующую сеть канализации диаметром 50 мм',
+            $work,
+            ['action' => $action, 'scope' => 'engineering', 'system' => 'sewerage'],
+        ));
+        self::assertTrue($service->isCompatible(
+            $relevantCandidate,
+            $work,
+            ['action' => $action, 'scope' => 'engineering', 'system' => 'sewerage'],
+        ));
+    }
+
+    public static function sewerComponentCompatibilityProvider(): array
+    {
+        return [
+            ['sewer_revision_installation', 'Монтаж канализационных ревизий', 'Установка ревизий на внутренних канализационных трубопроводах'],
+            ['sewer_riser_installation', 'Монтаж канализационных стояков', 'Прокладка стояков внутренней канализации'],
+            ['sewer_outlet_installation', 'Устройство выпусков канализации', 'Устройство выпусков внутренней канализации'],
+        ];
+    }
+
+    public function test_internal_sewer_pipe_does_not_use_trench_norm(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Прокладка чугунных канализационных трубопроводов в траншеях',
+            'Прокладка труб внутренней канализации',
+            ['action' => 'pipe_layout', 'scope' => 'engineering', 'system' => 'sewerage'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Прокладка чугунных канализационных трубопроводов в траншеях',
+            'Прокладка наружной канализации в траншее',
+            ['action' => 'pipe_layout', 'scope' => 'engineering', 'system' => 'sewerage'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Прокладка трубопроводов внутренней канализации',
+            'Прокладка труб внутренней канализации',
+            ['action' => 'pipe_layout', 'scope' => 'engineering', 'system' => 'sewerage'],
+        ));
+    }
 }

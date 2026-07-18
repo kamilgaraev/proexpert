@@ -261,6 +261,26 @@ final class NormativeHardGateTest extends TestCase
         self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
     }
 
+    public function test_residential_pipe_rejects_industrial_diameter_at_hard_gate(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'water-pipe', 'Прокладка труб водоснабжения', 'm', 'length',
+            '', 'pipe_layout', 'engineering', '16', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'], ['16'],
+        );
+        $candidate = $this->candidate([
+            'name' => 'Прокладка трубопроводов водоснабжения диаметром 200 мм',
+            'canonicalUnit' => 'm', 'unitDimension' => 'length',
+            'material' => null, 'technology' => null, 'structure' => null,
+            'normativeSection' => '16', 'objectType' => null,
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame([], $set->candidates);
+        self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
+    }
+
     public function test_explicitly_requested_normative_code_preserves_user_or_document_decision(): void
     {
         $intent = new WorkIntentData(

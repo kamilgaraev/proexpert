@@ -160,12 +160,16 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                         'name' => 'Длина труб канализации по ведомости',
                         'unit' => 'м',
                         'quantity' => 42,
+                        'source_refs' => [['type' => 'drawing', 'filename' => 'ВК.pdf', 'page_number' => 1]],
+                        'normalized_payload' => ['review_required' => false],
                     ],
                     [
                         'quantity_key' => 'sewerage.outlets',
                         'name' => 'Выпуски канализации по спецификации',
                         'unit' => 'шт',
                         'quantity' => 4,
+                        'source_refs' => [['type' => 'drawing', 'filename' => 'ВК.pdf', 'page_number' => 2]],
+                        'normalized_payload' => ['review_required' => false],
                     ],
                 ],
             ],
@@ -211,6 +215,26 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
 
         self::assertContains('Прокладка труб водоснабжения', array_column($items, 'name'));
         self::assertNotContains('Прокладка труб канализации', array_column($items, 'name'));
+    }
+
+    public function test_sewerage_accessories_are_not_invented_from_floor_area(): void
+    {
+        $localEstimate = $this->localEstimate('sewerage', 'Канализация', 'engineering', 12);
+
+        $items = $this->pricedItems($this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'facts_summary' => ['total_area_m2' => 180],
+                    'scale_validation' => ['confirmed' => true],
+                ],
+            ],
+        ));
+
+        self::assertNotContains('Монтаж канализационных выпусков', array_column($items, 'name'));
+        self::assertNotContains('Монтаж канализационных стояков', array_column($items, 'name'));
+        self::assertNotContains('Монтаж ревизий канализации', array_column($items, 'name'));
     }
 
     public function test_unknown_engineering_package_does_not_fall_back_to_electrical_or_generic_work(): void
