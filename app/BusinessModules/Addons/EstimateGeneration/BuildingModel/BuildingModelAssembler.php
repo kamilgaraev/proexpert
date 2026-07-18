@@ -79,7 +79,7 @@ final class BuildingModelAssembler
             $evidenceIds = array_map(static fn (string $reference): int => $input->evidenceIdsByRef[$reference], $element->evidenceRefs());
             $floorEvidence = [...$floorEvidence, ...$evidenceIds];
             if ($element->type === 'room') {
-                $rooms[] = new RoomData($element->key, null, $confirmed ? $this->metricPolygon($element, $input->scale->metersPerUnit) : null, $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown');
+                $rooms[] = new RoomData($element->key, $element->label, $confirmed ? $this->metricPolygon($element, $input->scale->metersPerUnit) : null, $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown');
             } elseif ($element->type === 'wall') {
                 $walls[] = new WallData(
                     $element->key,

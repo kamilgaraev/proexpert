@@ -424,17 +424,21 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             return null;
         }
         $selectedAbstractRows = collect();
+        $normsById = $norms->keyBy('id');
         foreach ($abstractResourceRows->groupBy('norm_resource_id') as $candidateRows) {
             $candidateRowList = $candidateRows->values()->all();
             $representative = $candidateRowList[0] ?? null;
             if (! is_object($representative)) {
                 continue;
             }
+            $norm = $normsById->get((int) $representative->estimate_norm_id);
             $selection = $this->abstractResourcePriceSelector->select(
                 trim((string) $representative->resource_code),
                 $requested->regionalPriceVersionId,
                 $candidateRowList,
                 $basePriceDatasetIds,
+                is_object($norm) ? (string) $norm->name : '',
+                trim((string) ($representative->resource_name ?? '')),
             );
             if ($selection === null) {
                 continue;
@@ -460,7 +464,6 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->unique()
             ->values()
             ->all();
-        $normsById = $norms->keyBy('id');
         $semanticSearchHints = $unresolvedAbstractDefinitions
             ->map(function (object $definition) use ($normsById): ?array {
                 $norm = $normsById->get((int) $definition->estimate_norm_id);

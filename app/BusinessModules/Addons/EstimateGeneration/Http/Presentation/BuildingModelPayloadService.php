@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use Brick\Math\BigDecimal;
 
 final readonly class BuildingModelPayloadService
@@ -43,7 +44,15 @@ final readonly class BuildingModelPayloadService
             throw new \UnexpectedValueException('Building model content version is invalid.');
         }
         $calculation = $this->calculator->calculate($this->mapper->map($model));
-        $quantities = array_values($calculation->all());
+        $quantitiesByKey = $calculation->all();
+        if (! isset($quantitiesByKey['floor_area'])) {
+            $totalArea = $this->data->totalArea($organizationId, $projectId, $sessionId);
+            $documentArea = $this->documentAreaQuantity($model, $totalArea);
+            if ($documentArea !== null) {
+                $quantitiesByKey[$documentArea->key] = $documentArea;
+            }
+        }
+        $quantities = array_values($quantitiesByKey);
         $total = count($quantities);
         $lastPage = max(1, (int) ceil($total / $perPage));
         $page = min(max(1, $page), $lastPage);
@@ -160,6 +169,58 @@ final readonly class BuildingModelPayloadService
             'review_blockers' => $reviewBlockers,
             'model_version' => $quantity->modelVersion,
         ];
+    }
+
+    /** @param array{amount: string, evidence_id: int, confidence: float, floor_count: int}|null $constraint */
+    private function documentAreaQuantity(NormalizedBuildingModelData $model, ?array $constraint): ?QuantityData
+    {
+        if ($constraint === null || $model->metrics['room_count'] < 1
+            || count($model->floors) !== $constraint['floor_count']
+            || $constraint['evidence_id'] < 1
+            || preg_match('/\A(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\z/', $constraint['amount']) !== 1
+            || (float) $constraint['amount'] <= 0) {
+            return null;
+        }
+        foreach ($model->assumptions as $assumption) {
+            if ($assumption->severity === 'blocking' && $assumption->code !== 'scale_missing') {
+                return null;
+            }
+        }
+        $evidenceId = (string) $constraint['evidence_id'];
+        $identity = hash('sha256', implode('|', [
+            $model->modelVersion,
+            'document.facts.total_floor_area',
+            $constraint['amount'],
+            $evidenceId,
+        ]));
+        $operand = [
+            'role' => 'area',
+            'value' => $constraint['amount'],
+            'unit' => 'm2',
+            'source' => 'evidenced',
+            'evidence_ids' => [$evidenceId],
+            'assumptions' => [],
+            'context_id' => 'model:'.$model->modelVersion,
+            'provenance_version' => 'document-total-area:v1',
+        ];
+
+        return new QuantityData(
+            key: 'floor_area',
+            unit: 'm2',
+            amount: $constraint['amount'],
+            formulaKey: 'document.facts.total_floor_area',
+            formulaVersion: '1.0.0',
+            formulaInputs: ['items' => [[
+                'identity' => $identity,
+                'amount' => $constraint['amount'],
+                'evidence_ids' => [$evidenceId],
+                'provenance_versions' => ['document-total-area:v1'],
+                'named_operands' => ['area' => $operand],
+            ]]],
+            source: QuantitySource::Evidenced,
+            evidenceIds: [$evidenceId],
+            modelVersion: $model->modelVersion,
+        );
     }
 
     /** @return array<string, mixed> */

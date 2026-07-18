@@ -50,7 +50,11 @@ final readonly class NormativeResourceRowData
             'regional_child_median:v1',
             'fsbc_base_child_median:v1',
             'fsnb_base_child_median:v1',
+            'regional_child_hard_attributes_median:v1',
+            'fsbc_base_child_hard_attributes_median:v1',
+            'fsnb_base_child_hard_attributes_median:v1',
         ], true)
+            && self::policyMatchesPriceSource($projectResourcePricePolicy, $priceSource)
             && preg_match('/^'.preg_quote($resourceCode, '/').'-\d{4}$/D', $priceResourceCode) === 1;
         $isProjectResourceSelection = $isAbstractResource
             && $projectResourceCandidatesCount !== null
@@ -109,5 +113,15 @@ final readonly class NormativeResourceRowData
         }
 
         return is_string($value) && preg_match('/^[1-9][0-9]*$/D', $value) === 1 ? (int) $value : null;
+    }
+
+    private static function policyMatchesPriceSource(string $policy, ?string $priceSource): bool
+    {
+        return match ($priceSource) {
+            'regional_catalog' => str_starts_with($policy, 'regional_'),
+            'fsbc_base' => str_starts_with($policy, 'fsbc_'),
+            'fsnb_base' => str_starts_with($policy, 'fsnb_'),
+            default => false,
+        };
     }
 }

@@ -35,6 +35,7 @@ final class NormativeSemanticCompatibilityService
             || ! $this->targetCompatible($candidateTitle, $workText)
             || ! $this->specializationCompatible($candidateTitle, $workText, $intent)
             || ! $this->separateWorkCompatible($candidateText, $workText, $intent)
+            || ! $this->objectTypeCompatible($candidateTitle, $workText, $intent)
             || ! $this->residentialEngineeringCompatible($candidateTitle, $workText, $intent)) {
             return false;
         }
@@ -198,8 +199,26 @@ final class NormativeSemanticCompatibilityService
                 && ! ($candidateLaysCable && ! $candidateInstallsTray);
         }
 
+        if ($action === 'cable_installation') {
+            if ($this->containsAny($workText, ['демонтаж', 'разборк', 'снят'])
+                && $this->containsAny($candidateTitle, ['демонтаж', 'разборк', 'снят'])) {
+                return true;
+            }
+
+            return $this->containsAny($candidateTitle, ['кабел', 'электропровод', 'провод'])
+                && $this->containsAny($candidateTitle, ['проклад', 'прокладыв', 'уклад', 'затягив', 'протяж']);
+        }
+
         if ($action === 'sanitary_fixture_installation') {
-            return ! $this->containsAny($candidateTitle, ['манометр', 'термометр', 'датчик давлен']);
+            if ($this->containsAny($candidateTitle, ['манометр', 'термометр', 'датчик давлен', 'люк', 'ревизи'])) {
+                return false;
+            }
+
+            if ($this->containsAny($workText, ['прибор', 'точк'])) {
+                return $this->containsAny($candidateTitle, [
+                    'прибор', 'умывальник', 'раковин', 'мойк', 'унитаз', 'ванн', 'душ', 'смесител',
+                ]);
+            }
         }
 
         if ($action === 'door_installation') {
@@ -372,6 +391,18 @@ final class NormativeSemanticCompatibilityService
             return false;
         }
 
+        if (($intent['scope'] ?? null) === 'roof'
+            && $this->containsAny($candidateTitle, ['козыр', 'навес'])
+            && ! $this->containsAny($workText, ['козыр', 'навес'])) {
+            return false;
+        }
+
+        if (($intent['scope'] ?? null) === 'roof'
+            && $this->containsAny($candidateTitle, ['антиобледен', 'снеготаян', 'электронагрев'])
+            && ! $this->containsAny($workText, ['антиобледен', 'снеготаян', 'электронагрев'])) {
+            return false;
+        }
+
         if (($intent['scope'] ?? null) === 'facade'
             && str_contains($candidateTitle, 'терразит')
             && ! str_contains($workText, 'терразит')) {
@@ -462,7 +493,7 @@ final class NormativeSemanticCompatibilityService
             || ($this->containsAny($candidateTitle, ['водосточн']) && $this->containsAny($candidateTitle, ['труб']));
         $workHasFacadeAccessories = ($this->containsAny($workText, ['стальн', 'металлическ'])
                 && $this->containsAny($workText, ['обдел']))
-            || ($this->containsAny($workText, ['водосточн']) && $this->containsAny($workText, ['труб']));
+            || $this->containsAny($workText, ['водосточн', 'водосток']);
         if ($candidateHasFacadeAccessories && ! $workHasFacadeAccessories) {
             return false;
         }
@@ -492,12 +523,42 @@ final class NormativeSemanticCompatibilityService
     }
 
     /** @param array<string, mixed> $intent */
+    private function objectTypeCompatible(string $candidateTitle, string $workText, array $intent): bool
+    {
+        if (! ObjectTypeSignalClassifier::isResidential((string) ($intent['object_type'] ?? ''))) {
+            return true;
+        }
+
+        $nonResidentialMarkers = [
+            'промышленн', 'производственн', 'сельскохозяйственн', 'складск', 'складов',
+        ];
+
+        return ! ($this->containsAny($candidateTitle, $nonResidentialMarkers)
+            && ! $this->containsAny($workText, $nonResidentialMarkers));
+    }
+
+    /** @param array<string, mixed> $intent */
     private function separateWorkCompatible(string $candidateText, string $workText, array $intent): bool
     {
-        $workIsRoofCovering = $this->containsAny($workText, ['кров']) && $this->containsAny($workText, ['покрыт']);
         $workIsRafterInstallation = $this->containsAny($workText, ['стропил']);
-        $candidateHasRoofCovering = $this->containsAny($candidateText, ['кров'])
-            && $this->containsAny($candidateText, ['покрыт']);
+        $workMentionsRoof = $this->containsAny($workText, ['кровл', 'кровел']);
+        $workIsExplicitRoofSubsystem = $this->containsAny($workText, [
+            'утепл', 'теплоизоляц', 'стяжк', 'основан', 'пароизоляц', 'гидроизоляц',
+            'водосточ', 'водосток', 'снегозадерж', 'антиобледен', 'огражден',
+        ]);
+        $workIsRoofCovering = $workMentionsRoof
+            && ! $workIsRafterInstallation
+            && ! $workIsExplicitRoofSubsystem
+            && ($this->containsAny($workText, ['покрыт', 'кровельн ков'])
+                || $this->containsAny($workText, ['монтаж кров', 'устройство кров']));
+        $candidateMentionsRoof = $this->containsAny($candidateText, ['кровл', 'кровел']);
+        $candidateHasRoofCovering = $candidateMentionsRoof
+            && ($this->containsAny($candidateText, ['покрыт'])
+                || ($this->containsAny($candidateText, ['устройство кров', 'монтаж кров'])
+                    && $this->containsAny($candidateText, [
+                        'металлочереп', 'черепиц', 'профнаст', 'профилированн', 'кровельн сталь',
+                        'листов', 'рулонн', 'мембран', 'шифер',
+                    ])));
         $candidateHasRafters = $this->containsAny($candidateText, ['стропил']);
 
         if ($workIsRoofCovering && ! $candidateHasRoofCovering) {

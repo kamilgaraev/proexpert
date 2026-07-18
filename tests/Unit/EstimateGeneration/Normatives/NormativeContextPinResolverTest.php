@@ -122,6 +122,143 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
+    public function abstract_resource_selector_filters_exact_group_children_by_explicit_hard_attributes(): void
+    {
+        $selection = (new AbstractNormativeResourcePriceSelector)->select(
+            '24.3.02.05',
+            11,
+            [
+                (object) [
+                    'price_id' => 1,
+                    'price_resource_code' => '24.3.02.05-0001',
+                    'price_resource_name' => 'Труба напорная многослойная из полипропилена наружным диаметром 63 мм',
+                    'base_price' => '100',
+                    'regional_price_version_id' => 11,
+                ],
+                (object) [
+                    'price_id' => 2,
+                    'price_resource_code' => '24.3.02.05-0002',
+                    'price_resource_name' => 'Труба напорная многослойная из полипропилена наружным диаметром 20 мм',
+                    'base_price' => '700',
+                    'regional_price_version_id' => 11,
+                ],
+                (object) [
+                    'price_id' => 3,
+                    'price_resource_code' => '24.3.02.05-0003',
+                    'price_resource_name' => 'Труба стальная наружным диаметром 20 мм',
+                    'base_price' => '200',
+                    'regional_price_version_id' => 11,
+                ],
+                (object) [
+                    'price_id' => 4,
+                    'price_resource_code' => '24.3.02.05-0004',
+                    'price_resource_name' => 'Труба канализационная из полипропилена наружным диаметром 20 мм',
+                    'base_price' => '50',
+                    'regional_price_version_id' => 11,
+                ],
+                (object) [
+                    'price_id' => 5,
+                    'price_resource_code' => '24.3.02.05-0005',
+                    'price_resource_name' => 'Труба из полипропилена для водоснабжения и пожаротушения диаметром 20 мм',
+                    'base_price' => '300',
+                    'regional_price_version_id' => 11,
+                ],
+            ],
+            [],
+            'Прокладка трубопроводов водоснабжения из многослойных полипропиленовых труб диаметром 20 мм',
+            'Трубы напорные многослойные из полипропилена номинальным наружным диаметром 20 мм',
+        );
+
+        self::assertNotNull($selection);
+        self::assertSame(2, $selection['row']->price_id);
+        self::assertSame(1, $selection['candidates_count']);
+        self::assertSame('regional_child_hard_attributes_median:v1', $selection['policy']);
+    }
+
+    #[Test]
+    public function abstract_resource_selector_fails_closed_when_explicit_hard_attributes_have_no_match(): void
+    {
+        self::assertNull((new AbstractNormativeResourcePriceSelector)->select(
+            '24.3.02.05',
+            11,
+            [(object) [
+                'price_id' => 1,
+                'price_resource_code' => '24.3.02.05-0001',
+                'price_resource_name' => 'Труба напорная многослойная из полипропилена наружным диаметром 63 мм',
+                'base_price' => '100',
+                'regional_price_version_id' => 11,
+            ]],
+            [],
+            'Прокладка трубопроводов водоснабжения из полипропиленовых труб диаметром 20 мм',
+            'Трубы напорные многослойные из полипропилена диаметром 20 мм',
+        ));
+    }
+
+    #[Test]
+    public function abstract_resource_selector_recognizes_nominal_bore_as_a_hard_diameter(): void
+    {
+        $selection = (new AbstractNormativeResourcePriceSelector)->select(
+            '23.3.06.01',
+            11,
+            [
+                (object) [
+                    'price_id' => 1,
+                    'price_resource_code' => '23.3.06.01-0001',
+                    'price_resource_name' => 'Труба стальная оцинкованная с условным проходом 20 мм',
+                    'base_price' => '100',
+                    'regional_price_version_id' => 11,
+                ],
+                (object) [
+                    'price_id' => 2,
+                    'price_resource_code' => '23.3.06.01-0002',
+                    'price_resource_name' => 'Труба стальная оцинкованная с условным проходом 15 мм',
+                    'base_price' => '200',
+                    'regional_price_version_id' => 11,
+                ],
+            ],
+            [],
+            'Прокладка водопровода из оцинкованных стальных труб с условным проходом 15 мм',
+            'Трубы стальные оцинкованные',
+        );
+
+        self::assertSame(2, $selection['row']->price_id ?? null);
+        self::assertSame(1, $selection['candidates_count'] ?? null);
+    }
+
+    #[Test]
+    public function abstract_resource_selector_fails_closed_for_conflicting_target_or_candidate_diameters(): void
+    {
+        $candidate = (object) [
+            'price_id' => 1,
+            'price_resource_code' => '23.3.06.01-0001',
+            'price_resource_name' => 'Труба стальная оцинкованная диаметром 15 мм',
+            'base_price' => '100',
+            'regional_price_version_id' => 11,
+        ];
+        $selector = new AbstractNormativeResourcePriceSelector;
+
+        self::assertNull($selector->select(
+            '23.3.06.01',
+            11,
+            [$candidate],
+            [],
+            'Прокладка водопровода из стальных труб диаметром 15 мм',
+            'Трубы стальные диаметром 20 мм',
+        ));
+        self::assertNull($selector->select(
+            '23.3.06.01',
+            11,
+            [(object) [
+                ...((array) $candidate),
+                'price_resource_name' => 'Труба стальная диаметром 15 мм с условным проходом 20 мм',
+            ]],
+            [],
+            'Прокладка водопровода из стальных труб диаметром 15 мм',
+            'Трубы стальные',
+        ));
+    }
+
+    #[Test]
     public function abstract_resource_selector_uses_explicit_base_catalog_fallback_when_regional_children_are_absent(): void
     {
         $selection = (new AbstractNormativeResourcePriceSelector)->select('04.1.02.05', 11, [
@@ -739,6 +876,66 @@ final class NormativeContextPinResolverTest extends TestCase
             'policy' => 'regional_child_median:v1',
             'candidates_count' => 7,
         ], $mapped->resource['project_resource_selection']);
+    }
+
+    #[Test]
+    public function abstract_resource_row_preserves_exact_group_hard_attribute_policy(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101,
+            'norm_resource_id' => 7001,
+            'construction_resource_id' => null,
+            'price_construction_resource_id' => 502,
+            'price_id' => 9001,
+            'resource_type' => 'material',
+            'resource_code' => '24.3.02.05',
+            'price_resource_code' => '24.3.02.05-0002',
+            'resource_name' => 'Трубы напорные многослойные из полипропилена диаметром 20 мм',
+            'price_resource_name' => 'Труба напорная многослойная из полипропилена диаметром 20 мм',
+            'unit' => 'м',
+            'price_unit' => 'м',
+            'quantity' => '100.000000',
+            'unit_price' => '145.500000',
+            'regional_price_version_id' => 11,
+            'regional_price_version_key' => 'regional-2026-q2',
+            'price_dataset_source_type' => null,
+            'price_dataset_version' => null,
+            'raw_source_tag' => 'AbstractResource',
+            'project_resource_candidates_count' => 1,
+            'project_resource_price_policy' => 'regional_child_hard_attributes_median:v1',
+        ]);
+
+        self::assertSame(
+            'regional_child_hard_attributes_median:v1',
+            $mapped->resource['project_resource_selection']['policy'],
+        );
+    }
+
+    #[Test]
+    public function abstract_resource_row_rejects_policy_that_does_not_match_price_source(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('normative_resource_price_relation_invalid');
+
+        NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101,
+            'norm_resource_id' => 7001,
+            'price_id' => 9001,
+            'resource_type' => 'material',
+            'resource_code' => '24.3.02.05',
+            'price_resource_code' => '24.3.02.05-0002',
+            'resource_name' => 'Трубы из полипропилена диаметром 20 мм',
+            'price_resource_name' => 'Труба из полипропилена диаметром 20 мм',
+            'unit' => 'м',
+            'quantity' => '100.000000',
+            'unit_price' => '145.500000',
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsbc',
+            'price_dataset_version' => 'fsbc-2026',
+            'raw_source_tag' => 'AbstractResource',
+            'project_resource_candidates_count' => 1,
+            'project_resource_price_policy' => 'regional_child_hard_attributes_median:v1',
+        ]);
     }
 
     #[Test]

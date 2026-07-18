@@ -295,6 +295,7 @@ final readonly class GeometryBuildingModelInputMapper
                     $item->key, $item->type, $geometry, 'vision', $item->evidenceRef,
                     $locator['source_version'], $locator['page_number'], $locator['coordinate_space'],
                     'vision-contract:v1', $vision->modelVersion, $item->confidence, [], $locator['coordinate_space'],
+                    $item->label,
                 );
             } catch (InvalidArgumentException) {
                 $issues[] = ['code' => 'geometry_element_unsupported', 'severity' => 'blocking', 'element_key' => $item->key, 'evidence_refs' => [$item->evidenceRef]];
@@ -410,6 +411,7 @@ final readonly class GeometryBuildingModelInputMapper
                 $element->confidence,
                 $element->provenance,
                 $element->coordinateTransform,
+                $element->label,
             );
         }, $elements);
     }

@@ -17,4 +17,7 @@ interface BuildingModelReadDataSource
 
     /** @param list<int> $documentIds @return array<int, string> */
     public function documentNames(int $organizationId, int $projectId, int $sessionId, array $documentIds): array;
+
+    /** @return array{amount: string, evidence_id: int, confidence: float, floor_count: int}|null */
+    public function totalArea(int $organizationId, int $projectId, int $sessionId): ?array;
 }
