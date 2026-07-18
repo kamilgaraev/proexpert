@@ -359,12 +359,33 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 })
                 ->whereRaw('diagnostic_unit_prices.unit IS NOT DISTINCT FROM diagnostic_resources.unit');
         });
+        $normalizedUnitMatched = (clone $codeMatched)->whereExists(function ($prices) use ($requested, $basePriceDatasetId): void {
+            $prices->selectRaw('1')
+                ->from('estimate_resource_prices as diagnostic_normalized_prices')
+                ->whereColumn('diagnostic_normalized_prices.resource_code', 'diagnostic_resources.resource_code')
+                ->where('diagnostic_normalized_prices.base_price', '>', 0)
+                ->where(function ($context) use ($requested, $basePriceDatasetId): void {
+                    $context->where(function ($regional) use ($requested): void {
+                        $regional->where('diagnostic_normalized_prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                            ->where('diagnostic_normalized_prices.region_id', $requested->regionId)
+                            ->where('diagnostic_normalized_prices.price_zone_id', $requested->priceZoneId)
+                            ->where('diagnostic_normalized_prices.period_id', $requested->periodId);
+                    })->orWhere(function ($base) use ($basePriceDatasetId): void {
+                        $base->where('diagnostic_normalized_prices.dataset_version_id', $basePriceDatasetId)
+                            ->whereNull('diagnostic_normalized_prices.regional_price_version_id');
+                    });
+                })
+                ->whereRaw(
+                    "LOWER(REGEXP_REPLACE(COALESCE(diagnostic_normalized_prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(diagnostic_resources.unit, ''), '[[:space:].,-]+', '', 'g'))"
+                );
+        });
 
         return [
             'base_price_dataset_id' => $basePriceDatasetId,
             'eligible_resource_rows_count' => (clone $eligible)->count(),
             'code_matched_resource_rows_count' => $codeMatched->count(),
             'exact_unit_matched_resource_rows_count' => $unitMatched->count(),
+            'normalized_unit_matched_resource_rows_count' => $normalizedUnitMatched->count(),
         ];
     }
 }
