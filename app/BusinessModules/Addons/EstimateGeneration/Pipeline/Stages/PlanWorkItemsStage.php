@@ -50,12 +50,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             $typed = QuantityData::fromArray($quantity)->toArray();
             $quantities[$typed['key']] = $typed;
         }
-        if (! isset($quantities['floor_area'])) {
-            $floorArea = $this->analysisFloorArea->make($analysis);
-            if ($floorArea !== null) {
-                $quantities[$floorArea->key] = $floorArea->toArray();
-            }
-        }
+        $quantities = $this->withPreferredAnalysisFloorArea($quantities, $analysis);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
@@ -137,6 +132,25 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
 
         return $workItem;
+    }
+
+    private function withPreferredAnalysisFloorArea(
+        array $quantities,
+        array $analysis,
+        ?AnalysisFloorAreaQuantityFactory $factory = null,
+    ): array {
+        $candidate = ($factory ?? $this->analysisFloorArea)->make($analysis);
+        if ($candidate === null) {
+            return $quantities;
+        }
+        $existing = isset($quantities[$candidate->key]) && is_array($quantities[$candidate->key])
+            ? QuantityData::fromArray($quantities[$candidate->key])
+            : null;
+        if ($existing === null || ($existing->reviewBlockers !== [] && $candidate->reviewBlockers === [])) {
+            $quantities[$candidate->key] = $candidate->toArray();
+        }
+
+        return $quantities;
     }
 
     private function quantityEvidenceSummary(array $localEstimates): array
