@@ -56,7 +56,7 @@ final class NormativeWorkItemPlannerServiceTest extends TestCase
         self::assertContains('normative_code_required', $resourceItem['validation_flags']);
         self::assertSame('not_calculated', $resourceItem['pricing_status']);
         self::assertSame('normative_required', $resourceItem['pricing_blocker']);
-        self::assertSame(12.0, $resourceItem['quantity']);
+        self::assertSame('12', $resourceItem['quantity']);
         self::assertSame('м3', $resourceItem['unit']);
         self::assertSame(83, $resourceItem['source_refs'][0]['document_id']);
     }

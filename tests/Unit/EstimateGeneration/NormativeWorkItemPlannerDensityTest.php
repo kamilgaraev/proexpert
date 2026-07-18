@@ -270,6 +270,48 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertNotContains('Воздухораспределители склада', $names);
     }
 
+    public function test_house_plan_excludes_office_and_warehouse_only_work_definitions(): void
+    {
+        $analysis = [
+            'object' => [
+                'object_type' => 'house_with_garage',
+                'building_type' => 'custom',
+                'description' => 'Индивидуальный жилой дом площадью 180 м2.',
+            ],
+            'document_context' => [
+                'context_text' => 'В служебном шаблоне упомянуты офис, склад и промышленный пол.',
+                'facts_summary' => [
+                    'total_area_m2' => 180,
+                ],
+            ],
+        ];
+        $planner = $this->planner();
+        $names = [];
+
+        foreach ([
+            'walls' => 'walls',
+            'slabs' => 'slabs',
+            'openings' => 'openings',
+            'heating' => 'heating',
+        ] as $packageKey => $scopeType) {
+            $localEstimate = $this->localEstimate($packageKey, $packageKey, $scopeType, 12);
+            $names = [
+                ...$names,
+                ...array_column($planner->build($localEstimate, $localEstimate['sections'][0], $analysis), 'name'),
+            ];
+        }
+
+        self::assertContains('Устройство внутренних перегородок', $names);
+        self::assertContains('Устройство плиты пола', $names);
+        self::assertContains('Монтаж дверных блоков', $names);
+        self::assertNotContains('Офисные перегородки', $names);
+        self::assertNotContains('Топпинг промышленного пола', $names);
+        self::assertNotContains('Деформационные швы пола', $names);
+        self::assertNotContains('Монтаж ворот', $names);
+        self::assertNotContains('Погрузочные узлы', $names);
+        self::assertNotContains('Воздушно-тепловые завесы', $names);
+    }
+
     public function test_unknown_custom_scope_does_not_create_generic_complex_work(): void
     {
         $localEstimate = $this->localEstimate('local-custom', 'Основные строительные работы', 'custom', 12);
