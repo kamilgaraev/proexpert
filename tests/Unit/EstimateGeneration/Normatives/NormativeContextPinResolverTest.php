@@ -200,6 +200,10 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('->whereNotExists(function ($validPrice) use ($requested, $basePriceDatasetIds)', $source);
         self::assertStringContainsString("->where('required_resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('required_resources.resource_type', '<>', 'summary')", $source);
+        self::assertStringContainsString("required_resources.raw_payload->>'source_tag'", $source);
+        self::assertStringContainsString("resources.raw_payload->>'source_tag'", $source);
+        self::assertStringContainsString("raw_payload->>'source_tag'", $source);
+        self::assertStringContainsString('unpriced_abstract_resources', $source);
         self::assertStringContainsString('->whereExists(function ($positiveQuantity)', $source);
         self::assertStringContainsString("->where('positive_resources.quantity', '>', 0)", $source);
         self::assertStringContainsString('->whereNotExists(function ($negativeQuantity)', $source);

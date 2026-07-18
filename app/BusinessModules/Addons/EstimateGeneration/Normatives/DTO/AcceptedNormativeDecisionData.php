@@ -31,6 +31,7 @@ final readonly class AcceptedNormativeDecisionData
         public array $matchReasons,
         public array $warnings,
         public array $evidenceRefs,
+        public array $unpricedAbstractResources,
     ) {}
 
     public static function fromWorkflowResult(NormativeWorkflowResultData $result, array $catalogCandidate): self
@@ -43,6 +44,12 @@ final readonly class AcceptedNormativeDecisionData
                 break;
             }
         }
+        $retrievalMetadata = is_array($catalogCandidate['retrieval_metadata'] ?? null)
+            ? $catalogCandidate['retrieval_metadata']
+            : [];
+        $unpricedAbstractResources = self::abstractResources(
+            $retrievalMetadata['unpriced_abstract_resources'] ?? []
+        );
         $catalogIdentity = $catalogCandidate;
         unset($catalogIdentity['retrieval_metadata']);
         if ($selected === null || ! self::exactKeys($catalogIdentity, self::CATALOG_KEYS)
@@ -91,6 +98,7 @@ final readonly class AcceptedNormativeDecisionData
             $result->rerankResult?->confidence ?? min(1.0, max(0.0, $selected->semanticScore ?? $selected->lexicalScore)),
             $result->rerankResult?->explanationCodes ?? ['lexical_match'], [],
             array_values(array_unique([...$selected->sourceEvidence, ...($result->rerankResult?->evidenceRefs ?? [])])),
+            $unpricedAbstractResources,
         );
     }
 
@@ -112,7 +120,34 @@ final readonly class AcceptedNormativeDecisionData
             self::strings($selected['work_composition'] ?? []), $selected['resources'],
             (float) ($selected['score'] ?? 0), (float) ($decision['confidence'] ?? $selected['confidence'] ?? 0),
             self::strings($selected['match_reasons'] ?? []), self::strings($decision['warnings'] ?? []), [],
+            self::abstractResources($selected['unpriced_abstract_resources'] ?? []),
         );
+    }
+
+    private static function abstractResources(mixed $value): array
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            throw new InvalidArgumentException('accepted_normative_abstract_resources_invalid');
+        }
+
+        return array_map(static function (mixed $resource): array {
+            if (! is_array($resource)
+                || ! is_string($resource['resource_code'] ?? null)
+                || ! is_string($resource['name'] ?? null)
+                || ! is_string($resource['unit'] ?? null)
+                || ! is_numeric($resource['quantity'] ?? null)
+                || ($resource['reason'] ?? null) !== 'project_resource_selection_required') {
+                throw new InvalidArgumentException('accepted_normative_abstract_resources_invalid');
+            }
+
+            return [
+                'resource_code' => $resource['resource_code'],
+                'name' => $resource['name'],
+                'unit' => $resource['unit'],
+                'quantity' => (float) $resource['quantity'],
+                'reason' => 'project_resource_selection_required',
+            ];
+        }, $value);
     }
 
     private static function resourceCount(array $resources): int

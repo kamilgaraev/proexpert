@@ -33,6 +33,7 @@ final class NormativeSemanticCompatibilityService
         if (! $this->additiveCompatible($candidateTitle, $workText)
             || ! $this->openingObjectCompatible($candidateTitle, $workText)
             || ! $this->targetCompatible($candidateTitle, $workText)
+            || ! $this->specializationCompatible($candidateTitle, $workText, $intent)
             || ! $this->separateWorkCompatible($candidateText, $workText, $intent)
             || ! $this->residentialEngineeringCompatible($candidateTitle, $workText, $intent)) {
             return false;
@@ -193,7 +194,7 @@ final class NormativeSemanticCompatibilityService
             $candidateLaysCable = $this->containsAny($candidateTitle, ['прокладк', 'укладк'])
                 && $this->containsAny($candidateTitle, ['кабел']);
 
-            return $this->containsAny($candidateTitle, ['лотк'])
+            return $candidateInstallsTray
                 && ! ($candidateLaysCable && ! $candidateInstallsTray);
         }
 
@@ -235,9 +236,20 @@ final class NormativeSemanticCompatibilityService
             return false;
         }
 
+        if ($action === 'pipe_layout'
+            && ! $this->containsAny($candidateTitle, ['прокладк', 'монтаж', 'установк', 'устройств трубопровод', 'укладк труб'])) {
+            return false;
+        }
+
         if ($action === 'grounding_installation'
             && $this->containsAny($candidateTitle, ['шина заземлен'])
             && ! $this->containsAny($workText, ['шина заземлен'])) {
+            return false;
+        }
+
+        if ($action === 'grounding_installation'
+            && $this->containsAny($candidateTitle, ['шпал', 'железнодорож'])
+            && ! $this->containsAny($workText, ['шпал', 'железнодорож'])) {
             return false;
         }
 
@@ -260,8 +272,8 @@ final class NormativeSemanticCompatibilityService
         }
 
         if ($action === 'floor_covering'
-            && $this->containsAny($candidateTitle, ['полимерцемент'])
-            && ! $this->containsAny($workText, ['полимерцемент'])) {
+            && $this->containsAny($candidateTitle, ['полимерцемент', 'поливинилацетат', 'цементобетон'])
+            && ! $this->containsAny($workText, ['полимерцемент', 'поливинилацетат', 'цементобетон'])) {
             return false;
         }
 
@@ -277,8 +289,16 @@ final class NormativeSemanticCompatibilityService
             return false;
         }
 
+        if ($action === 'painting'
+            && $this->containsAny($candidateTitle, ['шпатлев', 'шпаклев'])
+            && ! $this->containsAny($workText, ['шпатлев', 'шпаклев'])) {
+            return false;
+        }
+
         if ($action === 'soil_haulage') {
             return $this->containsAny($candidateTitle, ['вывоз', 'перевоз', 'транспортир'])
+                && ! ($this->containsAny($candidateTitle, ['землесосн', 'плавуч', 'станци перекач'])
+                    && ! $this->containsAny($workText, ['землесосн', 'плавуч', 'станци перекач']))
                 && ! ($this->containsAny($candidateTitle, ['разработк', 'выемк'])
                     && ! $this->containsAny($workText, ['разработк', 'выемк']));
         }
@@ -295,6 +315,11 @@ final class NormativeSemanticCompatibilityService
         if ($action === 'excavation') {
             if ($this->containsAny($candidateTitle, ['вручную', 'ручн'])
                 && ! $this->containsAny($workText, ['вручную', 'ручн'])) {
+                return false;
+            }
+
+            if ($this->containsAny($candidateTitle, ['вечномерзл', 'мерзл', 'отбойными молот'])
+                && ! $this->containsAny($workText, ['вечномерзл', 'мерзл', 'отбойными молот'])) {
                 return false;
             }
 
@@ -315,6 +340,24 @@ final class NormativeSemanticCompatibilityService
                 && ! $this->containsAny($candidateTitle, ['основан', 'площад', 'дно котлован', 'дно транше'])) {
                 return false;
             }
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function specializationCompatible(string $candidateTitle, string $workText, array $intent): bool
+    {
+        if (($intent['scope'] ?? null) === 'roof'
+            && str_contains($candidateTitle, 'мастик')
+            && ! str_contains($workText, 'мастик')) {
+            return false;
+        }
+
+        if (($intent['scope'] ?? null) === 'facade'
+            && str_contains($candidateTitle, 'терразит')
+            && ! str_contains($workText, 'терразит')) {
+            return false;
         }
 
         return true;
