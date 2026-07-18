@@ -83,6 +83,13 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
         self::assertStringContainsString('quantity>0', $source);
         self::assertStringContainsString('expected_price_resource_count_contract_changed', $source);
         self::assertStringContainsString("pg_get_functiondef('public.eg_expected_package_item_price(bigint)'::regprocedure)", $source);
+        self::assertStringContainsString('JOIN public.estimate_norm_resources counted_resources', $source);
+        self::assertStringContainsString('counted_resources.quantity > 0', $source);
+
+        $compatibility = (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000200_keep_zero_resource_price_inputs_compatible.php');
+        self::assertStringContainsString('counted_resources.quantity > 0', $compatibility);
+        self::assertStringContainsString('preg_match($positiveCountPattern, $definition)', $compatibility);
+        self::assertStringNotContainsString("replaceExpectedResourceCount('')", $source);
     }
 
     private function source(): string
