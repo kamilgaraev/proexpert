@@ -30,6 +30,28 @@ final class WorkItemQuantityMapperTest extends TestCase
     }
 
     #[Test]
+    public function wall_finishing_uses_residential_wall_area_factor_when_wall_geometry_is_missing(): void
+    {
+        $mapper = new WorkItemQuantityMapper;
+        $quantities = ['floor_area' => $this->quantity('floor_area', 'm2', '180.000000')];
+
+        self::assertSame('540.000000', $mapper->map('rough.walls', $quantities)?->amount);
+        self::assertSame('540.000000', $mapper->map('finish.paint', $quantities)?->amount);
+        self::assertSame('180.000000', $mapper->map('walls.internal', $quantities)?->amount);
+    }
+
+    #[Test]
+    public function measured_wall_geometry_takes_precedence_without_residential_fallback_factor(): void
+    {
+        $quantity = (new WorkItemQuantityMapper)->map('finish.paint', [
+            'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
+            'net_wall_area' => $this->quantity('net_wall_area', 'm2', '462.000000'),
+        ]);
+
+        self::assertSame('462.000000', $quantity?->amount);
+    }
+
+    #[Test]
     public function earthworks_volume_is_derived_from_evidenced_floor_area(): void
     {
         $quantity = (new WorkItemQuantityMapper)->map('earth.trench', [

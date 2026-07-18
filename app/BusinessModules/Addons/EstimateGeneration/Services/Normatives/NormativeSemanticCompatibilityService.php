@@ -173,7 +173,7 @@ final class NormativeSemanticCompatibilityService
                 return false;
             }
 
-            return $this->containsAny($candidateTitle, ['установ', 'монтаж', 'заполнен', 'блок']);
+            return $this->containsAny($candidateTitle, ['установ', 'монтаж', 'заполнение ', 'устройство блок']);
         }
 
         if ($action === 'door_installation') {
@@ -182,7 +182,7 @@ final class NormativeSemanticCompatibilityService
                 return false;
             }
 
-            if (! $this->containsAny($candidateTitle, ['установ', 'монтаж', 'заполнен', 'блок'])) {
+            if (! $this->containsAny($candidateTitle, ['установ', 'монтаж', 'заполнение ', 'устройство блок'])) {
                 return false;
             }
         }
@@ -229,8 +229,58 @@ final class NormativeSemanticCompatibilityService
             return false;
         }
 
+        if ($action === 'pipe_layout'
+            && $this->containsAny($candidateTitle, ['испытан', 'изготовлен', 'сборка узлов'])
+            && ! $this->containsAny($workText, ['испытан', 'изготовлен', 'сборка узлов'])) {
+            return false;
+        }
+
+        if ($action === 'grounding_installation'
+            && $this->containsAny($candidateTitle, ['шина заземлен'])
+            && ! $this->containsAny($workText, ['шина заземлен'])) {
+            return false;
+        }
+
+        if ($action === 'floor_preparation'
+            && $this->containsAny($candidateTitle, ['покрыт'])
+            && ! $this->containsAny($candidateTitle, ['стяжк', 'подстилающ', 'подготов', 'основани пола'])) {
+            return false;
+        }
+
+        if ($action === 'reinforcement') {
+            if ($this->containsAny($candidateTitle, ['композитн'])
+                && ! $this->containsAny($workText, ['композитн'])) {
+                return false;
+            }
+
+            if ($this->containsAny($candidateTitle, ['муфтов', 'муфт соединен'])
+                && ! $this->containsAny($workText, ['муфтов', 'муфт соединен'])) {
+                return false;
+            }
+        }
+
+        if ($action === 'floor_covering'
+            && $this->containsAny($candidateTitle, ['полимерцемент'])
+            && ! $this->containsAny($workText, ['полимерцемент'])) {
+            return false;
+        }
+
+        if ($action === 'baseboard_installation'
+            && $this->containsAny($candidateTitle, ['цементн'])
+            && ! $this->containsAny($workText, ['цементн'])) {
+            return false;
+        }
+
+        if ($action === 'painting'
+            && $this->containsAny($candidateTitle, ['под окраск'])
+            && ! $this->containsAny($candidateTitle, ['окраска', 'окрашиван', 'нанесение краск'])) {
+            return false;
+        }
+
         if ($action === 'soil_haulage') {
-            return $this->containsAny($candidateTitle, ['вывоз', 'перевоз', 'транспортир']);
+            return $this->containsAny($candidateTitle, ['вывоз', 'перевоз', 'транспортир'])
+                && ! ($this->containsAny($candidateTitle, ['разработк', 'выемк'])
+                    && ! $this->containsAny($workText, ['разработк', 'выемк']));
         }
 
         if ($action === 'backfill') {
@@ -243,6 +293,11 @@ final class NormativeSemanticCompatibilityService
         }
 
         if ($action === 'excavation') {
+            if ($this->containsAny($candidateTitle, ['вручную', 'ручн'])
+                && ! $this->containsAny($workText, ['вручную', 'ручн'])) {
+                return false;
+            }
+
             $excavationPosition = $this->firstMarkerPosition($candidateTitle, ['разработк', 'выемк', 'котлован', 'транше']);
             $backfillPosition = $this->firstMarkerPosition($candidateTitle, ['засып', 'уплотнен']);
             if ($backfillPosition !== null
@@ -339,11 +394,24 @@ final class NormativeSemanticCompatibilityService
             return false;
         }
 
+        if ($this->containsAny($candidateTitle, ['стеклянн крошк', 'стеклянной крошк'])
+            && ! $this->containsAny($workText, ['стеклянн крошк', 'стеклянной крошк'])) {
+            return false;
+        }
+
         $workHasStairPlatform = $this->containsAny($workText, ['лестничн']) && $this->containsAny($workText, ['площад']);
         $candidateHasStairPlatform = ($this->containsAny($candidateTitle, ['лестничн'])
                 && $this->containsAny($candidateTitle, ['площад']))
             || ($this->containsAny($candidateTitle, ['площад']) && $this->containsAny($candidateTitle, ['лестниц']));
         if ($workHasStairPlatform && ! $candidateHasStairPlatform) {
+            return false;
+        }
+
+        $workHasStairFlight = $this->containsAny($workText, ['лестничн'])
+            && $this->containsAny($workText, ['марш']);
+        if ($workHasStairFlight
+            && $this->containsAny($candidateTitle, ['опалуб'])
+            && ! $this->containsAny($workText, ['опалуб'])) {
             return false;
         }
 
@@ -360,6 +428,12 @@ final class NormativeSemanticCompatibilityService
         $candidateHasRafters = $this->containsAny($candidateText, ['стропил']);
 
         if ($workIsRoofCovering && ! $candidateHasRoofCovering) {
+            return false;
+        }
+
+        if ($workIsRoofCovering
+            && $this->containsAny($candidateText, ['огнезащит'])
+            && ! $this->containsAny($workText, ['огнезащит'])) {
             return false;
         }
 

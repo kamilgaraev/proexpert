@@ -127,7 +127,7 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
                 'waterproofing',
             ],
             'manual excavation' => [
-                'Разработка грунта под фундаменты',
+                'Разработка грунта вручную под фундаменты',
                 'Разработка грунта вручную в котлованах глубиной до 2 м',
                 'excavation',
             ],
@@ -556,6 +556,84 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
             'Подготовка поверхности металлических конструкций к нанесению огнезащитного покрытия',
             'Монтаж кровельного покрытия',
             ['action' => 'general_work', 'scope' => 'roof'],
+        ));
+    }
+
+    public function test_pipe_installation_is_not_testing_or_prefabrication(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $intent = ['action' => 'pipe_layout', 'scope' => 'engineering', 'system' => 'water_supply'];
+
+        self::assertFalse($service->isCompatible(
+            'Гидравлическое испытание трубопроводов систем отопления и водоснабжения',
+            'Прокладка труб водоснабжения',
+            $intent,
+        ));
+        self::assertFalse($service->isCompatible(
+            'Изготовление элементов и сборка узлов стальных трубопроводов',
+            'Прокладка труб водоснабжения',
+            $intent,
+        ));
+    }
+
+    public function test_generic_residential_work_does_not_invent_special_material_or_suboperation(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Огнезащита обрешетки под кровлю, покрытия и настилы по фермам',
+            'Монтаж кровельного покрытия',
+            ['action' => 'general_work', 'scope' => 'roof'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Шина заземления по бетонной крепи',
+            'Устройство заземления',
+            ['action' => 'grounding_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Фактурная отделка фасадов стеклянной крошкой',
+            'Отделка фасада',
+            ['action' => 'general_work', 'scope' => 'facade'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство покрытий поливинилацетатных толщиной 3 мм',
+            'Черновая подготовка пола',
+            ['action' => 'floor_preparation', 'scope' => 'finishing'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Отделка поверхностей стен под окраску',
+            'Окраска стен',
+            ['action' => 'painting', 'scope' => 'finishing'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Раскладка и вязка композитной арматуры диаметром 18 мм',
+            'Армирование фундаментов',
+            ['action' => 'reinforcement', 'scope' => 'foundation'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Установка арматуры в перекрытиях с устройством обжимных муфтовых соединений',
+            'Армирование монолитного перекрытия',
+            ['action' => 'reinforcement', 'scope' => 'slabs'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Монтаж мелкощитовой опалубки лестничных маршей',
+            'Устройство лестничных маршей',
+            ['action' => 'general_work', 'scope' => 'stairs'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство покрытий полимерцементных однослойных',
+            'Чистовое покрытие пола',
+            ['action' => 'floor_covering', 'scope' => 'finishing'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство плинтусов цементных',
+            'Монтаж плинтуса',
+            ['action' => 'baseboard_installation', 'scope' => 'finishing'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Разработка грунта вручную в траншеях и котлованах',
+            'Разработка грунта под фундаменты',
+            ['action' => 'excavation', 'scope' => 'foundation'],
         ));
     }
 }

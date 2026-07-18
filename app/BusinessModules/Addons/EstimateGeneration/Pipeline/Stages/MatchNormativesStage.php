@@ -120,6 +120,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         $catalogCandidates,
                         $workItem,
                         $intent->normativeSections,
+                        $intent,
                     );
                     if ($pinnedCandidates === []) {
                         $telemetry->missingPinnedCandidate();
