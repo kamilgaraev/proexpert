@@ -75,6 +75,10 @@ final class AcceptedQuantityPricingTest extends TestCase
         $currentVersion = 'sha256:'.str_repeat('c', 64);
 
         self::assertFalse((new AcceptedQuantityEvidenceVerifier($evidence))->verifyScope(10, 20, 30, $currentVersion, $item));
+        self::assertSame(
+            'source_version_mismatch',
+            (new AcceptedQuantityEvidenceVerifier($evidence))->rejectionReason(10, 20, 30, $currentVersion, $item),
+        );
         $persistence = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationPackagePersistenceService.php');
         self::assertStringNotContainsString("['quantity_evidence_source_version']", $persistence);
         self::assertStringContainsString('$package->input_version', $persistence);

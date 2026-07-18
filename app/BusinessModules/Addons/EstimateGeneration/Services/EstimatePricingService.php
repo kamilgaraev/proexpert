@@ -104,6 +104,17 @@ class EstimatePricingService
         return $workItems;
     }
 
+    public function quantityEvidenceRejectionReason(PipelineContext $context, array $workItem): ?string
+    {
+        return $this->acceptedEvidence?->rejectionReason(
+            $context->organizationId,
+            $context->projectId,
+            $context->sessionId,
+            (string) $context->baseInputVersion,
+            $workItem,
+        );
+    }
+
     private function resolveResources(array $workItem, array $regionalContext): array
     {
         $resourceSnapshots = [];

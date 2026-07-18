@@ -16,13 +16,13 @@ final readonly class AcceptedQuantityEvidenceVerifier
     /** @param array<string, mixed> $workItem */
     public function verify(PipelineContext $context, array $workItem): bool
     {
-        return $this->verifyScope(
+        return $this->rejectionReason(
             $context->organizationId,
             $context->projectId,
             $context->sessionId,
             (string) $context->baseInputVersion,
             $workItem,
-        );
+        ) === null;
     }
 
     /** @param array<string, mixed> $workItem */
@@ -33,25 +33,54 @@ final readonly class AcceptedQuantityEvidenceVerifier
         string $sourceVersion,
         array $workItem,
     ): bool {
+        return $this->rejectionReason(
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $sourceVersion,
+            $workItem,
+        ) === null;
+    }
+
+    /** @param array<string, mixed> $workItem */
+    public function rejectionReason(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        string $sourceVersion,
+        array $workItem,
+    ): ?string {
         $id = $workItem['quantity_evidence_id'] ?? null;
         $fingerprint = $workItem['quantity_evidence_fingerprint'] ?? null;
         if (! is_int($id) || $id < 1 || ! is_string($fingerprint) || preg_match('/^[a-f0-9]{64}$/D', $fingerprint) !== 1) {
-            return false;
+            return 'identity_invalid';
         }
         $node = $this->evidence->node($organizationId, $projectId, $sessionId, $id);
-        if ($node === null || $node->type !== EvidenceType::WorkItem || $node->invalidatedAt !== null
-            || ! hash_equals($node->fingerprint, $fingerprint)
-            || ! hash_equals($node->sourceVersion, $sourceVersion)
-            || ($node->value['unit'] ?? null) !== ($workItem['unit'] ?? null)) {
-            return false;
+        if ($node === null) {
+            return 'node_missing';
+        }
+        if ($node->type !== EvidenceType::WorkItem) {
+            return 'type_mismatch';
+        }
+        if ($node->invalidatedAt !== null) {
+            return 'node_invalidated';
+        }
+        if (! hash_equals($node->fingerprint, $fingerprint)) {
+            return 'fingerprint_mismatch';
+        }
+        if (! hash_equals($node->sourceVersion, $sourceVersion)) {
+            return 'source_version_mismatch';
+        }
+        if (($node->value['unit'] ?? null) !== ($workItem['unit'] ?? null)) {
+            return 'unit_mismatch';
         }
 
         try {
             return BigDecimal::of((string) ($node->value['quantity'] ?? ''))->compareTo(
                 BigDecimal::of((string) ($workItem['quantity'] ?? '')),
-            ) === 0;
+            ) === 0 ? null : 'quantity_mismatch';
         } catch (Throwable) {
-            return false;
+            return 'quantity_invalid';
         }
     }
 }

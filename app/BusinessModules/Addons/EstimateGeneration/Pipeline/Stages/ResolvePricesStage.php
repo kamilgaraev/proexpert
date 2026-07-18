@@ -40,7 +40,7 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
             Log::info('estimate_generation.pricing_resolution_outcomes', [
                 'session_id' => $context->sessionId,
                 'project_id' => $context->projectId,
-                ...$this->pricingSummary($data['local_estimates']),
+                ...$this->pricingSummary($context, $data['local_estimates']),
             ]);
         }
 
@@ -51,10 +51,11 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
      * @param  array<int, array<string, mixed>>  $localEstimates
      * @return array<string, mixed>
      */
-    private function pricingSummary(array $localEstimates): array
+    private function pricingSummary(PipelineContext $context, array $localEstimates): array
     {
         $statuses = [];
         $blockers = [];
+        $evidenceRejections = [];
         $pricedItems = 0;
         $totalCost = 0.0;
 
@@ -69,6 +70,10 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
                     $blocker = (string) ($workItem['pricing_blocker'] ?? 'none');
                     $statuses[$status] = ($statuses[$status] ?? 0) + 1;
                     $blockers[$blocker] = ($blockers[$blocker] ?? 0) + 1;
+                    if ($blocker === 'quantity_evidence_not_accepted') {
+                        $reason = $this->pricing->quantityEvidenceRejectionReason($context, $workItem) ?? 'unknown';
+                        $evidenceRejections[$reason] = ($evidenceRejections[$reason] ?? 0) + 1;
+                    }
                     $pricedItems++;
                     $totalCost += (float) ($workItem['total_cost'] ?? 0);
                 }
@@ -77,11 +82,13 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
 
         ksort($statuses, SORT_STRING);
         ksort($blockers, SORT_STRING);
+        ksort($evidenceRejections, SORT_STRING);
 
         return [
             'priced_items_count' => $pricedItems,
             'pricing_status_counts' => $statuses,
             'pricing_blocker_counts' => $blockers,
+            'quantity_evidence_rejection_counts' => $evidenceRejections,
             'total_cost' => round($totalCost, 2),
         ];
     }
