@@ -92,6 +92,16 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
         self::assertStringNotContainsString("replaceExpectedResourceCount('')", $source);
     }
 
+    #[Test]
+    public function summary_rows_are_not_resource_price_inputs(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000300_exclude_normative_summary_rows_from_pricing.php');
+
+        self::assertStringContainsString("resource_type <> 'summary'", $source);
+        self::assertStringContainsString('eg_expected_package_item_price', $source);
+        self::assertStringContainsString('eg_pricing_provenance', $source);
+    }
+
     private function source(): string
     {
         return (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001200_harden_estimate_generation_pricing_boundary.php');

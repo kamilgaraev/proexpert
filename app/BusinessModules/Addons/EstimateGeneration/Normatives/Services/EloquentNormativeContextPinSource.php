@@ -68,6 +68,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                         })
                         ->whereColumn('pin_resources.estimate_norm_id', 'norms.id')
                         ->where('pin_resources.quantity', '>', 0)
+                        ->where('pin_resources.resource_type', '<>', 'summary')
                         ->where('pin_prices.base_price', '>', 0)
                         ->where(function ($compatibleUnit): void {
                             $compatibleUnit->whereRaw('pin_prices.unit IS NOT DISTINCT FROM pin_resources.unit')
@@ -86,7 +87,8 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     $positiveQuantity->selectRaw('1')
                         ->from('estimate_norm_resources as positive_resources')
                         ->whereColumn('positive_resources.estimate_norm_id', 'norms.id')
-                        ->where('positive_resources.quantity', '>', 0);
+                        ->where('positive_resources.quantity', '>', 0)
+                        ->where('positive_resources.resource_type', '<>', 'summary');
                 })
                 ->whereNotExists(function ($negativeQuantity): void {
                     $negativeQuantity->selectRaw('1')
@@ -99,6 +101,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                         ->from('estimate_norm_resources as required_resources')
                         ->whereColumn('required_resources.estimate_norm_id', 'norms.id')
                         ->where('required_resources.quantity', '>', 0)
+                        ->where('required_resources.resource_type', '<>', 'summary')
                         ->whereNotExists(function ($validPrice) use ($requested): void {
                             $validPrice->selectRaw('1')
                                 ->from('estimate_resource_prices as valid_prices')
@@ -160,6 +163,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         $expectedResourceCounts = $this->database->table('estimate_norm_resources')
             ->whereIn('estimate_norm_id', $ids)
             ->where('quantity', '>', 0)
+            ->where('resource_type', '<>', 'summary')
             ->groupBy('estimate_norm_id')
             ->get(['estimate_norm_id', $this->database->raw('COUNT(*) AS resource_count')])
             ->mapWithKeys(static fn (object $row): array => [(int) $row->estimate_norm_id => (int) $row->resource_count])
@@ -174,6 +178,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             })
             ->whereIn('resources.estimate_norm_id', $ids)
             ->where('resources.quantity', '>', 0)
+            ->where('resources.resource_type', '<>', 'summary')
             ->where('prices.base_price', '>', 0)
             ->whereRaw(
                 'prices.id = (SELECT candidate_prices.id FROM estimate_resource_prices AS candidate_prices

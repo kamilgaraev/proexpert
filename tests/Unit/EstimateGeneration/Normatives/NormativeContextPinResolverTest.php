@@ -153,6 +153,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('->whereNotExists(function ($unpriced) use ($requested)', $source);
         self::assertStringContainsString('->whereNotExists(function ($validPrice) use ($requested)', $source);
         self::assertStringContainsString("->where('required_resources.quantity', '>', 0)", $source);
+        self::assertStringContainsString("->where('required_resources.resource_type', '<>', 'summary')", $source);
         self::assertStringContainsString('->whereExists(function ($positiveQuantity)', $source);
         self::assertStringContainsString("->where('positive_resources.quantity', '>', 0)", $source);
         self::assertStringContainsString('->whereNotExists(function ($negativeQuantity)', $source);
@@ -167,6 +168,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('candidate_prices.unit IS NOT DISTINCT FROM resources.unit', $source);
         self::assertStringContainsString("'prices.unit as price_unit'", $source);
         self::assertStringContainsString("->where('resources.quantity', '>', 0)", $source);
+        self::assertStringContainsString("->where('resources.resource_type', '<>', 'summary')", $source);
         self::assertStringContainsString("->where('quantity', '>', 0)", $source);
         self::assertStringContainsString('$this->ranker->select($query->all(), [$intent])', $source);
         self::assertStringContainsString("norms.search_vector @@ websearch_to_tsquery('russian', ?)", $source);
