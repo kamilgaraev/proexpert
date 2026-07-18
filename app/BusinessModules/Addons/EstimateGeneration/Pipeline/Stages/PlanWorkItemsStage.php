@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\AnalysisFloorAreaQuantityFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
+use Illuminate\Support\Facades\Log;
 
 final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
 {
@@ -75,6 +76,13 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             $regionalContext,
             $payload['local_estimates'],
         );
+        if ($this->canLog()) {
+            Log::info('estimate_generation.quantity_evidence_plan_outcomes', [
+                'session_id' => $context->sessionId,
+                'project_id' => $context->projectId,
+                ...$this->quantityEvidenceSummary($payload['local_estimates']),
+            ]);
+        }
 
         return $this->results->make($context, $this->stage(), $payload, [
             'local_estimates_count' => count($payload['local_estimates']),
@@ -129,5 +137,49 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
 
         return $workItem;
+    }
+
+    private function quantityEvidenceSummary(array $localEstimates): array
+    {
+        $quantities = 0;
+        $reviewFree = 0;
+        $identities = 0;
+        $idTypes = [];
+
+        foreach ($localEstimates as $localEstimate) {
+            foreach ($localEstimate['sections'] ?? [] as $section) {
+                foreach ($section['work_items'] ?? [] as $workItem) {
+                    if (! is_array($workItem) || ! is_array($workItem['quantity_evidence'] ?? null)) {
+                        continue;
+                    }
+                    $quantities++;
+                    if (($workItem['quantity_evidence']['review_blockers'] ?? []) !== []) {
+                        continue;
+                    }
+                    $reviewFree++;
+                    if (! array_key_exists('quantity_evidence_id', $workItem)) {
+                        continue;
+                    }
+                    $identities++;
+                    $type = get_debug_type($workItem['quantity_evidence_id']);
+                    $idTypes[$type] = ($idTypes[$type] ?? 0) + 1;
+                }
+            }
+        }
+        ksort($idTypes, SORT_STRING);
+
+        return [
+            'quantity_items_count' => $quantities,
+            'review_free_quantity_items_count' => $reviewFree,
+            'materialized_identity_items_count' => $identities,
+            'identity_id_type_counts' => $idTypes,
+        ];
+    }
+
+    private function canLog(): bool
+    {
+        $application = Log::getFacadeApplication();
+
+        return $application !== null && $application->bound('log') && $application->bound('config');
     }
 }

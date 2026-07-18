@@ -50,10 +50,19 @@ final readonly class AcceptedQuantityEvidenceVerifier
         string $sourceVersion,
         array $workItem,
     ): ?string {
-        $id = $this->positiveId($workItem['quantity_evidence_id'] ?? null);
+        if (! array_key_exists('quantity_evidence_id', $workItem)) {
+            return 'id_missing';
+        }
+        $rawId = $workItem['quantity_evidence_id'];
+        $id = $this->positiveId($rawId);
         $fingerprint = $workItem['quantity_evidence_fingerprint'] ?? null;
         if ($id === null) {
-            return 'id_invalid';
+            return match (true) {
+                $rawId === null => 'id_null',
+                is_string($rawId) => 'id_string_invalid',
+                is_float($rawId) => 'id_float_invalid',
+                default => 'id_type_invalid',
+            };
         }
         if (! is_string($fingerprint) || preg_match('/^[a-f0-9]{64}$/D', $fingerprint) !== 1) {
             return 'fingerprint_invalid';
