@@ -105,7 +105,7 @@ final readonly class WorkPlanCompiler
         ];
     }
 
-    /** @return list<array{search_text: string, unit: string, code: string|null, action: string, scope: string, system: string|null, object: string|null, object_type?: string, normative_section: string|null, normative_sections: list<string>}> */
+    /** @return list<array{search_text: string, unit: string, code: string|null, material?: string, action: string, scope: string, system: string|null, object: string|null, object_type?: string, normative_section: string|null, normative_sections: list<string>}> */
     private function normativeIntents(array $localEstimates, ?string $objectType = null): array
     {
         $intents = [];
@@ -130,6 +130,7 @@ final readonly class WorkPlanCompiler
                         static fn (mixed $section): bool => is_string($section) && $section !== '',
                     )));
                     $normativeSection = count($normativeSections) === 1 ? $normativeSections[0] : null;
+                    $material = $this->intentString($recordedIntent, 'material') ?? $classified->material;
                     $resolvedIntent = [
                         'search_text' => (string) ($item['normative_search_text'] ?? $item['name'] ?? ''),
                         'unit' => (string) ($item['unit'] ?? ''),
@@ -141,6 +142,9 @@ final readonly class WorkPlanCompiler
                         'normative_section' => is_string($normativeSection) ? $normativeSection : null,
                         'normative_sections' => $normativeSections,
                     ];
+                    if (is_string($material) && trim($material) !== '') {
+                        $resolvedIntent['material'] = trim($material);
+                    }
                     if (is_string($objectType) && trim($objectType) !== '') {
                         $resolvedIntent['object_type'] = trim($objectType);
                     }

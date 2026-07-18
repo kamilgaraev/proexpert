@@ -13,8 +13,28 @@ final readonly class AnalysisFloorAreaQuantityFactory
     /** @param array<string, mixed> $analysis */
     public function make(array $analysis): ?QuantityData
     {
-        [$value, $sourcePath] = $this->area($analysis);
-        if ($value === null) {
+        $model = is_array($analysis['normalized_building_model'] ?? null)
+            ? $analysis['normalized_building_model']
+            : [];
+        $constraint = is_array($analysis['document_total_area'] ?? null)
+            ? $analysis['document_total_area']
+            : [];
+        $hasExactEvidence = $constraint !== [];
+        $metrics = is_array($model['metrics'] ?? null) ? $model['metrics'] : [];
+        $floorCount = filter_var($constraint['floor_count'] ?? null, FILTER_VALIDATE_INT);
+        $modelFloorCount = filter_var($metrics['floor_count'] ?? null, FILTER_VALIDATE_INT);
+        $roomCount = filter_var($metrics['room_count'] ?? null, FILTER_VALIDATE_INT);
+        $evidenceId = filter_var($constraint['evidence_id'] ?? null, FILTER_VALIDATE_INT);
+        [$value, $sourcePath] = $hasExactEvidence
+            ? [$constraint['amount'] ?? null, 'document_total_area.amount']
+            : $this->preliminaryArea($analysis);
+        if (! $this->isNumeric($value)) {
+            return null;
+        }
+        if ($hasExactEvidence && ($floorCount === false || $floorCount < 1
+            || $modelFloorCount === false || $modelFloorCount !== $floorCount
+            || $roomCount === false || $roomCount < 1
+            || $evidenceId === false || $evidenceId < 1)) {
             return null;
         }
 
@@ -27,44 +47,58 @@ final readonly class AnalysisFloorAreaQuantityFactory
             return null;
         }
 
-        $model = is_array($analysis['normalized_building_model'] ?? null)
-            ? $analysis['normalized_building_model']
-            : [];
-        $evidenceIds = array_values(array_unique(array_map(
-            'strval',
-            array_filter(
-                is_array($model['evidence_ids'] ?? null) ? $model['evidence_ids'] : [],
-                static fn (mixed $id): bool => (is_int($id) || is_string($id)) && (int) $id > 0
-            )
-        )));
-        sort($evidenceIds, SORT_NATURAL);
-        $confirmed = ($model['scale_status'] ?? null) === 'confirmed' && $evidenceIds !== [];
+        foreach (is_array($model['assumptions'] ?? null) ? $model['assumptions'] : [] as $assumption) {
+            if (is_array($assumption)
+                && ($assumption['severity'] ?? null) === 'blocking'
+                && ($assumption['code'] ?? null) !== 'scale_missing') {
+                return null;
+            }
+        }
+        $amount = (string) $amount->toScale(6, RoundingMode::HalfUp);
+        $evidenceIds = $hasExactEvidence ? [(string) $evidenceId] : [];
+        $modelVersion = is_string($model['model_version'] ?? null)
+            ? $model['model_version']
+            : 'building-model:v1';
+        $identity = hash('sha256', implode('|', [
+            $modelVersion,
+            'document.facts.total_floor_area',
+            $amount,
+            $hasExactEvidence ? (string) $evidenceId : $sourcePath,
+        ]));
+        $operand = [
+            'role' => 'area',
+            'value' => $amount,
+            'unit' => 'm2',
+            'source' => $hasExactEvidence ? 'evidenced' : 'estimated',
+            'evidence_ids' => $evidenceIds,
+            'assumptions' => [],
+            'context_id' => 'model:'.$modelVersion,
+            'provenance_version' => $hasExactEvidence ? 'document-total-area:v1' : 'analysis-area:v1',
+        ];
 
         return new QuantityData(
             key: 'floor_area',
             unit: 'm2',
-            amount: (string) $amount->toScale(6, RoundingMode::HalfUp),
+            amount: $amount,
             formulaKey: 'document.facts.total_floor_area',
             formulaVersion: '1.0.0',
-            formulaInputs: [
-                'source_path' => $sourcePath,
-                'source_value' => (string) $value,
-            ],
-            source: $confirmed ? QuantitySource::Evidenced : QuantitySource::Estimated,
+            formulaInputs: ['items' => [[
+                'identity' => $identity,
+                'amount' => $amount,
+                'evidence_ids' => $evidenceIds,
+                'provenance_versions' => [$hasExactEvidence ? 'document-total-area:v1' : 'analysis-area:v1'],
+                'named_operands' => ['area' => $operand],
+            ]]],
+            source: $hasExactEvidence ? QuantitySource::Evidenced : QuantitySource::Estimated,
             evidenceIds: $evidenceIds,
-            modelVersion: is_string($model['model_version'] ?? null)
-                ? $model['model_version']
-                : 'building-model:v1',
-            assumptions: ['document_area_preliminary_takeoff'],
-            reviewBlockers: $confirmed ? [] : ['estimated_quantity_requires_review'],
+            modelVersion: $modelVersion,
+            assumptions: $hasExactEvidence ? [] : ['document_area_preliminary_takeoff'],
+            reviewBlockers: $hasExactEvidence ? [] : ['estimated_quantity_requires_review'],
         );
     }
 
-    /**
-     * @param  array<string, mixed>  $analysis
-     * @return array{0: int|float|string|null, 1: string}
-     */
-    private function area(array $analysis): array
+    /** @param array<string, mixed> $analysis @return array{0: mixed, 1: string} */
+    private function preliminaryArea(array $analysis): array
     {
         $facts = $analysis['document_context']['facts_summary'] ?? null;
         if (is_array($facts) && $this->isNumeric($facts['total_area_m2'] ?? null)) {

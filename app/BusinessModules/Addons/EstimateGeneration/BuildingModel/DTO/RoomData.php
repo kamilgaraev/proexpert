@@ -21,7 +21,7 @@ final readonly class RoomData
     public function __construct(string $key, ?string $name, ?array $polygon, array $evidenceIds, float $confidence, string $geometryCertainty)
     {
         $this->key = BuildingModelSchema::key($key, 'Room key');
-        $this->name = BuildingModelSchema::nullableLabel($name, 'Room name');
+        $this->name = BuildingModelSchema::nullableRoomLabel($name);
         $this->polygon = BuildingModelSchema::nullablePolygon($polygon);
         $this->evidenceIds = BuildingModelSchema::evidenceIds($evidenceIds);
         $this->confidence = BuildingModelSchema::confidence($confidence);

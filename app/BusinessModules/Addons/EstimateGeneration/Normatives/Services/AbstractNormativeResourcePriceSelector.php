@@ -37,7 +37,7 @@ final readonly class AbstractNormativeResourcePriceSelector
                     && (int) ($candidate->price_id ?? 0) > 0;
             },
         ));
-        $targetAttributes = $this->hardAttributes($normName.' '.$groupName);
+        $targetAttributes = $this->targetHardAttributes($normName, $groupName);
         if ($targetAttributes['diameter_conflict']) {
             return null;
         }
@@ -117,6 +117,36 @@ final readonly class AbstractNormativeResourcePriceSelector
                 || $candidateAttributes['purposes'] === []
                 || array_diff($candidateAttributes['purposes'], $target['purposes']) === [];
         }));
+    }
+
+    /** @return array{diameter: ?float, diameter_conflict: bool, material: ?string, purposes: list<string>} */
+    private function targetHardAttributes(string $normName, string $groupName): array
+    {
+        $groupAttributes = $this->hardAttributes($groupName);
+        $normalizedGroup = mb_strtolower(str_replace('ё', 'е', trim($groupName)));
+        $isPipeGroup = preg_match('/\bтруб(?:а|ы|опровод)/u', $normalizedGroup) === 1
+            && preg_match('/хомут|креплен/u', $normalizedGroup) !== 1;
+        if (! $isPipeGroup) {
+            return $groupAttributes;
+        }
+
+        $normAttributes = $this->hardAttributes($normName);
+        $diameters = array_values(array_unique(array_filter([
+            $groupAttributes['diameter'],
+            $normAttributes['diameter'],
+        ], static fn (?float $value): bool => $value !== null), SORT_REGULAR));
+
+        return [
+            'diameter' => count($diameters) === 1 ? $diameters[0] : null,
+            'diameter_conflict' => $groupAttributes['diameter_conflict']
+                || $normAttributes['diameter_conflict']
+                || count($diameters) > 1,
+            'material' => $groupAttributes['material'] ?? $normAttributes['material'],
+            'purposes' => array_values(array_unique([
+                ...$groupAttributes['purposes'],
+                ...$normAttributes['purposes'],
+            ])),
+        ];
     }
 
     /** @return array{diameter: ?float, diameter_conflict: bool, material: ?string, purposes: list<string>} */

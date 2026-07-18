@@ -104,6 +104,7 @@ final class NormativeHardGate
             implode(' ', [$candidate->name, ...$candidate->workComposition]),
             $intent->intent,
             [
+                'material' => $intent->material,
                 'action' => $intent->technology,
                 'scope' => $intent->structure,
                 'system' => $intent->system,

@@ -433,7 +433,7 @@ final readonly class GeometryBuildingModelInputMapper
         }
 
         try {
-            return BuildingModelSchema::nullableLabel($label, 'Room name');
+            return BuildingModelSchema::nullableRoomLabel($label);
         } catch (InvalidArgumentException) {
             return null;
         }

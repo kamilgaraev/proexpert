@@ -127,6 +127,10 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
                 'evidence_id' => (int) $row->id,
                 'confidence' => max(0.0, min(1.0, (float) $row->confidence)),
                 'floor_count' => $constraint['floor_count'],
+                'source_version' => (string) $row->source_version,
+                'fingerprint' => (string) $row->fingerprint,
+                'invalidation_version' => (int) $row->invalidation_version,
+                'active' => $row->invalidated_at === null,
             ];
         }
 
@@ -138,7 +142,7 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
     {
         return [
             'id', 'type', 'source_type', 'source_ref', 'source_version', 'locator', 'value',
-            'confidence', 'producer_name', 'producer_version', 'invalidated_at',
+            'confidence', 'producer_name', 'producer_version', 'fingerprint', 'invalidation_version', 'invalidated_at',
         ];
     }
 

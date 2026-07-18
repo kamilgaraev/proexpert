@@ -10,9 +10,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\AnalysisFloorAreaQuantityFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingModelQuantityInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityCalculationResult;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationQuantityLearningEvidenceService;
 
 final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
@@ -24,6 +27,7 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
         private StageResultFactory $results,
         private BuildingModelQuantityInputMapper $inputMapper = new NormalizedBuildingModelQuantityInputMapper,
         private BuildingQuantityCalculator $calculator = new BuildingQuantityCalculator,
+        private AnalysisFloorAreaQuantityFactory $analysisFloorArea = new AnalysisFloorAreaQuantityFactory,
     ) {}
 
     public function stage(): ProcessingStage
@@ -38,9 +42,28 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
 
         $data = ['quantity_learning_hints' => $hints, 'building_quantities' => []];
         $normalized = $analysis['normalized_building_model'] ?? null;
+        $quantities = [];
+        $diagnostics = [];
+        $metrics = [];
         if (is_array($normalized)) {
             $model = NormalizedBuildingModelData::fromArray($normalized);
-            $data['building_quantities'] = $this->calculator->calculate($this->inputMapper->map($model))->toArray();
+            $calculation = $this->calculator->calculate($this->inputMapper->map($model));
+            $quantities = $calculation->all();
+            $diagnostics = $calculation->diagnostics;
+            $metrics = $calculation->metrics;
+        }
+        $documentArea = $this->analysisFloorArea->make($analysis);
+        if ($documentArea !== null
+            && ($documentArea->source === QuantitySource::Evidenced
+                || ! isset($quantities['floor_area']))) {
+            $quantities[$documentArea->key] = $documentArea;
+        }
+        if ($quantities !== [] || is_array($normalized)) {
+            $data['building_quantities'] = (new QuantityCalculationResult(
+                $quantities,
+                $diagnostics,
+                $metrics,
+            ))->toArray();
         }
 
         return $this->results->make($context, $this->stage(), $data, ['hints_count' => count($hints)]);

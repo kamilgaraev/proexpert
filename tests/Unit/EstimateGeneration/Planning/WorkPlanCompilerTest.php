@@ -95,6 +95,7 @@ final class WorkPlanCompilerTest extends TestCase
                 'search_text' => 'Устройство полов',
                 'unit' => 'm2',
                 'code' => null,
+                'material' => 'керамическая плитка',
                 'action' => 'general_work',
                 'scope' => 'general',
                 'system' => null,
@@ -119,7 +120,10 @@ final class WorkPlanCompilerTest extends TestCase
                     'normative_search_text' => 'Устройство полов',
                     'unit' => 'm2',
                     'normative_rate_code' => null,
-                    'work_intent' => ['preferred_section_prefixes' => ['11']],
+                    'work_intent' => [
+                        'material' => 'керамическая плитка',
+                        'preferred_section_prefixes' => ['11'],
+                    ],
                 ]],
             ]],
         ]], 'house');
@@ -142,6 +146,7 @@ final class WorkPlanCompilerTest extends TestCase
                 'object' => 'foundation',
                 'normative_section' => null,
                 'normative_sections' => ['01', '06'],
+                'material' => 'concrete',
             ]])
             ->willReturn(['status' => 'pinned']);
 

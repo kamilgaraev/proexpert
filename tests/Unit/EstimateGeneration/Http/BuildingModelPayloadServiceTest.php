@@ -127,7 +127,8 @@ final class BuildingModelPayloadServiceTest extends TestCase
         ));
 
         $payload = $service->handle($this->generationSession());
-        $quantity = $payload['quantities']['data'][0];
+        $quantities = array_column($payload['quantities']['data'], null, 'key');
+        $quantity = $quantities['floor_area'];
 
         self::assertSame('building-model:v1', $payload['building_model']['model_version']);
         self::assertArrayNotHasKey('area_constraints', $payload['building_model']);
@@ -136,6 +137,28 @@ final class BuildingModelPayloadServiceTest extends TestCase
         self::assertSame('evidenced', $quantity['source']);
         self::assertSame('confirmed', $quantity['status']);
         self::assertSame([21], $quantity['evidence_ids']);
+    }
+
+    #[Test]
+    public function exact_document_total_area_overrides_polygon_derived_floor_area(): void
+    {
+        $evidence = $this->evidence(21, 'document', 'source_fact', [
+            'fact_key' => 'area', 'fact_value' => 180.0, 'unit' => 'm2',
+        ], '0.950000');
+        $service = new BuildingModelPayloadService(new FakeBuildingModelReadDataSource(
+            $this->model(),
+            [21 => $evidence],
+            totalArea: ['amount' => '180.000000', 'evidence_id' => 21, 'confidence' => 0.95, 'floor_count' => 1],
+        ));
+
+        $payload = $service->handle($this->generationSession());
+        $quantities = array_column($payload['quantities']['data'], null, 'key');
+        $quantity = $quantities['floor_area'];
+
+        self::assertSame('floor_area', $quantity['key']);
+        self::assertSame('180.000000', $quantity['amount']);
+        self::assertSame([21], $quantity['evidence_ids']);
+        self::assertSame('document.facts.total_floor_area', $quantity['formula']['key']);
     }
 
     #[Test]

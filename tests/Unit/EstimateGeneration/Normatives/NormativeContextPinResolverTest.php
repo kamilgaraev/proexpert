@@ -195,6 +195,59 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
+    public function abstract_clamp_group_does_not_inherit_pipe_material_and_diameter_from_norm_title(): void
+    {
+        $selection = (new AbstractNormativeResourcePriceSelector)->select(
+            '24.1.02.01',
+            11,
+            [(object) [
+                'price_id' => 1,
+                'price_resource_code' => '24.1.02.01-0001',
+                'price_resource_name' => 'Хомут стальной для крепления труб',
+                'base_price' => '320',
+                'regional_price_version_id' => 11,
+            ]],
+            [],
+            'Прокладка трубопроводов из полипропиленовых труб наружным диаметром 20 мм',
+            'Хомуты для крепления труб',
+        );
+
+        self::assertSame(1, $selection['row']->price_id ?? null);
+        self::assertSame('regional_child_median:v1', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function abstract_pipe_group_inherits_pipe_attributes_from_norm_title(): void
+    {
+        $selection = (new AbstractNormativeResourcePriceSelector)->select(
+            '24.3.02.05',
+            11,
+            [
+                (object) [
+                    'price_id' => 1,
+                    'price_resource_code' => '24.3.02.05-0001',
+                    'price_resource_name' => 'Труба стальная наружным диаметром 25 мм',
+                    'base_price' => '100',
+                    'regional_price_version_id' => 11,
+                ],
+                (object) [
+                    'price_id' => 2,
+                    'price_resource_code' => '24.3.02.05-0002',
+                    'price_resource_name' => 'Труба напорная из полипропилена наружным диаметром 20 мм',
+                    'base_price' => '700',
+                    'regional_price_version_id' => 11,
+                ],
+            ],
+            [],
+            'Прокладка трубопроводов из полипропиленовых труб наружным диаметром 20 мм',
+            'Трубы напорные',
+        );
+
+        self::assertSame(2, $selection['row']->price_id ?? null);
+        self::assertSame('regional_child_hard_attributes_median:v1', $selection['policy'] ?? null);
+    }
+
+    #[Test]
     public function abstract_resource_selector_recognizes_nominal_bore_as_a_hard_diameter(): void
     {
         $selection = (new AbstractNormativeResourcePriceSelector)->select(
@@ -430,6 +483,67 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertSame('door', $source->intents[1]['object']);
         self::assertSame('openings', $source->intents[0]['scope']);
         self::assertSame('house', $source->intents[0]['object_type']);
+    }
+
+    #[Test]
+    public function resolved_material_reaches_ranker_semantic_gate(): void
+    {
+        $source = new class implements NormativeContextPinSource
+        {
+            public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
+            {
+                $candidate = (object) [
+                    'id' => 150106401,
+                    'code' => '15-01-064-01',
+                    'name' => 'Облицовка фасадов фиброцементными плитами',
+                    'canonical_unit' => '100 m2',
+                    'unit' => '100 m2',
+                    'section_code' => '15-01',
+                    'section_name' => 'Отделочные работы',
+                    'work_composition' => [],
+                ];
+                $selected = (new NormativeIntentCandidateRanker)->select([$candidate], $intents);
+                if ($selected === null) {
+                    return null;
+                }
+
+                return new NormativeContextPinData(
+                    $requested->datasetId,
+                    $requested->datasetVersion,
+                    $requested->applicabilityDate,
+                    $requested->regionId,
+                    $requested->priceZoneId,
+                    $requested->periodId,
+                    $requested->regionalPriceVersionId,
+                    $requested->priceVersion,
+                    [['candidate_id' => (string) $selected[0]->id]],
+                    str_repeat('a', 64),
+                );
+            }
+        };
+        $resolver = new NormativeContextPinResolver($source);
+
+        $pin = $resolver->resolve([
+            'normative_dataset_id' => 77,
+            'normative_dataset_version' => 'fsnb-2026.1',
+            'region_id' => 16,
+            'price_zone_id' => 3,
+            'period_id' => 8,
+            'estimate_regional_price_version_id' => 11,
+            'price_version' => 'prices-2026.07',
+            'business_date' => '2026-07-01',
+        ], [[
+            'search_text' => 'Отделка фасада',
+            'unit' => 'm2',
+            'material' => 'fiber_cement',
+            'action' => 'general_work',
+            'scope' => 'facade',
+            'object_type' => 'residential',
+            'normative_sections' => ['15'],
+        ]]);
+
+        self::assertSame('pinned', $pin['status']);
+        self::assertSame('150106401', $pin['catalog_candidates'][0]['candidate_id']);
     }
 
     #[Test]

@@ -726,6 +726,77 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         ));
     }
 
+    public function test_generic_residential_facade_rejects_unconfirmed_material_systems(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $intent = ['action' => 'general_work', 'scope' => 'facade', 'object_type' => 'residential'];
+
+        foreach ([
+            'Облицовка фасадов фиброцементными и хризотилцементными плитами',
+            'Устройство навесных фасадов с облицовкой плитами из керамогранита',
+            'Облицовка фасадов сайдингом',
+            'Облицовка фасадов металлокассетами',
+            'Облицовка фасадов композитными панелями',
+            'Фактурная отделка фасадов стеклянной крошкой',
+            'Высококачественная штукатурка фасадов терразитовым раствором',
+            'Облицовка фасадов природным камнем',
+        ] as $candidate) {
+            self::assertFalse($service->isCompatible($candidate, 'Отделка фасада', $intent), $candidate);
+        }
+
+        self::assertTrue($service->isCompatible(
+            'Оштукатуривание фасадов цементно-известковым раствором',
+            'Отделка фасада',
+            $intent,
+        ));
+        self::assertTrue($service->isCompatible(
+            'Окраска фасадов водно-дисперсионными красками',
+            'Отделка фасада',
+            $intent,
+        ));
+    }
+
+    public function test_residential_facade_accepts_material_system_explicitly_named_by_work(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertTrue($service->isCompatible(
+            'Облицовка фасадов фиброцементными плитами',
+            'Отделка фасада фиброцементными плитами',
+            ['action' => 'general_work', 'scope' => 'facade', 'object_type' => 'residential'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Облицовка фасадов сайдингом',
+            'Отделка фасада',
+            [
+                'action' => 'general_work',
+                'scope' => 'facade',
+                'object_type' => 'residential',
+                'material' => 'сайдинг',
+            ],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Высококачественная штукатурка фасадов терразитовым раствором',
+            'Отделка фасада',
+            [
+                'action' => 'general_work',
+                'scope' => 'facade',
+                'object_type' => 'residential',
+                'material' => 'терразитовый раствор',
+            ],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Фактурная отделка фасадов стеклянной крошкой',
+            'Отделка фасада',
+            [
+                'action' => 'general_work',
+                'scope' => 'facade',
+                'object_type' => 'residential',
+                'material' => 'стеклянная крошка',
+            ],
+        ));
+    }
+
     public function test_residential_work_rejects_industrial_and_agricultural_candidates(): void
     {
         $service = new NormativeSemanticCompatibilityService;

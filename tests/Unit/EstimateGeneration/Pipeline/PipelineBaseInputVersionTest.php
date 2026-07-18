@@ -32,9 +32,69 @@ final class PipelineBaseInputVersionTest extends TestCase
             'schema_version' => PipelineBaseInputVersion::SCHEMA_VERSION,
             'input' => $input,
             'documents' => $documents,
+            'document_total_area_evidence' => null,
         ]));
 
         self::assertSame($expected, PipelineBaseInputVersion::fromProjection($input, $documents));
+    }
+
+    public function test_selected_area_evidence_changes_cache_version_independently_of_generation_attempt(): void
+    {
+        $documents = [[
+            'id' => 10,
+            'source_version' => 'sha256:'.str_repeat('a', 64),
+            'status' => 'ready',
+            'derived_version' => 'sha256:'.str_repeat('b', 64),
+        ]];
+        $selected = [
+            'evidence_id' => 901,
+            'source_version' => 'sha256:'.str_repeat('c', 64),
+            'fingerprint' => str_repeat('d', 64),
+            'invalidation_version' => 0,
+            'active' => true,
+        ];
+
+        $first = PipelineBaseInputVersion::fromProjection(
+            ['description' => 'Дом', 'generation_attempt_id' => 'attempt-a'],
+            $documents,
+            $selected,
+        );
+        $retry = PipelineBaseInputVersion::fromProjection(
+            ['description' => 'Дом', 'generation_attempt_id' => 'attempt-b'],
+            $documents,
+            $selected,
+        );
+        $replacement = PipelineBaseInputVersion::fromProjection(
+            ['description' => 'Дом', 'generation_attempt_id' => 'attempt-b'],
+            $documents,
+            [...$selected, 'evidence_id' => 902, 'fingerprint' => str_repeat('e', 64)],
+        );
+        $newInvalidationVersion = PipelineBaseInputVersion::fromProjection(
+            ['description' => 'house', 'generation_attempt_id' => 'attempt-b'],
+            $documents,
+            [...$selected, 'invalidation_version' => 1],
+        );
+        $inactive = PipelineBaseInputVersion::fromProjection(
+            ['description' => 'house', 'generation_attempt_id' => 'attempt-b'],
+            $documents,
+            [...$selected, 'active' => false],
+        );
+        $inactiveBaseline = PipelineBaseInputVersion::fromProjection(
+            ['description' => 'house', 'generation_attempt_id' => 'attempt-c'],
+            $documents,
+            null,
+        );
+        $invalidated = PipelineBaseInputVersion::fromProjection(
+            ['description' => 'Дом', 'generation_attempt_id' => 'attempt-b'],
+            $documents,
+            null,
+        );
+
+        self::assertSame($first, $retry);
+        self::assertNotSame($first, $replacement);
+        self::assertNotSame($first, $newInvalidationVersion);
+        self::assertSame($inactive, $inactiveBaseline);
+        self::assertNotSame($first, $invalidated);
     }
 
     #[DataProvider('derivedMutations')]

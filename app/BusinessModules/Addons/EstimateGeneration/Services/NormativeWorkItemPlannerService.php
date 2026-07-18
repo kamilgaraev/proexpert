@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\DirectTakeoffRequiredWorkItems;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Throwable;
 
@@ -333,7 +334,218 @@ final class NormativeWorkItemPlannerService
             $definitions,
             fn (array $definition): bool => $this->definitionMatchesObject($definition, $analysis)
                 && $this->definitionHasRequiredTakeoff($definition, $sourceBackedQuantityKeys)
+                && $this->definitionHasSanitaryFixtureEvidence($definition, $analysis)
         ));
+    }
+
+    private function definitionHasSanitaryFixtureEvidence(array $definition, array $analysis): bool
+    {
+        $quantityKey = (string) ($definition['quantity_key'] ?? '');
+        if ($quantityKey !== 'sanitary.points') {
+            return true;
+        }
+
+        if ($this->hasConfirmedSanitaryPointsTakeoff($analysis)) {
+            return true;
+        }
+
+        foreach ($this->sanitaryFixtureEvidenceTexts($analysis) as $text) {
+            if ($this->hasLocalSanitaryFixtureStatement($text)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function hasLocalSanitaryFixtureStatement(string $text): bool
+    {
+        $statements = preg_split('~(?:[.!?;]+|\R+)~u', $text) ?: [];
+        $fixture = '(?:'
+            .'унитаз(?:а|у|ом|е|ы|ов|ам|ами|ах)?|'
+            .'раковин(?:а|ы|у|е|ой|ою|ам|ами|ах)?|'
+            .'умывальник(?:а|и|ов|ом|ами)?|'
+            .'ванн(?:а|ы|у|е|ой|ою|ам|ами|ах)?|'
+            .'душ(?:а|у|е|ем|и|ей|ам|ами|ах)?|'
+            .'смесител(?:ь|я|ю|ем|е|и|ей|ям|ями|ях)|'
+            .'биде|'
+            .'писсуар(?:а|у|ом|е|ы|ов|ам|ами|ах)?|'
+            .'мойк(?:а|и|у|е|ой|ою|ам|ами|ах)|'
+            .'душев(?:ой|ого|ому|ым|ом|ая|ую|ые|ых|ыми)\s+'
+            .'(?:поддон(?:а|у|ом|е|ы|ов|ам|ами|ах)?|кабин(?:а|ы|у|е|ой|ою|ам|ами|ах)?)'
+            .')';
+        $action = '(?:'
+            .'установ\p{L}*|монтаж\p{L}*|подключ\p{L}*|предусмотр\p{L}*|'
+            .'комплект\p{L}*|количеств\p{L}*|'
+            .'\d+(?:[.,]\d+)?\s*(?:шт|ед(?:иниц)?|компл)\.?)';
+
+        foreach ($statements as $statement) {
+            $withoutRoomPhrases = preg_replace(
+                '~(?<![\p{L}\p{N}])(?:ванн|душев)(?:ая|ой|ую|ые|ых|ыми)\s+'
+                .'(?:комнат\p{L}*|помещен\p{L}*)(?![\p{L}\p{N}])~iu',
+                ' ',
+                $statement
+            ) ?? $statement;
+            $withoutLocativeRoomReference = preg_replace(
+                '~(?<![\p{L}\p{N}])(?:в|на|для)\s+ванн(?:ой|е|у|ы)(?![\p{L}\p{N}])~iu',
+                ' ',
+                $withoutRoomPhrases
+            ) ?? $withoutRoomPhrases;
+
+            if (preg_match(
+                '~(?<![\p{L}\p{N}])(?:'.$action.'.{0,80}'.$fixture.'|'.$fixture.'.{0,80}'.$action.')'
+                .'(?![\p{L}\p{N}])~iu',
+                $withoutLocativeRoomReference
+            ) === 1) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param array<string, mixed> $analysis */
+    private function hasConfirmedSanitaryPointsTakeoff(array $analysis): bool
+    {
+        $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
+        $takeoffs = is_array($documentContext['quantity_takeoffs'] ?? null) ? $documentContext['quantity_takeoffs'] : [];
+
+        foreach ($takeoffs as $takeoff) {
+            if (! is_array($takeoff) || EstimateGenerationQuantityKeyResolver::fromTakeoff($takeoff) !== 'sanitary.points') {
+                continue;
+            }
+
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $sourceRefs = $this->sourceRefsFromEvidence($takeoff);
+            $quantity = $this->firstNumeric($takeoff, ['quantity', 'value', 'value_number']);
+
+            if (
+                $quantity !== null
+                && $quantity > 0
+                && $sourceRefs !== []
+                && ($payload['review_required'] ?? $takeoff['review_required'] ?? true) === false
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $analysis
+     * @return array<int, string>
+     */
+    private function sanitaryFixtureEvidenceTexts(array $analysis): array
+    {
+        $fragments = [];
+        $object = is_array($analysis['object'] ?? null) ? $analysis['object'] : [];
+        $manualDescription = $object['manual_description'] ?? null;
+
+        if (is_string($manualDescription) && trim($manualDescription) !== '') {
+            $fragments[] = $manualDescription;
+        }
+
+        $sourceDocuments = is_array($analysis['source_documents'] ?? null) ? $analysis['source_documents'] : [];
+        foreach ($sourceDocuments as $document) {
+            if (! is_array($document) || ! DocumentEvidencePolicy::isTrusted($document)) {
+                continue;
+            }
+
+            $factsSummary = is_array($document['facts_summary'] ?? null) ? $document['facts_summary'] : [];
+            $understanding = is_array($document['document_understanding'] ?? null)
+                ? $document['document_understanding']
+                : (is_array($factsSummary['document_understanding'] ?? null)
+                    ? $factsSummary['document_understanding']
+                    : []);
+            $documentType = (string) ($understanding['document_type'] ?? '');
+            $role = DocumentEvidencePolicy::roleForEstimation($document);
+            $isQuantitySource = $role === 'quantity_source';
+            $isProjectDocument = $role === 'context_document'
+                && in_array($documentType, ['technical_document', 'project_document'], true);
+
+            if (! $isQuantitySource && ! $isProjectDocument) {
+                continue;
+            }
+
+            $text = $document['text'] ?? $document['extracted_text'] ?? null;
+            if (is_string($text) && trim($text) !== '') {
+                $fragments[] = $text;
+            }
+        }
+
+        $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
+        foreach ($documentContext['quantity_takeoffs'] ?? [] as $takeoff) {
+            if (! is_array($takeoff) || ! $this->hasKnownTakeoffTextProvenance($takeoff)) {
+                continue;
+            }
+
+            $fragments = [...$fragments, ...$this->textFields($takeoff)];
+        }
+
+        foreach ($documentContext['scope_inferences'] ?? [] as $inference) {
+            if (! is_array($inference) || ! $this->hasKnownInferenceTextProvenance($inference)) {
+                continue;
+            }
+
+            $fragments = [...$fragments, ...$this->textFields($inference)];
+        }
+
+        return $fragments;
+    }
+
+    /** @param array<string, mixed> $takeoff */
+    private function hasKnownTakeoffTextProvenance(array $takeoff): bool
+    {
+        $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+        $sourceRefs = $this->sourceRefsFromEvidence($takeoff);
+        $scopeKey = (string) ($takeoff['scope_key'] ?? '');
+        $source = (string) ($payload['source'] ?? $takeoff['source'] ?? '');
+
+        return $sourceRefs !== []
+            && ($payload['review_required'] ?? $takeoff['review_required'] ?? true) === false
+            && (
+                in_array($scopeKey, ['specification_quantity', 'equipment_quantity', 'sanitary_fixture_count'], true)
+                || in_array($source, [
+                    'specification',
+                    'specification_takeoff',
+                    'work_volume_statement',
+                    'work_volume_takeoff',
+                    'project_document',
+                ], true)
+            );
+    }
+
+    /** @param array<string, mixed> $inference */
+    private function hasKnownInferenceTextProvenance(array $inference): bool
+    {
+        $sourceRefs = $this->sourceRefsFromEvidence($inference);
+
+        return $sourceRefs !== []
+            && ($inference['review_required'] ?? true) === false
+            && in_array((string) ($inference['inference_type'] ?? ''), [
+                'specification_takeoff',
+                'work_volume_takeoff',
+                'project_requirement',
+            ], true);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<int, string>
+     */
+    private function textFields(array $payload): array
+    {
+        $fragments = [];
+
+        foreach (['name', 'label', 'title', 'description', 'formula', 'value_text'] as $field) {
+            $value = $payload[$field] ?? null;
+            if (is_string($value) && trim($value) !== '') {
+                $fragments[] = $value;
+            }
+        }
+
+        return $fragments;
     }
 
     /** @param array<string, bool> $sourceBackedQuantityKeys */
@@ -356,7 +568,7 @@ final class NormativeWorkItemPlannerService
             : [];
 
         return isset($payload['quantity_value'])
-            && $this->sourceRefsFromScopeInference($inference) !== []
+            && $this->sourceRefsFromEvidence($inference) !== []
             && ($inference['review_required'] ?? true) === false;
     }
 
@@ -646,7 +858,7 @@ final class NormativeWorkItemPlannerService
         $payload = is_array($inference['normalized_payload'] ?? null) ? $inference['normalized_payload'] : [];
 
         if (isset($payload['quantity_value'])) {
-            $sourceRefs = $this->sourceRefsFromScopeInference($inference);
+            $sourceRefs = $this->sourceRefsFromEvidence($inference);
 
             return [
                 'value' => (float) $payload['quantity_value'],
@@ -1304,18 +1516,18 @@ final class NormativeWorkItemPlannerService
      * @param  array<string, mixed>  $inference
      * @return array<int, array<string, mixed>>
      */
-    private function sourceRefsFromScopeInference(array $inference): array
+    private function sourceRefsFromEvidence(array $evidence): array
     {
-        $sourceRefs = is_array($inference['source_refs'] ?? null)
-            ? $this->normalizeSourceRefs($inference['source_refs'])
+        $sourceRefs = is_array($evidence['source_refs'] ?? null)
+            ? $this->normalizeSourceRefs($evidence['source_refs'])
             : [];
 
         if ($sourceRefs !== []) {
             return $sourceRefs;
         }
 
-        return isset($inference['source_ref']) && is_array($inference['source_ref']) && $inference['source_ref'] !== []
-            ? [$inference['source_ref']]
+        return isset($evidence['source_ref']) && is_array($evidence['source_ref']) && $evidence['source_ref'] !== []
+            ? $this->normalizeSourceRefs([$evidence['source_ref']])
             : [];
     }
 
