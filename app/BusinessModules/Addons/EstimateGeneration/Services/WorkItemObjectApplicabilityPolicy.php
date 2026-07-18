@@ -17,6 +17,8 @@ final class WorkItemObjectApplicabilityPolicy
         'warehouse.floor_joints',
         'warehouse.gates',
         'warehouse.loading_nodes',
+        'warehouse.panel_flashings',
+        'warehouse.wall_panels',
     ];
 
     /**

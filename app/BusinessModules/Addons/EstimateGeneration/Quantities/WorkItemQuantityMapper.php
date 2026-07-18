@@ -175,7 +175,13 @@ final class WorkItemQuantityMapper
             'plumbing.pipe' => $engineeringLength('water', '0.35'),
             'sewerage.pipe' => $engineeringLength('sewer', '0.25'),
             'heating.pipe' => $engineeringLength('heating', '0.50'),
-            'ventilation.air_exchange' => $engineeringLength('ventilation', '0.30'),
+            'ventilation.air_exchange' => [
+                'sources' => [
+                    ['key' => 'engineering.ventilation.area', 'factor' => '1'],
+                    ['key' => 'floor_area', 'factor' => '0.30'],
+                ],
+                'unit' => 'm2',
+            ],
 
             'warehouse.lighting' => $engineeringCount('electrical', '0.08'),
             'office.network_points', 'warehouse.fire' => $engineeringCount('electrical', '0.06'),

@@ -129,6 +129,18 @@ final class WorkItemQuantityMapperTest extends TestCase
         }
     }
 
+    #[Test]
+    public function ventilation_duct_takeoff_uses_area_required_by_fsnb_norms(): void
+    {
+        $quantity = (new WorkItemQuantityMapper)->map('ventilation.air_exchange', [
+            'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
+        ]);
+
+        self::assertNotNull($quantity);
+        self::assertSame('54.000000', $quantity->amount);
+        self::assertSame('m2', $quantity->unit);
+    }
+
     private function quantity(string $key, string $unit, string $amount): QuantityData
     {
         return new QuantityData(

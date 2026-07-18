@@ -76,9 +76,7 @@ final readonly class NormativeIntentCandidateRanker
     {
         $tokens = [];
         foreach (preg_split('/[^\pL\pN.-]+/u', mb_strtolower($search)) ?: [] as $token) {
-            if (mb_strlen($token) < 3 || in_array($token, [
-                'монтаж', 'устройство', 'отделка', 'работа', 'работы', 'система', 'системы',
-            ], true)) {
+            if (mb_strlen($token) < 3 || NormativeLexemePolicy::isGeneric($token)) {
                 continue;
             }
             $tokens[$token] = true;
