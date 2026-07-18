@@ -135,7 +135,7 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
-    public function production_source_has_no_latest_first_or_cross_dataset_fallback(): void
+    public function production_source_keeps_norm_dataset_exact_and_combines_authoritative_base_prices(): void
     {
         $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Normatives/Services/EloquentNormativeContextPinSource.php');
 
@@ -145,13 +145,13 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("->where('id', \$requested->datasetId)", $source);
         self::assertStringContainsString("->where('prices.regional_price_version_id', \$requested->regionalPriceVersionId)", $source);
         self::assertStringContainsString("->where('status', 'active')", $source);
-        self::assertStringContainsString('->whereExists(function ($priced) use ($requested, $basePriceDatasetId)', $source);
+        self::assertStringContainsString('->whereExists(function ($priced) use ($requested, $basePriceDatasetIds)', $source);
         self::assertStringContainsString("->where('pin_resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('pin_prices.base_price', '>', 0)", $source);
         self::assertStringNotContainsString("->whereColumn('pin_resources.construction_resource_id', 'pin_prices.construction_resource_id')", $source);
         self::assertStringNotContainsString("->on('pin_prices.price_type', '=', 'pin_resources.resource_type')", $source);
-        self::assertStringContainsString('->whereNotExists(function ($unpriced) use ($requested, $basePriceDatasetId)', $source);
-        self::assertStringContainsString('->whereNotExists(function ($validPrice) use ($requested, $basePriceDatasetId)', $source);
+        self::assertStringContainsString('->whereNotExists(function ($unpriced) use ($requested, $basePriceDatasetIds)', $source);
+        self::assertStringContainsString('->whereNotExists(function ($validPrice) use ($requested, $basePriceDatasetIds)', $source);
         self::assertStringContainsString("->where('required_resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('required_resources.resource_type', '<>', 'summary')", $source);
         self::assertStringContainsString('->whereExists(function ($positiveQuantity)', $source);
@@ -178,10 +178,16 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('CAST(norms.work_composition AS TEXT)', $source);
         self::assertStringContainsString("->where('source_type', 'fsnb_2022')", $source);
         self::assertStringContainsString("\$allowedSections->{\$method}('norms.section_code', 'like', \$section.'%')", $source);
-        self::assertStringContainsString("->whereIn('source_type', ['fsbc', 'fsnb_2022'])", $source);
-        self::assertStringContainsString("CASE WHEN source_type = 'fsbc' THEN 0 ELSE 1 END", $source);
+        self::assertStringContainsString("->where('source_type', 'fsbc')", $source);
+        self::assertStringContainsString('$fsbcBasePriceDatasetId,', $source);
+        self::assertStringContainsString('$requested->datasetId,', $source);
+        self::assertStringContainsString("->whereIn('pin_prices.dataset_version_id', \$basePriceDatasetIds)", $source);
+        self::assertStringContainsString("->whereIn('valid_prices.dataset_version_id', \$basePriceDatasetIds)", $source);
+        self::assertStringContainsString('candidate_prices.dataset_version_id IN (', $source);
+        self::assertStringContainsString('$basePricePlaceholders', $source);
         self::assertStringContainsString("->whereNull('regional_price_version_id')", $source);
-        self::assertStringContainsString('basePriceDatasetId', $source);
+        self::assertStringContainsString('basePriceDatasetIds', $source);
+        self::assertStringContainsString('base_price_dataset_ids', $source);
         self::assertStringContainsString('code_matched_resource_rows_count', $source);
         self::assertStringContainsString('exact_unit_matched_resource_rows_count', $source);
         self::assertStringContainsString('normalized_unit_matched_resource_rows_count', $source);

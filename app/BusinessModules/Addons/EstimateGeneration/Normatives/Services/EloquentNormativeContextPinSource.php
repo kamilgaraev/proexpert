@@ -47,8 +47,8 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
 
             return null;
         }
-        $basePriceDatasetId = $this->database->table('estimate_dataset_versions')
-            ->whereIn('source_type', ['fsbc', 'fsnb_2022'])
+        $fsbcBasePriceDatasetId = $this->database->table('estimate_dataset_versions')
+            ->where('source_type', 'fsbc')
             ->where('status', 'parsed')
             ->whereExists(function ($resourcePrices): void {
                 $resourcePrices->selectRaw('1')
@@ -57,11 +57,14 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     ->whereNull('regional_price_version_id')
                     ->where('base_price', '>', 0);
             })
-            ->orderByRaw("CASE WHEN source_type = 'fsbc' THEN 0 ELSE 1 END")
             ->orderByDesc('id')
             ->limit(1)
             ->value('id');
-        $basePriceDatasetId = is_numeric($basePriceDatasetId) ? (int) $basePriceDatasetId : 0;
+        $fsbcBasePriceDatasetId = is_numeric($fsbcBasePriceDatasetId) ? (int) $fsbcBasePriceDatasetId : 0;
+        $basePriceDatasetIds = array_values(array_unique(array_filter([
+            $fsbcBasePriceDatasetId,
+            $requested->datasetId,
+        ], static fn (int $id): bool => $id > 0)));
         $norms = collect();
         $poolCandidatesCount = 0;
         foreach ($intents as $intent) {
@@ -105,19 +108,19 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                         }
                     });
                 })
-                ->whereExists(function ($priced) use ($requested, $basePriceDatasetId): void {
+                ->whereExists(function ($priced) use ($requested, $basePriceDatasetIds): void {
                     $priced->selectRaw('1')
                         ->from('estimate_norm_resources as pin_resources')
-                        ->join('estimate_resource_prices as pin_prices', function ($join) use ($requested, $basePriceDatasetId): void {
+                        ->join('estimate_resource_prices as pin_prices', function ($join) use ($requested, $basePriceDatasetIds): void {
                             $join->on('pin_prices.resource_code', '=', 'pin_resources.resource_code')
-                                ->where(function ($priceContext) use ($requested, $basePriceDatasetId): void {
+                                ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
                                     $priceContext->where(function ($regional) use ($requested): void {
                                         $regional->where('pin_prices.regional_price_version_id', $requested->regionalPriceVersionId)
                                             ->where('pin_prices.region_id', $requested->regionId)
                                             ->where('pin_prices.price_zone_id', $requested->priceZoneId)
                                             ->where('pin_prices.period_id', $requested->periodId);
-                                    })->orWhere(function ($base) use ($basePriceDatasetId): void {
-                                        $base->where('pin_prices.dataset_version_id', $basePriceDatasetId)
+                                    })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                                        $base->whereIn('pin_prices.dataset_version_id', $basePriceDatasetIds)
                                             ->whereNull('pin_prices.regional_price_version_id');
                                     });
                                 });
@@ -152,24 +155,24 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                         ->whereColumn('negative_resources.estimate_norm_id', 'norms.id')
                         ->where('negative_resources.quantity', '<', 0);
                 })
-                ->whereNotExists(function ($unpriced) use ($requested, $basePriceDatasetId): void {
+                ->whereNotExists(function ($unpriced) use ($requested, $basePriceDatasetIds): void {
                     $unpriced->selectRaw('1')
                         ->from('estimate_norm_resources as required_resources')
                         ->whereColumn('required_resources.estimate_norm_id', 'norms.id')
                         ->where('required_resources.quantity', '>', 0)
                         ->where('required_resources.resource_type', '<>', 'summary')
-                        ->whereNotExists(function ($validPrice) use ($requested, $basePriceDatasetId): void {
+                        ->whereNotExists(function ($validPrice) use ($requested, $basePriceDatasetIds): void {
                             $validPrice->selectRaw('1')
                                 ->from('estimate_resource_prices as valid_prices')
                                 ->whereColumn('valid_prices.resource_code', 'required_resources.resource_code')
-                                ->where(function ($priceContext) use ($requested, $basePriceDatasetId): void {
+                                ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
                                     $priceContext->where(function ($regional) use ($requested): void {
                                         $regional->where('valid_prices.regional_price_version_id', $requested->regionalPriceVersionId)
                                             ->where('valid_prices.region_id', $requested->regionId)
                                             ->where('valid_prices.price_zone_id', $requested->priceZoneId)
                                             ->where('valid_prices.period_id', $requested->periodId);
-                                    })->orWhere(function ($base) use ($basePriceDatasetId): void {
-                                        $base->where('valid_prices.dataset_version_id', $basePriceDatasetId)
+                                    })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                                        $base->whereIn('valid_prices.dataset_version_id', $basePriceDatasetIds)
                                             ->whereNull('valid_prices.regional_price_version_id');
                                     });
                                 })
@@ -243,7 +246,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             $this->telemetry('norms_rejected', [
                 'intents_count' => count($intents),
                 'norms_count' => $poolCandidatesCount,
-                ...$this->coverageDiagnostics($requested, $basePriceDatasetId, $intents),
+                ...$this->coverageDiagnostics($requested, $basePriceDatasetIds, $intents),
             ]);
 
             return null;
@@ -257,17 +260,18 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->get(['estimate_norm_id', $this->database->raw('COUNT(*) AS resource_count')])
             ->mapWithKeys(static fn (object $row): array => [(int) $row->estimate_norm_id => (int) $row->resource_count])
             ->all();
+        $basePricePlaceholders = implode(', ', array_fill(0, count($basePriceDatasetIds), '?'));
         $resourceRows = $this->database->table('estimate_norm_resources as resources')
-            ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetId): void {
+            ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
                 $join->on('prices.resource_code', '=', 'resources.resource_code')
-                    ->where(function ($priceContext) use ($requested, $basePriceDatasetId): void {
+                    ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
                         $priceContext->where(function ($regional) use ($requested): void {
                             $regional->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
                                 ->where('prices.region_id', $requested->regionId)
                                 ->where('prices.price_zone_id', $requested->priceZoneId)
                                 ->where('prices.period_id', $requested->periodId);
-                        })->orWhere(function ($base) use ($basePriceDatasetId): void {
-                            $base->where('prices.dataset_version_id', $basePriceDatasetId)
+                        })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                            $base->whereIn('prices.dataset_version_id', $basePriceDatasetIds)
                                 ->whereNull('prices.regional_price_version_id');
                         });
                     });
@@ -284,7 +288,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                       AND ((candidate_prices.regional_price_version_id = ?
                         AND candidate_prices.region_id = ? AND candidate_prices.price_zone_id = ?
                         AND candidate_prices.period_id = ?)
-                        OR (candidate_prices.dataset_version_id = ? AND candidate_prices.regional_price_version_id IS NULL))
+                        OR (candidate_prices.dataset_version_id IN ('.$basePricePlaceholders.') AND candidate_prices.regional_price_version_id IS NULL))
                       AND candidate_prices.base_price > 0
                       AND (candidate_prices.unit IS NOT DISTINCT FROM resources.unit OR EXISTS (
                           SELECT 1 FROM estimate_generation_unit_conversions AS candidate_conversions
@@ -295,9 +299,18 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                             AND candidate_conversions.factor > 0
                       ))
                     ORDER BY CASE WHEN candidate_prices.regional_price_version_id = ? THEN 0 ELSE 1 END,
+                      CASE WHEN candidate_prices.dataset_version_id = ? THEN 0 ELSE 1 END,
                       CASE WHEN candidate_prices.unit IS NOT DISTINCT FROM resources.unit THEN 0 ELSE 1 END, candidate_prices.id
                     LIMIT 1)',
-                [$requested->regionalPriceVersionId, $requested->regionId, $requested->priceZoneId, $requested->periodId, $basePriceDatasetId, $requested->regionalPriceVersionId],
+                [
+                    $requested->regionalPriceVersionId,
+                    $requested->regionId,
+                    $requested->priceZoneId,
+                    $requested->periodId,
+                    ...$basePriceDatasetIds,
+                    $requested->regionalPriceVersionId,
+                    $fsbcBasePriceDatasetId,
+                ],
             )
             ->orderBy('resources.estimate_norm_id')->orderBy('resources.id')
             ->limit(10_001)
@@ -378,7 +391,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         }
     }
 
-    private function coverageDiagnostics(NormativeContextPinData $requested, int $basePriceDatasetId, array $intents): array
+    private function coverageDiagnostics(NormativeContextPinData $requested, array $basePriceDatasetIds, array $intents): array
     {
         $eligible = $this->database->table('estimate_norm_resources as diagnostic_resources')
             ->join('estimate_norms as diagnostic_norms', 'diagnostic_norms.id', '=', 'diagnostic_resources.estimate_norm_id')
@@ -386,54 +399,54 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->where('diagnostic_collections.dataset_version_id', $requested->datasetId)
             ->where('diagnostic_resources.quantity', '>', 0)
             ->where('diagnostic_resources.resource_type', '<>', 'summary');
-        $codeMatched = (clone $eligible)->whereExists(function ($prices) use ($requested, $basePriceDatasetId): void {
+        $codeMatched = (clone $eligible)->whereExists(function ($prices) use ($requested, $basePriceDatasetIds): void {
             $prices->selectRaw('1')
                 ->from('estimate_resource_prices as diagnostic_prices')
                 ->whereColumn('diagnostic_prices.resource_code', 'diagnostic_resources.resource_code')
                 ->where('diagnostic_prices.base_price', '>', 0)
-                ->where(function ($context) use ($requested, $basePriceDatasetId): void {
+                ->where(function ($context) use ($requested, $basePriceDatasetIds): void {
                     $context->where(function ($regional) use ($requested): void {
                         $regional->where('diagnostic_prices.regional_price_version_id', $requested->regionalPriceVersionId)
                             ->where('diagnostic_prices.region_id', $requested->regionId)
                             ->where('diagnostic_prices.price_zone_id', $requested->priceZoneId)
                             ->where('diagnostic_prices.period_id', $requested->periodId);
-                    })->orWhere(function ($base) use ($basePriceDatasetId): void {
-                        $base->where('diagnostic_prices.dataset_version_id', $basePriceDatasetId)
+                    })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                        $base->whereIn('diagnostic_prices.dataset_version_id', $basePriceDatasetIds)
                             ->whereNull('diagnostic_prices.regional_price_version_id');
                     });
                 });
         });
-        $unitMatched = (clone $codeMatched)->whereExists(function ($prices) use ($requested, $basePriceDatasetId): void {
+        $unitMatched = (clone $codeMatched)->whereExists(function ($prices) use ($requested, $basePriceDatasetIds): void {
             $prices->selectRaw('1')
                 ->from('estimate_resource_prices as diagnostic_unit_prices')
                 ->whereColumn('diagnostic_unit_prices.resource_code', 'diagnostic_resources.resource_code')
                 ->where('diagnostic_unit_prices.base_price', '>', 0)
-                ->where(function ($context) use ($requested, $basePriceDatasetId): void {
+                ->where(function ($context) use ($requested, $basePriceDatasetIds): void {
                     $context->where(function ($regional) use ($requested): void {
                         $regional->where('diagnostic_unit_prices.regional_price_version_id', $requested->regionalPriceVersionId)
                             ->where('diagnostic_unit_prices.region_id', $requested->regionId)
                             ->where('diagnostic_unit_prices.price_zone_id', $requested->priceZoneId)
                             ->where('diagnostic_unit_prices.period_id', $requested->periodId);
-                    })->orWhere(function ($base) use ($basePriceDatasetId): void {
-                        $base->where('diagnostic_unit_prices.dataset_version_id', $basePriceDatasetId)
+                    })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                        $base->whereIn('diagnostic_unit_prices.dataset_version_id', $basePriceDatasetIds)
                             ->whereNull('diagnostic_unit_prices.regional_price_version_id');
                     });
                 })
                 ->whereRaw('diagnostic_unit_prices.unit IS NOT DISTINCT FROM diagnostic_resources.unit');
         });
-        $normalizedUnitMatched = (clone $codeMatched)->whereExists(function ($prices) use ($requested, $basePriceDatasetId): void {
+        $normalizedUnitMatched = (clone $codeMatched)->whereExists(function ($prices) use ($requested, $basePriceDatasetIds): void {
             $prices->selectRaw('1')
                 ->from('estimate_resource_prices as diagnostic_normalized_prices')
                 ->whereColumn('diagnostic_normalized_prices.resource_code', 'diagnostic_resources.resource_code')
                 ->where('diagnostic_normalized_prices.base_price', '>', 0)
-                ->where(function ($context) use ($requested, $basePriceDatasetId): void {
+                ->where(function ($context) use ($requested, $basePriceDatasetIds): void {
                     $context->where(function ($regional) use ($requested): void {
                         $regional->where('diagnostic_normalized_prices.regional_price_version_id', $requested->regionalPriceVersionId)
                             ->where('diagnostic_normalized_prices.region_id', $requested->regionId)
                             ->where('diagnostic_normalized_prices.price_zone_id', $requested->priceZoneId)
                             ->where('diagnostic_normalized_prices.period_id', $requested->periodId);
-                    })->orWhere(function ($base) use ($basePriceDatasetId): void {
-                        $base->where('diagnostic_normalized_prices.dataset_version_id', $basePriceDatasetId)
+                    })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                        $base->whereIn('diagnostic_normalized_prices.dataset_version_id', $basePriceDatasetIds)
                             ->whereNull('diagnostic_normalized_prices.regional_price_version_id');
                     });
                 })
@@ -442,13 +455,6 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 );
         });
         $diagnosticIntent = $intents[0] ?? [];
-        foreach ($intents as $intent) {
-            if (str_contains(mb_strtolower((string) ($intent['search_text'] ?? '')), 'разработка грунта')) {
-                $diagnosticIntent = $intent;
-
-                break;
-            }
-        }
         $diagnosticSearchText = mb_strtolower(trim((string) ($diagnosticIntent['search_text'] ?? '')));
         $diagnosticLexicalCandidatesCount = 0;
         if ($diagnosticSearchText !== '') {
@@ -467,14 +473,14 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->where('diagnostic_pair_resources.quantity', '>', 0)
             ->where('diagnostic_pair_resources.resource_type', '<>', 'summary')
             ->where('diagnostic_pair_prices.base_price', '>', 0)
-            ->where(function ($context) use ($requested, $basePriceDatasetId): void {
+            ->where(function ($context) use ($requested, $basePriceDatasetIds): void {
                 $context->where(function ($regional) use ($requested): void {
                     $regional->where('diagnostic_pair_prices.regional_price_version_id', $requested->regionalPriceVersionId)
                         ->where('diagnostic_pair_prices.region_id', $requested->regionId)
                         ->where('diagnostic_pair_prices.price_zone_id', $requested->priceZoneId)
                         ->where('diagnostic_pair_prices.period_id', $requested->periodId);
-                })->orWhere(function ($base) use ($basePriceDatasetId): void {
-                    $base->where('diagnostic_pair_prices.dataset_version_id', $basePriceDatasetId)
+                })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                    $base->whereIn('diagnostic_pair_prices.dataset_version_id', $basePriceDatasetIds)
                         ->whereNull('diagnostic_pair_prices.regional_price_version_id');
                 });
             })
@@ -494,7 +500,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->all();
 
         return [
-            'base_price_dataset_id' => $basePriceDatasetId,
+            'base_price_dataset_ids' => $basePriceDatasetIds,
             'eligible_resource_rows_count' => (clone $eligible)->count(),
             'code_matched_resource_rows_count' => $codeMatched->count(),
             'exact_unit_matched_resource_rows_count' => $unitMatched->count(),
