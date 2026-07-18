@@ -187,7 +187,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             $this->telemetry('norms_rejected', [
                 'intents_count' => count($intents),
                 'norms_count' => $poolCandidatesCount,
-                ...$this->coverageDiagnostics($requested, $basePriceDatasetId),
+                ...$this->coverageDiagnostics($requested, $basePriceDatasetId, $intents),
             ]);
 
             return null;
@@ -316,7 +316,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         }
     }
 
-    private function coverageDiagnostics(NormativeContextPinData $requested, int $basePriceDatasetId): array
+    private function coverageDiagnostics(NormativeContextPinData $requested, int $basePriceDatasetId, array $intents): array
     {
         $eligible = $this->database->table('estimate_norm_resources as diagnostic_resources')
             ->join('estimate_norms as diagnostic_norms', 'diagnostic_norms.id', '=', 'diagnostic_resources.estimate_norm_id')
@@ -379,6 +379,57 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     "LOWER(REGEXP_REPLACE(COALESCE(diagnostic_normalized_prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(diagnostic_resources.unit, ''), '[[:space:].,-]+', '', 'g'))"
                 );
         });
+        $diagnosticIntent = $intents[0] ?? [];
+        foreach ($intents as $intent) {
+            if (str_contains(mb_strtolower((string) ($intent['search_text'] ?? '')), 'разработка грунта')) {
+                $diagnosticIntent = $intent;
+
+                break;
+            }
+        }
+        $diagnosticSearchText = mb_strtolower(trim((string) ($diagnosticIntent['search_text'] ?? '')));
+        $diagnosticLexicalCandidatesCount = 0;
+        if ($diagnosticSearchText !== '') {
+            $diagnosticLexicalQuery = $this->queryBuilder->build($diagnosticSearchText);
+            $diagnosticLexicalCandidatesCount = $this->database->table('estimate_norms as diagnostic_candidate_norms')
+                ->join('estimate_norm_collections as diagnostic_candidate_collections', 'diagnostic_candidate_collections.id', '=', 'diagnostic_candidate_norms.collection_id')
+                ->where('diagnostic_candidate_collections.dataset_version_id', $requested->datasetId)
+                ->whereRaw("diagnostic_candidate_norms.search_vector @@ websearch_to_tsquery('russian', ?)", [$diagnosticLexicalQuery])
+                ->count();
+        }
+        $unmatchedUnitPairs = $this->database->table('estimate_norm_resources as diagnostic_pair_resources')
+            ->join('estimate_norms as diagnostic_pair_norms', 'diagnostic_pair_norms.id', '=', 'diagnostic_pair_resources.estimate_norm_id')
+            ->join('estimate_norm_collections as diagnostic_pair_collections', 'diagnostic_pair_collections.id', '=', 'diagnostic_pair_norms.collection_id')
+            ->join('estimate_resource_prices as diagnostic_pair_prices', 'diagnostic_pair_prices.resource_code', '=', 'diagnostic_pair_resources.resource_code')
+            ->where('diagnostic_pair_collections.dataset_version_id', $requested->datasetId)
+            ->where('diagnostic_pair_resources.quantity', '>', 0)
+            ->where('diagnostic_pair_resources.resource_type', '<>', 'summary')
+            ->where('diagnostic_pair_prices.base_price', '>', 0)
+            ->where(function ($context) use ($requested, $basePriceDatasetId): void {
+                $context->where(function ($regional) use ($requested): void {
+                    $regional->where('diagnostic_pair_prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                        ->where('diagnostic_pair_prices.region_id', $requested->regionId)
+                        ->where('diagnostic_pair_prices.price_zone_id', $requested->priceZoneId)
+                        ->where('diagnostic_pair_prices.period_id', $requested->periodId);
+                })->orWhere(function ($base) use ($basePriceDatasetId): void {
+                    $base->where('diagnostic_pair_prices.dataset_version_id', $basePriceDatasetId)
+                        ->whereNull('diagnostic_pair_prices.regional_price_version_id');
+                });
+            })
+            ->whereRaw('diagnostic_pair_prices.unit IS DISTINCT FROM diagnostic_pair_resources.unit')
+            ->selectRaw("COALESCE(diagnostic_pair_resources.unit, '<null>') as norm_unit, COALESCE(diagnostic_pair_prices.unit, '<null>') as price_unit, diagnostic_pair_resources.resource_type, diagnostic_pair_prices.price_type, COUNT(*) as rows_count")
+            ->groupBy('diagnostic_pair_resources.unit', 'diagnostic_pair_prices.unit', 'diagnostic_pair_resources.resource_type', 'diagnostic_pair_prices.price_type')
+            ->orderByDesc('rows_count')
+            ->limit(16)
+            ->get()
+            ->map(static fn (object $row): array => [
+                'norm_unit' => (string) $row->norm_unit,
+                'price_unit' => (string) $row->price_unit,
+                'resource_type' => (string) $row->resource_type,
+                'price_type' => (string) $row->price_type,
+                'rows_count' => (int) $row->rows_count,
+            ])
+            ->all();
 
         return [
             'base_price_dataset_id' => $basePriceDatasetId,
@@ -386,6 +437,9 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             'code_matched_resource_rows_count' => $codeMatched->count(),
             'exact_unit_matched_resource_rows_count' => $unitMatched->count(),
             'normalized_unit_matched_resource_rows_count' => $normalizedUnitMatched->count(),
+            'diagnostic_intent_search_text' => $diagnosticSearchText,
+            'diagnostic_lexical_candidates_count' => $diagnosticLexicalCandidatesCount,
+            'unmatched_unit_pairs' => $unmatchedUnitPairs,
         ];
     }
 }
