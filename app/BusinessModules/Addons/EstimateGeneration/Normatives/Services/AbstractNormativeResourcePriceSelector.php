@@ -38,12 +38,18 @@ final readonly class AbstractNormativeResourcePriceSelector
         $eligible = $regional;
         $policy = 'regional_child_median:v1';
         if ($eligible === []) {
-            $eligible = array_values(array_filter(
+            $baseCandidates = array_values(array_filter(
                 $related,
                 static fn (object $candidate): bool => in_array((int) ($candidate->dataset_version_id ?? 0), $baseDatasetIds, true)
-                    && ($candidate->regional_price_version_id ?? null) === null,
+                    && ($candidate->regional_price_version_id ?? null) === null
+                    && in_array((string) ($candidate->price_dataset_source_type ?? ''), ['fsbc', 'fsnb_2022'], true),
             ));
-            $policy = 'fsbc_base_child_median:v1';
+            $fsbcCandidates = array_values(array_filter(
+                $baseCandidates,
+                static fn (object $candidate): bool => ($candidate->price_dataset_source_type ?? null) === 'fsbc',
+            ));
+            $eligible = $fsbcCandidates !== [] ? $fsbcCandidates : $baseCandidates;
+            $policy = $fsbcCandidates !== [] ? 'fsbc_base_child_median:v1' : 'fsnb_base_child_median:v1';
         }
         if ($eligible === []) {
             return null;
