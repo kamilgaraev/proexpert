@@ -22,7 +22,7 @@ final readonly class WorkPlanCompiler
     /** @param array<string, mixed> $analysis
      * @return array<string, mixed>
      */
-    public function compile(array $analysis, ?WorkPlannerResponseData $source = null): array
+    public function compile(array $analysis, ?WorkPlannerResponseData $source = null, bool $deferNormativePin = false): array
     {
         $profile = $this->packagePlanner->profileFromAnalysis($analysis);
         $plan = $this->packagePlanner->plan($profile);
@@ -44,9 +44,16 @@ final readonly class WorkPlanCompiler
             'document_requirements' => $this->packagePlanner->documentRequirements($profile),
             'generation_mode' => EstimateGenerationMode::fromInput($profile->planningSignals['generation_mode'] ?? null)->value,
             'regional_context' => $analysis['regional_context'] ?? [],
-            'normative_context_pin' => $this->normativePins->resolve($regionalContext, $this->normativeIntents($localEstimates)),
+            'normative_context_pin' => $deferNormativePin
+                ? ['status' => 'pending', 'blocking_issues' => []]
+                : $this->resolveNormativeContextPin($regionalContext, $localEstimates),
             'local_estimates' => $localEstimates,
         ];
+    }
+
+    public function resolveNormativeContextPin(array $regionalContext, array $localEstimates): array
+    {
+        return $this->normativePins->resolve($regionalContext, $this->normativeIntents($localEstimates));
     }
 
     /** @param array<string, mixed> $intent

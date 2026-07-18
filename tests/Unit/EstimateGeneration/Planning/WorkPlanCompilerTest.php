@@ -86,6 +86,39 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertArrayNotHasKey('norm_id', $item);
     }
 
+    public function test_normative_pin_is_resolved_from_final_canonical_work_item_units(): void
+    {
+        $pins = $this->createMock(NormativeContextPinResolver::class);
+        $pins->expects(self::once())
+            ->method('resolve')
+            ->with([], [[
+                'search_text' => 'Устройство полов',
+                'unit' => 'm2',
+                'code' => null,
+            ]])
+            ->willReturn(['status' => 'pinned']);
+        $compiler = new WorkPlanCompiler(
+            new PackagePlannerService,
+            new EstimateDecompositionService,
+            new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService),
+            $pins,
+        );
+
+        $pin = $compiler->resolveNormativeContextPin([], [[
+            'sections' => [[
+                'work_items' => [[
+                    'item_type' => 'priced_work',
+                    'name' => 'Устройство полов',
+                    'normative_search_text' => 'Устройство полов',
+                    'unit' => 'm2',
+                    'normative_rate_code' => null,
+                ]],
+            ]],
+        ]]);
+
+        self::assertSame(['status' => 'pinned'], $pin);
+    }
+
     private function compiler(): WorkPlanCompiler
     {
         return new WorkPlanCompiler(

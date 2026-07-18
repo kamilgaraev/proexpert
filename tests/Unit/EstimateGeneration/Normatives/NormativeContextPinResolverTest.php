@@ -331,6 +331,9 @@ final class NormativeContextPinResolverTest extends TestCase
             'price_id' => 9001, 'resource_type' => 'material', 'resource_code' => '01.7.01',
             'price_resource_code' => '01.7.01', 'price_unit' => '100 pcs',
             'resource_name' => 'Кирпич', 'unit' => 'pcs', 'quantity' => 50,
+            'unit_price' => '125.450000', 'regional_price_version_id' => 11,
+            'regional_price_version_key' => 'regional-2026-q2',
+            'price_dataset_source_type' => null, 'price_dataset_version' => null,
         ];
         $mapped = NormativeResourceRowData::fromDatabaseRow($row);
 
@@ -340,6 +343,9 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertSame(9001, $mapped->resource['price_id']);
         self::assertSame(501, $mapped->resource['linked_resource_id']);
         self::assertSame('100 pcs', $mapped->resource['price_unit']);
+        self::assertSame('125.450000', $mapped->resource['unit_price']);
+        self::assertSame('regional_catalog', $mapped->resource['price_source']);
+        self::assertSame('regional-2026-q2', $mapped->resource['price_source_version']);
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('normative_resource_price_relation_invalid');
@@ -358,10 +364,32 @@ final class NormativeContextPinResolverTest extends TestCase
             'price_id' => 9001, 'resource_type' => 'material',
             'resource_code' => '01.7.01', 'price_resource_code' => '01.7.01',
             'resource_name' => 'Кирпич', 'unit' => 'шт', 'quantity' => 50,
+            'unit_price' => '125.450000', 'regional_price_version_id' => 11,
+            'regional_price_version_key' => 'regional-2026-q2',
+            'price_dataset_source_type' => null, 'price_dataset_version' => null,
         ]);
 
         self::assertSame(101, $mapped->estimateNormId);
         self::assertSame(9001, $mapped->resource['price_id']);
         self::assertNull($mapped->resource['linked_resource_id']);
+    }
+
+    #[Test]
+    public function database_resource_row_preserves_fsnb_base_price_and_source(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101, 'norm_resource_id' => 7001,
+            'construction_resource_id' => null, 'price_construction_resource_id' => null,
+            'price_id' => 9001, 'resource_type' => 'labor',
+            'resource_code' => '1-100-01', 'price_resource_code' => '1-100-01',
+            'resource_name' => 'Рабочий', 'unit' => 'чел.-ч', 'price_unit' => 'чел.-ч',
+            'quantity' => '2.500000', 'unit_price' => '412.370000',
+            'regional_price_version_id' => null, 'regional_price_version_key' => null,
+            'price_dataset_source_type' => 'fsnb_2022', 'price_dataset_version' => '2022.4',
+        ]);
+
+        self::assertSame('412.370000', $mapped->resource['unit_price']);
+        self::assertSame('fsnb_base', $mapped->resource['price_source']);
+        self::assertSame('2022.4', $mapped->resource['price_source_version']);
     }
 }

@@ -40,7 +40,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         if ($hints !== []) {
             $analysis['document_context']['quantity_learning_hints'] = $hints;
         }
-        $payload = $this->compiler->compile($analysis);
+        $payload = $this->compiler->compile($analysis, null, true);
         $quantities = [];
         foreach (($quantityOutput['building_quantities']['quantities'] ?? []) as $quantity) {
             if (! is_array($quantity)) {
@@ -70,6 +70,11 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 }
             }
         }
+        $regionalContext = is_array($payload['regional_context'] ?? null) ? $payload['regional_context'] : [];
+        $payload['normative_context_pin'] = $this->compiler->resolveNormativeContextPin(
+            $regionalContext,
+            $payload['local_estimates'],
+        );
 
         return $this->results->make($context, $this->stage(), $payload, [
             'local_estimates_count' => count($payload['local_estimates']),

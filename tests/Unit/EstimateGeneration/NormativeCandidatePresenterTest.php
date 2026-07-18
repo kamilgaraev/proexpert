@@ -61,8 +61,14 @@ final class NormativeCandidatePresenterTest extends TestCase
             'score' => 92,
             'resources' => [
                 'materials' => [[
+                    'code' => '1.2.3',
+                    'name' => 'Песок',
+                    'unit' => 'т',
+                    'price_unit' => 'т',
+                    'unit_price' => '2500.000000',
                     'total_price' => 500000,
                     'price_source' => 'fsbc_base',
+                    'price_source_version' => 'ФСБЦ-2025',
                 ]],
                 'machinery' => [],
                 'labor' => [],
@@ -81,6 +87,17 @@ final class NormativeCandidatePresenterTest extends TestCase
         self::assertSame(500.0, $payload['cost_breakdown_preview']['materials']);
         self::assertArrayNotHasKey('work', $payload['cost_breakdown_preview']);
         self::assertSame(['fsbc_base'], $payload['price_sources']);
+        self::assertSame([[
+            'resource_code' => '1.2.3',
+            'resource_name' => 'Песок',
+            'resource_unit' => 'т',
+            'price_amount' => '2500.000000',
+            'price_unit' => 'т',
+            'currency' => 'RUB',
+            'source' => 'fsbc_base',
+            'source_version' => 'ФСБЦ-2025',
+        ]], $payload['resource_prices']);
+        self::assertSame(1, $payload['base_catalog_resources_count']);
     }
 
     public function test_presenter_marks_candidate_with_partial_resource_prices(): void

@@ -14,6 +14,7 @@ class NormativeCandidatePresenter
     {
         $resources = is_array($candidate['resources'] ?? null) ? $candidate['resources'] : [];
         $pricePreview = $this->pricePreview($candidate, $resources, $workItem);
+        $resourcePrices = $this->resourcePrices($resources);
 
         return [
             'key' => $candidate['key'] ?? null,
@@ -37,6 +38,11 @@ class NormativeCandidatePresenter
             'total_cost_preview' => $pricePreview['total_cost_preview'],
             'cost_breakdown_preview' => $pricePreview['cost_breakdown_preview'],
             'price_sources' => $pricePreview['price_sources'],
+            'resource_prices' => $resourcePrices,
+            'base_catalog_resources_count' => count(array_filter(
+                $resourcePrices,
+                static fn (array $price): bool => $price['source'] !== 'regional',
+            )),
             'match_reasons' => array_values($candidate['match_reasons'] ?? []),
             'warnings' => array_values($candidate['warnings'] ?? []),
             'work_composition' => $this->normalizeComposition($candidate['work_composition'] ?? []),
@@ -225,6 +231,46 @@ class NormativeCandidatePresenter
         }
 
         return array_values(array_unique($sources));
+    }
+
+    /** @return list<array{resource_code: string, resource_name: string, resource_unit: string|null, price_amount: string, price_unit: string|null, currency: string, source: string, source_version: string|null}> */
+    private function resourcePrices(array $resources): array
+    {
+        $prices = [];
+        foreach ($resources as $group) {
+            if (! is_array($group)) {
+                continue;
+            }
+            foreach ($group as $resource) {
+                if (! is_array($resource) || ! $this->resourceHasPositivePrice($resource)) {
+                    continue;
+                }
+                $code = trim((string) ($resource['code'] ?? ''));
+                $name = trim((string) ($resource['name'] ?? ''));
+                $amount = trim((string) ($resource['unit_price'] ?? ''));
+                $source = match (trim((string) ($resource['price_source'] ?? ''))) {
+                    'regional_catalog' => 'regional',
+                    'fsbc_base' => 'fsbc_base',
+                    'fsnb_base' => 'fsnb_base',
+                    default => null,
+                };
+                if ($code === '' || $name === '' || ! is_numeric($amount) || (float) $amount <= 0 || $source === null) {
+                    continue;
+                }
+                $prices[] = [
+                    'resource_code' => $code,
+                    'resource_name' => $name,
+                    'resource_unit' => $this->nullableString($resource['unit'] ?? null),
+                    'price_amount' => $amount,
+                    'price_unit' => $this->nullableString($resource['price_unit'] ?? $resource['unit'] ?? null),
+                    'currency' => 'RUB',
+                    'source' => $source,
+                    'source_version' => $this->nullableString($resource['price_source_version'] ?? null),
+                ];
+            }
+        }
+
+        return $prices;
     }
 
     /**
