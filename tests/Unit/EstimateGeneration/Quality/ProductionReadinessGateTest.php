@@ -35,7 +35,9 @@ final class ProductionReadinessGateTest extends TestCase
         yield 'scale unconfirmed' => ['geometry_scale_unconfirmed', ['building_model' => ['scale_status' => 'estimated']]];
         yield 'evidence missing' => ['evidence_missing', ['building_model' => ['evidence_ids' => null]]];
         yield 'evidence invalid' => ['evidence_invalid', ['building_model' => ['evidence_ids' => ['bad']]]];
-        yield 'estimated quantity' => ['estimated_quantity_unconfirmed', self::itemOverride(['quantity_evidence' => ['source' => 'estimated']])];
+        yield 'estimated quantity' => ['estimated_quantity_unconfirmed', self::itemOverride(['quantity_evidence' => [
+            'source' => 'estimated', 'review_blockers' => ['estimated_quantity_unconfirmed'],
+        ]])];
         yield 'normative missing' => ['normative_missing', self::itemOverride(['normative_match' => ['status' => 'not_found']])];
         yield 'normative rejected' => ['normative_rejected', self::itemOverride(['normative_match' => ['decision' => ['status' => 'rejected']]])];
         yield 'unit mismatch' => ['unit_mismatch', self::itemOverride(['normative_match' => ['warnings' => ['unit_mismatch']]])];
@@ -66,6 +68,22 @@ final class ProductionReadinessGateTest extends TestCase
         self::assertContains('low_confidence', array_column($result->warnings, 'code'));
         self::assertSame('apply_draft', $result->nextAction['code']);
         self::assertSame($result->toArray(), $result->toArray());
+    }
+
+    #[Test]
+    public function source_backed_estimated_quantity_without_review_blockers_is_ready(): void
+    {
+        $draft = $this->readyDraft();
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['quantity_evidence'] = [
+            'source' => 'estimated',
+            'evidence_ids' => [1],
+            'review_blockers' => [],
+        ];
+        $inspection = (new DraftReadinessInspector)->inspect($draft);
+        $result = (new EstimatorReadinessEvaluator)->evaluate($this->input($inspection->metrics));
+
+        self::assertNotContains('estimated_quantity_unconfirmed', array_column($inspection->blockingIssues, 'code'));
+        self::assertTrue($result->canApply);
     }
 
     private function input(array $draftMetrics): EstimatorReadinessInput

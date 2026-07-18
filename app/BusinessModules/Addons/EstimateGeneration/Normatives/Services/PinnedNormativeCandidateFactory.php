@@ -12,7 +12,7 @@ final readonly class PinnedNormativeCandidateFactory
     public function __construct(private NormativeIntentCandidateRanker $ranker = new NormativeIntentCandidateRanker) {}
 
     /** @return list<NormativeCandidateData> */
-    public function forWorkItem(array $catalogCandidates, array $workItem, ?string $normativeSection = null): array
+    public function forWorkItem(array $catalogCandidates, array $workItem, array $normativeSections = []): array
     {
         $rankable = [];
         $byId = [];
@@ -37,7 +37,10 @@ final readonly class PinnedNormativeCandidateFactory
             'search_text' => (string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''),
             'unit' => (string) ($workItem['unit'] ?? ''),
             'code' => is_string($workItem['normative_rate_code'] ?? null) ? $workItem['normative_rate_code'] : null,
-            'normative_section' => $normativeSection,
+            'action' => is_string($workItem['work_intent']['action'] ?? null)
+                ? $workItem['work_intent']['action']
+                : null,
+            'normative_sections' => $normativeSections,
         ]]);
         if ($selected === null) {
             return [];
@@ -65,6 +68,9 @@ final readonly class PinnedNormativeCandidateFactory
                 lexicalScore: max(0.1, 1 - ($index * 0.1)), semanticScore: null,
                 lexicalAlgorithmVersion: 'pinned-catalog-v1', semanticIndexVersion: null,
                 sourceEvidence: ['norm:'.(string) $candidate['normative_id'], 'dataset:'.(string) $candidate['dataset_id']],
+                workComposition: is_array($candidate['work_composition'] ?? null)
+                    ? array_values(array_filter($candidate['work_composition'], 'is_string'))
+                    : [],
             );
         }, $selected, array_keys($selected));
     }

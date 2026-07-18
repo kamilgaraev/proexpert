@@ -93,7 +93,7 @@ final readonly class WorkPlanCompiler
         ];
     }
 
-    /** @return list<array{search_text: string, unit: string, code: string|null, normative_section: string|null}> */
+    /** @return list<array{search_text: string, unit: string, code: string|null, action: string|null, normative_section: string|null, normative_sections: list<string>}> */
     private function normativeIntents(array $localEstimates): array
     {
         $intents = [];
@@ -112,14 +112,23 @@ final readonly class WorkPlanCompiler
                             'local_estimate_title' => $localEstimate['title'] ?? null,
                         ])
                         : null;
-                    $normativeSection = $recordedIntent === null
-                        ? ($classified?->preferredSectionPrefixes[0] ?? null)
-                        : ($recordedIntent['preferred_section_prefixes'][0] ?? null);
+                    $normativeSections = $recordedIntent === null
+                        ? ($classified?->preferredSectionPrefixes ?? [])
+                        : ($recordedIntent['preferred_section_prefixes'] ?? []);
+                    $normativeSections = array_values(array_unique(array_filter(
+                        $normativeSections,
+                        static fn (mixed $section): bool => is_string($section) && $section !== '',
+                    )));
+                    $normativeSection = count($normativeSections) === 1 ? $normativeSections[0] : null;
                     $intents[] = [
                         'search_text' => (string) ($item['normative_search_text'] ?? $item['name'] ?? ''),
                         'unit' => (string) ($item['unit'] ?? ''),
                         'code' => is_string($item['normative_rate_code'] ?? null) ? $item['normative_rate_code'] : null,
+                        'action' => is_string($recordedIntent['action'] ?? null)
+                            ? $recordedIntent['action']
+                            : $classified?->action,
                         'normative_section' => is_string($normativeSection) ? $normativeSection : null,
+                        'normative_sections' => $normativeSections,
                     ];
                 }
             }

@@ -10,16 +10,20 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeCandi
 class NormativeMatchDecisionService
 {
     private const ACCEPT_CONFIDENCE_THRESHOLD = 0.72;
+
     private const REVIEW_CONFIDENCE_THRESHOLD = 0.55;
+
     private const CANDIDATE_CONFIDENCE_THRESHOLD = 0.35;
 
     public function __construct(
         private readonly ?WorkIntentClassifier $workIntentClassifier = null,
+        private readonly ?NormativeSearchProfileCatalog $searchProfileCatalog = null,
+        private readonly ?NormativeSemanticCompatibilityService $semanticCompatibilityService = null,
     ) {}
 
     /**
-     * @param array<string, mixed> $candidate
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $candidate
+     * @param  array<string, mixed>  $workItem
      */
     public function decide(array $candidate, array $workItem): NormativeMatchDecisionData
     {
@@ -28,19 +32,26 @@ class NormativeMatchDecisionService
         $reasons = [];
         $unitCompatible = $this->unitCompatible((string) ($candidate['unit'] ?? ''), (string) ($workItem['unit'] ?? ''));
         $scopeCompatible = $this->scopeCompatible($candidate, $workItem);
+        $semanticCompatible = $this->semanticCompatible($candidate, $workItem);
         $resourceCount = $this->resourcesCount($candidate['resources'] ?? []);
         $pricedCount = $this->pricedResourcesCount($candidate['resources'] ?? []);
 
-        if (!$unitCompatible) {
+        if (! $unitCompatible) {
             $warnings[] = 'unit_mismatch';
         } else {
             $reasons[] = 'unit_compatible';
         }
 
-        if (!$scopeCompatible) {
+        if (! $scopeCompatible) {
             $warnings[] = 'scope_mismatch';
         } else {
             $reasons[] = 'scope_compatible';
+        }
+
+        if (! $semanticCompatible) {
+            $warnings[] = 'semantic_mismatch';
+        } else {
+            $reasons[] = 'semantic_compatible';
         }
 
         if ($confidence < self::ACCEPT_CONFIDENCE_THRESHOLD) {
@@ -71,6 +82,7 @@ class NormativeMatchDecisionService
             hardWarnings: array_values(array_intersect($warnings, [
                 'unit_mismatch',
                 'scope_mismatch',
+                'semantic_mismatch',
                 'norm_without_resources',
                 'norm_without_prices',
                 'norm_with_unpriced_resources',
@@ -113,8 +125,8 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param array<string, mixed> $candidate
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $candidate
+     * @param  array<string, mixed>  $workItem
      */
     private function scopeCompatible(array $candidate, array $workItem): bool
     {
@@ -155,7 +167,35 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $candidate
+     * @param  array<string, mixed>  $workItem
+     */
+    private function semanticCompatible(array $candidate, array $workItem): bool
+    {
+        $intent = $this->workIntent($workItem);
+        $profileCatalog = $this->searchProfileCatalog ?? new NormativeSearchProfileCatalog;
+        $profile = $profileCatalog->forIntent(
+            (string) ($intent['scope'] ?? ''),
+            (string) ($intent['action'] ?? ''),
+            isset($intent['system']) ? (string) $intent['system'] : null,
+        );
+        $service = $this->semanticCompatibilityService ?? new NormativeSemanticCompatibilityService;
+        $candidateText = $this->candidateSemanticText($candidate);
+
+        if ($candidateText === '') {
+            return true;
+        }
+
+        return $service->isCompatible(
+            $candidateText,
+            $this->workText($workItem),
+            $intent,
+            $profile->forbiddenDomainTerms,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function workIntent(array $workItem): array
@@ -164,7 +204,7 @@ class NormativeMatchDecisionService
             return $workItem['work_intent'];
         }
 
-        $classifier = $this->workIntentClassifier ?? new WorkIntentClassifier(new NormativeScopeRuleCatalog());
+        $classifier = $this->workIntentClassifier ?? new WorkIntentClassifier(new NormativeScopeRuleCatalog);
         $intent = $classifier->classify($workItem);
 
         return [
@@ -179,9 +219,9 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param array<string, mixed> $candidate
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $intent
+     * @param  array<string, mixed>  $candidate
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $intent
      */
     private function hasForbiddenDomain(array $candidate, array $workItem, array $intent): bool
     {
@@ -191,29 +231,29 @@ class NormativeMatchDecisionService
         $system = (string) ($intent['system'] ?? '');
         $action = (string) ($intent['action'] ?? '');
 
-        if ($this->containsAny($candidateText, ['кран портальн', 'портальный кран', 'кран козлов']) && !$this->containsAny($workText, ['кран', 'подъемн'])) {
+        if ($this->containsAny($candidateText, ['кран портальн', 'портальный кран', 'кран козлов']) && ! $this->containsAny($workText, ['кран', 'подъемн'])) {
             return true;
         }
 
-        if ($this->containsAny($candidateText, ['железнодорож', 'земляное полотно']) && !$this->containsAny($workText, ['железнодорож', 'рельс', 'путь'])) {
+        if ($this->containsAny($candidateText, ['железнодорож', 'земляное полотно']) && ! $this->containsAny($workText, ['железнодорож', 'рельс', 'путь'])) {
             return true;
         }
 
-        if ($this->containsAny($candidateText, ['бурени', 'скважин']) && !$this->containsAny($workText, ['бурени', 'скважин'])) {
+        if ($this->containsAny($candidateText, ['бурени', 'скважин']) && ! $this->containsAny($workText, ['бурени', 'скважин'])) {
             return true;
         }
 
-        if ($this->containsAny($candidateText, ['взрыв', 'взрываем']) && !$this->containsAny($workText, ['взрыв', 'взрываем'])) {
+        if ($this->containsAny($candidateText, ['взрыв', 'взрываем']) && ! $this->containsAny($workText, ['взрыв', 'взрываем'])) {
             return true;
         }
 
-        if ($this->containsAny($candidateText, ['шпунт']) && !$this->containsAny($workText, ['шпунт'])) {
+        if ($this->containsAny($candidateText, ['шпунт']) && ! $this->containsAny($workText, ['шпунт'])) {
             return true;
         }
 
         if (
             $this->containsAny($candidateText, ['водопроводн арматур', 'арматур водопровод'])
-            && !in_array($system, ['water_supply', 'sewerage'], true)
+            && ! in_array($system, ['water_supply', 'sewerage'], true)
             && $action !== 'pipe_layout'
         ) {
             return true;
@@ -221,8 +261,8 @@ class NormativeMatchDecisionService
 
         if (
             $this->containsAny($candidateText, ['землян', 'разработк грунт', 'котлован', 'транше'])
-            && !in_array($scope, ['foundation', 'site'], true)
-            && !in_array($action, ['excavation', 'backfill'], true)
+            && ! in_array($scope, ['foundation', 'site'], true)
+            && ! in_array($action, ['excavation', 'backfill'], true)
         ) {
             return true;
         }
@@ -291,7 +331,7 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param array<string, mixed> $candidate
+     * @param  array<string, mixed>  $candidate
      */
     private function candidateSectionCode(array $candidate): string
     {
@@ -306,7 +346,7 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param array<string, mixed> $candidate
+     * @param  array<string, mixed>  $candidate
      */
     private function candidateText(array $candidate): string
     {
@@ -323,7 +363,22 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $candidate
+     */
+    private function candidateSemanticText(array $candidate): string
+    {
+        $composition = is_array($candidate['work_composition'] ?? null)
+            ? implode(' ', $candidate['work_composition'])
+            : '';
+
+        return mb_strtolower(trim(implode(' ', array_filter([
+            (string) ($candidate['name'] ?? ''),
+            $composition,
+        ]))));
+    }
+
+    /**
+     * @param  array<string, mixed>  $workItem
      */
     private function workText(array $workItem): string
     {
@@ -336,7 +391,7 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param array<int, string> $prefixes
+     * @param  array<int, string>  $prefixes
      */
     private function startsWithAny(string $value, array $prefixes): bool
     {
@@ -350,12 +405,11 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param mixed $values
      * @return array<int, string>
      */
     private function stringList(mixed $values): array
     {
-        if (!is_array($values)) {
+        if (! is_array($values)) {
             return [];
         }
 
@@ -366,7 +420,7 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param array<int, string> $needles
+     * @param  array<int, string>  $needles
      */
     private function containsAny(string $text, array $needles): bool
     {
@@ -380,7 +434,7 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param array<string, mixed> $resources
+     * @param  array<string, mixed>  $resources
      */
     private function resourcesCount(array $resources): int
     {
@@ -391,7 +445,7 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param array<string, mixed> $resources
+     * @param  array<string, mixed>  $resources
      */
     private function pricedResourcesCount(array $resources): int
     {
@@ -409,7 +463,7 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param array<string, mixed> $resource
+     * @param  array<string, mixed>  $resource
      */
     private function resourceHasPositivePrice(array $resource): bool
     {
@@ -417,7 +471,7 @@ class NormativeMatchDecisionService
     }
 
     /**
-     * @param array<string, mixed> $resource
+     * @param  array<string, mixed>  $resource
      */
     private function resourceTotalPrice(array $resource): float
     {

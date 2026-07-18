@@ -4,11 +4,16 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSemanticCompatibilityService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 
 final readonly class NormativeIntentCandidateRanker
 {
-    /** @param list<object> $candidates @param non-empty-list<array{search_text: string, unit: string, code?: string|null, normative_section?: string|null}> $intents @return list<object>|null */
+    public function __construct(
+        private NormativeSemanticCompatibilityService $semanticCompatibility = new NormativeSemanticCompatibilityService,
+    ) {}
+
+    /** @param list<object> $candidates @param non-empty-list<array{search_text: string, unit: string, code?: string|null, action?: string|null, normative_section?: string|null, normative_sections?: list<string>}> $intents @return list<object>|null */
     public function select(array $candidates, array $intents): ?array
     {
         $selected = [];
@@ -31,21 +36,34 @@ final readonly class NormativeIntentCandidateRanker
         if ($selected === [] || count($selected) > 128) {
             return null;
         }
-        ksort($selected, SORT_NUMERIC);
 
         return array_values($selected);
     }
 
-    /** @param array{search_text: string, unit: string, code?: string|null, normative_section?: string|null} $intent */
+    /** @param array{search_text: string, unit: string, code?: string|null, action?: string|null, normative_section?: string|null, normative_sections?: list<string>} $intent */
     private function score(object $candidate, array $intent): ?int
     {
         $unit = (string) ($candidate->canonical_unit ?: $candidate->unit);
         if (! NormativeUnitNormalizer::compatible($unit, $intent['unit'])) {
             return null;
         }
+        $preferredSections = array_values(array_filter(
+            $intent['normative_sections'] ?? [],
+            static fn (mixed $section): bool => is_string($section) && $section !== '',
+        ));
         $preferredSection = trim((string) ($intent['normative_section'] ?? ''));
+        if ($preferredSections === [] && $preferredSection !== '') {
+            $preferredSections = [$preferredSection];
+        }
         $candidateSection = trim((string) ($candidate->section_code ?? ''));
-        if ($preferredSection !== '' && ! str_starts_with($candidateSection, $preferredSection)) {
+        $sectionMatches = false;
+        foreach ($preferredSections as $section) {
+            if (str_starts_with($candidateSection, $section)) {
+                $sectionMatches = true;
+                break;
+            }
+        }
+        if ($preferredSections !== [] && ! $sectionMatches) {
             return null;
         }
         $name = mb_strtolower((string) $candidate->name);
@@ -54,6 +72,19 @@ final readonly class NormativeIntentCandidateRanker
         $requestedCode = mb_strtolower((string) ($intent['code'] ?? ''));
         if ($requestedCode !== '' && $code === $requestedCode) {
             return 0;
+        }
+        $semanticText = implode(' ', [
+            (string) ($candidate->name ?? ''),
+            is_array($candidate->work_composition ?? null)
+                ? implode(' ', array_filter($candidate->work_composition, 'is_string'))
+                : (string) ($candidate->work_composition ?? ''),
+        ]);
+        if (! $this->semanticCompatibility->isCompatible(
+            $semanticText,
+            $intent['search_text'],
+            ['action' => (string) ($intent['action'] ?? '')],
+        )) {
+            return null;
         }
         if ($name === $search) {
             return 1;
@@ -76,9 +107,7 @@ final readonly class NormativeIntentCandidateRanker
     {
         $tokens = [];
         foreach (preg_split('/[^\pL\pN.-]+/u', mb_strtolower($search)) ?: [] as $token) {
-            if (mb_strlen($token) < 3 || in_array($token, [
-                'монтаж', 'устройство', 'отделка', 'работа', 'работы', 'система', 'системы',
-            ], true)) {
+            if (mb_strlen($token) < 3 || NormativeLexemePolicy::isGeneric($token)) {
                 continue;
             }
             $tokens[$token] = true;

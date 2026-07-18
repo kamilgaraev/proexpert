@@ -112,6 +112,45 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
         self::assertStringContainsString('LEFT JOIN public.estimate_regional_price_versions rv', $source);
     }
 
+    #[Test]
+    public function database_price_scales_work_quantity_to_the_norm_measurement_unit(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000600_scale_quantity_by_norm_unit.php');
+
+        self::assertIsString($migration);
+        self::assertStringContainsString('eg_norm_quantity_factor', $migration);
+        self::assertStringContainsString("p_work_unit = 'm2'", $migration);
+        self::assertStringContainsString("p_work_unit = 'pcs'", $migration);
+        self::assertStringContainsString("p_work_unit = 'kg'", $migration);
+        self::assertStringContainsString("chr(178),'2'", $migration);
+        self::assertStringContainsString("U&'\\0448\\0442'", $migration);
+        self::assertStringContainsString('eg_expected_package_item_price_v2', $migration);
+        self::assertStringContainsString("'pricing_formula_version','norm_measurement:v2'", $migration);
+        self::assertStringContainsString("'norm_measurement_unit',norm_unit", $migration);
+        self::assertStringContainsString("'work_to_norm_factor',norm_quantity_factor::text", $migration);
+        self::assertStringContainsString("public.eg_norm_quantity_factor(evidence.value->>'unit', norm_unit)", $migration);
+        self::assertStringContainsString('estimate_generation.norm_quantity_unit_mismatch', $migration);
+        self::assertStringContainsString('estimate_generation.norm_quantity_formula_rollback_blocked', $migration);
+        self::assertStringContainsString("definition('public.eg_expected_package_item_price(bigint)')", $migration);
+    }
+
+    #[Test]
+    public function pricing_canonicalization_parenthesizes_json_extraction_before_text_concatenation(): void
+    {
+        $base = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/';
+        $pricing = file_get_contents($base.'2026_07_18_000600_scale_quantity_by_norm_unit.php');
+        $repair = file_get_contents($base.'2026_07_18_000700_parenthesize_pricing_evidence_unit.php');
+
+        self::assertIsString($pricing);
+        self::assertIsString($repair);
+        self::assertStringContainsString("||(evidence.value->>'unit')||", $pricing);
+        self::assertStringContainsString("||(evidence.value->>'unit')||", $repair);
+        self::assertStringContainsString("definition('public.eg_expected_package_item_price_v2(bigint)')", $repair);
+        self::assertStringContainsString('estimate_generation.pricing_evidence_unit_precedence_contract_changed', $repair);
+        self::assertStringContainsString('hasParenthesizedEvidenceUnit', $repair);
+        self::assertStringNotContainsString('pricing_evidence_unit_precedence_rollback_contract_changed', $repair);
+    }
+
     private function source(): string
     {
         return (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001200_harden_estimate_generation_pricing_boundary.php');

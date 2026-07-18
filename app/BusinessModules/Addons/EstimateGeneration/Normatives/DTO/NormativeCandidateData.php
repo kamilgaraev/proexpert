@@ -8,7 +8,10 @@ use DateTimeImmutable;
 
 final readonly class NormativeCandidateData
 {
-    /** @param list<string> $sourceEvidence */
+    /**
+     * @param  list<string>  $sourceEvidence
+     * @param  list<string>  $workComposition
+     */
     public function __construct(
         public string $id,
         public int $normativeId,
@@ -32,6 +35,7 @@ final readonly class NormativeCandidateData
         public string $lexicalAlgorithmVersion,
         public ?string $semanticIndexVersion,
         public array $sourceEvidence,
+        public array $workComposition = [],
     ) {
         EvidenceBounds::assert($sourceEvidence);
     }

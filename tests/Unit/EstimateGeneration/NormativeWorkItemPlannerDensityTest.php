@@ -199,9 +199,18 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         $planner = $this->planner();
         $analysis = [
             'document_context' => [
+                'context_text' => 'House ventilation and fire safety are shown without a quantity takeoff.',
                 'facts_summary' => [
                     'total_area_m2' => 214,
                 ],
+                'quantity_takeoffs' => [[
+                    'quantity_key' => 'floor_area',
+                    'name' => 'Confirmed total floor area',
+                    'unit' => 'm2',
+                    'quantity' => 214,
+                    'source_refs' => [['type' => 'drawing', 'filename' => 'plan.pdf', 'page_number' => 1]],
+                    'normalized_payload' => ['review_required' => false],
+                ]],
             ],
         ];
 
@@ -302,8 +311,11 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         }
 
         self::assertContains('Устройство внутренних перегородок', $names);
-        self::assertContains('Устройство плиты пола', $names);
+        self::assertContains('Бетонирование монолитного перекрытия', $names);
+        self::assertContains('Армирование монолитного перекрытия', $names);
+        self::assertContains('Монтаж оконных блоков', $names);
         self::assertContains('Монтаж дверных блоков', $names);
+        self::assertNotContains('Устройство плиты пола', $names);
         self::assertNotContains('Офисные перегородки', $names);
         self::assertNotContains('Топпинг промышленного пола', $names);
         self::assertNotContains('Деформационные швы пола', $names);
@@ -322,14 +334,18 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                     [
                         'quantity_key' => 'stairs.flights',
                         'name' => 'Лестничные марши по спецификации',
-                        'unit' => 'м2',
-                        'quantity' => 18,
+                        'unit' => 'шт',
+                        'quantity' => 2,
+                        'source_refs' => [['type' => 'drawing', 'filename' => 'АР.pdf', 'page_number' => 4]],
+                        'normalized_payload' => ['review_required' => false],
                     ],
                     [
                         'quantity_key' => 'stairs.railings',
                         'name' => 'Ограждение лестниц по спецификации',
                         'unit' => 'м',
                         'quantity' => 22,
+                        'source_refs' => [['type' => 'drawing', 'filename' => 'АР.pdf', 'page_number' => 4]],
+                        'normalized_payload' => ['review_required' => false],
                     ],
                 ],
             ],
@@ -375,14 +391,18 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                     [
                         'quantity_key' => 'stairs.flights',
                         'name' => 'Лестничные марши по спецификации',
-                        'unit' => 'м2',
-                        'quantity' => 18,
+                        'unit' => 'шт',
+                        'quantity' => 2,
+                        'source_refs' => [['type' => 'drawing', 'filename' => 'АР.pdf', 'page_number' => 4]],
+                        'normalized_payload' => ['review_required' => false],
                     ],
                     [
                         'quantity_key' => 'stairs.railings',
                         'name' => 'Ограждение лестниц по спецификации',
                         'unit' => 'м',
                         'quantity' => 22,
+                        'source_refs' => [['type' => 'drawing', 'filename' => 'АР.pdf', 'page_number' => 4]],
+                        'normalized_payload' => ['review_required' => false],
                     ],
                 ],
             ],
@@ -1220,7 +1240,8 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             'foundation', 'foundations' => ['foundation.concrete', 'м3', 32.5],
             'walls' => ['walls.external_volume', 'м3', 38],
             'office_partitions' => ['office.partitions', 'м2', 84],
-            'slabs', 'industrial_floor' => ['warehouse.floor_concrete', 'м3', 75.6],
+            'slabs' => ['slabs.concrete', 'м3', 75.6],
+            'industrial_floor' => ['warehouse.floor_concrete', 'м3', 75.6],
             'stairs' => ['stairs.flights', 'м2', 18],
             'metal_frame' => ['warehouse.columns', 'т', 14.2],
             'envelope' => ['warehouse.wall_panels', 'м2', 310],

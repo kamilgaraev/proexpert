@@ -177,7 +177,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('->limit(32)', $source);
         self::assertStringNotContainsString('LOWER(CAST(norms.work_composition AS TEXT)) LIKE ?', $source);
         self::assertStringContainsString("->where('source_type', 'fsnb_2022')", $source);
-        self::assertStringContainsString("->where('norms.section_code', 'like', \$normativeSection.'%')", $source);
+        self::assertStringContainsString("\$allowedSections->{\$method}('norms.section_code', 'like', \$section.'%')", $source);
         self::assertStringContainsString("->whereIn('source_type', ['fsbc', 'fsnb_2022'])", $source);
         self::assertStringContainsString("CASE WHEN source_type = 'fsbc' THEN 0 ELSE 1 END", $source);
         self::assertStringContainsString("->whereNull('regional_price_version_id')", $source);
@@ -208,6 +208,79 @@ final class NormativeContextPinResolverTest extends TestCase
         ]]);
 
         self::assertSame([2], array_column($selected ?? [], 'id'));
+    }
+
+    #[Test]
+    public function ranker_accepts_a_relevant_candidate_from_any_allowed_section(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([
+            (object) ['id' => 1, 'code' => '09-01-001-01', 'name' => 'Установка лестничных маршей', 'canonical_unit' => '100 pcs', 'unit' => '100 pcs', 'section_code' => '09'],
+            (object) ['id' => 2, 'code' => '07-01-001-01', 'name' => 'Установка лестничных маршей', 'canonical_unit' => '100 pcs', 'unit' => '100 pcs', 'section_code' => '07'],
+        ], [[
+            'search_text' => 'Установка лестничных маршей', 'unit' => 'pcs', 'code' => null,
+            'normative_sections' => ['06', '07', '08'],
+        ]]);
+
+        self::assertSame([2], array_column($selected ?? [], 'id'));
+    }
+
+    #[Test]
+    public function ranker_keeps_relevance_order_instead_of_catalog_identifier_order(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([
+            (object) [
+                'id' => 1, 'code' => '08-01-001-01', 'name' => 'Устройство конструкций стен',
+                'canonical_unit' => 'm3', 'unit' => 'm3', 'section_code' => '08',
+            ],
+            (object) [
+                'id' => 200, 'code' => '08-01-002-01', 'name' => 'Кладка наружных стен из газобетонных блоков',
+                'canonical_unit' => 'm3', 'unit' => 'm3', 'section_code' => '08',
+            ],
+        ], [[
+            'search_text' => 'Кладка наружных стен из газобетонных блоков',
+            'unit' => 'm3', 'code' => null, 'normative_section' => '08',
+        ]]);
+
+        self::assertSame([200, 1], array_column($selected ?? [], 'id'));
+    }
+
+    #[Test]
+    public function ranker_excludes_semantically_foreign_candidates_before_bounding_the_pinned_pool(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([
+            (object) [
+                'id' => 1, 'code' => '09-01-001-01',
+                'name' => 'Прокладка заземляющего проводника по строительным основаниям',
+                'canonical_unit' => 'm', 'unit' => 'm', 'section_code' => '09',
+            ],
+            (object) [
+                'id' => 2, 'code' => '09-01-002-01',
+                'name' => 'Устройство временного ограждения строительной площадки',
+                'canonical_unit' => 'm', 'unit' => 'm', 'section_code' => '09',
+            ],
+        ], [[
+            'search_text' => 'Временное ограждение строительной площадки',
+            'unit' => 'm', 'code' => null, 'action' => 'fence_installation',
+            'normative_section' => '09',
+        ]]);
+
+        self::assertSame([2], array_column($selected ?? [], 'id'));
+    }
+
+    #[Test]
+    public function explicitly_requested_normative_code_precedes_automatic_semantic_filter(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([
+            (object) [
+                'id' => 10, 'code' => '09-01-001-01', 'name' => 'Специальная проектная норма',
+                'canonical_unit' => 'm', 'unit' => 'm', 'section_code' => '09',
+            ],
+        ], [[
+            'search_text' => 'Устройство временного ограждения', 'unit' => 'm',
+            'code' => '09-01-001-01', 'action' => 'fence_installation', 'normative_section' => '09',
+        ]]);
+
+        self::assertSame([10], array_column($selected ?? [], 'id'));
     }
 
     #[Test]

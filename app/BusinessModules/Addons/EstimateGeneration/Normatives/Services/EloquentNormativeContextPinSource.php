@@ -65,6 +65,15 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             $unit = trim((string) ($intent['unit'] ?? ''));
             $code = mb_strtolower(trim((string) ($intent['code'] ?? '')));
             $normativeSection = trim((string) ($intent['normative_section'] ?? ''));
+            $normativeSections = is_array($intent['normative_sections'] ?? null)
+                ? array_values(array_filter(
+                    $intent['normative_sections'],
+                    static fn (mixed $section): bool => is_string($section) && $section !== '',
+                ))
+                : [];
+            if ($normativeSections === [] && $normativeSection !== '') {
+                $normativeSections = [$normativeSection];
+            }
             if ($search === '' || $unit === '') {
                 return null;
             }
@@ -72,7 +81,14 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             $query = $this->database->table('estimate_norms as norms')
                 ->join('estimate_norm_collections as collections', 'collections.id', '=', 'norms.collection_id')
                 ->where('collections.dataset_version_id', $requested->datasetId)
-                ->when($normativeSection !== '', static fn ($sectionQuery) => $sectionQuery->where('norms.section_code', 'like', $normativeSection.'%'))
+                ->when($normativeSections !== [], static function ($sectionQuery) use ($normativeSections): void {
+                    $sectionQuery->where(static function ($allowedSections) use ($normativeSections): void {
+                        foreach ($normativeSections as $index => $section) {
+                            $method = $index === 0 ? 'where' : 'orWhere';
+                            $allowedSections->{$method}('norms.section_code', 'like', $section.'%');
+                        }
+                    });
+                })
                 ->whereExists(function ($priced) use ($requested, $basePriceDatasetId): void {
                     $priced->selectRaw('1')
                         ->from('estimate_norm_resources as pin_resources')

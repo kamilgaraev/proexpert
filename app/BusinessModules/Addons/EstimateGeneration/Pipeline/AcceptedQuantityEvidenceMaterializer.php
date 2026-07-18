@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 
 final readonly class AcceptedQuantityEvidenceMaterializer
 {
@@ -52,7 +53,9 @@ final readonly class AcceptedQuantityEvidenceMaterializer
                 'quantity' => $quantity->amount,
                 'unit' => $quantity->unit,
             ],
-            confidence: $quantity->reviewBlockers === [] ? 1.0 : 0.0,
+            confidence: $quantity->reviewBlockers !== []
+                ? 0.0
+                : ($quantity->source === QuantitySource::Evidenced ? 1.0 : 0.65),
             producerName: EvidenceProducer::WorkPlanner->value,
             producerVersion: 'pipeline:v1',
         )));
