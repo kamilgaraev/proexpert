@@ -175,6 +175,8 @@ class EstimateGenerationPackagePersistenceService
             $this->appendItemRevision($package, $workItem, $workIndex);
         }
 
+        $this->supersedeMissingItemRevisions($package, $workItems);
+
         $this->refreshPackagePricingState($package);
     }
 
@@ -196,7 +198,7 @@ class EstimateGenerationPackagePersistenceService
         $aggregate = DB::query()->fromSub($latestIds, 'latest')
             ->join('estimate_generation_package_items as item', 'item.id', '=', 'latest.id')
             ->where('latest.revision_rank', 1)
-            ->selectRaw('COUNT(*) AS total_items_count')
+            ->selectRaw("SUM(CASE WHEN item.item_type NOT IN ('operation', 'resource_note', 'review_note') THEN 1 ELSE 0 END) AS total_items_count")
             ->selectRaw("SUM(CASE WHEN item.item_type = 'priced_work' AND item.pricing_finalized_at IS NOT NULL THEN 1 ELSE 0 END) AS priced_items_count")
             ->selectRaw("SUM(CASE WHEN item.item_type = 'priced_work' AND item.pricing_finalized_at IS NULL THEN 1 ELSE 0 END) AS unfinalized_items_count")
             ->selectRaw("COALESCE(SUM(CASE WHEN item.item_type = 'priced_work' AND item.pricing_finalized_at IS NOT NULL THEN item.total_cost ELSE 0 END), 0) AS total_cost")
@@ -230,6 +232,67 @@ class EstimateGenerationPackagePersistenceService
             'quality_summary' => $quality,
             'totals' => $totals,
         ])->save();
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $workItems
+     */
+    private function supersedeMissingItemRevisions(EstimateGenerationPackage $package, array $workItems): void
+    {
+        EstimateGenerationPackage::query()->whereKey($package->id)->lockForUpdate()->firstOrFail();
+        $activeKeys = array_fill_keys(array_map(
+            fn (array $workItem, int $index): string => (string) ($workItem['key'] ?? $package->key.'.item.'.($index + 1)),
+            $workItems,
+            array_keys($workItems),
+        ), true);
+        $latestItems = EstimateGenerationPackageItem::query()
+            ->where('package_id', $package->id)
+            ->latestLogicalRevisions()
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($latestItems as $latest) {
+            $logicalKey = (string) ($latest->logical_key ?? $latest->key);
+            if (isset($activeKeys[$logicalKey]) || in_array($latest->item_type, EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true)) {
+                continue;
+            }
+
+            EstimateGenerationPackageItem::query()->create([
+                'package_id' => $package->id,
+                'key' => $logicalKey.'#r'.((int) $latest->revision + 1),
+                'logical_key' => $logicalKey,
+                'revision' => (int) $latest->revision + 1,
+                'supersedes_item_id' => $latest->id,
+                'parent_key' => $latest->parent_key,
+                'level' => (int) $latest->level,
+                'item_type' => 'operation',
+                'name' => $latest->name,
+                'unit' => null,
+                'quantity' => null,
+                'quantity_basis' => [],
+                'price_source' => null,
+                'price_snapshot' => null,
+                'quantity_evidence_id' => null,
+                'quantity_evidence_fingerprint' => null,
+                'estimate_norm_id' => null,
+                'region_id' => null,
+                'price_zone_id' => null,
+                'period_id' => null,
+                'regional_price_version_id' => null,
+                'pricing_finalized_at' => null,
+                'normative_status' => null,
+                'normative_confidence' => null,
+                'unit_price' => '0.000000',
+                'direct_cost' => '0.00',
+                'overhead_cost' => '0.00',
+                'profit_cost' => '0.00',
+                'total_cost' => '0.00',
+                'resources' => [],
+                'flags' => [],
+                'metadata' => ['superseded_by_regeneration' => true],
+                'sort_order' => (int) $latest->sort_order,
+            ]);
+        }
     }
 
     private function appendItemRevision(EstimateGenerationPackage $package, array $workItem, int $index): void

@@ -208,6 +208,37 @@ final class PackagePersistenceStaleFenceTest extends TestCase
     }
 
     #[Test]
+    public function regenerated_draft_supersedes_items_that_are_no_longer_present(): void
+    {
+        $current = 'sha256:'.str_repeat('b', 64);
+        [$session, , $service] = $this->fixture($current);
+
+        $service->syncFromDraft($session, $this->draft($current, [
+            $this->acceptedWorkItem($session, $current, 'kept'),
+            $this->acceptedWorkItem($session, $current, 'removed'),
+        ]));
+        DB::table('estimate_generation_package_items')->update(['total_cost' => '1.00']);
+        $service->syncFromDraft($session, $this->draft($current, [
+            $this->acceptedWorkItem($session, $current, 'kept'),
+        ]));
+
+        $package = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole();
+        $latestRemoved = $package->items()->where('logical_key', 'removed')->reorder()->orderByDesc('revision')->firstOrFail();
+
+        self::assertSame(
+            ['kept:1:priced_work', 'removed:1:priced_work', 'removed:2:operation'],
+            $package->items()->orderBy('id')->get()->map(
+                static fn ($item): string => $item->logical_key.':'.$item->revision.':'.$item->item_type,
+            )->all(),
+        );
+        self::assertSame(2, $latestRemoved->revision);
+        self::assertSame('operation', $latestRemoved->item_type);
+        self::assertTrue((bool) data_get($latestRemoved->metadata, 'superseded_by_regeneration'));
+        self::assertSame(1, (int) data_get($package->fresh()->totals, 'total_items_count'));
+        self::assertSame('1.00', (string) data_get($package->fresh()->totals, 'total_cost'));
+    }
+
+    #[Test]
     public function stale_pricing_formula_is_repriced_but_current_formula_is_reused(): void
     {
         $current = 'sha256:'.str_repeat('b', 64);
