@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Log;
 
 final readonly class EloquentNormativeContextPinSource implements NormativeContextPinSource
 {
-    private const CANDIDATE_POOL_LIMIT = 128;
+    private const CANDIDATE_POOL_LIMIT = 300;
 
     public function __construct(
         private Connection $database,

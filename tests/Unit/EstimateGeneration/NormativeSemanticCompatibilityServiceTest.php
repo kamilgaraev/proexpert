@@ -20,6 +20,22 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         self::assertSame([], $service->markersForAction('unknown_action'));
     }
 
+    public function test_reinforced_concrete_context_does_not_turn_formwork_into_concreting(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Монтаж мелкощитовой опалубки монолитных железобетонных конструкций фундаментов',
+            'Бетонирование железобетонных фундаментов',
+            ['action' => 'concreting'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Устройство монолитных фундаментов. Укладка бетонной смеси в опалубку',
+            'Бетонирование железобетонных фундаментов',
+            ['action' => 'concreting'],
+        ));
+    }
+
     #[DataProvider('incompatibleResidentialNorms')]
     public function test_rejects_norms_that_do_not_match_residential_work_semantics(
         string $workText,

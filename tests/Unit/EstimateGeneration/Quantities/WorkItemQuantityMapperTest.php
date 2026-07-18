@@ -133,7 +133,7 @@ final class WorkItemQuantityMapperTest extends TestCase
     }
 
     #[Test]
-    public function all_catalog_work_items_have_a_model_quantity_rule(): void
+    public function all_unconditional_catalog_work_items_have_a_model_quantity_rule(): void
     {
         $quantities = [
             'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
@@ -151,7 +151,7 @@ final class WorkItemQuantityMapperTest extends TestCase
             'plumbing.pipe', 'roof.area', 'roof.flat_area', 'roof.gutter',
             'rough.floor', 'rough.walls', 'sanitary.points', 'server.room',
             'sewerage.outlets', 'sewerage.pipe', 'sewerage.revisions', 'sewerage.risers',
-            'site.fence', 'siteworks.area',
+            'siteworks.area',
             'ventilation.office_points', 'ventilation.warehouse_points',
             'walls.external_volume', 'walls.internal',
             'warehouse.beams', 'warehouse.columns', 'warehouse.fire', 'warehouse.floor_concrete',
@@ -163,6 +163,16 @@ final class WorkItemQuantityMapperTest extends TestCase
         foreach ($keys as $key) {
             self::assertNotNull((new WorkItemQuantityMapper)->map($key, $quantities), $key);
         }
+    }
+
+    #[Test]
+    public function temporary_site_fence_is_not_inferred_from_building_floor_area(): void
+    {
+        $quantities = [
+            'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
+        ];
+
+        self::assertNull((new WorkItemQuantityMapper)->map('site.fence', $quantities));
     }
 
     #[Test]

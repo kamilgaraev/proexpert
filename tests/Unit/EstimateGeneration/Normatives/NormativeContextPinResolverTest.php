@@ -191,7 +191,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("REGEXP_REPLACE(COALESCE(diagnostic_normalized_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString("'resources.id as norm_resource_id'", $source);
         self::assertStringContainsString('resolveForIntents', $source);
-        self::assertStringContainsString('CANDIDATE_POOL_LIMIT = 128', $source);
+        self::assertStringContainsString('CANDIDATE_POOL_LIMIT = 300', $source);
         self::assertStringContainsString('markersForAction', $source);
         self::assertStringContainsString('pin_semantic_priority', $source);
         self::assertStringNotContainsString("->orderBy('norms.id')->limit(129)", $source);
