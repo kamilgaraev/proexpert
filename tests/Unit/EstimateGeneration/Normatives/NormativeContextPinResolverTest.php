@@ -177,7 +177,8 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('->limit(32)', $source);
         self::assertStringNotContainsString('LOWER(CAST(norms.work_composition AS TEXT)) LIKE ?', $source);
         self::assertStringContainsString("->where('source_type', 'fsnb_2022')", $source);
-        self::assertStringContainsString("->where('source_type', 'fsbc')", $source);
+        self::assertStringContainsString("->whereIn('source_type', ['fsbc', 'fsnb_2022'])", $source);
+        self::assertStringContainsString("CASE WHEN source_type = 'fsbc' THEN 0 ELSE 1 END", $source);
         self::assertStringContainsString("->whereNull('regional_price_version_id')", $source);
         self::assertStringContainsString('basePriceDatasetId', $source);
         self::assertStringContainsString('code_matched_resource_rows_count', $source);

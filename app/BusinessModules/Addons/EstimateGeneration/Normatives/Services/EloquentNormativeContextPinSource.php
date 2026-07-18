@@ -44,7 +44,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             return null;
         }
         $basePriceDatasetId = $this->database->table('estimate_dataset_versions')
-            ->where('source_type', 'fsbc')
+            ->whereIn('source_type', ['fsbc', 'fsnb_2022'])
             ->where('status', 'parsed')
             ->whereExists(function ($resourcePrices): void {
                 $resourcePrices->selectRaw('1')
@@ -53,6 +53,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     ->whereNull('regional_price_version_id')
                     ->where('base_price', '>', 0);
             })
+            ->orderByRaw("CASE WHEN source_type = 'fsbc' THEN 0 ELSE 1 END")
             ->orderByDesc('id')
             ->limit(1)
             ->value('id');
