@@ -24,8 +24,8 @@ final readonly class SessionBuildingModelBridge
         private BuildingModelRepository $models,
     ) {}
 
-    /** @param list<SessionBuildingModelUnitData> $units */
-    public function store(BuildingModelOperationContext $context, array $units): ?NormalizedBuildingModelData
+    /** @param list<SessionBuildingModelUnitData> $units @param array<string, mixed>|null $areaConstraint */
+    public function store(BuildingModelOperationContext $context, array $units, ?array $areaConstraint = null): ?NormalizedBuildingModelData
     {
         foreach ($units as $unit) {
             if (! $unit instanceof SessionBuildingModelUnitData) {
@@ -41,7 +41,12 @@ final readonly class SessionBuildingModelBridge
         $inputs = $this->evidence->transaction(
             $context->organizationId,
             $context->sessionId,
-            fn (): array => $this->inputs($context, $units),
+            function () use ($context, $units, $areaConstraint): array {
+                $inputs = $this->inputs($context, $units);
+                $this->areaEvidence($context, $areaConstraint);
+
+                return $inputs;
+            },
         );
         if ($inputs === []) {
             return null;
@@ -51,6 +56,40 @@ final readonly class SessionBuildingModelBridge
         $this->models->store($context, $model);
 
         return $model;
+    }
+
+    /** @param array<string, mixed>|null $constraint */
+    private function areaEvidence(BuildingModelOperationContext $context, ?array $constraint): ?\App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceNode
+    {
+        if ($constraint === null
+            || array_keys($constraint) !== ['total_area_m2', 'floor_count', 'document_id', 'source_version', 'confidence']
+            || ! is_numeric($constraint['total_area_m2']) || (float) $constraint['total_area_m2'] <= 0
+            || filter_var($constraint['floor_count'], FILTER_VALIDATE_INT) === false || (int) $constraint['floor_count'] < 1
+            || filter_var($constraint['document_id'], FILTER_VALIDATE_INT) === false || (int) $constraint['document_id'] < 1
+            || ! is_string($constraint['source_version']) || preg_match('/^sha256:[a-f0-9]{64}$/D', $constraint['source_version']) !== 1
+            || ! is_numeric($constraint['confidence']) || ! is_finite((float) $constraint['confidence'])
+            || (float) $constraint['confidence'] < 0 || (float) $constraint['confidence'] > 1) {
+            return null;
+        }
+
+        return $this->evidence->insertOrGet(new EvidenceData(
+            organizationId: $context->organizationId,
+            projectId: $context->projectId,
+            sessionId: $context->sessionId,
+            type: EvidenceType::SourceFact,
+            sourceType: EvidenceSourceType::Document,
+            sourceRef: 'document:'.$constraint['document_id'],
+            sourceVersion: $constraint['source_version'],
+            locator: ['document_id' => (int) $constraint['document_id']],
+            value: [
+                'fact_key' => 'area',
+                'fact_value' => (float) $constraint['total_area_m2'],
+                'unit' => 'm2',
+            ],
+            confidence: (float) $constraint['confidence'],
+            producerName: EvidenceProducer::Pipeline->value,
+            producerVersion: 'pipeline:v2',
+        ));
     }
 
     /** @param list<SessionBuildingModelUnitData> $units @return list<VisionBuildingModelInputData> */

@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DocumentTotalAreaConstraintResolver;
 use Illuminate\Database\DatabaseManager;
 use stdClass;
 
 final readonly class EloquentBuildingModelReadDataSource implements BuildingModelReadDataSource
 {
-    public function __construct(private DatabaseManager $database) {}
+    public function __construct(
+        private DatabaseManager $database,
+        private DocumentTotalAreaConstraintResolver $areaConstraints = new DocumentTotalAreaConstraintResolver,
+    ) {}
 
     public function latestModel(int $organizationId, int $projectId, int $sessionId): ?array
     {
@@ -76,6 +80,57 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
             ->pluck('filename', 'id')
             ->mapWithKeys(static fn (mixed $filename, mixed $id): array => [(int) $id => (string) $filename])
             ->all();
+    }
+
+    public function totalArea(int $organizationId, int $projectId, int $sessionId): ?array
+    {
+        $documents = $this->database->table('estimate_generation_documents')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->orderBy('id')
+            ->get(['id', 'status', 'quality_level', 'quality_score', 'source_version', 'facts_summary'])
+            ->map(fn (stdClass $row): array => [
+                'id' => (int) $row->id,
+                'status' => (string) $row->status,
+                'quality_level' => $row->quality_level,
+                'quality_score' => $row->quality_score,
+                'source_version' => (string) $row->source_version,
+                'facts_summary' => $this->json($row->facts_summary) ?? [],
+            ])
+            ->all();
+        $constraint = $this->areaConstraints->resolve($documents);
+        if ($constraint === null) {
+            return null;
+        }
+
+        $rows = $this->database->table('estimate_generation_evidence')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->where('type', 'source_fact')
+            ->where('source_type', 'document')
+            ->where('producer_name', 'pipeline')
+            ->where('producer_version', 'pipeline:v2')
+            ->whereNull('invalidated_at')
+            ->latest('id')
+            ->limit(100)
+            ->get($this->evidenceColumns());
+        foreach ($rows as $row) {
+            $evidence = $this->evidenceRow($row);
+            if (! $this->areaConstraints->matchesEvidence($constraint, $evidence)) {
+                continue;
+            }
+
+            return [
+                'amount' => number_format($constraint['total_area_m2'], 6, '.', ''),
+                'evidence_id' => (int) $row->id,
+                'confidence' => max(0.0, min(1.0, (float) $row->confidence)),
+                'floor_count' => $constraint['floor_count'],
+            ];
+        }
+
+        return null;
     }
 
     /** @return list<string> */

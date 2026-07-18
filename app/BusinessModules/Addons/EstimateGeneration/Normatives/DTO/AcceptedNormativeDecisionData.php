@@ -172,7 +172,15 @@ final readonly class AcceptedNormativeDecisionData
             && trim($selectedResourceCode) !== '';
         $isExactGroupSelection = is_string($groupCode)
             && is_string($selectedResourceCode)
-            && in_array($policy, ['regional_child_median:v1', 'fsbc_base_child_median:v1', 'fsnb_base_child_median:v1'], true)
+            && in_array($policy, [
+                'regional_child_median:v1',
+                'fsbc_base_child_median:v1',
+                'fsnb_base_child_median:v1',
+                'regional_child_hard_attributes_median:v1',
+                'fsbc_base_child_hard_attributes_median:v1',
+                'fsnb_base_child_hard_attributes_median:v1',
+            ], true)
+            && self::policyMatchesPriceSource($policy, $selection['price_source'] ?? null)
             && preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', $selectedResourceCode) === 1;
         if (! is_array($selection)
             || ! is_string($groupCode)
@@ -189,6 +197,20 @@ final readonly class AcceptedNormativeDecisionData
             || $selection['candidates_count'] <= 0) {
             throw new InvalidArgumentException('accepted_normative_project_resource_selection_invalid');
         }
+    }
+
+    private static function policyMatchesPriceSource(mixed $policy, mixed $priceSource): bool
+    {
+        if (! is_string($policy) || ! is_string($priceSource)) {
+            return false;
+        }
+
+        return match ($priceSource) {
+            'regional_catalog' => str_starts_with($policy, 'regional_'),
+            'fsbc_base' => str_starts_with($policy, 'fsbc_'),
+            'fsnb_base' => str_starts_with($policy, 'fsnb_'),
+            default => false,
+        };
     }
 
     private static function record(mixed $value): array

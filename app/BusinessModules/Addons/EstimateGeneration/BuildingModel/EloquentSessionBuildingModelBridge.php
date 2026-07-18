@@ -13,6 +13,7 @@ final readonly class EloquentSessionBuildingModelBridge
     public function __construct(
         private Connection $database,
         private SessionBuildingModelBridge $bridge,
+        private DocumentTotalAreaConstraintResolver $areaConstraints = new DocumentTotalAreaConstraintResolver,
     ) {}
 
     public function rebuild(int $sessionId): void
@@ -76,6 +77,35 @@ final readonly class EloquentSessionBuildingModelBridge
             (int) $session->project_id,
             (int) $session->id,
             PipelineBaseInputVersion::fromSession($session),
-        ), $units);
+        ), $units, $this->areaConstraint($session));
+    }
+
+    /** @return array<string, mixed>|null */
+    private function areaConstraint(EstimateGenerationSession $session): ?array
+    {
+        $documents = [];
+        foreach ($session->documents as $document) {
+            $documents[] = [
+                'id' => (int) $document->getKey(),
+                'status' => (string) $document->status,
+                'quality_level' => $document->quality_level,
+                'quality_score' => $document->quality_score,
+                'source_version' => (string) $document->source_version,
+                'facts_summary' => is_array($document->facts_summary) ? $document->facts_summary : [],
+            ];
+        }
+        $constraint = $this->areaConstraints->resolve($documents);
+        if ($constraint === null) {
+            return null;
+        }
+        $source = $constraint['sources'][0];
+
+        return [
+            'total_area_m2' => $constraint['total_area_m2'],
+            'floor_count' => $constraint['floor_count'],
+            'document_id' => $source['document_id'],
+            'source_version' => $source['source_version'],
+            'confidence' => $source['confidence'],
+        ];
     }
 }

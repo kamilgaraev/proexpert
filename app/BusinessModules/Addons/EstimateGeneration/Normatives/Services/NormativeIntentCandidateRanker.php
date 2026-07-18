@@ -145,7 +145,11 @@ final readonly class NormativeIntentCandidateRanker
             $tokens[$token] = true;
             foreach (['иями', 'ями', 'ами', 'ого', 'его', 'ыми', 'ими', 'иях', 'ах', 'ях', 'ов', 'ев', 'ий', 'ый', 'ой', 'ая', 'ое', 'ые', 'ых', 'их', 'ка', 'ки', 'ку', 'ом', 'ем', 'ам', 'ям', 'ия', 'ие', 'ей', 'а', 'ы', 'и', 'е', 'у'] as $suffix) {
                 if (str_ends_with($token, $suffix) && mb_strlen($token) - mb_strlen($suffix) >= 4) {
-                    $tokens[mb_substr($token, 0, mb_strlen($token) - mb_strlen($suffix))] = true;
+                    $stem = mb_substr($token, 0, mb_strlen($token) - mb_strlen($suffix));
+                    $tokens[$stem] = true;
+                    if (str_ends_with($stem, 'н') && mb_strlen($stem) >= 5) {
+                        $tokens[mb_substr($stem, 0, -1)] = true;
+                    }
                     break;
                 }
             }

@@ -143,6 +143,61 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
     }
 
     #[Test]
+    public function accepts_an_exact_group_selection_filtered_by_hard_attributes(): void
+    {
+        $record = $this->catalogCandidate();
+        $record['resources']['materials'][0] = [
+            ...$record['resources']['materials'][0],
+            'code' => '24.3.02.05',
+            'name' => 'Трубы напорные многослойные из полипропилена диаметром 20 мм',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => 'prices-2026.06',
+            'unit_price' => '145.500000',
+            'project_resource_selection' => [
+                'group_code' => '24.3.02.05',
+                'selected_resource_code' => '24.3.02.05-0002',
+                'selected_resource_name' => 'Труба напорная многослойная из полипропилена диаметром 20 мм',
+                'price_source' => 'regional_catalog',
+                'price_source_version' => 'prices-2026.06',
+                'policy' => 'regional_child_hard_attributes_median:v1',
+                'candidates_count' => 1,
+            ],
+        ];
+
+        $decision = AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
+
+        self::assertSame(
+            'regional_child_hard_attributes_median:v1',
+            $decision->resources['materials'][0]['project_resource_selection']['policy'],
+        );
+    }
+
+    #[Test]
+    public function rejects_exact_group_policy_that_does_not_match_price_source(): void
+    {
+        $record = $this->catalogCandidate();
+        $record['resources']['materials'][0] = [
+            ...$record['resources']['materials'][0],
+            'code' => '24.3.02.05',
+            'price_source' => 'fsbc_base',
+            'price_source_version' => 'fsbc-2026',
+            'project_resource_selection' => [
+                'group_code' => '24.3.02.05',
+                'selected_resource_code' => '24.3.02.05-0002',
+                'selected_resource_name' => 'Труба из полипропилена диаметром 20 мм',
+                'price_source' => 'fsbc_base',
+                'price_source_version' => 'fsbc-2026',
+                'policy' => 'regional_child_hard_attributes_median:v1',
+                'candidates_count' => 1,
+            ],
+        ];
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('accepted_normative_project_resource_selection_invalid');
+        AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
+    }
+
+    #[Test]
     public function accepts_an_explicitly_marked_project_resource_selection_from_the_fsbc_base_catalog(): void
     {
         $record = $this->catalogCandidate();

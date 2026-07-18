@@ -725,4 +725,88 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
             ['action' => 'general_work', 'scope' => 'facade'],
         ));
     }
+
+    public function test_residential_work_rejects_industrial_and_agricultural_candidates(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $intent = ['action' => 'masonry', 'scope' => 'walls', 'object_type' => 'residential'];
+
+        self::assertFalse($service->isCompatible(
+            'Устройство перегородок хризотилцементных панельных трехслойных в зданиях промышленных и сельскохозяйственных предприятий',
+            'Устройство внутренних перегородок',
+            $intent,
+        ));
+        self::assertTrue($service->isCompatible(
+            'Устройство перегородок из гипсокартонных листов по металлическому каркасу',
+            'Устройство внутренних перегородок',
+            $intent,
+        ));
+    }
+
+    public function test_roof_work_rejects_canopies_and_anti_icing_subsystems(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Устройство козырьков на металлических кронштейнах с покрытием кровельной сталью',
+            'Монтаж кровельного покрытия',
+            ['action' => 'general_work', 'scope' => 'roof', 'object_type' => 'residential'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство системы снеготаяния и антиобледенения кровли и водосточных желобов с применением электронагревательной ленты',
+            'Монтаж водосточной системы кровли',
+            ['action' => 'general_work', 'scope' => 'roof', 'object_type' => 'residential'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Устройство наружных водосточных труб из готовых звеньев',
+            'Монтаж водосточной системы кровли',
+            ['action' => 'general_work', 'scope' => 'roof', 'object_type' => 'residential'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство теплоизоляции кровли минераловатными плитами',
+            'Монтаж кровельного покрытия',
+            ['action' => 'general_work', 'scope' => 'roof', 'object_type' => 'residential'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство выравнивающей цементной стяжки кровли',
+            'Монтаж кровельного покрытия',
+            ['action' => 'general_work', 'scope' => 'roof', 'object_type' => 'residential'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство теплоизоляции кровли минераловатными плитами',
+            'Монтаж кровли',
+            ['action' => 'general_work', 'scope' => 'roof', 'object_type' => 'residential'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство выравнивающей цементной стяжки кровли',
+            'Устройство кровельного ковра',
+            ['action' => 'general_work', 'scope' => 'roof', 'object_type' => 'residential'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Устройство кровель из металлочерепицы по готовым прогонам',
+            'Монтаж кровли',
+            ['action' => 'general_work', 'scope' => 'roof', 'object_type' => 'residential'],
+        ));
+    }
+
+    public function test_engineering_work_requires_the_requested_installed_object(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Блок кабельных конструкций из одинарных стоек из угловой стали, устанавливаемый на стене',
+            'Прокладка силовых кабельных линий',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Установка люков сантехнических ревизионных с креплением саморезами',
+            'Подключение сантехнических приборов',
+            ['action' => 'sanitary_fixture_installation', 'scope' => 'engineering', 'system' => 'water_supply'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Кабель трехжильный, прокладываемый по установленным конструкциям и лоткам',
+            'Прокладка силовых кабельных линий',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+    }
 }

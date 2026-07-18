@@ -267,6 +267,30 @@ final class SessionBuildingModelBridgeTest extends TestCase
     }
 
     #[Test]
+    public function extracted_room_label_is_preserved_as_the_room_name(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
+        [$bridge] = $this->bridge();
+        $unit = $this->unkeyedVisionUnit(101, 501, 601, '1', 'named-room');
+        $payload = $unit->payload;
+        $payload['vision_analysis']['elements'][0]['label'] = 'Кухня';
+
+        $model = $bridge->store($context, [new SessionBuildingModelUnitData(
+            $unit->unitId,
+            $unit->documentId,
+            $unit->pageId,
+            $unit->type,
+            $unit->index,
+            $unit->sourceVersion,
+            $unit->confidence,
+            $payload,
+        )]);
+
+        self::assertNotNull($model);
+        self::assertSame('Кухня', $model->floors[0]->rooms[0]->name);
+    }
+
+    #[Test]
     public function elevations_remain_sources_but_do_not_create_building_floors(): void
     {
         $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
