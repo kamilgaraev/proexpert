@@ -8,7 +8,7 @@ use InvalidArgumentException;
 
 final readonly class PipelineDefinitionGraph
 {
-    public const MAX_TOTAL_ARTIFACT_BYTES = 8_388_608;
+    public const MAX_TOTAL_ARTIFACT_BYTES = 10_485_760;
 
     /** @var array<string, StageDefinition> */
     private array $definitions;
@@ -41,8 +41,8 @@ final readonly class PipelineDefinitionGraph
             new StageDefinition(ProcessingStage::MatchNormatives, 5, [ProcessingStage::PlanWorkItems], 1_310_720),
             new StageDefinition(ProcessingStage::AssembleResources, 1, [ProcessingStage::MatchNormatives], 1_048_576),
             new StageDefinition(ProcessingStage::ResolvePrices, 1, [ProcessingStage::AssembleResources], 1_441_792),
-            new StageDefinition(ProcessingStage::BuildDraft, 1, [ProcessingStage::UnderstandDocuments, ProcessingStage::UnderstandObject, ProcessingStage::PlanWorkItems, ProcessingStage::ResolvePrices], 786_432),
-            new StageDefinition(ProcessingStage::ValidateDraft, 1, [ProcessingStage::BuildDraft], 786_432),
+            new StageDefinition(ProcessingStage::BuildDraft, 1, [ProcessingStage::UnderstandDocuments, ProcessingStage::UnderstandObject, ProcessingStage::PlanWorkItems, ProcessingStage::ResolvePrices], 1_572_864),
+            new StageDefinition(ProcessingStage::ValidateDraft, 1, [ProcessingStage::BuildDraft], 1_572_864),
         ]);
     }
 
