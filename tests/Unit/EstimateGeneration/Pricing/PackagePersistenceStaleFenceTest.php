@@ -208,6 +208,37 @@ final class PackagePersistenceStaleFenceTest extends TestCase
     }
 
     #[Test]
+    public function stale_pricing_formula_is_repriced_but_current_formula_is_reused(): void
+    {
+        $current = 'sha256:'.str_repeat('b', 64);
+        [$session, , $service] = $this->fixture($current);
+        $draft = $this->draft($current, [$this->acceptedWorkItem($session, $current)]);
+
+        $service->syncFromDraft($session, $draft);
+        $service->syncFromDraft($session, $draft);
+
+        $package = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole();
+        self::assertSame(1, $package->items()->count());
+        self::assertSame(1, FinalizerTrackingSqliteConnection::$finalizerCalls);
+
+        $item = $package->items()->sole();
+        $snapshot = $item->price_snapshot;
+        $snapshot['coefficients']['pricing_formula_version'] = 'norm_measurement:v1';
+        $item->forceFill(['price_snapshot' => $snapshot])->save();
+
+        $service->syncFromDraft($session, $draft);
+
+        self::assertSame(2, $package->items()->count());
+        self::assertSame(2, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame(
+            ['1:norm_measurement:v1', '2:norm_measurement:v2'],
+            $package->items()->orderBy('revision')->get()->map(
+                static fn ($revision): string => $revision->revision.':'.data_get($revision->price_snapshot, 'coefficients.pricing_formula_version'),
+            )->all(),
+        );
+    }
+
+    #[Test]
     public function nested_local_estimate_version_is_ignored_when_top_level_version_is_current(): void
     {
         $current = 'sha256:'.str_repeat('b', 64);
@@ -319,8 +350,10 @@ final class FinalizerTrackingSqliteConnection extends SQLiteConnection
     {
         if ($query === 'SELECT public.eg_finalize_package_item_price(?)') {
             self::$finalizerCalls++;
+            $snapshot = ['coefficients' => ['pricing_formula_version' => 'norm_measurement:v2']];
             $this->table('estimate_generation_package_items')->where('id', (int) $bindings[0])->update([
                 'pricing_finalized_at' => '2026-07-13 00:00:00',
+                'price_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
             ]);
 
             return [];

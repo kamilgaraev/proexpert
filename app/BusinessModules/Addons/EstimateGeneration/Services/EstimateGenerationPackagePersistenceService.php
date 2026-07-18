@@ -14,6 +14,8 @@ use Illuminate\Support\Facades\DB;
 
 class EstimateGenerationPackagePersistenceService
 {
+    private const CURRENT_PRICING_FORMULA_VERSION = 'norm_measurement:v2';
+
     public function __construct(
         private readonly ?AuthoritativePackagePricingGuard $pricingGuard = null,
         private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
@@ -281,6 +283,9 @@ class EstimateGenerationPackagePersistenceService
     /** @param array{item: array<string, mixed>, inputs: list<array<string, int|null>>} $pricing */
     private function samePricingIdentity(EstimateGenerationPackageItem $latest, array $pricing): bool
     {
+        if (data_get($latest->price_snapshot, 'coefficients.pricing_formula_version') !== self::CURRENT_PRICING_FORMULA_VERSION) {
+            return false;
+        }
         foreach (['quantity_evidence_id', 'quantity_evidence_fingerprint', 'estimate_norm_id', 'region_id', 'price_zone_id', 'period_id', 'regional_price_version_id'] as $column) {
             if ((string) $latest->getAttribute($column) !== (string) ($pricing['item'][$column] ?? null)) {
                 return false;
