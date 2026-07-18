@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\DB;
 
 class EstimateGenerationPackagePersistenceService
 {
-    private const CURRENT_PRICING_FORMULA_VERSION = 'norm_measurement:v2';
+    private const CURRENT_PRICING_FORMULA_VERSION = 'project_resource:v3';
 
     public function __construct(
         private readonly ?AuthoritativePackagePricingGuard $pricingGuard = null,

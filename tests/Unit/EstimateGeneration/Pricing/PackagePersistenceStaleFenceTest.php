@@ -279,7 +279,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         self::assertSame(2, $package->items()->count());
         self::assertSame(2, FinalizerTrackingSqliteConnection::$finalizerCalls);
         self::assertSame(
-            ['1:norm_measurement:v1', '2:norm_measurement:v2'],
+            ['1:norm_measurement:v1', '2:project_resource:v3'],
             $package->items()->orderBy('revision')->get()->map(
                 static fn ($revision): string => $revision->revision.':'.data_get($revision->price_snapshot, 'coefficients.pricing_formula_version'),
             )->all(),
@@ -406,7 +406,7 @@ final class FinalizerTrackingSqliteConnection extends SQLiteConnection
     {
         if ($query === 'SELECT public.eg_finalize_package_item_price(?)') {
             self::$finalizerCalls++;
-            $snapshot = ['coefficients' => ['pricing_formula_version' => 'norm_measurement:v2']];
+            $snapshot = ['coefficients' => ['pricing_formula_version' => 'project_resource:v3']];
             $this->table('estimate_generation_package_items')->where('id', (int) $bindings[0])->update([
                 'pricing_finalized_at' => '2026-07-13 00:00:00',
                 'price_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),

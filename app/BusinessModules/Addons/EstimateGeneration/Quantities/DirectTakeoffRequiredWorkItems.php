@@ -7,8 +7,14 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Quantities;
 final class DirectTakeoffRequiredWorkItems
 {
     private const KEYS = [
+        'earth.export',
+        'electrical.grounding',
+        'rough.floor',
+        'roof.rafters',
         'site.setup',
         'site.geodesy',
+        'stairs.flights',
+        'stairs.landings',
         'foundation.prep',
         'heating.radiators',
         'heating.unit',

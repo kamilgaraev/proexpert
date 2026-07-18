@@ -126,6 +126,46 @@ final class BuildingModelAssemblerTest extends TestCase
     }
 
     #[Test]
+    public function confirmed_vision_floors_with_different_source_pixel_scales_merge_in_metric_space(): void
+    {
+        $firstFingerprint = 'sha256:'.str_repeat('1', 64);
+        $secondFingerprint = 'sha256:'.str_repeat('2', 64);
+        $inputs = [
+            self::metricVisionInput(
+                'floor-1',
+                'room-1',
+                'page-1',
+                11,
+                $firstFingerprint,
+                0.01,
+                [[0.0, 0.0], [400.0, 0.0], [400.0, 300.0], [0.0, 300.0]],
+            ),
+            self::metricVisionInput(
+                'floor-2',
+                'room-2',
+                'page-2',
+                12,
+                $secondFingerprint,
+                0.02,
+                [[0.0, 0.0], [250.0, 0.0], [250.0, 200.0], [0.0, 200.0]],
+            ),
+        ];
+
+        $model = (new BuildingModelAssembler)->assembleVisionMany($inputs);
+
+        self::assertSame('confirmed', $model->scaleStatus);
+        self::assertSame(1.0, $model->scaleMetersPerUnit);
+        self::assertSame(['floor-1', 'floor-2'], array_column($model->toArray()['floors'], 'key'));
+        self::assertSame([[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]], $model->floors[0]->rooms[0]->polygon);
+        self::assertSame([[0.0, 0.0], [5.0, 0.0], [5.0, 4.0], [0.0, 4.0]], $model->floors[1]->rooms[0]->polygon);
+        self::assertSame(12.0, self::polygonArea($model->floors[0]->rooms[0]->polygon));
+        self::assertSame(20.0, self::polygonArea($model->floors[1]->rooms[0]->polygon));
+        self::assertSame('confirmed', $model->floors[0]->rooms[0]->geometryCertainty);
+        self::assertSame('confirmed', $model->floors[1]->rooms[0]->geometryCertainty);
+        self::assertSame([], $model->assumptions);
+    }
+
+    #[Test]
     public function missing_scale_preserves_source_geometry_questions_and_assumptions_without_metric_data(): void
     {
         $geometry = (new GeometryFusionService)->fuse([self::sourceRoom('room-1', 'e1', [[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]])]);
@@ -259,6 +299,57 @@ final class BuildingModelAssemblerTest extends TestCase
     private static function sourceRoom(string $key, string $evidence, array $geometry): FusedGeometryElementData
     {
         return self::sourceElement($key, 'room', $evidence, ['polygon' => $geometry]);
+    }
+
+    private static function metricVisionInput(
+        string $floorKey,
+        string $roomKey,
+        string $evidenceRef,
+        int $evidenceId,
+        string $fingerprint,
+        float $scale,
+        array $polygon,
+    ): VisionBuildingModelInputData {
+        $element = new FusedGeometryElementData(
+            $roomKey,
+            'room',
+            ['polygon' => $polygon],
+            'vision',
+            $evidenceRef,
+            $fingerprint,
+            1,
+            'normalized_source_v1',
+            'runtime:v1',
+            'model:v1',
+            0.95,
+        );
+
+        return new VisionBuildingModelInputData(
+            new ScaleResolutionData(
+                'confirmed',
+                $scale,
+                [$evidenceRef],
+                null,
+                new ScaleContextData($fingerprint, 1, 'normalized_source_v1', 'normalized_source_v1'),
+            ),
+            (new GeometryFusionService)->fuse([$element]),
+            [],
+            [],
+            [$evidenceRef => $evidenceId],
+            'vision-fusion:v1',
+            $floorKey,
+        );
+    }
+
+    private static function polygonArea(array $polygon): float
+    {
+        $area = 0.0;
+        foreach ($polygon as $index => $point) {
+            $next = $polygon[($index + 1) % count($polygon)];
+            $area += $point[0] * $next[1] - $next[0] * $point[1];
+        }
+
+        return abs($area) / 2;
     }
 
     private static function sourceElement(string $key, string $type, string $evidence, array $geometry): FusedGeometryElementData

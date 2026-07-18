@@ -219,6 +219,54 @@ final class SessionBuildingModelBridgeTest extends TestCase
     }
 
     #[Test]
+    public function raster_floor_pages_with_different_pixel_scales_keep_metric_rooms_after_session_merge(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
+        [$bridge] = $this->bridge();
+        $first = $this->unkeyedVisionUnit(101, 501, 601, '1', 'first-scale');
+        $firstPayload = $first->payload;
+        $firstPayload['vision_analysis']['elements'][0]['polygon'] = [[0.0, 0.0], [1.0, 0.0], [1.0, 0.75], [0.0, 0.75]];
+        $firstPayload['vision_analysis']['scale_candidates'][0]['meters_per_unit'] = 4.0;
+        $firstScaleEvidence = $firstPayload['vision_analysis']['evidence'][0];
+        $firstScaleEvidence['key'] = 'vision-scale-first';
+        $firstPayload['vision_analysis']['evidence'][] = $firstScaleEvidence;
+        $firstScaleCandidate = $firstPayload['vision_analysis']['scale_candidates'][0];
+        $firstScaleCandidate['evidence_ref'] = 'vision-scale-first';
+        $firstPayload['vision_analysis']['scale_candidates'][] = $firstScaleCandidate;
+        $first = new SessionBuildingModelUnitData(
+            $first->unitId, $first->documentId, $first->pageId, $first->type, $first->index,
+            $first->sourceVersion, $first->confidence, $firstPayload,
+        );
+        $second = $this->unkeyedVisionUnit(102, 502, 602, '2', 'second-scale');
+        $secondPayload = $second->payload;
+        $secondPayload['vision_analysis']['elements'][0]['polygon'] = [[0.0, 0.0], [1.0, 0.0], [1.0, 0.8], [0.0, 0.8]];
+        $secondPayload['vision_analysis']['scale_candidates'][0]['meters_per_unit'] = 5.0;
+        $secondScaleEvidence = $secondPayload['vision_analysis']['evidence'][0];
+        $secondScaleEvidence['key'] = 'vision-scale-second';
+        $secondPayload['vision_analysis']['evidence'][] = $secondScaleEvidence;
+        $secondScaleCandidate = $secondPayload['vision_analysis']['scale_candidates'][0];
+        $secondScaleCandidate['evidence_ref'] = 'vision-scale-second';
+        $secondPayload['vision_analysis']['scale_candidates'][] = $secondScaleCandidate;
+        $second = new SessionBuildingModelUnitData(
+            $second->unitId, $second->documentId, $second->pageId, $second->type, $second->index,
+            $second->sourceVersion, $second->confidence, $secondPayload,
+        );
+
+        $model = $bridge->store($context, [$first, $second]);
+
+        self::assertNotNull($model);
+        self::assertSame('confirmed', $model->scaleStatus);
+        self::assertSame(1.0, $model->scaleMetersPerUnit);
+        self::assertSame(2, $model->metrics['floor_count']);
+        self::assertSame(2, $model->metrics['room_count']);
+        self::assertSame([[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]], $model->floors[0]->rooms[0]->polygon);
+        self::assertSame([[0.0, 0.0], [5.0, 0.0], [5.0, 4.0], [0.0, 4.0]], $model->floors[1]->rooms[0]->polygon);
+        self::assertSame(12.0, self::polygonArea($model->floors[0]->rooms[0]->polygon));
+        self::assertSame(20.0, self::polygonArea($model->floors[1]->rooms[0]->polygon));
+        self::assertSame([], $model->assumptions);
+    }
+
+    #[Test]
     public function elevations_remain_sources_but_do_not_create_building_floors(): void
     {
         $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
@@ -376,5 +424,16 @@ final class SessionBuildingModelBridgeTest extends TestCase
         $payload['vision_analysis']['scale_candidates'][0]['evidence_ref'] = 'vision-page-'.$suffix;
 
         return new SessionBuildingModelUnitData($unitId, $documentId, $pageId, 'sketch', 1, $source, 0.95, $payload);
+    }
+
+    private static function polygonArea(array $polygon): float
+    {
+        $area = 0.0;
+        foreach ($polygon as $index => $point) {
+            $next = $polygon[($index + 1) % count($polygon)];
+            $area += $point[0] * $next[1] - $next[0] * $point[1];
+        }
+
+        return abs($area) / 2;
     }
 }

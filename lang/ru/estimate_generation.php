@@ -55,6 +55,7 @@ return [
     'normative_candidate_not_available' => 'Выбранная норма сейчас недоступна.',
     'normative_manual_selection_required' => 'Нужно подобрать норму вручную.',
     'pricing_not_calculated_safe_norm' => 'Не рассчитано: нет безопасной нормы для этой позиции.',
+    'project_resource_selection_required' => 'Не рассчитано: для проектного ресурса нормы не найдена региональная цена конкретного материала.',
     'pricing_not_calculated_partial_resource_prices' => 'Не рассчитано: не хватает цен на часть ресурсов нормы.',
     'work_item_not_found' => 'Позиция сметы не найдена.',
     'normative_feedback_norm_required' => 'Выберите норму, которую нужно отклонить.',
