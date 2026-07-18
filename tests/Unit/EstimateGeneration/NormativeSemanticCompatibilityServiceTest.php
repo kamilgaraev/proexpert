@@ -10,6 +10,32 @@ use PHPUnit\Framework\TestCase;
 
 class NormativeSemanticCompatibilityServiceTest extends TestCase
 {
+    public function test_exposes_the_same_action_vocabulary_for_retrieval_and_validation(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertNotEmpty($service->markersForAction('insulation'));
+        self::assertNotEmpty($service->markersForAction('concreting'));
+        self::assertNotEmpty($service->markersForAction('fence_installation'));
+        self::assertSame([], $service->markersForAction('unknown_action'));
+    }
+
+    public function test_reinforced_concrete_context_does_not_turn_formwork_into_concreting(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Монтаж мелкощитовой опалубки монолитных железобетонных конструкций фундаментов',
+            'Бетонирование железобетонных фундаментов',
+            ['action' => 'concreting'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Устройство монолитных фундаментов. Укладка бетонной смеси в опалубку',
+            'Бетонирование железобетонных фундаментов',
+            ['action' => 'concreting'],
+        ));
+    }
+
     #[DataProvider('incompatibleResidentialNorms')]
     public function test_rejects_norms_that_do_not_match_residential_work_semantics(
         string $workText,

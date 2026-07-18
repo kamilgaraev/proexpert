@@ -167,7 +167,6 @@ final class WorkItemQuantityMapper
             ],
             'roof.gutter' => $floorLength('0.15'),
             'finish.baseboard' => $floorLength('0.40'),
-            'site.fence' => $floorLength('0.35'),
             'warehouse.floor_joints' => $floorLength('0.25'),
             'stairs.railings' => $floorLength('0.08'),
             'stairs.flights' => $floorArea('0.05'),

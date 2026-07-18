@@ -134,6 +134,22 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         foreach ($result->candidateSet->rejected as $rejected) {
                             $reasonCodes = [...$reasonCodes, ...$rejected->reasonCodes];
                         }
+                        if ($this->canLog()) {
+                            Log::info('estimate_generation.normative_work_item_rejected', [
+                                'session_id' => $context->sessionId,
+                                'project_id' => $context->projectId,
+                                'work_item_key' => $workItem['key'] ?? null,
+                                'search_text' => $intent->intent,
+                                'action' => $intent->technology,
+                                'unit' => $intent->canonicalUnit,
+                                'normative_sections' => $intent->normativeSections,
+                                'candidates' => array_map(static fn ($rejected): array => [
+                                    'code' => $rejected->candidate->code,
+                                    'name' => $rejected->candidate->name,
+                                    'reasons' => $rejected->reasonCodes,
+                                ], $result->candidateSet->rejected),
+                            ]);
+                        }
                         $telemetry->rejected(array_values(array_unique($reasonCodes)));
                         $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->blocked($workItem, $result->status, $result->blockingIssues[0] ?? 'normative_not_found');
 

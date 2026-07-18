@@ -51,7 +51,7 @@ final class NormativeSemanticCompatibilityService
         }
 
         $action = trim((string) ($intent['action'] ?? ''));
-        $actionMarkers = $this->actionMarkers()[$action] ?? [];
+        $actionMarkers = $this->markersForAction($action);
 
         return $actionMarkers === [] || $this->containsAny($candidateText, $actionMarkers);
     }
@@ -77,14 +77,14 @@ final class NormativeSemanticCompatibilityService
     /**
      * @return array<string, array<int, string>>
      */
-    private function actionMarkers(): array
+    public function markersForAction(string $action): array
     {
         return [
             'fence_installation' => ['огражд', 'забор'],
             'backfill' => ['засып', 'уплотнен'],
             'excavation' => ['разработк', 'выемк', 'котлован', 'транше'],
             'planning' => ['планиров'],
-            'concreting' => ['бетонир', 'бетонн', 'укладк бетон'],
+            'concreting' => ['бетонир', 'бетонная смес', 'бетонной смес', 'бетонную смес'],
             'reinforcement' => ['арматур', 'армирован'],
             'formwork' => ['опалуб'],
             'masonry' => ['кладк', 'кирпич', 'блок', 'перегород'],
@@ -102,7 +102,7 @@ final class NormativeSemanticCompatibilityService
             'heating_equipment' => ['отопл', 'радиатор', 'котел', 'конвектор', 'теплов'],
             'ventilation_installation' => ['вентиляц', 'воздуховод'],
             'window_installation' => ['окн', 'двер', 'ворот'],
-        ];
+        ][$action] ?? [];
     }
 
     /**
