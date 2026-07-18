@@ -137,7 +137,7 @@ SQL);
         $definition = $this->replaceOnce(
             $definition,
             "/canonical:=canonical\|\|'\|'\|\|item\.quantity_evidence_id\|\|':'\|\|item\.quantity_evidence_fingerprint;/i",
-            "canonical:=canonical||'|norm_measurement:v2:'||evidence.value->>'unit'||':'||norm_unit||':'||norm_quantity_factor::text||'|'||item.quantity_evidence_id||':'||item.quantity_evidence_fingerprint;",
+            "canonical:=canonical||'|norm_measurement:v2:'||(evidence.value->>'unit')||':'||norm_unit||':'||norm_quantity_factor::text||'|'||item.quantity_evidence_id||':'||item.quantity_evidence_fingerprint;",
             'estimate_generation.norm_quantity_canonical_contract_changed',
         );
         $definition = $this->replaceOnce(
