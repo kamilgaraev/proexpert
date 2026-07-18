@@ -43,7 +43,14 @@ final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
             new PipelineContext(31, 10, 20, 1, $context->inputVersion, 'generating', baseInputVersion: $context->baseInputVersion),
             $accepted,
         ));
-        self::assertSame(64, strlen((string) $first->value['formula_hash']));
-        self::assertSame(64, strlen((string) $first->value['source_evidence_hash']));
+        self::assertSame(['quantity', 'unit', 'work_code'], array_keys($first->value));
+
+        $changedFormula = QuantityData::fromArray([
+            ...$quantity->toArray(),
+            'formula_version' => 'v2',
+        ]);
+        $changed = $materializer->materialize($context, $changedFormula, $item);
+
+        self::assertNotSame($first->fingerprint, $changed->fingerprint);
     }
 }

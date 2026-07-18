@@ -20,10 +20,6 @@ final readonly class AcceptedQuantityEvidenceMaterializer
     /** @param array<string, mixed> $workItem */
     public function materialize(PipelineContext $context, QuantityData $quantity, array $workItem): EvidenceNode
     {
-        $itemIdentity = hash('sha256', self::canonical([
-            'key' => (string) ($workItem['logical_key'] ?? $workItem['key'] ?? ''),
-            'quantity_key' => $quantity->key,
-        ]));
         $formulaHash = hash('sha256', self::canonical([
             'key' => $quantity->formulaKey,
             'version' => $quantity->formulaVersion,
@@ -32,6 +28,13 @@ final readonly class AcceptedQuantityEvidenceMaterializer
         ]));
         $sourceIds = $quantity->evidenceIds;
         sort($sourceIds, SORT_STRING);
+        $sourceEvidenceHash = hash('sha256', self::canonical($sourceIds));
+        $itemIdentity = hash('sha256', self::canonical([
+            'key' => (string) ($workItem['logical_key'] ?? $workItem['key'] ?? ''),
+            'quantity_key' => $quantity->key,
+            'formula_hash' => $formulaHash,
+            'source_evidence_hash' => $sourceEvidenceHash,
+        ]));
 
         return $this->evidence->transaction($context->organizationId, $context->sessionId, fn (): EvidenceNode => $this->evidence->insertOrGet(new EvidenceData(
             organizationId: $context->organizationId,
@@ -46,9 +49,6 @@ final readonly class AcceptedQuantityEvidenceMaterializer
                 'work_code' => 'work_type:'.$itemIdentity,
                 'quantity' => $quantity->amount,
                 'unit' => $quantity->unit,
-                'quantity_key' => $quantity->key,
-                'formula_hash' => $formulaHash,
-                'source_evidence_hash' => hash('sha256', self::canonical($sourceIds)),
             ],
             confidence: $quantity->reviewBlockers === [] ? 1.0 : 0.0,
             producerName: EvidenceProducer::WorkPlanner->value,
