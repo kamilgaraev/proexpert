@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel;
 
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\BuildingModelSchema;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\VisionBuildingModelInputData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
@@ -295,7 +296,7 @@ final readonly class GeometryBuildingModelInputMapper
                     $item->key, $item->type, $geometry, 'vision', $item->evidenceRef,
                     $locator['source_version'], $locator['page_number'], $locator['coordinate_space'],
                     'vision-contract:v1', $vision->modelVersion, $item->confidence, [], $locator['coordinate_space'],
-                    $item->label,
+                    $this->modelRoomName($item->type, $item->label),
                 );
             } catch (InvalidArgumentException) {
                 $issues[] = ['code' => 'geometry_element_unsupported', 'severity' => 'blocking', 'element_key' => $item->key, 'evidence_refs' => [$item->evidenceRef]];
@@ -423,6 +424,19 @@ final readonly class GeometryBuildingModelInputMapper
         return strlen($key) <= 128
             ? $key
             : substr($key, 0, 115).'-'.substr(hash('sha256', $key), 0, 12);
+    }
+
+    private function modelRoomName(string $type, ?string $label): ?string
+    {
+        if ($type !== 'room' || $label === null) {
+            return null;
+        }
+
+        try {
+            return BuildingModelSchema::nullableLabel($label, 'Room name');
+        } catch (InvalidArgumentException) {
+            return null;
+        }
     }
 
     /** @param list<FusedGeometryElementData> $elements @return list<ScaleCandidateData> */
