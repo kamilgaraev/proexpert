@@ -240,6 +240,27 @@ final class NormativeHardGateTest extends TestCase
         self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
     }
 
+    public function test_strong_action_is_not_inferred_from_work_composition(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'work-cable', 'Прокладка кабельных линий', 'm', 'length',
+            '', 'cable_installation', '', '', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'],
+        );
+        $candidate = $this->candidate([
+            'name' => 'Трубопровод стальной 219 мм',
+            'canonicalUnit' => 'm', 'unitDimension' => 'length',
+            'material' => null, 'technology' => null, 'structure' => null,
+            'normativeSection' => null, 'objectType' => null,
+            'workComposition' => ['Прокладка кабеля в защитной трубе'],
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame([], $set->candidates);
+        self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
+    }
+
     public function test_explicitly_requested_normative_code_preserves_user_or_document_decision(): void
     {
         $intent = new WorkIntentData(

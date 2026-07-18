@@ -51,7 +51,7 @@ class ConstructionSemanticParser
         $objectType = (string) (
             $input['object_type']
             ?? $this->objectTypeFromExplicitBuildingType($explicitBuildingType)
-            ?? $this->detectObjectType($objectDescription, $documentContext)
+            ?? $this->detectObjectType($description, $documentContext)
             ?? $buildingType
         );
         $sourceRefs = $this->extractSourceRefs($combinedText);
@@ -373,9 +373,15 @@ class ConstructionSemanticParser
     /**
      * @param  array<string, mixed>  $documentContext
      */
-    private function detectObjectType(string $description, array $documentContext): ?string
+    private function detectObjectType(string $manualDescription, array $documentContext): ?string
     {
-        $normalized = mb_strtolower($description);
+        if (ObjectTypeSignalClassifier::isResidential($manualDescription)) {
+            return 'house';
+        }
+
+        $normalized = mb_strtolower(trim(
+            $manualDescription."\n".(string) ($documentContext['context_text'] ?? '')
+        ));
         $zones = is_array($documentContext['facts_summary']['zones'] ?? null)
             ? $documentContext['facts_summary']['zones']
             : [];

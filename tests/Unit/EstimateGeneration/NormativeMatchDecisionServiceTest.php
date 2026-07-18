@@ -260,9 +260,70 @@ class NormativeMatchDecisionServiceTest extends TestCase
             ],
         ]);
 
-        $this->assertSame('accepted', $decision->status);
+        $this->assertSame('accepted', $decision->status, json_encode($decision->warnings, JSON_UNESCAPED_UNICODE));
         $this->assertTrue($decision->canUseForPricing);
         $this->assertNotContains('semantic_mismatch', $decision->warnings);
+    }
+
+    public function test_soil_haulage_can_use_transport_norm_from_earthwork_section(): void
+    {
+        $decision = (new NormativeMatchDecisionService)->decide([
+            'confidence' => 0.95,
+            'unit' => 'м3',
+            'code' => '01-01-001-01',
+            'name' => 'Перевозка грунта автомобилями-самосвалами',
+            'section' => ['code' => '01'],
+            'resources' => [
+                'materials' => [['price_source' => 'fsbc_base', 'total_price' => 1000]],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ], [
+            'name' => 'Вывоз излишнего грунта',
+            'unit' => 'м3',
+            'work_intent' => [
+                'scope' => 'foundation',
+                'action' => 'soil_haulage',
+                'system' => null,
+                'preferred_section_prefixes' => ['01'],
+            ],
+        ]);
+
+        self::assertSame('accepted', $decision->status);
+        self::assertTrue($decision->canUseForPricing);
+        self::assertNotContains('scope_mismatch', $decision->warnings);
+        self::assertNotContains('semantic_mismatch', $decision->warnings);
+    }
+
+    public function test_strong_action_is_not_accepted_from_candidate_composition_only(): void
+    {
+        $decision = (new NormativeMatchDecisionService)->decide([
+            'confidence' => 0.95,
+            'unit' => 'm',
+            'code' => '08-02-001-01',
+            'name' => 'Трубопровод стальной 219 мм',
+            'section' => ['code' => '08'],
+            'work_composition' => ['Прокладка кабеля в защитной трубе'],
+            'resources' => [
+                'materials' => [['price_source' => 'fsbc_base', 'total_price' => 1000]],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ], [
+            'name' => 'Прокладка кабельных линий',
+            'unit' => 'm',
+            'work_intent' => [
+                'scope' => 'engineering',
+                'action' => 'cable_installation',
+                'system' => 'electrical',
+                'preferred_section_prefixes' => ['08'],
+            ],
+        ]);
+
+        self::assertFalse($decision->canUseForPricing);
+        self::assertContains('semantic_mismatch', $decision->warnings);
     }
 
     public function test_high_confidence_priced_candidate_is_accepted(): void

@@ -105,7 +105,11 @@ final class NormativeHardGate
         if (! $requestedCodeMatches && ! $this->semanticCompatibility->isCompatible(
             implode(' ', [$candidate->name, ...$candidate->workComposition]),
             $intent->intent,
-            ['action' => $intent->technology],
+            [
+                'action' => $intent->technology,
+                'object' => $intent->structure,
+                'candidate_title' => $candidate->name,
+            ],
         )) {
             $reasons[] = 'semantic_mismatch';
         }

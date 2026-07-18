@@ -135,7 +135,52 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
-    public function production_source_has_no_latest_first_or_cross_dataset_fallback(): void
+    public function structured_work_context_is_preserved_and_participates_in_deduplication(): void
+    {
+        $source = new class implements NormativeContextPinSource
+        {
+            public array $intents = [];
+
+            public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
+            {
+                $this->intents = $intents;
+
+                return new NormativeContextPinData(
+                    $requested->datasetId, $requested->datasetVersion, $requested->applicabilityDate,
+                    $requested->regionId, $requested->priceZoneId, $requested->periodId,
+                    $requested->regionalPriceVersionId, $requested->priceVersion,
+                    [['candidate_id' => '101']], str_repeat('a', 64),
+                );
+            }
+        };
+        $resolver = new NormativeContextPinResolver($source);
+        $context = [
+            'normative_dataset_id' => 77, 'normative_dataset_version' => 'fsnb-2026.1',
+            'region_id' => 16, 'price_zone_id' => 3, 'period_id' => 8,
+            'estimate_regional_price_version_id' => 11, 'price_version' => 'prices-2026.07',
+            'business_date' => '2026-07-01',
+        ];
+
+        $pin = $resolver->resolve($context, [
+            [
+                'search_text' => 'Монтаж блоков', 'unit' => 'pcs', 'action' => 'window_installation',
+                'scope' => 'openings', 'system' => null, 'object' => 'window',
+            ],
+            [
+                'search_text' => 'Монтаж блоков', 'unit' => 'pcs', 'action' => 'window_installation',
+                'scope' => 'openings', 'system' => null, 'object' => 'door',
+            ],
+        ]);
+
+        self::assertSame('pinned', $pin['status']);
+        self::assertCount(2, $source->intents);
+        self::assertSame('window', $source->intents[0]['object']);
+        self::assertSame('door', $source->intents[1]['object']);
+        self::assertSame('openings', $source->intents[0]['scope']);
+    }
+
+    #[Test]
+    public function production_source_keeps_norm_dataset_exact_and_combines_authoritative_base_prices(): void
     {
         $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Normatives/Services/EloquentNormativeContextPinSource.php');
 
@@ -145,13 +190,13 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("->where('id', \$requested->datasetId)", $source);
         self::assertStringContainsString("->where('prices.regional_price_version_id', \$requested->regionalPriceVersionId)", $source);
         self::assertStringContainsString("->where('status', 'active')", $source);
-        self::assertStringContainsString('->whereExists(function ($priced) use ($requested, $basePriceDatasetId)', $source);
+        self::assertStringContainsString('->whereExists(function ($priced) use ($requested, $basePriceDatasetIds)', $source);
         self::assertStringContainsString("->where('pin_resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('pin_prices.base_price', '>', 0)", $source);
         self::assertStringNotContainsString("->whereColumn('pin_resources.construction_resource_id', 'pin_prices.construction_resource_id')", $source);
         self::assertStringNotContainsString("->on('pin_prices.price_type', '=', 'pin_resources.resource_type')", $source);
-        self::assertStringContainsString('->whereNotExists(function ($unpriced) use ($requested, $basePriceDatasetId)', $source);
-        self::assertStringContainsString('->whereNotExists(function ($validPrice) use ($requested, $basePriceDatasetId)', $source);
+        self::assertStringContainsString('->whereNotExists(function ($unpriced) use ($requested, $basePriceDatasetIds)', $source);
+        self::assertStringContainsString('->whereNotExists(function ($validPrice) use ($requested, $basePriceDatasetIds)', $source);
         self::assertStringContainsString("->where('required_resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('required_resources.resource_type', '<>', 'summary')", $source);
         self::assertStringContainsString('->whereExists(function ($positiveQuantity)', $source);
@@ -164,8 +209,11 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("->where('valid_conversions.is_active', true)", $source);
         self::assertStringContainsString("->where('valid_conversions.factor', '>', 0)", $source);
         self::assertStringContainsString('pin_prices.unit IS NOT DISTINCT FROM pin_resources.unit', $source);
+        self::assertStringContainsString("REGEXP_REPLACE(COALESCE(pin_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString('valid_prices.unit IS NOT DISTINCT FROM required_resources.unit', $source);
+        self::assertStringContainsString("REGEXP_REPLACE(COALESCE(valid_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString('candidate_prices.unit IS NOT DISTINCT FROM resources.unit', $source);
+        self::assertStringContainsString("REGEXP_REPLACE(COALESCE(candidate_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString("'prices.unit as price_unit'", $source);
         self::assertStringContainsString("->where('resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('resources.resource_type', '<>', 'summary')", $source);
@@ -178,16 +226,27 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('CAST(norms.work_composition AS TEXT)', $source);
         self::assertStringContainsString("->where('source_type', 'fsnb_2022')", $source);
         self::assertStringContainsString("\$allowedSections->{\$method}('norms.section_code', 'like', \$section.'%')", $source);
-        self::assertStringContainsString("->whereIn('source_type', ['fsbc', 'fsnb_2022'])", $source);
-        self::assertStringContainsString("CASE WHEN source_type = 'fsbc' THEN 0 ELSE 1 END", $source);
+        self::assertStringContainsString("latestPriceDatasetId('fsbc', true)", $source);
+        self::assertStringContainsString("latestPriceDatasetId('fgis_labor_prices', false)", $source);
+        self::assertStringContainsString('$fsbcBasePriceDatasetId,', $source);
+        self::assertStringContainsString('$fgisLaborPriceDatasetId,', $source);
+        self::assertStringContainsString('$requested->datasetId,', $source);
+        self::assertStringContainsString("->whereIn('pin_prices.dataset_version_id', \$basePriceDatasetIds)", $source);
+        self::assertStringContainsString("->whereIn('valid_prices.dataset_version_id', \$basePriceDatasetIds)", $source);
+        self::assertStringContainsString('candidate_prices.dataset_version_id IN (', $source);
+        self::assertStringContainsString('$basePricePlaceholders', $source);
         self::assertStringContainsString("->whereNull('regional_price_version_id')", $source);
-        self::assertStringContainsString('basePriceDatasetId', $source);
+        self::assertStringContainsString('basePriceDatasetIds', $source);
+        self::assertStringContainsString('base_price_dataset_ids', $source);
         self::assertStringContainsString('code_matched_resource_rows_count', $source);
         self::assertStringContainsString('exact_unit_matched_resource_rows_count', $source);
         self::assertStringContainsString('normalized_unit_matched_resource_rows_count', $source);
         self::assertStringContainsString('diagnostic_lexical_candidates_count', $source);
         self::assertStringContainsString('unmatched_unit_pairs', $source);
         self::assertStringContainsString('diagnostic_pair_prices', $source);
+        self::assertStringContainsString("telemetry('intent_preprice_candidates'", $source);
+        self::assertStringContainsString('prePriceCandidateDiagnostics(', $source);
+        self::assertStringContainsString('$this->priceCoverageAnalyzer->analyze(', $source);
         self::assertStringContainsString("REGEXP_REPLACE(COALESCE(diagnostic_normalized_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString("'resources.id as norm_resource_id'", $source);
         self::assertStringContainsString('resolveForIntents', $source);
@@ -375,6 +434,26 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
+    public function candidate_composition_does_not_replace_title_for_strong_action(): void
+    {
+        $selected = (new NormativeIntentCandidateRanker)->select([(object) [
+            'id' => 203,
+            'code' => '16-02-001-01',
+            'name' => 'Трубопровод стальной 219 мм',
+            'work_composition' => ['Прокладка кабеля в защитной трубе'],
+            'canonical_unit' => 'm',
+            'unit' => 'm',
+        ]], [[
+            'search_text' => 'Прокладка кабельных линий',
+            'unit' => 'm',
+            'code' => null,
+            'action' => 'cable_installation',
+        ]]);
+
+        self::assertNull($selected);
+    }
+
+    #[Test]
     public function sixty_four_distinct_intents_keep_a_bounded_candidate_pool(): void
     {
         $candidates = [];
@@ -507,5 +586,23 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertSame('412.370000', $mapped->resource['unit_price']);
         self::assertSame('fsnb_base', $mapped->resource['price_source']);
         self::assertSame('2022.4', $mapped->resource['price_source_version']);
+    }
+
+    #[Test]
+    public function database_resource_row_preserves_fgis_labor_price_and_source(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101, 'norm_resource_id' => 7001,
+            'construction_resource_id' => null, 'price_construction_resource_id' => null,
+            'price_id' => 9001, 'resource_type' => 'labor',
+            'resource_code' => '1-100-01', 'price_resource_code' => '1-100-01',
+            'resource_name' => 'Рабочий', 'unit' => 'чел.-ч', 'price_unit' => 'чел.-ч',
+            'quantity' => '2.500000', 'unit_price' => '412.370000',
+            'regional_price_version_id' => null, 'regional_price_version_key' => null,
+            'price_dataset_source_type' => 'fgis_labor_prices', 'price_dataset_version' => '2026.2',
+        ]);
+
+        self::assertSame('fgis_labor_base', $mapped->resource['price_source']);
+        self::assertSame('2026.2', $mapped->resource['price_source_version']);
     }
 }

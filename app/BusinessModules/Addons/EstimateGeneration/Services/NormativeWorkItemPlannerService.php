@@ -402,7 +402,6 @@ final class NormativeWorkItemPlannerService
         return match ($definitionKey) {
             'preconstruction', 'site_preparation' => [
                 $this->definition('Подготовка строительной площадки', 'site', 'подготовка строительной площадки', 'site.setup'),
-                $this->definition('Временное ограждение площадки', 'site', 'устройство временного ограждения строительной площадки', 'site.fence'),
                 $this->definition('Геодезическая разбивка осей', 'site', 'геодезическая разбивка осей здания', 'site.geodesy'),
                 $this->definition('Планировка основания площадки', 'earthworks', 'планировка площадки механизированным способом', 'earth.plan'),
             ],
@@ -493,7 +492,12 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Монтаж СКС', 'electrical', 'монтаж структурированной кабельной сети', 'office.network_points'),
                 $this->definition('Серверная и связь', 'electrical', 'монтаж оборудования серверной', 'server.room'),
             ],
-            'plumbing', 'water_supply', 'water_sewerage', 'sanitary_rooms' => [
+            'plumbing', 'water_supply', 'sanitary_rooms' => [
+                $this->definition('Прокладка труб водоснабжения', 'plumbing', 'прокладка трубопроводов водоснабжения', 'plumbing.pipe'),
+                $this->definition('Сантехнические точки', 'plumbing', 'подключение сантехнических приборов', 'sanitary.points'),
+                $this->definition('Гидроизоляция и плитка мокрых зон', 'finishing', 'отделка мокрых зон плиткой', 'sanitary.tile'),
+            ],
+            'water_sewerage' => [
                 $this->definition('Прокладка труб водоснабжения', 'plumbing', 'прокладка трубопроводов водоснабжения', 'plumbing.pipe'),
                 $this->definition('Сантехнические точки', 'plumbing', 'подключение сантехнических приборов', 'sanitary.points'),
                 $this->definition('Прокладка труб канализации', 'sewerage', 'прокладка трубопроводов канализации', 'sewerage.pipe'),

@@ -16,15 +16,18 @@ final class NormativeWorkIntentFactory
 
     public function intent(array $item, array $context, string $datasetVersion): WorkIntentData
     {
-        $classified = is_array($item['work_intent'] ?? null) ? $item['work_intent'] : [];
-        if ($classified === []) {
-            $this->classifier ??= app(WorkIntentClassifier::class);
-            $intent = $this->classifier->classify($item, $context);
-            $classified = [
-                'material' => $intent->material, 'action' => $intent->action, 'scope' => $intent->scope,
-                'object' => $intent->object, 'expected_dimensions' => $intent->expectedDimensions,
-                'preferred_section_prefixes' => $intent->preferredSectionPrefixes,
-            ];
+        $recorded = is_array($item['work_intent'] ?? null) ? $item['work_intent'] : [];
+        $this->classifier ??= app(WorkIntentClassifier::class);
+        $intent = $this->classifier->classify($item, $context);
+        $classified = [
+            'material' => $intent->material, 'action' => $intent->action, 'scope' => $intent->scope,
+            'object' => $intent->object, 'expected_dimensions' => $intent->expectedDimensions,
+            'preferred_section_prefixes' => $intent->preferredSectionPrefixes,
+        ];
+        foreach ($recorded as $key => $value) {
+            if ((is_string($value) && trim($value) !== '') || (is_array($value) && $value !== [])) {
+                $classified[$key] = $value;
+            }
         }
         $evidence = $this->evidence($context['source_refs'] ?? []);
 

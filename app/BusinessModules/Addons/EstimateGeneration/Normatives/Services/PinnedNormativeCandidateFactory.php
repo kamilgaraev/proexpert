@@ -40,6 +40,15 @@ final readonly class PinnedNormativeCandidateFactory
             'action' => is_string($workItem['work_intent']['action'] ?? null)
                 ? $workItem['work_intent']['action']
                 : null,
+            'scope' => is_string($workItem['work_intent']['scope'] ?? null)
+                ? $workItem['work_intent']['scope']
+                : null,
+            'system' => is_string($workItem['work_intent']['system'] ?? null)
+                ? $workItem['work_intent']['system']
+                : null,
+            'object' => is_string($workItem['work_intent']['object'] ?? null)
+                ? $workItem['work_intent']['object']
+                : null,
             'normative_sections' => $normativeSections,
         ]]);
         if ($selected === null) {

@@ -93,7 +93,7 @@ final readonly class WorkPlanCompiler
         ];
     }
 
-    /** @return list<array{search_text: string, unit: string, code: string|null, action: string|null, normative_section: string|null, normative_sections: list<string>}> */
+    /** @return list<array{search_text: string, unit: string, code: string|null, action: string, scope: string, system: string|null, object: string|null, normative_section: string|null, normative_sections: list<string>}> */
     private function normativeIntents(array $localEstimates): array
     {
         $intents = [];
@@ -105,16 +105,14 @@ final readonly class WorkPlanCompiler
                         continue;
                     }
                     $recordedIntent = is_array($item['work_intent'] ?? null) ? $item['work_intent'] : null;
-                    $classified = $recordedIntent === null
-                        ? $classifier->classify($item, [
-                            'scope_type' => $localEstimate['scope_type'] ?? null,
-                            'section_title' => $section['title'] ?? null,
-                            'local_estimate_title' => $localEstimate['title'] ?? null,
-                        ])
-                        : null;
-                    $normativeSections = $recordedIntent === null
-                        ? ($classified?->preferredSectionPrefixes ?? [])
-                        : ($recordedIntent['preferred_section_prefixes'] ?? []);
+                    $classified = $classifier->classify($item, [
+                        'scope_type' => $localEstimate['scope_type'] ?? null,
+                        'section_title' => $section['title'] ?? null,
+                        'local_estimate_title' => $localEstimate['title'] ?? null,
+                    ]);
+                    $normativeSections = is_array($recordedIntent['preferred_section_prefixes'] ?? null)
+                        ? $recordedIntent['preferred_section_prefixes']
+                        : $classified->preferredSectionPrefixes;
                     $normativeSections = array_values(array_unique(array_filter(
                         $normativeSections,
                         static fn (mixed $section): bool => is_string($section) && $section !== '',
@@ -124,9 +122,10 @@ final readonly class WorkPlanCompiler
                         'search_text' => (string) ($item['normative_search_text'] ?? $item['name'] ?? ''),
                         'unit' => (string) ($item['unit'] ?? ''),
                         'code' => is_string($item['normative_rate_code'] ?? null) ? $item['normative_rate_code'] : null,
-                        'action' => is_string($recordedIntent['action'] ?? null)
-                            ? $recordedIntent['action']
-                            : $classified?->action,
+                        'action' => $this->intentString($recordedIntent, 'action') ?? $classified->action,
+                        'scope' => $this->intentString($recordedIntent, 'scope') ?? $classified->scope,
+                        'system' => $this->intentString($recordedIntent, 'system') ?? $classified->system,
+                        'object' => $this->intentString($recordedIntent, 'object') ?? $classified->object,
                         'normative_section' => is_string($normativeSection) ? $normativeSection : null,
                         'normative_sections' => $normativeSections,
                     ];
@@ -135,5 +134,13 @@ final readonly class WorkPlanCompiler
         }
 
         return $intents;
+    }
+
+    /** @param array<string, mixed>|null $intent */
+    private function intentString(?array $intent, string $key): ?string
+    {
+        $value = $intent[$key] ?? null;
+
+        return is_string($value) && trim($value) !== '' ? trim($value) : null;
     }
 }
