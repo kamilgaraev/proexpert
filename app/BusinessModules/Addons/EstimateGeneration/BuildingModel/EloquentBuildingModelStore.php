@@ -98,6 +98,33 @@ final readonly class EloquentBuildingModelStore implements BuildingModelStore
         );
     }
 
+    public function latest(BuildingModelOperationContext $context): ?StoredBuildingModel
+    {
+        $row = $this->database->table('estimate_generation_building_models')
+            ->where('organization_id', $context->organizationId)
+            ->where('project_id', $context->projectId)
+            ->where('session_id', $context->sessionId)
+            ->orderByDesc('id')
+            ->first(['id', 'input_version', 'model_version', 'content_version']);
+        if ($row === null) {
+            return null;
+        }
+        $modelContext = new BuildingModelOperationContext(
+            $context->organizationId,
+            $context->projectId,
+            $context->sessionId,
+            (string) $row->input_version,
+        );
+
+        return new StoredBuildingModel(
+            (int) $row->id,
+            $modelContext,
+            (string) $row->model_version,
+            (string) $row->content_version,
+            false,
+        );
+    }
+
     public function model(StoredBuildingModel $stored): ?NormalizedBuildingModelData
     {
         $raw = $this->database->table('estimate_generation_building_models')

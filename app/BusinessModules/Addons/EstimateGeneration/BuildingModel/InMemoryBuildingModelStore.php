@@ -53,6 +53,28 @@ final class InMemoryBuildingModelStore implements BuildingModelStore
         return $stored === null ? null : new StoredBuildingModel($stored->id, $context, $stored->modelVersion, $stored->contentVersion, false);
     }
 
+    public function latest(BuildingModelOperationContext $context): ?StoredBuildingModel
+    {
+        $latest = null;
+        foreach ($this->models as $stored) {
+            if ($stored->context->organizationId !== $context->organizationId
+                || $stored->context->projectId !== $context->projectId
+                || $stored->context->sessionId !== $context->sessionId
+                || ($latest !== null && $stored->id <= $latest->id)) {
+                continue;
+            }
+            $latest = $stored;
+        }
+
+        return $latest === null ? null : new StoredBuildingModel(
+            $latest->id,
+            $latest->context,
+            $latest->modelVersion,
+            $latest->contentVersion,
+            false,
+        );
+    }
+
     public function model(StoredBuildingModel $stored): ?NormalizedBuildingModelData
     {
         return $this->payloads[$stored->id] ?? null;

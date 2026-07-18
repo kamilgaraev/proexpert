@@ -33,8 +33,27 @@ final readonly class BuildingModelRepository
 
     public function current(BuildingModelOperationContext $context): ?StoredBuildingModel
     {
-        return $this->store->transaction($context, function () use ($context): ?StoredBuildingModel {
-            $stored = $this->store->find($context);
+        return $this->validated($context, false);
+    }
+
+    public function currentModel(BuildingModelOperationContext $context): ?NormalizedBuildingModelData
+    {
+        $stored = $this->current($context);
+
+        return $stored === null ? null : $this->store->model($stored);
+    }
+
+    public function latestCurrentModel(BuildingModelOperationContext $context): ?NormalizedBuildingModelData
+    {
+        $stored = $this->validated($context, true);
+
+        return $stored === null ? null : $this->store->model($stored);
+    }
+
+    private function validated(BuildingModelOperationContext $context, bool $latest): ?StoredBuildingModel
+    {
+        return $this->store->transaction($context, function () use ($context, $latest): ?StoredBuildingModel {
+            $stored = $latest ? $this->store->latest($context) : $this->store->find($context);
             if ($stored === null) {
                 return null;
             }
@@ -51,12 +70,5 @@ final readonly class BuildingModelRepository
 
             return array_map(static fn ($node): int => $node->id, $nodes) === $ids ? $stored : null;
         });
-    }
-
-    public function currentModel(BuildingModelOperationContext $context): ?NormalizedBuildingModelData
-    {
-        $stored = $this->current($context);
-
-        return $stored === null ? null : $this->store->model($stored);
     }
 }

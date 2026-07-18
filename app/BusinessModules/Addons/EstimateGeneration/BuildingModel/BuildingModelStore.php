@@ -16,6 +16,8 @@ interface BuildingModelStore
 
     public function find(BuildingModelOperationContext $context): ?StoredBuildingModel;
 
+    public function latest(BuildingModelOperationContext $context): ?StoredBuildingModel;
+
     public function model(StoredBuildingModel $stored): ?NormalizedBuildingModelData;
 
     /** @return list<int> */

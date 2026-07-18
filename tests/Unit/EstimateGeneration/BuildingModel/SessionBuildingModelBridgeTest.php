@@ -43,6 +43,22 @@ final class SessionBuildingModelBridgeTest extends TestCase
     }
 
     #[Test]
+    public function latest_active_session_model_is_available_across_pipeline_input_versions(): void
+    {
+        [$bridge, $repository] = $this->bridge();
+        $firstContext = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('a', 64));
+        $latestContext = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('b', 64));
+        $pipelineContext = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('c', 64));
+
+        $bridge->store($firstContext, [$this->visionUnit()]);
+        $latest = $bridge->store($latestContext, [$this->visionUnit(), $this->vectorUnit()]);
+
+        self::assertNotNull($latest);
+        self::assertNull($repository->currentModel($pipelineContext));
+        self::assertSame($latest->toArray(), $repository->latestCurrentModel($pipelineContext)?->toArray());
+    }
+
+    #[Test]
     public function vision_cad_and_pdf_vector_pages_preserve_distinct_floor_identity_and_pdf_segments(): void
     {
         $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('e', 64));

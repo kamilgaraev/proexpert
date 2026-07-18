@@ -98,7 +98,7 @@ final readonly class EloquentGenerationPipelineDataGateway implements Generation
             }
         }
 
-        $model = $this->buildingModels->currentModel(new BuildingModelOperationContext(
+        $model = $this->buildingModels->latestCurrentModel(new BuildingModelOperationContext(
             $context->organizationId,
             $context->projectId,
             $context->sessionId,
