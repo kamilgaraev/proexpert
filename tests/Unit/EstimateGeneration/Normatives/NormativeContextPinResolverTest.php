@@ -199,6 +199,9 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('diagnostic_lexical_candidates_count', $source);
         self::assertStringContainsString('unmatched_unit_pairs', $source);
         self::assertStringContainsString('diagnostic_pair_prices', $source);
+        self::assertStringContainsString("telemetry('intent_preprice_candidates'", $source);
+        self::assertStringContainsString('prePriceCandidateDiagnostics(', $source);
+        self::assertStringContainsString('$this->priceCoverageAnalyzer->analyze(', $source);
         self::assertStringContainsString("REGEXP_REPLACE(COALESCE(diagnostic_normalized_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString("'resources.id as norm_resource_id'", $source);
         self::assertStringContainsString('resolveForIntents', $source);

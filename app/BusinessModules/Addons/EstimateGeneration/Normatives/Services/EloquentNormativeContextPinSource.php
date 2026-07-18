@@ -18,6 +18,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         private NormativeSearchQueryBuilder $queryBuilder = new NormativeSearchQueryBuilder,
         private NormativeResourceCoverage $resourceCoverage = new NormativeResourceCoverage,
         private NormativeSemanticCompatibilityService $semanticCompatibility = new NormativeSemanticCompatibilityService,
+        private NormativeCandidatePriceCoverageAnalyzer $priceCoverageAnalyzer = new NormativeCandidatePriceCoverageAnalyzer,
     ) {}
 
     public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
@@ -208,6 +209,16 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 ->limit(self::CANDIDATE_POOL_LIMIT)
                 ->get();
             if ($query->isEmpty()) {
+                $this->telemetryPrePriceCandidates(
+                    $requested,
+                    $basePriceDatasetIds,
+                    $intent,
+                    $lexicalQuery,
+                    $code,
+                    $normativeSections,
+                    $semanticPrioritySql,
+                    $semanticPriorityBindings,
+                );
                 $this->telemetry('intent_candidates_empty', [
                     'search_text' => $search,
                     'action' => $intent['action'] ?? null,
@@ -222,6 +233,16 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             if ($selectedForIntent !== null) {
                 $norms = $norms->concat($selectedForIntent);
             } else {
+                $this->telemetryPrePriceCandidates(
+                    $requested,
+                    $basePriceDatasetIds,
+                    $intent,
+                    $lexicalQuery,
+                    $code,
+                    $normativeSections,
+                    $semanticPrioritySql,
+                    $semanticPriorityBindings,
+                );
                 $this->telemetry('intent_candidates_rejected', [
                     'search_text' => $search,
                     'action' => $intent['action'] ?? null,
@@ -382,6 +403,164 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             $requested->regionalPriceVersionId, $requested->priceVersion,
             $candidates, hash('sha256', $canonical),
         );
+    }
+
+    private function telemetryPrePriceCandidates(
+        NormativeContextPinData $requested,
+        array $basePriceDatasetIds,
+        array $intent,
+        string $lexicalQuery,
+        string $code,
+        array $normativeSections,
+        string $semanticPrioritySql,
+        array $semanticPriorityBindings,
+    ): void {
+        $candidates = $this->prePriceCandidateDiagnostics(
+            $requested,
+            $basePriceDatasetIds,
+            $intent,
+            $lexicalQuery,
+            $code,
+            $normativeSections,
+            $semanticPrioritySql,
+            $semanticPriorityBindings,
+        );
+        if ($candidates === []) {
+            return;
+        }
+
+        $this->telemetry('intent_preprice_candidates', [
+            'search_text' => mb_strtolower(trim((string) ($intent['search_text'] ?? ''))),
+            'action' => $intent['action'] ?? null,
+            'unit' => trim((string) ($intent['unit'] ?? '')),
+            'normative_sections' => $normativeSections,
+            'regional_price_version_id' => $requested->regionalPriceVersionId,
+            'base_price_dataset_ids' => $basePriceDatasetIds,
+            'candidates' => $candidates,
+        ]);
+    }
+
+    private function prePriceCandidateDiagnostics(
+        NormativeContextPinData $requested,
+        array $basePriceDatasetIds,
+        array $intent,
+        string $lexicalQuery,
+        string $code,
+        array $normativeSections,
+        string $semanticPrioritySql,
+        array $semanticPriorityBindings,
+    ): array {
+        $query = $this->database->table('estimate_norms as norms')
+            ->join('estimate_norm_collections as collections', 'collections.id', '=', 'norms.collection_id')
+            ->where('collections.dataset_version_id', $requested->datasetId)
+            ->when($normativeSections !== [], static function ($sectionQuery) use ($normativeSections): void {
+                $sectionQuery->where(static function ($allowedSections) use ($normativeSections): void {
+                    foreach ($normativeSections as $index => $section) {
+                        $method = $index === 0 ? 'where' : 'orWhere';
+                        $allowedSections->{$method}('norms.section_code', 'like', $section.'%');
+                    }
+                });
+            })
+            ->whereExists(function ($positiveQuantity): void {
+                $positiveQuantity->selectRaw('1')
+                    ->from('estimate_norm_resources as positive_resources')
+                    ->whereColumn('positive_resources.estimate_norm_id', 'norms.id')
+                    ->where('positive_resources.quantity', '>', 0)
+                    ->where('positive_resources.resource_type', '<>', 'summary');
+            })
+            ->whereNotExists(function ($negativeQuantity): void {
+                $negativeQuantity->selectRaw('1')
+                    ->from('estimate_norm_resources as negative_resources')
+                    ->whereColumn('negative_resources.estimate_norm_id', 'norms.id')
+                    ->where('negative_resources.quantity', '<', 0);
+            })
+            ->where(function ($query) use ($code, $lexicalQuery): void {
+                if ($code !== '') {
+                    $query->orWhereRaw('LOWER(norms.code) = ?', [$code]);
+                }
+                $query->orWhereRaw("norms.search_vector @@ websearch_to_tsquery('russian', ?)", [$lexicalQuery]);
+            })
+            ->select([
+                'norms.id', 'norms.code', 'norms.name', 'norms.canonical_unit', 'norms.unit',
+                'norms.section_code', 'norms.section_name', 'norms.work_composition',
+            ])
+            ->selectRaw("ts_rank_cd(norms.search_vector, websearch_to_tsquery('russian', ?)) AS pin_lexical_score", [$lexicalQuery])
+            ->selectRaw($semanticPrioritySql, $semanticPriorityBindings)
+            ->orderByRaw('CASE WHEN LOWER(norms.code) = ? THEN 0 ELSE 1 END', [$code])
+            ->orderBy('pin_semantic_priority')
+            ->orderByDesc('pin_lexical_score')
+            ->orderBy('norms.id')
+            ->limit(self::CANDIDATE_POOL_LIMIT)
+            ->get();
+        $selected = $this->ranker->select($query->all(), [$intent]);
+        if ($selected === null) {
+            return [];
+        }
+        $selected = collect($selected)->take(2)->values();
+        $ids = $selected->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
+        if ($ids === []) {
+            return [];
+        }
+
+        $resources = $this->database->table('estimate_norm_resources')
+            ->whereIn('estimate_norm_id', $ids)
+            ->where('quantity', '>', 0)
+            ->where('resource_type', '<>', 'summary')
+            ->get(['estimate_norm_id', 'resource_code', 'unit'])
+            ->map(static fn (object $row): array => [
+                'estimate_norm_id' => (int) $row->estimate_norm_id,
+                'resource_code' => is_string($row->resource_code) ? $row->resource_code : null,
+                'unit' => is_string($row->unit) ? $row->unit : null,
+            ])
+            ->all();
+        $resourceCodes = collect($resources)
+            ->pluck('resource_code')
+            ->filter(static fn (mixed $value): bool => is_string($value) && trim($value) !== '')
+            ->unique()
+            ->values()
+            ->all();
+        $prices = $resourceCodes === [] ? collect() : $this->database->table('estimate_resource_prices')
+            ->whereIn('resource_code', $resourceCodes)
+            ->where('base_price', '>', 0)
+            ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
+                $priceContext->where(function ($regional) use ($requested): void {
+                    $regional->where('regional_price_version_id', $requested->regionalPriceVersionId)
+                        ->where('region_id', $requested->regionId)
+                        ->where('price_zone_id', $requested->priceZoneId)
+                        ->where('period_id', $requested->periodId);
+                })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                    $base->whereIn('dataset_version_id', $basePriceDatasetIds)
+                        ->whereNull('regional_price_version_id');
+                });
+            })
+            ->get(['resource_code', 'unit']);
+        $priceRows = $prices->map(static fn (object $row): array => [
+            'resource_code' => (string) $row->resource_code,
+            'unit' => is_string($row->unit) ? $row->unit : null,
+        ])->all();
+        $resourceUnits = collect($resources)->pluck('unit')->filter()->unique()->values()->all();
+        $priceUnits = collect($priceRows)->pluck('unit')->filter()->unique()->values()->all();
+        $conversions = ($resourceUnits === [] || $priceUnits === []) ? collect() : $this->database
+            ->table('estimate_generation_unit_conversions')
+            ->whereIn('from_unit', $resourceUnits)
+            ->whereIn('to_unit', $priceUnits)
+            ->where('version', 1)
+            ->where('is_active', true)
+            ->where('factor', '>', 0)
+            ->get(['from_unit', 'to_unit']);
+        $conversionRows = $conversions->map(static fn (object $row): array => [
+            'from_unit' => (string) $row->from_unit,
+            'to_unit' => (string) $row->to_unit,
+        ])->all();
+        $coverage = $this->priceCoverageAnalyzer->analyze($resources, $priceRows, $conversionRows);
+
+        return $selected->map(static fn (object $candidate): array => [
+            'code' => (string) $candidate->code,
+            'name' => (string) $candidate->name,
+            'unit' => (string) ($candidate->canonical_unit ?: $candidate->unit),
+            'section' => (string) $candidate->section_code,
+            ...($coverage[(int) $candidate->id] ?? []),
+        ])->all();
     }
 
     private function telemetry(string $phase, array $context): void
