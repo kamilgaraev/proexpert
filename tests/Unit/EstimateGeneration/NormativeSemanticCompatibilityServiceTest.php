@@ -514,4 +514,48 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
             ['action' => 'pipe_layout', 'scope' => 'engineering', 'system' => 'sewerage'],
         ));
     }
+
+    public function test_internal_heating_and_water_pipes_do_not_use_sewer_trench_norm(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $candidate = 'Прокладка в траншеях трубопроводов из чугунных канализационных труб диаметром 50 мм';
+
+        self::assertFalse($service->isCompatible(
+            $candidate,
+            'Прокладка труб отопления',
+            ['action' => 'pipe_layout', 'scope' => 'engineering', 'system' => 'heating'],
+        ));
+        self::assertFalse($service->isCompatible(
+            $candidate,
+            'Прокладка труб водоснабжения',
+            ['action' => 'pipe_layout', 'scope' => 'engineering', 'system' => 'water_supply'],
+        ));
+    }
+
+    public function test_opening_installation_is_not_slope_finishing_or_box_caulk(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Сплошное выравнивание оконных и дверных откосов',
+            'Монтаж оконных блоков',
+            ['action' => 'window_installation', 'scope' => 'openings'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Дополнительная конопатка дверных коробок паклей',
+            'Монтаж дверных блоков',
+            ['action' => 'door_installation', 'scope' => 'openings'],
+        ));
+    }
+
+    public function test_roof_covering_is_not_metal_fireproofing_preparation(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Подготовка поверхности металлических конструкций к нанесению огнезащитного покрытия',
+            'Монтаж кровельного покрытия',
+            ['action' => 'general_work', 'scope' => 'roof'],
+        ));
+    }
 }

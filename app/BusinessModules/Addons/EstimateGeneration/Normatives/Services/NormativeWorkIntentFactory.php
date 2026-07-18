@@ -49,6 +49,8 @@ final class NormativeWorkIntentFactory
             is_string($item['normative_rate_code'] ?? null) && $item['normative_rate_code'] !== ''
                 ? $item['normative_rate_code']
                 : null,
+            (string) ($intent->system ?? ''),
+            (string) ($classified['object'] ?? ''),
         );
     }
 

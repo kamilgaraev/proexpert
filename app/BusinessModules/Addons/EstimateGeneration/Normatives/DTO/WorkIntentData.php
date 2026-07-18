@@ -32,6 +32,8 @@ final readonly class WorkIntentData
         public array $sourceEvidence,
         public array $normativeSections = [],
         public ?string $requestedNormativeCode = null,
+        public string $system = '',
+        public string $workObject = '',
     ) {
         EvidenceBounds::assert($sourceEvidence);
     }

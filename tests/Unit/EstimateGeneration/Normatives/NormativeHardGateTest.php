@@ -281,7 +281,7 @@ final class NormativeHardGateTest extends TestCase
         self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
     }
 
-    public function test_explicitly_requested_normative_code_preserves_user_or_document_decision(): void
+    public function test_explicitly_requested_normative_code_cannot_bypass_semantic_safety(): void
     {
         $intent = new WorkIntentData(
             1, 2, 3, 'work-explicit', 'Устройство временного ограждения', 'm', 'length',
@@ -297,7 +297,28 @@ final class NormativeHardGateTest extends TestCase
 
         $set = (new NormativeHardGate)->filter($intent, [$candidate]);
 
-        self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
+        self::assertSame([], $set->candidates);
+        self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
+    }
+
+    public function test_work_system_is_used_by_semantic_safety_gate(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'heating-pipe', 'Прокладка труб отопления', 'm', 'length',
+            '', 'pipe_layout', 'engineering', '16', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'], [], null, 'heating', 'pipe',
+        );
+        $candidate = $this->candidate([
+            'name' => 'Прокладка в траншеях трубопроводов из чугунных канализационных труб диаметром 50 мм',
+            'canonicalUnit' => 'm', 'unitDimension' => 'length',
+            'material' => null, 'technology' => null, 'structure' => null,
+            'normativeSection' => '16', 'objectType' => null,
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame([], $set->candidates);
+        self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
     }
 
     private function intent(): WorkIntentData
