@@ -436,11 +436,12 @@ class ContractController extends Controller
         }
     }
 
-    public function transition(Request $request, int $contract): JsonResponse
+    public function transition(Request $request): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
         $projectId = $request->route('project');
+        $contract = (int) $request->route('contract');
         $action = (string) $request->route('action');
 
         if (! $organizationId || ! $user) {

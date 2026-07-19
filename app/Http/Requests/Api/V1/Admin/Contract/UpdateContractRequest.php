@@ -21,12 +21,17 @@ class UpdateContractRequest extends FormRequest
     {
         $user = $this->user();
 
-        return $user !== null && app(AuthorizationService::class)->can($user, 'contracts.edit', [
+        $context = [
             'organization_id' => (int) (
                 $this->attributes->get('current_organization_id')
-                ?? $user->current_organization_id
+                ?? $user?->current_organization_id
             ),
-        ]);
+        ];
+        if ($this->route('project') !== null) {
+            $context['project_id'] = (int) $this->route('project');
+        }
+
+        return $user !== null && app(AuthorizationService::class)->can($user, 'contracts.edit', $context);
     }
 
     public function withValidator($validator): void

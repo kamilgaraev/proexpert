@@ -20,9 +20,14 @@ class StoreContractRequest extends FormRequest
     {
         $user = $this->user();
 
-        return $user !== null && app(AuthorizationService::class)->can($user, 'contracts.create', [
+        $context = [
             'organization_id' => $this->currentOrganizationId(),
-        ]);
+        ];
+        if ($this->route('project') !== null) {
+            $context['project_id'] = (int) $this->route('project');
+        }
+
+        return $user !== null && app(AuthorizationService::class)->can($user, 'contracts.create', $context);
     }
 
     public function withValidator($validator): void
@@ -157,7 +162,6 @@ class StoreContractRequest extends FormRequest
             'advance_payments.*.amount' => ['required', 'numeric', 'min:0'],
             'advance_payments.*.payment_date' => ['nullable', 'date'],
             'advance_payments.*.description' => ['nullable', 'string'],
-            'status' => ['required', new Enum(ContractStatusEnum::class)],
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['nullable', 'string'],
@@ -227,7 +231,7 @@ class StoreContractRequest extends FormRequest
             subcontract_amount: $this->validated('subcontract_amount') !== null ? (float) $this->validated('subcontract_amount') : null,
             planned_advance_amount: $this->validated('planned_advance_amount') !== null ? (float) $this->validated('planned_advance_amount') : null,
             actual_advance_amount: $this->validated('actual_advance_amount') !== null ? (float) $this->validated('actual_advance_amount') : null,
-            status: ContractStatusEnum::from($this->validated('status')),
+            status: ContractStatusEnum::DRAFT,
             start_date: $this->validated('start_date') ? \Carbon\Carbon::parse($this->validated('start_date'))->format('Y-m-d') : null,
             end_date: $this->validated('end_date') ? \Carbon\Carbon::parse($this->validated('end_date'))->format('Y-m-d') : null,
             notes: $this->validated('notes'),

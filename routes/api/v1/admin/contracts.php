@@ -49,6 +49,7 @@ Route::group(['prefix' => 'contracts'], function () {
     Route::get('{contract}/export-ks6a', [ContractController::class, 'exportKS6a'])
         ->name('contracts.export-ks6a');
     Route::get('{contract}/available-works-for-acts', [ContractPerformanceActController::class, 'availableWorks'])
+        ->middleware('authorize:contracts.performance_acts.create')
         ->name('contracts.available-works-for-acts');
 });
 
@@ -56,22 +57,38 @@ Route::group(['prefix' => 'contracts'], function () {
 // Имена параметров будут contract и performance_act
 // Доступ: admin/contracts/{contract}/performance-acts
 //         admin/performance-acts/{performance_act} (благодаря shallow)
-Route::apiResource('contracts.performance-acts', ContractPerformanceActController::class)
-    ->shallow()
-    ->parameters(['performance-acts' => 'performance_act']);
+Route::get('contracts/{contract}/performance-acts', [ContractPerformanceActController::class, 'index'])
+    ->middleware('authorize:contracts.performance_acts.view')
+    ->name('contracts.performance-acts.index');
+Route::post('contracts/{contract}/performance-acts', [ContractPerformanceActController::class, 'store'])
+    ->middleware('authorize:contracts.performance_acts.create')
+    ->name('contracts.performance-acts.store');
+Route::get('performance-acts/{performance_act}', [ContractPerformanceActController::class, 'show'])
+    ->middleware('authorize:contracts.performance_acts.view')
+    ->name('performance-acts.show');
+Route::match(['put', 'patch'], 'performance-acts/{performance_act}', [ContractPerformanceActController::class, 'update'])
+    ->middleware('authorize:contracts.performance_acts.edit')
+    ->name('performance-acts.update');
+Route::delete('performance-acts/{performance_act}', [ContractPerformanceActController::class, 'destroy'])
+    ->middleware('authorize:contracts.performance_acts.delete')
+    ->name('performance-acts.destroy');
 
 // Дополнительные маршруты для экспорта актов и файлов
 Route::group(['prefix' => 'contracts/{contract}/performance-acts'], function () {
     Route::get('{performance_act}/export/pdf', [ContractPerformanceActController::class, 'exportPdf'])
+        ->middleware('authorize:contracts.performance_acts.export')
         ->name('contracts.performance-acts.export.pdf');
     Route::get('{performance_act}/export/excel', [ContractPerformanceActController::class, 'exportExcel'])
+        ->middleware('authorize:contracts.performance_acts.export')
         ->name('contracts.performance-acts.export.excel');
     Route::get('{performance_act}/export/ks3', [ContractPerformanceActController::class, 'exportKS3'])
+        ->middleware('authorize:contracts.performance_acts.export')
         ->name('contracts.performance-acts.export.ks3');
 });
 
 // Маршруты для файлов актов (shallow - без привязки к контракту)
 Route::get('performance-acts/{performance_act}/files', [ContractPerformanceActController::class, 'getFiles'])
+    ->middleware('authorize:contracts.performance_acts.view')
     ->name('performance-acts.files');
 
 // УСТАРЕВШИЕ МАРШРУТЫ - УДАЛЕНЫ
