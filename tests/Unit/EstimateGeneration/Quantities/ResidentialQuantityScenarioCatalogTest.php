@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Quantities;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityCoverageWarning;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
@@ -61,6 +62,9 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertArrayNotHasKey('electrical.trays', $result->quantities);
         self::assertArrayNotHasKey('ventilation.office_points', $result->quantities);
         self::assertArrayNotHasKey('ventilation.warehouse_points', $result->quantities);
+        foreach ($result->omissions as $omission) {
+            self::assertTrue(QuantityCoverageWarning::isValid($omission), json_encode($omission, JSON_THROW_ON_ERROR));
+        }
     }
 
     #[Test]
