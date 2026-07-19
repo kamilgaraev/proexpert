@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v3', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v4', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -124,6 +124,11 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'roof.insulation',
             'утепление покрытий плитами из минеральной ваты насухо',
             '12-01-013-07',
+        ];
+        yield 'metal tile roof covering' => [
+            'roof.covering',
+            'устройство простой кровли из металлочерепицы по готовым прогонам',
+            '12-01-023-01',
         ];
         yield 'laminate floor' => [
             'finish.floor',

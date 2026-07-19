@@ -263,6 +263,8 @@ final class NormativeIntentCandidateRankerTest extends TestCase
             ['foundation.waterproofing', 'm2', 'waterproofing', 'foundation', '08', 'Гидроизоляция стен, фундаментов: Гидроизоляция боковая обмазочная битумная в 2 слоя по выровненной поверхности бутовой кладки, кирпичу, бетону'],
             ['walls.external_volume', 'm3', 'masonry', 'walls', '08', 'Кладка стен из газобетонных блоков на клее без облицовки толщиной: 400 мм при высоте этажа до 4 м'],
             ['walls.internal', 'm2', 'masonry', 'walls', '08', 'Кладка перегородок из газобетонных блоков на клее толщиной: 100 мм при высоте этажа до 4 м'],
+            ['roof.insulation', 'm2', 'insulation', 'roof', '12', 'Утепление покрытий плитами: из минеральной ваты насухо'],
+            ['roof.covering', 'm2', 'general_work', 'roof', '12', 'Устройство кровли из металлочерепицы по готовым прогонам: простая кровля'],
             ['finish.floor', 'm2', 'floor_covering', 'finishing', '11', 'Устройство покрытий: из досок ламинированных замковым способом'],
             ['finish.baseboard', 'm', 'baseboard_installation', 'finishing', '11', 'Устройство плинтусов поливинилхлоридных: на винтах самонарезающих'],
             ['stairs.flights', 'm2', 'general_work', 'stairs', '10', 'Устройство внутриквартирных лестниц без подшивки'],

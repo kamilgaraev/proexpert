@@ -29,6 +29,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             ['roof', 'roof', 'roof.area', 'm2', '152.955000'],
             ['openings', 'openings', 'openings.windows', 'm2', '23.136000'],
             ['electrical', 'electrical', 'electrical.main_cable', 'm', '77.120000'],
+            ['lighting', 'electrical', 'lighting.lines', 'm', '154.240000'],
             ['plumbing', 'plumbing', 'plumbing.pipe', 'm', '67.480000'],
             ['sewerage', 'sewerage', 'sewerage.pipe', 'm', '48.200000'],
             ['heating', 'heating', 'heating.pipe', 'm', '96.400000'],
@@ -339,6 +340,29 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
         $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
 
         self::assertNotContains('roof.area', array_column($items, 'quantity_formula'));
+    }
+
+    #[Test]
+    public function current_pitched_roof_scenario_exposes_only_normable_supported_works(): void
+    {
+        $analysis = [
+            'object' => ['object_type' => 'house', 'roof_type' => 'pitched'],
+            'document_context' => ['canonical_building_quantities' => [
+                $this->currentScenarioQuantity('roof.rafters', 'm2', '152.955000')->toArray(),
+                $this->currentScenarioQuantity('roof.area', 'm2', '152.955000')->toArray(),
+                $this->currentScenarioQuantity('roof.gutter', 'm', '46.834688')->toArray(),
+            ]],
+        ];
+        $estimate = $this->estimate('roof', 'roof');
+
+        $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+
+        self::assertSame(
+            ['Утепление кровли', 'Монтаж кровельного покрытия'],
+            array_column($items, 'name'),
+        );
+        self::assertSame(['roof.area', 'roof.area'], array_column($items, 'quantity_formula'));
+        self::assertSame(['12-01-013-07', '12-01-023-01'], array_column($items, 'normative_rate_code'));
     }
 
     private function scenarioQuantity(string $key, string $unit, string $amount): QuantityData

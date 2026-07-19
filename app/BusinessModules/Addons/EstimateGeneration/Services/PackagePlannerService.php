@@ -98,7 +98,9 @@ class PackagePlannerService
         $hasExplicitObjectType = $objectType !== '' && $objectType !== 'custom';
         $hasExplicitBuildingType = $buildingType !== '' && $buildingType !== 'custom';
 
-        if (ObjectTypeSignalClassifier::isResidential($buildingType) || ObjectTypeSignalClassifier::isResidential($type)) {
+        if (ObjectTypeSignalClassifier::isResidential($buildingType)
+            || ObjectTypeSignalClassifier::isResidential($type)
+            || ObjectTypeSignalClassifier::isResidential($description)) {
             $type = 'house';
         } elseif (str_contains($type, 'mixed_warehouse_office') || (($hasWarehouse || $hasIndustrial) && $hasOffice)) {
             $type = 'mixed_warehouse_office';
@@ -223,6 +225,7 @@ class PackagePlannerService
             $this->package('openings', 'Окна и двери', 'openings', 14, 28),
             $this->package('facade', 'Фасад', 'facade', 18, 36),
             $this->package('electrical', 'Электрика', 'electrical', 24, 50),
+            $this->package('lighting', 'Освещение', 'electrical', 8, 20),
             $this->package('plumbing', 'Водоснабжение', 'plumbing', 16, 34),
             $this->package('sewerage', 'Канализация', 'sewerage', 12, 26),
             $this->package('heating', 'Отопление', 'heating', 18, 40),
@@ -370,6 +373,7 @@ class PackagePlannerService
                 || str_starts_with($quantityKey, 'office.ceiling')
                 || str_starts_with($quantityKey, 'sanitary.tile') => $this->package('custom-finishing', 'Отделочные работы', 'finishing', 1, 20),
             str_starts_with($quantityKey, 'electrical.')
+                || str_starts_with($quantityKey, 'lighting.')
                 || str_starts_with($quantityKey, 'warehouse.lighting')
                 || str_starts_with($quantityKey, 'warehouse.low_current') => $this->package('custom-electrical', 'Электромонтажные работы', 'electrical', 1, 20),
             str_starts_with($quantityKey, 'plumbing.')
