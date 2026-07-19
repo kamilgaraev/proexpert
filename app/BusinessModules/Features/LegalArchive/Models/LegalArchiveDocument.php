@@ -12,9 +12,12 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 final class LegalArchiveDocument extends Model
 {
+    use SoftDeletes;
+
     protected $fillable = [
         'organization_id',
         'primary_project_id',
@@ -22,6 +25,11 @@ final class LegalArchiveDocument extends Model
         'document_number',
         'document_type',
         'status',
+        'type_profile_code',
+        'lifecycle_status',
+        'approval_status',
+        'signature_status',
+        'confidentiality_level',
         'direction',
         'source_system',
         'counterparty_name',
@@ -39,6 +47,17 @@ final class LegalArchiveDocument extends Model
         'legal_hold',
         'archived_at',
         'archived_by_user_id',
+        'owner_user_id',
+        'responsible_user_id',
+        'current_primary_version_id',
+        'lock_version',
+        'structured_fields',
+        'activated_at',
+        'completed_at',
+        'terminated_at',
+        'source_type',
+        'source_id',
+        'source_idempotency_key',
         'created_by_user_id',
         'updated_by_user_id',
         'metadata',
@@ -52,6 +71,11 @@ final class LegalArchiveDocument extends Model
         'retention_until' => 'datetime',
         'legal_hold' => 'boolean',
         'archived_at' => 'datetime',
+        'lock_version' => 'integer',
+        'structured_fields' => 'array',
+        'activated_at' => 'datetime',
+        'completed_at' => 'datetime',
+        'terminated_at' => 'datetime',
         'metadata' => 'array',
     ];
 
@@ -75,6 +99,11 @@ final class LegalArchiveDocument extends Model
         return $this->hasOne(LegalArchiveDocumentVersion::class, 'document_id')->where('is_current', true);
     }
 
+    public function currentPrimaryVersion(): BelongsTo
+    {
+        return $this->belongsTo(LegalArchiveDocumentVersion::class, 'current_primary_version_id');
+    }
+
     public function versions(): HasMany
     {
         return $this->hasMany(LegalArchiveDocumentVersion::class, 'document_id')->orderByDesc('created_at');
@@ -88,5 +117,15 @@ final class LegalArchiveDocument extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');
+    }
+
+    public function owner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'owner_user_id');
+    }
+
+    public function responsible(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'responsible_user_id');
     }
 }
