@@ -117,6 +117,8 @@ final class NormativeSemanticCompatibilityService
             'sewer_revision_installation',
             'sewer_riser_installation',
             'sewer_outlet_installation',
+            'electrical_panel_installation',
+            'lighting_fixture_installation',
         ], true);
     }
 
@@ -133,7 +135,8 @@ final class NormativeSemanticCompatibilityService
             'пол' => ['пол', 'покрыт', 'стяжк', 'основани под покрыт'],
             'лотк' => ['лотк'],
             'заземл' => ['заземл'],
-            'розет|выключател' => ['розет', 'выключател'],
+            'розет' => ['розет'],
+            'выключател' => ['выключател'],
             'плинтус|галтел' => ['плинтус', 'галтел'],
         ];
     }
@@ -166,6 +169,8 @@ final class NormativeSemanticCompatibilityService
             'cable_tray_installation' => ['лотк'],
             'grounding_installation' => ['заземл', 'заземляющ', 'электрод'],
             'socket_installation' => ['розет', 'выключател'],
+            'electrical_panel_installation' => ['щит', 'щиток'],
+            'lighting_fixture_installation' => ['светильн', 'люстр'],
             'pipe_layout' => ['труб', 'трубопровод'],
             'heating_equipment' => ['отопл', 'отопит', 'радиатор', 'котел', 'котл', 'конвектор', 'теплов'],
             'ventilation_installation' => ['вентиляц', 'воздуховод'],
@@ -180,6 +185,14 @@ final class NormativeSemanticCompatibilityService
 
     private function actionCompatible(string $action, string $system, string $candidateTitle, string $workText): bool
     {
+        if ($action === 'electrical_panel_installation') {
+            return $this->containsAny($candidateTitle, ['щит', 'щиток']);
+        }
+
+        if ($action === 'lighting_fixture_installation') {
+            return $this->containsAny($candidateTitle, ['светильн', 'люстр']);
+        }
+
         if ($action === 'window_installation') {
             if ($this->containsAny($candidateTitle, ['откос']) && ! $this->containsAny($workText, ['откос'])) {
                 return false;

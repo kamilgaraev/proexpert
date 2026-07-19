@@ -18,7 +18,51 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         self::assertNotEmpty($service->markersForAction('insulation'));
         self::assertNotEmpty($service->markersForAction('concreting'));
         self::assertNotEmpty($service->markersForAction('fence_installation'));
+        self::assertNotEmpty($service->markersForAction('electrical_panel_installation'));
+        self::assertNotEmpty($service->markersForAction('lighting_fixture_installation'));
         self::assertSame([], $service->markersForAction('unknown_action'));
+    }
+
+    public function test_residential_electrical_devices_require_the_same_device_type(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Установка центробежных выключателей',
+            'Монтаж розеток',
+            ['scope' => 'engineering', 'system' => 'electrical', 'action' => 'socket_installation'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Установка штепсельных розеток утопленного типа',
+            'Монтаж розеток',
+            ['scope' => 'engineering', 'system' => 'electrical', 'action' => 'socket_installation'],
+        ));
+    }
+
+    public function test_panel_and_lighting_actions_reject_unrelated_electrical_equipment(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertTrue($service->isCompatible(
+            'Щиток осветительный групповой: установка и подключение',
+            'Монтаж квартирного распределительного щита',
+            ['scope' => 'engineering', 'system' => 'electrical', 'action' => 'electrical_panel_installation'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Колонка распределительная со штепсельными розетками',
+            'Монтаж квартирного распределительного щита',
+            ['scope' => 'engineering', 'system' => 'electrical', 'action' => 'electrical_panel_installation'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Светильники потолочные: установка',
+            'Установка потолочных светильников',
+            ['scope' => 'engineering', 'system' => 'electrical', 'action' => 'lighting_fixture_installation'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Муфты концевые для одножильного кабеля',
+            'Установка потолочных светильников',
+            ['scope' => 'engineering', 'system' => 'electrical', 'action' => 'lighting_fixture_installation'],
+        ));
     }
 
     public function test_reinforced_concrete_context_does_not_turn_formwork_into_concreting(): void
