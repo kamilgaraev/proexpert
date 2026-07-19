@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
-use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditPhaseBInvariantService;
+use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRolloutService;
 use Illuminate\Console\Command;
-use Illuminate\Database\DatabaseManager;
+use Illuminate\Support\Facades\DB;
 use Throwable;
 
 final class ImmutableAuditRepairInvariantsCommand extends Command
@@ -15,7 +15,7 @@ final class ImmutableAuditRepairInvariantsCommand extends Command
 
     protected $description = 'Восстановить и проверить постоянные инварианты неизменяемого аудита';
 
-    public function handle(DatabaseManager $database, ImmutableAuditPhaseBInvariantService $invariants): int
+    public function handle(ImmutableAuditRolloutService $rollout): int
     {
         try {
             if (! $this->option('confirm-repair') || getenv('LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED') !== 'true') {
@@ -23,7 +23,12 @@ final class ImmutableAuditRepairInvariantsCommand extends Command
 
                 return self::FAILURE;
             }
-            $invariants->repairPermanentInvariants($database->connection());
+            $rollout->repairPermanentInvariants(
+                DB::connection(),
+                true,
+                (string) config('legal_archive.audit_writer_secret', ''),
+                (int) config('legal_archive.audit_phase_b_drain_ttl_minutes', 15),
+            );
             $this->info('Immutable audit invariants repaired and verified.');
 
             return self::SUCCESS;

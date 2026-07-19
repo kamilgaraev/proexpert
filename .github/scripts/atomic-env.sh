@@ -23,6 +23,7 @@ assert_env_security() {
 }
 
 initialize_secure_env() {
+  command -v sync >/dev/null 2>&1 || return 1
   [ -f "${ENV_FILE}" ]
   [ ! -L "${ENV_FILE}" ]
   ENV_EXPECTED_UID="$(stat -c '%u' -- "${ENV_FILE}")"
@@ -45,8 +46,10 @@ atomic_env_replace() {
   fi
   chown "${ENV_EXPECTED_UID}:${ENV_EXPECTED_GID}" -- "${ENV_TEMP_FILE}"
   chmod 600 -- "${ENV_TEMP_FILE}"
+  sync -f -- "${ENV_TEMP_FILE}" || return 1
   mv -f -- "${ENV_TEMP_FILE}" "${ENV_FILE}"
   ENV_TEMP_FILE=''
+  sync -f -- "${env_directory}" || return 1
   assert_env_security
 }
 

@@ -5,14 +5,9 @@ MOST_COMPOSE_WRITER_SERVICES=(
 )
 
 MOST_SYSTEMD_WRITER_UNITS=(
-  most-backend.service
-  most-horizon.service
-  most-queue.service
-  most-scheduler.service
-  prohelper.service
-  prohelper-horizon.service
-  prohelper-worker.service
-  prohelper-scheduler.service
+  prohelper-octane.service
+  prohelper-queue.service
+  reverb.service
 )
 
 MOST_SUPERVISOR_WRITER_PROGRAM_PATTERN='^(most|prohelper|laravel-worker|horizon|scheduler|queue|artisan)([-_:].*)?$'

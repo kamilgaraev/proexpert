@@ -52,7 +52,6 @@ SQL);
         DB::statement('DROP FUNCTION IF EXISTS immutable_audit_allocate_sequence()');
         DB::statement('DROP FUNCTION IF EXISTS immutable_audit_sync_sequence_after_insert()');
         DB::statement('DROP FUNCTION IF EXISTS immutable_audit_writer_guard()');
-        DB::statement('DROP TABLE IF EXISTS immutable_audit_invariant_baselines');
         DB::statement('DROP TABLE IF EXISTS immutable_audit_rollout');
         DB::statement('DROP SEQUENCE IF EXISTS immutable_audit_sequence');
     }

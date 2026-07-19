@@ -7,7 +7,6 @@ namespace Tests\Integration\LegalArchive;
 use App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventData;
 use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditIntegrityService;
-use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditPhaseBInvariantService;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRecorder;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRedactor;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRolloutService;
@@ -355,8 +354,9 @@ SQL);
     public function test_neutered_guard_with_legacy_marker_strings_fails_exact_fingerprint_readiness(): void
     {
         $this->activatePhaseB();
-        $invariants = new ImmutableAuditPhaseBInvariantService;
-        $invariants->repairPermanentInvariants($this->first);
+        $rollout = new ImmutableAuditRolloutService;
+        $rollout->confirmDrain($this->first, true);
+        $rollout->repairPermanentInvariants($this->first, true, self::WRITER_TOKEN);
         $this->first->unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION immutable_audit_writer_guard() RETURNS trigger AS $$
 BEGIN
@@ -372,9 +372,42 @@ SQL);
 
         self::assertFalse($status['ready']);
         self::assertSame('immutable_audit_writer_guard_invalid', $status['reason']);
-        $invariants->repairPermanentInvariants($this->first);
-        $invariants->repairPermanentInvariants($this->first);
+        $rollout->confirmDrain($this->first, true);
+        $rollout->repairPermanentInvariants($this->first, true, self::WRITER_TOKEN);
+        $rollout->confirmDrain($this->first, true);
+        $rollout->repairPermanentInvariants($this->first, true, self::WRITER_TOKEN);
         self::assertTrue((new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN)['ready']);
+    }
+
+    public function test_security_attributes_sequence_start_and_obsolete_baseline_cannot_bypass_readiness_and_repair(): void
+    {
+        $this->activatePhaseB();
+        $rollout = new ImmutableAuditRolloutService;
+        self::assertFalse($this->first->getSchemaBuilder()->hasTable('immutable_audit_invariant_baselines'));
+
+        foreach ([
+            'ALTER FUNCTION immutable_audit_writer_guard() SECURITY DEFINER',
+            'ALTER FUNCTION immutable_audit_writer_guard() SET search_path = public',
+            'ALTER FUNCTION immutable_audit_writer_guard() RETURNS NULL ON NULL INPUT',
+            'ALTER FUNCTION immutable_audit_writer_guard() PARALLEL SAFE',
+            'ALTER SEQUENCE immutable_audit_sequence START WITH 41',
+        ] as $drift) {
+            $this->first->statement($drift);
+            $status = (new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN);
+            self::assertFalse($status['ready'], $drift);
+            $rollout->confirmDrain($this->first, true);
+            $rollout->repairPermanentInvariants($this->first, true, self::WRITER_TOKEN);
+            self::assertTrue((new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN)['ready'], $drift);
+        }
+
+        try {
+            $this->first->statement('ALTER FUNCTION immutable_audit_writer_guard() LEAKPROOF');
+            self::assertFalse((new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN)['ready']);
+            $rollout->confirmDrain($this->first, true);
+            $rollout->repairPermanentInvariants($this->first, true, self::WRITER_TOKEN);
+        } catch (\Illuminate\Database\QueryException $error) {
+            self::assertStringContainsString('must be superuser', strtolower($error->getMessage()));
+        }
     }
 
     public function test_real_rollout_phases_preserve_global_index_until_explicit_writer_fence(): void

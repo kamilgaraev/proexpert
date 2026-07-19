@@ -31,7 +31,6 @@ final class ImmutableAuditRolloutService
         $connection->statement("INSERT INTO immutable_audit_rollout (singleton, phase, writer_version, writer_credential_hash, phase_a_expires_at) VALUES (true, 'phase_a', 1, ?, clock_timestamp() + make_interval(hours => ?)) ON CONFLICT (singleton) DO NOTHING", [$credentialHash, $hours]);
         $connection->statement('UPDATE immutable_audit_rollout SET writer_credential_hash = ?, phase_a_expires_at = COALESCE(phase_a_expires_at, clock_timestamp() + make_interval(hours => ?)), updated_at = clock_timestamp() WHERE singleton = true', [$credentialHash, $hours]);
         $this->invariants->installCanonicalCore($connection);
-        $this->invariants->captureBaseline($connection, false);
     }
 
     public function confirmDrain(ConnectionInterface $connection, bool $enabled): void
@@ -107,6 +106,50 @@ final class ImmutableAuditRolloutService
         }
     }
 
+    public function repairPermanentInvariants(ConnectionInterface $connection, bool $enabled, string $writerSecret, int $drainTtlMinutes = 15): void
+    {
+        if (! $enabled) {
+            throw new RuntimeException('immutable_audit_invariant_repair_not_confirmed');
+        }
+        if ($connection->getDriverName() !== 'pgsql') {
+            throw new RuntimeException('immutable_audit_invariant_repair_requires_postgresql');
+        }
+        $credentialHash = $this->credential->fingerprint($writerSecret);
+        $ttl = max(1, min($drainTtlMinutes, 60));
+        $this->assertCutoverMarker($this->lockedRolloutMarker($connection, $ttl, false), $credentialHash, 'phase_b');
+
+        $connection->select('SELECT pg_advisory_lock(hashtextextended(?, 0))', ['immutable_audit_phase_b_index_prep']);
+        try {
+            $this->invariants->preparePhaseBIndexes($connection);
+        } finally {
+            $connection->select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', ['immutable_audit_phase_b_index_prep']);
+        }
+
+        $connection->select('SELECT pg_advisory_lock(hashtextextended(?, 0))', ['immutable_audit_writer_fence']);
+        try {
+            $connection->transaction(function () use ($connection, $credentialHash, $ttl): void {
+                $connection->statement('LOCK TABLE immutable_audit_events IN ACCESS EXCLUSIVE MODE');
+                $marker = $this->lockedRolloutMarker($connection, $ttl, true);
+                $this->assertCutoverMarker($marker, $credentialHash, 'phase_b');
+                $this->invariants->installCanonicalCore($connection);
+                $this->invariants->assertPermanentInvariants($connection);
+                $consumed = $connection->table('immutable_audit_rollout')
+                    ->where('singleton', true)
+                    ->where('drain_marker', (string) $marker->drain_marker)
+                    ->update([
+                        'drain_confirmed_at' => null,
+                        'drain_marker' => null,
+                        'updated_at' => new Expression('clock_timestamp()'),
+                    ]);
+                if ($consumed !== 1) {
+                    throw new RuntimeException('immutable_audit_invariant_repair_drain_marker_consumption_failed');
+                }
+            });
+        } finally {
+            $connection->select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', ['immutable_audit_writer_fence']);
+        }
+    }
+
     private function preparePhaseBIndexes(ConnectionInterface $connection): void
     {
         $this->ensurePhaseBIndex($connection, 'immutable_audit_source_event_aggregate_unique', ['organization_id', 'domain', 'subject_type', 'subject_id', 'source', 'source_event_id'], 'source_event_id IS NOT NULL AND subject_type IS NOT NULL AND subject_id IS NOT NULL');
@@ -132,10 +175,13 @@ FROM immutable_audit_rollout WHERE singleton = true
 SQL, [$ttlMinutes]);
     }
 
-    private function assertCutoverMarker(?object $marker, string $credentialHash): void
+    private function assertCutoverMarker(?object $marker, string $credentialHash, ?string $requiredPhase = null): void
     {
         if ($marker === null || ! in_array($marker->phase ?? null, ['phase_a', 'phase_b'], true)) {
             throw new RuntimeException('immutable_audit_phase_a_not_installed');
+        }
+        if ($requiredPhase !== null && ($marker->phase ?? null) !== $requiredPhase) {
+            throw new RuntimeException('immutable_audit_invariant_repair_requires_phase_b');
         }
         if (! isset($marker->writer_credential_hash) || ! hash_equals((string) $marker->writer_credential_hash, $credentialHash)) {
             throw new RuntimeException('immutable_audit_phase_b_writer_secret_rejected');

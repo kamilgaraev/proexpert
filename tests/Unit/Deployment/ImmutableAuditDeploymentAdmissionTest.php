@@ -24,8 +24,13 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
             'docker compose stop --timeout 7200 ${BACKEND_SERVICES}',
             'assert_legacy_runtime_stopped',
             'php artisan migrate:safe --force',
+            'assert_legacy_runtime_stopped',
             'php artisan immutable-audit:confirm-drain',
+            'assert_legacy_runtime_stopped',
             'php artisan immutable-audit:phase-b-cutover --confirm-writer-version=2',
+            'assert_legacy_runtime_stopped',
+            'php artisan immutable-audit:confirm-drain',
+            'assert_legacy_runtime_stopped',
             'php artisan immutable-audit:repair-invariants',
             'php artisan immutable-audit:writer-readiness',
             'docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}',
@@ -34,7 +39,7 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
         ];
         $previous = -1;
         foreach ($orderedMarkers as $marker) {
-            $position = strrpos($workflow, $marker);
+            $position = strpos($workflow, $marker, $previous + 1);
             self::assertIsInt($position, $marker);
             self::assertGreaterThan($previous, $position, $marker);
             $previous = $position;
@@ -49,7 +54,7 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
         self::assertStringContainsString('openssl rand -hex 32', $workflow);
         self::assertStringContainsString('upsert_env LEGAL_ARCHIVE_AUDIT_WRITER_SECRET', $workflow);
         self::assertStringContainsString('-e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true', $workflow);
-        self::assertSame(2, substr_count($workflow, '-e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true'));
+        self::assertSame(3, substr_count($workflow, '-e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true'));
         self::assertStringContainsString('remove_env_key LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED', $workflow);
         self::assertStringNotContainsString('upsert_env LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED', $workflow);
         self::assertStringContainsString('-e LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true api php artisan immutable-audit:repair-invariants --confirm-repair', $workflow);
@@ -107,6 +112,11 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
         self::assertStringContainsString('mv -f -- "${ENV_TEMP_FILE}" "${ENV_FILE}"', $helper);
         self::assertStringContainsString('chmod 600', $helper);
         self::assertStringContainsString("stat -c '%a'", $helper);
+        self::assertStringContainsString('command -v sync >/dev/null 2>&1 || return 1', $helper);
+        self::assertStringContainsString('sync -f -- "${ENV_TEMP_FILE}" || return 1', $helper);
+        self::assertStringContainsString('sync -f -- "${env_directory}" || return 1', $helper);
+        self::assertTrue(strpos($helper, 'sync -f -- "${ENV_TEMP_FILE}"') < strpos($helper, 'mv -f -- "${ENV_TEMP_FILE}"'));
+        self::assertTrue(strpos($helper, 'mv -f -- "${ENV_TEMP_FILE}"') < strpos($helper, 'sync -f -- "${env_directory}"'));
         self::assertStringNotContainsString('cat "${ENV_TEMP_FILE}" >', $helper);
     }
 
@@ -142,7 +152,16 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
         self::assertStringContainsString('php([0-9.]+)?', $workflow);
         self::assertStringContainsString('rr[[:space:]]+serve', $workflow);
         self::assertStringContainsString('MOST backend writer process remains active', $workflow);
+        self::assertStringContainsString('MOST backend writer unit remains active', $workflow);
+        self::assertStringContainsString('MOST backend supervisor writer remains active', $workflow);
+        self::assertStringContainsString('systemctl is-active --quiet "${unit}"', $workflow);
+        self::assertStringContainsString('$2 == "RUNNING"', $workflow);
         self::assertStringContainsString('stop_legacy_systemd_processes', $workflow);
+        self::assertStringContainsString('prohelper-octane.service', $allowlist);
+        self::assertStringContainsString('prohelper-queue.service', $allowlist);
+        self::assertStringContainsString('reverb.service', $allowlist);
+        self::assertStringNotContainsString('most-backend.service', $allowlist);
+        self::assertSame(6, substr_count($workflow, 'assert_legacy_runtime_stopped'));
         $compose = Yaml::parseFile($root.'/docker-compose.yml');
         self::assertIsArray($compose);
         foreach (['api', 'websockets', 'horizon', 'geometry-worker', 'geometry-recovery-worker', 'worker-heavy', 'worker-ifc', 'scheduler'] as $service) {

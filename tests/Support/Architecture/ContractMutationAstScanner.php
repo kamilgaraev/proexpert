@@ -33,13 +33,38 @@ final class ContractMutationAstScanner
 
     private const PDO_ENTRY_POINTS = ['exec', 'query', 'prepare'];
 
+    private const SAFE_SQL_FUNCTIONS = [
+        'abs' => 'immutable numeric projection', 'array_agg' => 'immutable aggregate', 'avg' => 'immutable aggregate',
+        'cast' => 'immutable type conversion', 'ceil' => 'immutable numeric projection', 'coalesce' => 'immutable null projection',
+        'concat' => 'immutable text projection', 'concat_ws' => 'immutable text projection', 'count' => 'immutable aggregate',
+        'current_setting' => 'read-only session setting', 'date_trunc' => 'immutable date projection',
+        'dense_rank' => 'immutable window projection', 'encode' => 'immutable binary projection', 'extract' => 'immutable date projection',
+        'floor' => 'immutable numeric projection', 'greatest' => 'immutable scalar projection', 'json_agg' => 'immutable aggregate',
+        'json_build_array' => 'immutable json projection', 'json_build_object' => 'immutable json projection',
+        'jsonb_agg' => 'immutable aggregate', 'jsonb_build_array' => 'immutable json projection',
+        'jsonb_build_object' => 'immutable json projection', 'lag' => 'immutable window projection', 'lead' => 'immutable window projection',
+        'least' => 'immutable scalar projection', 'lower' => 'immutable text projection', 'max' => 'immutable aggregate',
+        'min' => 'immutable aggregate', 'now' => 'read-only transaction timestamp', 'nullif' => 'immutable scalar projection',
+        'percentile_cont' => 'immutable aggregate', 'rank' => 'immutable window projection', 'round' => 'immutable numeric projection',
+        'row_number' => 'immutable window projection', 'sha256' => 'immutable digest', 'string_agg' => 'immutable aggregate',
+        'sum' => 'immutable aggregate', 'to_char' => 'immutable formatting', 'upper' => 'immutable text projection',
+        'convert_to' => 'immutable encoding projection', 'hashtext' => 'immutable digest', 'hashtextextended' => 'immutable digest',
+        'radians' => 'immutable numeric projection', 'sin' => 'immutable numeric projection',
+        'array' => 'SQL array constructor grammar', 'exists' => 'SQL existence predicate grammar',
+        'in' => 'SQL membership predicate grammar', 'over' => 'SQL window grammar', 'values' => 'SQL values grammar',
+        'regexp_replace' => 'immutable text projection', 'jsonb_array_elements_text' => 'immutable json projection',
+        'to_tsvector' => 'immutable text-search projection', 'setweight' => 'immutable text-search projection',
+        'array_to_string' => 'immutable text projection', 'jsonb_set' => 'immutable json projection',
+        'jsonb_typeof' => 'immutable json inspection', 'jsonb_array_length' => 'immutable json inspection',
+    ];
+
     /** @return list<int> */
     public function scan(string $source): array
     {
         return array_values(array_unique(array_column($this->findings($source), 'line')));
     }
 
-    /** @return list<array{line:int,class:string,method:string,operation:string,receiver:string,fingerprint:string}> */
+    /** @return list<array{line:int,class:string,method:string,operation:string,receiver:string,fingerprint:string,evidence:string}> */
     public function findings(string $source): array
     {
         $nodes = (new ParserFactory)->createForNewestSupportedVersion()->parse($source) ?? [];
@@ -66,6 +91,8 @@ final class ContractMutationAstScanner
         $repositoryProperties = $this->repositoryProperties($nodes);
         $connectionProperties = $this->typedProperties($nodes, fn (?Node $type): bool => $this->isDatabaseConnectionType($type));
         $pdoProperties = $this->typedProperties($nodes, fn (?Node $type): bool => $this->isPdoType($type));
+        $statementProperties = $this->typedProperties($nodes, fn (?Node $type): bool => $this->isPdoStatementType($type));
+        $methodReturnKinds = $this->methodReturnKinds($nodes);
         $needsStructuralHashes = $finder->findFirst($nodes, static function (Node $node): bool {
             return ($node instanceof Node\Expr\MethodCall || $node instanceof Node\Expr\StaticCall)
                 && $node->name instanceof Node\Identifier
@@ -76,6 +103,14 @@ final class ContractMutationAstScanner
         foreach ($scopes as $scope) {
             $class = $this->enclosingClassName($nodes, $scope);
             $method = $this->scopeMethodName($nodes, $scope);
+            $inheritedDatabase = $this->inheritedDatabaseState(
+                $nodes,
+                $scope,
+                $connectionProperties[$class] ?? [],
+                $pdoProperties[$class] ?? [],
+                $statementProperties[$class] ?? [],
+                $methodReturnKinds[$class] ?? [],
+            );
             $findings = array_merge($findings, $this->scopeFindings(
                 $scope,
                 $class,
@@ -83,19 +118,24 @@ final class ContractMutationAstScanner
                 $repositoryProperties[$class] ?? [],
                 $connectionProperties[$class] ?? [],
                 $pdoProperties[$class] ?? [],
+                $statementProperties[$class] ?? [],
+                $methodReturnKinds[$class] ?? [],
                 $methodHashes[$class] ?? [],
                 $this->inheritedTypedVariables($nodes, $scope, true),
                 $this->inheritedTypedVariables($nodes, $scope, false),
+                $inheritedDatabase['connection'],
+                $inheritedDatabase['pdo'],
+                $inheritedDatabase['statement'],
             ));
         }
 
-        unset($nodes, $traverser, $finder, $scopes, $repositoryProperties, $connectionProperties, $pdoProperties, $methodHashes);
+        unset($nodes, $traverser, $finder, $scopes, $repositoryProperties, $connectionProperties, $pdoProperties, $statementProperties, $methodReturnKinds, $methodHashes);
         gc_collect_cycles();
 
         return $findings;
     }
 
-    /** @return list<array{line:int,class:string,method:string,operation:string,receiver:string,fingerprint:string}> */
+    /** @return list<array{line:int,class:string,method:string,operation:string,receiver:string,fingerprint:string,evidence:string}> */
     private function scopeFindings(
         Node\FunctionLike $scope,
         string $class,
@@ -103,16 +143,22 @@ final class ContractMutationAstScanner
         array $repositoryProperties,
         array $connectionProperties,
         array $pdoProperties,
+        array $statementProperties,
+        array $methodReturnKinds,
         array $methodHashes,
         array $inheritedContractVariables,
         array $inheritedRepositoryVariables,
+        array $inheritedConnectionVariables,
+        array $inheritedPdoVariables,
+        array $inheritedStatementVariables,
     ): array {
         $finder = new NodeFinder;
         $printer = new Standard;
         $contractVariables = $class === 'Contract' ? ['this' => true] : $inheritedContractVariables;
         $repositoryVariables = $inheritedRepositoryVariables;
-        $connectionVariables = [];
-        $pdoVariables = [];
+        $connectionVariables = $inheritedConnectionVariables;
+        $pdoVariables = $inheritedPdoVariables;
+        $statementVariables = $inheritedStatementVariables;
         foreach ($scope->getParams() as $parameter) {
             if ($parameter->var instanceof Node\Expr\Variable && $this->isExactContractType($parameter->type)) {
                 $contractVariables[(string) $parameter->var->name] = true;
@@ -126,6 +172,9 @@ final class ContractMutationAstScanner
             if ($parameter->var instanceof Node\Expr\Variable && $this->isPdoType($parameter->type)) {
                 $pdoVariables[(string) $parameter->var->name] = true;
             }
+            if ($parameter->var instanceof Node\Expr\Variable && $this->isPdoStatementType($parameter->type)) {
+                $statementVariables[(string) $parameter->var->name] = true;
+            }
         }
         $scopeNodes = $this->nodesWithinScope($scope);
         $stringConstants = [];
@@ -133,17 +182,19 @@ final class ContractMutationAstScanner
         $assignments = array_values(array_filter($scopeNodes, static fn (Node $node): bool => $node instanceof Node\Expr\Assign));
         $assignmentCounts = [];
         foreach ($assignments as $assignment) {
-            if ($assignment->var instanceof Node\Expr\Variable && is_string($assignment->var->name)) {
-                $assignmentCounts[$assignment->var->name] = ($assignmentCounts[$assignment->var->name] ?? 0) + 1;
+            $target = $this->expressionKey($assignment->var, $printer);
+            if ($target !== null) {
+                $assignmentCounts[$target] = ($assignmentCounts[$target] ?? 0) + 1;
             }
         }
         do {
             $changed = false;
             foreach ($assignments as $assignment) {
-                if (! $assignment->var instanceof Node\Expr\Variable || ! is_string($assignment->var->name)) {
+                $target = $this->expressionKey($assignment->var, $printer);
+                if ($target === null) {
                     continue;
                 }
-                $name = $assignment->var->name;
+                $name = $target;
                 if (! isset($contractVariables[$name]) && $this->isContractExpression($assignment->expr, $contractVariables, $printer)) {
                     $contractVariables[$name] = true;
                     $changed = true;
@@ -160,6 +211,10 @@ final class ContractMutationAstScanner
                     $pdoVariables[$name] = true;
                     $changed = true;
                 }
+                if (! isset($statementVariables[$name]) && $this->isStatementExpression($assignment->expr, $statementVariables, $statementProperties, $preparedStatements, $pdoVariables, $pdoProperties, $connectionVariables, $connectionProperties, $methodReturnKinds, $printer)) {
+                    $statementVariables[$name] = true;
+                    $changed = true;
+                }
                 if ($assignment->expr instanceof Node\Expr\MethodCall
                     && $assignment->expr->name instanceof Node\Identifier
                     && $assignment->expr->name->toString() === 'prepare'
@@ -168,8 +223,8 @@ final class ContractMutationAstScanner
                         ? $this->constantString($assignment->expr->args[0]->value, $stringConstants)
                         : null;
                 }
-                $constant = $assignmentCounts[$name] === 1 ? $this->constantString($assignment->expr, $stringConstants) : null;
-                if ($constant !== null && ($stringConstants[$name] ?? null) !== $constant) {
+                $constant = ($assignmentCounts[$name] ?? 0) === 1 ? $this->constantString($assignment->expr, $stringConstants) : null;
+                if ($assignment->var instanceof Node\Expr\Variable && $constant !== null && ($stringConstants[$name] ?? null) !== $constant) {
                     $stringConstants[$name] = $constant;
                     $changed = true;
                 }
@@ -177,7 +232,7 @@ final class ContractMutationAstScanner
         } while ($changed);
 
         $results = [];
-        foreach (array_filter($scopeNodes, fn (Node $node): bool => $this->isMutation($node, $contractVariables, $repositoryVariables, $repositoryProperties, $connectionVariables, $connectionProperties, $pdoVariables, $pdoProperties, $preparedStatements, $stringConstants, $printer)) as $node) {
+        foreach (array_filter($scopeNodes, fn (Node $node): bool => $this->isMutation($node, $contractVariables, $repositoryVariables, $repositoryProperties, $connectionVariables, $connectionProperties, $pdoVariables, $pdoProperties, $statementVariables, $statementProperties, $methodReturnKinds, $preparedStatements, $stringConstants, $printer)) as $node) {
             $operation = $node->name instanceof Node\Identifier ? $node->name->toString() : 'raw_sql';
             $receiver = $node instanceof Node\Expr\MethodCall ? $printer->prettyPrintExpr($node->var) : $printer->prettyPrintExpr($node);
             $databaseExecution = $this->isDatabaseExecutionNode($node, $connectionVariables, $connectionProperties, $pdoVariables, $pdoProperties);
@@ -185,7 +240,8 @@ final class ContractMutationAstScanner
                 ? ($this->structuralBuilderHash($node, $methodHashes) ?? ($methodHashes[$method] ?? null))
                 : null;
             $fingerprint = implode('|', [$class, $method, $operation, preg_replace('/\s+/', '', $receiver)]).($structuralHash === null ? '' : '|builder='.$structuralHash);
-            $results[] = ['line' => $node->getStartLine(), 'class' => $class, 'method' => $method, 'operation' => $operation, 'receiver' => $receiver, 'fingerprint' => $fingerprint];
+            $evidence = $this->findingEvidence($node, $stringConstants, $printer);
+            $results[] = ['line' => $node->getStartLine(), 'class' => $class, 'method' => $method, 'operation' => $operation, 'receiver' => $receiver, 'fingerprint' => $fingerprint, 'evidence' => $evidence];
         }
 
         return $results;
@@ -213,7 +269,7 @@ final class ContractMutationAstScanner
     }
 
     /** @param array<string, true> $variables */
-    private function isMutation(Node $node, array $variables, array $repositoryVariables, array $repositoryProperties, array $connectionVariables, array $connectionProperties, array $pdoVariables, array $pdoProperties, array $preparedStatements, array $stringConstants, Standard $printer): bool
+    private function isMutation(Node $node, array $variables, array $repositoryVariables, array $repositoryProperties, array $connectionVariables, array $connectionProperties, array $pdoVariables, array $pdoProperties, array $statementVariables, array $statementProperties, array $methodReturnKinds, array $preparedStatements, array $stringConstants, Standard $printer): bool
     {
         if ($node instanceof Node\Expr\StaticCall) {
             $class = $node->class instanceof Node\Name ? $node->class->toString() : $printer->prettyPrintExpr($node->class);
@@ -255,9 +311,9 @@ final class ContractMutationAstScanner
 
                 return $sql === null || $this->sqlRequiresAudit($sql);
             }
-            $root = $this->rootVariable($node->var);
-            if ($root !== null && array_key_exists($root, $preparedStatements)) {
-                $sql = $preparedStatements[$root];
+            $statement = $this->expressionKey($node->var, $printer);
+            if ($this->isStatementExpression($node->var, $statementVariables, $statementProperties, $preparedStatements, $pdoVariables, $pdoProperties, $connectionVariables, $connectionProperties, $methodReturnKinds, $printer)) {
+                $sql = $statement !== null && array_key_exists($statement, $preparedStatements) ? $preparedStatements[$statement] : null;
 
                 return $sql === null || $this->sqlRequiresAudit($sql);
             }
@@ -401,25 +457,34 @@ final class ContractMutationAstScanner
         if (preg_match('/\b(?:select|with)\b/i', $sql) !== 1) {
             return false;
         }
-        preg_match_all('/(?<![a-z0-9_$])([a-z_][a-z0-9_$]*)(?:\s*\.\s*([a-z_][a-z0-9_$]*))?\s*\(/i', $sql, $matches, PREG_SET_ORDER);
-        $allowed = [
-            'abs', 'acos', 'array', 'array_agg', 'avg', 'cast', 'ceil', 'coalesce', 'concat', 'concat_ws', 'cos', 'count',
-            'current_setting', 'date_trunc', 'dense_rank', 'encode', 'extract', 'floor', 'greatest',
-            'json_agg', 'json_build_array', 'json_build_object', 'jsonb_agg', 'jsonb_build_array',
-            'jsonb_build_object', 'lag', 'lead', 'least', 'lower', 'max', 'min', 'nextval', 'now',
-            'nullif', 'percentile_cont', 'rank', 'round', 'row_number', 'set_config', 'setval', 'sha256',
-            'string_agg', 'sum', 'to_char', 'upper', 'convert_to', 'exists', 'hashtext', 'hashtextextended',
-            'radians', 'sin', 'then', 'else', 'when', 'in', 'over', 'values',
-        ];
+        preg_match_all('/(?<![a-z0-9_$])(?:(?:"([^"]+)"|([a-z_][a-z0-9_$]*))\s*\.\s*)?(?:"([^"]+)"|([a-z_][a-z0-9_$]*))\s*\(/i', $sql, $matches, PREG_SET_ORDER);
         foreach ($matches as $match) {
-            $qualified = $match[2] ?? '';
-            $function = strtolower($qualified !== '' ? $qualified : $match[1]);
-            if (! in_array($function, $allowed, true) && ! str_starts_with($function, 'pg_')) {
+            $function = strtolower((string) (($match[3] ?? '') !== '' ? $match[3] : ($match[4] ?? '')));
+            if ($function !== '' && ! array_key_exists($function, self::SAFE_SQL_FUNCTIONS)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /** @param array<string,string> $stringConstants */
+    private function findingEvidence(Node $node, array $stringConstants, Standard $printer): string
+    {
+        $operation = $node->name instanceof Node\Identifier ? $node->name->toString() : 'raw_sql';
+        if (($node instanceof Node\Expr\MethodCall || $node instanceof Node\Expr\StaticCall) && isset($node->args[0])) {
+            $sql = $this->constantString($node->args[0]->value, $stringConstants);
+            if ($sql !== null) {
+                $normalized = (string) preg_replace('/\s+/', ' ', trim($sql));
+                $snippet = strlen($normalized) > 180 ? substr($normalized, 0, 180).'…' : $normalized;
+
+                return $operation.':sql='.$snippet;
+            }
+
+            return $operation.':argument='.(string) preg_replace('/\s+/', '', $printer->prettyPrintExpr($node->args[0]->value));
+        }
+
+        return $operation.':receiver='.(string) preg_replace('/\s+/', '', $printer->prettyPrintExpr($node));
     }
 
     private function isDatabaseFacadeName(string $name): bool
@@ -477,6 +542,11 @@ final class ContractMutationAstScanner
         return $node instanceof Node\Name && ltrim($node->toString(), '\\') === 'PDO';
     }
 
+    private function isPdoStatementType(?Node $node): bool
+    {
+        return $node instanceof Node\Name && ltrim($node->toString(), '\\') === 'PDOStatement';
+    }
+
     private function isConnectionExpression(Node\Expr $expression, array $variables, array $properties): bool
     {
         if ($expression instanceof Node\Expr\Variable && is_string($expression->name)) {
@@ -523,6 +593,47 @@ final class ContractMutationAstScanner
         }
 
         return false;
+    }
+
+    private function isStatementExpression(Node\Expr $expression, array $statementVariables, array $statementProperties, array $preparedStatements, array $pdoVariables, array $pdoProperties, array $connectionVariables, array $connectionProperties, array $methodReturnKinds, Standard $printer): bool
+    {
+        $key = $this->expressionKey($expression, $printer);
+        if ($key !== null && (isset($statementVariables[$key]) || array_key_exists($key, $preparedStatements))) {
+            return true;
+        }
+        if ($expression instanceof Node\Expr\PropertyFetch
+            && $expression->var instanceof Node\Expr\Variable
+            && $expression->var->name === 'this'
+            && $expression->name instanceof Node\Identifier
+            && in_array($expression->name->toString(), $statementProperties, true)) {
+            return true;
+        }
+        if ($expression instanceof Node\Expr\MethodCall
+            && $expression->name instanceof Node\Identifier) {
+            if ($expression->name->toString() === 'prepare'
+                && $this->isPdoExpression($expression->var, $pdoVariables, $pdoProperties, $connectionVariables, $connectionProperties)) {
+                return true;
+            }
+            if ($expression->var instanceof Node\Expr\Variable
+                && $expression->var->name === 'this'
+                && ($methodReturnKinds[$expression->name->toString()] ?? null) === 'statement') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function expressionKey(Node\Expr $expression, Standard $printer): ?string
+    {
+        if ($expression instanceof Node\Expr\Variable && is_string($expression->name)) {
+            return $expression->name;
+        }
+        if ($expression instanceof Node\Expr\ArrayDimFetch || $expression instanceof Node\Expr\PropertyFetch) {
+            return (string) preg_replace('/\s+/', '', $printer->prettyPrintExpr($expression));
+        }
+
+        return null;
     }
 
     private function isExactContractType(?Node $node): bool
@@ -594,6 +705,33 @@ final class ContractMutationAstScanner
     }
 
     /** @param list<Node> $nodes @return array<string,array<string,string>> */
+    private function methodReturnKinds(array $nodes): array
+    {
+        $kinds = [];
+        foreach ((new NodeFinder)->findInstanceOf($nodes, Node\Stmt\Class_::class) as $class) {
+            $className = $class->name?->toString() ?? 'anonymous';
+            foreach ($class->getMethods() as $method) {
+                $kind = $this->databaseTypeKind($method->returnType);
+                if ($kind !== null) {
+                    $kinds[$className][$method->name->toString()] = $kind;
+                }
+            }
+        }
+
+        return $kinds;
+    }
+
+    private function databaseTypeKind(?Node $type): ?string
+    {
+        return match (true) {
+            $this->isDatabaseConnectionType($type) => 'connection',
+            $this->isPdoType($type) => 'pdo',
+            $this->isPdoStatementType($type) => 'statement',
+            default => null,
+        };
+    }
+
+    /** @param list<Node> $nodes @return array<string,array<string,string>> */
     private function methodStructuralHashes(array $nodes): array
     {
         $printer = new Standard;
@@ -610,17 +748,40 @@ final class ContractMutationAstScanner
                 $this->collectMethodStructure($node, 'global', $printer, $bodies, $calls);
             }
         }
-        $hashes = [];
+        $flatBodies = [];
+        $flatCalls = [];
         foreach ($bodies as $class => $methods) {
             foreach ($methods as $name => $body) {
-                $children = [];
-                foreach (array_unique($calls[$class][$name] ?? []) as $called) {
-                    if (isset($methods[$called])) {
-                        $children[$called] = hash('sha256', $methods[$called]);
-                    }
-                }
-                ksort($children, SORT_STRING);
-                $hashes[$class][$name] = hash('sha256', $body.'|'.json_encode($children, JSON_THROW_ON_ERROR));
+                $identity = $class.'::'.$name;
+                $flatBodies[$identity] = $body;
+                $flatCalls[$identity] = array_values(array_unique($calls[$class][$name] ?? []));
+            }
+        }
+        $memo = [];
+        $visiting = [];
+        $resolve = function (string $identity) use (&$resolve, &$memo, &$visiting, $flatBodies, $flatCalls): string {
+            if (isset($memo[$identity])) {
+                return $memo[$identity];
+            }
+            if (isset($visiting[$identity])) {
+                return hash('sha256', 'cycle:'.$identity);
+            }
+            $visiting[$identity] = true;
+            $children = [];
+            foreach ($flatCalls[$identity] ?? [] as $called) {
+                $children[$called] = isset($flatBodies[$called])
+                    ? $resolve($called)
+                    : hash('sha256', 'external:'.$called);
+            }
+            ksort($children, SORT_STRING);
+            unset($visiting[$identity]);
+
+            return $memo[$identity] = hash('sha256', ($flatBodies[$identity] ?? 'external').'|'.json_encode($children, JSON_THROW_ON_ERROR));
+        };
+        $hashes = [];
+        foreach ($bodies as $class => $methods) {
+            foreach (array_keys($methods) as $name) {
+                $hashes[$class][$name] = $resolve($class.'::'.$name);
             }
         }
 
@@ -636,10 +797,19 @@ final class ContractMutationAstScanner
                 && $node->var instanceof Node\Expr\Variable
                 && $node->var->name === 'this'
                 && $node->name instanceof Node\Identifier) {
-                $calls[$class][$name][] = $node->name->toString();
+                $calls[$class][$name][] = $class.'::'.$node->name->toString();
+            } elseif ($node instanceof Node\Expr\MethodCall && $node->name instanceof Node\Identifier) {
+                $calls[$class][$name][] = 'dynamic:'.preg_replace('/\s+/', '', $printer->prettyPrintExpr($node->var)).'::'.$node->name->toString();
             }
-            if ($class === 'global' && $node instanceof Node\Expr\FuncCall && $node->name instanceof Node\Name) {
-                $calls[$class][$name][] = $node->name->toString();
+            if ($node instanceof Node\Expr\StaticCall && $node->name instanceof Node\Identifier) {
+                $target = $node->class instanceof Node\Name ? $node->class->toString() : $printer->prettyPrintExpr($node->class);
+                if (in_array(strtolower($target), ['self', 'static'], true)) {
+                    $target = $class;
+                }
+                $calls[$class][$name][] = $this->shortName($target).'::'.$node->name->toString();
+            }
+            if ($node instanceof Node\Expr\FuncCall && $node->name instanceof Node\Name) {
+                $calls[$class][$name][] = 'global::'.$node->name->toString();
             }
         }
     }
@@ -729,6 +899,65 @@ final class ContractMutationAstScanner
         }
 
         return $variables;
+    }
+
+    /** @param list<Node> $nodes @return array{connection:array<string,true>,pdo:array<string,true>,statement:array<string,true>} */
+    private function inheritedDatabaseState(array $nodes, Node\FunctionLike $scope, array $connectionProperties, array $pdoProperties, array $statementProperties, array $returnKinds): array
+    {
+        if ($scope instanceof Node\Stmt\ClassMethod || $scope instanceof Node\Stmt\Function_) {
+            return ['connection' => [], 'pdo' => [], 'statement' => []];
+        }
+        $parent = $this->enclosingNamedFunction($nodes, $scope);
+        $connectionVariables = [];
+        $pdoVariables = [];
+        $statementVariables = [];
+        foreach ($parent?->getParams() ?? [] as $parameter) {
+            if ($parameter->var instanceof Node\Expr\Variable
+                && is_string($parameter->var->name)) {
+                $parameterKind = $this->databaseTypeKind($parameter->type);
+                if ($parameterKind === 'connection') {
+                    $connectionVariables[$parameter->var->name] = true;
+                } elseif ($parameterKind === 'pdo') {
+                    $pdoVariables[$parameter->var->name] = true;
+                } elseif ($parameterKind === 'statement') {
+                    $statementVariables[$parameter->var->name] = true;
+                }
+            }
+        }
+        if ($parent === null) {
+            return ['connection' => [], 'pdo' => [], 'statement' => []];
+        }
+        $printer = new Standard;
+        $prepared = [];
+        $assignments = array_filter($this->nodesWithinScope($parent), static fn (Node $node): bool => $node instanceof Node\Expr\Assign);
+        do {
+            $changed = false;
+            foreach ($assignments as $assignment) {
+                $target = $this->expressionKey($assignment->var, $printer);
+                if ($target === null) {
+                    continue;
+                }
+                if (! isset($connectionVariables[$target]) && $this->isConnectionExpression($assignment->expr, $connectionVariables, $connectionProperties)) {
+                    $connectionVariables[$target] = true;
+                    $changed = true;
+                }
+                if (! isset($pdoVariables[$target]) && $this->isPdoExpression($assignment->expr, $pdoVariables, $pdoProperties, $connectionVariables, $connectionProperties)) {
+                    $pdoVariables[$target] = true;
+                    $changed = true;
+                }
+                if ($assignment->expr instanceof Node\Expr\MethodCall
+                    && $assignment->expr->name instanceof Node\Identifier
+                    && $assignment->expr->name->toString() === 'prepare') {
+                    $prepared[$target] = null;
+                }
+                if (! isset($statementVariables[$target]) && $this->isStatementExpression($assignment->expr, $statementVariables, $statementProperties, $prepared, $pdoVariables, $pdoProperties, $connectionVariables, $connectionProperties, $returnKinds, $printer)) {
+                    $statementVariables[$target] = true;
+                    $changed = true;
+                }
+            }
+        } while ($changed);
+
+        return ['connection' => $connectionVariables, 'pdo' => $pdoVariables, 'statement' => $statementVariables];
     }
 
     /** @param list<Node> $nodes */

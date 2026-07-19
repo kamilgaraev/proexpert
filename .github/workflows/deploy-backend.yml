@@ -155,8 +155,19 @@ jobs:
             }
 
             assert_legacy_runtime_stopped() {
-              local process_directory process_id command_line working_directory cgroup
+              local process_directory process_id command_line working_directory cgroup unit supervisor_status
               test -z "$(docker compose ps --status running -q ${BACKEND_SERVICES})"
+              for unit in "${MOST_SYSTEMD_WRITER_UNITS[@]}"; do
+                if systemctl is-active --quiet "${unit}"; then
+                  echo "MOST backend writer unit remains active (${unit}); refusing deployment"
+                  return 1
+                fi
+              done
+              supervisor_status="$(supervisorctl status 2>/dev/null || true)"
+              if awk -v pattern="${MOST_SUPERVISOR_WRITER_PROGRAM_PATTERN}" '$1 ~ pattern && $2 == "RUNNING" { found = 1 } END { exit found ? 0 : 1 }' <<< "${supervisor_status}"; then
+                echo 'MOST backend supervisor writer remains active; refusing deployment'
+                return 1
+              fi
               for process_directory in /proc/[0-9]*; do
                 process_id="${process_directory##*/}"
                 [ "${process_id}" = "$$" ] && continue
@@ -221,8 +232,13 @@ jobs:
             assert_legacy_runtime_stopped
 
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan migrate:safe --force
+            assert_legacy_runtime_stopped
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true api php artisan immutable-audit:confirm-drain
+            assert_legacy_runtime_stopped
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true api php artisan immutable-audit:phase-b-cutover --confirm-writer-version=2
+            assert_legacy_runtime_stopped
+            MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true api php artisan immutable-audit:confirm-drain
+            assert_legacy_runtime_stopped
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true api php artisan immutable-audit:repair-invariants --confirm-repair
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan immutable-audit:writer-readiness
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
