@@ -150,11 +150,6 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'заземлитель горизонтальный из круглой стали диаметром 12 мм',
             '08-02-472-01',
         ];
-        yield 'steel radiators' => [
-            'heating.radiators',
-            'установка стальных радиаторов',
-            '18-03-001-02',
-        ];
         yield 'wet zone waterproofing' => [
             'sanitary.waterproofing',
             'устройство обмазочной гидроизоляции битумной мастикой в один слой толщиной 2 мм',

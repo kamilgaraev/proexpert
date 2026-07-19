@@ -48,7 +48,6 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'sewerage.revisions',
             'heating.unit',
             'heating.pipe',
-            'heating.radiators',
             'ventilation.air_exchange',
             'sanitary.waterproofing',
             'sanitary.tile',
@@ -89,8 +88,6 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertSame('6.000000', $result->quantities['sanitary.points']->amount);
         self::assertSame('12.980000', $result->quantities['sanitary.waterproofing']->amount);
         self::assertSame('39.497496', $result->quantities['sanitary.tile']->amount);
-        self::assertSame('19.280000', $result->quantities['heating.radiators']->amount);
-        self::assertSame('kw', $result->quantities['heating.radiators']->unit);
         self::assertArrayNotHasKey('electrical.trays', $result->quantities);
 
         foreach ($result->quantities as $quantity) {
@@ -111,7 +108,7 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertContains('stairs.landings', array_column($result->omissions, 'quantity_key'));
         self::assertContains('stairs.railings', array_column($result->omissions, 'quantity_key'));
         self::assertNotContains('openings.windows', array_column($result->omissions, 'quantity_key'));
-        self::assertNotContains('heating.radiators', array_column($result->omissions, 'quantity_key'));
+        self::assertContains('heating.radiators', array_column($result->omissions, 'quantity_key'));
         self::assertNotContains('ventilation.air_exchange', array_column($result->omissions, 'quantity_key'));
     }
 

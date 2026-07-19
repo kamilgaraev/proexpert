@@ -268,7 +268,6 @@ final class NormativeIntentCandidateRankerTest extends TestCase
             ['stairs.flights', 'm2', 'general_work', 'stairs', '10', 'Устройство внутриквартирных лестниц без подшивки'],
             ['openings.windows', 'm2', 'window_installation', 'openings', '10', 'Установка в жилых и общественных зданиях оконных блоков из ПВХ профилей поворотно-откидных двухстворчатых площадью проема до 2 м2'],
             ['electrical.grounding', 'm', 'grounding_installation', 'engineering', '08', 'Заземлитель горизонтальный из стали круглой диаметром 12 мм'],
-            ['heating.radiators', 'kw', 'heating_equipment', 'engineering', '18', 'Установка радиаторов стальных'],
             ['sanitary.waterproofing', 'm2', 'waterproofing', 'finishing', '11', 'Устройство гидроизоляции обмазочной битумной мастикой в один слой толщиной 2 мм'],
             ['sanitary.tile', 'm2', 'tiling', 'finishing', '15', 'Гладкая облицовка стен керамическими плитками на клее из сухих смесей по кирпичу и бетону'],
         ];

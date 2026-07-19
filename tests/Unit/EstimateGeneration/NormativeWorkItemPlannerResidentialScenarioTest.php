@@ -55,7 +55,6 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             ['stairs', 'stairs', 'stairs.flights', 'm2', '8.000000', '10-01-052-02'],
             ['openings', 'openings', 'openings.windows', 'm2', '23.136000', '10-01-034-05'],
             ['electrical', 'electrical', 'electrical.grounding', 'm', '42.576989', '08-02-472-01'],
-            ['heating', 'heating', 'heating.radiators', 'kw', '19.280000', '18-03-001-02'],
             ['plumbing', 'plumbing', 'sanitary.waterproofing', 'm2', '12.980000', '11-01-004-05'],
             ['plumbing', 'plumbing', 'sanitary.tile', 'm2', '39.497496', '15-01-019-05'],
         ] as [$package, $scope, $quantityKey, $unit, $amount, $normCode]) {

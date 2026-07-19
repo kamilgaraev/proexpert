@@ -86,12 +86,6 @@ final class ResidentialMaterialScenarioCatalog
             'normative_search_text' => 'заземлитель горизонтальный из круглой стали диаметром 12 мм',
             'normative_rate_code' => '08-02-472-01',
         ],
-        'heating.radiators' => [
-            'material_markers' => ['радиатор', 'стальн'],
-            'assumption_code' => 'residential_steel_radiators',
-            'normative_search_text' => 'установка стальных радиаторов',
-            'normative_rate_code' => '18-03-001-02',
-        ],
         'sanitary.waterproofing' => [
             'material_markers' => ['гидроизоляц', 'обмазочн', 'мастик'],
             'assumption_code' => 'wet_zone_coating_waterproofing',

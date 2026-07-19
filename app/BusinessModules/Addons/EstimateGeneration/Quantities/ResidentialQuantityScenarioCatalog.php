@@ -22,7 +22,6 @@ final class ResidentialQuantityScenarioCatalog
         'electrical.main_cable' => 'm',
         'electrical.power_lines' => 'm',
         'heating.pipe' => 'm',
-        'heating.radiators' => 'kw',
         'heating.unit' => 'pcs',
         'lighting.lines' => 'm',
         'openings.doors' => 'm2',
@@ -127,13 +126,6 @@ final class ResidentialQuantityScenarioCatalog
             ] as $key => [$unit, $factor, $assumption]) {
                 $quantities[$key] = $this->scaled($key, $unit, $floorArea, $factor, [$assumption]);
             }
-            $quantities['heating.radiators'] = $this->scaled(
-                'heating.radiators',
-                'kw',
-                $floorArea,
-                '0.10',
-                ['preliminary_specific_heat_load_kw_per_m2:0.10'],
-            );
             $quantities['heating.unit'] = $this->countBased(
                 'heating.unit',
                 'pcs',
@@ -146,12 +138,14 @@ final class ResidentialQuantityScenarioCatalog
         } else {
             foreach ([
                 'openings.windows', 'electrical.main_cable', 'electrical.power_lines', 'lighting.lines',
-                'plumbing.pipe', 'sewerage.pipe', 'heating.pipe', 'heating.radiators', 'heating.unit',
+                'plumbing.pipe', 'sewerage.pipe', 'heating.pipe', 'heating.unit',
                 'ventilation.air_exchange',
             ] as $key) {
                 $omissions[] = $this->omission($key, 'total_internal_area_missing');
             }
         }
+
+        $omissions[] = $this->omission('heating.radiators', 'radiator_schedule_missing');
 
         if ($roomCount > 0) {
             $quantities['openings.doors'] = $this->countBased(
