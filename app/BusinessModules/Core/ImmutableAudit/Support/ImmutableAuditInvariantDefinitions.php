@@ -116,6 +116,10 @@ ALTER FUNCTION immutable_audit_allocate_sequence() SECURITY INVOKER CALLED ON NU
 ALTER FUNCTION immutable_audit_sync_sequence_after_insert() SECURITY INVOKER CALLED ON NULL INPUT NOT LEAKPROOF PARALLEL UNSAFE;
 ALTER FUNCTION immutable_audit_writer_guard() SECURITY INVOKER CALLED ON NULL INPUT NOT LEAKPROOF PARALLEL UNSAFE;
 ALTER FUNCTION immutable_audit_prevent_mutation() SECURITY INVOKER CALLED ON NULL INPUT NOT LEAKPROOF PARALLEL UNSAFE;
+ALTER FUNCTION immutable_audit_allocate_sequence() COST 100;
+ALTER FUNCTION immutable_audit_sync_sequence_after_insert() COST 100;
+ALTER FUNCTION immutable_audit_writer_guard() COST 100;
+ALTER FUNCTION immutable_audit_prevent_mutation() COST 100;
 ALTER FUNCTION immutable_audit_allocate_sequence() RESET ALL;
 ALTER FUNCTION immutable_audit_sync_sequence_after_insert() RESET ALL;
 ALTER FUNCTION immutable_audit_writer_guard() RESET ALL;
@@ -133,6 +137,14 @@ BEGIN
     EXECUTE format('ALTER FUNCTION immutable_audit_sync_sequence_after_insert() OWNER TO %%I', canonical_owner);
     EXECUTE format('ALTER FUNCTION immutable_audit_writer_guard() OWNER TO %%I', canonical_owner);
     EXECUTE format('ALTER FUNCTION immutable_audit_prevent_mutation() OWNER TO %%I', canonical_owner);
+    EXECUTE 'REVOKE ALL ON FUNCTION immutable_audit_allocate_sequence() FROM PUBLIC';
+    EXECUTE 'REVOKE ALL ON FUNCTION immutable_audit_sync_sequence_after_insert() FROM PUBLIC';
+    EXECUTE 'REVOKE ALL ON FUNCTION immutable_audit_writer_guard() FROM PUBLIC';
+    EXECUTE 'REVOKE ALL ON FUNCTION immutable_audit_prevent_mutation() FROM PUBLIC';
+    EXECUTE format('GRANT EXECUTE ON FUNCTION immutable_audit_allocate_sequence() TO %%I', canonical_owner);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION immutable_audit_sync_sequence_after_insert() TO %%I', canonical_owner);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION immutable_audit_writer_guard() TO %%I', canonical_owner);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION immutable_audit_prevent_mutation() TO %%I', canonical_owner);
 END
 $owner$;
 DROP TRIGGER IF EXISTS immutable_audit_writer_guard ON immutable_audit_events;
@@ -155,6 +167,13 @@ SQL, self::ALLOCATOR_BODY, self::SEQUENCE_SYNC_BODY, self::WRITER_GUARD_BODY, se
             'volatility' => 'v',
             'security_definer' => false,
             'owner_matches_relation' => true,
+            'owner_identity' => '$database_owner',
+            'relation_owner_identity' => '$database_owner',
+            'acl' => ['$database_owner:EXECUTE:false:$database_owner'],
+            'public_execute' => false,
+            'cost' => '100',
+            'rows' => '0',
+            'support' => '-',
             'config' => ['search_path=pg_catalog, public'],
             'strict' => false,
             'leakproof' => false,
@@ -173,7 +192,30 @@ SQL, self::ALLOCATOR_BODY, self::SEQUENCE_SYNC_BODY, self::WRITER_GUARD_BODY, se
             'relation' => 'immutable_audit_events',
             'function_name' => $function,
             'type' => $type,
+            'definition' => self::normalizeTriggerDefinition(sprintf(
+                'CREATE TRIGGER %s %s ON immutable_audit_events FOR EACH ROW EXECUTE FUNCTION %s()',
+                $name,
+                $type === 7 ? 'BEFORE INSERT' : ($type === 27 ? 'BEFORE DELETE OR UPDATE' : 'AFTER INSERT'),
+                $function,
+            )),
+            'when' => '',
+            'arguments_hex' => '',
+            'constraint_oid' => '0',
+            'constraint_type' => '',
+            'deferrable' => false,
+            'initially_deferred' => false,
+            'parent_trigger_oid' => '0',
+            'parent_relation' => '',
+            'parent_trigger' => '',
+            'old_transition_table' => '',
+            'new_transition_table' => '',
+            'function_dependency' => true,
         ];
+    }
+
+    private static function normalizeTriggerDefinition(string $definition): string
+    {
+        return strtolower((string) preg_replace('/[;\s"]+/', '', $definition));
     }
 
     private static function normalizeBody(string $body): string

@@ -155,7 +155,9 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
         self::assertStringContainsString('MOST backend writer unit remains active', $workflow);
         self::assertStringContainsString('MOST backend supervisor writer remains active', $workflow);
         self::assertStringContainsString('systemctl is-active --quiet "${unit}"', $workflow);
-        self::assertStringContainsString('$2 == "RUNNING"', $workflow);
+        self::assertStringContainsString('systemctl mask --runtime --now "${unit}"', $workflow);
+        self::assertStringContainsString("grep -Eq '^masked(-runtime)?$'", $workflow);
+        self::assertStringContainsString('$2 == "RUNNING" || $2 == "STARTING" || $2 == "BACKOFF"', $workflow);
         self::assertStringContainsString('stop_legacy_systemd_processes', $workflow);
         self::assertStringContainsString('prohelper-octane.service', $allowlist);
         self::assertStringContainsString('prohelper-queue.service', $allowlist);

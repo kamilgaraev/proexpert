@@ -13,6 +13,19 @@ use PhpParser\PrettyPrinter\Standard;
 
 final class ContractMutationAstScanner
 {
+    /** @var array<string,list<Node>> */
+    private array $parseCache = [];
+
+    /** @var array<string,array{bodies:array<string,string>,calls:array<string,list<string>>}> */
+    private array $structureCache = [];
+
+    /** @var array<string,list<array{file:string,line:int,class:string,method:string,operation:string,receiver:string,fingerprint:string,evidence:string}>> */
+    private array $projectFindingsCache = [];
+
+    private int $projectCacheHits = 0;
+
+    private int $projectCacheMisses = 0;
+
     private const MUTATIONS = ['save', 'saveQuietly', 'update', 'updateQuietly', 'delete', 'forceDelete', 'insert', 'upsert', 'increment', 'decrement', 'touch', 'restore', 'create'];
 
     private const RAW_SQL_ENTRY_POINTS = [
@@ -67,10 +80,150 @@ final class ContractMutationAstScanner
     /** @return list<array{line:int,class:string,method:string,operation:string,receiver:string,fingerprint:string,evidence:string}> */
     public function findings(string $source): array
     {
+        $nodes = $this->parse($source);
+
+        return $this->findingsFromNodes($nodes, $this->methodStructuralHashes($nodes));
+    }
+
+    /**
+     * @param  list<string>  $files
+     * @return list<array{file:string,line:int,class:string,method:string,operation:string,receiver:string,fingerprint:string,evidence:string}>
+     */
+    public function findingsInFiles(array $files): array
+    {
+        sort($files, SORT_STRING);
+        $pendingFindings = [];
+        $bodies = [];
+        $calls = [];
+        $sources = [];
+        $declarations = [];
+        foreach ($files as $file) {
+            if (! is_file($file) || ! is_readable($file)) {
+                throw new \RuntimeException('contract_ast_source_unreadable:'.$file);
+            }
+            $source = file_get_contents($file);
+            if (! is_string($source)) {
+                throw new \RuntimeException('contract_ast_source_unreadable:'.$file);
+            }
+            $sources[$file] = $source;
+            preg_match('/\bnamespace\s+([^;{]+)[;{]/', $source, $namespaceMatch);
+            $namespace = trim($namespaceMatch[1] ?? '');
+            preg_match_all('/\b(?:final\s+|abstract\s+|readonly\s+)*(?:class|trait|interface|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/', $source, $classMatches);
+            foreach ($classMatches[1] as $class) {
+                $declarations[$class] = $file;
+                $declarations[ltrim($namespace.'\\'.$class, '\\')] = $file;
+            }
+            preg_match_all('/\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/', $source, $functionMatches);
+            foreach ($functionMatches[1] as $function) {
+                $declarations[$function] ??= $file;
+                $declarations[ltrim($namespace.'\\'.$function, '\\')] ??= $file;
+            }
+        }
+        $snapshot = hash('sha256', json_encode(array_map(
+            static fn (string $file, string $source): array => [$file, hash('sha256', $source)],
+            array_keys($sources),
+            array_values($sources),
+        ), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+        if (isset($this->projectFindingsCache[$snapshot])) {
+            $this->projectCacheHits++;
+
+            return $this->projectFindingsCache[$snapshot];
+        }
+        $this->projectCacheMisses++;
+        $parsed = [];
+        $mergeFile = function (string $file) use (&$parsed, &$sources, &$bodies, &$calls): array {
+            if (isset($parsed[$file])) {
+                return [];
+            }
+            $parsed[$file] = true;
+            $source = $sources[$file];
+            $hash = hash('sha256', $source);
+            $nodes = $this->parse($source, false);
+            $structure = $this->structureCache[$hash] ??= $this->methodStructures($nodes, $source);
+            $bodies += $structure['bodies'];
+            foreach ($structure['calls'] as $identity => $targets) {
+                $calls[$identity] = array_values(array_unique(array_merge($calls[$identity] ?? [], $targets)));
+            }
+
+            return $nodes;
+        };
+        $reachable = [];
+        foreach ($sources as $file => $source) {
+            $rawCandidate = preg_match('/(?:->|::)\s*(?:statement|unprepared|affectingStatement|raw|select|selectOne|selectResultSets|selectFromWriteConnection|scalar|cursor|exec|query|prepare|execute)\s*\(/', $source) === 1;
+            $rawCandidate = $rawCandidate || (preg_match('/(?:DB\s*::|Connection(?:Interface)?|PDO|\$(?:database|connection))/', $source) === 1
+                && preg_match('/(?:->|::)\s*(?:insert|update|delete)\s*\(/', $source) === 1);
+            $contractCandidate = stripos($source, 'contract') !== false
+                && preg_match('/(?:->|::)\s*(?:save|saveQuietly|update|updateQuietly|delete|forceDelete|insert|upsert|increment|decrement|touch|restore|create)\s*\(/', $source) === 1;
+            if ($rawCandidate || $contractCandidate) {
+                $nodes = $mergeFile($file);
+                foreach ($this->findingsFromNodes($nodes, []) as $finding) {
+                    $pendingFindings[] = ['file' => $file] + $finding;
+                    if (is_string($finding['builder_identity'] ?? null)) {
+                        $reachable[] = $finding['builder_identity'];
+                    }
+                }
+            }
+        }
+        $visited = [];
+        while (($identity = array_pop($reachable)) !== null) {
+            if (isset($visited[$identity])) {
+                continue;
+            }
+            $visited[$identity] = true;
+            $targetFile = $declarations[$identity] ?? $declarations[explode('::', $identity)[0]] ?? null;
+            if (is_string($targetFile) && ! isset($parsed[$targetFile])) {
+                $mergeFile($targetFile);
+            }
+            foreach ($calls[$identity] ?? [] as $target) {
+                if (! str_starts_with($target, 'dynamic:')) {
+                    $reachable[] = $target;
+                }
+            }
+        }
+        $methodHashes = $this->stronglyConnectedStructuralHashes($bodies, $calls);
+        $findings = [];
+        foreach ($pendingFindings as $finding) {
+            $builderIdentity = $finding['builder_identity'] ?? null;
+            unset($finding['builder_identity']);
+            if (is_string($builderIdentity)) {
+                $hash = $methodHashes[$builderIdentity] ?? 'unresolved-'.hash('sha256', $builderIdentity);
+                $finding['fingerprint'] = (string) preg_replace('/\|builder=pending$/', '|builder='.$hash, $finding['fingerprint']);
+            }
+            $findings[] = $finding;
+        }
+
+        return $this->projectFindingsCache[$snapshot] = $findings;
+    }
+
+    /** @return array{hits:int,misses:int} */
+    public function projectCacheMetrics(): array
+    {
+        return ['hits' => $this->projectCacheHits, 'misses' => $this->projectCacheMisses];
+    }
+
+    /** @return list<Node> */
+    private function parse(string $source, bool $cache = true): array
+    {
+        $hash = hash('sha256', $source);
+        if ($cache && isset($this->parseCache[$hash])) {
+            return $this->parseCache[$hash];
+        }
         $nodes = (new ParserFactory)->createForNewestSupportedVersion()->parse($source) ?? [];
         $traverser = new NodeTraverser;
         $traverser->addVisitor(new NameResolver);
+
         $nodes = $traverser->traverse($nodes);
+
+        return $cache ? $this->parseCache[$hash] = $nodes : $nodes;
+    }
+
+    /**
+     * @param  list<Node>  $nodes
+     * @param  array<string,string>  $methodHashes
+     * @return list<array{line:int,class:string,method:string,operation:string,receiver:string,fingerprint:string,evidence:string}>
+     */
+    private function findingsFromNodes(array $nodes, array $methodHashes): array
+    {
         $finder = new NodeFinder;
         $candidate = $finder->findFirst($nodes, function (Node $node): bool {
             if ($node instanceof Node\Expr\StaticCall && $node->name instanceof Node\Identifier) {
@@ -82,9 +235,6 @@ final class ContractMutationAstScanner
                 && in_array($node->name->toString(), array_merge(self::MUTATIONS, self::RAW_SQL_ENTRY_POINTS, self::PDO_ENTRY_POINTS, ['execute']), true);
         });
         if ($candidate === null) {
-            unset($nodes, $traverser, $finder, $candidate);
-            gc_collect_cycles();
-
             return [];
         }
         $scopes = $finder->findInstanceOf($nodes, Node\FunctionLike::class);
@@ -93,15 +243,10 @@ final class ContractMutationAstScanner
         $pdoProperties = $this->typedProperties($nodes, fn (?Node $type): bool => $this->isPdoType($type));
         $statementProperties = $this->typedProperties($nodes, fn (?Node $type): bool => $this->isPdoStatementType($type));
         $methodReturnKinds = $this->methodReturnKinds($nodes);
-        $needsStructuralHashes = $finder->findFirst($nodes, static function (Node $node): bool {
-            return ($node instanceof Node\Expr\MethodCall || $node instanceof Node\Expr\StaticCall)
-                && $node->name instanceof Node\Identifier
-                && in_array($node->name->toString(), array_merge(self::RAW_SQL_ENTRY_POINTS, self::PDO_ENTRY_POINTS, ['execute']), true);
-        }) !== null;
-        $methodHashes = $needsStructuralHashes ? $this->methodStructuralHashes($nodes) : [];
         $findings = [];
         foreach ($scopes as $scope) {
             $class = $this->enclosingClassName($nodes, $scope);
+            $classIdentity = $this->enclosingClassIdentity($nodes, $scope);
             $method = $this->scopeMethodName($nodes, $scope);
             $inheritedDatabase = $this->inheritedDatabaseState(
                 $nodes,
@@ -120,7 +265,8 @@ final class ContractMutationAstScanner
                 $pdoProperties[$class] ?? [],
                 $statementProperties[$class] ?? [],
                 $methodReturnKinds[$class] ?? [],
-                $methodHashes[$class] ?? [],
+                $methodHashes,
+                $classIdentity,
                 $this->inheritedTypedVariables($nodes, $scope, true),
                 $this->inheritedTypedVariables($nodes, $scope, false),
                 $inheritedDatabase['connection'],
@@ -128,9 +274,6 @@ final class ContractMutationAstScanner
                 $inheritedDatabase['statement'],
             ));
         }
-
-        unset($nodes, $traverser, $finder, $scopes, $repositoryProperties, $connectionProperties, $pdoProperties, $statementProperties, $methodReturnKinds, $methodHashes);
-        gc_collect_cycles();
 
         return $findings;
     }
@@ -146,6 +289,7 @@ final class ContractMutationAstScanner
         array $statementProperties,
         array $methodReturnKinds,
         array $methodHashes,
+        string $classIdentity,
         array $inheritedContractVariables,
         array $inheritedRepositoryVariables,
         array $inheritedConnectionVariables,
@@ -236,12 +380,13 @@ final class ContractMutationAstScanner
             $operation = $node->name instanceof Node\Identifier ? $node->name->toString() : 'raw_sql';
             $receiver = $node instanceof Node\Expr\MethodCall ? $printer->prettyPrintExpr($node->var) : $printer->prettyPrintExpr($node);
             $databaseExecution = $this->isDatabaseExecutionNode($node, $connectionVariables, $connectionProperties, $pdoVariables, $pdoProperties);
-            $structuralHash = $databaseExecution
-                ? ($this->structuralBuilderHash($node, $methodHashes) ?? ($methodHashes[$method] ?? null))
+            $builderIdentity = $databaseExecution
+                ? ($this->structuralBuilderIdentity($node, $classIdentity) ?? $classIdentity.'::'.$method)
                 : null;
+            $structuralHash = $builderIdentity === null ? null : ($methodHashes[$builderIdentity] ?? ($methodHashes === [] ? 'pending' : hash('sha256', 'unresolved:'.$builderIdentity)));
             $fingerprint = implode('|', [$class, $method, $operation, preg_replace('/\s+/', '', $receiver)]).($structuralHash === null ? '' : '|builder='.$structuralHash);
             $evidence = $this->findingEvidence($node, $stringConstants, $printer);
-            $results[] = ['line' => $node->getStartLine(), 'class' => $class, 'method' => $method, 'operation' => $operation, 'receiver' => $receiver, 'fingerprint' => $fingerprint, 'evidence' => $evidence];
+            $results[] = ['line' => $node->getStartLine(), 'class' => $class, 'method' => $method, 'operation' => $operation, 'receiver' => $receiver, 'fingerprint' => $fingerprint, 'evidence' => $evidence, 'builder_identity' => $builderIdentity];
         }
 
         return $results;
@@ -529,22 +674,39 @@ final class ContractMutationAstScanner
 
     private function isDatabaseConnectionType(?Node $node): bool
     {
-        if (! $node instanceof Node\Name) {
-            return false;
-        }
-        $name = ltrim($node->toString(), '\\');
-
-        return in_array($name, ['Illuminate\\Database\\ConnectionInterface', 'Illuminate\\Database\\Connection'], true);
+        return $this->typeContains($node, ['Illuminate\\Database\\ConnectionInterface', 'Illuminate\\Database\\Connection']);
     }
 
     private function isPdoType(?Node $node): bool
     {
-        return $node instanceof Node\Name && ltrim($node->toString(), '\\') === 'PDO';
+        return $this->typeContains($node, ['PDO']);
     }
 
     private function isPdoStatementType(?Node $node): bool
     {
-        return $node instanceof Node\Name && ltrim($node->toString(), '\\') === 'PDOStatement';
+        return $this->typeContains($node, ['PDOStatement']);
+    }
+
+    /** @param list<string> $expected */
+    private function typeContains(?Node $type, array $expected): bool
+    {
+        if ($type instanceof Node\NullableType) {
+            return $this->typeContains($type->type, $expected);
+        }
+        if ($type instanceof Node\UnionType || $type instanceof Node\IntersectionType) {
+            foreach ($type->types as $member) {
+                if ($this->typeContains($member, $expected)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        if (! $type instanceof Node\Name) {
+            return false;
+        }
+
+        return in_array(ltrim($type->toString(), '\\'), $expected, true);
     }
 
     private function isConnectionExpression(Node\Expr $expression, array $variables, array $properties): bool
@@ -731,91 +893,160 @@ final class ContractMutationAstScanner
         };
     }
 
-    /** @param list<Node> $nodes @return array<string,array<string,string>> */
+    /** @param list<Node> $nodes @return array<string,string> */
     private function methodStructuralHashes(array $nodes): array
+    {
+        $structure = $this->methodStructures($nodes);
+
+        return $this->stronglyConnectedStructuralHashes($structure['bodies'], $structure['calls']);
+    }
+
+    /** @param list<Node> $nodes @return array{bodies:array<string,string>,calls:array<string,list<string>>} */
+    private function methodStructures(array $nodes, ?string $source = null): array
     {
         $printer = new Standard;
         $bodies = [];
         $calls = [];
         foreach ((new NodeFinder)->findInstanceOf($nodes, Node\Stmt\Class_::class) as $classNode) {
-            $class = $classNode->name?->toString() ?? 'anonymous';
+            $class = $this->declaredClassIdentity($classNode);
             foreach ($classNode->getMethods() as $method) {
-                $this->collectMethodStructure($method, $class, $printer, $bodies, $calls);
+                $this->collectMethodStructure($method, $class, $printer, $bodies, $calls, null, $source);
             }
         }
-        foreach ($nodes as $node) {
-            if ($node instanceof Node\Stmt\Function_) {
-                $this->collectMethodStructure($node, 'global', $printer, $bodies, $calls);
+        foreach ((new NodeFinder)->findInstanceOf($nodes, Node\Stmt\Function_::class) as $function) {
+            $namespaceName = $function->namespacedName ?? $function->getAttribute('namespacedName');
+            $identity = $namespaceName instanceof Node\Name ? $namespaceName->toString() : $function->name->toString();
+            $this->collectMethodStructure($function, 'function', $printer, $bodies, $calls, $identity, $source);
+        }
+        foreach ($calls as $identity => $targets) {
+            $calls[$identity] = array_values(array_unique($targets));
+            sort($calls[$identity], SORT_STRING);
+        }
+
+        return ['bodies' => $bodies, 'calls' => $calls];
+    }
+
+    /**
+     * @param  array<string,string>  $bodies
+     * @param  array<string,list<string>>  $calls
+     * @return array<string,string>
+     */
+    private function stronglyConnectedStructuralHashes(array $bodies, array $calls): array
+    {
+        $identities = array_keys($bodies);
+        sort($identities, SORT_STRING);
+        $nextIndex = 0;
+        $indices = [];
+        $lowLinks = [];
+        $stack = [];
+        $onStack = [];
+        $components = [];
+        $visit = function (string $identity) use (&$visit, &$nextIndex, &$indices, &$lowLinks, &$stack, &$onStack, &$components, $bodies, $calls): void {
+            $indices[$identity] = $nextIndex;
+            $lowLinks[$identity] = $nextIndex++;
+            $stack[] = $identity;
+            $onStack[$identity] = true;
+            foreach ($calls[$identity] ?? [] as $target) {
+                if (! isset($bodies[$target])) {
+                    continue;
+                }
+                if (! array_key_exists($target, $indices)) {
+                    $visit($target);
+                    $lowLinks[$identity] = min($lowLinks[$identity], $lowLinks[$target]);
+                } elseif (isset($onStack[$target])) {
+                    $lowLinks[$identity] = min($lowLinks[$identity], $indices[$target]);
+                }
+            }
+            if ($lowLinks[$identity] !== $indices[$identity]) {
+                return;
+            }
+            $component = [];
+            do {
+                $member = array_pop($stack);
+                if (! is_string($member)) {
+                    break;
+                }
+                unset($onStack[$member]);
+                $component[] = $member;
+            } while ($member !== $identity);
+            sort($component, SORT_STRING);
+            $components[] = $component;
+        };
+        foreach ($identities as $identity) {
+            if (! array_key_exists($identity, $indices)) {
+                $visit($identity);
             }
         }
-        $flatBodies = [];
-        $flatCalls = [];
-        foreach ($bodies as $class => $methods) {
-            foreach ($methods as $name => $body) {
-                $identity = $class.'::'.$name;
-                $flatBodies[$identity] = $body;
-                $flatCalls[$identity] = array_values(array_unique($calls[$class][$name] ?? []));
+        $componentByMember = [];
+        foreach ($components as $componentId => $members) {
+            foreach ($members as $member) {
+                $componentByMember[$member] = $componentId;
             }
         }
         $memo = [];
-        $visiting = [];
-        $resolve = function (string $identity) use (&$resolve, &$memo, &$visiting, $flatBodies, $flatCalls): string {
-            if (isset($memo[$identity])) {
-                return $memo[$identity];
+        $resolve = function (int $componentId) use (&$resolve, &$memo, $components, $componentByMember, $bodies, $calls): string {
+            if (isset($memo[$componentId])) {
+                return $memo[$componentId];
             }
-            if (isset($visiting[$identity])) {
-                return hash('sha256', 'cycle:'.$identity);
-            }
-            $visiting[$identity] = true;
-            $children = [];
-            foreach ($flatCalls[$identity] ?? [] as $called) {
-                $children[$called] = isset($flatBodies[$called])
-                    ? $resolve($called)
-                    : hash('sha256', 'external:'.$called);
-            }
-            ksort($children, SORT_STRING);
-            unset($visiting[$identity]);
+            $members = [];
+            $outgoing = [];
+            foreach ($components[$componentId] as $member) {
+                $members[$member] = $bodies[$member];
+                foreach ($calls[$member] ?? [] as $target) {
+                    if (! isset($componentByMember[$target])) {
+                        $outgoing['external:'.$target] = hash('sha256', 'external:'.$target);
 
-            return $memo[$identity] = hash('sha256', ($flatBodies[$identity] ?? 'external').'|'.json_encode($children, JSON_THROW_ON_ERROR));
+                        continue;
+                    }
+                    $targetComponent = $componentByMember[$target];
+                    if ($targetComponent !== $componentId) {
+                        $outgoing['scc:'.implode('|', $components[$targetComponent])] = $resolve($targetComponent);
+                    }
+                }
+            }
+            ksort($members, SORT_STRING);
+            ksort($outgoing, SORT_STRING);
+
+            return $memo[$componentId] = hash('sha256', json_encode(['members' => $members, 'outgoing' => $outgoing], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
         };
         $hashes = [];
-        foreach ($bodies as $class => $methods) {
-            foreach (array_keys($methods) as $name) {
-                $hashes[$class][$name] = $resolve($class.'::'.$name);
-            }
+        foreach ($componentByMember as $member => $componentId) {
+            $hashes[$member] = $resolve($componentId);
         }
 
         return $hashes;
     }
 
-    private function collectMethodStructure(Node\Stmt\ClassMethod|Node\Stmt\Function_ $method, string $class, Standard $printer, array &$bodies, array &$calls): void
+    private function collectMethodStructure(Node\Stmt\ClassMethod|Node\Stmt\Function_ $method, string $class, Standard $printer, array &$bodies, array &$calls, ?string $functionIdentity = null, ?string $source = null): void
     {
         $name = $method->name->toString();
-        $bodies[$class][$name] = $printer->prettyPrint($method->getStmts() ?? []);
+        $identity = $functionIdentity ?? $class.'::'.$name;
+        $bodies[$identity] = $source === null
+            ? $printer->prettyPrint($method->getStmts() ?? [])
+            : substr($source, $method->getStartFilePos(), $method->getEndFilePos() - $method->getStartFilePos() + 1);
         foreach ($this->nodesWithinScope($method) as $node) {
             if ($node instanceof Node\Expr\MethodCall
                 && $node->var instanceof Node\Expr\Variable
                 && $node->var->name === 'this'
                 && $node->name instanceof Node\Identifier) {
-                $calls[$class][$name][] = $class.'::'.$node->name->toString();
+                $calls[$identity][] = $class.'::'.$node->name->toString();
             } elseif ($node instanceof Node\Expr\MethodCall && $node->name instanceof Node\Identifier) {
-                $calls[$class][$name][] = 'dynamic:'.preg_replace('/\s+/', '', $printer->prettyPrintExpr($node->var)).'::'.$node->name->toString();
+                $calls[$identity][] = 'dynamic:'.preg_replace('/\s+/', '', $printer->prettyPrintExpr($node->var)).'::'.$node->name->toString();
             }
             if ($node instanceof Node\Expr\StaticCall && $node->name instanceof Node\Identifier) {
                 $target = $node->class instanceof Node\Name ? $node->class->toString() : $printer->prettyPrintExpr($node->class);
                 if (in_array(strtolower($target), ['self', 'static'], true)) {
                     $target = $class;
                 }
-                $calls[$class][$name][] = $this->shortName($target).'::'.$node->name->toString();
+                $calls[$identity][] = ltrim($target, '\\').'::'.$node->name->toString();
             }
             if ($node instanceof Node\Expr\FuncCall && $node->name instanceof Node\Name) {
-                $calls[$class][$name][] = 'global::'.$node->name->toString();
+                $calls[$identity][] = ltrim($node->name->toString(), '\\');
             }
         }
     }
 
-    /** @param array<string,string> $methodHashes */
-    private function structuralBuilderHash(Node $node, array $methodHashes): ?string
+    private function structuralBuilderIdentity(Node $node, string $classIdentity): ?string
     {
         if (! ($node instanceof Node\Expr\MethodCall || $node instanceof Node\Expr\StaticCall)
             || ! isset($node->args[0])) {
@@ -826,10 +1057,23 @@ final class ContractMutationAstScanner
             && $argument->var instanceof Node\Expr\Variable
             && $argument->var->name === 'this'
             && $argument->name instanceof Node\Identifier) {
-            return $methodHashes[$argument->name->toString()] ?? null;
+            return $classIdentity.'::'.$argument->name->toString();
+        }
+        if ($argument instanceof Node\Expr\StaticCall
+            && $argument->class instanceof Node\Name
+            && $argument->name instanceof Node\Identifier) {
+            $target = $argument->class->toString();
+            if (in_array(strtolower($target), ['self', 'static'], true)) {
+                $target = $classIdentity;
+            }
+
+            return ltrim($target, '\\').'::'.$argument->name->toString();
         }
         if ($argument instanceof Node\Expr\FuncCall && $argument->name instanceof Node\Name) {
-            return $methodHashes[$argument->name->toString()] ?? null;
+            return ltrim($argument->name->toString(), '\\');
+        }
+        if ($argument instanceof Node\Expr\MethodCall || $argument instanceof Node\Expr\StaticCall || $argument instanceof Node\Expr\FuncCall) {
+            return 'unresolved-expression:'.(string) preg_replace('/\s+/', '', (new Standard)->prettyPrintExpr($argument));
         }
 
         return null;
@@ -886,8 +1130,8 @@ final class ContractMutationAstScanner
         if ($scope instanceof Node\Stmt\ClassMethod || $scope instanceof Node\Stmt\Function_) {
             return [];
         }
-        $parent = $this->enclosingNamedFunction($nodes, $scope);
-        $variables = [];
+        $parent = $this->enclosingFunctionLike($nodes, $scope);
+        $variables = $parent === null ? [] : $this->inheritedTypedVariables($nodes, $parent, $contracts);
         foreach ($parent?->getParams() ?? [] as $parameter) {
             if (! $parameter->var instanceof Node\Expr\Variable || ! is_string($parameter->var->name)) {
                 continue;
@@ -907,10 +1151,13 @@ final class ContractMutationAstScanner
         if ($scope instanceof Node\Stmt\ClassMethod || $scope instanceof Node\Stmt\Function_) {
             return ['connection' => [], 'pdo' => [], 'statement' => []];
         }
-        $parent = $this->enclosingNamedFunction($nodes, $scope);
-        $connectionVariables = [];
-        $pdoVariables = [];
-        $statementVariables = [];
+        $parent = $this->enclosingFunctionLike($nodes, $scope);
+        $inherited = $parent === null
+            ? ['connection' => [], 'pdo' => [], 'statement' => []]
+            : $this->inheritedDatabaseState($nodes, $parent, $connectionProperties, $pdoProperties, $statementProperties, $returnKinds);
+        $connectionVariables = $inherited['connection'];
+        $pdoVariables = $inherited['pdo'];
+        $statementVariables = $inherited['statement'];
         foreach ($parent?->getParams() ?? [] as $parameter) {
             if ($parameter->var instanceof Node\Expr\Variable
                 && is_string($parameter->var->name)) {
@@ -976,6 +1223,24 @@ final class ContractMutationAstScanner
     }
 
     /** @param list<Node> $nodes */
+    private function enclosingFunctionLike(array $nodes, Node\FunctionLike $scope): ?Node\FunctionLike
+    {
+        $candidate = null;
+        foreach ((new NodeFinder)->findInstanceOf($nodes, Node\FunctionLike::class) as $function) {
+            if ($function === $scope) {
+                continue;
+            }
+            if ($function->getStartFilePos() <= $scope->getStartFilePos() && $function->getEndFilePos() >= $scope->getEndFilePos()) {
+                if ($candidate === null || $function->getStartFilePos() >= $candidate->getStartFilePos()) {
+                    $candidate = $function;
+                }
+            }
+        }
+
+        return $candidate;
+    }
+
+    /** @param list<Node> $nodes */
     private function enclosingClassName(array $nodes, Node $scope): string
     {
         $finder = new NodeFinder;
@@ -986,5 +1251,26 @@ final class ContractMutationAstScanner
         }
 
         return 'global';
+    }
+
+    /** @param list<Node> $nodes */
+    private function enclosingClassIdentity(array $nodes, Node $scope): string
+    {
+        foreach ((new NodeFinder)->findInstanceOf($nodes, Node\Stmt\Class_::class) as $class) {
+            if ($class->getStartFilePos() <= $scope->getStartFilePos() && $class->getEndFilePos() >= $scope->getEndFilePos()) {
+                return $this->declaredClassIdentity($class);
+            }
+        }
+
+        return 'global';
+    }
+
+    private function declaredClassIdentity(Node\Stmt\Class_ $class): string
+    {
+        $namespacedName = $class->namespacedName ?? $class->getAttribute('namespacedName');
+
+        return $namespacedName instanceof Node\Name
+            ? $namespacedName->toString()
+            : ($class->name?->toString() ?? 'anonymous');
     }
 }

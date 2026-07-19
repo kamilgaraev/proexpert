@@ -7,7 +7,7 @@
 1. Сервер получает точный commit и digest образа до остановки трафика.
 2. `.github/scripts/atomic-env.sh` создаёт временный файл рядом с `.env`, сохраняет uid/gid, устанавливает `0600` и проверяет атрибуты через `stat`. Перед атомарным rename выполняется `sync -f` временного файла, после rename — `sync -f` каталога. Отсутствие поддерживаемого механизма durability блокирует deployment. EXIT-trap удаляет незавершённый временный файл.
 3. `LEGAL_ARCHIVE_AUDIT_WRITER_SECRET` при необходимости создаётся на сервере через `openssl rand -hex 32`. Секрет не пересекает GitHub/SSH boundary и не выводится.
-4. Nginx и writer-runtime останавливаются по tracked allowlist `deploy/backend-runtime-allowlist.sh`. Подтверждённые production units: `prohelper-octane.service`, `prohelper-queue.service`, `reverb.service`. Compose, supervisor, systemd и `/proc` проверяются по command line, cwd и cgroup, включая `php8.2`, `php -d`, relative Artisan, Horizon, Reverb и RoadRunner.
+4. Nginx и writer-runtime останавливаются по tracked allowlist `deploy/backend-runtime-allowlist.sh`. Подтверждённые production units: `prohelper-octane.service`, `prohelper-queue.service`, `reverb.service`. Каждая legacy systemd unit до scan получает `systemctl mask --runtime --now`, поэтому параллельный `start` невозможен до перезагрузки или явного снятия маски. Ручной `supervisorctl stop` переводит найденные программы в STOPPED и подавляет их `autorestart`; состояния RUNNING, STARTING и BACKOFF блокируют продолжение. Compose, supervisor, systemd и `/proc` проверяются по command line, cwd и cgroup, включая `php8.2`, `php -d`, relative Artisan, Horizon, Reverb и RoadRunner.
 5. После `migrate:safe --force` runtime scan повторяется непосредственно перед каждым `confirm-drain`, Phase B cutover и invariant repair.
 6. Первый свежий drain-маркер потребляется Phase B cutover. После cutover создаётся отдельный свежий маркер для repair; повторное использование уже потреблённого маркера невозможно.
 7. `immutable-audit:repair-invariants --confirm-repair` требует process-local `LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true`, Phase B, правильный writer secret и свежий внутренний drain-маркер. Самостоятельный запуск без доказанного drain завершается ошибкой.
@@ -25,13 +25,15 @@ Repair под fence заново устанавливает функции, тр
 
 Mutable database baseline отсутствует. Ожидаемые descriptors определены в versioned `ImmutableAuditInvariantDefinitions` и не могут быть изменены записью в БД. Readiness сравнивает напрямую:
 
-- тело, identity arguments, return type, language, volatility, SECURITY INVOKER, owner relationship, exact `search_path`, strict, leakproof, parallel и kind каждой функции;
-- точные relation, function, row/timing/events type, enabled и internal каждого trigger;
+- тело, identity arguments, return type, language, volatility, SECURITY INVOKER, точный owner функции и таблицы, равный аутентифицированной роли deployment/readiness, ACL без EXECUTE для PUBLIC, cost, rows, support, exact `search_path`, strict, leakproof, parallel и kind каждой функции;
+- нормализованное полное определение, relation, function dependency, row/timing/events type, WHEN, arguments, constraint/deferrability, parent/partition binding, transition tables, enabled и internal каждого trigger;
 - data type, START, min/max, increment, cache, cycle и ownership sequence без сравнения текущего значения;
 - valid/ready/unique, колонки, predicate и полное определение обоих Phase B индексов.
 
-Canonical repair явно сбрасывает все function attributes и configuration, возвращает owner к владельцу audit-таблицы и восстанавливает sequence START metadata. Любой drift закрывает `/ready` с HTTP 503. Устаревшая таблица `immutable_audit_invariant_baselines`, если она осталась в предварительном окружении, удаляется и больше нигде не читается.
+Canonical repair явно сбрасывает все function attributes и configuration, возвращает owner к владельцу audit-таблицы, отзывает EXECUTE у PUBLIC, оставляет EXECUTE владельцу и восстанавливает sequence START metadata. Любой drift закрывает `/ready` с HTTP 503. Устаревшая таблица `immutable_audit_invariant_baselines`, если она осталась в предварительном окружении, удаляется и больше нигде не читается.
 
 ## Поведение при ошибке
 
 После начала остановки любой ненулевой код активирует failure trap. Nginx, compose writer-сервисы и tracked host runtimes остаются остановленными. Автоматического отката к старому writer нет. Повторный deployment снова требует свежие runtime scans и отдельные drain-маркеры.
+
+Legacy units штатно не возвращаются после успешного deployment. Если подтверждённое аварийное восстановление действительно требует старый runtime, оператор сначала останавливает новый compose runtime, закрывает nginx, затем явно выполняет `systemctl unmask --runtime prohelper-octane.service prohelper-queue.service reverb.service` и запускает только согласованный набор units. Снятие маски во время admission/cutover запрещено.

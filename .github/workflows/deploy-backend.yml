@@ -148,9 +148,8 @@ jobs:
             stop_legacy_systemd_processes() {
               local unit
               for unit in "${MOST_SYSTEMD_WRITER_UNITS[@]}"; do
-                if systemctl is-active --quiet "${unit}"; then
-                  systemctl stop "${unit}"
-                fi
+                systemctl mask --runtime --now "${unit}"
+                systemctl is-enabled "${unit}" 2>/dev/null | grep -Eq '^masked(-runtime)?$'
               done
             }
 
@@ -158,13 +157,17 @@ jobs:
               local process_directory process_id command_line working_directory cgroup unit supervisor_status
               test -z "$(docker compose ps --status running -q ${BACKEND_SERVICES})"
               for unit in "${MOST_SYSTEMD_WRITER_UNITS[@]}"; do
+                if ! systemctl is-enabled "${unit}" 2>/dev/null | grep -Eq '^masked(-runtime)?$'; then
+                  echo "MOST backend writer unit is not runtime-masked (${unit}); refusing deployment"
+                  return 1
+                fi
                 if systemctl is-active --quiet "${unit}"; then
                   echo "MOST backend writer unit remains active (${unit}); refusing deployment"
                   return 1
                 fi
               done
               supervisor_status="$(supervisorctl status 2>/dev/null || true)"
-              if awk -v pattern="${MOST_SUPERVISOR_WRITER_PROGRAM_PATTERN}" '$1 ~ pattern && $2 == "RUNNING" { found = 1 } END { exit found ? 0 : 1 }' <<< "${supervisor_status}"; then
+              if awk -v pattern="${MOST_SUPERVISOR_WRITER_PROGRAM_PATTERN}" '$1 ~ pattern && ($2 == "RUNNING" || $2 == "STARTING" || $2 == "BACKOFF") { found = 1 } END { exit found ? 0 : 1 }' <<< "${supervisor_status}"; then
                 echo 'MOST backend supervisor writer remains active; refusing deployment'
                 return 1
               fi

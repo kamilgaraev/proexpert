@@ -136,6 +136,17 @@ final class ImmutableAuditPhaseBInvariantService
 SELECT p.prosrc, pg_get_function_identity_arguments(p.oid) AS identity_arguments,
        pg_get_function_result(p.oid) AS result, l.lanname AS language, p.provolatile AS volatility,
        p.prosecdef AS security_definer, p.proowner = relation.relowner AS owner_matches_relation,
+       CASE WHEN pg_get_userbyid(p.proowner) = current_user THEN '$database_owner' ELSE pg_get_userbyid(p.proowner) END AS owner_identity,
+       CASE WHEN pg_get_userbyid(relation.relowner) = current_user THEN '$database_owner' ELSE pg_get_userbyid(relation.relowner) END AS relation_owner_identity,
+       ARRAY(SELECT format('%s:%s:%s:%s',
+                    CASE WHEN acl.grantee = 0 THEN 'PUBLIC' WHEN pg_get_userbyid(acl.grantee) = current_user THEN '$database_owner' ELSE pg_get_userbyid(acl.grantee) END,
+                    acl.privilege_type, CASE WHEN acl.is_grantable THEN 'true' ELSE 'false' END,
+                    CASE WHEN pg_get_userbyid(acl.grantor) = current_user THEN '$database_owner' ELSE pg_get_userbyid(acl.grantor) END)
+             FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl
+             ORDER BY 1) AS acl,
+       EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) public_acl
+               WHERE public_acl.grantee = 0 AND public_acl.privilege_type = 'EXECUTE') AS public_execute,
+       p.procost, p.prorows, p.prosupport::regproc::text AS support,
        p.proconfig, p.proisstrict AS strict, p.proleakproof AS leakproof,
        p.proparallel AS parallel, p.prokind AS kind
 FROM pg_proc p
@@ -150,11 +161,32 @@ SQL, [$name]);
     {
         return $connection->selectOne(<<<'SQL'
 SELECT t.tgname AS name, t.tgenabled AS enabled, t.tgisinternal AS internal,
-       c.relname AS relation, p.proname AS function_name, t.tgtype AS type
+       c.relname AS relation, p.proname AS function_name, t.tgtype AS type,
+       pg_get_triggerdef(t.oid, true) AS definition,
+       COALESCE(pg_get_expr(t.tgqual, t.tgrelid, true), '') AS when_expression,
+       encode(t.tgargs, 'hex') AS arguments_hex,
+       t.tgconstraint::text AS constraint_oid, COALESCE(con.contype::text, '') AS constraint_type,
+       COALESCE(con.condeferrable, false) AS deferrable,
+       COALESCE(con.condeferred, false) AS initially_deferred,
+       t.tgparentid::text AS parent_trigger_oid,
+       COALESCE(parent_relation.relname, '') AS parent_relation,
+       COALESCE(parent_trigger.tgname, '') AS parent_trigger,
+       COALESCE(t.tgoldtable, '') AS old_transition_table,
+       COALESCE(t.tgnewtable, '') AS new_transition_table,
+       EXISTS (SELECT 1 FROM pg_depend dependency
+               WHERE dependency.classid = 'pg_trigger'::regclass
+                 AND dependency.objid = t.oid
+                 AND dependency.refclassid = 'pg_proc'::regclass
+                 AND dependency.refobjid = t.tgfoid
+                 AND dependency.deptype = 'n') AS function_dependency
 FROM pg_trigger t
 JOIN pg_class c ON c.oid = t.tgrelid
 JOIN pg_proc p ON p.oid = t.tgfoid
-WHERE t.tgname = ? AND c.relnamespace = current_schema()::regnamespace
+LEFT JOIN pg_constraint con ON con.oid = t.tgconstraint
+LEFT JOIN pg_trigger parent_trigger ON parent_trigger.oid = t.tgparentid
+LEFT JOIN pg_class parent_relation ON parent_relation.oid = parent_trigger.tgrelid
+WHERE t.tgname = ? AND c.relname = 'immutable_audit_events'
+  AND c.relnamespace = current_schema()::regnamespace
 SQL, [$name]);
     }
 
@@ -238,6 +270,13 @@ SQL, [$name]);
             'volatility' => (string) $row->volatility,
             'security_definer' => $this->postgresBoolean($row->security_definer),
             'owner_matches_relation' => $this->postgresBoolean($row->owner_matches_relation),
+            'owner_identity' => (string) $row->owner_identity,
+            'relation_owner_identity' => (string) $row->relation_owner_identity,
+            'acl' => $this->postgresArray($row->acl),
+            'public_execute' => $this->postgresBoolean($row->public_execute),
+            'cost' => (string) $row->procost,
+            'rows' => (string) $row->prorows,
+            'support' => (string) $row->support,
             'config' => $this->postgresArray($row->proconfig),
             'strict' => $this->postgresBoolean($row->strict),
             'leakproof' => $this->postgresBoolean($row->leakproof),
@@ -256,6 +295,19 @@ SQL, [$name]);
             'relation' => (string) $row->relation,
             'function_name' => (string) $row->function_name,
             'type' => (int) $row->type,
+            'definition' => $this->normalizeTriggerDefinition((string) $row->definition),
+            'when' => $this->normalizeSql((string) $row->when_expression),
+            'arguments_hex' => (string) $row->arguments_hex,
+            'constraint_oid' => (string) $row->constraint_oid,
+            'constraint_type' => (string) $row->constraint_type,
+            'deferrable' => $this->postgresBoolean($row->deferrable),
+            'initially_deferred' => $this->postgresBoolean($row->initially_deferred),
+            'parent_trigger_oid' => (string) $row->parent_trigger_oid,
+            'parent_relation' => (string) $row->parent_relation,
+            'parent_trigger' => (string) $row->parent_trigger,
+            'old_transition_table' => (string) $row->old_transition_table,
+            'new_transition_table' => (string) $row->new_transition_table,
+            'function_dependency' => $this->postgresBoolean($row->function_dependency),
         ];
     }
 
@@ -330,6 +382,13 @@ SQL, [$name]);
         $definition = (string) preg_replace('/\s+ON\s+(?:(?:"[^"]+"|[a-z_][a-z0-9_$]*)\.)?/i', ' ON ', $definition, 1);
 
         return $this->normalizeSql($definition);
+    }
+
+    private function normalizeTriggerDefinition(string $definition): string
+    {
+        $definition = (string) preg_replace('/(?:(?:"[^"]+"|[a-z_][a-z0-9_$]*)\.)?(immutable_audit_(?:events|writer_guard|prevent_mutation|sync_sequence_after_insert))/i', '$1', $definition);
+
+        return strtolower((string) preg_replace('/[;\s"]+/', '', $definition));
     }
 
     /** @param list<string> $columns */

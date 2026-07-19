@@ -390,6 +390,8 @@ SQL);
             'ALTER FUNCTION immutable_audit_writer_guard() SET search_path = public',
             'ALTER FUNCTION immutable_audit_writer_guard() RETURNS NULL ON NULL INPUT',
             'ALTER FUNCTION immutable_audit_writer_guard() PARALLEL SAFE',
+            'ALTER FUNCTION immutable_audit_writer_guard() COST 41',
+            'GRANT EXECUTE ON FUNCTION immutable_audit_writer_guard() TO PUBLIC',
             'ALTER SEQUENCE immutable_audit_sequence START WITH 41',
         ] as $drift) {
             $this->first->statement($drift);
@@ -407,6 +409,24 @@ SQL);
             $rollout->repairPermanentInvariants($this->first, true, self::WRITER_TOKEN);
         } catch (\Illuminate\Database\QueryException $error) {
             self::assertStringContainsString('must be superuser', strtolower($error->getMessage()));
+        }
+    }
+
+    public function test_trigger_when_arguments_constraint_and_relation_substitution_fail_readiness_and_repair_exactly(): void
+    {
+        $this->activatePhaseB();
+        $rollout = new ImmutableAuditRolloutService;
+        foreach ([
+            'DROP TRIGGER immutable_audit_writer_guard ON immutable_audit_events; CREATE TRIGGER immutable_audit_writer_guard BEFORE INSERT ON immutable_audit_events FOR EACH ROW WHEN (false) EXECUTE FUNCTION immutable_audit_writer_guard()',
+            "DROP TRIGGER immutable_audit_writer_guard ON immutable_audit_events; CREATE TRIGGER immutable_audit_writer_guard BEFORE INSERT ON immutable_audit_events FOR EACH ROW EXECUTE FUNCTION immutable_audit_writer_guard('changed')",
+            'DROP TRIGGER immutable_audit_sequence_sync ON immutable_audit_events; CREATE CONSTRAINT TRIGGER immutable_audit_sequence_sync AFTER INSERT ON immutable_audit_events DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION immutable_audit_sync_sequence_after_insert()',
+            'DROP TRIGGER immutable_audit_writer_guard ON immutable_audit_events; CREATE TEMP TABLE immutable_audit_trigger_impostor (id bigint); CREATE TRIGGER immutable_audit_writer_guard BEFORE INSERT ON immutable_audit_trigger_impostor FOR EACH ROW EXECUTE FUNCTION immutable_audit_writer_guard()',
+        ] as $drift) {
+            $this->first->unprepared($drift);
+            self::assertFalse((new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN)['ready'], $drift);
+            $rollout->confirmDrain($this->first, true);
+            $rollout->repairPermanentInvariants($this->first, true, self::WRITER_TOKEN);
+            self::assertTrue((new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN)['ready'], $drift);
         }
     }
 
