@@ -100,6 +100,11 @@ final class NormativeWorkItemPlannerService
         $definition = $this->withResidentialMaterialScenario($definition, $analysis);
         $quantity = $this->quantityForDefinition($definition, $analysis, $quantityModel);
 
+        if (($quantity['source'] ?? null) === 'residential_preliminary_scenario'
+            && in_array((string) ($definition['quantity_key'] ?? ''), ['roof.rafters', 'roof.gutter'], true)) {
+            return null;
+        }
+
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
         $key = $packageKey.'-norm-intent-'.($index + 1);
 
@@ -331,7 +336,11 @@ final class NormativeWorkItemPlannerService
 
         $text = mb_strtolower((string) ($definition['normative_search_text'] ?? $definition['name'] ?? ''));
 
-        return str_contains($text, 'утепл') ? 'roof.insulation' : '';
+        return match (true) {
+            str_contains($text, 'утепл') => 'roof.insulation',
+            str_contains($text, 'покрыт') || str_contains($text, 'кровл') => 'roof.covering',
+            default => '',
+        };
     }
 
     /**
@@ -460,6 +469,7 @@ final class NormativeWorkItemPlannerService
             'external_walls_aerated_concrete' => 'Предварительно приняты наружные стены из газобетонных блоков. Материал нужно уточнить по проекту.',
             'internal_partitions_aerated_concrete' => 'Предварительно приняты внутренние перегородки из газобетонных блоков. Материал нужно уточнить по проекту.',
             'pitched_roof_mineral_wool' => 'Предварительно принято утепление скатной кровли минераловатными плитами. Материал нужно уточнить по проекту.',
+            'pitched_roof_metal_tile' => 'Предварительно принято покрытие простой скатной кровли металлочерепицей. Материал и сложность кровли нужно уточнить по проекту.',
             'floor_laminate' => 'Предварительно принято чистовое покрытие пола из ламината. Материал нужно уточнить по ведомости отделки.',
             'baseboard_pvc' => 'Предварительно принят плинтус из ПВХ. Материал нужно уточнить по ведомости отделки.',
             'residential_small_galvanized_ducts' => 'Предварительно приняты воздуховоды из оцинкованной стали класса Н диаметром до 200 мм. Материал и сечение нужно уточнить по проекту вентиляции.',

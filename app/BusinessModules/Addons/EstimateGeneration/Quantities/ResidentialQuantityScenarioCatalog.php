@@ -13,16 +13,15 @@ use Brick\Math\RoundingMode;
 
 final class ResidentialQuantityScenarioCatalog
 {
-    public const VERSION = '2.1.0';
+    public const VERSION = '2.2.0';
 
-    public const SCENARIO_ID = 'residential_preliminary_scenario:v4';
+    public const SCENARIO_ID = 'residential_preliminary_scenario:v5';
 
     private const UNITS = [
         'electrical.grounding' => 'm',
         'electrical.main_cable' => 'm',
         'electrical.power_lines' => 'm',
         'heating.pipe' => 'm',
-        'heating.radiators' => 'kw',
         'heating.unit' => 'pcs',
         'lighting.lines' => 'm',
         'openings.doors' => 'm2',
@@ -61,7 +60,6 @@ final class ResidentialQuantityScenarioCatalog
             ? []
             : array_merge(...array_map(static fn ($floor): array => $floor->rooms, $floors));
         $roomCount = count($rooms);
-        $wetRooms = array_values(array_filter($rooms, fn (RoomData $room): bool => $this->isWetRoom($room)));
         $serviceRooms = array_values(array_filter($rooms, fn (RoomData $room): bool => $this->isServiceRoom($room)));
         $quantities = [];
         $omissions = [];
@@ -127,13 +125,6 @@ final class ResidentialQuantityScenarioCatalog
             ] as $key => [$unit, $factor, $assumption]) {
                 $quantities[$key] = $this->scaled($key, $unit, $floorArea, $factor, [$assumption]);
             }
-            $quantities['heating.radiators'] = $this->scaled(
-                'heating.radiators',
-                'kw',
-                $floorArea,
-                '0.10',
-                ['preliminary_specific_heat_load_kw_per_m2:0.10'],
-            );
             $quantities['heating.unit'] = $this->countBased(
                 'heating.unit',
                 'pcs',
@@ -146,12 +137,14 @@ final class ResidentialQuantityScenarioCatalog
         } else {
             foreach ([
                 'openings.windows', 'electrical.main_cable', 'electrical.power_lines', 'lighting.lines',
-                'plumbing.pipe', 'sewerage.pipe', 'heating.pipe', 'heating.radiators', 'heating.unit',
+                'plumbing.pipe', 'sewerage.pipe', 'heating.pipe', 'heating.unit',
                 'ventilation.air_exchange',
             ] as $key) {
                 $omissions[] = $this->omission($key, 'total_internal_area_missing');
             }
         }
+
+        $omissions[] = $this->omission('heating.radiators', 'radiator_schedule_missing');
 
         if ($roomCount > 0) {
             $quantities['openings.doors'] = $this->countBased(
@@ -186,42 +179,9 @@ final class ResidentialQuantityScenarioCatalog
             }
         }
 
-        if ($wetRooms !== []) {
-            $wetRoomCount = count($wetRooms);
-            $quantities['sanitary.points'] = $this->countBased(
-                'sanitary.points',
-                'pcs',
-                $wetRoomCount,
-                '2',
-                $model,
-                'documented_wet_room_count',
-                ['two_connection_points_per_documented_wet_room'],
-            );
-            $quantities['sewerage.outlets'] = $this->countBased(
-                'sewerage.outlets',
-                'pcs',
-                $wetRoomCount,
-                '1',
-                $model,
-                'documented_wet_room_count',
-                ['one_sewer_outlet_per_documented_wet_room'],
-            );
-            $riserCount = max(1, min($floorCount, $wetRoomCount));
-            foreach (['sewerage.risers', 'sewerage.revisions'] as $key) {
-                $quantities[$key] = $this->countBased(
-                    $key,
-                    'pcs',
-                    $riserCount,
-                    '1',
-                    $model,
-                    'floors_with_documented_wet_rooms',
-                    ['one_riser_and_revision_per_served_floor'],
-                );
-            }
-        } else {
-            foreach (['sanitary.points', 'sewerage.outlets', 'sewerage.risers', 'sewerage.revisions'] as $key) {
-                $omissions[] = $this->omission($key, 'wet_room_annotations_missing');
-            }
+        $omissions[] = $this->omission('sanitary.points', 'plumbing_design_takeoff_missing');
+        foreach (['sewerage.outlets', 'sewerage.risers', 'sewerage.revisions'] as $key) {
+            $omissions[] = $this->omission($key, 'sewerage_design_takeoff_missing');
         }
 
         $finishedWetRooms = array_values(array_filter($rooms, fn (RoomData $room): bool => $this->isFinishedWetRoom($room)));
@@ -249,28 +209,7 @@ final class ResidentialQuantityScenarioCatalog
                 $model->modelVersion,
                 ['wet_zone_floor_area_with_perimeter_upturn_factor:1.10'],
             );
-            $equivalentWallPerimeter = array_sum(array_map(
-                static fn (array $room): float => 4 * sqrt((float) (string) $room['area']),
-                $finishedWetRoomAreas,
-            ));
-            $tileArea = BigDecimal::of((string) $equivalentWallPerimeter)
-                ->multipliedBy('2.40')
-                ->multipliedBy('0.85')
-                ->toScale(6, RoundingMode::HalfUp);
-            $quantities['sanitary.tile'] = $this->make(
-                'sanitary.tile',
-                'm2',
-                (string) $tileArea,
-                [
-                    'documented_wet_rooms' => $wetRoomInputs,
-                    'equivalent_room_perimeter_formula' => '4*sqrt(area)',
-                    'tile_height_m' => '2.40',
-                    'opening_deduction_factor' => '0.85',
-                ],
-                $wetRoomEvidenceIds,
-                $model->modelVersion,
-                ['wet_zone_wall_tile_height_m:2.40', 'wet_zone_opening_deduction_factor:0.85'],
-            );
+            $omissions[] = $this->omission('sanitary.tile', 'wet_zone_finish_specification_missing');
         } else {
             $omissions[] = $this->omission('sanitary.waterproofing', 'finished_wet_room_area_missing');
             $omissions[] = $this->omission('sanitary.tile', 'finished_wet_room_area_missing');
@@ -434,14 +373,6 @@ final class ResidentialQuantityScenarioCatalog
             'formula_version' => $source->formulaVersion,
             'model_version' => $source->modelVersion,
         ];
-    }
-
-    private function isWetRoom(RoomData $room): bool
-    {
-        return preg_match(
-            '/(?:сануз|(?:^|\s)су(?=\s|$)|с\s*\/\s*у|ванн|душ|постир|котельн|бойлер|тех(?:ническ)?\.?\s*помещ|кухн|bath|shower|wc|boiler|kitchen)/iu',
-            mb_strtolower((string) $room->name),
-        ) === 1;
     }
 
     private function isServiceRoom(RoomData $room): bool

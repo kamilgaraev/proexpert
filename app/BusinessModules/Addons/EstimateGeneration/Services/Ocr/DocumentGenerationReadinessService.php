@@ -53,6 +53,7 @@ class DocumentGenerationReadinessService
             EstimateGenerationStatus::ReadyToGenerate,
             EstimateGenerationStatus::EstimateReviewRequired,
             EstimateGenerationStatus::ReadyToApply,
+            EstimateGenerationStatus::Applied,
         ], true);
         $canGenerate = $summary['can_generate'] || (
             $reviewAcknowledged

@@ -62,7 +62,7 @@ final class NormativeScopeRuleCatalog
         return match ($scope) {
             'foundation' => $this->rule(['gesn_building', 'gesn_concrete'], [], ['01', '06'], []),
             'roof' => $this->rule(['gesn_building', 'gesnr_roof'], ['gesn_earthwork', 'gesnp_plumbing'], ['10', '12', '26'], ['01', '03', '09', '16', '18', '20', '27', '28']),
-            'stairs' => $this->rule(['gesn_building', 'gesn_concrete'], ['gesn_earthwork'], ['06', '07', '08'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
+            'stairs' => $this->rule(['gesn_building', 'gesn_concrete'], ['gesn_earthwork'], ['06', '07', '08', '10'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
             'engineering' => $this->rule(['gesnm', 'gesnp'], ['gesn_earthwork'], ['08', '16', '18', '20'], ['01', '05', '07', '09', '10', '12', '15', '26', '27', '28']),
             'walls' => $this->rule(['gesn_building'], ['gesn_earthwork'], ['07', '08'], ['01', '03', '05', '09', '27', '28']),
             'slabs' => $this->rule(['gesn_building', 'gesn_concrete'], ['gesn_earthwork'], ['06', '07'], ['01']),
@@ -132,6 +132,7 @@ final class NormativeScopeRuleCatalog
         return match ($action) {
             'plastering' => $this->rule(['gesn_building', 'gesnr_finishing'], ['gesn_earthwork'], ['15'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
             'painting', 'tiling', 'ceiling_finishing' => $this->rule(['gesn_building', 'gesnr_finishing'], ['gesn_earthwork'], ['15'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
+            'waterproofing' => $this->rule(['gesn_building'], ['gesn_earthwork'], ['11'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
             'floor_preparation', 'floor_covering', 'baseboard_installation' => $this->rule(['gesn_building', 'gesnr_finishing'], ['gesn_earthwork'], ['11'], ['01', '03', '05', '08', '09', '15', '16', '18', '20', '27', '28']),
             default => $this->rule([], [], [], []),
         };

@@ -6,11 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v3';
+    private const CATALOG_VERSION = 'residential_material_scenario:v4';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v3';
+    private const SCENARIO_ID = 'residential_preliminary_common:v4';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v3';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v4';
 
     /**
      * @var array<string, array{
@@ -40,10 +40,16 @@ final class ResidentialMaterialScenarioCatalog
             'normative_rate_code' => '08-04-003-01',
         ],
         'roof.insulation' => [
-            'material_markers' => ['минераловат', 'минеральн ват'],
+            'material_markers' => ['минераловат', 'минеральн'],
             'assumption_code' => 'pitched_roof_mineral_wool',
             'normative_search_text' => 'утепление покрытий плитами из минеральной ваты насухо',
             'normative_rate_code' => '12-01-013-07',
+        ],
+        'roof.covering' => [
+            'material_markers' => ['металлочереп'],
+            'assumption_code' => 'pitched_roof_metal_tile',
+            'normative_search_text' => 'устройство простой кровли из металлочерепицы по готовым прогонам',
+            'normative_rate_code' => '12-01-023-01',
         ],
         'finish.floor' => [
             'material_markers' => ['ламинат', 'ламинированн'],
@@ -85,12 +91,6 @@ final class ResidentialMaterialScenarioCatalog
             'assumption_code' => 'residential_round_steel_grounding',
             'normative_search_text' => 'заземлитель горизонтальный из круглой стали диаметром 12 мм',
             'normative_rate_code' => '08-02-472-01',
-        ],
-        'heating.radiators' => [
-            'material_markers' => ['радиатор', 'стальн'],
-            'assumption_code' => 'residential_steel_radiators',
-            'normative_search_text' => 'установка стальных радиаторов',
-            'normative_rate_code' => '18-03-001-02',
         ],
         'sanitary.waterproofing' => [
             'material_markers' => ['гидроизоляц', 'обмазочн', 'мастик'],
