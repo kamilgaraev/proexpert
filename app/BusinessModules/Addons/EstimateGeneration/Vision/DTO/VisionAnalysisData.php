@@ -117,7 +117,8 @@ final readonly class VisionAnalysisData
             || count($data['elements']) > $maxElements) {
             throw new VisionContractException('invalid_analysis_schema');
         }
-        $evidence = array_map(static fn (mixed $item): VisionEvidenceData => is_array($item) ? VisionEvidenceData::fromArray($item) : throw new VisionContractException('invalid_evidence'), $data['evidence']);
+        $evidencePayload = self::normalizeEvidencePayload($data['evidence']);
+        $evidence = array_map(static fn (mixed $item): VisionEvidenceData => is_array($item) ? VisionEvidenceData::fromArray($item) : throw new VisionContractException('invalid_evidence'), $evidencePayload);
         $elements = array_map(static fn (mixed $item): VisionElementData => is_array($item) ? VisionElementData::fromArray($item) : throw new VisionContractException('invalid_element'), $data['elements']);
         $scales = array_map(static fn (mixed $item): VisionScaleCandidateData => is_array($item) ? VisionScaleCandidateData::fromArray($item) : throw new VisionContractException('invalid_scale_candidate'), $data['scale_candidates']);
         foreach ($data['warnings'] as $warning) {
@@ -199,5 +200,23 @@ final readonly class VisionAnalysisData
     private static function hasExactKeys(array $data, array $keys): bool
     {
         return count($data) === count($keys) && array_diff(array_keys($data), $keys) === [];
+    }
+
+    /** @param array<mixed> $evidence @return array<mixed> */
+    private static function normalizeEvidencePayload(array $evidence): array
+    {
+        if (array_is_list($evidence)) {
+            return $evidence;
+        }
+
+        $normalized = [];
+        foreach ($evidence as $key => $item) {
+            if (! is_string($key) || ! is_array($item) || ! self::hasExactKeys($item, ['locator'])) {
+                throw new VisionContractException('invalid_evidence');
+            }
+            $normalized[] = ['key' => $key, 'locator' => $item['locator']];
+        }
+
+        return $normalized;
     }
 }

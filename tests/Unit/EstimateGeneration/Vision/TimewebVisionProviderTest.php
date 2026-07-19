@@ -151,6 +151,27 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function it_accepts_evidence_keyed_by_reference_from_the_provider(): void
+    {
+        Http::fake(['*' => Http::response($this->response([
+            'evidence' => [
+                'page-1' => ['locator' => [
+                    'page_id' => 17,
+                    'page_number' => 2,
+                    'processing_unit_id' => 19,
+                    'source_version' => 'sha256:'.str_repeat('a', 64),
+                    'coordinate_space' => 'normalized_derivative_v1',
+                ]],
+            ],
+        ]))]);
+
+        $analysis = $this->provider()->analyze($this->input());
+
+        self::assertSame('page-1', $analysis->evidence[0]->key);
+        self::assertSame('page-1', $analysis->visualAttributes['roof_type']['evidence_ref']);
+    }
+
+    #[Test]
     #[DataProvider('maxElementCases')]
     public function effective_element_limit_is_rendered_hashed_and_enforced(int $maxElements): void
     {
