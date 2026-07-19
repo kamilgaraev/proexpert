@@ -95,6 +95,8 @@ final class EstimateGenerationGeometryController extends Controller
             $failureId = bin2hex(random_bytes(8));
             Log::error('[EstimateGeneration] Geometry confirmation failed', [
                 'exception' => $exception,
+                'exception_class' => $exception::class,
+                'exception_message' => $exception->getMessage(),
                 'failure_id' => $failureId,
                 'organization_id' => (int) ($request->user()?->current_organization_id ?? 0),
                 'project_id' => (int) $project->getKey(),
