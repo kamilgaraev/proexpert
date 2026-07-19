@@ -71,6 +71,17 @@ final class EstimateGenerationMutationPolicy
                 || $session->resume_status === EstimateGenerationStatus::ProcessingDocuments);
     }
 
+    public static function canConfirmGeometry(EstimateGenerationSession $session): bool
+    {
+        return in_array($session->status, [
+            EstimateGenerationStatus::InputReviewRequired,
+            EstimateGenerationStatus::ReadyToGenerate,
+            EstimateGenerationStatus::Generating,
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+        ], true);
+    }
+
     /** @param list<EstimateGenerationStatus> $allowedStatuses */
     private function assert(
         EstimateGenerationSession $session,
