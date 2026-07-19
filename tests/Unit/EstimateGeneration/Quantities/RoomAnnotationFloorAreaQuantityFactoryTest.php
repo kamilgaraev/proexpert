@@ -29,6 +29,35 @@ final class RoomAnnotationFloorAreaQuantityFactoryTest extends TestCase
     }
 
     #[Test]
+    public function keeps_document_room_areas_after_user_confirms_the_drawing_scale(): void
+    {
+        $evidence = new InMemoryEvidenceRepository;
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('a', 64));
+        $area = $evidence->insertOrGet(new EvidenceData(
+            10, 20, 30, EvidenceType::Extracted, EvidenceSourceType::DocumentUnit, 'document:501',
+            'sha256:'.str_repeat('b', 64),
+            ['document_id' => 501, 'unit_type' => 'raster_image', 'unit_index' => 1, 'page' => 1, 'element_key' => 'element:'.hash('sha256', 'room')],
+            ['field_key' => 'room_area', 'field_value' => 42.7, 'unit' => 'm2'],
+            0.95, EvidenceProducer::DrawingAnalyzer->value, 'model:v2',
+        ));
+        $confirmation = $evidence->insertOrGet(new EvidenceData(
+            10, 20, 30, EvidenceType::SourceFact, EvidenceSourceType::UserInput, 'input:17',
+            'sha256:'.str_repeat('c', 64), ['source_key' => 'source:'.str_repeat('d', 64)],
+            ['fact_key' => 'element_type_code', 'fact_value' => 'element_type:room'],
+            1, 'user_input_normalizer', 'model:v1',
+        ));
+        $room = new RoomData('room-1', 'Kitchen 42,7', null, [$area->id], 0.95, 'confirmed');
+        $model = new NormalizedBuildingModelData('m', 'confirmed', 0.019244, [new FloorData(
+            'floor-1', null, null, [$room], [], [], [], [$area->id, $confirmation->id], 0.95, 'confirmed',
+        )], [], 'building-model:v1');
+
+        $quantity = (new RoomAnnotationFloorAreaQuantityFactory($evidence))->make($context, $model, 1);
+
+        self::assertSame('42.700000', $quantity?->amount);
+        self::assertSame([(string) $area->id], $quantity?->evidenceIds);
+    }
+
+    #[Test]
     public function sums_only_document_backed_internal_room_annotations_without_scale(): void
     {
         $evidence = new InMemoryEvidenceRepository;
