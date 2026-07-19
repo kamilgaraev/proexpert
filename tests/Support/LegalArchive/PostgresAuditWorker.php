@@ -37,17 +37,19 @@ $database->setAsGlobal();
 $database->bootEloquent();
 $connection = $database->getConnection();
 $connection->statement("SET search_path TO {$schema}");
-if ($mode === 'legacy') {
-    $connection->transaction(function () use ($connection, $action, $sourceEventId, $barrier): void {
+if (in_array($mode, ['legacy', 'legacy_after'], true)) {
+    $connection->transaction(function () use ($connection, $action, $sourceEventId, $mode, $barrier): void {
         $sequence = ((int) $connection->table('immutable_audit_events')->max('sequence_id')) + 1;
-        if (! is_string($barrier) || preg_match('/^[a-f0-9]{24}$/D', $barrier) !== 1) {
-            throw new RuntimeException('invalid_barrier');
-        }
-        $ready = sys_get_temp_dir().DIRECTORY_SEPARATOR."most-audit-{$barrier}.ready";
-        $release = sys_get_temp_dir().DIRECTORY_SEPARATOR."most-audit-{$barrier}.release";
-        file_put_contents($ready, 'ready', LOCK_EX);
-        while (! is_file($release)) {
-            time_nanosleep(0, 10_000_000);
+        if ($mode === 'legacy') {
+            if (! is_string($barrier) || preg_match('/^[a-f0-9]{24}$/D', $barrier) !== 1) {
+                throw new RuntimeException('invalid_barrier');
+            }
+            $ready = sys_get_temp_dir().DIRECTORY_SEPARATOR."most-audit-{$barrier}.ready";
+            $release = sys_get_temp_dir().DIRECTORY_SEPARATOR."most-audit-{$barrier}.release";
+            file_put_contents($ready, 'ready', LOCK_EX);
+            while (! is_file($release)) {
+                time_nanosleep(0, 10_000_000);
+            }
         }
         $now = now()->setMicrosecond(0);
         $connection->table('immutable_audit_events')->insert([
@@ -68,6 +70,7 @@ $recorder = new ImmutableAuditRecorder(
     new ImmutableAuditRedactor,
     new ImmutableAuditIntegrityService,
     $connection,
+    'test-immutable-audit-writer-token-2026-07-19',
 );
 $record = static fn (string $eventAction, string $eventSource, int $subjectId) => $recorder->record(new ImmutableAuditEventData(
     organizationId: 7, domain: 'legal_archive', eventType: 'legal_document.'.$eventAction,

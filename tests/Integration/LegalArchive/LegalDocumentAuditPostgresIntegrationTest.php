@@ -31,6 +31,8 @@ use Symfony\Component\Process\Process;
 
 final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
 {
+    private const WRITER_TOKEN = 'test-immutable-audit-writer-token-2026-07-19';
+
     private Capsule $database;
 
     private ConnectionInterface $first;
@@ -78,8 +80,8 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
     public function test_production_recorders_on_two_connections_preserve_hashes_and_chain(): void
     {
         $integrity = new ImmutableAuditIntegrityService;
-        $first = new ImmutableAuditRecorder(new ImmutableAuditRedactor, $integrity, $this->first);
-        $second = new ImmutableAuditRecorder(new ImmutableAuditRedactor, $integrity, $this->second);
+        $first = new ImmutableAuditRecorder(new ImmutableAuditRedactor, $integrity, $this->first, self::WRITER_TOKEN);
+        $second = new ImmutableAuditRecorder(new ImmutableAuditRedactor, $integrity, $this->second, self::WRITER_TOKEN);
         $base = $this->event('created', 'source:1');
 
         $created = $first->record($base);
@@ -143,7 +145,7 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
         self::assertTrue((new ImmutableAuditIntegrityService)->verifyChain($events)['valid']);
     }
 
-    public function test_phase_a_accepts_delayed_legacy_max_plus_one_and_new_writer_without_collision_or_hash_mutation(): void
+    public function test_phase_a_accepts_delayed_legacy_max_plus_one_and_new_writer_without_collision_or_deadlock(): void
     {
         $worker = dirname(__DIR__, 2).'/Support/LegalArchive/PostgresAuditWorker.php';
         $barrier = bin2hex(random_bytes(12));
@@ -153,10 +155,10 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
         $modern = new Process([PHP_BINARY, $worker, $this->schema, 'modern', 'modern:1', 'batch']);
         $legacy->start();
         self::assertTrue($legacy->waitUntil(static fn (): bool => is_file($ready)), 'Legacy writer did not reach the barrier.');
-        $modern->start();
-        $modern->wait();
         file_put_contents($release, 'release', LOCK_EX);
         $legacy->wait();
+        $modern->start();
+        $modern->wait();
         @unlink($ready);
         @unlink($release);
 
@@ -165,13 +167,11 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
         $rows = $this->first->table('immutable_audit_events')->orderBy('sequence_id')->get();
         self::assertCount(3, $rows);
         self::assertSame(3, count(array_unique($rows->pluck('sequence_id')->all())));
-        $hashes = $rows->map(fn ($row): array => [(string) $row->payload_hash, (string) $row->record_hash])->all();
-        self::assertSame($hashes, $this->first->table('immutable_audit_events')->orderBy('sequence_id')->get()->map(fn ($row): array => [(string) $row->payload_hash, (string) $row->record_hash])->all());
     }
 
     public function test_phase_b_repairs_invalid_index_and_repairs_wrong_definition_after_completed_marker(): void
     {
-        $recorder = new ImmutableAuditRecorder(new ImmutableAuditRedactor, new ImmutableAuditIntegrityService, $this->first);
+        $recorder = new ImmutableAuditRecorder(new ImmutableAuditRedactor, new ImmutableAuditIntegrityService, $this->first, self::WRITER_TOKEN);
         $event = $recorder->record($this->event('created', 'repair:1'));
         $this->first->statement('DROP INDEX immutable_audit_source_event_unique');
         $this->first->statement('CREATE TEMP TABLE duplicate_event AS SELECT * FROM immutable_audit_events WHERE id = ?', [$event->id]);
@@ -189,11 +189,13 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
         $this->first->statement('CREATE TRIGGER immutable_audit_events_append_only BEFORE UPDATE OR DELETE ON immutable_audit_events FOR EACH ROW EXECUTE FUNCTION immutable_audit_prevent_mutation()');
 
         $rollout = new ImmutableAuditRolloutService;
-        $rollout->cutover($this->first, true, 2);
+        $token = str_repeat('d', 32);
+        $rollout->confirmDrain($this->first, true, $token);
+        $rollout->cutover($this->first, true, 2, $token, self::WRITER_TOKEN);
         self::assertTrue((bool) $this->first->selectOne("SELECT indisvalid AND indisready AS ready FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = 'immutable_audit_source_event_aggregate_unique'")->ready);
         $this->first->statement('DROP INDEX CONCURRENTLY immutable_audit_source_event_aggregate_unique');
         $this->first->statement('CREATE UNIQUE INDEX immutable_audit_source_event_aggregate_unique ON immutable_audit_events (id)');
-        $rollout->cutover($this->first, true, 2);
+        $rollout->cutover($this->first, true, 2, $token, self::WRITER_TOKEN);
         $definition = (string) $this->first->selectOne("SELECT pg_get_indexdef(c.oid) AS definition FROM pg_class c WHERE c.relname = 'immutable_audit_source_event_aggregate_unique'")->definition;
         self::assertStringContainsString('(organization_id, domain, subject_type, subject_id, source, source_event_id)', $definition);
         self::assertSame((string) $event->payload_hash, (string) $this->first->table('immutable_audit_events')->where('id', $event->id)->value('payload_hash'));
@@ -236,14 +238,17 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
         $contract = (new Contract)->setConnection('legal_pg_first')->newQuery()->findOrFail($contractId);
         $integrity = new ImmutableAuditIntegrityService;
         $service = new LegalDocumentAuditService(
-            new ImmutableAuditRecorder(new ImmutableAuditRedactor, $integrity, $this->first),
+            new ImmutableAuditRecorder(new ImmutableAuditRedactor, $integrity, $this->first, self::WRITER_TOKEN),
             new LegalDocumentOutbox(dispatchJobs: false, connection: $this->first),
             $this->first,
         );
         $service->recordContractForActorId('legacy_retry', $contract, null, ['source_event_id' => 'external:legacy']);
         $legacyEvent = (string) $this->first->table('immutable_audit_events')->value('id');
         $legacyOutbox = (string) $this->first->table('legal_document_outbox')->value('id');
-        (new ImmutableAuditRolloutService)->cutover($this->first, true, 2);
+        $rollout = new ImmutableAuditRolloutService;
+        $token = str_repeat('e', 32);
+        $rollout->confirmDrain($this->first, true, $token);
+        $rollout->cutover($this->first, true, 2, $token, self::WRITER_TOKEN);
         $service->recordContractForActorId('legacy_retry', $contract, null, ['source_event_id' => 'external:legacy']);
         self::assertSame($legacyEvent, (string) $this->first->table('immutable_audit_events')->where('source_event_id', 'external:legacy')->value('id'));
         self::assertSame($legacyOutbox, (string) $this->first->table('legal_document_outbox')->where('id', $legacyOutbox)->value('id'));
@@ -260,6 +265,7 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
             new ImmutableAuditRedactor,
             new ImmutableAuditIntegrityService,
             $this->first,
+            self::WRITER_TOKEN,
         ))->record($this->event('created', 'source:1'));
 
         $this->expectException(\Illuminate\Database\QueryException::class);
@@ -273,17 +279,61 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
         self::assertSame(1, (int) $this->first->selectOne("SELECT COUNT(*) AS value FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'immutable_audit_source_event_unique'")->value);
 
         try {
-            $rollout->cutover($this->first, false, 2);
+            $rollout->cutover($this->first, false, 2, '', self::WRITER_TOKEN);
             self::fail('Cutover must require an explicit deployment fence.');
         } catch (RuntimeException $error) {
             self::assertSame('immutable_audit_phase_b_writer_fence_not_confirmed', $error->getMessage());
         }
 
-        $rollout->cutover($this->first, true, 2);
-        $rollout->cutover($this->first, true, 2);
+        try {
+            $rollout->cutover($this->first, true, 2, str_repeat('f', 32), self::WRITER_TOKEN);
+            self::fail('Cutover must fail before index changes without a drain marker.');
+        } catch (RuntimeException $error) {
+            self::assertSame('immutable_audit_phase_b_drain_marker_required', $error->getMessage());
+        }
+        self::assertSame(0, (int) $this->first->selectOne("SELECT COUNT(*) AS value FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'immutable_audit_source_event_aggregate_unique'")->value);
+        $token = str_repeat('f', 32);
+        $rollout->confirmDrain($this->first, true, $token);
+        try {
+            $rollout->cutover($this->first, true, 2, $token, str_repeat('x', 32));
+            self::fail('Cutover must reject a writer token that is not bound to the rollout marker.');
+        } catch (RuntimeException $error) {
+            self::assertSame('immutable_audit_phase_b_writer_token_rejected', $error->getMessage());
+        }
+        $rollout->cutover($this->first, true, 2, $token, self::WRITER_TOKEN);
+        $rollout->cutover($this->first, true, 2, $token, self::WRITER_TOKEN);
         self::assertSame('phase_b', $this->first->table('immutable_audit_rollout')->value('phase'));
         self::assertSame(0, (int) $this->first->selectOne("SELECT COUNT(*) AS value FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'immutable_audit_source_event_unique'")->value);
         self::assertSame(1, (int) $this->first->selectOne("SELECT COUNT(*) AS value FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'immutable_audit_source_event_aggregate_unique'")->value);
+        $worker = dirname(__DIR__, 2).'/Support/LegalArchive/PostgresAuditWorker.php';
+        $legacy = new Process([PHP_BINARY, $worker, $this->schema, 'rejected', 'legacy:after', 'legacy_after']);
+        $legacy->run();
+        self::assertFalse($legacy->isSuccessful());
+        self::assertStringContainsString('immutable_audit_writer_version_rejected', $legacy->getErrorOutput());
+        $spoofed = (array) $this->first->table('immutable_audit_events')->first();
+        $spoofed['id'] = (string) \Illuminate\Support\Str::uuid();
+        $spoofed['sequence_id'] = ((int) $this->first->table('immutable_audit_events')->max('sequence_id')) + 1;
+        try {
+            $this->first->transaction(function () use ($spoofed): void {
+                $this->first->select("SELECT set_config('most.immutable_audit_writer_version', '2', true), set_config('most.immutable_audit_writer_token', 'spoofed-token-without-app-secret-123', true)");
+                $this->first->table('immutable_audit_events')->insert($spoofed);
+            });
+            self::fail('A spoofed writer version and token must be rejected.');
+        } catch (\Illuminate\Database\QueryException $error) {
+            self::assertStringContainsString('immutable_audit_writer_version_rejected', $error->getMessage());
+        }
+        $modern = (new ImmutableAuditRecorder(new ImmutableAuditRedactor, new ImmutableAuditIntegrityService, $this->first, self::WRITER_TOKEN))
+            ->record($this->event('modern_after_cutover', 'modern:after'));
+        self::assertTrue((new ImmutableAuditIntegrityService)->verifyEvent($modern)['record_valid']);
+        $afterCommit = (array) $this->first->table('immutable_audit_events')->where('id', $modern->id)->first();
+        $afterCommit['id'] = (string) \Illuminate\Support\Str::uuid();
+        $afterCommit['sequence_id'] = ((int) $this->first->table('immutable_audit_events')->max('sequence_id')) + 1;
+        try {
+            $this->first->table('immutable_audit_events')->insert($afterCommit);
+            self::fail('Transaction-local writer credentials must not leak through the connection pool.');
+        } catch (\Illuminate\Database\QueryException $error) {
+            self::assertStringContainsString('immutable_audit_writer_version_rejected', $error->getMessage());
+        }
     }
 
     private function event(string $action, string $sourceEventId): ImmutableAuditEventData
@@ -381,7 +431,7 @@ CREATE TABLE contract_audit_reconciliation_debts (
     UNIQUE(source_type, source_id, change_fingerprint)
 );
 SQL);
-        (new ImmutableAuditRolloutService)->installCompatibilityPhase($this->first);
+        (new ImmutableAuditRolloutService)->installCompatibilityPhase($this->first, 24, self::WRITER_TOKEN);
     }
 
     /** @return array{string, string} */

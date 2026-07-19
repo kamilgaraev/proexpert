@@ -5,27 +5,40 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\ImmutableAudit\Services;
 
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Support\Carbon;
 use RuntimeException;
 
 final class ImmutableAuditRolloutService
 {
     public const PHASE_B_WRITER_VERSION = 2;
 
-    public function installCompatibilityPhase(ConnectionInterface $connection): void
+    public function installCompatibilityPhase(ConnectionInterface $connection, int $maximumPhaseAHours, string $writerToken): void
     {
         if ($connection->getDriverName() !== 'pgsql') {
             return;
         }
+        if (strlen($writerToken) < 32) {
+            throw new RuntimeException('immutable_audit_writer_token_not_configured');
+        }
 
         $connection->statement('CREATE SEQUENCE IF NOT EXISTS immutable_audit_sequence');
-        $connection->statement("CREATE TABLE IF NOT EXISTS immutable_audit_rollout (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), phase text NOT NULL CHECK (phase IN ('phase_a', 'phase_b')), writer_version integer NOT NULL, updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)");
-        $connection->statement("INSERT INTO immutable_audit_rollout (singleton, phase, writer_version) VALUES (true, 'phase_a', 1) ON CONFLICT (singleton) DO NOTHING");
+        $connection->statement("CREATE TABLE IF NOT EXISTS immutable_audit_rollout (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), phase text NOT NULL CHECK (phase IN ('phase_a', 'phase_b')), writer_version integer NOT NULL, writer_token_hash char(64) NULL, phase_a_expires_at timestamptz NULL, drain_confirmed_at timestamptz NULL, drain_token_hash char(64) NULL, updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+        $connection->statement('ALTER TABLE immutable_audit_rollout ADD COLUMN IF NOT EXISTS writer_token_hash char(64) NULL');
+        $connection->statement('ALTER TABLE immutable_audit_rollout ADD COLUMN IF NOT EXISTS phase_a_expires_at timestamptz NULL');
+        $connection->statement('ALTER TABLE immutable_audit_rollout ADD COLUMN IF NOT EXISTS drain_confirmed_at timestamptz NULL');
+        $connection->statement('ALTER TABLE immutable_audit_rollout ADD COLUMN IF NOT EXISTS drain_token_hash char(64) NULL');
+        $hours = max(1, min($maximumPhaseAHours, 168));
+        $connection->statement("INSERT INTO immutable_audit_rollout (singleton, phase, writer_version, phase_a_expires_at) VALUES (true, 'phase_a', 1, CURRENT_TIMESTAMP + INTERVAL '{$hours} hours') ON CONFLICT (singleton) DO NOTHING");
+        $connection->statement("UPDATE immutable_audit_rollout SET phase_a_expires_at = CURRENT_TIMESTAMP + INTERVAL '{$hours} hours' WHERE singleton = true AND phase = 'phase_a' AND phase_a_expires_at IS NULL");
+        $connection->table('immutable_audit_rollout')->where('singleton', true)->update([
+            'writer_token_hash' => $this->writerTokenHash($writerToken),
+            'updated_at' => now(),
+        ]);
         $connection->unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION immutable_audit_allocate_compatible_sequence() RETURNS bigint AS $$
 DECLARE allocated bigint;
 BEGIN
-    LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE;
-    SELECT COALESCE(MAX(sequence_id), 0) + 2 INTO allocated FROM immutable_audit_events;
+    SELECT COALESCE(MAX(sequence_id), 0) + 1 INTO allocated FROM immutable_audit_events;
     RETURN allocated;
 END;
 $$ LANGUAGE plpgsql VOLATILE;
@@ -43,13 +56,64 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION immutable_audit_writer_guard() RETURNS trigger AS $$
+DECLARE rollout immutable_audit_rollout%ROWTYPE;
+BEGIN
+    SELECT * INTO rollout FROM immutable_audit_rollout WHERE singleton = true;
+    IF rollout.phase = 'phase_a' AND rollout.phase_a_expires_at IS NOT NULL AND CURRENT_TIMESTAMP > rollout.phase_a_expires_at THEN
+        RAISE EXCEPTION 'immutable_audit_phase_a_expired' USING ERRCODE = '55000';
+    END IF;
+    IF rollout.phase = 'phase_b' AND (
+        COALESCE(current_setting('most.immutable_audit_writer_version', true), '') <> '2'
+        OR rollout.writer_token_hash IS NULL
+        OR encode(sha256(convert_to('immutable-audit-writer-v2:' || COALESCE(current_setting('most.immutable_audit_writer_token', true), ''), 'UTF8')), 'hex') <> rollout.writer_token_hash
+    ) THEN
+        RAISE EXCEPTION 'immutable_audit_writer_version_rejected' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS immutable_audit_writer_guard ON immutable_audit_events;
+CREATE TRIGGER immutable_audit_writer_guard BEFORE INSERT ON immutable_audit_events
+FOR EACH ROW EXECUTE FUNCTION immutable_audit_writer_guard();
 DROP TRIGGER IF EXISTS immutable_audit_sequence_sync ON immutable_audit_events;
 CREATE TRIGGER immutable_audit_sequence_sync AFTER INSERT ON immutable_audit_events
 FOR EACH ROW EXECUTE FUNCTION immutable_audit_sync_sequence_after_insert();
 SQL);
     }
 
-    public function cutover(ConnectionInterface $connection, bool $enabled, int $confirmedWriterVersion): void
+    public function confirmDrain(ConnectionInterface $connection, bool $enabled, string $token): void
+    {
+        if (! $enabled || strlen($token) < 32) {
+            throw new RuntimeException('immutable_audit_drain_confirmation_rejected');
+        }
+        $updated = $connection->table('immutable_audit_rollout')->where('singleton', true)->update([
+            'drain_confirmed_at' => now(),
+            'drain_token_hash' => hash('sha256', $token),
+            'updated_at' => now(),
+        ]);
+        if ($updated !== 1) {
+            throw new RuntimeException('immutable_audit_rollout_not_installed');
+        }
+    }
+
+    /** @return array{phase:?string,phase_a_expires_at:mixed,overdue:bool} */
+    public function status(ConnectionInterface $connection): array
+    {
+        if (! $connection->getSchemaBuilder()->hasTable('immutable_audit_rollout')) {
+            return ['phase' => null, 'phase_a_expires_at' => null, 'overdue' => false];
+        }
+        $row = $connection->table('immutable_audit_rollout')->where('singleton', true)->first();
+        $expiresAt = $row?->phase_a_expires_at ?? null;
+
+        return [
+            'phase' => isset($row->phase) ? (string) $row->phase : null,
+            'phase_a_expires_at' => $expiresAt,
+            'overdue' => isset($row->phase) && $row->phase === 'phase_a' && $expiresAt !== null && Carbon::parse($expiresAt)->isPast(),
+        ];
+    }
+
+    public function cutover(ConnectionInterface $connection, bool $enabled, int $confirmedWriterVersion, string $drainToken, string $writerToken, int $drainTtlMinutes = 15): void
     {
         if (! $enabled || $confirmedWriterVersion !== self::PHASE_B_WRITER_VERSION) {
             throw new RuntimeException('immutable_audit_phase_b_writer_fence_not_confirmed');
@@ -57,7 +121,20 @@ SQL);
         if ($connection->getDriverName() !== 'pgsql') {
             throw new RuntimeException('immutable_audit_phase_b_requires_postgresql');
         }
-        $connection->select('SELECT pg_advisory_lock(hashtextextended(?, 0))', ['immutable_audit_phase_b_cutover']);
+        $marker = $connection->table('immutable_audit_rollout')->where('singleton', true)->first();
+        $writerTokenValid = strlen($writerToken) >= 32
+            && isset($marker->writer_token_hash)
+            && hash_equals((string) $marker->writer_token_hash, $this->writerTokenHash($writerToken));
+        if (! $writerTokenValid) {
+            throw new RuntimeException('immutable_audit_phase_b_writer_token_rejected');
+        }
+        $drainValid = isset($marker->drain_confirmed_at, $marker->drain_token_hash)
+            && hash_equals((string) $marker->drain_token_hash, hash('sha256', $drainToken))
+            && Carbon::parse($marker->drain_confirmed_at)->gte(now()->subMinutes(max(1, min($drainTtlMinutes, 60))));
+        if (! $drainValid) {
+            throw new RuntimeException('immutable_audit_phase_b_drain_marker_required');
+        }
+        $connection->select('SELECT pg_advisory_lock(hashtextextended(?, 0))', ['immutable_audit_writer_fence']);
         try {
             $phase = $connection->table('immutable_audit_rollout')->where('singleton', true)->value('phase');
             if (! in_array($phase, ['phase_a', 'phase_b'], true)) {
@@ -76,7 +153,7 @@ SQL);
                 $connection->statement('DROP INDEX IF EXISTS immutable_audit_source_event_unique');
             });
         } finally {
-            $connection->select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', ['immutable_audit_phase_b_cutover']);
+            $connection->select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', ['immutable_audit_writer_fence']);
         }
     }
 
@@ -144,5 +221,10 @@ SQL, [$name]);
     private function postgresBoolean(mixed $value): bool
     {
         return $value === true || $value === 1 || $value === '1' || $value === 't';
+    }
+
+    private function writerTokenHash(string $writerToken): string
+    {
+        return hash('sha256', 'immutable-audit-writer-v2:'.$writerToken);
     }
 }

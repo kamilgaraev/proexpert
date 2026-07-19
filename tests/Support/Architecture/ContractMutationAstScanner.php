@@ -6,6 +6,8 @@ namespace Tests\Support\Architecture;
 
 use PhpParser\Node;
 use PhpParser\NodeFinder;
+use PhpParser\NodeTraverser;
+use PhpParser\NodeVisitor\NameResolver;
 use PhpParser\ParserFactory;
 use PhpParser\PrettyPrinter\Standard;
 
@@ -22,7 +24,14 @@ final class ContractMutationAstScanner
     /** @return list<array{line:int,class:string,method:string,operation:string,receiver:string,fingerprint:string}> */
     public function findings(string $source): array
     {
+        if (preg_match('/(?:\bContract\b|\bcontracts?\b|ContractRepository|contractRepository)/', $source) !== 1
+            || preg_match('/\b(?:save|saveQuietly|update|updateQuietly|delete|forceDelete|insert|upsert|increment|decrement|touch|restore|create|updateOrCreate|firstOrCreate|destroy|forceDestroy|statement|unprepared)\b/i', $source) !== 1) {
+            return [];
+        }
         $nodes = (new ParserFactory)->createForNewestSupportedVersion()->parse($source) ?? [];
+        $traverser = new NodeTraverser;
+        $traverser->addVisitor(new NameResolver);
+        $nodes = $traverser->traverse($nodes);
         $finder = new NodeFinder;
         $scopes = $finder->find($nodes, static fn (Node $node): bool => $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Stmt\Function_);
         $repositoryProperties = $this->repositoryProperties($nodes);
@@ -51,6 +60,15 @@ final class ContractMutationAstScanner
                 $repositoryVariables[(string) $parameter->var->name] = true;
             }
         }
+        foreach ($finder->findInstanceOf($scope->getStmts() ?? [], Node\Param::class) as $parameter) {
+            if ($parameter->var instanceof Node\Expr\Variable && $this->isExactContractType($parameter->type)) {
+                $contractVariables[(string) $parameter->var->name] = true;
+            }
+            if ($parameter->var instanceof Node\Expr\Variable && $this->isContractRepositoryType($parameter->type)) {
+                $repositoryVariables[(string) $parameter->var->name] = true;
+            }
+        }
+        $stringConstants = [];
         $assignments = $finder->findInstanceOf($scope->getStmts() ?? [], Node\Expr\Assign::class);
         do {
             $changed = false;
@@ -67,11 +85,16 @@ final class ContractMutationAstScanner
                     $repositoryVariables[$name] = true;
                     $changed = true;
                 }
+                $constant = $this->constantString($assignment->expr, $stringConstants);
+                if ($constant !== null && ($stringConstants[$name] ?? null) !== $constant) {
+                    $stringConstants[$name] = $constant;
+                    $changed = true;
+                }
             }
         } while ($changed);
 
         $results = [];
-        foreach ($finder->find($scope->getStmts() ?? [], fn (Node $node): bool => $this->isMutation($node, $contractVariables, $repositoryVariables, $repositoryProperties, $printer)) as $node) {
+        foreach ($finder->find($scope->getStmts() ?? [], fn (Node $node): bool => $this->isMutation($node, $contractVariables, $repositoryVariables, $repositoryProperties, $stringConstants, $printer)) as $node) {
             $operation = $node->name instanceof Node\Identifier ? $node->name->toString() : 'raw_sql';
             $receiver = $node instanceof Node\Expr\MethodCall ? $printer->prettyPrintExpr($node->var) : $printer->prettyPrintExpr($node);
             $fingerprint = implode('|', [$class, $method, $operation, preg_replace('/\s+/', '', $receiver)]);
@@ -82,18 +105,18 @@ final class ContractMutationAstScanner
     }
 
     /** @param array<string, true> $variables */
-    private function isMutation(Node $node, array $variables, array $repositoryVariables, array $repositoryProperties, Standard $printer): bool
+    private function isMutation(Node $node, array $variables, array $repositoryVariables, array $repositoryProperties, array $stringConstants, Standard $printer): bool
     {
         if ($node instanceof Node\Expr\StaticCall) {
             $class = $node->class instanceof Node\Name ? $node->class->toString() : $printer->prettyPrintExpr($node->class);
             $operation = $node->name instanceof Node\Identifier ? $node->name->toString() : '';
-            if ($this->shortName($class) === 'Contract' && in_array($operation, ['create', 'updateOrCreate', 'firstOrCreate', 'destroy', 'forceDestroy'], true)) {
+            if ($this->isExactContractName($class) && in_array($operation, ['create', 'updateOrCreate', 'firstOrCreate', 'destroy', 'forceDestroy'], true)) {
                 return true;
             }
             if ($this->shortName($class) === 'DB' && in_array($operation, ['statement', 'unprepared', 'insert', 'update', 'delete'], true)) {
-                $sql = $node->args[0]->value ?? null;
+                $sql = isset($node->args[0]) ? $this->constantString($node->args[0]->value, $stringConstants) : null;
 
-                return $sql instanceof Node\Scalar\String_ && preg_match('/\b(insert\s+into|update|delete\s+from)\s+["`]?contracts\b/i', $sql->value) === 1;
+                return $sql !== null && preg_match('/\b(insert\s+into|update|delete\s+from)\s+["`]?contracts\b/i', $sql) === 1;
             }
         }
         if (! $node instanceof Node\Expr\MethodCall || ! $node->name instanceof Node\Identifier || ! in_array($node->name->toString(), self::MUTATIONS, true)) {
@@ -111,7 +134,7 @@ final class ContractMutationAstScanner
             || ($root !== null && isset($repositoryVariables[$root]))
             || $repositoryProperty
             || $this->receiverContainsRepositoryProperty($receiver, $repositoryProperties)
-            || str_contains($receiver, 'Contract::query()')
+            || $this->rootedAtExactContractStatic($node->var)
             || preg_match('/DB::(?:connection\([^)]*\)->)?table\([\'"]contracts[\'"]\)/', $receiver) === 1
             || str_contains($receiver, 'contractRepository')
             || str_contains($receiver, 'contracts()');
@@ -128,7 +151,7 @@ final class ContractMutationAstScanner
         }
         $printed = $printer->prettyPrintExpr($expression);
 
-        return preg_match('/^(?:\\\\?App\\\\Models\\\\)?Contract::/', $printed) === 1
+        return $this->rootedAtExactContractStatic($expression)
             || preg_match('/contractRepository->(?:find|findOrFail|getById)/', $printed) === 1
             || preg_match('/->contract\(\)->/', $printed) === 1
             || preg_match('/DB::(?:connection\([^)]*\)->)?table\([\'"]contracts[\'"]\)/', $printed) === 1;
@@ -143,9 +166,47 @@ final class ContractMutationAstScanner
         return $expression instanceof Node\Expr\Variable && is_string($expression->name) ? $expression->name : null;
     }
 
+    private function rootedAtExactContractStatic(Node\Expr $expression): bool
+    {
+        while ($expression instanceof Node\Expr\MethodCall || $expression instanceof Node\Expr\PropertyFetch) {
+            $expression = $expression->var;
+        }
+        if (! $expression instanceof Node\Expr\StaticCall || ! $expression->class instanceof Node\Name) {
+            return false;
+        }
+
+        return $this->isExactContractName($expression->class->toString());
+    }
+
+    /** @param array<string, string> $constants */
+    private function constantString(Node\Expr $expression, array $constants): ?string
+    {
+        if ($expression instanceof Node\Scalar\String_) {
+            return $expression->value;
+        }
+        if ($expression instanceof Node\Expr\Variable && is_string($expression->name)) {
+            return $constants[$expression->name] ?? null;
+        }
+        if ($expression instanceof Node\Expr\BinaryOp\Concat) {
+            $left = $this->constantString($expression->left, $constants);
+            $right = $this->constantString($expression->right, $constants);
+
+            return $left !== null && $right !== null ? $left.$right : null;
+        }
+
+        return null;
+    }
+
     private function isExactContractType(?Node $node): bool
     {
-        return $node instanceof Node\Name && $this->shortName($node->toString()) === 'Contract';
+        return $node instanceof Node\Name && $this->isExactContractName($node->toString());
+    }
+
+    private function isExactContractName(string $name): bool
+    {
+        $name = ltrim($name, '\\');
+
+        return $name === 'Contract' || $name === 'App\\Models\\Contract';
     }
 
     private function isContractRepositoryType(?Node $node): bool

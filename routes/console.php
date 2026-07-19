@@ -241,6 +241,13 @@ Schedule::command('contracts:reconcile-audit-debts --limit=100')
         Log::error('contract.audit_reconciliation.schedule_failed');
     });
 
+Schedule::command('immutable-audit:rollout-status')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(5)
+    ->onFailure(function (): void {
+        Log::critical('immutable_audit.rollout_status_failed');
+    });
+
 if ((bool) config('one_c_exchange.delivery.enabled', false)) {
     Schedule::command("one-c-exchange:deliver --limit={$oneCExchangeScheduledLimit}")
         ->everyMinute()

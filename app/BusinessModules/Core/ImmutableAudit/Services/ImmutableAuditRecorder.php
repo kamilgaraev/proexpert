@@ -19,31 +19,49 @@ final class ImmutableAuditRecorder
         private readonly ImmutableAuditRedactor $redactor,
         private readonly ImmutableAuditIntegrityService $integrity,
         private readonly ?ConnectionInterface $connection = null,
+        private readonly ?string $writerToken = null,
     ) {}
 
     public function record(ImmutableAuditEventData $data): ImmutableAuditEvent
     {
-        if ($data->sourceEventId !== null) {
-            $existing = $this->findExisting($data);
+        for ($attempt = 1; $attempt <= 5; $attempt++) {
+            if ($data->sourceEventId !== null) {
+                $existing = $this->findExisting($data);
+                if ($existing !== null) {
+                    $this->assertSameLogicalEvent($existing, $data);
 
-            if ($existing !== null) {
-                $this->assertSameLogicalEvent($existing, $data);
-
-                return $existing;
+                    return $existing;
+                }
             }
-        }
 
-        try {
-            return $this->database()->transaction(function () use ($data): ImmutableAuditEvent {
-                if ($this->database()->getDriverName() === 'pgsql') {
-                    if ($this->phaseACompatibilityMode()) {
-                        $this->database()->statement('LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE');
-                    } else {
+            try {
+                return $this->database()->transaction(function () use ($data): ImmutableAuditEvent {
+                    if ($this->database()->getDriverName() === 'pgsql') {
+                        $this->database()->select('SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))', ['immutable_audit_writer_fence']);
+                        $this->database()->select("SELECT set_config('most.immutable_audit_writer_version', '2', true), set_config('most.immutable_audit_writer_token', ?, true)", [$this->writerToken()]);
                         $chainScope = $data->chainScope ?? 'organization:'.$data->organizationId;
                         $this->database()->select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [$chainScope]);
                     }
-                }
 
+                    if ($data->sourceEventId !== null) {
+                        $existing = $this->findExisting($data);
+
+                        if ($existing !== null) {
+                            $this->assertSameLogicalEvent($existing, $data);
+
+                            return $existing;
+                        }
+                    }
+
+                    $attributes = $this->buildAttributes($data);
+
+                    $event = new ImmutableAuditEvent;
+                    $event->setConnection($this->database()->getName());
+                    $event->fill($attributes)->save();
+
+                    return $event;
+                }, 3);
+            } catch (QueryException $e) {
                 if ($data->sourceEventId !== null) {
                     $existing = $this->findExisting($data);
 
@@ -53,28 +71,15 @@ final class ImmutableAuditRecorder
                         return $existing;
                     }
                 }
-
-                $attributes = $this->buildAttributes($data);
-
-                $event = new ImmutableAuditEvent;
-                $event->setConnection($this->database()->getName());
-                $event->fill($attributes)->save();
-
-                return $event;
-            }, 3);
-        } catch (QueryException $e) {
-            if ($data->sourceEventId !== null) {
-                $existing = $this->findExisting($data);
-
-                if ($existing !== null) {
-                    $this->assertSameLogicalEvent($existing, $data);
-
-                    return $existing;
+                if ($attempt < 5 && $this->isSequenceCollision($e)) {
+                    continue;
                 }
-            }
 
-            throw $e;
+                throw $e;
+            }
         }
+
+        throw new \RuntimeException('immutable_audit_sequence_retry_exhausted');
     }
 
     private function buildAttributes(ImmutableAuditEventData $data): array
@@ -213,11 +218,11 @@ final class ImmutableAuditRecorder
         return ((int) $this->query()->max('sequence_id')) + 1;
     }
 
-    private function phaseACompatibilityMode(): bool
+    private function isSequenceCollision(QueryException $exception): bool
     {
-        $row = $this->database()->selectOne("SELECT CASE WHEN to_regclass('immutable_audit_rollout') IS NULL THEN NULL ELSE (SELECT phase FROM immutable_audit_rollout WHERE singleton = true) END AS phase");
+        $sqlState = $exception->errorInfo[0] ?? null;
 
-        return ($row->phase ?? null) === 'phase_a';
+        return $sqlState === '23505' && str_contains($exception->getMessage(), 'immutable_audit_events_sequence_id_unique');
     }
 
     private function previousHash(string $chainScope): ?string
@@ -238,6 +243,16 @@ final class ImmutableAuditRecorder
     private function database(): ConnectionInterface
     {
         return $this->connection ?? DB::connection();
+    }
+
+    private function writerToken(): string
+    {
+        $token = $this->writerToken ?? (string) config('legal_archive.audit_writer_token', '');
+        if (strlen($token) < 32) {
+            throw new DomainException('immutable_audit_writer_token_not_configured');
+        }
+
+        return $token;
     }
 
     private function assertSameLogicalEvent(ImmutableAuditEvent $existing, ImmutableAuditEventData $data): void

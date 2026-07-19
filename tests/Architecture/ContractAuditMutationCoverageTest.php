@@ -13,12 +13,13 @@ final class ContractAuditMutationCoverageTest extends TestCase
     {
         $root = dirname(__DIR__, 2).'/app';
         $exemptions = [
-            'ContractAuditedMutationService|persistUpdate|update|$contract',
-            'ContractAuditedMutationService|delete|delete|$contract',
-            'ContractSideMutationService|create|create|$this->contractRepository',
-            "SetupRBACTestEnvironment|cleanupTestData|delete|DB::table('contracts')->whereIn('organization_id',\$orgIds)",
-            "SetupRBACTestEnvironment|cleanupTestData|delete|DB::table('contracts')->whereIn('project_id',\$projectIds)",
+            'ContractAuditedMutationService|persistUpdate|update|$contract' => 1,
+            'ContractAuditedMutationService|delete|delete|$contract' => 1,
+            'ContractSideMutationService|create|create|$this->contractRepository' => 1,
+            "SetupRBACTestEnvironment|cleanupTestData|delete|\\Illuminate\\Support\\Facades\\DB::table('contracts')->whereIn('organization_id',\$orgIds)" => 1,
+            "SetupRBACTestEnvironment|cleanupTestData|delete|\\Illuminate\\Support\\Facades\\DB::table('contracts')->whereIn('project_id',\$projectIds)" => 1,
         ];
+        $seenExemptions = array_fill_keys(array_keys($exemptions), 0);
         $violations = [];
         $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root));
         $scanner = new ContractMutationAstScanner;
@@ -36,9 +37,17 @@ final class ContractAuditMutationCoverageTest extends TestCase
                 continue;
             }
             foreach ($scanner->findings($source) as $finding) {
-                if (! in_array($finding['fingerprint'], $exemptions, true)) {
+                if (isset($exemptions[$finding['fingerprint']])) {
+                    $seenExemptions[$finding['fingerprint']]++;
+                } else {
                     $violations[] = "{$relative}:{$finding['line']}:{$finding['fingerprint']}";
                 }
+            }
+        }
+
+        foreach ($exemptions as $fingerprint => $expectedCount) {
+            if ($seenExemptions[$fingerprint] !== $expectedCount) {
+                $violations[] = "exemption_count:{$fingerprint}:expected={$expectedCount}:actual={$seenExemptions[$fingerprint]}";
             }
         }
 
@@ -101,15 +110,20 @@ final class ContractAuditMutationCoverageTest extends TestCase
         $source = <<<'PHP'
 <?php
 use App\Models\Contract;
+use App\Models\Contract as ContractModel;
 use Illuminate\Support\Facades\DB;
 function mutate(): void {
     $targetContract = Contract::query()->findOrFail(1);
     $alias = $targetContract;
     $alias->save();
-    Contract::query()->whereKey(2)->increment('version');
+    Contract::whereKey(2)->update(['number' => 'static-root']);
+    Contract::active()->where('id', 2)->increment('version');
+    ContractModel::query()->whereKey(3)->decrement('version');
     Contract::query()->upsert([], ['id']);
     DB::connection('tenant')->table('contracts')->delete();
     DB::statement('UPDATE contracts SET number = 1');
+    $sql = 'UPDATE contracts SET subject = 1';
+    DB::statement($sql);
     $relationContract = $act->contract;
     $relationContract->touch();
     $loadedContract = $act->contract()->first();
@@ -118,6 +132,8 @@ function mutate(): void {
     $repositoryContract->forceDelete();
     $audit->recordCreated($targetContract);
     $targetContract->update(['number' => 'still-detected']);
+    $closure = function (Contract $closureContract): void { $closureContract->delete(); };
+    $arrow = fn (Contract $arrowContract) => $arrowContract->forceDelete();
 }
 class Contract { public function mutateSelf(): void { $this->saveQuietly(); } }
 class PurchaseContract { public function harmless(): void { $this->save(); } }
@@ -128,7 +144,23 @@ class RepoService {
 PHP;
 
         $findings = $scanner->findings($source);
-        self::assertSame(['save', 'increment', 'upsert', 'delete', 'statement', 'touch', 'restore', 'forceDelete', 'update', 'saveQuietly', 'update'], array_column($findings, 'operation'));
+        self::assertSame(['save', 'update', 'increment', 'decrement', 'upsert', 'delete', 'statement', 'statement', 'touch', 'restore', 'forceDelete', 'update', 'delete', 'forceDelete', 'saveQuietly', 'update'], array_column($findings, 'operation'));
         self::assertNotContains('PurchaseContract', array_column($findings, 'class'));
+    }
+
+    public function test_semantic_exemption_count_rejects_duplicate_identical_repository_create(): void
+    {
+        $findings = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+class Example {
+    public function __construct(private ContractRepositoryInterface $contractRepository) {}
+    public function create(): void {
+        $this->contractRepository->create([]);
+        $this->contractRepository->create([]);
+    }
+}
+PHP);
+
+        self::assertCount(2, array_filter($findings, static fn (array $finding): bool => $finding['fingerprint'] === 'Example|create|create|$this->contractRepository'));
     }
 }
