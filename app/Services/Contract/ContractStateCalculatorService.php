@@ -4,20 +4,69 @@ namespace App\Services\Contract;
 
 use App\Models\Contract;
 use App\Models\ContractCurrentState;
-use App\Models\ContractStateEvent;
 use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
+use Illuminate\Contracts\Support\Arrayable;
 
 class ContractStateCalculatorService
 {
+    private const PRICE_EVENT_TYPES = [
+        'created',
+        'amount_changed',
+        'supplementary_agreement_applied',
+    ];
+
+    private const LEGACY_PRICE_EVENT_TYPES = [
+        'amended' => 'amount_changed',
+        'supplementary_agreement_created' => 'supplementary_agreement_applied',
+    ];
+
     protected ContractStateEventRepositoryInterface $eventRepository;
 
     public function __construct(
         ContractStateEventRepositoryInterface $eventRepository
     ) {
         $this->eventRepository = $eventRepository;
+    }
+
+    public function calculate(iterable $events): \stdClass
+    {
+        $totalCents = 0;
+
+        foreach ($events as $event) {
+            $eventData = $event instanceof Arrayable ? $event->toArray() : (array) $event;
+            $eventType = $eventData['event_type'] ?? null;
+            $eventType = $eventType instanceof \BackedEnum ? $eventType->value : (string) $eventType;
+            $canonicalType = self::LEGACY_PRICE_EVENT_TYPES[$eventType] ?? $eventType;
+
+            if (!in_array($canonicalType, self::PRICE_EVENT_TYPES, true)) {
+                continue;
+            }
+
+            $totalCents += $this->toCents($eventData['amount_delta'] ?? 0);
+        }
+
+        $sign = $totalCents < 0 ? '-' : '';
+        $absoluteCents = abs($totalCents);
+
+        return (object) [
+            'totalAmount' => sprintf('%s%d.%02d', $sign, intdiv($absoluteCents, 100), $absoluteCents % 100),
+        ];
+    }
+
+    private function toCents(mixed $amount): int
+    {
+        $normalizedAmount = str_replace(',', '.', trim((string) $amount));
+
+        if (!preg_match('/^(?<sign>-?)(?<whole>\d+)(?:\.(?<fraction>\d+))?$/', $normalizedAmount, $matches)) {
+            return (int) round((float) $amount * 100);
+        }
+
+        $fraction = str_pad(substr($matches['fraction'] ?? '', 0, 2), 2, '0');
+        $cents = ((int) $matches['whole'] * 100) + (int) $fraction;
+
+        return $matches['sign'] === '-' ? -$cents : $cents;
     }
 
     /**
@@ -27,7 +76,7 @@ class ContractStateCalculatorService
     {
         $activeEvents = $this->eventRepository->findActiveEvents($contract->id);
         
-        $totalAmount = $activeEvents->sum('amount_delta');
+        $totalAmount = $this->calculate($activeEvents)->totalAmount;
         
         // Находим активную спецификацию
         $activeSpecificationId = null;
@@ -97,7 +146,7 @@ class ContractStateCalculatorService
             $date
         );
 
-        $totalAmount = $activeEvents->sum('amount_delta');
+        $totalAmount = $this->calculate($activeEvents)->totalAmount;
         $activeSpecificationId = null;
         
         $lastAmendedEvent = $activeEvents
@@ -163,4 +212,3 @@ class ContractStateCalculatorService
         }
     }
 }
-

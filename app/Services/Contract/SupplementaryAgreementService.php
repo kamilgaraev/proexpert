@@ -342,260 +342,122 @@ class SupplementaryAgreementService
         return $this->repository->paginate($perPage, $filters, $sortBy, $sortDirection);
     }
 
-    public function applyChangesToContract(int $agreementId): bool
+    public function applyOnce(SupplementaryAgreement $agreement, int $actorId): Contract
     {
-        try {
-            $agreement = $this->getById($agreementId);
-            if (!$agreement) {
-                throw new Exception('Дополнительное соглашение не найдено');
+        return DB::transaction(function () use ($agreement, $actorId): Contract {
+            $lockedAgreement = SupplementaryAgreement::query()
+                ->whereKey($agreement->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($lockedAgreement->applied_at !== null) {
+                return $lockedAgreement->contract()->firstOrFail();
             }
 
-            $contract = $agreement->contract;
-            
-            // BUSINESS: Начало применения изменений допсоглашения
-            $this->logging->business('agreement.apply_changes.started', [
-                'agreement_id' => $agreementId,
-                'agreement_number' => $agreement->number,
-                'contract_id' => $contract->id,
-                'contract_number' => $contract->number,
-                'organization_id' => $contract->organization_id,
-                'user_id' => Auth::id(),
-                'changes' => [
-                    'change_amount' => $agreement->change_amount,
-                    'has_subcontract_changes' => !empty($agreement->subcontract_changes),
-                    'has_gp_changes' => !empty($agreement->gp_changes),
-                    'has_advance_changes' => !empty($agreement->advance_changes),
-                ]
-            ]);
+            $contract = Contract::query()
+                ->whereKey($lockedAgreement->contract_id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-            // Сохраняем старые значения для логирования
-            $oldValues = [
-                'total_amount' => $contract->total_amount,
-                'subcontract_amount' => $contract->subcontract_amount,
-                'gp_percentage' => $contract->gp_percentage,
-                'gp_coefficient' => $contract->gp_coefficient,
-                'gp_calculation_type' => $contract->gp_calculation_type?->value,
-            ];
+            $changeAmount = (float) ($lockedAgreement->change_amount ?? 0);
+            $oldTotalAmount = (float) ($contract->total_amount ?? 0);
+            $newTotalAmount = round($oldTotalAmount + $changeAmount, 2);
 
-            DB::beginTransaction();
+            if ($newTotalAmount < 0) {
+                throw new Exception('Невозможно применить изменения: новая сумма договора будет отрицательной.');
+            }
 
-            // 1. Применяем изменение суммы контракта
-            if ($agreement->change_amount !== null && $agreement->change_amount != 0) {
-                // Изменение суммы через дельту
-                $newTotalAmount = $contract->total_amount + $agreement->change_amount;
-                
-                // Валидация: сумма контракта не может быть отрицательной
-                if ($newTotalAmount < 0) {
-                    throw new Exception(
-                        "Невозможно применить изменения: новая сумма контракта будет отрицательной " .
-                        "({$newTotalAmount}). Текущая сумма: {$contract->total_amount}, " .
-                        "изменение: {$agreement->change_amount}"
-                    );
+            if (abs($changeAmount) > 0.001) {
+                if (!$contract->usesEventSourcing()) {
+                    $this->getStateEventService()->createContractCreatedEvent($contract, null, $actorId);
                 }
-                
+
                 $contract->total_amount = $newTotalAmount;
-                
-                // BUSINESS: Изменение суммы контракта
-                $this->logging->business('agreement.contract_amount_changed', [
-                    'agreement_id' => $agreementId,
-                    'contract_id' => $contract->id,
-                    'old_amount' => $oldValues['total_amount'],
-                    'change_amount' => $agreement->change_amount,
-                    'new_amount' => $newTotalAmount,
-                    'user_id' => Auth::id(),
-                ]);
-            }
-            // Если только supersede_agreement_ids без change_amount - сумма пересчитается автоматически через Event Sourcing
-
-            // 2. Применяем изменения субподряда
-            if ($agreement->subcontract_changes) {
-                $this->applySubcontractChanges($contract, $agreement->subcontract_changes);
             }
 
-            // 3. Применяем изменения ГП
-            if ($agreement->gp_changes) {
-                $this->applyGpChanges($contract, $agreement->gp_changes);
+            if (is_array($lockedAgreement->subcontract_changes)) {
+                $this->applySubcontractChanges($contract, $lockedAgreement->subcontract_changes);
             }
 
-            // 4. Применяем изменения авансов
-            if ($agreement->advance_changes) {
-                $this->applyAdvanceChanges($contract, $agreement->advance_changes);
+            if (is_array($lockedAgreement->gp_changes)) {
+                $this->applyGpChanges($contract, $lockedAgreement->gp_changes);
             }
 
-            // Сохраняем контракт со всеми изменениями
+            if (is_array($lockedAgreement->advance_changes)) {
+                $this->applyAdvanceChanges($contract, $lockedAgreement->advance_changes);
+            }
+
             $contract->save();
 
-            // Если контракт не использует Event Sourcing, активируем его
-            if (!$contract->usesEventSourcing()) {
-                try {
-                    // Создаем начальное событие CREATED для активации Event Sourcing
-                    $this->getStateEventService()->createContractCreatedEvent($contract);
-                    \Illuminate\Support\Facades\Log::info('Event Sourcing activated for contract via agreement', [
-                        'contract_id' => $contract->id,
-                        'agreement_id' => $agreementId
-                    ]);
-                } catch (Exception $e) {
-                    \Illuminate\Support\Facades\Log::warning('Failed to activate Event Sourcing for contract', [
-                        'contract_id' => $contract->id,
-                        'agreement_id' => $agreementId,
-                        'error' => $e->getMessage()
-                    ]);
-                }
+            if (!empty($lockedAgreement->supersede_agreement_ids)) {
+                $this->getStateEventService()->supersedeAgreementsWithoutAmountChange(
+                    $contract,
+                    $lockedAgreement,
+                    $lockedAgreement->supersede_agreement_ids
+                );
             }
 
-            // Создаем событие для примененного доп.соглашения, если Event Sourcing активен
-            $contract->refresh(); // Обновляем модель чтобы получить актуальный статус usesEventSourcing
-            if ($contract->usesEventSourcing()) {
-                try {
-                    // Находим активную спецификацию для события (если есть)
-                    $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
-                    
-                    // Проверяем, нужно ли аннулировать ДС
-                    if (!empty($agreement->supersede_agreement_ids)) {
-                        // Аннулирование выбранных ДС
-                        if ($agreement->change_amount !== null && $agreement->change_amount != 0) {
-                            // Аннулируем выбранные ДС и применяем изменение суммы
-                            // Сначала аннулируем, потом применяем change_amount
-                            $supersedeEvents = $this->getStateEventService()->supersedeAgreementsWithoutAmountChange(
-                                $contract,
-                                $agreement,
-                                $agreement->supersede_agreement_ids
-                            );
-                            
-                            // Затем создаем событие с change_amount
-                            $amendedEvent = $this->getStateEventService()->createAmendedEvent(
-                                $contract,
-                                $activeSpecification?->id,
-                                $agreement->change_amount,
-                                $agreement,
-                                $agreement->agreement_date ?? now(),
-                                [
-                                    'agreement_number' => $agreement->number,
-                                    'reason' => 'Применено дополнительное соглашение после аннулирования ДС',
-                                    'superseded_agreement_ids' => $agreement->supersede_agreement_ids,
-                                ]
-                            );
-                            
-                            // BUSINESS: Логирование аннулирования с изменением суммы
-                            $this->logging->business('agreement.superseded_with_change_amount', [
-                                'agreement_id' => $agreementId,
-                                'contract_id' => $contract->id,
-                                'supersede_agreement_ids' => $agreement->supersede_agreement_ids,
-                                'change_amount' => $agreement->change_amount,
-                                'events_created' => count($supersedeEvents) + 1,
-                                'user_id' => Auth::id(),
-                            ]);
-                        } else {
-                            // Только аннулирование без изменения суммы
-                            $events = $this->getStateEventService()->supersedeAgreementsWithoutAmountChange(
-                                $contract,
-                                $agreement,
-                                $agreement->supersede_agreement_ids
-                            );
-                            
-                            // BUSINESS: Логирование аннулирования без изменения суммы
-                            $this->logging->business('agreement.superseded_without_amount_change', [
-                                'agreement_id' => $agreementId,
-                                'contract_id' => $contract->id,
-                                'supersede_agreement_ids' => $agreement->supersede_agreement_ids,
-                                'events_created' => count($events),
-                                'user_id' => Auth::id(),
-                            ]);
-                        }
-                    } elseif ($agreement->change_amount !== null && $agreement->change_amount != 0) {
-                        // Старая логика: простое изменение суммы через дельту
-                        $this->getStateEventService()->createAmendedEvent(
-                            $contract,
-                            $activeSpecification?->id,
-                            $agreement->change_amount,
-                            $agreement,
-                            $agreement->agreement_date ?? now(),
-                            [
-                                'agreement_number' => $agreement->number,
-                                'reason' => 'Применено дополнительное соглашение'
-                            ]
-                        );
-                    }
-
-                    // Обновляем материализованное представление
-                    $this->getStateCalculatorService()->recalculateContractState($contract);
-                    
-                    // ВСЕГДА обновляем сумму контракта из Event Sourcing после изменений
-                    // (особенно важно при аннулировании ДС без change_amount)
-                    $contract->refresh();
-                    $currentState = $this->getStateEventService()->getCurrentState($contract);
-                    $calculatedAmount = $currentState['total_amount'];
-                    
-                    if (abs($contract->total_amount - $calculatedAmount) > 0.01) {
-                        // Сумма изменилась, обновляем
-                        $oldAmount = $contract->total_amount;
-                        $contract->total_amount = $calculatedAmount;
-                        $contract->save();
-                        
-                        // BUSINESS: Логирование обновления суммы из Event Sourcing
-                        $this->logging->business('agreement.contract_amount_recalculated_from_events', [
-                            'agreement_id' => $agreementId,
-                            'contract_id' => $contract->id,
-                            'old_amount' => $oldAmount,
-                            'new_amount' => $calculatedAmount,
-                            'reason' => !empty($agreement->supersede_agreement_ids) ? 'Аннулирование ДС' : 'Применение изменений',
-                            'user_id' => Auth::id(),
-                        ]);
-                    }
-                } catch (Exception $e) {
-                    \Illuminate\Support\Facades\Log::warning('Failed to create state event for agreement', [
-                        'contract_id' => $contract->id,
-                        'agreement_id' => $agreementId,
-                        'error' => $e->getMessage()
-                    ]);
-                }
+            if (abs($changeAmount) > 0.001 && !empty($lockedAgreement->supersede_agreement_ids)) {
+                $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
+                $this->getStateEventService()->createAmendedEvent(
+                    $contract,
+                    $activeSpecification?->id,
+                    $changeAmount,
+                    $lockedAgreement,
+                    $lockedAgreement->agreement_date ?? now(),
+                    [
+                        'agreement_number' => $lockedAgreement->number,
+                        'superseded_agreement_ids' => $lockedAgreement->supersede_agreement_ids,
+                    ],
+                    $actorId
+                );
+            } elseif (abs($changeAmount) > 0.001) {
+                $this->getStateEventService()->createSupplementaryAgreementEvent(
+                    $contract,
+                    $lockedAgreement,
+                    $actorId
+                );
             }
 
-            DB::commit();
+            $lockedAgreement->forceFill([
+                'applied_at' => now(),
+                'applied_by_user_id' => $actorId,
+                'application_key' => "supplementary-agreement:{$lockedAgreement->id}",
+            ])->save();
 
-            // BUSINESS: Изменения успешно применены
             $this->logging->business('agreement.apply_changes.success', [
-                'agreement_id' => $agreementId,
+                'agreement_id' => $lockedAgreement->id,
                 'contract_id' => $contract->id,
                 'organization_id' => $contract->organization_id,
-                'user_id' => Auth::id(),
-                'old_values' => $oldValues,
-                'new_values' => [
-                    'total_amount' => $contract->total_amount,
-                    'subcontract_amount' => $contract->subcontract_amount,
-                    'gp_percentage' => $contract->gp_percentage,
-                    'gp_coefficient' => $contract->gp_coefficient,
-                    'gp_calculation_type' => $contract->gp_calculation_type?->value,
-                ]
+                'user_id' => $actorId,
             ]);
 
-            // AUDIT: Применение допсоглашения для compliance
             $this->logging->audit('agreement.applied_to_contract', [
-                'agreement_id' => $agreementId,
-                'agreement_number' => $agreement->number,
+                'agreement_id' => $lockedAgreement->id,
+                'agreement_number' => $lockedAgreement->number,
                 'contract_id' => $contract->id,
                 'contract_number' => $contract->number,
                 'organization_id' => $contract->organization_id,
-                'user_id' => Auth::id(),
-                'total_amount_delta' => $contract->total_amount - $oldValues['total_amount'],
+                'user_id' => $actorId,
+                'total_amount_delta' => $newTotalAmount - $oldTotalAmount,
             ]);
 
-            return true;
-        } catch (Exception $e) {
-            DB::rollBack();
-            
-            // BUSINESS: Ошибка применения изменений
-            $this->logging->business('agreement.apply_changes.failed', [
-                'agreement_id' => $agreementId,
-                'contract_id' => $agreement?->contract_id,
-                'error' => $e->getMessage(),
-                'user_id' => Auth::id(),
-            ]);
-            
-            throw $e;
-        }
+            return $contract->refresh();
+        });
     }
 
+    public function applyChangesToContract(int $agreementId): bool
+    {
+        $agreement = $this->getById($agreementId);
+
+        if (!$agreement instanceof SupplementaryAgreement) {
+            throw new Exception('Дополнительное соглашение не найдено');
+        }
+
+        $this->applyOnce($agreement, (int) (Auth::id() ?? 0));
+
+        return true;
+    }
     private function applySubcontractChanges(Contract $contract, array $changes): void
     {
         if (isset($changes['amount'])) {

@@ -96,16 +96,9 @@ class ContractSideMutationService
                 }
             }
 
-            DB::commit();
+            $this->stateEventService->createContractCreatedEvent($contract);
 
-            try {
-                $this->stateEventService->createContractCreatedEvent($contract);
-            } catch (Exception $exception) {
-                Log::warning('Failed to create contract state event', [
-                    'contract_id' => $contract->id,
-                    'error' => $exception->getMessage(),
-                ]);
-            }
+            DB::commit();
 
             $this->logging->business('contract.created', [
                 'organization_id' => $targetOrganizationId,

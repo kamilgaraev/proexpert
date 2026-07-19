@@ -15,19 +15,27 @@ use Exception;
 class ContractStateEventService
 {
     protected ContractStateEventRepositoryInterface $eventRepository;
+    protected ContractStateCalculatorService $stateCalculatorService;
 
     public function __construct(
-        ContractStateEventRepositoryInterface $eventRepository
+        ContractStateEventRepositoryInterface $eventRepository,
+        ?ContractStateCalculatorService $stateCalculatorService = null
     ) {
         $this->eventRepository = $eventRepository;
+        $this->stateCalculatorService = $stateCalculatorService
+            ?? new ContractStateCalculatorService($eventRepository);
     }
 
     /**
      * Создать событие для нового договора
      */
-    public function createContractCreatedEvent(Contract $contract, ?int $specificationId = null): ContractStateEvent
+    public function createContractCreatedEvent(
+        Contract $contract,
+        ?int $specificationId = null,
+        ?int $actorId = null
+    ): ContractStateEvent
     {
-        return DB::transaction(function () use ($contract, $specificationId) {
+        return DB::transaction(function () use ($contract, $specificationId, $actorId) {
             $data = [
                 'contract_id' => $contract->id,
                 'event_type' => ContractStateEventTypeEnum::CREATED,
@@ -41,7 +49,7 @@ class ContractStateEventService
                     'contract_number' => $contract->number,
                     'contractor_id' => $contract->contractor_id,
                 ],
-                'created_by_user_id' => Auth::id(),
+                'created_by_user_id' => $actorId ?? Auth::id(),
             ];
 
             return $this->eventRepository->createEvent($data);
@@ -57,9 +65,10 @@ class ContractStateEventService
         float $amountDelta,
         $triggeredBy = null,
         ?Carbon $effectiveFrom = null,
-        array $metadata = []
+        array $metadata = [],
+        ?int $actorId = null
     ): ContractStateEvent {
-        return DB::transaction(function () use ($contract, $specificationId, $amountDelta, $triggeredBy, $effectiveFrom, $metadata) {
+        return DB::transaction(function () use ($contract, $specificationId, $amountDelta, $triggeredBy, $effectiveFrom, $metadata, $actorId) {
             $triggeredByType = Contract::class;
             $triggeredById = $contract->id;
 
@@ -83,7 +92,7 @@ class ContractStateEventService
                     'specification_id' => $specificationId,
                     'amount_delta' => $amountDelta,
                 ], $metadata),
-                'created_by_user_id' => Auth::id(),
+                'created_by_user_id' => $actorId ?? Auth::id(),
             ];
 
             return $this->eventRepository->createEvent($data);
@@ -276,9 +285,10 @@ class ContractStateEventService
      */
     public function createSupplementaryAgreementEvent(
         Contract $contract,
-        SupplementaryAgreement $agreement
+        SupplementaryAgreement $agreement,
+        ?int $actorId = null
     ): ContractStateEvent {
-        return DB::transaction(function () use ($contract, $agreement) {
+        return DB::transaction(function () use ($contract, $agreement, $actorId) {
             $data = [
                 'contract_id' => $contract->id,
                 'event_type' => ContractStateEventTypeEnum::SUPPLEMENTARY_AGREEMENT_CREATED,
@@ -293,7 +303,7 @@ class ContractStateEventService
                     'change_amount' => $agreement->change_amount,
                     'subject_changes' => $agreement->subject_changes ?? [],
                 ],
-                'created_by_user_id' => Auth::id(),
+                'created_by_user_id' => $actorId ?? Auth::id(),
             ];
 
             return $this->eventRepository->createEvent($data);
@@ -340,13 +350,7 @@ class ContractStateEventService
 
         // Рассчитываем сумму из событий, влияющих на сумму контракта
         // PAYMENT_CREATED не влияет на total_amount контракта (это платежи, не изменения суммы договора)
-        $calculatedAmount = $activeEvents
-            ->filter(function ($event) {
-                return !in_array($event->event_type, [
-                    ContractStateEventTypeEnum::PAYMENT_CREATED
-                ]);
-            })
-            ->sum('amount_delta');
+        $calculatedAmount = $this->stateCalculatorService->calculate($activeEvents)->totalAmount;
         
         // ИСПОЛЬЗУЕМ РАССЧИТАННОЕ ЗНАЧЕНИЕ ИЗ СОБЫТИЙ КАК ИСТОЧНИК ИСТИНЫ
         // Event Sourcing: состояние восстанавливается из событий
@@ -384,31 +388,6 @@ class ContractStateEventService
                 'has_payment_only' => $activeEvents->count() === 1 && $activeEvents->first()->event_type === ContractStateEventTypeEnum::PAYMENT_CREATED,
             ]);
             
-            if (!$hasCreatedEvent && $dbTotalAmount > 0 && $amountAffectingEvents->isEmpty()) {
-                try {
-                    $this->createContractCreatedEvent($contract);
-                    \Illuminate\Support\Facades\Log::info('Auto-created missing CREATED event for contract', [
-                        'contract_id' => $contract->id,
-                        'contract_number' => $contract->number,
-                        'amount' => $dbTotalAmount,
-                    ]);
-                    
-                    $activeEvents = $this->eventRepository->findActiveEvents($contract->id, ['specification', 'createdBy']);
-                    $calculatedAmount = $activeEvents
-                        ->filter(function ($event) {
-                            return !in_array($event->event_type, [
-                                ContractStateEventTypeEnum::PAYMENT_CREATED
-                            ]);
-                        })
-                        ->sum('amount_delta');
-                    $totalAmount = (float) $calculatedAmount;
-                } catch (Exception $e) {
-                    \Illuminate\Support\Facades\Log::error('Failed to auto-create CREATED event', [
-                        'contract_id' => $contract->id,
-                        'error' => $e->getMessage(),
-                    ]);
-                }
-            }
         }
         
         $activeSpecification = null;
@@ -449,13 +428,7 @@ class ContractStateEventService
 
         // Рассчитываем сумму только из событий, влияющих на сумму контракта
         // PAYMENT_CREATED не влияет на total_amount контракта
-        $totalAmount = $activeEvents
-            ->filter(function ($event) {
-                return !in_array($event->event_type, [
-                    ContractStateEventTypeEnum::PAYMENT_CREATED
-                ]);
-            })
-            ->sum('amount_delta');
+        $totalAmount = $this->stateCalculatorService->calculate($activeEvents)->totalAmount;
         $activeSpecification = null;
         
         $lastAmendedEvent = $activeEvents

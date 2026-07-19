@@ -21,6 +21,9 @@ class SupplementaryAgreement extends Model
         'subcontract_changes',
         'gp_changes',
         'advance_changes',
+        'applied_at',
+        'applied_by_user_id',
+        'application_key',
     ];
 
     protected $casts = [
@@ -31,10 +34,12 @@ class SupplementaryAgreement extends Model
         'subcontract_changes' => 'array',
         'gp_changes' => 'array',
         'advance_changes' => 'array',
+        'applied_at' => 'datetime',
+        'applied_by_user_id' => 'integer',
     ];
 
     public function contract(): BelongsTo
     {
         return $this->belongsTo(Contract::class);
     }
-} 
+}
