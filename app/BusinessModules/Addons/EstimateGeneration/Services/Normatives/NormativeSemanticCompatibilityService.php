@@ -608,6 +608,7 @@ final class NormativeSemanticCompatibilityService
             ['металлокассет', 'металлическими кассет', 'metal_cassette'],
             ['композитн', 'composite_panel'],
             ['стеклянной крош', 'стеклянная крош', 'стеклянную крош', 'glass_crumb'],
+            ['мраморной крош', 'мраморная крош', 'мраморную крош', 'marble_crumb'],
             ['терразит', 'terrazite', 'terrazzo'],
             ['природным кам', 'природного кам', 'каменн облицов', 'natural_stone'],
         ];
