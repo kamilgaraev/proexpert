@@ -19,6 +19,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
+use RuntimeException;
 
 final class LegalDocumentFileAuthorizationTest extends TestCase
 {
@@ -85,20 +86,20 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
         [$version, $actor] = $this->versionAndActor(10, 10, 'ready');
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('can')->willReturn(true);
-        $auditRecorded = false;
+        $urlCreated = false;
         $storage = $this->createMock(FileService::class);
         $storage->expects(self::once())->method('temporaryUrl')
             ->with('org-10/legal-archive/files/7/version.pdf', 5, self::isInstanceOf(Organization::class))
-            ->willReturnCallback(function () use (&$auditRecorded): string {
-                self::assertTrue($auditRecorded, 'Audit/outbox unit must commit before issuing a signed URL.');
+            ->willReturnCallback(function () use (&$urlCreated): string {
+                $urlCreated = true;
 
                 return 'https://signed.example/version.pdf';
             });
         $audit = $this->createMock(LegalDocumentAudit::class);
         $audit->expects(self::once())->method('record')
-            ->with('preview', self::isInstanceOf(LegalArchiveDocument::class), $actor, self::isType('array'))
-            ->willReturnCallback(function () use (&$auditRecorded): void {
-                $auditRecorded = true;
+            ->with('preview_url_issued', self::isInstanceOf(LegalArchiveDocument::class), $actor, self::isType('array'))
+            ->willReturnCallback(function () use (&$urlCreated): void {
+                self::assertTrue($urlCreated, 'The URL must exist before recording a successful issuance event.');
             });
 
         $url = (new LegalDocumentDownloadService(
@@ -110,6 +111,28 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
         ))->temporaryUrl($version, $actor, 'preview');
 
         self::assertSame('https://signed.example/version.pdf', $url);
+    }
+
+    public function test_generated_url_is_not_returned_when_issuance_audit_fails(): void
+    {
+        [$version, $actor] = $this->versionAndActor(10, 10, 'ready');
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->method('can')->willReturn(true);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('temporaryUrl')->willReturn('https://signed.example/version.pdf');
+        $audit = $this->createMock(LegalDocumentAudit::class);
+        $audit->expects(self::once())->method('record')->willThrowException(new RuntimeException('audit failed'));
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('audit failed');
+
+        (new LegalDocumentDownloadService(
+            $storage,
+            $authorization,
+            new LegalDocumentFilePolicy([]),
+            new NullLogger,
+            $audit,
+        ))->temporaryUrl($version, $actor, 'download');
     }
 
     #[DataProvider('forbiddenVersionProvider')]

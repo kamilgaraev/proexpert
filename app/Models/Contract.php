@@ -590,11 +590,6 @@ class Contract extends Model
         $newTotalAmount = round((float) $actsAmount + (float) $agreementsAmount, 2);
 
         // Обновляем только если сумма изменилась
-        if (abs((float) ($this->total_amount ?? 0) - $newTotalAmount) > 0.01) {
-            $this->updateQuietly(['total_amount' => $newTotalAmount]);
-            $this->total_amount = $newTotalAmount;
-        }
-
         return $newTotalAmount;
     }
 

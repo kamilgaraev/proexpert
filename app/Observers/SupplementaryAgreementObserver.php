@@ -3,6 +3,8 @@
 namespace App\Observers;
 
 use App\Models\SupplementaryAgreement;
+use App\Services\Contract\ContractAuditedMutationService;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -11,12 +13,14 @@ use Illuminate\Support\Facades\Log;
  */
 class SupplementaryAgreementObserver
 {
+    public function __construct(private readonly ContractAuditedMutationService $contractMutations) {}
+
     /**
      * Вызывается после создания дополнительного соглашения
      */
     public function created(SupplementaryAgreement $agreement): void
     {
-        $this->recalculateContractTotal($agreement);
+        $this->recalculateContractTotal($agreement, 'created');
     }
 
     /**
@@ -26,7 +30,7 @@ class SupplementaryAgreementObserver
     {
         // Пересчитываем только если изменилась сумма изменения
         if ($agreement->wasChanged('change_amount')) {
-            $this->recalculateContractTotal($agreement);
+            $this->recalculateContractTotal($agreement, 'updated');
         }
     }
 
@@ -35,18 +39,18 @@ class SupplementaryAgreementObserver
      */
     public function deleted(SupplementaryAgreement $agreement): void
     {
-        $this->recalculateContractTotal($agreement);
+        $this->recalculateContractTotal($agreement, 'deleted');
     }
 
     /**
      * Пересчитать total_amount контракта
      */
-    private function recalculateContractTotal(SupplementaryAgreement $agreement): void
+    private function recalculateContractTotal(SupplementaryAgreement $agreement, string $reason): void
     {
         try {
             $contract = $agreement->contract;
-            
-            if (!$contract) {
+
+            if (! $contract) {
                 return;
             }
 
@@ -59,8 +63,19 @@ class SupplementaryAgreementObserver
             $newTotalAmount = $contract->recalculateTotalAmountForNonFixed();
 
             if ($newTotalAmount !== null && abs((float) $oldTotalAmount - $newTotalAmount) > 0.01) {
+                $this->contractMutations->update(
+                    $contract,
+                    ['total_amount' => $newTotalAmount],
+                    'agreement_total_recalculated',
+                    Auth::id(),
+                    [
+                        'agreement_id' => (int) $agreement->id,
+                        'reason' => $reason,
+                        'source_event_id' => 'supplementary_agreement:'.(string) $agreement->id.':'.$reason.':'.hash('sha256', (string) $agreement->updated_at),
+                    ],
+                );
                 $amountDelta = $newTotalAmount - $oldTotalAmount;
-                
+
                 Log::info('contract.total_amount.recalculated.from_agreement', [
                     'contract_id' => $contract->id,
                     'agreement_id' => $agreement->id,
@@ -73,10 +88,10 @@ class SupplementaryAgreementObserver
                 if ($contract->usesEventSourcing()) {
                     try {
                         $stateEventService = app(\App\Services\Contract\ContractStateEventService::class);
-                        
+
                         // Находим активную спецификацию для события (если есть)
                         $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
-                        
+
                         $stateEventService->createAmendedEvent(
                             $contract,
                             $activeSpecification?->id ?? null,
@@ -113,4 +128,3 @@ class SupplementaryAgreementObserver
         }
     }
 }
-

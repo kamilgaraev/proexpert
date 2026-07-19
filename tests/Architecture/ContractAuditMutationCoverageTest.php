@@ -13,9 +13,11 @@ final class ContractAuditMutationCoverageTest extends TestCase
         $root = dirname(__DIR__, 2).'/app';
         $allowed = [
             'Services/Contract/ContractAuditedMutationService.php',
-            'Console/Commands/SyncContractsWithEventSourcing.php',
-            'Console/Commands/MigrateLegacyContractsToEventSourcing.php',
-            'Console/Commands/MigrateContractsToAgreements.php',
+            'Console/Commands/SetupRBACTestEnvironment.php',
+        ];
+        $auditedCreationPaths = [
+            'Services/Contract/ContractSideMutationService.php',
+            'BusinessModules/Features/Procurement/Services/PurchaseContractService.php',
         ];
         $violations = [];
         $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root));
@@ -28,20 +30,44 @@ final class ContractAuditMutationCoverageTest extends TestCase
             if (in_array($relative, $allowed, true)) {
                 continue;
             }
+            if (str_contains($relative, '/migrations/')) {
+                continue;
+            }
             $source = file_get_contents($file->getPathname());
             if (! is_string($source)) {
                 continue;
             }
             if (
                 preg_match('/\$(?:contract|lockedContract)->(?:save|update|forceFill|delete)\s*\(/', $source) === 1
+                || preg_match('/\$(?:contract|lockedContract|parent)->(?:saveQuietly|updateQuietly)\s*\(/', $source) === 1
+                || ($relative === 'Models/Contract.php' && preg_match('/\$this->(?:save|saveQuietly|update|updateQuietly|delete)\s*\(/', $source) === 1)
                 || preg_match('/\$this->contractRepository->(?:update|delete)\s*\(/', $source) === 1
+                || preg_match('/\$this->contractRepository->create\s*\(/', $source) === 1
                 || preg_match('/contracts\(\)->(?:update|delete)\s*\(/', $source) === 1
+                || preg_match('/DB::table\([\'\"]contracts[\'\"]\)[\s\S]{0,300}?->(?:insert|update|delete)\s*\(/', $source) === 1
+                || preg_match('/Contract::(?:create|updateOrCreate|firstOrCreate|destroy)\s*\(/', $source) === 1
+                || preg_match('/Contract::query\(\)[\s\S]{0,300}?->(?:insert|update|delete)\s*\(/', $source) === 1
             ) {
+                if (
+                    in_array($relative, $auditedCreationPaths, true)
+                    && str_contains($source, 'ContractAuditedMutationService')
+                    && str_contains($source, 'recordCreated(')
+                ) {
+                    continue;
+                }
                 $violations[] = $relative;
             }
         }
 
         self::assertSame([], $violations, 'Unaudited Contract mutations: '.implode(', ', $violations));
+    }
+
+    public function test_only_test_environment_cleanup_has_a_narrow_bulk_delete_exception(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 2).'/app/Console/Commands/SetupRBACTestEnvironment.php');
+        self::assertIsString($source);
+        self::assertStringContainsString("app()->environment(['local', 'testing'])", $source);
+        self::assertStringContainsString("DB::table('contracts')", $source);
     }
 
     public function test_known_cross_module_contract_mutators_use_the_audited_boundary(): void
@@ -57,6 +83,12 @@ final class ContractAuditMutationCoverageTest extends TestCase
             'BusinessModules/Features/WorkflowManagement/Services/MobileWorkflowTaskService.php',
             'Services/Landing/MultiOrganizationService.php',
             'Services/Contract/ContractPaymentService.php',
+            'Observers/ContractPerformanceActObserver.php',
+            'Observers/SupplementaryAgreementObserver.php',
+            'Console/Commands/Contracts/RecalculateNonFixedContractsTotalCommand.php',
+            'Console/Commands/SyncContractsWithEventSourcing.php',
+            'Console/Commands/MigrateLegacyContractsToEventSourcing.php',
+            'Console/Commands/MigrateContractsToAgreements.php',
         ] as $relative) {
             $source = file_get_contents(dirname(__DIR__, 2).'/app/'.$relative);
             self::assertIsString($source);

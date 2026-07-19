@@ -4,20 +4,24 @@ namespace App\Observers;
 
 use App\Models\ContractPerformanceAct;
 use App\Services\Analytics\EVMService;
+use App\Services\Contract\ContractAuditedMutationService;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
 class ContractPerformanceActObserver
 {
+    public function __construct(private readonly ContractAuditedMutationService $contractMutations) {}
+
     public function created(ContractPerformanceAct $act): void
     {
-        $this->recalculateContractTotal($act);
+        $this->recalculateContractTotal($act, 'created');
         $this->invalidateEVMCache($act);
     }
 
     public function updated(ContractPerformanceAct $act): void
     {
         if ($act->wasChanged(['amount', 'is_approved'])) {
-            $this->recalculateContractTotal($act);
+            $this->recalculateContractTotal($act, 'updated');
         }
 
         if ($act->wasChanged(['amount', 'is_approved', 'project_id', 'contract_id', 'act_date', 'approval_date', 'status'])) {
@@ -27,11 +31,11 @@ class ContractPerformanceActObserver
 
     public function deleted(ContractPerformanceAct $act): void
     {
-        $this->recalculateContractTotal($act);
+        $this->recalculateContractTotal($act, 'deleted');
         $this->invalidateEVMCache($act);
     }
 
-    private function recalculateContractTotal(ContractPerformanceAct $act): void
+    private function recalculateContractTotal(ContractPerformanceAct $act, string $reason): void
     {
         try {
             $contract = $act->contract;
@@ -46,6 +50,18 @@ class ContractPerformanceActObserver
             if ($newTotalAmount === null || abs((float) $oldTotalAmount - $newTotalAmount) <= 0.01) {
                 return;
             }
+
+            $this->contractMutations->update(
+                $contract,
+                ['total_amount' => $newTotalAmount],
+                'performance_act_total_recalculated',
+                Auth::id(),
+                [
+                    'act_id' => (int) $act->id,
+                    'reason' => $reason,
+                    'source_event_id' => 'performance_act:'.(string) $act->id.':'.$reason.':'.hash('sha256', (string) $act->updated_at),
+                ],
+            );
 
             $amountDelta = $newTotalAmount - $oldTotalAmount;
 

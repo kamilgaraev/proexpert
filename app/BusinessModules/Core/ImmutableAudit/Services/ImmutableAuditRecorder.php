@@ -204,7 +204,7 @@ final class ImmutableAuditRecorder
     private function nextSequenceId(): int
     {
         if ($this->database()->getDriverName() === 'pgsql') {
-            $row = $this->database()->selectOne("SELECT nextval('immutable_audit_sequence') AS value");
+            $row = $this->database()->selectOne('SELECT immutable_audit_allocate_sequence() AS value');
 
             return (int) ($row->value ?? 0);
         }
@@ -236,6 +236,9 @@ final class ImmutableAuditRecorder
     {
         $redacted = $this->redactPayloads($data);
         $expected = [
+            'organization_id' => $data->organizationId,
+            'project_id' => $data->projectId,
+            'domain' => $data->domain,
             'event_type' => $data->eventType,
             'action' => $data->action,
             'result' => $data->result,
@@ -244,21 +247,29 @@ final class ImmutableAuditRecorder
             'actor_user_id' => $data->actorUserId,
             'actor_snapshot' => $redacted['actor_snapshot'],
             'impersonator_user_id' => $data->impersonatorUserId,
+            'source' => $data->source,
             'source_route' => $data->sourceRoute,
             'source_model' => $data->sourceModel,
             'source_table' => $data->sourceTable,
             'correlation_id' => $data->correlationId,
             'idempotency_key' => $data->idempotencyKey,
             'subject_label' => $data->subjectLabel,
+            'subject_type' => $data->subjectType,
+            'subject_id' => $data->subjectId === null ? null : (string) $data->subjectId,
             'related_subjects' => $redacted['related_subjects'],
             'reason' => $data->reason,
             'before_state' => $redacted['before_state'],
             'after_state' => $redacted['after_state'],
             'diff' => $redacted['diff'],
             'domain_context' => $redacted['domain_context'],
+            'sensitive_fields' => $redacted['sensitive_fields'],
+            'redaction_policy_version' => ImmutableAuditRedactor::POLICY_VERSION,
             'chain_scope' => $data->chainScope ?? 'organization:'.$data->organizationId,
             'chain_version' => $data->chainVersion,
         ];
+        if ($data->occurredAt !== null) {
+            $expected['occurred_at'] = $data->occurredAt->copy()->setMicrosecond(0);
+        }
         $actual = [];
         foreach (array_keys($expected) as $field) {
             $actual[$field] = $existing->getAttribute($field);

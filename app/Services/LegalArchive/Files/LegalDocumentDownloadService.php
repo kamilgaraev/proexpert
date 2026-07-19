@@ -61,12 +61,6 @@ final class LegalDocumentDownloadService
         if (! $document instanceof LegalArchiveDocument) {
             throw new RuntimeException('legal_document_not_found_for_audit');
         }
-        $this->audit->record($purpose, $document, $actor, [
-            'version_id' => (int) $version->id,
-            'document_file_id' => (int) $version->document_file_id,
-            'source_event_id' => $purpose.':'.(string) $version->id.':'.(string) Str::uuid(),
-        ]);
-
         $organization = $version->organization;
         if (! $organization instanceof Organization) {
             $organization = new Organization;
@@ -82,6 +76,13 @@ final class LegalDocumentDownloadService
         if (! is_string($url) || $url === '') {
             throw new RuntimeException('legal_document_temporary_url_failed');
         }
+
+        $issuanceEvent = $purpose.'_url_issued';
+        $this->audit->record($issuanceEvent, $document, $actor, [
+            'version_id' => (int) $version->id,
+            'document_file_id' => (int) $version->document_file_id,
+            'source_event_id' => $issuanceEvent.':'.(string) $version->id.':'.(string) Str::uuid(),
+        ]);
 
         $this->logger->info('legal_archive.file_access_granted', [
             'actor_id' => $actor->id,

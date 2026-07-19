@@ -234,11 +234,17 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertStringContainsString('immutable_audit_events_append_only', $baseMigration);
         self::assertStringContainsString("'contracts', 'legal_archive'", $extension);
         self::assertStringContainsString('immutable_audit_sequence', $extension);
+        $validation = file_get_contents(
+            __DIR__.'/../../../database/migrations/2026_07_19_000311_validate_immutable_audit_legal_domains.php',
+        );
+        self::assertIsString($validation);
         self::assertStringContainsString('NOT VALID', $extension);
-        self::assertStringContainsString('VALIDATE CONSTRAINT', $extension);
-        self::assertStringContainsString('immutable_audit_sequence_sync', $extension);
-        self::assertStringContainsString('SET DEFAULT nextval', $extension);
-        self::assertStringContainsString('LOCK TABLE immutable_audit_events', $extension);
+        self::assertStringNotContainsString('VALIDATE CONSTRAINT', $extension);
+        self::assertStringContainsString('VALIDATE CONSTRAINT', $validation);
+        self::assertStringContainsString('immutable_audit_allocate_sequence', $extension);
+        self::assertStringNotContainsString('CREATE TRIGGER immutable_audit_sequence_sync', $extension);
+        self::assertStringNotContainsString('SET DEFAULT nextval', $extension);
+        self::assertStringNotContainsString('LOCK TABLE immutable_audit_events', $extension);
     }
 
     public function test_source_idempotency_is_aggregate_scoped_and_conflicts_are_rejected(): void
@@ -262,6 +268,75 @@ final class LegalDocumentAuditChainTest extends TestCase
             'source_event_id' => 'external:17',
             'after' => ['status' => 'active'],
         ]);
+    }
+
+    public function test_duplicate_comparison_rejects_changed_project_and_evidence_fields(): void
+    {
+        $recorder = new ImmutableAuditRecorder(
+            new ImmutableAuditRedactor,
+            new ImmutableAuditIntegrityService,
+            $this->database->getConnection(),
+        );
+        $base = new \App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventData(
+            organizationId: 2,
+            domain: 'legal_archive',
+            eventType: 'legal_document.issued',
+            action: 'issued',
+            source: 'legal_archive',
+            projectId: 10,
+            sourceEventId: 'issue:5',
+            subjectType: 'legal_document',
+            subjectId: 5,
+            beforeState: ['status' => 'ready'],
+            relatedSubjects: [['type' => 'version', 'id' => 7]],
+        );
+        $recorder->record($base);
+
+        $this->expectException(DomainException::class);
+        $recorder->record(new \App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventData(
+            organizationId: 2,
+            domain: 'legal_archive',
+            eventType: 'legal_document.issued',
+            action: 'issued',
+            source: 'legal_archive',
+            projectId: 11,
+            sourceEventId: 'issue:5',
+            subjectType: 'legal_document',
+            subjectId: 5,
+            beforeState: ['status' => 'changed'],
+            relatedSubjects: [['type' => 'version', 'id' => 8]],
+        ));
+    }
+
+    public function test_idempotency_index_rollout_preserves_legacy_contour_and_is_forward_only(): void
+    {
+        $migration = file_get_contents(
+            __DIR__.'/../../../database/migrations/2026_07_19_000320_scope_immutable_audit_idempotency.php',
+        );
+        self::assertIsString($migration);
+        self::assertStringContainsString('immutable_audit_source_event_aggregate_unique', $migration);
+        self::assertStringContainsString('immutable_audit_source_event_legacy_unique', $migration);
+        self::assertStringContainsString('subject_type IS NULL OR subject_id IS NULL', $migration);
+        self::assertStringContainsString('CREATE UNIQUE INDEX{$concurrently}', $migration);
+        self::assertStringContainsString('immutable_audit_idempotency_indexes_are_forward_only', $migration);
+        self::assertStringNotContainsString('immutable_audit_source_event_unique_v1', $migration);
+    }
+
+    public function test_opt_in_postgres_test_exercises_production_recorder_integrity_and_outbox(): void
+    {
+        $test = file_get_contents(
+            __DIR__.'/../../Integration/LegalArchive/LegalDocumentAuditPostgresIntegrationTest.php',
+        );
+        self::assertIsString($test);
+        self::assertStringContainsString('new ImmutableAuditRecorder', $test);
+        self::assertStringContainsString('verifyEvent(', $test);
+        self::assertStringContainsString('verifyChain(', $test);
+        self::assertStringContainsString('new LegalDocumentOutbox', $test);
+        self::assertStringContainsString("getConnection('legal_pg_first')", $test);
+        self::assertStringContainsString("getConnection('legal_pg_second')", $test);
+        self::assertStringContainsString('new Process([PHP_BINARY', $test);
+        self::assertStringNotContainsString('SKIP LOCKED', $test);
+        self::assertStringNotContainsString('pg_try_advisory', $test);
     }
 
     public function test_service_uses_only_injected_connection_for_audit_and_outbox(): void

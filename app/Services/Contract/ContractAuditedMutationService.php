@@ -25,15 +25,35 @@ final readonly class ContractAuditedMutationService
         array $context = [],
         ?Closure $afterPersist = null,
     ): Contract {
+        return $this->persistUpdate(
+            $contract,
+            $attributes,
+            $this->snapshot($contract, array_keys($attributes)),
+            $event,
+            $actorId,
+            $context,
+            $afterPersist,
+        );
+    }
+
+    private function persistUpdate(
+        Contract $contract,
+        array $attributes,
+        array $before,
+        string $event,
+        ?int $actorId,
+        array $context,
+        ?Closure $afterPersist,
+    ): Contract {
         return $this->connection->transaction(function () use (
             $contract,
             $attributes,
+            $before,
             $event,
             $actorId,
             $context,
             $afterPersist,
         ): Contract {
-            $before = $this->snapshot($contract, array_keys($attributes));
             $contract->setConnection($this->connection->getName());
             $contract->update($attributes);
             $additionalContext = $afterPersist?->__invoke($contract) ?? [];
@@ -54,7 +74,13 @@ final readonly class ContractAuditedMutationService
         array $context = [],
         ?Closure $afterPersist = null,
     ): Contract {
-        return $this->update($contract, $contract->getDirty(), $event, $actorId, $context, $afterPersist);
+        $attributes = $contract->getDirty();
+        $before = [];
+        foreach (array_keys($attributes) as $field) {
+            $before[$field] = $contract->getOriginal($field);
+        }
+
+        return $this->persistUpdate($contract, $attributes, $before, $event, $actorId, $context, $afterPersist);
     }
 
     public function recordCreated(

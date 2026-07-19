@@ -4,12 +4,18 @@ namespace App\Console\Commands;
 
 use App\Models\Contract;
 use App\Models\SupplementaryAgreement;
+use App\Services\Contract\ContractAuditedMutationService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class MigrateContractsToAgreements extends Command
 {
+    public function __construct(private readonly ContractAuditedMutationService $contractMutations)
+    {
+        parent::__construct();
+    }
+
     protected $signature = 'contracts:migrate-to-agreements {--dry-run : Показать изменения без сохранения}';
 
     protected $description = 'Мигрирует "дочерние контракты" (Д/С) в таблицу supplementary_agreements';
@@ -81,7 +87,7 @@ class MigrateContractsToAgreements extends Command
             ]
         );
 
-        if (!empty($stats['errors'])) {
+        if (! empty($stats['errors'])) {
             $this->error('❌ Ошибки:');
             foreach ($stats['errors'] as $error) {
                 $this->error("  - {$error}");
@@ -98,8 +104,8 @@ class MigrateContractsToAgreements extends Command
     protected function isSupplementaryAgreement(Contract $contract): bool
     {
         $parent = $contract->parentContract;
-        
-        if (!$parent) {
+
+        if (! $parent) {
             return false;
         }
 
@@ -107,7 +113,7 @@ class MigrateContractsToAgreements extends Command
         // 1. Тот же organization_id
         // 2. Тот же contractor_id
         // 3. Номер содержит "Д/С" или "ДС"
-        
+
         $sameOrganization = $contract->organization_id === $parent->organization_id;
         $sameContractor = $contract->contractor_id === $parent->contractor_id;
         $hasAgreementPattern = preg_match('/Д\/С|ДС|дополнительн|доп\.\s*согл/ui', $contract->number);
@@ -122,7 +128,7 @@ class MigrateContractsToAgreements extends Command
 
         // В dry-run режиме используем кэш для накопления изменений
         if ($dryRun) {
-            if (!isset($parentAmountsCache[$parent->id])) {
+            if (! isset($parentAmountsCache[$parent->id])) {
                 $parentAmountsCache[$parent->id] = $parent->total_amount;
             }
             $currentParentAmount = $parentAmountsCache[$parent->id];
@@ -153,23 +159,30 @@ class MigrateContractsToAgreements extends Command
             ] : null,
         ];
 
-        if (!$dryRun) {
+        if (! $dryRun) {
             DB::beginTransaction();
             try {
                 // Создаем запись в supplementary_agreements
                 $agreement = SupplementaryAgreement::create($agreementData);
 
                 // Обновляем total_amount родительского контракта
-                $parent->total_amount += $contract->total_amount;
-                $parent->save();
+                $this->contractMutations->update(
+                    $parent,
+                    ['total_amount' => $parent->total_amount + $contract->total_amount],
+                    'legacy_child_contract_migrated',
+                    null,
+                    ['source_event_id' => 'contract_to_agreement:'.(string) $contract->id.':parent'],
+                );
 
                 // Помечаем старый контракт как удаленный (soft delete)
-                $contract->delete();
+                $this->contractMutations->delete($contract, null, [
+                    'source_event_id' => 'contract_to_agreement:'.(string) $contract->id.':deleted',
+                ]);
 
                 DB::commit();
 
                 $this->info("\n✅ Контракт #{$contract->id} ({$contract->number}) → Agreement #{$agreement->id}");
-                $this->info("   Родитель #{$parent->id}: {$parent->total_amount} ₽ (было: " . ($currentParentAmount) . " ₽)");
+                $this->info("   Родитель #{$parent->id}: {$parent->total_amount} ₽ (было: ".($currentParentAmount).' ₽)');
 
                 Log::info('Contract migrated to agreement', [
                     'old_contract_id' => $contract->id,
@@ -190,12 +203,11 @@ class MigrateContractsToAgreements extends Command
             $this->info("   change_amount: {$contract->total_amount} ₽");
             $this->info("   Текущая сумма родителя: {$currentParentAmount} ₽");
             $this->info("   Новая сумма родителя: {$newParentAmount} ₽");
-            
+
             // Обновляем кэш
             $parentAmountsCache[$parent->id] = $newParentAmount;
-            
+
             $stats['migrated']++;
         }
     }
 }
-

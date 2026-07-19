@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Contract;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\Enums\Contract\ContractStatusEnum;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\Contract\ContractAuditedMutationService;
@@ -36,6 +37,7 @@ final class ContractAuditedMutationServiceTest extends TestCase
             $table->string('number');
             $table->string('status')->default('draft');
             $table->unsignedBigInteger('supplier_id')->nullable();
+            $table->boolean('is_fixed_amount')->default(true);
             $table->timestamps();
         });
     }
@@ -72,6 +74,32 @@ final class ContractAuditedMutationServiceTest extends TestCase
         }
 
         self::assertNull($contract->refresh()->supplier_id);
+    }
+
+    public function test_save_dirty_uses_original_cast_values_for_before_and_current_values_for_after(): void
+    {
+        $contract = Contract::query()->create([
+            'organization_id' => 7,
+            'number' => 'D-1',
+            'status' => ContractStatusEnum::DRAFT,
+            'supplier_id' => null,
+            'is_fixed_amount' => true,
+        ]);
+        $contract->status = ContractStatusEnum::ACTIVE;
+        $contract->supplier_id = 55;
+        $contract->is_fixed_amount = false;
+        $audit = new RecordingContractAudit;
+
+        (new ContractAuditedMutationService($audit, $this->database->getConnection()))
+            ->saveDirty($contract, 'dirty_saved', 9);
+
+        $context = $audit->events[0]['context'];
+        self::assertSame(ContractStatusEnum::DRAFT, $context['before']['status']);
+        self::assertNull($context['before']['supplier_id']);
+        self::assertTrue($context['before']['is_fixed_amount']);
+        self::assertSame(ContractStatusEnum::ACTIVE, $context['after']['status']);
+        self::assertSame(55, $context['after']['supplier_id']);
+        self::assertFalse($context['after']['is_fixed_amount']);
     }
 }
 
