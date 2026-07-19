@@ -12,7 +12,12 @@ final class DraftReadinessInspector
         'normative_missing', 'normative_rejected', 'unit_mismatch',
         'price_snapshot_missing', 'price_snapshot_unfinalized', 'duplicate_candidate',
         'blocking_review_unresolved', 'building_model_incomplete', 'cad_processing_failed',
+        'required_scope_unresolved',
     ];
+
+    public function __construct(
+        private readonly DraftPackageCoverageInspector $packageCoverage = new DraftPackageCoverageInspector,
+    ) {}
 
     public function inspect(array $draft): DraftReadinessInspection
     {
@@ -78,6 +83,10 @@ final class DraftReadinessInspector
         if ((int) ($draft['quality_summary']['review_items']['blocking'] ?? 0) > 0) {
             $codes[] = 'blocking_review_unresolved';
         }
+        $missingPackages = $this->packageCoverage->missingPackages($draft);
+        if ($missingPackages !== []) {
+            $codes[] = 'required_scope_unresolved';
+        }
 
         $codes = array_values(array_unique(array_filter($codes)));
         sort($codes, SORT_STRING);
@@ -85,7 +94,13 @@ final class DraftReadinessInspector
         sort($warningCodes, SORT_STRING);
 
         return new DraftReadinessInspection(
-            array_map($this->issue(...), $codes),
+            array_map(
+                fn (string $code): array => $this->issue(
+                    $code,
+                    $code === 'required_scope_unresolved' ? ['packages' => $missingPackages] : [],
+                ),
+                $codes,
+            ),
             array_map($this->issue(...), $warningCodes),
             array_merge(
                 array_fill_keys(array_map(static fn (string $code): string => 'gate_'.$code, self::BLOCKING_CODES), 0),
@@ -111,8 +126,13 @@ final class DraftReadinessInspector
         return $items;
     }
 
-    private function issue(string $code): array
+    private function issue(string $code, array $details = []): array
     {
-        return ['code' => $code, 'message_key' => 'estimate_generation.readiness_'.$code, 'message' => 'estimate_generation.readiness_'.$code];
+        return [
+            'code' => $code,
+            'message_key' => 'estimate_generation.readiness_'.$code,
+            'message' => 'estimate_generation.readiness_'.$code,
+            ...($details !== [] ? ['details' => $details] : []),
+        ];
     }
 }

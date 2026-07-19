@@ -166,7 +166,10 @@ final readonly class AcceptedNormativeDecisionData
         $groupCode = $resource['code'] ?? null;
         $policy = is_array($selection) ? ($selection['policy'] ?? null) : null;
         $selectedResourceCode = is_array($selection) ? ($selection['selected_resource_code'] ?? null) : null;
-        $isSemanticSelection = $policy === 'regional_semantic_pipe_hard_attributes_median:v1'
+        $isSemanticSelection = in_array($policy, [
+            'regional_semantic_pipe_hard_attributes_median:v1',
+            'regional_semantic_metal_gutter_family_median:v1',
+        ], true)
             && ($selection['price_source'] ?? null) === 'regional_catalog'
             && is_string($selectedResourceCode)
             && trim($selectedResourceCode) !== '';

@@ -39,7 +39,6 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         if ($hints !== []) {
             $analysis['document_context']['quantity_learning_hints'] = $hints;
         }
-        $payload = $this->compiler->compile($analysis, null, true);
         $quantities = [];
         foreach (($quantityOutput['building_quantities']['quantities'] ?? []) as $quantity) {
             if (! is_array($quantity)) {
@@ -48,6 +47,10 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             $typed = QuantityData::fromArray($quantity)->toArray();
             $quantities[$typed['key']] = $typed;
         }
+        if ($quantities !== []) {
+            $analysis['document_context']['canonical_building_quantities'] = array_values($quantities);
+        }
+        $payload = $this->compiler->compile($analysis, null, true);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {

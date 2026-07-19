@@ -22,6 +22,7 @@ final readonly class SessionBuildingModelBridge
         private GeometryBuildingModelInputMapper $mapper,
         private BuildingModelAssembler $assembler,
         private BuildingModelRepository $models,
+        private DocumentFloorIdentityResolver $floorIdentity = new DocumentFloorIdentityResolver,
     ) {}
 
     /** @param list<SessionBuildingModelUnitData> $units @param array<string, mixed>|null $areaConstraint */
@@ -98,6 +99,7 @@ final readonly class SessionBuildingModelBridge
         $inputs = [];
         $unanchoredVectorInputs = [];
         $hasPrimaryRecognizedFloorPlan = $this->hasPrimaryRecognizedFloorPlan($units);
+        $acceptedFloorDocuments = $this->acceptedFloorDocuments($units);
         foreach ($units as $unit) {
             $visionPayload = $unit->payload['vision_analysis'] ?? null;
             $vectorPayload = $unit->payload['vector_geometry'] ?? null;
@@ -109,6 +111,9 @@ final readonly class SessionBuildingModelBridge
                 continue;
             }
             if (is_array($visionPayload) && $this->isNonFloorVisionSource($visionPayload)) {
+                continue;
+            }
+            if (is_array($visionPayload) && $this->isRejectedFloorSource($unit, $visionPayload, $acceptedFloorDocuments)) {
                 continue;
             }
 
@@ -164,6 +169,79 @@ final readonly class SessionBuildingModelBridge
         }
 
         return $hasPrimaryRecognizedFloorPlan ? $inputs : [...$inputs, ...$unanchoredVectorInputs];
+    }
+
+    /**
+     * @param  list<SessionBuildingModelUnitData>  $units
+     * @return array<string, int|null>
+     */
+    private function acceptedFloorDocuments(array $units): array
+    {
+        $sources = [];
+        foreach ($units as $unit) {
+            $vision = $unit->payload['vision_analysis'] ?? null;
+            if (! in_array($unit->type->value, ['raster_image', 'sketch'], true)
+                || ! is_array($vision)
+                || $this->isNonFloorVisionSource($vision)
+                || ! $this->hasDetectedRoom($vision)) {
+                continue;
+            }
+            $identity = $this->recognizedFloorIdentity($unit);
+            if ($identity === null) {
+                continue;
+            }
+            [$floorKey, $priority] = $identity;
+            $sources[$floorKey][$unit->documentId] = max(
+                $priority,
+                (int) ($sources[$floorKey][$unit->documentId] ?? 0),
+            );
+        }
+
+        $accepted = [];
+        foreach ($sources as $floorKey => $documents) {
+            $highestPriority = max($documents);
+            $authoritativeDocuments = array_keys(array_filter(
+                $documents,
+                static fn (int $priority): bool => $priority === $highestPriority,
+            ));
+            $accepted[$floorKey] = count($authoritativeDocuments) === 1
+                ? (int) $authoritativeDocuments[0]
+                : null;
+        }
+
+        return $accepted;
+    }
+
+    /** @param array<string, mixed> $vision @param array<string, int|null> $acceptedFloorDocuments */
+    private function isRejectedFloorSource(
+        SessionBuildingModelUnitData $unit,
+        array $vision,
+        array $acceptedFloorDocuments,
+    ): bool {
+        if (! in_array($unit->type->value, ['raster_image', 'sketch'], true) || ! $this->hasDetectedRoom($vision)) {
+            return false;
+        }
+        $identity = $this->recognizedFloorIdentity($unit);
+        if ($identity === null || ! array_key_exists($identity[0], $acceptedFloorDocuments)) {
+            return false;
+        }
+
+        return $acceptedFloorDocuments[$identity[0]] !== $unit->documentId;
+    }
+
+    /** @return array{string, 1|2}|null */
+    private function recognizedFloorIdentity(SessionBuildingModelUnitData $unit): ?array
+    {
+        $explicit = $unit->payload['floor_key'] ?? null;
+        if (is_string($explicit) && preg_match('/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$/D', $explicit) === 1) {
+            return [$explicit, 2];
+        }
+        $documentFloor = $this->floorIdentity->resolve(
+            is_string($unit->payload['document_name'] ?? null) ? $unit->payload['document_name'] : null,
+            is_string($unit->payload['document_title'] ?? null) ? $unit->payload['document_title'] : null,
+        );
+
+        return $documentFloor === null ? null : [$documentFloor, 1];
     }
 
     /** @param list<SessionBuildingModelUnitData> $units */
@@ -366,6 +444,13 @@ final readonly class SessionBuildingModelBridge
         $explicit = $unit->payload['floor_key'] ?? null;
         if (is_string($explicit) && preg_match('/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$/D', $explicit) === 1) {
             return $explicit;
+        }
+        $documentFloor = $this->floorIdentity->resolve(
+            is_string($unit->payload['document_name'] ?? null) ? $unit->payload['document_name'] : null,
+            is_string($unit->payload['document_title'] ?? null) ? $unit->payload['document_title'] : null,
+        );
+        if ($documentFloor !== null) {
+            return $documentFloor;
         }
         if (($unit->payload['single_floor'] ?? false) === true || ($unit->payload['floor_count'] ?? null) === 1) {
             return 'floor-1';

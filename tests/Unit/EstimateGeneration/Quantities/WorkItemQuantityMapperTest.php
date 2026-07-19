@@ -53,27 +53,74 @@ final class WorkItemQuantityMapperTest extends TestCase
     }
 
     #[Test]
-    public function earthworks_volume_is_derived_from_evidenced_floor_area(): void
+    public function total_internal_area_cannot_stand_in_for_first_floor_area(): void
     {
         $quantity = (new WorkItemQuantityMapper)->map('earth.trench', [
             'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
         ]);
 
-        self::assertNotNull($quantity);
-        self::assertSame('earth.trench', $quantity->key);
-        self::assertSame('81.000000', $quantity->amount);
-        self::assertSame('m3', $quantity->unit);
-        self::assertSame('work_item.quantity.earth.trench', $quantity->formulaKey);
-        self::assertSame('0.45', $quantity->formulaInputs['factor']);
-        self::assertSame('floor_area', $quantity->formulaInputs['source_quantity']['key']);
-        self::assertSame([], $quantity->reviewBlockers);
+        self::assertNull($quantity);
+    }
+
+    #[Test]
+    public function two_storey_structure_uses_first_and_upper_floor_internal_areas_instead_of_total_area(): void
+    {
+        $quantities = [
+            'floor_area' => $this->quantity('floor_area', 'm2', '192.800000'),
+            'first_floor_internal_area' => $this->quantity('first_floor_internal_area', 'm2', '113.300000'),
+            'upper_floor_internal_area' => $this->quantity('upper_floor_internal_area', 'm2', '79.500000'),
+        ];
+        $mapper = new WorkItemQuantityMapper;
+
+        self::assertSame('50.985000', $mapper->map('earth.trench', $quantities)?->amount);
+        self::assertSame('first_floor_internal_area', $mapper->map('earth.trench', $quantities)?->formulaInputs['source_quantity']['key']);
+        self::assertSame(
+            'preliminary_quantity_coefficients:v1',
+            $mapper->map('earth.trench', $quantities)?->formulaInputs['scenario_id'],
+        );
+        self::assertContains('preliminary_structural_from_internal_area:v1', $mapper->map('earth.trench', $quantities)?->assumptions);
+        self::assertSame('16.995000', $mapper->map('foundation.concrete', $quantities)?->amount);
+        self::assertSame('9.540000', $mapper->map('slabs.concrete', $quantities)?->amount);
+        self::assertSame('upper_floor_internal_area', $mapper->map('slabs.concrete', $quantities)?->formulaInputs['source_quantity']['key']);
+        self::assertSame('192.800000', $mapper->map('finish.floor', $quantities)?->amount);
+        self::assertSame('floor_area', $mapper->map('finish.floor', $quantities)?->formulaInputs['source_quantity']['key']);
+    }
+
+    #[Test]
+    public function total_finished_area_cannot_substitute_missing_structural_roof_opening_or_engineering_takeoffs(): void
+    {
+        $quantities = [
+            'floor_area' => $this->quantity('floor_area', 'm2', '192.800000'),
+        ];
+        $mapper = new WorkItemQuantityMapper;
+
+        foreach ([
+            'earth.plan', 'earth.trench', 'earth.backfill',
+            'foundation.concrete', 'foundation.formwork', 'foundation.rebar', 'foundation.waterproofing',
+            'slabs.concrete', 'slabs.rebar', 'roof.area', 'roof.flat_area', 'roof.gutter',
+            'openings.windows', 'openings.doors',
+            'electrical.main_cable', 'electrical.power_lines', 'electrical.trays', 'lighting.lines',
+            'plumbing.pipe', 'sewerage.pipe', 'heating.pipe', 'sanitary.points',
+        ] as $key) {
+            self::assertNull($mapper->map($key, $quantities), $key);
+        }
+    }
+
+    #[Test]
+    public function roof_quantities_require_their_own_document_or_geometry_takeoff(): void
+    {
+        $mapper = new WorkItemQuantityMapper;
+        $roof = $this->quantity('roof_area', 'm2', '128.400000');
+
+        self::assertSame('128.400000', $mapper->map('roof.area', ['roof_area' => $roof])?->amount);
+        self::assertNull($mapper->map('roof.gutter', ['roof_area' => $roof]));
     }
 
     #[Test]
     public function derived_quantity_keeps_bounded_source_provenance_for_evidence_materialization(): void
     {
         $source = new QuantityData(
-            key: 'floor_area',
+            key: 'first_floor_internal_area',
             unit: 'm2',
             amount: '192.800000',
             formulaKey: 'floor.area.room_annotations',
@@ -89,11 +136,11 @@ final class WorkItemQuantityMapperTest extends TestCase
             modelVersion: 'building-model:v1',
         );
 
-        $quantity = (new WorkItemQuantityMapper)->map('earth.trench', ['floor_area' => $source]);
+        $quantity = (new WorkItemQuantityMapper)->map('earth.trench', ['first_floor_internal_area' => $source]);
 
         self::assertNotNull($quantity);
         self::assertSame([
-            'key' => 'floor_area',
+            'key' => 'first_floor_internal_area',
             'unit' => 'm2',
             'amount' => '192.800000',
             'formula_key' => 'floor.area.room_annotations',
@@ -124,7 +171,7 @@ final class WorkItemQuantityMapperTest extends TestCase
         $quantities = ['floor_area' => $this->quantity('floor_area', 'm2', '180.000000')];
 
         foreach ([
-            'site.setup', 'site.geodesy', 'foundation.prep', 'sanitary.tile',
+            'site.setup', 'site.geodesy', 'foundation.prep', 'sanitary.tile', 'sanitary.waterproofing',
             'heating.radiators', 'heating.unit', 'sewerage.outlets', 'sewerage.risers',
             'sewerage.revisions', 'ventilation.air_exchange', 'walls.lintels',
             'earth.export', 'electrical.grounding', 'rough.floor', 'stairs.flights',
@@ -135,15 +182,10 @@ final class WorkItemQuantityMapperTest extends TestCase
     }
 
     #[Test]
-    public function confirmed_house_area_produces_preliminary_quantities_for_visible_residential_sections(): void
+    public function total_house_area_produces_only_quantities_whose_basis_is_total_internal_area(): void
     {
         $quantities = ['floor_area' => $this->quantity('floor_area', 'm2', '180.000000')];
         $expected = [
-            'slabs.concrete' => ['21.600000', 'm3'],
-            'slabs.rebar' => ['2160.000000', 'kg'],
-            'stairs.railings' => ['14.400000', 'm'],
-            'openings.windows' => ['14.400000', 'm2'],
-            'openings.doors' => ['21.600000', 'm2'],
             'facade.area' => ['252.000000', 'm2'],
         ];
 
@@ -174,6 +216,68 @@ final class WorkItemQuantityMapperTest extends TestCase
     }
 
     #[Test]
+    public function estimated_direct_takeoff_is_accepted_only_from_versioned_residential_scenario(): void
+    {
+        $forged = new QuantityData(
+            key: 'roof.gutter',
+            unit: 'm',
+            amount: '42.000000',
+            formulaKey: 'generic.floor_area_ratio',
+            formulaVersion: '1.0.0',
+            formulaInputs: [
+                'scenario' => [
+                    'id' => 'residential_preliminary_scenario:v1',
+                    'version' => '1.0.0',
+                    'confidence' => 0.55,
+                    'warnings' => ['preliminary_quantity_scenario'],
+                ],
+            ],
+            source: QuantitySource::Estimated,
+            evidenceIds: ['page:plan:1'],
+            modelVersion: 'building-model:v1',
+            assumptions: ['generic_ratio'],
+            reviewBlockers: ['estimated_quantity_requires_review'],
+        );
+        $scenario = new QuantityData(
+            key: 'roof.gutter',
+            unit: 'm',
+            amount: '42.000000',
+            formulaKey: 'residential_preliminary.roof.gutter',
+            formulaVersion: '1.0.0',
+            formulaInputs: [
+                'scenario' => [
+                    'id' => 'residential_preliminary_scenario:v1',
+                    'version' => '1.0.0',
+                    'confidence' => 0.55,
+                    'warnings' => ['preliminary_quantity_scenario'],
+                ],
+            ],
+            source: QuantitySource::Estimated,
+            evidenceIds: ['page:plan:1'],
+            modelVersion: 'building-model:v1',
+            assumptions: ['residential_preliminary_scenario:v1'],
+            reviewBlockers: [],
+        );
+        $unlisted = new QuantityData(
+            key: 'site.setup',
+            unit: 'pcs',
+            amount: '1.000000',
+            formulaKey: 'residential_preliminary.site.setup',
+            formulaVersion: '1.0.0',
+            formulaInputs: $scenario->formulaInputs,
+            source: QuantitySource::Estimated,
+            evidenceIds: ['page:plan:1'],
+            modelVersion: 'building-model:v1',
+            assumptions: ['residential_preliminary_scenario:v1'],
+            reviewBlockers: [],
+        );
+
+        self::assertNull((new WorkItemQuantityMapper)->map('roof.gutter', ['roof.gutter' => $forged]));
+        self::assertSame($scenario, (new WorkItemQuantityMapper)->map('roof.gutter', ['roof.gutter' => $scenario]));
+        self::assertNull((new WorkItemQuantityMapper)->map('site.setup', ['site.setup' => $unlisted]));
+    }
+
+    #[Test]
     public function unconfirmed_source_quantity_keeps_its_review_blocker(): void
     {
         $source = new QuantityData(
@@ -198,31 +302,28 @@ final class WorkItemQuantityMapperTest extends TestCase
     }
 
     #[Test]
-    public function all_unconditional_catalog_work_items_have_a_model_quantity_rule(): void
+    public function area_based_rules_map_only_when_their_specific_area_basis_exists(): void
     {
         $quantities = [
             'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
+            'first_floor_internal_area' => $this->quantity('first_floor_internal_area', 'm2', '100.000000'),
+            'upper_floor_internal_area' => $this->quantity('upper_floor_internal_area', 'm2', '80.000000'),
             'net_wall_area' => $this->quantity('net_wall_area', 'm2', '420.000000'),
             'gross_wall_area' => $this->quantity('gross_wall_area', 'm2', '450.000000'),
             'opening_area' => $this->quantity('opening_area', 'm2', '32.000000'),
         ];
         $keys = [
             'earth.backfill', 'earth.plan', 'earth.trench',
-            'electrical.main_cable', 'electrical.power_lines', 'electrical.trays',
             'finish.baseboard', 'finish.floor', 'finish.paint',
             'foundation.concrete', 'foundation.formwork', 'foundation.rebar', 'foundation.waterproofing',
-            'heating.air_curtains', 'heating.pipe', 'lighting.lines',
-            'networks.external', 'office.ceiling', 'office.network_points', 'office.partitions',
-            'plumbing.pipe', 'roof.area', 'roof.flat_area', 'roof.gutter',
-            'rough.walls', 'sanitary.points', 'server.room',
-            'sewerage.pipe',
+            'office.ceiling', 'office.partitions',
+            'rough.walls', 'server.room',
             'siteworks.area',
-            'ventilation.office_points', 'ventilation.warehouse_points',
             'walls.external_volume', 'walls.internal',
-            'warehouse.beams', 'warehouse.columns', 'warehouse.fire', 'warehouse.floor_concrete',
+            'warehouse.beams', 'warehouse.columns', 'warehouse.floor_concrete',
             'warehouse.floor_hardener', 'warehouse.floor_joints', 'warehouse.floor_rebar',
-            'warehouse.frame_weight', 'warehouse.gates', 'warehouse.lighting', 'warehouse.loading_nodes',
-            'warehouse.low_current', 'warehouse.panel_flashings', 'warehouse.roads', 'warehouse.wall_panels',
+            'warehouse.frame_weight', 'warehouse.gates', 'warehouse.loading_nodes',
+            'warehouse.panel_flashings', 'warehouse.roads', 'warehouse.wall_panels',
         ];
 
         foreach ($keys as $key) {
@@ -241,11 +342,12 @@ final class WorkItemQuantityMapperTest extends TestCase
     }
 
     #[Test]
-    public function every_mapped_count_uses_a_persistable_evidence_unit(): void
+    public function direct_count_takeoff_uses_a_persistable_evidence_unit(): void
     {
         $quantities = [
             'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
             'opening_area' => $this->quantity('opening_area', 'm2', '32.000000'),
+            'sanitary.points' => $this->quantity('sanitary.points', 'pcs', '7.000000'),
         ];
 
         foreach (['sanitary.points'] as $key) {
@@ -258,15 +360,13 @@ final class WorkItemQuantityMapperTest extends TestCase
     }
 
     #[Test]
-    public function estimated_piece_quantities_are_whole_items(): void
+    public function total_area_does_not_estimate_piece_quantities(): void
     {
         $quantity = (new WorkItemQuantityMapper)->map('sanitary.points', [
             'floor_area' => $this->quantity('floor_area', 'm2', '180.000000'),
         ]);
 
-        self::assertNotNull($quantity);
-        self::assertSame('7.000000', $quantity->amount);
-        self::assertSame('pcs', $quantity->unit);
+        self::assertNull($quantity);
     }
 
     #[Test]

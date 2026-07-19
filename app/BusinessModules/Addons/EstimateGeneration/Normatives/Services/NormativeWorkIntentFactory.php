@@ -12,7 +12,11 @@ use DateTimeImmutable;
 
 final class NormativeWorkIntentFactory
 {
-    public function __construct(private ?WorkIntentClassifier $classifier = null, private ?NormativeRerankerModelSet $modelSet = null) {}
+    public function __construct(
+        private ?WorkIntentClassifier $classifier = null,
+        private ?NormativeRerankerModelSet $modelSet = null,
+        private ?ResidentialMaterialScenarioCatalog $materialScenarioCatalog = null,
+    ) {}
 
     public function intent(array $item, array $context, string $datasetVersion): WorkIntentData
     {
@@ -33,6 +37,8 @@ final class NormativeWorkIntentFactory
             }
         }
         $evidence = $this->evidence($context['source_refs'] ?? []);
+        $objectType = ObjectTypeSignalClassifier::canonical((string) ($context['object_type'] ?? ''));
+        $quantityKey = $this->quantityKey($item);
 
         $preferredSections = array_values(array_filter(
             $classified['preferred_section_prefixes'] ?? [],
@@ -46,7 +52,7 @@ final class NormativeWorkIntentFactory
             (string) ($classified['expected_dimensions'][0] ?? ''), (string) ($classified['material'] ?? ''),
             (string) ($classified['action'] ?? ''), (string) ($classified['scope'] ?? ''),
             count($preferredSections) === 1 ? $preferredSections[0] : '',
-            ObjectTypeSignalClassifier::canonical((string) ($context['object_type'] ?? '')),
+            $objectType,
             $datasetVersion, 'parsed', $this->region($context), new DateTimeImmutable((string) $context['applicability_date']),
             $evidence, $preferredSections,
             is_string($item['normative_rate_code'] ?? null) && $item['normative_rate_code'] !== ''
@@ -54,6 +60,15 @@ final class NormativeWorkIntentFactory
                 : null,
             (string) ($intent->system ?? ''),
             (string) ($classified['object'] ?? ''),
+            $this->specializationEvidence(
+                $recorded['specialization_evidence'] ?? $item['specialization_evidence'] ?? [],
+                $evidence,
+            ),
+            $this->specializationScenario(
+                $item['specialization_scenario'] ?? $recorded['specialization_scenario'] ?? null,
+                $quantityKey,
+                $objectType,
+            ),
         );
     }
 
@@ -96,5 +111,65 @@ final class NormativeWorkIntentFactory
         }
 
         return array_slice(array_values(array_unique(array_filter($evidence, static fn (mixed $ref): bool => is_string($ref) && $ref !== '' && strlen($ref) <= 128))), 0, 32);
+    }
+
+    /**
+     * @param  list<string>  $sourceEvidence
+     * @return list<array<string, mixed>>
+     */
+    private function specializationEvidence(mixed $evidence, array $sourceEvidence): array
+    {
+        if (! is_array($evidence)) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($evidence as $item) {
+            if (! is_array($item)
+                || ! in_array($item['source'] ?? null, ['document', 'building_model', 'user_confirmation'], true)) {
+                continue;
+            }
+
+            $text = trim((string) ($item['text'] ?? ''));
+            $refs = is_array($item['evidence_refs'] ?? null)
+                ? array_values(array_unique(array_filter(
+                    $item['evidence_refs'],
+                    static fn (mixed $ref): bool => is_string($ref) && in_array($ref, $sourceEvidence, true),
+                )))
+                : [];
+            if ($text === '' || $refs === []) {
+                continue;
+            }
+
+            $result[] = [
+                'text' => mb_substr($text, 0, 2000),
+                'source' => $item['source'],
+                'evidence_refs' => $refs,
+            ];
+        }
+
+        return array_slice($result, 0, 32);
+    }
+
+    /** @return array<string, mixed>|null */
+    private function specializationScenario(mixed $scenario, string $quantityKey, string $objectType): ?array
+    {
+        $this->materialScenarioCatalog ??= new ResidentialMaterialScenarioCatalog;
+
+        return $this->materialScenarioCatalog->resolve($scenario, $quantityKey, $objectType);
+    }
+
+    /** @param array<string, mixed> $item */
+    private function quantityKey(array $item): string
+    {
+        $metadata = is_array($item['metadata'] ?? null) ? $item['metadata'] : [];
+
+        foreach ([$metadata['material_scenario_work_key'] ?? null, $metadata['quantity_key'] ?? null, $item['quantity_formula'] ?? null] as $value) {
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return '';
     }
 }

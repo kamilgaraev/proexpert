@@ -11,6 +11,8 @@ final readonly class WorkIntentData
     /**
      * @param  list<string>  $sourceEvidence
      * @param  list<string>  $normativeSections
+     * @param  list<array<string, mixed>>  $specializationEvidence
+     * @param  array<string, mixed>|null  $specializationScenario
      */
     public function __construct(
         public int $organizationId,
@@ -34,6 +36,8 @@ final readonly class WorkIntentData
         public ?string $requestedNormativeCode = null,
         public string $system = '',
         public string $workObject = '',
+        public array $specializationEvidence = [],
+        public ?array $specializationScenario = null,
     ) {
         EvidenceBounds::assert($sourceEvidence);
     }

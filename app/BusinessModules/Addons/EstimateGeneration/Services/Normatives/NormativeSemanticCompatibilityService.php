@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClassifier;
 
 final class NormativeSemanticCompatibilityService
 {
+    public function __construct(private ?ResidentialMaterialScenarioCatalog $materialScenarioCatalog = null) {}
+
     /**
      * @param  array<string, mixed>  $intent
      * @param  array<int, string>  $forbiddenDomainTerms
@@ -194,9 +197,11 @@ final class NormativeSemanticCompatibilityService
         }
 
         if ($action === 'cable_tray_installation') {
-            $candidateInstallsTray = $this->containsAny($candidateTitle, ['монтаж', 'установк', 'устройств'])
-                && $this->containsAny($candidateTitle, ['лотк']);
-            $candidateLaysCable = $this->containsAny($candidateTitle, ['прокладк', 'укладк'])
+            $candidateInstallsTray = preg_match(
+                '/(?:монтаж|установк\p{L}*|устройств\p{L}*)\s+(?:(?!кабел(?:ь|я|ю|ем|е)(?:\s|$))\S+\s+){0,4}лотк\p{L}*/u',
+                $candidateTitle
+            ) === 1;
+            $candidateLaysCable = $this->containsAny($candidateTitle, ['прокладк', 'укладк', 'установк кабел'])
                 && $this->containsAny($candidateTitle, ['кабел']);
 
             return $candidateInstallsTray
@@ -375,10 +380,17 @@ final class NormativeSemanticCompatibilityService
     /** @param array<string, mixed> $intent */
     private function specializationCompatible(string $candidateTitle, string $workText, array $intent): bool
     {
+        $specializationEvidenceText = $this->specializationEvidenceText($intent);
+
+        if (! $this->finishingPhaseCompatible($candidateTitle, $workText, $intent)
+            || ! $this->finishingMaterialCompatible($candidateTitle, $specializationEvidenceText, $intent)) {
+            return false;
+        }
+
         if (($intent['action'] ?? null) === 'floor_covering'
             && $this->hasUnconfirmedSpecialization(
                 $candidateTitle,
-                $workText,
+                $specializationEvidenceText,
                 ['полиуретан', 'полимер', 'наливн']
             )) {
             return false;
@@ -387,7 +399,7 @@ final class NormativeSemanticCompatibilityService
         if (($intent['scope'] ?? null) === 'roof'
             && $this->hasUnconfirmedSpecialization(
                 $candidateTitle,
-                $workText,
+                $specializationEvidenceText,
                 ['плоск', 'полиуретан', 'полимер', 'антикорроз', 'наливн']
             )) {
             return false;
@@ -395,23 +407,27 @@ final class NormativeSemanticCompatibilityService
 
         if (($intent['scope'] ?? null) === 'roof'
             && str_contains($candidateTitle, 'мастик')
-            && ! str_contains($workText, 'мастик')) {
+            && ! str_contains($specializationEvidenceText, 'мастик')) {
             return false;
         }
 
         if (($intent['scope'] ?? null) === 'roof'
             && $this->containsAny($candidateTitle, ['козыр', 'навес'])
-            && ! $this->containsAny($workText, ['козыр', 'навес'])) {
+            && ! $this->containsAny($specializationEvidenceText, ['козыр', 'навес'])) {
             return false;
         }
 
         if (($intent['scope'] ?? null) === 'roof'
             && $this->containsAny($candidateTitle, ['антиобледен', 'снеготаян', 'электронагрев'])
-            && ! $this->containsAny($workText, ['антиобледен', 'снеготаян', 'электронагрев'])) {
+            && ! $this->containsAny($specializationEvidenceText, ['антиобледен', 'снеготаян', 'электронагрев'])) {
             return false;
         }
 
-        if (! $this->facadeMaterialCompatible($candidateTitle, $workText, $intent)) {
+        if (! $this->catalogSpecializationCompatible($candidateTitle, $specializationEvidenceText, $intent)) {
+            return false;
+        }
+
+        if (! $this->facadeMaterialCompatible($candidateTitle, $specializationEvidenceText, $intent)) {
             return false;
         }
 
@@ -419,7 +435,125 @@ final class NormativeSemanticCompatibilityService
     }
 
     /** @param array<string, mixed> $intent */
-    private function facadeMaterialCompatible(string $candidateTitle, string $workText, array $intent): bool
+    private function catalogSpecializationCompatible(string $candidateTitle, string $evidenceText, array $intent): bool
+    {
+        $action = (string) ($intent['action'] ?? '');
+        $scope = (string) ($intent['scope'] ?? '');
+
+        if ($scope === 'roof' && $action === 'insulation') {
+            foreach ([
+                ['ячеист'],
+                ['фибролит'],
+                ['минераловат', 'минеральн ват'],
+            ] as $markers) {
+                if ($this->hasUnconfirmedMarkerGroup($candidateTitle, $evidenceText, $markers)) {
+                    return false;
+                }
+            }
+
+            if ($this->containsAll($candidateTitle, ['легк', 'бетон'])
+                && ! $this->containsAll($evidenceText, ['легк', 'бетон'])) {
+                return false;
+            }
+        }
+
+        if ($scope === 'roof'
+            && $this->hasUnconfirmedMarkerGroup(
+                $candidateTitle,
+                $evidenceText,
+                ['цементно-песчан', 'цементно песчан']
+            )) {
+            return false;
+        }
+
+        if ($scope === 'walls' && $action === 'masonry') {
+            foreach ([['кирпич'], ['газобетон', 'ячеист']] as $markers) {
+                if ($this->hasUnconfirmedMarkerGroup($candidateTitle, $evidenceText, $markers)) {
+                    return false;
+                }
+            }
+        }
+
+        if ($scope === 'foundation' && $action === 'waterproofing') {
+            foreach ([
+                ['цементн'],
+                ['рулонн', 'оклеечн'],
+                ['мастич', 'мастик', 'обмазочн'],
+            ] as $markers) {
+                if ($this->hasUnconfirmedMarkerGroup($candidateTitle, $evidenceText, $markers)) {
+                    return false;
+                }
+            }
+
+            if ($this->containsAll($candidateTitle, ['жидк', 'стекл'])
+                && ! $this->containsAll($evidenceText, ['жидк', 'стекл'])) {
+                return false;
+            }
+        }
+
+        if ($scope === 'stairs'
+            && $this->containsAll($candidateTitle, ['древес', 'тверд'])
+            && ! $this->containsAll($evidenceText, ['древес', 'тверд'])) {
+            return false;
+        }
+
+        if ($scope === 'openings'
+            && ! $this->openingSpecializationCompatible($candidateTitle, $evidenceText)) {
+            return false;
+        }
+
+        if ($scope === 'slabs' && $action === 'concreting') {
+            if ($this->containsAll($candidateTitle, ['кран', 'бадь'])
+                && ! $this->containsAll($evidenceText, ['кран', 'бадь'])) {
+                return false;
+            }
+
+            if ($this->containsAll($candidateTitle, ['ячейк', 'до 10'])
+                && ! $this->containsAll($evidenceText, ['ячейк', 'до 10'])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** @param array<int, string> $markers */
+    private function hasUnconfirmedMarkerGroup(string $candidateTitle, string $evidenceText, array $markers): bool
+    {
+        return $this->containsAny($candidateTitle, $markers)
+            && ! $this->containsAny($evidenceText, $markers);
+    }
+
+    private function openingSpecializationCompatible(string $candidateTitle, string $evidenceText): bool
+    {
+        foreach ([
+            ['кирпич'],
+            ['ячеист', 'газобетон'],
+            ['деревянн стен', 'рубленн стен'],
+            ['одностворч'],
+            ['двухстворч', 'двустворч'],
+            ['трехстворч', 'трёхстворч'],
+            ['глух створ'],
+            ['поворотно-откид', 'поворотно откид'],
+        ] as $markers) {
+            if ($this->hasUnconfirmedMarkerGroup($candidateTitle, $evidenceText, $markers)) {
+                return false;
+            }
+        }
+
+        if (preg_match_all('/(?:до|более|свыше)\s*\d+(?:[.,]\d+)?\s*м(?:2|²)/u', $candidateTitle, $matches) !== false) {
+            foreach ($matches[0] as $openingSize) {
+                if (! str_contains($evidenceText, $openingSize)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function facadeMaterialCompatible(string $candidateTitle, string $evidenceText, array $intent): bool
     {
         $objectType = trim((string) ($intent['object_type'] ?? ''));
         if (($intent['scope'] ?? null) !== 'facade'
@@ -427,7 +561,6 @@ final class NormativeSemanticCompatibilityService
             return true;
         }
 
-        $evidenceText = $workText.' '.$this->normalize((string) ($intent['material'] ?? ''));
         $materialMarkerGroups = [
             ['фиброцемент', 'fiber_cement'],
             ['хризотилцемент', 'chrysotile_cement', 'asbestos_cement'],
@@ -448,6 +581,116 @@ final class NormativeSemanticCompatibilityService
         }
 
         return true;
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function finishingPhaseCompatible(string $candidateTitle, string $workText, array $intent): bool
+    {
+        if (($intent['scope'] ?? null) !== 'finishing') {
+            return true;
+        }
+
+        $roughWallPreparation = $this->containsAny($workText, ['чернов', 'подготов'])
+            && $this->containsAny($workText, ['стен', 'поверхност']);
+        $candidateIsPainting = $this->containsAny($candidateTitle, [
+            'окраск',
+            'окрашив',
+            'покраск',
+            'побелк',
+            'нанесение краск',
+        ]);
+
+        return ! ($roughWallPreparation && $candidateIsPainting);
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function finishingMaterialCompatible(string $candidateTitle, string $evidenceText, array $intent): bool
+    {
+        if (($intent['scope'] ?? null) !== 'finishing') {
+            return true;
+        }
+
+        $action = (string) ($intent['action'] ?? '');
+        $markerGroups = match ($action) {
+            'floor_covering' => [
+                ['линолеум'],
+                ['поливинилхлорид', 'пвх'],
+                ['ламинат'],
+                ['паркет'],
+                ['дощат', 'доск', 'деревян', 'древес'],
+                ['керамическ', 'керамогранит', 'плитк'],
+                ['ковролин', 'ковров'],
+                ['резинов'],
+                ['пробков'],
+            ],
+            'baseboard_installation' => [
+                ['деревян', 'древес'],
+                ['поливинилхлорид', 'пвх', 'пластмасс', 'пластик'],
+                ['алюминиев'],
+                ['керамическ'],
+                ['каменн', 'мрамор', 'гранит'],
+                ['цементн'],
+            ],
+            default => [],
+        };
+
+        foreach ($markerGroups as $markers) {
+            if ($this->hasUnconfirmedMarkerGroup($candidateTitle, $evidenceText, $markers)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function specializationEvidenceText(array $intent): string
+    {
+        $parts = [];
+        $evidence = is_array($intent['specialization_evidence'] ?? null)
+            ? $intent['specialization_evidence']
+            : [];
+
+        foreach ($evidence as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $evidenceRefs = is_array($item['evidence_refs'] ?? null)
+                ? array_values(array_filter(
+                    $item['evidence_refs'],
+                    static fn (mixed $ref): bool => is_string($ref) && trim($ref) !== '',
+                ))
+                : [];
+            if (! in_array($item['source'] ?? null, ['document', 'building_model', 'user_confirmation'], true)
+                || $evidenceRefs === []) {
+                continue;
+            }
+
+            $text = trim((string) ($item['text'] ?? ''));
+            if ($text !== '') {
+                $parts[] = $text;
+            }
+        }
+
+        $scenario = is_array($intent['specialization_scenario'] ?? null) ? $intent['specialization_scenario'] : [];
+        $this->materialScenarioCatalog ??= new ResidentialMaterialScenarioCatalog;
+        $resolvedScenario = $this->materialScenarioCatalog->resolve(
+            $scenario,
+            (string) ($scenario['work_item_key'] ?? ''),
+            ObjectTypeSignalClassifier::canonical((string) ($intent['object_type'] ?? '')),
+        );
+        if ($resolvedScenario !== null) {
+            $parts = [
+                ...$parts,
+                ...array_values(array_filter(
+                    $resolvedScenario['material_markers'] ?? [],
+                    static fn (mixed $marker): bool => is_string($marker) && trim($marker) !== '',
+                )),
+            ];
+        }
+
+        return $this->normalize(implode(' ', $parts));
     }
 
     /** @param array<int, string> $markers */
@@ -482,7 +725,9 @@ final class NormativeSemanticCompatibilityService
     {
         $additiveMarkers = [
             'добавлять к норм',
+            'добавлять при',
             'добавлять или исключать',
+            'на изменение толщины',
             'на каждый последующ',
             'засыпка пустот',
         ];
@@ -494,6 +739,8 @@ final class NormativeSemanticCompatibilityService
             'добавочн',
             'дополнительн',
             'корректир',
+            'изменен толщин',
+            'увеличен количеств',
             'последующ',
             'заполнен пустот',
             'засыпк пустот',
@@ -702,6 +949,18 @@ final class NormativeSemanticCompatibilityService
         }
 
         return false;
+    }
+
+    /** @param array<int, string> $needles */
+    private function containsAll(string $text, array $needles): bool
+    {
+        foreach ($needles as $needle) {
+            if ($needle === '' || ! str_contains($text, $needle)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function normalize(string $value): string

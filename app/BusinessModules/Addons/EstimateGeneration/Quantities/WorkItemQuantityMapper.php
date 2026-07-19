@@ -9,12 +9,18 @@ use Brick\Math\RoundingMode;
 
 final class WorkItemQuantityMapper
 {
-    public const FORMULA_VERSION = '1.4.0';
+    public const FORMULA_VERSION = '1.5.0';
 
     public function map(string $workItemKey, array $quantities): ?QuantityData
     {
         $direct = $this->quantity($quantities[$workItemKey] ?? null);
         if ($direct !== null) {
+            if (DirectTakeoffRequiredWorkItems::contains($workItemKey)
+                && $direct->source === QuantitySource::Estimated
+                && ! ResidentialQuantityScenarioCatalog::owns($direct)) {
+                return null;
+            }
+
             return $direct;
         }
 
@@ -43,6 +49,10 @@ final class WorkItemQuantityMapper
                 $amount = $amount->toScale(0, RoundingMode::HalfUp);
             }
 
+            $structuralAssumptions = in_array($source->key, ['first_floor_internal_area', 'upper_floor_internal_area'], true)
+                ? ['preliminary_structural_from_internal_area:v1']
+                : [];
+
             return new QuantityData(
                 key: $workItemKey,
                 unit: $rule['unit'],
@@ -53,12 +63,14 @@ final class WorkItemQuantityMapper
                     'source_quantity' => $this->sourceReference($source),
                     'factor' => $candidate['factor'],
                     'minimum' => $rule['minimum'] ?? null,
+                    'scenario_id' => 'preliminary_quantity_coefficients:v1',
                 ],
                 source: QuantitySource::Estimated,
                 evidenceIds: $source->evidenceIds,
                 modelVersion: $source->modelVersion,
                 assumptions: array_values(array_unique([
                     ...$source->assumptions,
+                    ...$structuralAssumptions,
                     'preliminary_work_quantity:'.$workItemKey,
                 ])),
                 reviewBlockers: $source->reviewBlockers,
@@ -94,6 +106,10 @@ final class WorkItemQuantityMapper
     private function rule(string $key): ?array
     {
         $floorArea = fn (string $factor = '1'): array => ['sources' => [['key' => 'floor_area', 'factor' => $factor]], 'unit' => 'm2'];
+        $firstFloorInternalArea = fn (string $factor = '1'): array => [
+            'sources' => [['key' => 'first_floor_internal_area', 'factor' => $factor]],
+            'unit' => 'm2',
+        ];
         $wallArea = fn (string $factor = '1', string $floorAreaFallbackFactor = '1'): array => [
             'sources' => [
                 ['key' => 'net_wall_area', 'factor' => $factor],
@@ -125,8 +141,9 @@ final class WorkItemQuantityMapper
         ];
 
         return match ($key) {
-            'rough.floor', 'finish.floor', 'office.ceiling', 'warehouse.floor_hardener',
-            'earth.plan', 'siteworks.area', 'warehouse.roads' => $floorArea(),
+            'rough.floor', 'finish.floor', 'office.ceiling', 'warehouse.floor_hardener' => $floorArea(),
+
+            'earth.plan', 'siteworks.area', 'warehouse.roads' => $firstFloorInternalArea(),
 
             'rough.walls', 'finish.paint' => $wallArea('1', '3'),
 
@@ -142,21 +159,21 @@ final class WorkItemQuantityMapper
                 'unit' => 'm2',
             ],
 
-            'earth.trench' => ['sources' => [['key' => 'floor_area', 'factor' => '0.45']], 'unit' => 'm3'],
-            'earth.backfill' => ['sources' => [['key' => 'floor_area', 'factor' => '0.30']], 'unit' => 'm3'],
-            'earth.export' => ['sources' => [['key' => 'floor_area', 'factor' => '0.15']], 'unit' => 'm3'],
+            'earth.trench' => ['sources' => [['key' => 'first_floor_internal_area', 'factor' => '0.45']], 'unit' => 'm3'],
+            'earth.backfill' => ['sources' => [['key' => 'first_floor_internal_area', 'factor' => '0.30']], 'unit' => 'm3'],
+            'earth.export' => ['sources' => [['key' => 'first_floor_internal_area', 'factor' => '0.15']], 'unit' => 'm3'],
             'foundation.concrete' => [
                 'sources' => [
                     ['key' => 'foundation_volume', 'factor' => '1'],
-                    ['key' => 'floor_area', 'factor' => '0.15'],
+                    ['key' => 'first_floor_internal_area', 'factor' => '0.15'],
                 ],
                 'unit' => 'm3',
             ],
-            'foundation.formwork', 'foundation.waterproofing' => $floorArea('0.75'),
+            'foundation.formwork', 'foundation.waterproofing' => $firstFloorInternalArea('0.75'),
             'foundation.rebar' => [
                 'sources' => [
                     ['key' => 'foundation_volume', 'factor' => '120'],
-                    ['key' => 'floor_area', 'factor' => '18'],
+                    ['key' => 'first_floor_internal_area', 'factor' => '18'],
                 ],
                 'unit' => 'kg',
             ],
@@ -169,19 +186,17 @@ final class WorkItemQuantityMapper
             ],
             'warehouse.floor_concrete' => ['sources' => [['key' => 'floor_area', 'factor' => '0.12']], 'unit' => 'm3'],
             'warehouse.floor_rebar' => ['sources' => [['key' => 'floor_area', 'factor' => '9']], 'unit' => 'kg'],
-            'slabs.concrete' => ['sources' => [['key' => 'floor_area', 'factor' => '0.12']], 'unit' => 'm3'],
-            'slabs.rebar' => ['sources' => [['key' => 'floor_area', 'factor' => '12']], 'unit' => 'kg'],
+            'slabs.concrete' => ['sources' => [['key' => 'upper_floor_internal_area', 'factor' => '0.12']], 'unit' => 'm3'],
+            'slabs.rebar' => ['sources' => [['key' => 'upper_floor_internal_area', 'factor' => '12']], 'unit' => 'kg'],
             'warehouse.frame_weight' => ['sources' => [['key' => 'floor_area', 'factor' => '35']], 'unit' => 'kg'],
             'warehouse.columns', 'warehouse.beams' => ['sources' => [['key' => 'floor_area', 'factor' => '18']], 'unit' => 'kg'],
 
             'roof.area', 'roof.flat_area' => [
                 'sources' => [
                     ['key' => 'roof_area', 'factor' => '1'],
-                    ['key' => 'floor_area', 'factor' => '0.55'],
                 ],
                 'unit' => 'm2',
             ],
-            'roof.gutter' => $floorLength('0.15'),
             'finish.baseboard' => $floorLength('0.40'),
             'warehouse.floor_joints' => $floorLength('0.25'),
             'stairs.railings' => $floorLength('0.08'),

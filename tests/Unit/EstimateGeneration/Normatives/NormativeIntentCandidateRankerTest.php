@@ -205,6 +205,11 @@ final class NormativeIntentCandidateRankerTest extends TestCase
         self::assertNull((new NormativeIntentCandidateRanker)->select([$candidate], [$intent]));
 
         $intent['material'] = 'фиброцементные плиты';
+        $intent['specialization_evidence'] = [[
+            'text' => 'Фасадные плиты: фиброцемент',
+            'source' => 'document',
+            'evidence_refs' => ['doc:1'],
+        ]];
         self::assertSame(
             [150106401],
             array_column((new NormativeIntentCandidateRanker)->select([$candidate], [$intent]) ?? [], 'id'),

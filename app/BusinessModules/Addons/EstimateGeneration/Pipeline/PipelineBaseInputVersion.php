@@ -9,7 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 
 final class PipelineBaseInputVersion
 {
-    public const SCHEMA_VERSION = 4;
+    public const SCHEMA_VERSION = 5;
 
     /**
      * @param  list<array{id: int, source_version: string, status: string, derived_version: string}>  $documents

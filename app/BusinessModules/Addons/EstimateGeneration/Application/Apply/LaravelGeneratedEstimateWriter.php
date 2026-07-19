@@ -24,6 +24,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
     public function __construct(
         private EstimateDraftPersistenceService $draftService,
         private GeneratedEstimateNumberAllocator $numberAllocator,
+        private GeneratedEstimateItemMetadataFactory $itemMetadata = new GeneratedEstimateItemMetadataFactory,
     ) {}
 
     public function createFromSession(
@@ -235,15 +236,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
             'current_total_amount' => $workItem['total_cost'],
             'justification' => $workItem['quantity_basis'],
             'is_manual' => true,
-            'metadata' => [
-                'source_refs' => $workItem['source_refs'],
-                'confidence' => $workItem['confidence'],
-                'validation_flags' => $workItem['validation_flags'],
-                'normative_dataset' => $workItem['normative_dataset'] ?? null,
-                'normative_match' => $workItem['normative_match'] ?? null,
-                'normative_candidates' => $workItem['normative_candidates'] ?? [],
-                'price_source' => $workItem['price_source'] ?? null,
-            ],
+            'metadata' => $this->itemMetadata->make($workItem),
         ]);
     }
 

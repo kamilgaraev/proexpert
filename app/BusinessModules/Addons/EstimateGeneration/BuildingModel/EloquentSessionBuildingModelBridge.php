@@ -53,6 +53,7 @@ final readonly class EloquentSessionBuildingModelBridge
             ->get([
                 'units.id as unit_id', 'units.document_id', 'pages.id as page_id', 'units.unit_type',
                 'units.unit_index', 'units.source_version', 'pages.confidence', 'pages.normalized_payload',
+                'documents.filename as document_name',
             ]);
 
         $units = [];
@@ -60,6 +61,9 @@ final readonly class EloquentSessionBuildingModelBridge
             $payload = is_array($row->normalized_payload)
                 ? $row->normalized_payload
                 : json_decode((string) $row->normalized_payload, true, 512, JSON_THROW_ON_ERROR);
+            if (is_array($payload) && is_string($row->document_name) && trim($row->document_name) !== '') {
+                $payload['document_name'] = $row->document_name;
+            }
             $units[] = new SessionBuildingModelUnitData(
                 (int) $row->unit_id,
                 (int) $row->document_id,

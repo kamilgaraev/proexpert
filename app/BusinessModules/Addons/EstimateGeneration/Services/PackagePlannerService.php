@@ -24,6 +24,14 @@ class PackagePlannerService
             $packages = $this->warehousePackages();
         } else {
             $packages = $this->housePackages();
+            if ($this->isHouse($profile)) {
+                $packages = array_map(
+                    static fn (array $package): array => $package['key'] === 'preconstruction'
+                        ? [...$package, 'coverage_required' => false, 'coverage_warning' => 'document_scope_required']
+                        : [...$package, 'coverage_required' => true],
+                    $packages,
+                );
+            }
         }
 
         $packages = $this->withReviewPackages($packages, $profile);

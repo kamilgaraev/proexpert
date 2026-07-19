@@ -47,6 +47,19 @@ final class ProductionReadinessGateTest extends TestCase
         yield 'review' => ['blocking_review_unresolved', ['quality_summary' => ['review_items' => ['blocking' => 1]]]];
         yield 'model incomplete' => ['building_model_incomplete', ['building_model' => ['metrics' => ['complete' => false]]]];
         yield 'cad failure' => ['cad_processing_failed', ['building_model' => ['cad_status' => 'failed']]];
+        yield 'required scope omitted' => ['required_scope_unresolved', [
+            'package_plan' => ['packages' => [[
+                'key' => 'openings',
+                'title' => 'Окна и двери',
+                'coverage_required' => true,
+            ]]],
+            'local_estimates' => [[
+                'key' => 'openings',
+                'sections' => [['work_items' => [[
+                    'item_type' => 'review_note',
+                ]]]],
+            ]],
+        ]];
     }
 
     private static function itemOverride(array $item): array

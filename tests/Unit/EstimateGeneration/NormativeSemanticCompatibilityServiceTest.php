@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSemanticCompatibilityService;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -103,10 +104,19 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
     ): void {
         $service = new NormativeSemanticCompatibilityService;
 
+        $intent = ['scope' => 'foundation', 'action' => $action];
+        if ($action === 'waterproofing') {
+            $intent['specialization_evidence'] = [[
+                'text' => $workText,
+                'source' => 'document',
+                'evidence_refs' => ['document:test'],
+            ]];
+        }
+
         $this->assertTrue($service->isCompatible(
             $candidateText,
             $workText,
-            ['scope' => 'foundation', 'action' => $action],
+            $intent,
         ));
     }
 
@@ -122,7 +132,7 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
                 'formwork',
             ],
             'foundation waterproofing' => [
-                'Гидроизоляция фундаментов',
+                'Битумная обмазочная гидроизоляция фундаментов',
                 'Гидроизоляция боковая обмазочная битумная стен фундаментов',
                 'waterproofing',
             ],
@@ -265,6 +275,284 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         ));
     }
 
+    public function test_generic_work_rejects_unconfirmed_catalog_specializations(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        foreach ([
+            [
+                'Добавлять при увеличении количества слоев утеплителя',
+                'Утепление кровли',
+                ['action' => 'insulation', 'scope' => 'roof'],
+            ],
+            [
+                'На изменение толщины теплоизоляционного слоя добавлять к норме',
+                'Утепление кровли',
+                ['action' => 'insulation', 'scope' => 'roof'],
+            ],
+            [
+                'Устройство теплоизоляции кровли плитами из легкого ячеистого бетона',
+                'Утепление кровли',
+                ['action' => 'insulation', 'scope' => 'roof'],
+            ],
+            [
+                'Устройство теплоизоляции кровли плитами из легкого бетона',
+                'Утепление кровли',
+                ['action' => 'insulation', 'scope' => 'roof'],
+            ],
+            [
+                'Устройство теплоизоляции кровли фибролитовыми плитами',
+                'Утепление кровли',
+                ['action' => 'insulation', 'scope' => 'roof'],
+            ],
+            [
+                'Устройство теплоизоляции кровли минераловатными плитами',
+                'Утепление кровли',
+                ['action' => 'insulation', 'scope' => 'roof'],
+            ],
+            [
+                'Устройство кровли из цементно-песчаной черепицы',
+                'Монтаж кровельного покрытия',
+                ['action' => 'general_work', 'scope' => 'roof'],
+            ],
+            [
+                'Кладка наружных стен из кирпича',
+                'Кладка наружных стен',
+                ['action' => 'masonry', 'scope' => 'walls'],
+            ],
+            [
+                'Кладка наружных стен из газобетонных блоков',
+                'Кладка наружных стен',
+                ['action' => 'masonry', 'scope' => 'walls'],
+            ],
+            [
+                'Гидроизоляция фундаментов цементным раствором с жидким стеклом',
+                'Гидроизоляция фундаментов',
+                ['action' => 'waterproofing', 'scope' => 'foundation'],
+            ],
+            [
+                'Проникающая гидроизоляция фундаментов составом на основе жидкого стекла',
+                'Гидроизоляция фундаментов',
+                ['action' => 'waterproofing', 'scope' => 'foundation'],
+            ],
+            [
+                'Оклеечная рулонная гидроизоляция фундаментов',
+                'Гидроизоляция фундаментов',
+                ['action' => 'waterproofing', 'scope' => 'foundation'],
+            ],
+            [
+                'Обмазочная мастичная гидроизоляция фундаментов',
+                'Гидроизоляция фундаментов',
+                ['action' => 'waterproofing', 'scope' => 'foundation'],
+            ],
+            [
+                'Устройство лестничных ограждений с поручнем из древесины твердых пород',
+                'Монтаж лестничных ограждений',
+                ['action' => 'general_work', 'scope' => 'stairs'],
+            ],
+            [
+                'Установка оконных блоков в кирпичных стенах при площади проема до 2 м2, двухстворчатых',
+                'Монтаж оконных блоков',
+                ['action' => 'window_installation', 'scope' => 'openings'],
+            ],
+            [
+                'Установка дверных блоков в стенах из ячеистого бетона при площади проема до 3 м2',
+                'Монтаж дверных блоков',
+                ['action' => 'door_installation', 'scope' => 'openings'],
+            ],
+            [
+                'Бетонирование перекрытий краном в бадьях при площади ячеек до 10 м2',
+                'Бетонирование монолитного перекрытия',
+                ['action' => 'concreting', 'scope' => 'slabs'],
+            ],
+        ] as [$candidate, $work, $intent]) {
+            self::assertFalse($service->isCompatible($candidate, $work, $intent), $candidate);
+        }
+    }
+
+    public function test_catalog_specialization_is_accepted_when_document_evidence_confirms_it(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        foreach ([
+            [
+                'Добавлять при увеличении количества слоев утеплителя',
+                'Корректировка нормы при увеличении количества слоев утеплителя',
+                ['action' => 'insulation', 'scope' => 'roof'],
+            ],
+            [
+                'Устройство теплоизоляции кровли минераловатными плитами',
+                'Утепление кровли минераловатными плитами',
+                ['action' => 'insulation', 'scope' => 'roof'],
+            ],
+            [
+                'Устройство кровли из цементно-песчаной черепицы',
+                'Монтаж кровельного покрытия',
+                ['action' => 'general_work', 'scope' => 'roof', 'material' => 'цементно-песчаная черепица'],
+            ],
+            [
+                'Кладка наружных стен из газобетонных блоков',
+                'Кладка наружных стен',
+                ['action' => 'masonry', 'scope' => 'walls', 'material' => 'газобетонные блоки'],
+            ],
+            [
+                'Обмазочная мастичная гидроизоляция фундаментов',
+                'Мастичная гидроизоляция фундаментов',
+                ['action' => 'waterproofing', 'scope' => 'foundation'],
+            ],
+            [
+                'Устройство лестничных ограждений с поручнем из древесины твердых пород',
+                'Монтаж лестничных ограждений с поручнем из твердой древесины',
+                ['action' => 'general_work', 'scope' => 'stairs'],
+            ],
+            [
+                'Установка оконных блоков в кирпичных стенах при площади проема до 2 м2, двухстворчатых',
+                'Монтаж двухстворчатых оконных блоков в кирпичных стенах, проем до 2 м2',
+                ['action' => 'window_installation', 'scope' => 'openings'],
+            ],
+            [
+                'Бетонирование перекрытий краном в бадьях при площади ячеек до 10 м2',
+                'Бетонирование монолитного перекрытия краном в бадьях, ячейки до 10 м2',
+                ['action' => 'concreting', 'scope' => 'slabs'],
+            ],
+        ] as [$candidate, $work, $intent]) {
+            $intent['specialization_evidence'] = [[
+                'text' => $work.' '.($intent['material'] ?? ''),
+                'source' => 'document',
+                'evidence_refs' => ['document:test'],
+            ]];
+            self::assertTrue($service->isCompatible($candidate, $work, $intent), $candidate);
+        }
+    }
+
+    public function test_generated_work_text_and_classified_material_do_not_confirm_specialization(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Устройство теплоизоляции кровли минераловатными плитами',
+            'Утепление кровли минераловатными плитами',
+            [
+                'action' => 'insulation',
+                'scope' => 'roof',
+                'material' => 'минераловатные плиты',
+            ],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство покрытий полов из линолеума',
+            'Чистовое покрытие пола из линолеума',
+            [
+                'action' => 'floor_covering',
+                'scope' => 'finishing',
+                'material' => 'линолеум',
+            ],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство покрытий полов из линолеума',
+            'Чистовое покрытие пола',
+            [
+                'action' => 'floor_covering',
+                'scope' => 'finishing',
+                'specialization_evidence' => [[
+                    'text' => 'линолеум',
+                    'source' => 'document',
+                    'evidence_refs' => [null, ''],
+                ]],
+            ],
+        ));
+    }
+
+    public function test_document_evidence_or_versioned_scenario_confirms_specialization(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertTrue($service->isCompatible(
+            'Устройство покрытий полов из линолеума',
+            'Чистовое покрытие пола',
+            [
+                'action' => 'floor_covering',
+                'scope' => 'finishing',
+                'specialization_evidence' => [[
+                    'text' => 'Ведомость отделки: линолеум',
+                    'source' => 'document',
+                    'evidence_refs' => ['document:142:page:1'],
+                ]],
+            ],
+        ));
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('finish.baseboard', 'residential');
+        self::assertIsArray($scenario);
+        self::assertTrue($service->isCompatible(
+            'Устройство плинтусов из поливинилхлорида',
+            'Монтаж плинтуса',
+            [
+                'action' => 'baseboard_installation',
+                'scope' => 'finishing',
+                'object_type' => 'residential',
+                'specialization_scenario' => $scenario,
+            ],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Устройство плинтусов деревянных',
+            'Монтаж плинтуса',
+            [
+                'action' => 'baseboard_installation',
+                'scope' => 'finishing',
+                'object_type' => 'residential',
+                'specialization_scenario' => [
+                    'version' => 'residential_finish_material:v1',
+                    'text' => 'деревянный плинтус',
+                ],
+            ],
+        ));
+    }
+
+    public function test_rough_wall_preparation_does_not_use_painting_norm(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Окраска стен водно-дисперсионными составами',
+            'Черновая подготовка стен',
+            ['action' => 'general_work', 'scope' => 'finishing'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Подготовка поверхностей стен под отделку',
+            'Черновая подготовка стен',
+            ['action' => 'general_work', 'scope' => 'finishing'],
+        ));
+    }
+
+    public function test_generic_floor_and_baseboard_work_rejects_unconfirmed_materials(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        foreach ([
+            'Устройство покрытий полов из линолеума',
+            'Устройство покрытий полов из ламината',
+            'Устройство покрытий дощатых из древесины',
+            'Устройство покрытий полов из керамической плитки',
+        ] as $candidate) {
+            self::assertFalse($service->isCompatible(
+                $candidate,
+                'Чистовое покрытие пола',
+                ['action' => 'floor_covering', 'scope' => 'finishing'],
+            ), $candidate);
+        }
+
+        foreach ([
+            'Устройство плинтусов деревянных',
+            'Устройство плинтусов из поливинилхлорида',
+            'Устройство плинтусов алюминиевых',
+            'Устройство плинтусов керамических',
+        ] as $candidate) {
+            self::assertFalse($service->isCompatible(
+                $candidate,
+                'Монтаж плинтуса',
+                ['action' => 'baseboard_installation', 'scope' => 'finishing'],
+            ), $candidate);
+        }
+    }
+
     public function test_residential_reinforcement_does_not_use_power_station_norm(): void
     {
         $service = new NormativeSemanticCompatibilityService;
@@ -326,6 +614,28 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
             'Прокладка кабеля в трубе. Состав работ: прокладка трубы',
             'Прокладка кабельных линий',
             ['action' => 'cable_installation', 'candidate_title' => 'Прокладка кабеля в трубе'],
+        ));
+    }
+
+    public function test_cable_in_preinstalled_trays_is_not_tray_installation(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $intent = ['action' => 'cable_tray_installation', 'scope' => 'engineering', 'system' => 'electrical'];
+
+        self::assertFalse($service->isCompatible(
+            'Кабель трех-пятижильный по установленным конструкциям и лоткам с креплением на поворотах',
+            'Монтаж кабельных лотков',
+            $intent,
+        ));
+        self::assertFalse($service->isCompatible(
+            'Установка кабеля трех-пятижильного по установленным конструкциям и лоткам',
+            'Монтаж кабельных лотков',
+            $intent,
+        ));
+        self::assertTrue($service->isCompatible(
+            'Монтаж кабельных лотков по установленным конструкциям',
+            'Монтаж кабельных лотков',
+            $intent,
         ));
     }
 
@@ -594,7 +904,11 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         self::assertTrue($service->isCompatible(
             'Устройство полимерных наливных полов из полиуретана: с толщиной покрытия 2 мм',
             'Устройство полимерного наливного полиуретанового покрытия пола',
-            $intent,
+            [...$intent, 'specialization_evidence' => [[
+                'text' => 'полимерное наливное полиуретановое покрытие пола',
+                'source' => 'document',
+                'evidence_refs' => ['document:test'],
+            ]]],
         ));
     }
 
@@ -616,7 +930,11 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         self::assertTrue($service->isCompatible(
             'Устройство кровель плоских: Устройство защитного антикоррозийного полимерного наливного покрытия',
             'Устройство плоской кровли из защитного антикоррозийного полимерного наливного покрытия',
-            $intent,
+            [...$intent, 'specialization_evidence' => [[
+                'text' => 'плоская кровля из защитного антикоррозийного полимерного наливного покрытия',
+                'source' => 'document',
+                'evidence_refs' => ['document:test'],
+            ]]],
         ));
     }
 
@@ -756,14 +1074,25 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         ));
     }
 
-    public function test_residential_facade_accepts_material_system_explicitly_named_by_work(): void
+    public function test_residential_facade_accepts_material_system_confirmed_by_document(): void
     {
         $service = new NormativeSemanticCompatibilityService;
+
+        $documentEvidence = static fn (string $text): array => [[
+            'text' => $text,
+            'source' => 'document',
+            'evidence_refs' => ['document:test'],
+        ]];
 
         self::assertTrue($service->isCompatible(
             'Облицовка фасадов фиброцементными плитами',
             'Отделка фасада фиброцементными плитами',
-            ['action' => 'general_work', 'scope' => 'facade', 'object_type' => 'residential'],
+            [
+                'action' => 'general_work',
+                'scope' => 'facade',
+                'object_type' => 'residential',
+                'specialization_evidence' => $documentEvidence('фиброцементные плиты'),
+            ],
         ));
         self::assertTrue($service->isCompatible(
             'Облицовка фасадов сайдингом',
@@ -772,7 +1101,7 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
                 'action' => 'general_work',
                 'scope' => 'facade',
                 'object_type' => 'residential',
-                'material' => 'сайдинг',
+                'specialization_evidence' => $documentEvidence('сайдинг'),
             ],
         ));
         self::assertTrue($service->isCompatible(
@@ -782,7 +1111,7 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
                 'action' => 'general_work',
                 'scope' => 'facade',
                 'object_type' => 'residential',
-                'material' => 'терразитовый раствор',
+                'specialization_evidence' => $documentEvidence('терразитовый раствор'),
             ],
         ));
         self::assertTrue($service->isCompatible(
@@ -792,7 +1121,7 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
                 'action' => 'general_work',
                 'scope' => 'facade',
                 'object_type' => 'residential',
-                'material' => 'стеклянная крошка',
+                'specialization_evidence' => $documentEvidence('стеклянная крошка'),
             ],
         ));
     }

@@ -129,6 +129,124 @@ final readonly class RoomAnnotationFloorAreaQuantityFactory
         );
     }
 
+    /** @return array<string, QuantityData> */
+    public function makeAll(
+        BuildingModelOperationContext $context,
+        NormalizedBuildingModelData $model,
+        ?int $expectedFloorCount = null,
+    ): array {
+        $total = $this->make($context, $model, $expectedFloorCount);
+        if ($total === null) {
+            return [];
+        }
+
+        $quantities = ['floor_area' => $total];
+        $floorItems = [];
+        foreach ($model->floors as $floor) {
+            if ($this->floorSource($context, $floor->rooms, $floor->evidenceIds) === 'reference') {
+                continue;
+            }
+            $floorNumber = $this->floorNumber($floor->key);
+            if ($floorNumber === null || isset($floorItems[$floorNumber])) {
+                return $quantities;
+            }
+            $items = [];
+            foreach ($floor->rooms as $room) {
+                $annotation = $this->parser->parse($room->name);
+                if ($annotation === null || ! $annotation['included_in_floor_area']) {
+                    continue;
+                }
+                $evidenceId = $this->areaEvidenceId($context, $room->evidenceIds, $annotation['area_m2']);
+                if ($evidenceId === null) {
+                    return $quantities;
+                }
+                $amount = BigDecimal::of((string) $annotation['area_m2'])->toScale(6, RoundingMode::HalfUp);
+                $id = (string) $evidenceId;
+                $items[] = [
+                    'identity' => hash('sha256', $floor->key.'|'.$room->key.'|'.$id.'|'.$amount),
+                    'amount' => (string) $amount,
+                    'evidence_ids' => [$id],
+                    'provenance_versions' => ['room-annotation:v1'],
+                    'named_operands' => ['area' => [
+                        'role' => 'area',
+                        'value' => (string) $amount,
+                        'unit' => 'm2',
+                        'source' => 'estimated',
+                        'evidence_ids' => [$id],
+                        'assumptions' => ['vision_room_area_extraction'],
+                        'context_id' => 'model:'.$model->modelVersion,
+                        'provenance_version' => 'room-annotation:v1',
+                    ]],
+                ];
+            }
+            if ($items === []) {
+                return $quantities;
+            }
+            $floorItems[$floorNumber] = $items;
+        }
+        if (! isset($floorItems[1])) {
+            return $quantities;
+        }
+        ksort($floorItems, SORT_NUMERIC);
+        $quantities['first_floor_internal_area'] = $this->areaQuantity(
+            'first_floor_internal_area',
+            'document.rooms.first_floor_internal_area_sum',
+            $floorItems[1],
+            $model->modelVersion,
+        );
+        $upperItems = array_merge(...array_values(array_filter(
+            $floorItems,
+            static fn (int $floorNumber): bool => $floorNumber > 1,
+            ARRAY_FILTER_USE_KEY,
+        )));
+        if ($upperItems !== []) {
+            $quantities['upper_floor_internal_area'] = $this->areaQuantity(
+                'upper_floor_internal_area',
+                'document.rooms.upper_floor_internal_area_sum',
+                $upperItems,
+                $model->modelVersion,
+            );
+        }
+
+        return $quantities;
+    }
+
+    /** @param list<array<string, mixed>> $items */
+    private function areaQuantity(string $key, string $formulaKey, array $items, string $modelVersion): QuantityData
+    {
+        $amount = BigDecimal::zero();
+        $evidenceIds = [];
+        foreach ($items as $item) {
+            $amount = $amount->plus((string) $item['amount']);
+            foreach ((array) ($item['evidence_ids'] ?? []) as $evidenceId) {
+                $evidenceIds[(string) $evidenceId] = (string) $evidenceId;
+            }
+        }
+        ksort($evidenceIds, SORT_NUMERIC);
+
+        return new QuantityData(
+            key: $key,
+            unit: 'm2',
+            amount: (string) $amount->toScale(6, RoundingMode::HalfUp),
+            formulaKey: $formulaKey,
+            formulaVersion: '1.0.0',
+            formulaInputs: ['items' => array_values($items)],
+            source: QuantitySource::Estimated,
+            evidenceIds: array_values($evidenceIds),
+            modelVersion: $modelVersion,
+            assumptions: ['vision_room_area_extraction'],
+        );
+    }
+
+    private function floorNumber(string $key): ?int
+    {
+        if (preg_match('/^(?:floor|level)[-_ ]*([1-9][0-9]*)$/i', trim($key), $matches) !== 1) {
+            return null;
+        }
+
+        return (int) $matches[1];
+    }
+
     /** @param array<string, int|string|null> $details */
     private function reject(BuildingModelOperationContext $context, string $reason, array $details = []): ?QuantityData
     {

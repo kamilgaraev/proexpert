@@ -143,6 +143,36 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
     }
 
     #[Test]
+    public function accepts_a_semantic_metal_gutter_selection_with_an_exact_regional_price_source(): void
+    {
+        $record = $this->catalogCandidate();
+        $record['resources']['materials'][0] = [
+            ...$record['resources']['materials'][0],
+            'code' => '08.1.02.22',
+            'name' => 'Изделия для водосточных труб',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => 'prices-2026.06',
+            'unit_price' => '274.750000',
+            'project_resource_selection' => [
+                'group_code' => '08.1.02.22',
+                'selected_resource_code' => '12.1.01.05-0058',
+                'selected_resource_name' => 'Соединитель желоба металлический для водосточных систем',
+                'price_source' => 'regional_catalog',
+                'price_source_version' => 'prices-2026.06',
+                'policy' => 'regional_semantic_metal_gutter_family_median:v1',
+                'candidates_count' => 3,
+            ],
+        ];
+
+        $decision = AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
+
+        self::assertSame(
+            '12.1.01.05-0058',
+            $decision->resources['materials'][0]['project_resource_selection']['selected_resource_code'],
+        );
+    }
+
+    #[Test]
     public function accepts_an_exact_group_selection_filtered_by_hard_attributes(): void
     {
         $record = $this->catalogCandidate();
