@@ -172,6 +172,9 @@ final readonly class AcceptedNormativeDecisionData
             'regional_semantic_hard_attributes_median:v2',
             'fsbc_semantic_hard_attributes_median:v2',
             'fsnb_semantic_hard_attributes_median:v2',
+            'regional_semantic_hard_attributes_median:v3',
+            'fsbc_semantic_hard_attributes_median:v3',
+            'fsnb_semantic_hard_attributes_median:v3',
         ], true)
             && self::policyMatchesPriceSource($policy, $selection['price_source'] ?? null)
             && is_string($selectedResourceCode)

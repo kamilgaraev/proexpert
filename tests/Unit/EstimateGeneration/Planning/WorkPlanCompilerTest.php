@@ -8,6 +8,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedWorkPlannerR
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
@@ -17,6 +20,57 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkPlanCompilerTest extends TestCase
 {
+    public function test_signed_residential_work_is_owned_by_its_canonical_package_only(): void
+    {
+        $decomposition = $this->createMock(EstimateDecompositionService::class);
+        $decomposition->method('decomposePackagePlan')->willReturn([
+            [
+                'key' => 'electrical', 'title' => 'Электрика', 'scope_type' => 'electrical',
+                'sections' => [['key' => 'electrical', 'title' => 'Электрика', 'source_refs' => []]],
+            ],
+            [
+                'key' => 'lighting', 'title' => 'Освещение', 'scope_type' => 'electrical',
+                'sections' => [['key' => 'lighting', 'title' => 'Освещение', 'source_refs' => []]],
+            ],
+        ]);
+        $quantity = new QuantityData(
+            key: 'lighting.lines',
+            unit: 'm',
+            amount: '154.240000',
+            formulaKey: 'residential_preliminary.lighting.lines',
+            formulaVersion: ResidentialQuantityScenarioCatalog::VERSION,
+            formulaInputs: ['scenario' => [
+                'id' => ResidentialQuantityScenarioCatalog::SCENARIO_ID,
+                'version' => ResidentialQuantityScenarioCatalog::VERSION,
+                'confidence' => 0.62,
+                'warnings' => ['preliminary_quantity_scenario'],
+            ]],
+            source: QuantitySource::Estimated,
+            evidenceIds: ['room:1'],
+            modelVersion: 'building-model:v1',
+            assumptions: [ResidentialQuantityScenarioCatalog::SCENARIO_ID],
+        );
+        $analysis = [
+            'object' => ['object_type' => 'house', 'area' => 192.8],
+            'document_context' => ['canonical_building_quantities' => [$quantity->toArray()]],
+            'planning_signals' => ['generation_mode' => 'ai_assisted'],
+        ];
+        $compiler = new WorkPlanCompiler(
+            new PackagePlannerService,
+            $decomposition,
+            new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService),
+            new NormativeContextPinResolver,
+        );
+
+        $compiled = $compiler->compile($analysis, deferNormativePin: true);
+        $packages = array_column($compiled['local_estimates'], null, 'key');
+        $electricalItems = $packages['electrical']['sections'][0]['work_items'];
+        $lightingItems = $packages['lighting']['sections'][0]['work_items'];
+
+        self::assertNotContains('lighting.lines', array_column($electricalItems, 'quantity_formula'));
+        self::assertSame(['lighting.lines'], array_column($lightingItems, 'quantity_formula'));
+    }
+
     public function test_quantity_coverage_warnings_are_attached_only_to_the_affected_packages(): void
     {
         $analysis = $this->analysis();
@@ -67,6 +121,22 @@ final class WorkPlanCompilerTest extends TestCase
             'Лестничные марши и площадки не включены: в документах нет конструкции, размеров и объёмов лестницы.',
             $packages['electrical']['assumptions'],
         );
+    }
+
+    public function test_repeated_coverage_reason_is_presented_once_per_package(): void
+    {
+        $analysis = $this->analysis();
+        $analysis['document_context']['quantity_coverage_warnings'] = [
+            ['quantity_key' => 'sewerage.outlets', 'reason' => 'sewerage_design_takeoff_missing', 'package_key' => 'foundation'],
+            ['quantity_key' => 'sewerage.risers', 'reason' => 'sewerage_design_takeoff_missing', 'package_key' => 'foundation'],
+            ['quantity_key' => 'sewerage.revisions', 'reason' => 'sewerage_design_takeoff_missing', 'package_key' => 'foundation'],
+        ];
+
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        $package = array_column($payload['local_estimates'], null, 'key')['foundation'];
+
+        self::assertCount(1, $package['coverage_warnings']);
+        self::assertSame('sewerage_design_takeoff_missing', $package['coverage_warnings'][0]['reason']);
     }
 
     public function test_runtime_compilation_is_identical_to_legacy_algorithm(): void

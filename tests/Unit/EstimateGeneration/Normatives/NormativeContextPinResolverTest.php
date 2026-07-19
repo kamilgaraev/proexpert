@@ -113,7 +113,7 @@ final class NormativeContextPinResolverTest extends TestCase
         );
 
         self::assertSame(942, $selection['row']->price_id ?? null);
-        self::assertSame('fsnb_semantic_hard_attributes_median:v2', $selection['policy'] ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v3', $selection['policy'] ?? null);
     }
 
     #[Test]
@@ -142,7 +142,65 @@ final class NormativeContextPinResolverTest extends TestCase
         );
 
         self::assertSame(952, $selection['row']->price_id ?? null);
-        self::assertSame('fsnb_semantic_hard_attributes_median:v2', $selection['policy'] ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v3', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function semantic_window_selector_rejects_incompatible_leaf_count_and_opening_area(): void
+    {
+        $selection = (new AbstractResourceSemanticPriceSelector)->select(
+            'Установка оконных блоков из ПВХ профилей двухстворчатых с площадью проема до 2 м2',
+            'Блоки оконные пластиковые',
+            'м2',
+            11,
+            [
+                (object) [
+                    'price_id' => 961, 'price_resource_code' => '11.3.02.04-0032',
+                    'price_resource_name' => 'Блок оконный из ПВХ-профилей, трехстворчатый, площадь от 3,01 до 3,5 м2',
+                    'price_unit' => 'м2', 'base_price' => '4000', 'regional_price_version_id' => 11,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+                (object) [
+                    'price_id' => 962, 'price_resource_code' => '11.3.02.04-0021',
+                    'price_resource_name' => 'Блок оконный из ПВХ-профилей, двухстворчатый, площадь до 2 м2',
+                    'price_unit' => 'м2', 'base_price' => '5200', 'regional_price_version_id' => 11,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+            ],
+            [42],
+        );
+
+        self::assertSame(962, $selection['row']->price_id ?? null);
+        self::assertSame('regional_semantic_hard_attributes_median:v3', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function semantic_duct_selector_rejects_fittings_for_a_straight_duct_norm(): void
+    {
+        $selection = (new AbstractResourceSemanticPriceSelector)->select(
+            'Прокладка воздуховодов из листовой оцинкованной стали толщиной 0,5 мм, диаметром до 200 мм',
+            'Воздуховоды металлические',
+            'м2',
+            11,
+            [
+                (object) [
+                    'price_id' => 971, 'price_resource_code' => '19.1.01.09-0139',
+                    'price_resource_name' => 'Изделия фасонные для воздуховодов из оцинкованной стали, толщина 0,5 мм, диаметр 125 мм',
+                    'price_unit' => 'м2', 'base_price' => '700', 'regional_price_version_id' => 11,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+                (object) [
+                    'price_id' => 972, 'price_resource_code' => '19.1.01.01-0052',
+                    'price_resource_name' => 'Воздуховод из листовой оцинкованной стали, прямой участок, толщина 0,5 мм, диаметр до 200 мм',
+                    'price_unit' => 'м2', 'base_price' => '1400', 'regional_price_version_id' => 11,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+            ],
+            [42],
+        );
+
+        self::assertSame(972, $selection['row']->price_id ?? null);
+        self::assertSame('regional_semantic_hard_attributes_median:v3', $selection['policy'] ?? null);
     }
 
     #[Test]
@@ -1355,12 +1413,12 @@ final class NormativeContextPinResolverTest extends TestCase
             'regional_price_version_id' => null, 'regional_price_version_key' => null,
             'price_dataset_source_type' => 'fsnb_2022', 'price_dataset_version' => '2026-05-07',
             'raw_source_tag' => 'AbstractResource', 'project_resource_candidates_count' => 2,
-            'project_resource_price_policy' => 'fsnb_semantic_hard_attributes_median:v2',
+            'project_resource_price_policy' => 'fsnb_semantic_hard_attributes_median:v3',
         ]);
 
         self::assertSame('fsnb_base', $mapped->resource['price_source']);
         self::assertSame('09.4.02.05-0042', $mapped->resource['project_resource_selection']['selected_resource_code'] ?? null);
-        self::assertSame('fsnb_semantic_hard_attributes_median:v2', $mapped->resource['project_resource_selection']['policy'] ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v3', $mapped->resource['project_resource_selection']['policy'] ?? null);
     }
 
     private function semanticPrice(

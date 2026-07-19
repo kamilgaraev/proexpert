@@ -48,6 +48,9 @@ final readonly class NormativeResourceRowData
             'regional_semantic_hard_attributes_median:v2',
             'fsbc_semantic_hard_attributes_median:v2',
             'fsnb_semantic_hard_attributes_median:v2',
+            'regional_semantic_hard_attributes_median:v3',
+            'fsbc_semantic_hard_attributes_median:v3',
+            'fsnb_semantic_hard_attributes_median:v3',
         ], true)
             && self::policyMatchesPriceSource($projectResourcePricePolicy, $priceSource)
             && $priceResourceCode !== ''

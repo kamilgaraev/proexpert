@@ -41,6 +41,7 @@ final readonly class WorkPlanCompiler
                     : array_map(fn (array $intent): array => $this->intentToWorkItem($intent, $localEstimate, $section), $intents);
             }
         }
+        $localEstimates = $this->deduplicateSignedScenarioItems($localEstimates);
 
         $regionalContext = is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : [];
 
@@ -61,6 +62,52 @@ final readonly class WorkPlanCompiler
                 ),
             'local_estimates' => $localEstimates,
         ];
+    }
+
+    /** @param list<array<string, mixed>> $localEstimates
+     * @return list<array<string, mixed>>
+     */
+    private function deduplicateSignedScenarioItems(array $localEstimates): array
+    {
+        $owners = [];
+        foreach ($localEstimates as $localEstimate) {
+            $packageKey = (string) ($localEstimate['key'] ?? '');
+            foreach ($localEstimate['sections'] ?? [] as $section) {
+                foreach ($section['work_items'] ?? [] as $item) {
+                    $metadata = is_array($item['metadata'] ?? null) ? $item['metadata'] : [];
+                    $scenarioKey = trim((string) ($metadata['material_scenario_work_key'] ?? ''));
+                    if ($scenarioKey === '') {
+                        continue;
+                    }
+
+                    $preferredPackage = strstr($scenarioKey, '.', true) ?: '';
+                    if (! isset($owners[$scenarioKey]) || $packageKey === $preferredPackage) {
+                        $owners[$scenarioKey] = $packageKey;
+                    }
+                }
+            }
+        }
+
+        foreach ($localEstimates as $localIndex => $localEstimate) {
+            $packageKey = (string) ($localEstimate['key'] ?? '');
+            foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
+                $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'] = array_values(array_filter(
+                    $section['work_items'] ?? [],
+                    static function (mixed $item) use ($owners, $packageKey): bool {
+                        if (! is_array($item)) {
+                            return true;
+                        }
+
+                        $metadata = is_array($item['metadata'] ?? null) ? $item['metadata'] : [];
+                        $scenarioKey = trim((string) ($metadata['material_scenario_work_key'] ?? ''));
+
+                        return $scenarioKey === '' || ($owners[$scenarioKey] ?? $packageKey) === $packageKey;
+                    },
+                ));
+            }
+        }
+
+        return $localEstimates;
     }
 
     public function resolveNormativeContextPin(
