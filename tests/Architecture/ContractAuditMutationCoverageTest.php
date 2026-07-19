@@ -62,6 +62,7 @@ ImmutableAuditPhaseBInvariantService|installCanonicalCore|cfec38cfc7fecafda89316
 ImmutableAuditPhaseBInvariantService|installCanonicalCore|cfec38cfc7fecafda89316c15ded5c4de6ad2271c1f24a4fedf49a2f36063ac4|evidence=statement:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::SEQUENCE_CREATE_SQL=1
 ImmutableAuditPhaseBInvariantService|sequenceCatalog|003c10eed535f2ee9e9be91879fd76184920845f42e44443545f89276c66996c|evidence=selectOne:sql=SELECT s.data_type, s.start_value, s.min_value, s.max_value, s.increment_by, s.cycle, s.cache_size, CASE WHEN pg_get_userbyid(q.relowner) = current_user THEN '$database_owner' ELSE…=1
 ImmutableAuditPhaseBInvariantService|triggerCatalog|415242921953fc646198f320b21b170385a3f955d9eeee6594604c611d20b7e7|evidence=selectOne:sql=SELECT t.tgname AS name, t.tgenabled AS enabled, t.tgisinternal AS internal, c.relname AS relation, p.proname AS function_name, t.tgtype AS type, CASE WHEN function_namespace.nspna…=1
+ImmutableAuditRecorder|activateWriterCredential|b72323145530842ff92ecfcedc42d66d20a983777fdbac8c76dfc53dd80e5f57|evidence=execute:argument=[$credential]=1
 ImmutableAuditRolloutService|cutover|86e4e5b604d45cefffabb63b0b368e392b540f163d726516721ff75e584b835a|evidence=select:sql=SELECT pg_advisory_lock(hashtextextended(?, 0))=2
 ImmutableAuditRolloutService|cutover|86e4e5b604d45cefffabb63b0b368e392b540f163d726516721ff75e584b835a|evidence=select:sql=SELECT pg_advisory_unlock(hashtextextended(?, 0))=2
 ImmutableAuditRolloutService|cutover|86e4e5b604d45cefffabb63b0b368e392b540f163d726516721ff75e584b835a|evidence=statement:sql=SELECT setval('immutable_audit_sequence', GREATEST((SELECT last_value FROM immutable_audit_sequence), COALESCE((SELECT MAX(sequence_id) FROM immutable_audit_events), 1)), EXISTS (S…=1
@@ -356,6 +357,7 @@ final class InjectedDatabase {
 PHP);
 
         self::assertSame(['statement', 'delete', 'exec', 'execute', 'query'], array_column($findings, 'operation'));
+        self::assertStringNotContainsString('|builder=unresolved-', $findings[3]['fingerprint']);
     }
 
     public function test_dynamic_sql_exemption_hash_changes_with_builder_and_one_hop_dependency_body(): void
@@ -589,6 +591,114 @@ final class StatementConsumer {
 PHP);
 
         self::assertSame(['execute', 'execute', 'execute'], array_column($findings, 'operation'));
+    }
+
+    public function test_unknown_statement_provenance_remains_fail_closed_through_alias_array_property_and_nested_capture(): void
+    {
+        $findings = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+final class UnknownStatementConsumer {
+    private mixed $statement;
+    public function run(): void {
+        $statement = UnknownFactory::make();
+        $statement->execute();
+        $alias = $statement;
+        $alias->execute();
+        $bucket['statement'] = $statement;
+        $bucket['statement']->execute();
+        $fromArray = $bucket['statement'];
+        $fromArray->execute();
+        $this->statement = $fromArray;
+        $this->statement->execute();
+        $nested = function () use ($statement): void { $statement->execute(); };
+    }
+}
+PHP);
+
+        self::assertCount(6, $findings);
+        foreach ($findings as $finding) {
+            self::assertStringContainsString('|builder=unresolved-', $finding['fingerprint']);
+        }
+    }
+
+    public function test_domain_execute_receiver_is_not_misclassified_as_unknown_statement(): void
+    {
+        $findings = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+final class DomainToolConsumer {
+    public function run(ToolRegistry $registry): void {
+        $tool = $registry->getTool('report');
+        $tool->execute([]);
+    }
+}
+PHP);
+
+        self::assertSame([], $findings);
+    }
+
+    public function test_static_statement_factory_fingerprint_tracks_its_exact_body_independently(): void
+    {
+        $first = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+final class StaticStatementFactory {
+    public static function make(): \PDOStatement { throw new \RuntimeException('first'); }
+}
+final class StaticStatementConsumer {
+    public function run(): void { StaticStatementFactory::make()->execute(); }
+}
+PHP);
+        $second = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+final class StaticStatementFactory {
+    public static function make(): \PDOStatement { throw new \RuntimeException('second'); }
+}
+final class StaticStatementConsumer {
+    public function run(): void { StaticStatementFactory::make()->execute(); }
+}
+PHP);
+
+        self::assertCount(1, $first);
+        self::assertCount(1, $second);
+        self::assertNotSame($first[0]['fingerprint'], $second[0]['fingerprint']);
+    }
+
+    public function test_injected_statement_factory_fingerprint_tracks_only_the_exact_factory_body_and_cache_content(): void
+    {
+        $directory = sys_get_temp_dir().'/most-injected-statement-factory-'.bin2hex(random_bytes(6));
+        self::assertTrue(mkdir($directory));
+        $caller = $directory.'/Caller.php';
+        $factory = $directory.'/StatementFactory.php';
+        file_put_contents($caller, <<<'PHP'
+<?php
+namespace InjectedStatementProject;
+final class Caller {
+    private StatementFactory $factory;
+    public function __construct(StatementFactory $factory) { $this->factory = $factory; }
+    public function run(): void { $this->factory->build()->execute(); }
+}
+PHP);
+        $firstFactory = <<<'PHP'
+<?php
+namespace InjectedStatementProject;
+final class StatementFactory {
+    public function build(): \PDOStatement { throw new \RuntimeException('first'); }
+}
+PHP;
+        file_put_contents($factory, $firstFactory);
+        $scanner = new ContractMutationAstScanner;
+        $first = $scanner->findingsInFiles([$caller, $factory]);
+        file_put_contents($factory, str_replace("'first'", "'second'", $firstFactory));
+        $second = $scanner->findingsInFiles([$caller, $factory]);
+
+        self::assertCount(1, $first);
+        self::assertCount(1, $second);
+        self::assertStringNotContainsString('|builder=unresolved-', $first[0]['fingerprint']);
+        self::assertNotSame($first[0]['fingerprint'], $second[0]['fingerprint']);
+        self::assertSame(['hits' => 0, 'misses' => 2], $scanner->projectCacheMetrics());
+
+        unlink($caller);
+        unlink($factory);
+        rmdir($directory);
     }
 
     public function test_project_statement_factory_index_is_cross_file_content_sensitive_and_unknown_call_chains_fail_closed(): void
