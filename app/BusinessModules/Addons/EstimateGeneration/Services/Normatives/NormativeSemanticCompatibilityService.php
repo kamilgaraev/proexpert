@@ -600,14 +600,33 @@ final class NormativeSemanticCompatibilityService
             return true;
         }
 
+        if (! in_array(trim((string) ($intent['action'] ?? '')), ['', 'general_work'], true)) {
+            return true;
+        }
+
+        if ($evidenceText === '' && $this->containsAny($candidateTitle, [
+            'облицов',
+            'навесн фасад',
+            'вентилируем',
+            'каркас',
+            'направляющ профил',
+        ])) {
+            return false;
+        }
+
         $materialMarkerGroups = [
             ['фиброцемент', 'fiber_cement'],
             ['хризотилцемент', 'chrysotile_cement', 'asbestos_cement'],
             ['керамогранит', 'porcelain_stoneware', 'porcelain_tile'],
+            ['керамическ плит', 'кабанчик', 'ceramic_tile'],
             ['сайдинг'],
             ['металлокассет', 'металлическими кассет', 'metal_cassette'],
             ['композитн', 'composite_panel'],
+            ['бетонн декоратив', 'изделиями бетонн', 'decorative_concrete'],
+            ['вентилируем', 'ventilated_facade'],
             ['стеклянной крош', 'стеклянная крош', 'стеклянную крош', 'glass_crumb'],
+            ['мраморной крош', 'мраморная крош', 'мраморную крош', 'marble_crumb'],
+            ['лицевым кирпич', 'облицовочн кирпич', 'brick_facing'],
             ['терразит', 'terrazite', 'terrazzo'],
             ['природным кам', 'природного кам', 'каменн облицов', 'natural_stone'],
         ];

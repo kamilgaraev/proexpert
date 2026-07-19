@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
@@ -97,6 +98,9 @@ final class EstimateGenerationGeometryController extends Controller
                 'exception' => $exception,
                 'exception_class' => $exception::class,
                 'exception_message' => $exception->getMessage(),
+                'sql_state' => $exception instanceof QueryException ? ($exception->errorInfo[0] ?? null) : null,
+                'driver_error_code' => $exception instanceof QueryException ? ($exception->errorInfo[1] ?? null) : null,
+                'query_template' => $exception instanceof QueryException ? $exception->getSql() : null,
                 'failure_id' => $failureId,
                 'organization_id' => (int) ($request->user()?->current_organization_id ?? 0),
                 'project_id' => (int) $project->getKey(),

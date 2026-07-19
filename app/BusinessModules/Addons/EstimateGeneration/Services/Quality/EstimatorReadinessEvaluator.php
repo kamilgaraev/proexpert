@@ -84,10 +84,17 @@ final class EstimatorReadinessEvaluator
     private function warnings(array $metrics): array
     {
         $warnings = [];
-        if ($metrics['documents_ready'] > 0 && $metrics['quantity_takeoffs'] === 0) {
+        $hasTraceableDraft = $metrics['priced_work_items'] > 0
+            && $metrics['quantity_review_work_items'] === 0
+            && $metrics['not_calculated_work_items'] === 0;
+
+        if ($metrics['documents_ready'] > 0 && $metrics['quantity_takeoffs'] === 0 && ! $hasTraceableDraft) {
             $warnings[] = $this->issue('no_quantity_takeoffs', 'estimate_generation.readiness_warning_no_quantity_takeoffs');
         }
-        if ($metrics['documents_ready'] > 0 && $metrics['facts'] === 0 && $metrics['drawing_elements'] === 0) {
+        if ($metrics['documents_ready'] > 0
+            && $metrics['facts'] === 0
+            && $metrics['drawing_elements'] === 0
+            && ! $hasTraceableDraft) {
             $warnings[] = $this->issue('low_document_understanding', 'estimate_generation.readiness_warning_low_document_understanding');
         }
         foreach ($metrics as $metric => $count) {

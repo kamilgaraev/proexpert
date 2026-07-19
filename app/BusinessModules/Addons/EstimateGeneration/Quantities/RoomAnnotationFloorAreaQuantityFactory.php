@@ -339,6 +339,9 @@ final readonly class RoomAnnotationFloorAreaQuantityFactory
         }
         foreach (array_unique($ids) as $id) {
             $node = $this->evidence->node($context->organizationId, $context->projectId, $context->sessionId, $id);
+            if ($node !== null && $this->isGeometryConfirmationEvidence($node)) {
+                continue;
+            }
             if ($node === null || $node->invalidatedAt !== null || $node->sourceType !== EvidenceSourceType::DocumentUnit) {
                 $hasUnknown = true;
 
@@ -359,5 +362,15 @@ final readonly class RoomAnnotationFloorAreaQuantityFactory
         }
 
         return $hasPrimary ? 'primary' : ($hasReference ? 'reference' : 'unknown');
+    }
+
+    private function isGeometryConfirmationEvidence(EvidenceNode $node): bool
+    {
+        return $node->invalidatedAt === null
+            && $node->type === EvidenceType::SourceFact
+            && $node->sourceType === EvidenceSourceType::UserInput
+            && $node->producerName === 'user_input_normalizer'
+            && ($node->value['fact_key'] ?? null) === 'element_type_code'
+            && ($node->value['fact_value'] ?? null) === 'element_type:room';
     }
 }
