@@ -173,6 +173,36 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
     }
 
     #[Test]
+    public function accepts_a_semantically_selected_base_project_resource(): void
+    {
+        $record = $this->catalogCandidate();
+        $record['resources']['materials'][0] = [
+            ...$record['resources']['materials'][0],
+            'code' => '09.4.03.01',
+            'name' => 'Блоки оконные пластиковые',
+            'price_source' => 'fsnb_base',
+            'price_source_version' => '2026-05-07',
+            'unit_price' => '11200.500000',
+            'project_resource_selection' => [
+                'group_code' => '09.4.03.01',
+                'selected_resource_code' => '09.4.02.05-0042',
+                'selected_resource_name' => 'Блок оконный из ПВХ профилей двухстворчатый',
+                'price_source' => 'fsnb_base',
+                'price_source_version' => '2026-05-07',
+                'policy' => 'fsnb_semantic_hard_attributes_median:v3',
+                'candidates_count' => 2,
+            ],
+        ];
+
+        $decision = AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
+
+        self::assertSame(
+            '09.4.02.05-0042',
+            $decision->resources['materials'][0]['project_resource_selection']['selected_resource_code'],
+        );
+    }
+
+    #[Test]
     public function accepts_an_exact_group_selection_filtered_by_hard_attributes(): void
     {
         $record = $this->catalogCandidate();
@@ -189,7 +219,7 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
                 'selected_resource_name' => 'Труба напорная многослойная из полипропилена диаметром 20 мм',
                 'price_source' => 'regional_catalog',
                 'price_source_version' => 'prices-2026.06',
-                'policy' => 'regional_child_hard_attributes_median:v1',
+                'policy' => 'regional_child_hard_attributes_median:v2',
                 'candidates_count' => 1,
             ],
         ];
@@ -197,7 +227,7 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
         $decision = AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
 
         self::assertSame(
-            'regional_child_hard_attributes_median:v1',
+            'regional_child_hard_attributes_median:v2',
             $decision->resources['materials'][0]['project_resource_selection']['policy'],
         );
     }

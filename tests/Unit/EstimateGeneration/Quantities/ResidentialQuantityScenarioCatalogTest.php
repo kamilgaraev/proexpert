@@ -112,6 +112,20 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
     }
 
     #[Test]
+    public function documented_internal_ceiling_area_feeds_rough_and_finish_ceiling_work(): void
+    {
+        $result = (new ResidentialQuantityScenarioCatalog)->build([
+            'floor_area' => $this->quantity('floor_area', '192.800000', ['room:1', 'room:2']),
+            'ceiling_area' => $this->quantity('ceiling_area', '192.800000', ['room:1', 'room:2']),
+        ], $this->model(), ['object' => ['object_type' => 'house']]);
+
+        self::assertSame('192.800000', $result->quantities['rough.ceiling']->amount);
+        self::assertSame('192.800000', $result->quantities['finish.ceiling']->amount);
+        self::assertSame('ceiling_area', $result->quantities['rough.ceiling']->formulaInputs['source_quantity']['key']);
+        self::assertSame('ceiling_area', $result->quantities['finish.ceiling']->formulaInputs['source_quantity']['key']);
+    }
+
+    #[Test]
     public function preliminary_house_scope_does_not_invent_fixture_types_or_sewer_fittings(): void
     {
         $result = (new ResidentialQuantityScenarioCatalog)->build([

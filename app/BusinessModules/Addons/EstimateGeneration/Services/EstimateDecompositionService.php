@@ -94,12 +94,25 @@ class EstimateDecompositionService
                 && trim((string) ($warning['package_key'] ?? '')) === $packageKey,
         ));
 
-        return array_map(function (array $warning): array {
+        $presentedWarnings = array_map(function (array $warning): array {
             $reason = trim((string) ($warning['reason'] ?? ''));
             $message = $reason !== '' ? $this->quantityCoverageWarningMessage($reason) : null;
 
             return $message === null ? $warning : [...$warning, 'message' => $message];
         }, $packageWarnings);
+
+        $seenReasons = [];
+
+        return array_values(array_filter($presentedWarnings, static function (array $warning) use (&$seenReasons): bool {
+            $reason = trim((string) ($warning['reason'] ?? ''));
+            if ($reason === '' || ! isset($seenReasons[$reason])) {
+                $seenReasons[$reason] = true;
+
+                return true;
+            }
+
+            return false;
+        }));
     }
 
     /**

@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v4', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v6', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -87,6 +87,16 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         );
     }
 
+    public function test_issues_signed_intent_actions_for_residential_engineering_scenarios(): void
+    {
+        $catalog = new ResidentialMaterialScenarioCatalog;
+
+        self::assertSame('cable_installation', $catalog->issue('electrical.main_cable', 'residential')['intent_action'] ?? null);
+        self::assertSame('cable_installation', $catalog->issue('electrical.power_lines', 'residential')['intent_action'] ?? null);
+        self::assertSame('cable_installation', $catalog->issue('lighting.lines', 'residential')['intent_action'] ?? null);
+        self::assertSame('heating_equipment', $catalog->issue('heating.unit', 'residential')['intent_action'] ?? null);
+    }
+
     #[DataProvider('verifiedNormativeSpecializations')]
     public function test_issues_verified_search_and_rate_for_preliminary_material_scenario(
         string $workItemKey,
@@ -154,6 +164,26 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'electrical.grounding',
             'заземлитель горизонтальный из круглой стали диаметром 12 мм',
             '08-02-472-01',
+        ];
+        yield 'residential feeder cable' => [
+            'electrical.main_cable',
+            'прокладка кабеля с креплением скобами и установкой ответвительных коробок',
+            '08-02-401-01',
+        ];
+        yield 'residential power wiring' => [
+            'electrical.power_lines',
+            'прокладка проводов силовой сети в готовых каналах сечением до 6 мм2',
+            '08-02-404-01',
+        ];
+        yield 'residential lighting wiring' => [
+            'lighting.lines',
+            'прокладка проводов групповых осветительных сетей под штукатурку или в бороздах',
+            '08-02-403-03',
+        ];
+        yield 'assembled residential heating boiler' => [
+            'heating.unit',
+            'установка отопительного котла поставляемого в сборе',
+            '18-01-001-01',
         ];
         yield 'wet zone waterproofing' => [
             'sanitary.waterproofing',

@@ -45,8 +45,14 @@ final readonly class NormativeResourceRowData
         $isSemanticProjectSelection = in_array($projectResourcePricePolicy, [
             'regional_semantic_pipe_hard_attributes_median:v1',
             'regional_semantic_metal_gutter_family_median:v1',
+            'regional_semantic_hard_attributes_median:v2',
+            'fsbc_semantic_hard_attributes_median:v2',
+            'fsnb_semantic_hard_attributes_median:v2',
+            'regional_semantic_hard_attributes_median:v3',
+            'fsbc_semantic_hard_attributes_median:v3',
+            'fsnb_semantic_hard_attributes_median:v3',
         ], true)
-            && $regionalPriceVersionId !== null
+            && self::policyMatchesPriceSource($projectResourcePricePolicy, $priceSource)
             && $priceResourceCode !== ''
             && trim((string) ($row->price_resource_name ?? '')) !== '';
         $isExactGroupProjectSelection = in_array($projectResourcePricePolicy, [
@@ -56,6 +62,9 @@ final readonly class NormativeResourceRowData
             'regional_child_hard_attributes_median:v1',
             'fsbc_base_child_hard_attributes_median:v1',
             'fsnb_base_child_hard_attributes_median:v1',
+            'regional_child_hard_attributes_median:v2',
+            'fsbc_base_child_hard_attributes_median:v2',
+            'fsnb_base_child_hard_attributes_median:v2',
         ], true)
             && self::policyMatchesPriceSource($projectResourcePricePolicy, $priceSource)
             && preg_match('/^'.preg_quote($resourceCode, '/').'-\d{4}$/D', $priceResourceCode) === 1;

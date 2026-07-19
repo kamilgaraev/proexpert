@@ -172,4 +172,44 @@ final class NormativeCandidatePresenterTest extends TestCase
         self::assertNull($payload['unit_price_preview']);
         self::assertSame([], $payload['price_sources']);
     }
+
+    public function test_presenter_never_exposes_price_preview_for_abstract_project_resource(): void
+    {
+        $payload = (new NormativeCandidatePresenter)->present([
+            'key' => 'norm-4',
+            'norm_id' => 4,
+            'code' => '10-01-034-05',
+            'name' => 'Установка оконных блоков из ПВХ профилей',
+            'unit' => '100 м2',
+            'confidence' => 0.95,
+            'score' => 100,
+            'resources' => [
+                'materials' => [[
+                    'code' => '09.4.03.01',
+                    'name' => 'Блоки оконные пластиковые',
+                    'unit' => 'м2',
+                    'quantity' => 100.0,
+                    'unit_price' => 7500.0,
+                    'total_price' => 750000.0,
+                    'price_source' => 'fsbc_base',
+                    'is_abstract_resource' => true,
+                    'requires_project_resource_selection' => true,
+                ]],
+                'machinery' => [],
+                'labor' => [],
+                'other' => [],
+            ],
+        ], [
+            'unit' => 'м2',
+            'quantity' => 23.136,
+        ]);
+
+        self::assertFalse($payload['preview_calculable']);
+        self::assertSame(0, $payload['priced_resources_count']);
+        self::assertSame(1, $payload['unpriced_resources_count']);
+        self::assertNull($payload['unit_price_preview']);
+        self::assertNull($payload['total_cost_preview']);
+        self::assertSame([], $payload['price_sources']);
+        self::assertSame([], $payload['resource_prices']);
+    }
 }

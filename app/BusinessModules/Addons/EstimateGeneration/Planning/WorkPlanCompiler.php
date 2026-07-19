@@ -6,10 +6,12 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Planning;
 
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
 
 final readonly class WorkPlanCompiler
@@ -20,6 +22,7 @@ final readonly class WorkPlanCompiler
         private NormativeWorkItemPlannerService $workItemPlanner,
         private NormativeContextPinResolver $normativePins,
         private ?WorkIntentClassifier $intentClassifier = null,
+        private ?ResidentialMaterialScenarioCatalog $materialScenarioCatalog = null,
     ) {}
 
     /** @param array<string, mixed> $analysis
@@ -38,6 +41,7 @@ final readonly class WorkPlanCompiler
                     : array_map(fn (array $intent): array => $this->intentToWorkItem($intent, $localEstimate, $section), $intents);
             }
         }
+        $localEstimates = $this->deduplicateSignedScenarioItems($localEstimates);
 
         $regionalContext = is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : [];
 
@@ -58,6 +62,52 @@ final readonly class WorkPlanCompiler
                 ),
             'local_estimates' => $localEstimates,
         ];
+    }
+
+    /** @param list<array<string, mixed>> $localEstimates
+     * @return list<array<string, mixed>>
+     */
+    private function deduplicateSignedScenarioItems(array $localEstimates): array
+    {
+        $owners = [];
+        foreach ($localEstimates as $localEstimate) {
+            $packageKey = (string) ($localEstimate['key'] ?? '');
+            foreach ($localEstimate['sections'] ?? [] as $section) {
+                foreach ($section['work_items'] ?? [] as $item) {
+                    $metadata = is_array($item['metadata'] ?? null) ? $item['metadata'] : [];
+                    $scenarioKey = trim((string) ($metadata['material_scenario_work_key'] ?? ''));
+                    if ($scenarioKey === '') {
+                        continue;
+                    }
+
+                    $preferredPackage = strstr($scenarioKey, '.', true) ?: '';
+                    if (! isset($owners[$scenarioKey]) || $packageKey === $preferredPackage) {
+                        $owners[$scenarioKey] = $packageKey;
+                    }
+                }
+            }
+        }
+
+        foreach ($localEstimates as $localIndex => $localEstimate) {
+            $packageKey = (string) ($localEstimate['key'] ?? '');
+            foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
+                $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'] = array_values(array_filter(
+                    $section['work_items'] ?? [],
+                    static function (mixed $item) use ($owners, $packageKey): bool {
+                        if (! is_array($item)) {
+                            return true;
+                        }
+
+                        $metadata = is_array($item['metadata'] ?? null) ? $item['metadata'] : [];
+                        $scenarioKey = trim((string) ($metadata['material_scenario_work_key'] ?? ''));
+
+                        return $scenarioKey === '' || ($owners[$scenarioKey] ?? $packageKey) === $packageKey;
+                    },
+                ));
+            }
+        }
+
+        return $localEstimates;
     }
 
     public function resolveNormativeContextPin(
@@ -117,6 +167,7 @@ final readonly class WorkPlanCompiler
                         continue;
                     }
                     $recordedIntent = is_array($item['work_intent'] ?? null) ? $item['work_intent'] : null;
+                    $scenario = $this->resolvedMaterialScenario($item, $objectType);
                     $classified = $classifier->classify($item, [
                         'scope_type' => $localEstimate['scope_type'] ?? null,
                         'section_title' => $section['title'] ?? null,
@@ -129,13 +180,19 @@ final readonly class WorkPlanCompiler
                         $normativeSections,
                         static fn (mixed $section): bool => is_string($section) && $section !== '',
                     )));
+                    $scenarioRateCode = trim((string) ($scenario['normative_rate_code'] ?? ''));
+                    if (preg_match('/^(\d{2})-\d{2}-\d{3}-\d{2}$/D', $scenarioRateCode, $matches) === 1) {
+                        $normativeSections = [$matches[1]];
+                    }
                     $normativeSection = count($normativeSections) === 1 ? $normativeSections[0] : null;
                     $material = $this->intentString($recordedIntent, 'material') ?? $classified->material;
                     $resolvedIntent = [
                         'search_text' => (string) ($item['normative_search_text'] ?? $item['name'] ?? ''),
                         'unit' => (string) ($item['unit'] ?? ''),
                         'code' => is_string($item['normative_rate_code'] ?? null) ? $item['normative_rate_code'] : null,
-                        'action' => $this->intentString($recordedIntent, 'action') ?? $classified->action,
+                        'action' => $this->intentString($scenario, 'intent_action')
+                            ?? $this->intentString($recordedIntent, 'action')
+                            ?? $classified->action,
                         'scope' => $this->intentString($recordedIntent, 'scope') ?? $classified->scope,
                         'system' => $this->intentString($recordedIntent, 'system') ?? $classified->system,
                         'object' => $this->intentString($recordedIntent, 'object') ?? $classified->object,
@@ -160,6 +217,27 @@ final readonly class WorkPlanCompiler
         }
 
         return $intents;
+    }
+
+    /** @param array<string, mixed> $item @return array<string, mixed>|null */
+    private function resolvedMaterialScenario(array $item, ?string $objectType): ?array
+    {
+        $scenario = $item['specialization_scenario'] ?? null;
+        $metadata = is_array($item['metadata'] ?? null) ? $item['metadata'] : [];
+        $quantityKey = trim((string) (
+            $metadata['material_scenario_work_key']
+            ?? $metadata['quantity_key']
+            ?? $item['quantity_formula']
+            ?? ''
+        ));
+        $canonicalObjectType = ObjectTypeSignalClassifier::canonical((string) $objectType);
+        if ($quantityKey === '' || $canonicalObjectType === '') {
+            return null;
+        }
+
+        $catalog = $this->materialScenarioCatalog ?? new ResidentialMaterialScenarioCatalog;
+
+        return $catalog->resolve($scenario, $quantityKey, $canonicalObjectType);
     }
 
     /** @param array<string, mixed>|null $intent */

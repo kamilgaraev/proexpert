@@ -169,8 +169,14 @@ final readonly class AcceptedNormativeDecisionData
         $isSemanticSelection = in_array($policy, [
             'regional_semantic_pipe_hard_attributes_median:v1',
             'regional_semantic_metal_gutter_family_median:v1',
+            'regional_semantic_hard_attributes_median:v2',
+            'fsbc_semantic_hard_attributes_median:v2',
+            'fsnb_semantic_hard_attributes_median:v2',
+            'regional_semantic_hard_attributes_median:v3',
+            'fsbc_semantic_hard_attributes_median:v3',
+            'fsnb_semantic_hard_attributes_median:v3',
         ], true)
-            && ($selection['price_source'] ?? null) === 'regional_catalog'
+            && self::policyMatchesPriceSource($policy, $selection['price_source'] ?? null)
             && is_string($selectedResourceCode)
             && trim($selectedResourceCode) !== '';
         $isExactGroupSelection = is_string($groupCode)
@@ -182,6 +188,9 @@ final readonly class AcceptedNormativeDecisionData
                 'regional_child_hard_attributes_median:v1',
                 'fsbc_base_child_hard_attributes_median:v1',
                 'fsnb_base_child_hard_attributes_median:v1',
+                'regional_child_hard_attributes_median:v2',
+                'fsbc_base_child_hard_attributes_median:v2',
+                'fsnb_base_child_hard_attributes_median:v2',
             ], true)
             && self::policyMatchesPriceSource($policy, $selection['price_source'] ?? null)
             && preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', $selectedResourceCode) === 1;

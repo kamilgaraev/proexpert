@@ -192,7 +192,40 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         $intent = $factory->intent($item, $context, 'fsnb-2026.1');
 
         self::assertSame(['ламинат', 'ламинированн'], $intent->specializationScenario['material_markers'] ?? null);
-        self::assertSame('residential_preliminary_common:v4', $intent->specializationScenario['scenario_id'] ?? null);
+        self::assertSame('residential_preliminary_common:v6', $intent->specializationScenario['scenario_id'] ?? null);
+    }
+
+    public function test_signed_engineering_scenario_overrides_ambiguous_classifier_action_and_section(): void
+    {
+        $catalog = new ResidentialMaterialScenarioCatalog;
+        $factory = new NormativeWorkIntentFactory(
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
+            null,
+            $catalog,
+        );
+        $scenario = $catalog->issue('lighting.lines', 'residential');
+        self::assertIsArray($scenario);
+
+        $intent = $factory->intent([
+            'key' => 'lighting-lines',
+            'name' => 'Подготовка поверхности под штукатурку',
+            'normative_search_text' => $scenario['normative_search_text'],
+            'normative_rate_code' => $scenario['normative_rate_code'],
+            'unit' => 'm',
+            'metadata' => ['quantity_key' => 'lighting.lines'],
+            'specialization_scenario' => $scenario,
+        ], [
+            'organization_id' => 1,
+            'project_id' => 89,
+            'session_id' => 58,
+            'scope_type' => 'finishing',
+            'object_type' => 'house',
+            'applicability_date' => '2026-07-17',
+            'source_refs' => ['doc:1'],
+        ], 'fsnb-2026.1');
+
+        self::assertSame('cable_installation', $intent->technology);
+        self::assertSame(['08'], $intent->normativeSections);
     }
 
     public function test_trusted_specialization_evidence_suppresses_preliminary_scenario(): void

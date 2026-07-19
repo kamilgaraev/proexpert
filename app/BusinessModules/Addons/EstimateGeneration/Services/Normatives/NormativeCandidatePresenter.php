@@ -202,6 +202,11 @@ class NormativeCandidatePresenter
      */
     private function resourceHasPositivePrice(array $resource): bool
     {
+        if (($resource['is_abstract_resource'] ?? false) === true
+            || ($resource['requires_project_resource_selection'] ?? false) === true) {
+            return false;
+        }
+
         return ($resource['price_source'] ?? null) !== null && $this->resourceTotalPrice($resource) > 0;
     }
 

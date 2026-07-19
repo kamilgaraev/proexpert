@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingServic
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -26,6 +27,7 @@ class NormativeCandidateSelectionService
         protected EstimateGenerationPackagePersistenceService $packagePersistenceService,
         protected EstimateGenerationLearningRecorder $learningRecorder,
         protected AdvanceEstimateGeneration $advanceGeneration,
+        protected NormativeCandidateSelectionHardGate $selectionHardGate,
     ) {}
 
     /**
@@ -33,6 +35,23 @@ class NormativeCandidateSelectionService
      */
     public function select(EstimateGenerationSession $session, string $workItemKey, int $normId, bool $allowCatalogSelection = false): array
     {
+        return DB::transaction(function () use ($session, $workItemKey, $normId, $allowCatalogSelection): array {
+            $lockedSession = EstimateGenerationSession::query()
+                ->whereKey($session->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            return $this->selectLocked($lockedSession, $workItemKey, $normId, $allowCatalogSelection);
+        }, 3);
+    }
+
+    /** @return array<string, mixed> */
+    protected function selectLocked(
+        EstimateGenerationSession $session,
+        string $workItemKey,
+        int $normId,
+        bool $allowCatalogSelection,
+    ): array {
         $draft = $session->draft_payload ?? [];
         $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
         $found = false;
@@ -55,6 +74,9 @@ class NormativeCandidateSelectionService
                         'scope_type' => $localEstimate['scope_type'] ?? null,
                         'local_estimate_title' => $localEstimate['title'] ?? null,
                         'section_title' => $section['title'] ?? null,
+                        'object_type' => data_get($draft, 'object_profile.object_type')
+                            ?? data_get($session->analysis_payload, 'object_profile.object_type')
+                            ?? data_get($session->input_payload, 'object_profile.object_type'),
                         'source_refs' => $section['source_refs'] ?? $localEstimate['source_refs'] ?? [],
                         'regional_context' => $regionalContext,
                         'normative_dataset_version' => is_array($regionalContext)
@@ -70,6 +92,8 @@ class NormativeCandidateSelectionService
                             'norm_id' => [$this->message('estimate_generation.normative_candidate_not_available')],
                         ]);
                     }
+
+                    $this->assertMatchPassesHardGate($workItem, $context, $match);
 
                     $workItem = $this->resourceAssemblyService->applySelectedNormativeMatch($workItem, $match, $context);
                     $workItem = $this->pricingService->price([$workItem], is_array($regionalContext) ? $regionalContext : [])[0];
@@ -112,6 +136,22 @@ class NormativeCandidateSelectionService
         ]);
 
         return $draft;
+    }
+
+    /**
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $context
+     * @param  array<string, mixed>  $match
+     */
+    protected function assertMatchPassesHardGate(array $workItem, array $context, array $match): void
+    {
+        if ($this->selectionHardGate->rejectionReasons($workItem, $context, $match) === []) {
+            return;
+        }
+
+        throw $this->validationException([
+            'norm_id' => [$this->message('estimate_generation.normative_candidate_not_available')],
+        ]);
     }
 
     /**

@@ -43,6 +43,21 @@ final class NormativeWorkIntentFactory
             $recorded['specialization_evidence'] ?? $item['specialization_evidence'] ?? [],
             $evidence,
         );
+        $specializationScenario = $specializationEvidence === []
+            ? $this->specializationScenario(
+                $item['specialization_scenario'] ?? $recorded['specialization_scenario'] ?? null,
+                $quantityKey,
+                $objectType,
+            )
+            : null;
+        if (is_string($specializationScenario['intent_action'] ?? null)
+            && trim($specializationScenario['intent_action']) !== '') {
+            $classified['action'] = trim($specializationScenario['intent_action']);
+            $rateCode = trim((string) ($specializationScenario['normative_rate_code'] ?? ''));
+            if (preg_match('/^(\d{2})-\d{2}-\d{3}-\d{2}$/D', $rateCode, $matches) === 1) {
+                $classified['preferred_section_prefixes'] = [$matches[1]];
+            }
+        }
 
         $preferredSections = array_values(array_filter(
             $classified['preferred_section_prefixes'] ?? [],
@@ -65,13 +80,7 @@ final class NormativeWorkIntentFactory
             (string) ($intent->system ?? ''),
             (string) ($classified['object'] ?? ''),
             $specializationEvidence,
-            $specializationEvidence === []
-                ? $this->specializationScenario(
-                    $item['specialization_scenario'] ?? $recorded['specialization_scenario'] ?? null,
-                    $quantityKey,
-                    $objectType,
-                )
-                : null,
+            $specializationScenario,
         );
     }
 
