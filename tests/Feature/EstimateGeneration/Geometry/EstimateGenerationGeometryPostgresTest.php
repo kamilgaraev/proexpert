@@ -239,6 +239,14 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
                 self::assertStringContainsString('geometry_confirmation_immutable', $exception->getMessage());
             }
             self::assertSame(1, DB::table('estimate_generation_geometry_regeneration_outbox')->where('session_id', $fixture['session']->id)->count());
+            $regeneratingSession = DB::table('estimate_generation_sessions')->where('id', $fixture['session']->id)->first();
+            self::assertNotNull($regeneratingSession);
+            self::assertSame('generating', $regeneratingSession->status);
+            $regeneratingInput = json_decode((string) $regeneratingSession->input_payload, true, flags: JSON_THROW_ON_ERROR);
+            $outboxAttempt = DB::table('estimate_generation_geometry_regeneration_outbox')
+                ->where('session_id', $fixture['session']->id)->value('generation_attempt_id');
+            self::assertSame($outboxAttempt, $regeneratingInput['generation_attempt_id']);
+            self::assertFalse($regeneratingInput['generation_requested']);
             self::assertNotNull(DB::table('estimate_generation_evidence')->where('id', $fixture['derived_root_id'])->value('invalidated_at'));
         } finally {
             $this->cleanup($fixture);
@@ -693,7 +701,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             'is_owner' => true, 'is_active' => true, 'project_access_mode' => 'all_projects',
             'created_at' => now(), 'updated_at' => now()]);
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
-            'user_id' => $user->id, 'status' => 'input_review_required', 'processing_stage' => 'input_review_required',
+            'user_id' => $user->id, 'status' => 'estimate_review_required', 'processing_stage' => 'estimate_review_required',
             'processing_progress' => 100, 'input_payload' => [], 'state_version' => 1]);
         $inputVersion = 'sha256:'.str_repeat('b', 64);
         $evidence = (new EloquentEvidenceRepository(DB::connection()))->insertOrGet(new EvidenceData((int) $organization->id,

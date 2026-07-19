@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Geometry;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationBuildingModel;
@@ -34,7 +35,12 @@ final class ConfirmBuildingGeometry
             if ($session === null || (int) $session->organization_id !== $command->organizationId || (int) $session->project_id !== $command->projectId) {
                 throw new NotFoundHttpException;
             }
-            if ($session->status->isTerminal() || $session->applied_estimate_id !== null) {
+            if (! in_array($session->status, [
+                EstimateGenerationStatus::ReadyToGenerate,
+                EstimateGenerationStatus::Generating,
+                EstimateGenerationStatus::EstimateReviewRequired,
+                EstimateGenerationStatus::ReadyToApply,
+            ], true) || $session->applied_estimate_id !== null) {
                 throw new InvalidArgumentException('Geometry confirmation is not allowed.');
             }
             if ((int) $session->state_version !== $command->expectedStateVersion) {
@@ -107,15 +113,26 @@ final class ConfirmBuildingGeometry
             ], $normalized->evidenceIds));
             $invalidation = $this->invalidator->invalidate($command->sessionId, $command->expectedInputVersion, $command->expectedStateVersion + 1);
             $this->faultInjector->afterInvalidation();
+            $attemptId = (string) Str::uuid();
             $session = $this->stateStore->compareAndSet(
                 $session,
                 $command->expectedStateVersion,
-                $session->status,
-                ['draft_payload' => null],
+                EstimateGenerationStatus::Generating,
+                [
+                    'processing_stage' => 'generating',
+                    'processing_progress' => 40,
+                    'last_error' => null,
+                    'failure_code' => null,
+                    'input_payload' => [
+                        ...($session->input_payload ?? []),
+                        'generation_attempt_id' => $attemptId,
+                        'generation_requested' => false,
+                    ],
+                ],
             );
             $intentId = $this->outbox->append(new GeometryRegenerationIntent(
                 $command->organizationId, $command->projectId, $command->sessionId, (int) $session->state_version,
-                $command->expectedInputVersion, $newInputVersion, $normalized->contentVersion(), (string) Str::uuid(),
+                $command->expectedInputVersion, $newInputVersion, $normalized->contentVersion(), $attemptId,
             ));
 
             return [[
