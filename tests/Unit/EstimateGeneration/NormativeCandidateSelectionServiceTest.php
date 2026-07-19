@@ -66,6 +66,59 @@ final class NormativeCandidateSelectionServiceTest extends TestCase
         ]));
     }
 
+    public function test_confirming_current_priced_norm_preserves_resources_price_and_review_advice(): void
+    {
+        $workItem = [
+            'key' => 'ventilation.ducts',
+            'quantity' => 23.136,
+            'pricing_status' => 'calculated',
+            'pricing_blocker' => null,
+            'total_cost' => 29910.50,
+            'materials' => [[
+                'code' => '19.1.01.03-0071',
+                'total_price' => 16569.51,
+                'project_resource_selection' => ['policy' => 'regional_semantic_hard_attributes_median:v4'],
+            ]],
+            'labor' => [['code' => '1-100-32', 'total_price' => 7779.24]],
+            'machinery' => [],
+            'other_resources' => [],
+            'validation_flags' => ['project_resource_price_assumption'],
+            'normative_match' => [
+                'status' => 'matched',
+                'selected_by_user' => false,
+                'norm_id' => 501,
+                'code' => '20-01-001-01',
+                'project_resource_selections' => [[
+                    'selected_resource_code' => '19.1.01.03-0071',
+                ]],
+            ],
+        ];
+
+        $confirmed = $this->service()->confirmCurrentPricedSelection($workItem, 501);
+
+        self::assertNotNull($confirmed);
+        self::assertTrue($confirmed['normative_match']['selected_by_user']);
+        self::assertSame($workItem['materials'], $confirmed['materials']);
+        self::assertSame($workItem['total_cost'], $confirmed['total_cost']);
+        self::assertSame('calculated', $confirmed['pricing_status']);
+        self::assertSame(['project_resource_price_assumption'], $confirmed['validation_flags']);
+    }
+
+    public function test_current_norm_with_incomplete_price_is_rebuilt_instead_of_confirmed(): void
+    {
+        self::assertNull($this->service()->confirmCurrentPricedSelection([
+            'quantity' => 23.136,
+            'pricing_status' => 'not_calculated',
+            'pricing_blocker' => 'project_resource_selection_required',
+            'total_cost' => 0,
+            'materials' => [],
+            'normative_match' => [
+                'status' => 'matched',
+                'norm_id' => 501,
+            ],
+        ], 501));
+    }
+
     public function test_rejects_candidate_blocked_by_selection_hard_gate(): void
     {
         $service = $this->service($this->selectionHardGate());
@@ -201,6 +254,15 @@ final class TestableNormativeCandidateSelectionService extends NormativeCandidat
     public function assertSafeMatch(array $workItem, array $context, array $match): void
     {
         $this->assertMatchPassesHardGate($workItem, $context, $match);
+    }
+
+    /**
+     * @param  array<string, mixed>  $workItem
+     * @return array<string, mixed>|null
+     */
+    public function confirmCurrentPricedSelection(array $workItem, int $normId): ?array
+    {
+        return $this->confirmedCurrentPricedSelection($workItem, $normId);
     }
 
     /** @return array<string, mixed> */

@@ -85,6 +85,15 @@ class NormativeCandidateSelectionService
                         'selection_source' => $allowCatalogSelection ? 'catalog_search' : 'offered_candidate',
                     ];
 
+                    $confirmedCurrentSelection = $this->confirmedCurrentPricedSelection($workItem, $normId);
+                    if ($confirmedCurrentSelection !== null) {
+                        $learningSelection = [$originalWorkItem, $confirmedCurrentSelection, $context];
+                        $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex] = $confirmedCurrentSelection;
+                        $updated = true;
+
+                        break 3;
+                    }
+
                     $match = $this->matcher->matchSelectedNorm($normId, $workItem, $context);
 
                     if ($match === null) {
@@ -194,6 +203,40 @@ class NormativeCandidateSelectionService
         throw $this->validationException([
             'norm_id' => [$this->message('estimate_generation.normative_candidate_not_offered')],
         ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $workItem
+     * @return array<string, mixed>|null
+     */
+    protected function confirmedCurrentPricedSelection(array $workItem, int $normId): ?array
+    {
+        $currentMatch = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
+        $hasPricedResources = array_filter([
+            $workItem['materials'] ?? [],
+            $workItem['labor'] ?? [],
+            $workItem['machinery'] ?? [],
+            $workItem['other_resources'] ?? [],
+        ], static fn (mixed $resources): bool => is_array($resources) && $resources !== []) !== [];
+
+        if (
+            (int) ($currentMatch['norm_id'] ?? $currentMatch['id'] ?? 0) !== $normId
+            || (string) ($currentMatch['status'] ?? '') !== 'matched'
+            || (string) ($workItem['pricing_status'] ?? '') !== 'calculated'
+            || ($workItem['pricing_blocker'] ?? null) !== null
+            || (float) ($workItem['quantity'] ?? 0) <= 0
+            || (float) ($workItem['total_cost'] ?? 0) <= 0
+            || ! $hasPricedResources
+        ) {
+            return null;
+        }
+
+        $workItem['normative_match'] = [
+            ...$currentMatch,
+            'selected_by_user' => true,
+        ];
+
+        return $workItem;
     }
 
     protected function message(string $key): string
