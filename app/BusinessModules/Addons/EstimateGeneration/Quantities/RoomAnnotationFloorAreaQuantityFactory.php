@@ -19,6 +19,8 @@ use Illuminate\Support\Facades\Log;
 
 final readonly class RoomAnnotationFloorAreaQuantityFactory
 {
+    private const MIN_ROOM_AREA_CONFIDENCE = 0.70;
+
     public function __construct(
         private EvidenceRepository $evidence,
         private RoomAreaAnnotationParser $parser = new RoomAreaAnnotationParser,
@@ -155,7 +157,7 @@ final readonly class RoomAnnotationFloorAreaQuantityFactory
             || $node->sourceType !== EvidenceSourceType::DocumentUnit
             || $node->producerName !== EvidenceProducer::DrawingAnalyzer->value
             || ! in_array($node->locator['unit_type'] ?? null, ['raster_image', 'sketch'], true)
-            || $node->confidence < 0.85
+            || $node->confidence < self::MIN_ROOM_AREA_CONFIDENCE
             || ($node->value['unit'] ?? null) !== 'm2'
             || ! is_numeric($node->value['field_value'] ?? null)
             || abs((float) $node->value['field_value'] - $area) > 0.000001) {
