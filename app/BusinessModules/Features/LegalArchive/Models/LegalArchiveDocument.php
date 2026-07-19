@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 
 final class LegalArchiveDocument extends Model
 {
@@ -101,7 +102,14 @@ final class LegalArchiveDocument extends Model
 
     public function currentPrimaryVersion(): BelongsTo
     {
-        return $this->belongsTo(LegalArchiveDocumentVersion::class, 'current_primary_version_id');
+        return $this->belongsTo(LegalArchiveDocumentVersion::class, 'current_primary_version_id')
+            ->whereExists(static function (QueryBuilder $query): void {
+                $query->selectRaw('1')
+                    ->from('legal_archive_documents as owner')
+                    ->whereColumn('owner.id', 'legal_archive_document_versions.document_id')
+                    ->whereColumn('owner.organization_id', 'legal_archive_document_versions.organization_id')
+                    ->whereColumn('owner.current_primary_version_id', 'legal_archive_document_versions.id');
+            });
     }
 
     public function versions(): HasMany

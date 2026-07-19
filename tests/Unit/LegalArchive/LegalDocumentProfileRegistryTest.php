@@ -143,4 +143,70 @@ final class LegalDocumentProfileRegistryTest extends TestCase
 
         $registry->find(15, 'customer.inactive');
     }
+
+    public function test_organization_profile_cannot_override_base_field_definition(): void
+    {
+        $registry = new LegalDocumentProfileRegistry(
+            static fn (int $organizationId, string $code): ?array => [
+                'organization_id' => $organizationId,
+                'code' => $code,
+                'base_code' => 'contract.supply',
+                'name' => 'Профиль с подменой цены',
+                'schema' => [
+                    'price' => ['type' => 'string', 'label' => 'Цена текстом'],
+                ],
+                'required_fields' => [],
+                'required_file_roles' => [],
+                'is_active' => true,
+            ],
+            require dirname(__DIR__, 3).'/config/legal-document-profiles.php',
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Пользовательский профиль не может изменять поля базового профиля');
+
+        $registry->find(15, 'customer.override-price');
+    }
+
+    public function test_organization_profile_with_unknown_base_is_rejected(): void
+    {
+        $registry = new LegalDocumentProfileRegistry(
+            static fn (int $organizationId, string $code): ?array => [
+                'organization_id' => $organizationId,
+                'code' => $code,
+                'base_code' => 'contract.unknown',
+                'name' => 'Профиль без основы',
+                'schema' => [],
+                'required_fields' => [],
+                'required_file_roles' => [],
+                'is_active' => true,
+            ],
+            require dirname(__DIR__, 3).'/config/legal-document-profiles.php',
+        );
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Базовый профиль документа не найден');
+
+        $registry->find(15, 'customer.unknown-base');
+    }
+
+    public function test_organization_profile_can_explicitly_disable_inherited_signature_requirement(): void
+    {
+        $registry = new LegalDocumentProfileRegistry(
+            static fn (int $organizationId, string $code): ?array => [
+                'organization_id' => $organizationId,
+                'code' => $code,
+                'base_code' => 'contract.supply',
+                'name' => 'Профиль без обязательной подписи',
+                'schema' => [],
+                'required_fields' => [],
+                'required_file_roles' => [],
+                'requires_signature' => false,
+                'is_active' => true,
+            ],
+            require dirname(__DIR__, 3).'/config/legal-document-profiles.php',
+        );
+
+        self::assertFalse($registry->find(15, 'customer.no-signature')->requiresSignature);
+    }
 }

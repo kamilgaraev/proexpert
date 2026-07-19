@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('legal_archive_document_type_profiles', function (Blueprint $table): void {
             $table->uuid('id')->primary();
-            $table->foreignId('organization_id')->constrained('organizations')->cascadeOnDelete();
+            $table->unsignedBigInteger('organization_id');
             $table->string('code', 128);
             $table->string('base_code', 128);
             $table->string('name', 255);
@@ -27,10 +27,6 @@ return new class extends Migration
             $table->boolean('is_active')->default(true);
             $table->unsignedInteger('lock_version')->default(0);
             $table->timestampsTz();
-
-            $table->unique(['organization_id', 'code'], 'legal_doc_profiles_org_code_unique');
-            $table->index(['organization_id', 'is_active'], 'legal_doc_profiles_org_active_idx');
-            $table->index(['organization_id', 'base_code'], 'legal_doc_profiles_org_base_idx');
         });
 
         Schema::table('legal_archive_documents', function (Blueprint $table): void {
@@ -39,13 +35,10 @@ return new class extends Migration
             $table->string('approval_status', 32)->nullable();
             $table->string('signature_status', 32)->nullable();
             $table->string('confidentiality_level', 32)->nullable();
-            $table->foreignId('owner_user_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->foreignId('responsible_user_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->foreignId('current_primary_version_id')
-                ->nullable()
-                ->constrained('legal_archive_document_versions')
-                ->nullOnDelete();
-            $table->unsignedInteger('lock_version')->default(0);
+            $table->unsignedBigInteger('owner_user_id')->nullable();
+            $table->unsignedBigInteger('responsible_user_id')->nullable();
+            $table->unsignedBigInteger('current_primary_version_id')->nullable();
+            $table->unsignedInteger('lock_version')->nullable();
             $table->jsonb('structured_fields')->nullable();
             $table->timestampTz('activated_at')->nullable();
             $table->timestampTz('completed_at')->nullable();
@@ -54,61 +47,85 @@ return new class extends Migration
             $table->string('source_id', 128)->nullable();
             $table->string('source_idempotency_key', 191)->nullable();
             $table->softDeletesTz();
-
-            $table->index(['organization_id', 'type_profile_code'], 'legal_docs_org_profile_idx');
-            $table->index(['organization_id', 'lifecycle_status'], 'legal_docs_org_lifecycle_idx');
-            $table->index(['organization_id', 'approval_status'], 'legal_docs_org_approval_idx');
-            $table->index(['organization_id', 'signature_status'], 'legal_docs_org_signature_idx');
-            $table->index(['organization_id', 'owner_user_id'], 'legal_docs_org_owner_idx');
-            $table->index(['organization_id', 'responsible_user_id'], 'legal_docs_org_responsible_idx');
-            $table->index(['organization_id', 'source_type', 'source_id'], 'legal_docs_org_source_idx');
-            $table->unique(
-                ['organization_id', 'source_type', 'source_idempotency_key'],
-                'legal_docs_source_idempotency_unique',
-            );
         });
 
-        if (Schema::getConnection()->getDriverName() === 'pgsql') {
-            DB::statement(
-                'ALTER TABLE legal_archive_document_type_profiles '.
-                'ADD CONSTRAINT legal_doc_profiles_lock_version_check CHECK (lock_version >= 0), '.
-                'ADD CONSTRAINT legal_doc_profiles_confidentiality_check '.
-                "CHECK (confidentiality_level IN ('public', 'internal', 'restricted', 'secret'))"
-            );
-
-            DB::statement(
-                'ALTER TABLE legal_archive_documents '.
-                'ADD CONSTRAINT legal_docs_lifecycle_status_check CHECK (lifecycle_status IS NULL OR lifecycle_status IN '.
-                "('draft', 'under_review', 'revision_required', 'rejected', 'approved', 'signing', ".
-                "'partially_signed', 'signed', 'signature_failed', 'effective', 'suspended', 'completed', ".
-                "'terminated', 'expired', 'archived')), ".
-                'ADD CONSTRAINT legal_docs_approval_status_check CHECK (approval_status IS NULL OR approval_status IN '.
-                "('not_started', 'pending', 'approved', 'rejected', 'revision_required', 'cancelled', 'expired')), ".
-                'ADD CONSTRAINT legal_docs_signature_status_check CHECK (signature_status IS NULL OR signature_status IN '.
-                "('not_required', 'unsigned', 'pending', 'partially_signed', 'signed', 'verification_failed', ".
-                "'rejected', 'expired', 'revoked')), ".
-                'ADD CONSTRAINT legal_docs_lock_version_check CHECK (lock_version >= 0), '.
-                'ADD CONSTRAINT legal_docs_source_identity_check CHECK '.
-                '(((source_type IS NULL AND source_id IS NULL) OR (source_type IS NOT NULL AND source_id IS NOT NULL)) '.
-                'AND (source_idempotency_key IS NULL OR (source_type IS NOT NULL AND source_id IS NOT NULL)))'
-            );
+        if (Schema::getConnection()->getDriverName() !== 'pgsql') {
+            return;
         }
+
+        DB::statement(
+            'ALTER TABLE legal_archive_document_type_profiles '.
+            'ADD CONSTRAINT legal_doc_profiles_organization_fk FOREIGN KEY (organization_id) '.
+            'REFERENCES organizations (id) ON DELETE CASCADE NOT VALID'
+        );
+        DB::statement(
+            'ALTER TABLE legal_archive_document_type_profiles '.
+            'ADD CONSTRAINT legal_doc_profiles_lock_version_check CHECK (lock_version >= 0) NOT VALID'
+        );
+        DB::statement(
+            'ALTER TABLE legal_archive_document_type_profiles '.
+            'ADD CONSTRAINT legal_doc_profiles_confidentiality_check '.
+            "CHECK (confidentiality_level IN ('public', 'internal', 'restricted', 'secret')) NOT VALID"
+        );
+        DB::statement(
+            'ALTER TABLE legal_archive_documents '.
+            'ADD CONSTRAINT legal_docs_owner_user_fk FOREIGN KEY (owner_user_id) '.
+            'REFERENCES users (id) ON DELETE SET NULL NOT VALID'
+        );
+        DB::statement(
+            'ALTER TABLE legal_archive_documents '.
+            'ADD CONSTRAINT legal_docs_responsible_user_fk FOREIGN KEY (responsible_user_id) '.
+            'REFERENCES users (id) ON DELETE SET NULL NOT VALID'
+        );
+        DB::statement(
+            'ALTER TABLE legal_archive_documents '.
+            'ADD CONSTRAINT legal_docs_lifecycle_status_check CHECK (lifecycle_status IS NULL OR lifecycle_status IN '.
+            "('draft', 'under_review', 'revision_required', 'rejected', 'approved', 'signing', ".
+            "'partially_signed', 'signed', 'signature_failed', 'effective', 'suspended', 'completed', ".
+            "'terminated', 'expired', 'archived')) NOT VALID"
+        );
+        DB::statement(
+            'ALTER TABLE legal_archive_documents '.
+            'ADD CONSTRAINT legal_docs_approval_status_check CHECK (approval_status IS NULL OR approval_status IN '.
+            "('not_started', 'pending', 'approved', 'rejected', 'revision_required', 'cancelled', 'expired')) NOT VALID"
+        );
+        DB::statement(
+            'ALTER TABLE legal_archive_documents '.
+            'ADD CONSTRAINT legal_docs_signature_status_check CHECK (signature_status IS NULL OR signature_status IN '.
+            "('not_required', 'unsigned', 'pending', 'partially_signed', 'signed', 'verification_failed', ".
+            "'rejected', 'expired', 'revoked')) NOT VALID"
+        );
+        DB::statement(
+            'ALTER TABLE legal_archive_documents '.
+            'ADD CONSTRAINT legal_docs_confidentiality_check '.
+            "CHECK (confidentiality_level IS NULL OR confidentiality_level IN ('public', 'internal', 'restricted', 'secret')) NOT VALID"
+        );
+        DB::statement(
+            'ALTER TABLE legal_archive_documents '.
+            'ADD CONSTRAINT legal_docs_lock_version_check CHECK (lock_version IS NULL OR lock_version >= 0) NOT VALID'
+        );
+        DB::statement(
+            'ALTER TABLE legal_archive_documents '.
+            'ADD CONSTRAINT legal_docs_source_identity_check CHECK '.
+            '(((source_type IS NULL AND source_id IS NULL) OR (source_type IS NOT NULL AND source_id IS NOT NULL)) '.
+            'AND (source_idempotency_key IS NULL OR (source_type IS NOT NULL AND source_id IS NOT NULL))) NOT VALID'
+        );
     }
 
     public function down(): void
     {
+        if (Schema::getConnection()->getDriverName() === 'pgsql') {
+            DB::statement('ALTER TABLE legal_archive_documents DROP CONSTRAINT IF EXISTS legal_docs_source_identity_check');
+            DB::statement('ALTER TABLE legal_archive_documents DROP CONSTRAINT IF EXISTS legal_docs_lock_version_check');
+            DB::statement('ALTER TABLE legal_archive_documents DROP CONSTRAINT IF EXISTS legal_docs_confidentiality_check');
+            DB::statement('ALTER TABLE legal_archive_documents DROP CONSTRAINT IF EXISTS legal_docs_signature_status_check');
+            DB::statement('ALTER TABLE legal_archive_documents DROP CONSTRAINT IF EXISTS legal_docs_approval_status_check');
+            DB::statement('ALTER TABLE legal_archive_documents DROP CONSTRAINT IF EXISTS legal_docs_lifecycle_status_check');
+            DB::statement('ALTER TABLE legal_archive_documents DROP CONSTRAINT IF EXISTS legal_docs_responsible_user_fk');
+            DB::statement('ALTER TABLE legal_archive_documents DROP CONSTRAINT IF EXISTS legal_docs_owner_user_fk');
+        }
+
         Schema::table('legal_archive_documents', function (Blueprint $table): void {
-            $table->dropForeign(['owner_user_id']);
-            $table->dropForeign(['responsible_user_id']);
-            $table->dropForeign(['current_primary_version_id']);
-            $table->dropUnique('legal_docs_source_idempotency_unique');
-            $table->dropIndex('legal_docs_org_profile_idx');
-            $table->dropIndex('legal_docs_org_lifecycle_idx');
-            $table->dropIndex('legal_docs_org_approval_idx');
-            $table->dropIndex('legal_docs_org_signature_idx');
-            $table->dropIndex('legal_docs_org_owner_idx');
-            $table->dropIndex('legal_docs_org_responsible_idx');
-            $table->dropIndex('legal_docs_org_source_idx');
             $table->dropColumn([
                 'type_profile_code',
                 'lifecycle_status',

@@ -71,12 +71,16 @@ final class LegalDocumentProfileRegistry
         $baseProfile = $this->fromStandardProfile($baseCode, $base);
         $customSchema = $this->arrayValue($custom, 'schema');
 
+        if (array_intersect_key($customSchema, $baseProfile->schema) !== []) {
+            throw new InvalidArgumentException(trans_message('legal_archive.profiles.base_field_override_forbidden'));
+        }
+
         return new LegalDocumentProfile(
             code: $code,
             baseCode: $baseCode,
             label: (string) ($custom['name'] ?? $baseProfile->label),
             category: $baseProfile->category,
-            schema: array_replace($baseProfile->schema, $customSchema),
+            schema: [...$baseProfile->schema, ...$customSchema],
             requiredFileRoles: $this->uniqueStrings([
                 ...$baseProfile->requiredFileRoles,
                 ...$this->stringList($custom, 'required_file_roles'),

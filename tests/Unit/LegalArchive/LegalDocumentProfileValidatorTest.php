@@ -86,6 +86,144 @@ final class LegalDocumentProfileValidatorTest extends TestCase
         }
     }
 
+    public function test_required_string_containing_only_whitespace_is_missing(): void
+    {
+        $validator = new LegalDocumentProfileValidator;
+
+        try {
+            $validator->validate($this->profile(), ['subject' => " \t\n"]);
+            self::fail('Ожидалась ошибка обязательного поля');
+        } catch (ValidationException $exception) {
+            self::assertSame(
+                ['Укажите значение поля «Предмет договора»'],
+                $exception->errors()['subject'],
+            );
+        }
+    }
+
+    public function test_optional_nullable_values_are_normalized_without_boolean_coercion(): void
+    {
+        $validator = new LegalDocumentProfileValidator;
+
+        $result = $validator->validate($this->profile(), [
+            'subject' => 'Поставка',
+            'comment' => '',
+            'signed_on' => null,
+        ]);
+
+        self::assertNull($result['comment']);
+        self::assertNull($result['signed_on']);
+    }
+
+    public function test_false_and_zero_are_present_values(): void
+    {
+        $validator = new LegalDocumentProfileValidator;
+
+        $result = $validator->validate($this->profile(), [
+            'subject' => 'Поставка',
+            'price' => 0,
+            'urgent' => false,
+        ]);
+
+        self::assertSame(0.0, $result['price']);
+        self::assertFalse($result['urgent']);
+    }
+
+    public function test_optional_empty_array_remains_an_empty_array(): void
+    {
+        $result = (new LegalDocumentProfileValidator)->validate($this->profile(), [
+            'subject' => 'Поставка',
+            'tags' => [],
+        ]);
+
+        self::assertSame([], $result['tags']);
+    }
+
+    public function test_boolean_is_rejected_for_integer_field(): void
+    {
+        $validator = new LegalDocumentProfileValidator;
+
+        try {
+            $validator->validate($this->profile(), [
+                'subject' => 'Поставка',
+                'installments' => true,
+            ]);
+            self::fail('Ожидалась ошибка целочисленного поля');
+        } catch (ValidationException $exception) {
+            self::assertSame(
+                ['Проверьте значение поля «Количество этапов»'],
+                $exception->errors()['installments'],
+            );
+        }
+    }
+
+    public function test_boolean_string_requires_explicit_schema_representation(): void
+    {
+        $validator = new LegalDocumentProfileValidator;
+
+        try {
+            $validator->validate($this->profile(), [
+                'subject' => 'Поставка',
+                'strict_boolean' => 'true',
+            ]);
+            self::fail('Ожидалась ошибка строгого логического поля');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('strict_boolean', $exception->errors());
+        }
+
+        $result = $validator->validate($this->profile(), [
+            'subject' => 'Поставка',
+            'urgent' => 'yes',
+        ]);
+
+        self::assertTrue($result['urgent']);
+    }
+
+    public function test_enum_accepts_only_declared_value(): void
+    {
+        $validator = new LegalDocumentProfileValidator;
+
+        self::assertSame(
+            'rub',
+            $validator->validate($this->profile(), ['subject' => 'Поставка', 'currency' => 'rub'])['currency'],
+        );
+
+        try {
+            $validator->validate($this->profile(), ['subject' => 'Поставка', 'currency' => 'usd']);
+            self::fail('Ожидалась ошибка значения перечисления');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('currency', $exception->errors());
+        }
+    }
+
+    public function test_nested_value_is_rejected_for_scalar_array_items(): void
+    {
+        $validator = new LegalDocumentProfileValidator;
+
+        try {
+            $validator->validate($this->profile(), [
+                'subject' => 'Поставка',
+                'tags' => [['nested' => true]],
+            ]);
+            self::fail('Ожидалась ошибка вложенного значения');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('tags', $exception->errors());
+        }
+    }
+
+    public function test_array_schema_without_supported_scalar_item_type_is_rejected(): void
+    {
+        $validator = new LegalDocumentProfileValidator;
+        $profile = $this->profileWithSchema([
+            'nested' => ['type' => 'array', 'label' => 'Вложенные данные', 'items' => 'array'],
+        ]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Профиль документа содержит неподдерживаемое описание поля');
+
+        $validator->validate($profile, ['nested' => []]);
+    }
+
     public function test_unknown_field_is_rejected(): void
     {
         $validator = new LegalDocumentProfileValidator;
@@ -145,8 +283,16 @@ final class LegalDocumentProfileValidatorTest extends TestCase
             schema: [
                 'subject' => ['type' => 'string', 'label' => 'Предмет договора'],
                 'price' => ['type' => 'number', 'label' => 'Цена'],
-                'urgent' => ['type' => 'boolean', 'label' => 'Срочный'],
-                'signed_on' => ['type' => 'date', 'label' => 'Дата подписания'],
+                'urgent' => [
+                    'type' => 'boolean',
+                    'label' => 'Срочный',
+                    'boolean_representations' => ['true' => true, 'yes' => true, 'false' => false, 'no' => false],
+                ],
+                'strict_boolean' => ['type' => 'boolean', 'label' => 'Строгое значение'],
+                'installments' => ['type' => 'integer', 'label' => 'Количество этапов'],
+                'signed_on' => ['type' => 'date', 'label' => 'Дата подписания', 'nullable' => true],
+                'comment' => ['type' => 'string', 'label' => 'Комментарий', 'nullable' => true],
+                'currency' => ['type' => 'enum', 'label' => 'Валюта', 'options' => ['rub', 'eur']],
                 'tags' => ['type' => 'array', 'label' => 'Метки', 'items' => 'string'],
             ],
             requiredFileRoles: ['primary'],
@@ -154,6 +300,26 @@ final class LegalDocumentProfileValidatorTest extends TestCase
             requiresSignature: true,
             workflowTemplateId: null,
             retentionPolicy: 'five_years',
+            confidentialityLevel: 'internal',
+            isActive: true,
+            lockVersion: 0,
+        );
+    }
+
+    /** @param array<string, array<string, mixed>> $schema */
+    private function profileWithSchema(array $schema): LegalDocumentProfile
+    {
+        return new LegalDocumentProfile(
+            code: 'custom.schema',
+            baseCode: 'other.custom',
+            label: 'Проверка схемы',
+            category: 'other',
+            schema: $schema,
+            requiredFileRoles: [],
+            requiredFields: [],
+            requiresSignature: false,
+            workflowTemplateId: null,
+            retentionPolicy: null,
             confidentialityLevel: 'internal',
             isActive: true,
             lockVersion: 0,
