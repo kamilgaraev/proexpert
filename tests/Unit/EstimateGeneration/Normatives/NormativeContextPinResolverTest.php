@@ -113,7 +113,7 @@ final class NormativeContextPinResolverTest extends TestCase
         );
 
         self::assertSame(942, $selection['row']->price_id ?? null);
-        self::assertSame('fsnb_semantic_hard_attributes_median:v3', $selection['policy'] ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v4', $selection['policy'] ?? null);
     }
 
     #[Test]
@@ -142,14 +142,14 @@ final class NormativeContextPinResolverTest extends TestCase
         );
 
         self::assertSame(952, $selection['row']->price_id ?? null);
-        self::assertSame('fsnb_semantic_hard_attributes_median:v3', $selection['policy'] ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v4', $selection['policy'] ?? null);
     }
 
     #[Test]
     public function semantic_window_selector_rejects_incompatible_leaf_count_and_opening_area(): void
     {
         $selection = (new AbstractResourceSemanticPriceSelector)->select(
-            'Установка оконных блоков из ПВХ профилей двухстворчатых с площадью проема до 2 м2',
+            'Установка оконных блоков из ПВХ профилей поворотных (откидных, поворотно-откидных) двухстворчатых с площадью проема до 2 м2',
             'Блоки оконные пластиковые',
             'м2',
             11,
@@ -162,8 +162,14 @@ final class NormativeContextPinResolverTest extends TestCase
                 ],
                 (object) [
                     'price_id' => 962, 'price_resource_code' => '11.3.02.04-0021',
-                    'price_resource_name' => 'Блок оконный из ПВХ-профилей, двустворчатый, площадь до 2 м2',
+                    'price_resource_name' => 'Блок оконный из ПВХ-профилей, двустворчатый, с поворотно-откидной створкой, площадь до 2 м2',
                     'price_unit' => 'м2', 'base_price' => '5200', 'regional_price_version_id' => 11,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+                (object) [
+                    'price_id' => 963, 'price_resource_code' => '11.3.02.04-0022',
+                    'price_resource_name' => 'Блок оконный из ПВХ-профилей, двустворчатый, глухой, площадь до 2 м2',
+                    'price_unit' => 'м2', 'base_price' => '4500', 'regional_price_version_id' => 11,
                     'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
                 ],
             ],
@@ -171,7 +177,7 @@ final class NormativeContextPinResolverTest extends TestCase
         );
 
         self::assertSame(962, $selection['row']->price_id ?? null);
-        self::assertSame('regional_semantic_hard_attributes_median:v3', $selection['policy'] ?? null);
+        self::assertSame('regional_semantic_hard_attributes_median:v4', $selection['policy'] ?? null);
     }
 
     #[Test]
@@ -200,7 +206,7 @@ final class NormativeContextPinResolverTest extends TestCase
         );
 
         self::assertSame(972, $selection['row']->price_id ?? null);
-        self::assertSame('regional_semantic_hard_attributes_median:v3', $selection['policy'] ?? null);
+        self::assertSame('regional_semantic_hard_attributes_median:v4', $selection['policy'] ?? null);
     }
 
     #[Test]
@@ -1413,12 +1419,12 @@ final class NormativeContextPinResolverTest extends TestCase
             'regional_price_version_id' => null, 'regional_price_version_key' => null,
             'price_dataset_source_type' => 'fsnb_2022', 'price_dataset_version' => '2026-05-07',
             'raw_source_tag' => 'AbstractResource', 'project_resource_candidates_count' => 2,
-            'project_resource_price_policy' => 'fsnb_semantic_hard_attributes_median:v3',
+            'project_resource_price_policy' => 'fsnb_semantic_hard_attributes_median:v4',
         ]);
 
         self::assertSame('fsnb_base', $mapped->resource['price_source']);
         self::assertSame('09.4.02.05-0042', $mapped->resource['project_resource_selection']['selected_resource_code'] ?? null);
-        self::assertSame('fsnb_semantic_hard_attributes_median:v3', $mapped->resource['project_resource_selection']['policy'] ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v4', $mapped->resource['project_resource_selection']['policy'] ?? null);
     }
 
     private function semanticPrice(

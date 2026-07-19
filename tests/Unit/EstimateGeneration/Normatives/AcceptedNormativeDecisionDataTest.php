@@ -189,7 +189,7 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
                 'selected_resource_name' => 'Блок оконный из ПВХ профилей двухстворчатый',
                 'price_source' => 'fsnb_base',
                 'price_source_version' => '2026-05-07',
-                'policy' => 'fsnb_semantic_hard_attributes_median:v3',
+                'policy' => 'fsnb_semantic_hard_attributes_median:v4',
                 'candidates_count' => 2,
             ],
         ];
