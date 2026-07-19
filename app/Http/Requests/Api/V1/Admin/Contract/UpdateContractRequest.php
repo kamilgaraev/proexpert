@@ -10,6 +10,7 @@ use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Models\Contract;
 use App\Rules\ParentContractValid;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
@@ -20,6 +21,15 @@ class UpdateContractRequest extends FormRequest
     public function authorize(): bool
     {
         $user = $this->user();
+        $routeProjectId = $this->routeProjectId();
+
+        if ($user === null) {
+            return false;
+        }
+
+        if ($routeProjectId !== null && ! $this->contractBelongsToProject($this->resolveContract(), $routeProjectId)) {
+            return false;
+        }
 
         $context = [
             'organization_id' => (int) (
@@ -27,11 +37,11 @@ class UpdateContractRequest extends FormRequest
                 ?? $user?->current_organization_id
             ),
         ];
-        if ($this->route('project') !== null) {
-            $context['project_id'] = (int) $this->route('project');
+        if ($routeProjectId !== null) {
+            $context['project_id'] = $routeProjectId;
         }
 
-        return $user !== null && app(AuthorizationService::class)->can($user, 'contracts.edit', $context);
+        return app(AuthorizationService::class)->can($user, 'contracts.edit', $context);
     }
 
     public function withValidator($validator): void
@@ -119,14 +129,32 @@ class UpdateContractRequest extends FormRequest
     public function rules(): array
     {
         $organizationId = $this->currentOrganizationId();
+        $routeProjectId = $this->routeProjectId();
+        $projectIdRules = [
+            'sometimes',
+            'nullable',
+            'integer',
+            Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+        ];
+        $projectIdsRules = ['sometimes', 'nullable', 'array', 'min:1'];
+        $projectIdsItemRules = [
+            'integer',
+            Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+        ];
 
-        return [
-            'project_id' => [
-                'sometimes',
-                'nullable',
+        if ($routeProjectId !== null) {
+            $projectIdRules = [
+                'required',
                 'integer',
                 Rule::exists('projects', 'id')->where('organization_id', $organizationId),
-            ],
+                Rule::in([$routeProjectId]),
+            ];
+            $projectIdsRules[] = 'size:1';
+            $projectIdsItemRules[] = Rule::in([$routeProjectId]);
+        }
+
+        return [
+            'project_id' => $projectIdRules,
             'contract_side_type' => ['sometimes', new Enum(ContractSideTypeEnum::class)],
             'contractor_id' => [
                 'sometimes',
@@ -166,11 +194,8 @@ class UpdateContractRequest extends FormRequest
             'end_date' => ['sometimes', 'nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['sometimes', 'nullable', 'string'],
             'is_multi_project' => ['sometimes', 'nullable', 'boolean'],
-            'project_ids' => ['sometimes', 'nullable', 'array', 'min:1'],
-            'project_ids.*' => [
-                'integer',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
-            ],
+            'project_ids' => $projectIdsRules,
+            'project_ids.*' => $projectIdsItemRules,
         ];
     }
 
@@ -208,6 +233,11 @@ class UpdateContractRequest extends FormRequest
     protected function prepareForValidation()
     {
         $input = $this->all();
+        $routeProjectId = $this->routeProjectId();
+
+        if ($routeProjectId !== null && ! array_key_exists('project_id', $input)) {
+            $input['project_id'] = $routeProjectId;
+        }
 
         Log::info('UpdateContractRequest::prepareForValidation - RAW INPUT', [
             'contract_id' => $this->route('contract'),
@@ -337,5 +367,25 @@ class UpdateContractRequest extends FormRequest
     private function resolveContract(): Contract
     {
         return Contract::findOrFail($this->route('contract'));
+    }
+
+    private function routeProjectId(): ?int
+    {
+        $project = $this->route('project');
+
+        if ($project instanceof Model) {
+            return (int) $project->getKey();
+        }
+
+        return $project !== null ? (int) $project : null;
+    }
+
+    private function contractBelongsToProject(Contract $contract, int $projectId): bool
+    {
+        if ((bool) $contract->is_multi_project) {
+            return $contract->projects()->whereKey($projectId)->exists();
+        }
+
+        return (int) $contract->project_id === $projectId;
     }
 }

@@ -19,8 +19,10 @@ use App\Http\Requests\Api\V1\Admin\Contract\UpdateContractRequest;
 use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
 use App\Models\User;
+use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
 use App\Services\Contract\ContractLifecycleService;
 use App\Services\Contract\ContractService;
+use App\Services\Contract\ContractStateCalculatorService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route as LaravelRoute;
@@ -138,7 +140,7 @@ final class ContractPermissionAndLifecycleTest extends TestCase
         $controller = new ContractController(
             \Mockery::mock(ContractService::class),
             \Mockery::mock(OfficialFormsExportService::class),
-            new ContractLifecycleService
+            app(ContractLifecycleService::class)
         );
 
         $response = $controller->destroy(123, Request::create('/api/v1/admin/contracts/123', 'DELETE'));
@@ -168,9 +170,179 @@ final class ContractPermissionAndLifecycleTest extends TestCase
         self::assertSame('draft', Contract::query()->findOrFail($wrongContract->id)->status->value);
         self::assertDatabaseHas('contract_state_events', [
             'contract_id' => 22,
-            'event_type' => ContractStateEventTypeEnum::AMENDED->value,
+            'event_type' => 'status_transition',
             'created_by_user_id' => $user->id,
         ]);
+    }
+
+    public function test_project_create_rejects_foreign_project_targets_and_accepts_route_project(): void
+    {
+        $this->createContractTables();
+        $this->app->instance(AuthorizationService::class, $this->mockAuthorization(static fn (): bool => true));
+
+        Route::post('/__review/projects/{project}/scoped-contracts', static function (StoreContractRequest $request) {
+            $dto = $request->toDto();
+
+            return AdminResponse::success([
+                'project_id' => $dto->project_id,
+                'project_ids' => $dto->project_ids,
+            ]);
+        });
+
+        $payload = [
+            'project_id' => 17,
+            'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+            'number' => 'PROJECT-SCOPE-CREATE',
+            'date' => '2026-07-19',
+            'is_self_execution' => true,
+        ];
+
+        $this->actingAs($this->user(7))
+            ->postJson('/__review/projects/11/scoped-contracts', $payload)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('project_id');
+
+        $this->actingAs($this->user(7))
+            ->postJson('/__review/projects/11/scoped-contracts', [...$payload, 'project_id' => 11])
+            ->assertOk()
+            ->assertJsonPath('data.project_id', 11);
+    }
+
+    public function test_project_create_rejects_project_ids_outside_route_project(): void
+    {
+        $this->createContractTables();
+        $this->app->instance(AuthorizationService::class, $this->mockAuthorization(static fn (): bool => true));
+
+        Route::post('/__review/projects/{project}/scoped-multi-contracts', static fn (StoreContractRequest $request) => AdminResponse::success());
+
+        $this->actingAs($this->user(7))
+            ->postJson('/__review/projects/11/scoped-multi-contracts', [
+                'project_id' => 11,
+                'project_ids' => [11, 17],
+                'is_multi_project' => true,
+                'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+                'number' => 'PROJECT-SCOPE-MULTI-CREATE',
+                'date' => '2026-07-19',
+                'is_self_execution' => true,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('project_ids');
+    }
+
+    public function test_project_update_rejects_foreign_project_targets_and_accepts_current_route_project(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(71, 11);
+        $this->app->instance(AuthorizationService::class, $this->mockAuthorization(static fn (): bool => true));
+
+        Route::put('/__review/projects/{project}/scoped-contracts/{contract}', static function (UpdateContractRequest $request) {
+            $dto = $request->toDto();
+
+            return AdminResponse::success([
+                'project_id' => $dto->project_id,
+                'project_ids' => $dto->project_ids,
+            ]);
+        });
+
+        $this->actingAs($this->user(7))
+            ->putJson("/__review/projects/11/scoped-contracts/{$contract->id}", ['project_id' => 17])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('project_id');
+
+        $this->actingAs($this->user(7))
+            ->putJson("/__review/projects/11/scoped-contracts/{$contract->id}", ['project_id' => 11])
+            ->assertOk()
+            ->assertJsonPath('data.project_id', 11);
+    }
+
+    public function test_project_update_rejects_project_ids_outside_route_project(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(72, 11);
+        $this->app->instance(AuthorizationService::class, $this->mockAuthorization(static fn (): bool => true));
+
+        Route::put('/__review/projects/{project}/scoped-multi-contracts/{contract}', static fn (UpdateContractRequest $request) => AdminResponse::success());
+
+        $this->actingAs($this->user(7))
+            ->putJson("/__review/projects/11/scoped-multi-contracts/{$contract->id}", [
+                'project_id' => 11,
+                'project_ids' => [11, 17],
+                'is_multi_project' => true,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('project_ids');
+    }
+
+    public function test_project_update_rejects_contract_outside_route_project(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(73, 17);
+        $this->app->instance(AuthorizationService::class, $this->mockAuthorization(static fn (): bool => true));
+
+        Route::put('/__review/projects/{project}/membership-contracts/{contract}', static fn (UpdateContractRequest $request) => AdminResponse::success());
+
+        $this->actingAs($this->user(7))
+            ->putJson("/__review/projects/11/membership-contracts/{$contract->id}", ['project_id' => 11])
+            ->assertForbidden();
+    }
+
+    public function test_project_update_cannot_clear_route_project(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(74, 11);
+        $this->app->instance(AuthorizationService::class, $this->mockAuthorization(static fn (): bool => true));
+
+        Route::put('/__review/projects/{project}/required-project-contracts/{contract}', static fn (UpdateContractRequest $request) => AdminResponse::success());
+
+        $this->actingAs($this->user(7))
+            ->putJson("/__review/projects/11/required-project-contracts/{$contract->id}", ['project_id' => null])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('project_id');
+    }
+
+    public function test_lifecycle_transition_preserves_financial_projection_and_invalidates_event_cache(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(81, 11);
+        $contract->forceFill(['status' => 'active', 'total_amount' => 125.50])->save();
+        $actor = $this->user(7);
+
+        $repository = app(ContractStateEventRepositoryInterface::class);
+        $repository->createEvent([
+            'contract_id' => $contract->id,
+            'event_type' => ContractStateEventTypeEnum::CREATED,
+            'triggered_by_type' => Contract::class,
+            'triggered_by_id' => $contract->id,
+            'specification_id' => 777,
+            'amount_delta' => 125.50,
+            'effective_from' => '2026-07-19',
+            'metadata' => [],
+            'created_by_user_id' => $actor->id,
+        ]);
+
+        $calculator = app(ContractStateCalculatorService::class);
+        $before = $calculator->recalculateContractState($contract);
+        self::assertCount(1, $repository->findActiveEvents($contract->id));
+
+        app(ContractLifecycleService::class)->transition($contract, 'suspend', $actor, 'Проверка проекции');
+
+        $events = $repository->findActiveEvents($contract->id);
+        self::assertCount(2, $events, 'Repository cache должен быть сброшен после lifecycle-события.');
+        $transitionEvent = $events->last();
+        self::assertSame('status_transition', $transitionEvent->event_type->value);
+        self::assertSame([
+            'action' => 'suspend',
+            'from_status' => 'active',
+            'to_status' => 'on_hold',
+            'reason' => 'Проверка проекции',
+            'actor_id' => $actor->id,
+        ], $transitionEvent->metadata);
+
+        $after = $calculator->recalculateContractState($contract->refresh());
+        self::assertSame('125.50', $before->current_total_amount);
+        self::assertSame($before->current_total_amount, $after->current_total_amount);
+        self::assertSame(777, $before->active_specification_id);
+        self::assertSame($before->active_specification_id, $after->active_specification_id);
     }
 
     public function test_http_invalid_transition_and_legacy_delete_return_conflict(): void
@@ -231,6 +403,8 @@ final class ContractPermissionAndLifecycleTest extends TestCase
 
     public function test_form_requests_forward_project_route_context_to_authorization_service(): void
     {
+        $this->createContractTables();
+        $this->persistContract(22, 11);
         $user = $this->user(7);
         $expected = [
             StoreContractRequest::class => 'contracts.create',
@@ -243,11 +417,11 @@ final class ContractPermissionAndLifecycleTest extends TestCase
             $authorization = \Mockery::mock(AuthorizationService::class);
             $authorization->shouldReceive('can')
                 ->once()
-                ->with($user, $permission, ['organization_id' => 7, 'project_id' => 55])
+                ->with($user, $permission, ['organization_id' => 7, 'project_id' => 11])
                 ->andReturnTrue();
             $this->app->instance(AuthorizationService::class, $authorization);
 
-            $request = $this->requestWithProjectRoute($requestClass, $user, 55);
+            $request = $this->requestWithProjectRoute($requestClass, $user, 11);
             self::assertTrue($request->authorize());
         }
     }
@@ -337,6 +511,7 @@ final class ContractPermissionAndLifecycleTest extends TestCase
 
     private function createContractTables(): void
     {
+        Schema::dropIfExists('contract_current_state');
         Schema::dropIfExists('contract_state_events');
         Schema::dropIfExists('contracts');
         Schema::dropIfExists('organizations');
@@ -379,6 +554,7 @@ final class ContractPermissionAndLifecycleTest extends TestCase
             $table->string('number');
             $table->date('date');
             $table->string('status');
+            $table->decimal('total_amount', 15, 2)->nullable();
             $table->boolean('is_self_execution')->default(false);
             $table->timestamps();
             $table->softDeletes();
@@ -408,8 +584,20 @@ final class ContractPermissionAndLifecycleTest extends TestCase
             $table->string('event_type');
             $table->string('triggered_by_type')->nullable();
             $table->unsignedBigInteger('triggered_by_id')->nullable();
+            $table->unsignedBigInteger('specification_id')->nullable();
+            $table->decimal('amount_delta', 15, 2)->default(0);
+            $table->date('effective_from')->nullable();
+            $table->unsignedBigInteger('supersedes_event_id')->nullable();
             $table->json('metadata')->nullable();
             $table->unsignedBigInteger('created_by_user_id')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('contract_current_state', static function (Blueprint $table): void {
+            $table->unsignedBigInteger('contract_id')->primary();
+            $table->unsignedBigInteger('active_specification_id')->nullable();
+            $table->decimal('current_total_amount', 15, 2)->default(0);
+            $table->json('active_events')->nullable();
+            $table->timestamp('calculated_at')->nullable();
             $table->timestamps();
         });
         Contract::flushEventListeners();

@@ -58,6 +58,33 @@ class ContractStateEventService
         });
     }
 
+    public function createStatusTransitionEvent(
+        Contract $contract,
+        string $action,
+        string $fromStatus,
+        string $toStatus,
+        ?string $reason,
+        int $actorId
+    ): ContractStateEvent {
+        return $this->eventRepository->createEvent([
+            'contract_id' => $contract->id,
+            'event_type' => ContractStateEventTypeEnum::STATUS_TRANSITION,
+            'triggered_by_type' => Contract::class,
+            'triggered_by_id' => $contract->id,
+            'specification_id' => null,
+            'amount_delta' => 0,
+            'effective_from' => now(),
+            'metadata' => [
+                'action' => $action,
+                'from_status' => $fromStatus,
+                'to_status' => $toStatus,
+                'reason' => $reason,
+                'actor_id' => $actorId,
+            ],
+            'created_by_user_id' => $actorId,
+        ]);
+    }
+
     /**
      * Создать событие изменения (amended) - новая спецификация
      */

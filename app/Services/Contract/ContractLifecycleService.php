@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Services\Contract;
 
-use App\Enums\Contract\ContractStateEventTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Contract;
@@ -20,6 +19,10 @@ final class ContractLifecycleService
         'completed' => ['archive' => 'archived'],
         'terminated' => ['archive' => 'archived'],
     ];
+
+    public function __construct(
+        private readonly ContractStateEventService $stateEventService
+    ) {}
 
     public function transition(Contract $contract, string $action, User $actor, ?string $reason): Contract
     {
@@ -37,18 +40,14 @@ final class ContractLifecycleService
             $contract->save();
 
             if ($contract->exists) {
-                $contract->stateEvents()->create([
-                    'event_type' => ContractStateEventTypeEnum::AMENDED,
-                    'triggered_by_type' => Contract::class,
-                    'triggered_by_id' => $contract->id,
-                    'metadata' => [
-                        'action' => $action,
-                        'from_status' => $currentStatus,
-                        'to_status' => $targetStatus,
-                        'reason' => $reason,
-                    ],
-                    'created_by_user_id' => $actor->id,
-                ]);
+                $this->stateEventService->createStatusTransitionEvent(
+                    $contract,
+                    $action,
+                    $currentStatus,
+                    $targetStatus,
+                    $reason,
+                    (int) $actor->id
+                );
             }
 
             return $contract->exists ? $contract->refresh() : $contract;

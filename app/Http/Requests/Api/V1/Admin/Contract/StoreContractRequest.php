@@ -10,6 +10,7 @@ use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Rules\ParentContractValid;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Enum;
@@ -19,12 +20,13 @@ class StoreContractRequest extends FormRequest
     public function authorize(): bool
     {
         $user = $this->user();
+        $routeProjectId = $this->routeProjectId();
 
         $context = [
             'organization_id' => $this->currentOrganizationId(),
         ];
-        if ($this->route('project') !== null) {
-            $context['project_id'] = (int) $this->route('project');
+        if ($routeProjectId !== null) {
+            $context['project_id'] = $routeProjectId;
         }
 
         return $user !== null && app(AuthorizationService::class)->can($user, 'contracts.create', $context);
@@ -118,14 +120,32 @@ class StoreContractRequest extends FormRequest
     public function rules(): array
     {
         $organizationId = $this->currentOrganizationId();
+        $routeProjectId = $this->routeProjectId();
+        $projectIdRules = [
+            'nullable',
+            'integer',
+            Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            'required_without:project_ids',
+        ];
+        $projectIdsRules = ['nullable', 'required_if:is_multi_project,true,1', 'array', 'min:1'];
+        $projectIdsItemRules = [
+            'integer',
+            Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+        ];
 
-        return [
-            'project_id' => [
-                'nullable',
+        if ($routeProjectId !== null) {
+            $projectIdRules = [
+                'required',
                 'integer',
                 Rule::exists('projects', 'id')->where('organization_id', $organizationId),
-                'required_without:project_ids',
-            ],
+                Rule::in([$routeProjectId]),
+            ];
+            $projectIdsRules[] = 'size:1';
+            $projectIdsItemRules[] = Rule::in([$routeProjectId]);
+        }
+
+        return [
+            'project_id' => $projectIdRules,
             'contract_side_type' => ['required', new Enum(ContractSideTypeEnum::class)],
             'contractor_id' => [
                 'nullable',
@@ -166,11 +186,8 @@ class StoreContractRequest extends FormRequest
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['nullable', 'string'],
             'is_multi_project' => ['nullable', 'boolean'],
-            'project_ids' => ['nullable', 'required_if:is_multi_project,true,1', 'array', 'min:1'],
-            'project_ids.*' => [
-                'integer',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
-            ],
+            'project_ids' => $projectIdsRules,
+            'project_ids.*' => $projectIdsItemRules,
             'organization_id_for_creation' => ['sometimes', 'integer'],
         ];
     }
@@ -182,6 +199,26 @@ class StoreContractRequest extends FormRequest
             ?? $this->user()?->current_organization_id
             ?? $this->input('organization_id_for_creation')
         );
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $routeProjectId = $this->routeProjectId();
+
+        if ($routeProjectId !== null && ! $this->has('project_id')) {
+            $this->merge(['project_id' => $routeProjectId]);
+        }
+    }
+
+    private function routeProjectId(): ?int
+    {
+        $project = $this->route('project');
+
+        if ($project instanceof Model) {
+            return (int) $project->getKey();
+        }
+
+        return $project !== null ? (int) $project : null;
     }
 
     private function availableContractorRule(int $organizationId): \Closure
