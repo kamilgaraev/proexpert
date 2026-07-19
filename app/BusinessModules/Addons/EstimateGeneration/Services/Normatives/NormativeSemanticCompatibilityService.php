@@ -607,6 +607,7 @@ final class NormativeSemanticCompatibilityService
             ['сайдинг'],
             ['металлокассет', 'металлическими кассет', 'metal_cassette'],
             ['композитн', 'composite_panel'],
+            ['вентилируем', 'ventilated_facade'],
             ['стеклянной крош', 'стеклянная крош', 'стеклянную крош', 'glass_crumb'],
             ['мраморной крош', 'мраморная крош', 'мраморную крош', 'marble_crumb'],
             ['терразит', 'terrazite', 'terrazzo'],
