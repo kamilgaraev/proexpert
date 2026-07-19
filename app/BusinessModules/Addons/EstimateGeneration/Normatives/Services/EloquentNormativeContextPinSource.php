@@ -441,6 +441,25 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 trim((string) ($representative->resource_name ?? '')),
             );
             if ($selection === null) {
+                $this->telemetry('abstract_resource_candidates_rejected', [
+                    'norm_code' => is_object($norm) ? trim((string) $norm->code) : '',
+                    'norm_name' => is_object($norm) ? trim((string) $norm->name) : '',
+                    'group_code' => trim((string) $representative->resource_code),
+                    'group_name' => trim((string) ($representative->resource_name ?? '')),
+                    'candidates' => array_map(static fn (object $candidate): array => [
+                        'resource_code' => trim((string) ($candidate->price_resource_code ?? '')),
+                        'resource_name' => trim((string) ($candidate->price_resource_name ?? '')),
+                        'unit' => trim((string) ($candidate->price_unit ?? '')),
+                        'base_price' => is_numeric($candidate->base_price ?? null)
+                            ? (float) $candidate->base_price
+                            : null,
+                        'source_type' => trim((string) ($candidate->price_dataset_source_type ?? '')),
+                        'regional_price_version_id' => isset($candidate->regional_price_version_id)
+                            ? (int) $candidate->regional_price_version_id
+                            : null,
+                    ], array_slice($candidateRowList, 0, 20)),
+                ]);
+
                 continue;
             }
             $selection['row']->project_resource_candidates_count = $selection['candidates_count'];
