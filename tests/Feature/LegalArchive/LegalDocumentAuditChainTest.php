@@ -241,10 +241,15 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertStringContainsString('NOT VALID', $extension);
         self::assertStringNotContainsString('VALIDATE CONSTRAINT', $extension);
         self::assertStringContainsString('VALIDATE CONSTRAINT', $validation);
-        self::assertStringContainsString('immutable_audit_allocate_sequence', $extension);
-        self::assertStringNotContainsString('CREATE TRIGGER immutable_audit_sequence_sync', $extension);
+        $rollout = file_get_contents(__DIR__.'/../../../app/BusinessModules/Core/ImmutableAudit/Services/ImmutableAuditRolloutService.php');
+        self::assertIsString($rollout);
+        self::assertStringContainsString('immutable_audit_allocate_sequence', $rollout);
+        self::assertStringContainsString('CREATE TRIGGER immutable_audit_sequence_sync', $rollout);
+        self::assertStringContainsString('AFTER INSERT', $rollout);
+        self::assertStringContainsString('MAX(sequence_id), 0) + 2', $rollout);
+        self::assertStringContainsString('LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE', $rollout);
+        self::assertStringNotContainsString('NEW.sequence_id :=', $rollout);
         self::assertStringNotContainsString('SET DEFAULT nextval', $extension);
-        self::assertStringNotContainsString('LOCK TABLE immutable_audit_events', $extension);
     }
 
     public function test_source_idempotency_is_aggregate_scoped_and_conflicts_are_rejected(): void
@@ -314,12 +319,15 @@ final class LegalDocumentAuditChainTest extends TestCase
             __DIR__.'/../../../database/migrations/2026_07_19_000320_scope_immutable_audit_idempotency.php',
         );
         self::assertIsString($migration);
-        self::assertStringContainsString('immutable_audit_source_event_aggregate_unique', $migration);
-        self::assertStringContainsString('immutable_audit_source_event_legacy_unique', $migration);
-        self::assertStringContainsString('subject_type IS NULL OR subject_id IS NULL', $migration);
-        self::assertStringContainsString('CREATE UNIQUE INDEX{$concurrently}', $migration);
-        self::assertStringContainsString('immutable_audit_idempotency_indexes_are_forward_only', $migration);
-        self::assertStringNotContainsString('immutable_audit_source_event_unique_v1', $migration);
+        self::assertStringNotContainsString('DROP INDEX', $migration);
+        $rollout = file_get_contents(__DIR__.'/../../../app/BusinessModules/Core/ImmutableAudit/Services/ImmutableAuditRolloutService.php');
+        $command = file_get_contents(__DIR__.'/../../../app/Console/Commands/ImmutableAuditPhaseBCutoverCommand.php');
+        self::assertIsString($rollout);
+        self::assertIsString($command);
+        self::assertStringContainsString('immutable_audit_source_event_aggregate_unique', $rollout);
+        self::assertStringContainsString('immutable_audit_source_event_legacy_unique', $rollout);
+        self::assertStringContainsString('phase_b_writer_fence_not_confirmed', $rollout);
+        self::assertStringContainsString('--confirm-writer-version=', $command);
     }
 
     public function test_opt_in_postgres_test_exercises_production_recorder_integrity_and_outbox(): void
@@ -335,6 +343,13 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertStringContainsString("getConnection('legal_pg_first')", $test);
         self::assertStringContainsString("getConnection('legal_pg_second')", $test);
         self::assertStringContainsString('new Process([PHP_BINARY', $test);
+        self::assertStringContainsString('new ImmutableAuditRolloutService', $test);
+        self::assertStringContainsString('installCompatibilityPhase', $test);
+        self::assertStringContainsString('cutover($this->first, false, 2)', $test);
+        self::assertStringContainsString('cutover($this->first, true, 2)', $test);
+        self::assertStringContainsString('immutable_audit_source_event_unique', $test);
+        self::assertStringContainsString("'legacy:1', 'legacy'", $test);
+        self::assertStringContainsString('count(array_unique', $test);
         self::assertStringNotContainsString('SKIP LOCKED', $test);
         self::assertStringNotContainsString('pg_try_advisory', $test);
     }

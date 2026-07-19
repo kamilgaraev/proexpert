@@ -9,6 +9,7 @@ use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditIntegrityService;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRecorder;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRedactor;
+use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRolloutService;
 use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentOutboxMessage;
 use App\Services\LegalArchive\Audit\LegalDocumentOutbox;
 use App\Services\LegalArchive\Audit\LegalDocumentOutboxPublisher;
@@ -127,6 +128,26 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
         self::assertTrue((new ImmutableAuditIntegrityService)->verifyChain($events)['valid']);
     }
 
+    public function test_phase_a_accepts_delayed_legacy_max_plus_one_and_new_writer_without_collision_or_hash_mutation(): void
+    {
+        $worker = dirname(__DIR__, 2).'/Support/LegalArchive/PostgresAuditWorker.php';
+        $legacy = new Process([PHP_BINARY, $worker, $this->schema, 'legacy', 'legacy:1', 'legacy']);
+        $modern = new Process([PHP_BINARY, $worker, $this->schema, 'modern', 'modern:1']);
+        $legacy->start();
+        usleep(100_000);
+        $modern->start();
+        $legacy->wait();
+        $modern->wait();
+
+        self::assertTrue($legacy->isSuccessful(), $legacy->getErrorOutput());
+        self::assertTrue($modern->isSuccessful(), $modern->getErrorOutput());
+        $rows = $this->first->table('immutable_audit_events')->orderBy('sequence_id')->get();
+        self::assertCount(2, $rows);
+        self::assertSame(2, count(array_unique($rows->pluck('sequence_id')->all())));
+        $hashes = $rows->map(fn ($row): array => [(string) $row->payload_hash, (string) $row->record_hash])->all();
+        self::assertSame($hashes, $this->first->table('immutable_audit_events')->orderBy('sequence_id')->get()->map(fn ($row): array => [(string) $row->payload_hash, (string) $row->record_hash])->all());
+    }
+
     public function test_append_only_trigger_rejects_mutation_of_real_recorder_event(): void
     {
         $event = (new ImmutableAuditRecorder(
@@ -137,6 +158,26 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
 
         $this->expectException(\Illuminate\Database\QueryException::class);
         $this->first->table('immutable_audit_events')->where('id', $event->id)->update(['action' => 'tampered']);
+    }
+
+    public function test_real_rollout_phases_preserve_global_index_until_explicit_writer_fence(): void
+    {
+        $rollout = new ImmutableAuditRolloutService;
+        self::assertSame('phase_a', $this->first->table('immutable_audit_rollout')->value('phase'));
+        self::assertSame(1, (int) $this->first->selectOne("SELECT COUNT(*) AS value FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'immutable_audit_source_event_unique'")->value);
+
+        try {
+            $rollout->cutover($this->first, false, 2);
+            self::fail('Cutover must require an explicit deployment fence.');
+        } catch (RuntimeException $error) {
+            self::assertSame('immutable_audit_phase_b_writer_fence_not_confirmed', $error->getMessage());
+        }
+
+        $rollout->cutover($this->first, true, 2);
+        $rollout->cutover($this->first, true, 2);
+        self::assertSame('phase_b', $this->first->table('immutable_audit_rollout')->value('phase'));
+        self::assertSame(0, (int) $this->first->selectOne("SELECT COUNT(*) AS value FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'immutable_audit_source_event_unique'")->value);
+        self::assertSame(1, (int) $this->first->selectOne("SELECT COUNT(*) AS value FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'immutable_audit_source_event_aggregate_unique'")->value);
     }
 
     private function event(string $action, string $sourceEventId): ImmutableAuditEventData
@@ -182,10 +223,6 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
     private function installSchema(): void
     {
         $this->first->unprepared(<<<'SQL'
-CREATE SEQUENCE immutable_audit_sequence;
-CREATE FUNCTION immutable_audit_allocate_sequence() RETURNS bigint AS $$
-BEGIN RETURN nextval('immutable_audit_sequence'); END;
-$$ LANGUAGE plpgsql VOLATILE;
 CREATE TABLE immutable_audit_events (
     id uuid PRIMARY KEY, sequence_id bigint NOT NULL UNIQUE, organization_id bigint NOT NULL,
     project_id bigint NULL, domain text NOT NULL, event_type text NOT NULL, action text NOT NULL,
@@ -200,9 +237,9 @@ CREATE TABLE immutable_audit_events (
     chain_version smallint NOT NULL, sealed_at timestamptz NULL, seal_id uuid NULL,
     integrity_status text NOT NULL, retention_until timestamptz NOT NULL, created_at timestamptz NOT NULL
 );
-CREATE UNIQUE INDEX immutable_audit_source_event_aggregate_unique
-ON immutable_audit_events (organization_id, domain, subject_type, subject_id, source, source_event_id)
-WHERE source_event_id IS NOT NULL AND subject_type IS NOT NULL AND subject_id IS NOT NULL;
+CREATE UNIQUE INDEX immutable_audit_source_event_unique
+ON immutable_audit_events (organization_id, domain, source, source_event_id)
+WHERE source_event_id IS NOT NULL;
 CREATE FUNCTION immutable_audit_prevent_mutation() RETURNS trigger AS $$
 BEGIN RAISE EXCEPTION 'immutable audit records are append-only'; END;
 $$ LANGUAGE plpgsql;
@@ -217,6 +254,7 @@ CREATE TABLE legal_document_outbox (
     UNIQUE (organization_id, aggregate_type, aggregate_id, idempotency_key)
 );
 SQL);
+        (new ImmutableAuditRolloutService)->installCompatibilityPhase($this->first);
     }
 }
 

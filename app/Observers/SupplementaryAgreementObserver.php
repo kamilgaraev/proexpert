@@ -4,6 +4,7 @@ namespace App\Observers;
 
 use App\Models\SupplementaryAgreement;
 use App\Services\Contract\ContractAuditedMutationService;
+use App\Services\Contract\ContractAuditReconciliationService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
@@ -13,7 +14,10 @@ use Illuminate\Support\Facades\Log;
  */
 class SupplementaryAgreementObserver
 {
-    public function __construct(private readonly ContractAuditedMutationService $contractMutations) {}
+    public function __construct(
+        private readonly ContractAuditedMutationService $contractMutations,
+        private readonly ContractAuditReconciliationService $reconciliation,
+    ) {}
 
     /**
      * Вызывается после создания дополнительного соглашения
@@ -71,7 +75,7 @@ class SupplementaryAgreementObserver
                     [
                         'agreement_id' => (int) $agreement->id,
                         'reason' => $reason,
-                        'source_event_id' => 'supplementary_agreement:'.(string) $agreement->id.':'.$reason.':'.hash('sha256', (string) $agreement->updated_at),
+                        'source_event_id' => 'supplementary_agreement:'.(string) $agreement->id.':'.$reason.':'.$this->changeFingerprint($agreement, $reason),
                     ],
                 );
                 $amountDelta = $newTotalAmount - $oldTotalAmount;
@@ -119,6 +123,9 @@ class SupplementaryAgreementObserver
                 }
             }
         } catch (\Exception $e) {
+            if (isset($newTotalAmount) && $contract instanceof \App\Models\Contract && is_numeric($newTotalAmount)) {
+                $this->reconciliation->recordDebt($contract, 'supplementary_agreement', (string) $agreement->id, $this->changeFingerprint($agreement, $reason), (float) $newTotalAmount, $e);
+            }
             // Не критично - логируем и продолжаем
             Log::warning('Failed to recalculate contract total_amount from agreement', [
                 'agreement_id' => $agreement->id,
@@ -126,5 +133,10 @@ class SupplementaryAgreementObserver
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    private function changeFingerprint(SupplementaryAgreement $agreement, string $reason): string
+    {
+        return hash('sha256', json_encode([$reason, $agreement->getOriginal(), $agreement->getChanges()], JSON_THROW_ON_ERROR));
     }
 }

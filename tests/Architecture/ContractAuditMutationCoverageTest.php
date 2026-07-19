@@ -5,31 +5,32 @@ declare(strict_types=1);
 namespace Tests\Architecture;
 
 use PHPUnit\Framework\TestCase;
+use Tests\Support\Architecture\ContractMutationAstScanner;
 
 final class ContractAuditMutationCoverageTest extends TestCase
 {
     public function test_runtime_contract_mutations_are_confined_to_audited_boundary(): void
     {
         $root = dirname(__DIR__, 2).'/app';
-        $allowed = [
-            'Services/Contract/ContractAuditedMutationService.php',
-            'Console/Commands/SetupRBACTestEnvironment.php',
-        ];
-        $auditedCreationPaths = [
-            'Services/Contract/ContractSideMutationService.php',
-            'BusinessModules/Features/Procurement/Services/PurchaseContractService.php',
+        $exemptions = [
+            'BusinessModules/Features/Procurement/Services/PurchaseContractService.php:32',
+            'BusinessModules/Features/Procurement/Services/PurchaseContractService.php:83',
+            'Console/Commands/CleanupFilesCommand.php:98',
+            'Console/Commands/CleanupFilesCommand.php:148',
+            'Console/Commands/SetupRBACTestEnvironment.php:96',
+            'Console/Commands/SetupRBACTestEnvironment.php:103',
+            'Services/Contract/ContractAuditedMutationService.php:58',
+            'Services/Contract/ContractAuditedMutationService.php:134',
         ];
         $violations = [];
         $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root));
+        $scanner = new ContractMutationAstScanner;
 
         foreach ($iterator as $file) {
             if (! $file->isFile() || $file->getExtension() !== 'php') {
                 continue;
             }
             $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($root) + 1));
-            if (in_array($relative, $allowed, true)) {
-                continue;
-            }
             if (str_contains($relative, '/migrations/')) {
                 continue;
             }
@@ -37,25 +38,11 @@ final class ContractAuditMutationCoverageTest extends TestCase
             if (! is_string($source)) {
                 continue;
             }
-            if (
-                preg_match('/\$(?:contract|lockedContract)->(?:save|update|forceFill|delete)\s*\(/', $source) === 1
-                || preg_match('/\$(?:contract|lockedContract|parent)->(?:saveQuietly|updateQuietly)\s*\(/', $source) === 1
-                || ($relative === 'Models/Contract.php' && preg_match('/\$this->(?:save|saveQuietly|update|updateQuietly|delete)\s*\(/', $source) === 1)
-                || preg_match('/\$this->contractRepository->(?:update|delete)\s*\(/', $source) === 1
-                || preg_match('/\$this->contractRepository->create\s*\(/', $source) === 1
-                || preg_match('/contracts\(\)->(?:update|delete)\s*\(/', $source) === 1
-                || preg_match('/DB::table\([\'\"]contracts[\'\"]\)[\s\S]{0,300}?->(?:insert|update|delete)\s*\(/', $source) === 1
-                || preg_match('/Contract::(?:create|updateOrCreate|firstOrCreate|destroy)\s*\(/', $source) === 1
-                || preg_match('/Contract::query\(\)[\s\S]{0,300}?->(?:insert|update|delete)\s*\(/', $source) === 1
-            ) {
-                if (
-                    in_array($relative, $auditedCreationPaths, true)
-                    && str_contains($source, 'ContractAuditedMutationService')
-                    && str_contains($source, 'recordCreated(')
-                ) {
-                    continue;
+            foreach ($scanner->scan($source) as $line) {
+                $location = "{$relative}:{$line}";
+                if (! in_array($location, $exemptions, true)) {
+                    $violations[] = $location;
                 }
-                $violations[] = $relative;
             }
         }
 
@@ -94,5 +81,42 @@ final class ContractAuditMutationCoverageTest extends TestCase
             self::assertIsString($source);
             self::assertStringContainsString('ContractAuditedMutationService', $source, $relative);
         }
+    }
+
+    public function test_observer_idempotency_uses_change_fingerprint_and_persists_reconciliation_debt(): void
+    {
+        foreach (['ContractPerformanceActObserver.php', 'SupplementaryAgreementObserver.php'] as $file) {
+            $source = file_get_contents(dirname(__DIR__, 2).'/app/Observers/'.$file);
+            self::assertIsString($source);
+            self::assertStringContainsString('changeFingerprint(', $source);
+            self::assertStringContainsString('recordDebt(', $source);
+            self::assertStringNotContainsString("hash('sha256', (string) $", $source);
+        }
+
+        $migration = file_get_contents(dirname(__DIR__, 2).'/database/migrations/2026_07_19_000321_create_contract_audit_reconciliation_debts.php');
+        self::assertIsString($migration);
+        self::assertStringContainsString("unique(['source_type', 'source_id', 'change_fingerprint'])", $migration);
+        self::assertStringContainsString("timestampTz('resolved_at')", $migration);
+    }
+
+    public function test_ast_scanner_catches_alias_static_connection_raw_sql_and_mixed_files(): void
+    {
+        $scanner = new ContractMutationAstScanner;
+        $source = <<<'PHP'
+<?php
+use App\Models\Contract;
+use Illuminate\Support\Facades\DB;
+function mutate(): void {
+    $targetContract = Contract::query()->findOrFail(1);
+    $targetContract->save();
+    Contract::query()->whereKey(2)->update(['number' => 'x']);
+    DB::connection()->table('contracts')->delete();
+    DB::statement('UPDATE contracts SET number = 1');
+    $audit->recordCreated($targetContract);
+    $targetContract->update(['number' => 'still-detected']);
+}
+PHP;
+
+        self::assertSame([6, 7, 8, 9, 11], $scanner->scan($source));
     }
 }

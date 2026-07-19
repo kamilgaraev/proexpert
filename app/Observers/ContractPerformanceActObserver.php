@@ -5,12 +5,16 @@ namespace App\Observers;
 use App\Models\ContractPerformanceAct;
 use App\Services\Analytics\EVMService;
 use App\Services\Contract\ContractAuditedMutationService;
+use App\Services\Contract\ContractAuditReconciliationService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
 class ContractPerformanceActObserver
 {
-    public function __construct(private readonly ContractAuditedMutationService $contractMutations) {}
+    public function __construct(
+        private readonly ContractAuditedMutationService $contractMutations,
+        private readonly ContractAuditReconciliationService $reconciliation,
+    ) {}
 
     public function created(ContractPerformanceAct $act): void
     {
@@ -59,7 +63,7 @@ class ContractPerformanceActObserver
                 [
                     'act_id' => (int) $act->id,
                     'reason' => $reason,
-                    'source_event_id' => 'performance_act:'.(string) $act->id.':'.$reason.':'.hash('sha256', (string) $act->updated_at),
+                    'source_event_id' => 'performance_act:'.(string) $act->id.':'.$reason.':'.$this->changeFingerprint($act, $reason),
                 ],
             );
 
@@ -106,12 +110,20 @@ class ContractPerformanceActObserver
                 ]);
             }
         } catch (\Exception $e) {
+            if (isset($newTotalAmount) && $contract instanceof \App\Models\Contract && is_numeric($newTotalAmount)) {
+                $this->reconciliation->recordDebt($contract, 'performance_act', (string) $act->id, $this->changeFingerprint($act, $reason), (float) $newTotalAmount, $e);
+            }
             Log::warning('Failed to recalculate contract total_amount from act', [
                 'act_id' => $act->id,
                 'contract_id' => $act->contract_id,
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    private function changeFingerprint(ContractPerformanceAct $act, string $reason): string
+    {
+        return hash('sha256', json_encode([$reason, $act->getOriginal(), $act->getChanges()], JSON_THROW_ON_ERROR));
     }
 
     private function invalidateEVMCache(ContractPerformanceAct $act, bool $includeOriginal = false): void

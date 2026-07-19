@@ -54,6 +54,12 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->bind(\App\Services\Contract\ContractAuditReconciliationService::class, function ($app) {
+            return new \App\Services\Contract\ContractAuditReconciliationService(
+                $app->make('db')->connection(),
+                $app->make(\App\Services\Contract\ContractAuditedMutationService::class),
+            );
+        });
         $this->app->bind(
             \App\Services\LegalArchive\Audit\LegalDocumentOutboxPublisher::class,
             \App\Services\LegalArchive\Audit\LaravelLegalDocumentOutboxPublisher::class,

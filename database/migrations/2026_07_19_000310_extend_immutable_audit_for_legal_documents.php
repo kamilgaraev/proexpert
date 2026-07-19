@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRolloutService;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -14,26 +15,7 @@ return new class extends Migration
             return;
         }
 
-        DB::statement('CREATE SEQUENCE IF NOT EXISTS immutable_audit_sequence');
-        DB::statement(<<<'SQL'
-SELECT setval(
-    'immutable_audit_sequence',
-    GREATEST(
-        (SELECT last_value FROM immutable_audit_sequence),
-        COALESCE((SELECT MAX(sequence_id) FROM immutable_audit_events), 1),
-        1
-    ),
-    (SELECT is_called FROM immutable_audit_sequence) OR EXISTS (SELECT 1 FROM immutable_audit_events)
-)
-SQL);
-        DB::unprepared(<<<'SQL'
-CREATE OR REPLACE FUNCTION immutable_audit_allocate_sequence()
-RETURNS bigint AS $$
-BEGIN
-    RETURN nextval('immutable_audit_sequence');
-END;
-$$ LANGUAGE plpgsql VOLATILE;
-SQL);
+        (new ImmutableAuditRolloutService)->installCompatibilityPhase(DB::connection());
         DB::unprepared(<<<'SQL'
 DO $$
 BEGIN
@@ -61,7 +43,11 @@ SQL);
         }
 
         DB::statement('ALTER TABLE immutable_audit_events DROP CONSTRAINT IF EXISTS immutable_audit_events_domain_check_v2');
+        DB::statement('DROP TRIGGER IF EXISTS immutable_audit_sequence_sync ON immutable_audit_events');
         DB::statement('DROP FUNCTION IF EXISTS immutable_audit_allocate_sequence()');
+        DB::statement('DROP FUNCTION IF EXISTS immutable_audit_allocate_compatible_sequence()');
+        DB::statement('DROP FUNCTION IF EXISTS immutable_audit_sync_sequence_after_insert()');
+        DB::statement('DROP TABLE IF EXISTS immutable_audit_rollout');
         DB::statement('DROP SEQUENCE IF EXISTS immutable_audit_sequence');
     }
 };

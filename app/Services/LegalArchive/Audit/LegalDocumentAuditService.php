@@ -63,7 +63,7 @@ final readonly class LegalDocumentAuditService implements LegalDocumentAudit
                 actorUserId: $actorId,
                 sourceModel: Contract::class,
                 sourceTable: $contract->getTable(),
-                sourceEventId: $this->sourceEventId($context),
+                sourceEventId: $this->sourceEventId($context, 'contract', $contractId),
                 idempotencyKey: $this->idempotencyKey($context),
                 subjectType: 'contract',
                 subjectId: $contractId,
@@ -103,7 +103,7 @@ final readonly class LegalDocumentAuditService implements LegalDocumentAudit
                 actorSnapshot: $actorSnapshot,
                 sourceModel: LegalArchiveDocument::class,
                 sourceTable: $document->getTable(),
-                sourceEventId: $this->sourceEventId($context),
+                sourceEventId: $this->sourceEventId($context, 'legal_document', $documentId),
                 idempotencyKey: $this->idempotencyKey($context),
                 subjectType: 'legal_document',
                 subjectId: $documentId,
@@ -144,11 +144,13 @@ final readonly class LegalDocumentAuditService implements LegalDocumentAudit
         }
     }
 
-    private function sourceEventId(array $context): ?string
+    private function sourceEventId(array $context, string $aggregateType, string $aggregateId): ?string
     {
         $value = $context['source_event_id'] ?? null;
 
-        return is_string($value) && $value !== '' ? $value : null;
+        return is_string($value) && $value !== ''
+            ? "{$aggregateType}:{$aggregateId}:{$value}"
+            : null;
     }
 
     private function idempotencyKey(array $context): ?string

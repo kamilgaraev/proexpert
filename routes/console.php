@@ -233,6 +233,11 @@ Schedule::command('estimates:regional-prices:sync-fgiscs --region=RU-TA --latest
 
 $oneCExchangeScheduledLimit = max(1, (int) config('one_c_exchange.delivery.scheduled_limit', 50));
 
+Schedule::command('contracts:reconcile-audit-debts --limit=100')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->runInBackground();
+
 if ((bool) config('one_c_exchange.delivery.enabled', false)) {
     Schedule::command("one-c-exchange:deliver --limit={$oneCExchangeScheduledLimit}")
         ->everyMinute()
