@@ -72,6 +72,7 @@ final readonly class RoomAnnotationFloorAreaQuantityFactory
                         'floor_key' => $floor->key,
                         'room_key' => $room->key,
                         'room_evidence_count' => count($room->evidenceIds),
+                        ...$this->areaEvidenceDiagnostics($context, $room->evidenceIds, $annotation['area_m2']),
                     ]);
                 }
                 if (isset($usedEvidenceIds[$areaEvidenceId])) {
@@ -162,6 +163,29 @@ final readonly class RoomAnnotationFloorAreaQuantityFactory
         }
 
         return $node->id;
+    }
+
+    /** @param list<int> $ids @return array<string, int|float|string|bool|null> */
+    private function areaEvidenceDiagnostics(BuildingModelOperationContext $context, array $ids, float $area): array
+    {
+        $nodes = $this->roomAreaNodes($context, $ids);
+        if (count($nodes) !== 1) {
+            return ['room_area_node_count' => count($nodes)];
+        }
+        $node = $nodes[0];
+        $value = $node->value['field_value'] ?? null;
+
+        return [
+            'room_area_node_count' => 1,
+            'node_active' => $node->invalidatedAt === null,
+            'node_source_type' => $node->sourceType->value,
+            'node_producer_name' => $node->producerName,
+            'node_unit_type' => is_string($node->locator['unit_type'] ?? null) ? $node->locator['unit_type'] : null,
+            'node_confidence' => $node->confidence,
+            'node_unit' => is_string($node->value['unit'] ?? null) ? $node->value['unit'] : null,
+            'node_value_numeric' => is_numeric($value),
+            'node_value_delta' => is_numeric($value) ? abs((float) $value - $area) : null,
+        ];
     }
 
     /** @param list<int> $ids @return list<EvidenceNode> */
