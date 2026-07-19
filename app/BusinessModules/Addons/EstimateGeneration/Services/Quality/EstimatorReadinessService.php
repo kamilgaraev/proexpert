@@ -30,16 +30,41 @@ class EstimatorReadinessService
             ? $session->status->value
             : (string) $session->status;
 
-        return ($this->evaluator ?? new EstimatorReadinessEvaluator)->evaluate(new EstimatorReadinessInput(
+        $inspection = ($this->draftInspector ?? new DraftReadinessInspector)->inspect($draft);
+        $result = ($this->evaluator ?? new EstimatorReadinessEvaluator)->evaluate(new EstimatorReadinessInput(
             sessionStatus: $status,
             hasDraft: is_array($session->draft_payload) && ($session->draft_payload['local_estimates'] ?? []) !== [],
             qualityStatus: (string) ($quality['status'] ?? ''),
             qualityLevel: (string) ($quality['level'] ?? ''),
             metrics: array_merge(
                 $this->metrics($session, $documents, $draft, $quality),
-                ($this->draftInspector ?? new DraftReadinessInspector)->inspect($draft)->metrics,
+                $inspection->metrics,
             ),
         ));
+
+        return $this->withInspectionDetails($result, $inspection);
+    }
+
+    private function withInspectionDetails(
+        ReadinessResult $result,
+        DraftReadinessInspection $inspection,
+    ): ReadinessResult {
+        $issues = array_column($result->blockingIssues, null, 'code');
+        foreach ($inspection->blockingIssues as $issue) {
+            if (is_array($issue) && is_string($issue['code'] ?? null)) {
+                $issues[$issue['code']] = $issue;
+            }
+        }
+
+        return new ReadinessResult(
+            status: $result->status,
+            canGenerate: $result->canGenerate,
+            canApply: $result->canApply && $issues === [],
+            blockingIssues: array_values($issues),
+            warnings: $result->warnings,
+            metrics: $result->metrics,
+            nextAction: $result->nextAction,
+        );
     }
 
     /** @return Collection<int, EstimateGenerationDocument> */

@@ -100,13 +100,6 @@ final class NormativeWorkItemPlannerService
         $definition = $this->withResidentialMaterialScenario($definition, $analysis);
         $quantity = $this->quantityForDefinition($definition, $analysis, $quantityModel);
 
-        $definitionMetadata = is_array($definition['metadata'] ?? null) ? $definition['metadata'] : [];
-        if (($quantity['source'] ?? null) === 'residential_preliminary_scenario'
-            && (in_array((string) ($definition['quantity_key'] ?? ''), ['roof.rafters', 'roof.gutter'], true)
-                || ($definitionMetadata['material_scenario_work_key'] ?? null) === 'roof.insulation')) {
-            return null;
-        }
-
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
         $key = $packageKey.'-norm-intent-'.($index + 1);
 
@@ -287,6 +280,14 @@ final class NormativeWorkItemPlannerService
         if ($workItemKey === '') {
             return $definition;
         }
+        $compositionWorkKey = (string) ($definition['metadata']['composition_work_key'] ?? '');
+        if ($compositionWorkKey === '' || $compositionWorkKey === (string) ($definition['quantity_key'] ?? '')) {
+            $compositionWorkKey = $workItemKey;
+        }
+        $definition['metadata'] = [
+            ...(is_array($definition['metadata'] ?? null) ? $definition['metadata'] : []),
+            'composition_work_key' => $compositionWorkKey,
+        ];
 
         $trustedEvidence = $this->trustedSpecializationEvidence($analysis, $workItemKey);
         if ($trustedEvidence !== []) {
@@ -896,6 +897,12 @@ final class NormativeWorkItemPlannerService
             ],
             'slabs' => [
                 $this->definition(
+                    'Опалубка монолитного перекрытия',
+                    'slabs',
+                    'устройство опалубки монолитного железобетонного перекрытия',
+                    'slabs.formwork'
+                ),
+                $this->definition(
                     'Бетонирование монолитного перекрытия',
                     'slabs',
                     'бетонирование монолитного железобетонного перекрытия жилого здания',
@@ -930,10 +937,10 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Отделка фасада', 'facade', 'отделка фасада здания', 'facade.area'),
             ],
             'roof' => $roofType === 'flat' ? [
-                $this->definition('Устройство основания плоской кровли', 'roof', 'устройство основания плоской кровли', 'roof.flat_area'),
-                $this->definition('Пароизоляция плоской кровли', 'roof', 'устройство пароизоляции плоской кровли', 'roof.flat_area'),
-                $this->definition('Утепление плоской кровли', 'roof', 'утепление плоской кровли', 'roof.flat_area'),
-                $this->definition('Гидроизоляционный ковер кровли', 'roof', 'устройство рулонной гидроизоляции кровли', 'roof.flat_area'),
+                $this->definition('Устройство основания плоской кровли', 'roof', 'устройство основания плоской кровли', 'roof.flat_area', metadata: ['composition_work_key' => 'roof.flat.base']),
+                $this->definition('Пароизоляция плоской кровли', 'roof', 'устройство пароизоляции плоской кровли', 'roof.flat_area', metadata: ['composition_work_key' => 'roof.flat.vapor_barrier']),
+                $this->definition('Утепление плоской кровли', 'roof', 'утепление плоской кровли', 'roof.flat_area', metadata: ['composition_work_key' => 'roof.flat.insulation']),
+                $this->definition('Гидроизоляционный ковер кровли', 'roof', 'устройство рулонной гидроизоляции кровли', 'roof.flat_area', metadata: ['composition_work_key' => 'roof.flat.waterproofing']),
                 $this->definition('Водоотвод плоской кровли', 'roof', 'устройство внутреннего водостока кровли', 'roof.gutter'),
             ] : ($roofType === 'pitched' ? [
                 $this->definition('Монтаж стропильной системы', 'roof', 'монтаж стропильной системы кровли', 'roof.rafters'),
@@ -953,11 +960,15 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Прокладка магистральных кабелей', 'electrical', 'прокладка магистральных кабельных линий', 'electrical.main_cable'),
                 $this->definition('Монтаж кабельных лотков', 'electrical', 'монтаж кабельных лотков', 'electrical.trays'),
                 $this->definition('Прокладка силовых линий', 'electrical', 'прокладка силовых кабельных линий', 'electrical.power_lines'),
+                $this->definition('Монтаж распределительного щита', 'electrical', 'монтаж квартирного распределительного щита', 'electrical.panel'),
+                $this->definition('Монтаж розеток', 'electrical', 'установка штепсельных розеток', 'electrical.outlets'),
+                $this->definition('Монтаж выключателей', 'electrical', 'установка выключателей освещения', 'electrical.switches'),
                 $this->definition('Прокладка линий освещения', 'electrical', 'прокладка групповых линий освещения', 'lighting.lines'),
                 $this->definition('Устройство заземления', 'electrical', 'устройство контура заземления', 'electrical.grounding'),
             ],
             'lighting' => [
                 $this->definition('Прокладка линий освещения', 'electrical', 'прокладка групповых линий освещения', 'lighting.lines'),
+                $this->definition('Монтаж светильников', 'electrical', 'установка светильников потолочных', 'lighting.fixtures'),
                 $this->definition('Монтаж светильников', 'electrical', 'монтаж промышленных светильников', 'warehouse.lighting'),
             ],
             'low_current', 'server_room' => [
@@ -1936,7 +1947,7 @@ final class NormativeWorkItemPlannerService
             'quantity_key' => $quantityKey,
             'operations' => $operations !== [] ? $operations : $this->operationBank($category),
             'confidence' => $confidence,
-            'metadata' => $metadata,
+            'metadata' => ['composition_work_key' => $quantityKey, ...$metadata],
         ];
     }
 

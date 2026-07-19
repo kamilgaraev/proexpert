@@ -93,6 +93,10 @@ class PackagePlannerService
         $hasOffice = $this->containsOfficeSignal($type)
             || $this->containsOfficeSignal($description);
         $planningSignals = $this->planningSignalsFromAnalysis($analysis, $description);
+        $roofType = (new RoofTypeResolver)->resolve($analysis);
+        if ($roofType !== null) {
+            $planningSignals['roof_type'] = $roofType;
+        }
         $planningSignals['generation_mode'] = $this->generationModeFromAnalysis($analysis)->value;
 
         $hasExplicitObjectType = $objectType !== '' && $objectType !== 'custom';

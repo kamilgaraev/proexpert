@@ -4,13 +4,40 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Workflow;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionOperationalSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionSnapshotData;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReadinessResult;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class SessionOperationalSnapshotDataTest extends TestCase
 {
+    #[Test]
+    public function persisted_draft_blocker_replaces_apply_status_and_next_action(): void
+    {
+        $builder = (new \ReflectionClass(BuildSessionOperationalSnapshot::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod(BuildSessionOperationalSnapshot::class, 'withPersistedBlockingIssues');
+        $ready = new ReadinessResult(
+            'ready_to_apply', true, true, [], [], [],
+            ['code' => 'apply_draft', 'message_key' => 'apply', 'message' => 'apply'],
+        );
+
+        $result = $method->invoke($builder, $ready, [
+            'draft_blocking_issues' => json_encode([[
+                'code' => 'required_scope_unresolved',
+                'message_key' => 'estimate_generation.readiness_required_scope_unresolved',
+                'message' => 'Не учтены обязательные работы',
+            ]], JSON_THROW_ON_ERROR),
+        ]);
+
+        self::assertInstanceOf(ReadinessResult::class, $result);
+        self::assertSame('draft_needs_review', $result->status);
+        self::assertFalse($result->canApply);
+        self::assertSame('review_draft', $result->nextAction['code']);
+        self::assertSame(1, $result->metrics['gate_required_scope_unresolved']);
+    }
+
     #[Test]
     public function operational_checkpoint_queries_are_scoped_to_the_active_generation_attempt(): void
     {

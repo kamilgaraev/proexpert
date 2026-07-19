@@ -237,6 +237,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
         ));
         $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Planning\WorkCompositionLlmClient::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Planning\AttemptAwareWorkCompositionLlmClient::class,
+        );
+        $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Monitoring\EstimateGenerationDashboardRepository::class,
             \App\BusinessModules\Addons\EstimateGeneration\Monitoring\SqlEstimateGenerationDashboardRepository::class,
         );

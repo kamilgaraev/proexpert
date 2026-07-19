@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -38,6 +39,7 @@ final class NormativeCandidateFeedbackService
         private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
         private readonly ?AdvanceEstimateGeneration $advanceGeneration = null,
         private readonly ?EvidenceRepository $evidenceRepository = null,
+        private readonly DraftReadinessProjector $readinessProjector = new DraftReadinessProjector,
     ) {
         $this->messageResolver = $messageResolver;
         $this->validationExceptionFactory = $validationExceptionFactory;
@@ -89,7 +91,7 @@ final class NormativeCandidateFeedbackService
         if ($feedback->feedback_type === 'quantity_confirmation') {
             $draft = $this->attachConfirmedQuantityEvidence($session, $feedback, $draft);
         }
-        $draft = $this->validationService->validate($draft);
+        $draft = $this->readinessProjector->project($this->validationService->validate($draft));
         $workItemKey = trim((string) $feedback->work_item_key);
         $syncedPackage = $workItemKey !== ''
             && $this->packagePersistenceService->syncWorkItemPackageFromDraft($session, $draft, $workItemKey);
@@ -1233,7 +1235,8 @@ final class NormativeCandidateFeedbackService
      */
     private function draftRequiresReview(array $draft): bool
     {
-        return (int) data_get($draft, 'quality_summary.normative_items.requires_review', 0) > 0
+        return (array) data_get($draft, 'readiness_summary.blocking_issues', []) !== []
+            || (int) data_get($draft, 'quality_summary.normative_items.requires_review', 0) > 0
             || (int) data_get($draft, 'quality_summary.quantity_review_work_items', 0) > 0
             || (int) data_get($draft, 'quality_summary.not_calculated_work_items', 0) > 0
             || (int) data_get($draft, 'quality_summary.safe_norm_required_work_items', 0) > 0

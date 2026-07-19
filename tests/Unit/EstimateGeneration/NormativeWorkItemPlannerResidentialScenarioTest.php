@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\WallData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\ResidentialWorkCompositionCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
@@ -21,6 +22,66 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
 {
+    #[Test]
+    public function deterministic_house_catalog_is_fully_realized_by_the_normative_planner(): void
+    {
+        $plan = [
+            'object_profile' => [
+                'object_type' => 'house',
+                'floors' => 2,
+                'planning_signals' => ['roof_type' => 'pitched'],
+            ],
+        ];
+        $requirements = (new ResidentialWorkCompositionCatalog)->requirements($plan);
+        $units = [
+            'earth.trench' => 'm3', 'earth.backfill' => 'm3', 'earth.export' => 'm3', 'earth.plan' => 'm2',
+            'foundation.prep' => 'm2', 'foundation.formwork' => 'm2', 'foundation.rebar' => 't',
+            'foundation.concrete' => 'm3', 'foundation.waterproofing' => 'm2',
+            'walls.external_volume' => 'm3', 'walls.internal' => 'm2', 'walls.lintels' => 'pcs',
+            'slabs.formwork' => 'm2', 'slabs.concrete' => 'm3', 'slabs.rebar' => 't',
+            'stairs.flights' => 'm2', 'stairs.railings' => 'm',
+            'roof.rafters' => 'm2', 'roof.area' => 'm2', 'roof.insulation' => 'm2',
+            'roof.covering' => 'm2', 'roof.gutter' => 'm',
+            'openings.windows' => 'm2', 'openings.doors' => 'm2', 'facade.area' => 'm2',
+            'electrical.main_cable' => 'm', 'electrical.power_lines' => 'm', 'electrical.panel' => 'pcs',
+            'electrical.outlets' => 'pcs', 'electrical.switches' => 'pcs', 'electrical.grounding' => 'm',
+            'lighting.lines' => 'm', 'lighting.fixtures' => 'pcs', 'plumbing.pipe' => 'm', 'sanitary.points' => 'pcs',
+            'sanitary.waterproofing' => 'm2', 'sanitary.tile' => 'm2', 'sewerage.pipe' => 'm',
+            'sewerage.outlets' => 'pcs', 'sewerage.risers' => 'pcs', 'sewerage.revisions' => 'pcs',
+            'heating.unit' => 'pcs', 'heating.pipe' => 'm', 'heating.radiators' => 'pcs',
+            'ventilation.air_exchange' => 'm2', 'rough.floor' => 'm2', 'rough.walls' => 'm2',
+            'rough.ceiling' => 'm2', 'finish.floor' => 'm2', 'finish.paint' => 'm2',
+            'finish.ceiling' => 'm2', 'finish.baseboard' => 'm',
+        ];
+        $quantities = array_map(
+            fn (string $key): array => $this->currentScenarioQuantity($key, $units[$key], '10.000000')->toArray(),
+            array_keys($units),
+        );
+        $analysis = [
+            'object' => ['object_type' => 'house', 'roof_type' => 'pitched'],
+            'document_context' => ['canonical_building_quantities' => $quantities],
+        ];
+        $scopeByPackage = [
+            'earthworks' => 'earthworks', 'foundation' => 'foundation', 'walls' => 'walls', 'slabs' => 'slabs',
+            'stairs' => 'stairs', 'roof' => 'roof', 'openings' => 'openings', 'facade' => 'facade',
+            'electrical' => 'electrical', 'lighting' => 'electrical', 'plumbing' => 'plumbing',
+            'sewerage' => 'sewerage', 'heating' => 'heating', 'ventilation' => 'ventilation',
+            'rough_finishing' => 'finishing', 'finish_finishing' => 'finishing',
+        ];
+
+        foreach ($requirements as $package => $requiredKeys) {
+            $estimate = $this->estimate($package, $scopeByPackage[$package]);
+            $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+            $identities = array_map(static fn (array $item): string => (string) (
+                $item['metadata']['composition_work_key']
+                ?? $item['metadata']['material_scenario_work_key']
+                ?? $item['quantity_formula']
+            ), $items);
+
+            self::assertSame([], array_values(array_diff($requiredKeys, $identities)), $package);
+        }
+    }
+
     #[Test]
     public function current_residential_scenario_exposes_traceable_required_work_items(): void
     {
@@ -399,7 +460,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
     }
 
     #[Test]
-    public function current_pitched_roof_scenario_exposes_only_normable_supported_works(): void
+    public function current_pitched_roof_scenario_exposes_the_complete_normable_roof_assembly(): void
     {
         $analysis = [
             'object' => ['object_type' => 'house', 'roof_type' => 'pitched'],
@@ -414,11 +475,38 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
         $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
 
         self::assertSame(
-            ['Монтаж кровельного покрытия'],
-            array_column($items, 'name'),
+            ['roof.rafters', 'roof.area', 'roof.area', 'roof.gutter'],
+            array_column($items, 'quantity_formula'),
         );
-        self::assertSame(['roof.area'], array_column($items, 'quantity_formula'));
-        self::assertSame(['12-01-023-01'], array_column($items, 'normative_rate_code'));
+        self::assertSame(
+            ['roof.rafters', 'roof.insulation', 'roof.covering', 'roof.gutter'],
+            array_map(
+                static fn (array $item): string => (string) (
+                    $item['metadata']['material_scenario_work_key']
+                    ?? $item['metadata']['quantity_key']
+                ),
+                $items,
+            ),
+        );
+        self::assertSame([null, '12-01-013-07', '12-01-023-01', null], array_column($items, 'normative_rate_code'));
+    }
+
+    #[Test]
+    public function current_flat_roof_scenario_keeps_each_required_layer_distinct(): void
+    {
+        $analysis = [
+            'object' => ['object_type' => 'house', 'roof_type' => 'flat'],
+            'document_context' => ['canonical_building_quantities' => [
+                $this->currentScenarioQuantity('roof.flat_area', 'm2', '113.300000')->toArray(),
+            ]],
+        ];
+        $estimate = $this->estimate('roof', 'roof');
+
+        $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+
+        self::assertSame([
+            'roof.flat.base', 'roof.flat.vapor_barrier', 'roof.flat.insulation', 'roof.flat.waterproofing',
+        ], array_slice(array_column(array_column($items, 'metadata'), 'composition_work_key'), 0, 4));
     }
 
     private function scenarioQuantity(string $key, string $unit, string $amount): QuantityData

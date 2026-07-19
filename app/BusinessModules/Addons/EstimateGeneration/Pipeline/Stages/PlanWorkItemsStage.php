@@ -10,6 +10,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\AiResidentialWorkCompositionAdvisor;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\ResidentialWorkPlanReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityResolver;
@@ -23,7 +25,9 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private WorkPlanCompiler $compiler,
         private StageResultFactory $results,
         private AcceptedQuantityEvidenceMaterializer $acceptedEvidence,
+        private AiResidentialWorkCompositionAdvisor $compositionAdvisor,
         private WorkItemQuantityResolver $quantityResolver = new WorkItemQuantityResolver,
+        private ResidentialWorkPlanReconciler $compositionReconciler = new ResidentialWorkPlanReconciler,
     ) {}
 
     public function stage(): ProcessingStage
@@ -57,6 +61,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             $analysis['document_context']['canonical_building_quantities'] = array_values($quantities);
         }
         $payload = $this->compiler->compile($analysis, null, true);
+        $advice = $this->compositionAdvisor->advise($analysis, $payload, $context);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
@@ -72,6 +77,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 }
             }
         }
+        $payload = $this->compositionReconciler->reconcile($payload, $advice);
         $regionalContext = is_array($payload['regional_context'] ?? null) ? $payload['regional_context'] : [];
         $payload['normative_context_pin'] = $this->compiler->resolveNormativeContextPin(
             $regionalContext,

@@ -53,7 +53,7 @@ final class DraftPackageCoverageInspectorTest extends TestCase
     }
 
     #[Test]
-    public function explicit_scope_omission_warning_keeps_an_empty_required_package_non_blocking(): void
+    public function explicit_scope_omission_warning_does_not_hide_an_empty_required_package(): void
     {
         $localEstimate = $this->localEstimate('stairs', []);
         $localEstimate['coverage_warnings'] = [[
@@ -69,7 +69,10 @@ final class DraftPackageCoverageInspectorTest extends TestCase
             'local_estimates' => [$localEstimate],
         ]);
 
-        self::assertSame([], $missing);
+        self::assertSame([[
+            'key' => 'stairs',
+            'title' => 'Лестницы',
+        ]], $missing);
     }
 
     #[Test]

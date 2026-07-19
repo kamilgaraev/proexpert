@@ -23,6 +23,17 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeCandidateSelectionServiceTest extends TestCase
 {
+    public function test_composition_only_readiness_blocker_keeps_session_in_review(): void
+    {
+        $service = (new \ReflectionClass(NormativeCandidateSelectionService::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod(NormativeCandidateSelectionService::class, 'draftRequiresReview');
+
+        self::assertTrue($method->invoke($service, [
+            'readiness_summary' => ['blocking_issues' => [['code' => 'required_scope_unresolved']]],
+            'quality_summary' => [],
+        ]));
+    }
+
     public function test_rejects_unoffered_norm_by_default(): void
     {
         $this->expectException(ValidationException::class);
