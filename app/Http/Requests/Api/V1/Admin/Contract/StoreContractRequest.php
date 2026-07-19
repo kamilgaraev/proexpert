@@ -22,14 +22,29 @@ class StoreContractRequest extends FormRequest
         $user = $this->user();
         $routeProjectId = $this->routeProjectId();
 
-        $context = [
-            'organization_id' => $this->currentOrganizationId(),
-        ];
-        if ($routeProjectId !== null) {
-            $context['project_id'] = $routeProjectId;
+        if ($user === null) {
+            return false;
         }
 
-        return $user !== null && app(AuthorizationService::class)->can($user, 'contracts.create', $context);
+        $projectIds = $routeProjectId !== null ? [$routeProjectId] : [];
+        if ($routeProjectId !== null && $this->boolean('is_multi_project')) {
+            $projectIds = array_merge($projectIds, $this->numericProjectIds($this->input('project_ids', [])));
+        }
+
+        $authorization = app(AuthorizationService::class);
+        $baseContext = ['organization_id' => $this->currentOrganizationId()];
+
+        if ($projectIds === []) {
+            return $authorization->can($user, 'contracts.create', $baseContext);
+        }
+
+        foreach (array_unique($projectIds) as $projectId) {
+            if (! $authorization->can($user, 'contracts.create', $baseContext + ['project_id' => $projectId])) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public function withValidator($validator): void
@@ -121,6 +136,7 @@ class StoreContractRequest extends FormRequest
     {
         $organizationId = $this->currentOrganizationId();
         $routeProjectId = $this->routeProjectId();
+        $isMultiProject = $this->boolean('is_multi_project');
         $projectIdRules = [
             'nullable',
             'integer',
@@ -135,13 +151,19 @@ class StoreContractRequest extends FormRequest
 
         if ($routeProjectId !== null) {
             $projectIdRules = [
-                'required',
+                $isMultiProject ? 'nullable' : 'required',
                 'integer',
                 Rule::exists('projects', 'id')->where('organization_id', $organizationId),
                 Rule::in([$routeProjectId]),
             ];
-            $projectIdsRules[] = 'size:1';
-            $projectIdsItemRules[] = Rule::in([$routeProjectId]);
+            $projectIdsItemRules[] = 'distinct';
+            if ($isMultiProject) {
+                $projectIdsRules[] = static function (string $attribute, mixed $value, \Closure $fail) use ($routeProjectId): void {
+                    if (is_array($value) && ! in_array($routeProjectId, array_map('intval', $value), true)) {
+                        $fail(trans_message('contracts.route_project_required'));
+                    }
+                };
+            }
         }
 
         return [
@@ -206,7 +228,7 @@ class StoreContractRequest extends FormRequest
         $routeProjectId = $this->routeProjectId();
 
         if ($routeProjectId !== null && ! $this->has('project_id')) {
-            $this->merge(['project_id' => $routeProjectId]);
+            $this->merge(['project_id' => $this->boolean('is_multi_project') ? null : $routeProjectId]);
         }
     }
 
@@ -219,6 +241,16 @@ class StoreContractRequest extends FormRequest
         }
 
         return $project !== null ? (int) $project : null;
+    }
+
+    /** @return array<int, int> */
+    private function numericProjectIds(mixed $projectIds): array
+    {
+        if (! is_array($projectIds)) {
+            return [];
+        }
+
+        return array_map('intval', array_filter($projectIds, 'is_numeric'));
     }
 
     private function availableContractorRule(int $organizationId): \Closure

@@ -11,6 +11,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStateEventTypeEnum;
 use App\Exceptions\BusinessLogicException;
+use App\Http\Controllers\Api\V1\Admin\Contract\ContractStateEventController;
 use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Requests\Api\V1\Admin\Contract\PerformanceAct\StoreContractPerformanceActRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\PerformanceAct\UpdateContractPerformanceActRequest;
@@ -18,11 +19,14 @@ use App\Http\Requests\Api\V1\Admin\Contract\StoreContractRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\UpdateContractRequest;
 use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
+use App\Models\ContractStateEvent;
 use App\Models\User;
+use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
 use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
 use App\Services\Contract\ContractLifecycleService;
 use App\Services\Contract\ContractService;
 use App\Services\Contract\ContractStateCalculatorService;
+use App\Services\Contract\ContractStateEventService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route as LaravelRoute;
@@ -208,16 +212,16 @@ final class ContractPermissionAndLifecycleTest extends TestCase
             ->assertJsonPath('data.project_id', 11);
     }
 
-    public function test_project_create_rejects_project_ids_outside_route_project(): void
+    public function test_project_create_requires_permission_for_each_multi_project_target(): void
     {
         $this->createContractTables();
-        $this->app->instance(AuthorizationService::class, $this->mockAuthorization(static fn (): bool => true));
+        $this->app->instance(AuthorizationService::class, $this->projectAuthorization([11]));
 
         Route::post('/__review/projects/{project}/scoped-multi-contracts', static fn (StoreContractRequest $request) => AdminResponse::success());
 
         $this->actingAs($this->user(7))
             ->postJson('/__review/projects/11/scoped-multi-contracts', [
-                'project_id' => 11,
+                'project_id' => null,
                 'project_ids' => [11, 17],
                 'is_multi_project' => true,
                 'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
@@ -225,6 +229,41 @@ final class ContractPermissionAndLifecycleTest extends TestCase
                 'date' => '2026-07-19',
                 'is_self_execution' => true,
             ])
+            ->assertForbidden();
+    }
+
+    public function test_project_create_accepts_authorized_multi_targets_and_requires_route_project(): void
+    {
+        $this->createContractTables();
+        $this->app->instance(AuthorizationService::class, $this->projectAuthorization([11, 17]));
+
+        Route::post('/__review/projects/{project}/authorized-multi-contracts', static function (StoreContractRequest $request) {
+            $dto = $request->toDto();
+
+            return AdminResponse::success([
+                'project_id' => $dto->project_id,
+                'project_ids' => $dto->project_ids,
+            ]);
+        });
+
+        $payload = [
+            'project_id' => null,
+            'project_ids' => [11, 17],
+            'is_multi_project' => true,
+            'contract_side_type' => ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR->value,
+            'number' => 'PROJECT-SCOPE-MULTI-CREATE',
+            'date' => '2026-07-19',
+            'is_self_execution' => true,
+        ];
+
+        $this->actingAs($this->user(7))
+            ->postJson('/__review/projects/11/authorized-multi-contracts', $payload)
+            ->assertOk()
+            ->assertJsonPath('data.project_id', null)
+            ->assertJsonPath('data.project_ids', [11, 17]);
+
+        $this->actingAs($this->user(7))
+            ->postJson('/__review/projects/11/authorized-multi-contracts', [...$payload, 'project_ids' => [17]])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('project_ids');
     }
@@ -255,22 +294,69 @@ final class ContractPermissionAndLifecycleTest extends TestCase
             ->assertJsonPath('data.project_id', 11);
     }
 
-    public function test_project_update_rejects_project_ids_outside_route_project(): void
+    public function test_project_update_requires_permission_for_each_multi_project_target(): void
     {
         $this->createContractTables();
         $contract = $this->persistContract(72, 11);
-        $this->app->instance(AuthorizationService::class, $this->mockAuthorization(static fn (): bool => true));
+        $this->app->instance(AuthorizationService::class, $this->projectAuthorization([11]));
 
         Route::put('/__review/projects/{project}/scoped-multi-contracts/{contract}', static fn (UpdateContractRequest $request) => AdminResponse::success());
 
         $this->actingAs($this->user(7))
             ->putJson("/__review/projects/11/scoped-multi-contracts/{$contract->id}", [
-                'project_id' => 11,
+                'project_id' => null,
                 'project_ids' => [11, 17],
                 'is_multi_project' => true,
             ])
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('project_ids');
+            ->assertForbidden();
+    }
+
+    public function test_project_update_accepts_authorized_multi_targets(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(75, 11);
+        $this->app->instance(AuthorizationService::class, $this->projectAuthorization([11, 17]));
+
+        Route::put('/__review/projects/{project}/authorized-multi-contracts/{contract}', static function (UpdateContractRequest $request) {
+            $dto = $request->toDto();
+
+            return AdminResponse::success([
+                'project_id' => $dto->project_id,
+                'project_ids' => $dto->project_ids,
+            ]);
+        });
+
+        $this->actingAs($this->user(7))
+            ->putJson("/__review/projects/11/authorized-multi-contracts/{$contract->id}", [
+                'project_id' => null,
+                'project_ids' => [11, 17],
+                'is_multi_project' => true,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.project_id', null)
+            ->assertJsonPath('data.project_ids', [11, 17]);
+    }
+
+    public function test_project_update_requires_permission_for_current_multi_project_boundary(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(76, 11);
+        $contract->forceFill(['project_id' => null, 'is_multi_project' => true])->save();
+        \DB::table('contract_project')->insert([
+            ['contract_id' => $contract->id, 'project_id' => 11, 'created_at' => now(), 'updated_at' => now()],
+            ['contract_id' => $contract->id, 'project_id' => 17, 'created_at' => now(), 'updated_at' => now()],
+        ]);
+        $this->app->instance(AuthorizationService::class, $this->projectAuthorization([11]));
+
+        Route::put('/__review/projects/{project}/boundary-contracts/{contract}', static fn (UpdateContractRequest $request) => AdminResponse::success());
+
+        $this->actingAs($this->user(7))
+            ->putJson("/__review/projects/11/boundary-contracts/{$contract->id}", [
+                'project_id' => 11,
+                'project_ids' => null,
+                'is_multi_project' => false,
+            ])
+            ->assertForbidden();
     }
 
     public function test_project_update_rejects_contract_outside_route_project(): void
@@ -343,6 +429,57 @@ final class ContractPermissionAndLifecycleTest extends TestCase
         self::assertSame($before->current_total_amount, $after->current_total_amount);
         self::assertSame(777, $before->active_specification_id);
         self::assertSame($before->active_specification_id, $after->active_specification_id);
+    }
+
+    public function test_status_transition_timeline_uses_business_labels_and_reason(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(82, 11);
+        $event = ContractStateEvent::query()->create([
+            'contract_id' => $contract->id,
+            'event_type' => ContractStateEventTypeEnum::STATUS_TRANSITION,
+            'triggered_by_type' => Contract::class,
+            'triggered_by_id' => $contract->id,
+            'amount_delta' => 0,
+            'effective_from' => '2026-07-19',
+            'metadata' => [
+                'action' => 'suspend',
+                'from_status' => 'active',
+                'to_status' => 'on_hold',
+                'reason' => 'Плановая пауза',
+                'actor_id' => 42,
+            ],
+            'created_by_user_id' => 42,
+        ]);
+        $event->setRelation('createdBy', $this->user(7)->forceFill(['name' => 'Иван Петров']));
+        $event->setRelation('specification', null);
+
+        $contractService = \Mockery::mock(ContractService::class);
+        $contractService->shouldReceive('getContractById')->once()->with(82, 7)->andReturn($contract);
+        $eventService = \Mockery::mock(ContractStateEventService::class);
+        $eventService->shouldReceive('getTimeline')->once()->with($contract, null)->andReturn(collect([$event]));
+        $performanceActs = \Mockery::mock(ContractPerformanceActRepositoryInterface::class);
+        $performanceActs->shouldReceive('getActsForContract')->once()->with(82)->andReturn(collect());
+        $controller = new ContractStateEventController(
+            $contractService,
+            $eventService,
+            \Mockery::mock(ContractStateCalculatorService::class),
+            $performanceActs
+        );
+
+        $request = Request::create('/__review/projects/11/contracts/82/state-events/timeline', 'GET');
+        $request->setUserResolver(fn (): User => $this->user(7));
+        $route = new LaravelRoute(['GET'], '__review/projects/{project}/contracts/{contract}/state-events/timeline', static fn () => null);
+        $route->bind($request);
+        $request->setRouteResolver(static fn () => $route);
+
+        $payload = json_decode($controller->timeline($request, 11, 82)->getContent(), true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame(
+            'Приостановка договора: Активен → Приостановлен. Основание: Плановая пауза.',
+            $payload['data']['events'][0]['description']
+        );
+        self::assertNotSame('status_transition', $payload['data']['events'][0]['description']);
     }
 
     public function test_http_invalid_transition_and_legacy_delete_return_conflict(): void
@@ -488,6 +625,20 @@ final class ContractPermissionAndLifecycleTest extends TestCase
         });
     }
 
+    private function projectAuthorization(array $projectIds): AuthorizationService
+    {
+        return $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($projectIds): void {
+            $mock->shouldReceive('canAccessInterface')->andReturn(true);
+            $mock->shouldReceive('can')->andReturnUsing(
+                static fn (User $user, string $permission, ?array $context = null): bool => in_array(
+                    (int) ($context['project_id'] ?? 0),
+                    $projectIds,
+                    true
+                )
+            );
+        });
+    }
+
     private function user(int $organizationId): User
     {
         $user = new User;
@@ -514,6 +665,7 @@ final class ContractPermissionAndLifecycleTest extends TestCase
         Schema::dropIfExists('contract_current_state');
         Schema::dropIfExists('contract_state_events');
         Schema::dropIfExists('contracts');
+        Schema::dropIfExists('contract_project');
         Schema::dropIfExists('organizations');
         Schema::create('organizations', static function (Blueprint $table): void {
             $table->id();
@@ -555,9 +707,15 @@ final class ContractPermissionAndLifecycleTest extends TestCase
             $table->date('date');
             $table->string('status');
             $table->decimal('total_amount', 15, 2)->nullable();
+            $table->boolean('is_multi_project')->default(false);
             $table->boolean('is_self_execution')->default(false);
             $table->timestamps();
             $table->softDeletes();
+        });
+        Schema::create('contract_project', static function (Blueprint $table): void {
+            $table->unsignedBigInteger('contract_id');
+            $table->unsignedBigInteger('project_id');
+            $table->timestamps();
         });
         Schema::dropIfExists('contract_parties');
         Schema::create('contract_parties', static function (Blueprint $table): void {

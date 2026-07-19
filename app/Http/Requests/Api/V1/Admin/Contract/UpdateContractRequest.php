@@ -31,17 +31,34 @@ class UpdateContractRequest extends FormRequest
             return false;
         }
 
-        $context = [
+        $baseContext = [
             'organization_id' => (int) (
                 $this->attributes->get('current_organization_id')
                 ?? $user?->current_organization_id
             ),
         ];
+        $projectIds = $routeProjectId !== null ? [$routeProjectId] : [];
+        $contract = $this->resolveContract();
+
         if ($routeProjectId !== null) {
-            $context['project_id'] = $routeProjectId;
+            $projectIds = array_merge($projectIds, $this->contractProjectIds($contract));
+            if ($this->requestedMultiProjectState($contract)) {
+                $projectIds = array_merge($projectIds, $this->numericProjectIds($this->input('project_ids', [])));
+            }
         }
 
-        return app(AuthorizationService::class)->can($user, 'contracts.edit', $context);
+        $authorization = app(AuthorizationService::class);
+        if ($projectIds === []) {
+            return $authorization->can($user, 'contracts.edit', $baseContext);
+        }
+
+        foreach (array_unique($projectIds) as $projectId) {
+            if (! $authorization->can($user, 'contracts.edit', $baseContext + ['project_id' => $projectId])) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public function withValidator($validator): void
@@ -130,6 +147,7 @@ class UpdateContractRequest extends FormRequest
     {
         $organizationId = $this->currentOrganizationId();
         $routeProjectId = $this->routeProjectId();
+        $isMultiProject = $this->requestedMultiProjectState($this->resolveContract());
         $projectIdRules = [
             'sometimes',
             'nullable',
@@ -144,13 +162,20 @@ class UpdateContractRequest extends FormRequest
 
         if ($routeProjectId !== null) {
             $projectIdRules = [
-                'required',
+                $isMultiProject ? 'nullable' : 'required',
                 'integer',
                 Rule::exists('projects', 'id')->where('organization_id', $organizationId),
                 Rule::in([$routeProjectId]),
             ];
-            $projectIdsRules[] = 'size:1';
-            $projectIdsItemRules[] = Rule::in([$routeProjectId]);
+            $projectIdsItemRules[] = 'distinct';
+            if ($isMultiProject) {
+                $projectIdsRules[] = 'required';
+                $projectIdsRules[] = static function (string $attribute, mixed $value, \Closure $fail) use ($routeProjectId): void {
+                    if (is_array($value) && ! in_array($routeProjectId, array_map('intval', $value), true)) {
+                        $fail(trans_message('contracts.route_project_required'));
+                    }
+                };
+            }
         }
 
         return [
@@ -236,7 +261,7 @@ class UpdateContractRequest extends FormRequest
         $routeProjectId = $this->routeProjectId();
 
         if ($routeProjectId !== null && ! array_key_exists('project_id', $input)) {
-            $input['project_id'] = $routeProjectId;
+            $input['project_id'] = $this->requestedMultiProjectState($this->resolveContract()) ? null : $routeProjectId;
         }
 
         Log::info('UpdateContractRequest::prepareForValidation - RAW INPUT', [
@@ -290,7 +315,7 @@ class UpdateContractRequest extends FormRequest
             : ($contract->is_fixed_amount ?? true);
 
         return new ContractDTO(
-            project_id: $validatedData['project_id'] ?? $contract->project_id,
+            project_id: array_key_exists('project_id', $validatedData) ? $validatedData['project_id'] : $contract->project_id,
             contractor_id: array_key_exists('contractor_id', $validatedData) ? $validatedData['contractor_id'] : $contract->contractor_id,
             parent_contract_id: array_key_exists('parent_contract_id', $validatedData) ? $validatedData['parent_contract_id'] : $contract->parent_contract_id,
             number: $validatedData['number'] ?? $contract->number,
@@ -387,5 +412,32 @@ class UpdateContractRequest extends FormRequest
         }
 
         return (int) $contract->project_id === $projectId;
+    }
+
+    /** @return array<int, int> */
+    private function contractProjectIds(Contract $contract): array
+    {
+        if ((bool) $contract->is_multi_project) {
+            return $contract->projects()->pluck('projects.id')->map(static fn (mixed $id): int => (int) $id)->all();
+        }
+
+        return $contract->project_id !== null ? [(int) $contract->project_id] : [];
+    }
+
+    /** @return array<int, int> */
+    private function numericProjectIds(mixed $projectIds): array
+    {
+        if (! is_array($projectIds)) {
+            return [];
+        }
+
+        return array_map('intval', array_filter($projectIds, 'is_numeric'));
+    }
+
+    private function requestedMultiProjectState(Contract $contract): bool
+    {
+        return $this->has('is_multi_project')
+            ? $this->boolean('is_multi_project')
+            : (bool) $contract->is_multi_project;
     }
 }
