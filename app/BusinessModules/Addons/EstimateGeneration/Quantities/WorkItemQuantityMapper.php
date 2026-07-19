@@ -9,7 +9,7 @@ use Brick\Math\RoundingMode;
 
 final class WorkItemQuantityMapper
 {
-    public const FORMULA_VERSION = '1.3.0';
+    public const FORMULA_VERSION = '1.4.0';
 
     public function map(string $workItemKey, array $quantities): ?QuantityData
     {
@@ -50,7 +50,7 @@ final class WorkItemQuantityMapper
                 formulaKey: 'work_item.quantity.'.$workItemKey,
                 formulaVersion: self::FORMULA_VERSION,
                 formulaInputs: [
-                    'source_quantity' => $source->toArray(),
+                    'source_quantity' => $this->sourceReference($source),
                     'factor' => $candidate['factor'],
                     'minimum' => $rule['minimum'] ?? null,
                 ],
@@ -75,6 +75,20 @@ final class WorkItemQuantityMapper
         }
 
         return is_array($quantity) ? QuantityData::fromArray($quantity) : null;
+    }
+
+    /** @return array<string, string> */
+    private function sourceReference(QuantityData $source): array
+    {
+        return [
+            'key' => $source->key,
+            'unit' => $source->unit,
+            'amount' => $source->amount,
+            'formula_key' => $source->formulaKey,
+            'formula_version' => $source->formulaVersion,
+            'source' => $source->source->value,
+            'model_version' => $source->modelVersion,
+        ];
     }
 
     private function rule(string $key): ?array
