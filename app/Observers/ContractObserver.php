@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Observers;
 
 use App\Models\Contract;
@@ -9,7 +11,5 @@ use App\Models\Contract;
  */
 class ContractObserver
 {
-    public function retrieved(Contract $contract): void
-    {
-    }
+    public function retrieved(Contract $contract): void {}
 }

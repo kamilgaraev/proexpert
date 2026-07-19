@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Contract;
 
+use App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface;
 use App\DTOs\Contract\ContractDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStateEventTypeEnum;
@@ -12,7 +13,6 @@ use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Models\Contract;
 use App\Models\ContractStateEvent;
 use App\Observers\ContractObserver;
-use App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface;
 use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
 use App\Services\Contract\ContractAccessService;
@@ -116,7 +116,7 @@ class ContractMutationAtomicityTest extends TestCase
             'effective_from' => now(),
         ]);
 
-        (new ContractObserver())->retrieved($contract->fresh());
+        (new ContractObserver)->retrieved($contract->fresh());
 
         $storedAmount = Contract::withoutEvents(
             static fn () => Contract::query()->whereKey($contract->id)->value('total_amount')

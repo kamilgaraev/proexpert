@@ -1,13 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\Contract;
 
 use App\Models\Contract;
 use App\Models\ContractCurrentState;
 use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
-use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
 use Illuminate\Contracts\Support\Arrayable;
+use Illuminate\Support\Facades\Cache;
 
 class ContractStateCalculatorService
 {
@@ -40,7 +42,7 @@ class ContractStateCalculatorService
             $eventType = $eventType instanceof \BackedEnum ? $eventType->value : (string) $eventType;
             $canonicalType = self::LEGACY_PRICE_EVENT_TYPES[$eventType] ?? $eventType;
 
-            if (!in_array($canonicalType, self::PRICE_EVENT_TYPES, true)) {
+            if (! in_array($canonicalType, self::PRICE_EVENT_TYPES, true)) {
                 continue;
             }
 
@@ -59,7 +61,7 @@ class ContractStateCalculatorService
     {
         $normalizedAmount = str_replace(',', '.', trim((string) $amount));
 
-        if (!preg_match('/^(?<sign>-?)(?<whole>\d+)(?:\.(?<fraction>\d+))?$/', $normalizedAmount, $matches)) {
+        if (! preg_match('/^(?<sign>-?)(?<whole>\d+)(?:\.(?<fraction>\d+))?$/', $normalizedAmount, $matches)) {
             return (int) round((float) $amount * 100);
         }
 
@@ -75,15 +77,15 @@ class ContractStateCalculatorService
     public function recalculateContractState(Contract $contract): ContractCurrentState
     {
         $activeEvents = $this->eventRepository->findActiveEvents($contract->id);
-        
+
         $totalAmount = $this->calculate($activeEvents)->totalAmount;
-        
+
         // Находим активную спецификацию
         $activeSpecificationId = null;
         $lastAmendedEvent = $activeEvents
             ->where('event_type', \App\Enums\Contract\ContractStateEventTypeEnum::AMENDED)
             ->last();
-        
+
         if ($lastAmendedEvent && $lastAmendedEvent->specification_id) {
             $activeSpecificationId = $lastAmendedEvent->specification_id;
         } else {
@@ -123,12 +125,12 @@ class ContractStateCalculatorService
         }
 
         $cacheKey = "contract_current_state:{$contract->id}";
-        
+
         return Cache::remember($cacheKey, 300, function () use ($contract) {
             $currentState = ContractCurrentState::find($contract->id);
 
             // Если состояния нет или оно устарело - пересчитываем
-            if (!$currentState || $currentState->isStale(10)) {
+            if (! $currentState || $currentState->isStale(10)) {
                 return $this->recalculateContractState($contract);
             }
 
@@ -148,11 +150,11 @@ class ContractStateCalculatorService
 
         $totalAmount = $this->calculate($activeEvents)->totalAmount;
         $activeSpecificationId = null;
-        
+
         $lastAmendedEvent = $activeEvents
             ->where('event_type', \App\Enums\Contract\ContractStateEventTypeEnum::AMENDED)
             ->last();
-        
+
         if ($lastAmendedEvent && $lastAmendedEvent->specification_id) {
             $activeSpecificationId = $lastAmendedEvent->specification_id;
         } else {
@@ -185,7 +187,7 @@ class ContractStateCalculatorService
                 $this->recalculateContractState($contract);
                 $count++;
             } catch (\Exception $e) {
-                \Log::error("Failed to recalculate state for contract {$contract->id}: " . $e->getMessage());
+                \Log::error("Failed to recalculate state for contract {$contract->id}: ".$e->getMessage());
             }
         }
 
@@ -198,16 +200,18 @@ class ContractStateCalculatorService
     public function recalculateContract(int $contractId): bool
     {
         $contract = Contract::find($contractId);
-        
-        if (!$contract) {
+
+        if (! $contract) {
             return false;
         }
 
         try {
             $this->recalculateContractState($contract);
+
             return true;
         } catch (\Exception $e) {
-            \Log::error("Failed to recalculate state for contract {$contractId}: " . $e->getMessage());
+            \Log::error("Failed to recalculate state for contract {$contractId}: ".$e->getMessage());
+
             return false;
         }
     }

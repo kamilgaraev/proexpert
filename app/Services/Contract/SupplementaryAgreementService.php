@@ -1,26 +1,26 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\Contract;
 
-use App\Repositories\Interfaces\SupplementaryAgreementRepositoryInterface;
-use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
-use App\DTOs\SupplementaryAgreementDTO;
-use App\Models\SupplementaryAgreement;
-use App\Models\Contract;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
-use App\Models\ContractStateEvent;
+use App\DTOs\SupplementaryAgreementDTO;
+use App\Enums\Contract\ContractStateEventTypeEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
+use App\Models\Contract;
+use App\Models\ContractStateEvent;
+use App\Models\SupplementaryAgreement;
+use App\Repositories\Interfaces\SupplementaryAgreementRepositoryInterface;
 use App\Services\Logging\LoggingService;
-use App\Services\Contract\ContractStateEventService;
-use App\Services\Contract\ContractStateCalculatorService;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Auth;
-use Carbon\Carbon;
 use Exception;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class SupplementaryAgreementService
 {
     protected ?ContractStateEventService $stateEventService = null;
+
     protected ?ContractStateCalculatorService $stateCalculatorService = null;
 
     public function __construct(
@@ -28,158 +28,32 @@ class SupplementaryAgreementService
         protected LoggingService $logging
     ) {}
 
-    /**
-     * Создать дополнительное соглашение
-     * 
-     * BUSINESS LOGIC:
-     * Дополнительное соглашение может быть создано в следующих сценариях:
-     * 
-     * 1. С изменением суммы контракта (change_amount != 0)
-     *    - Увеличение объема работ
-     *    - Дополнительные работы
-     *    - Снижение стоимости
-     * 
-     * 2. С аннулированием предыдущих ДС (supersede_agreement_ids)
-     *    - Отмена/замена ранее подписанных ДС
-     *    - Может быть с изменением суммы или без
-     * 
-     * 3. Без изменения суммы и без аннулирования (только subject_changes)
-     *    - Изменение сроков выполнения работ
-     *    - Замена материалов на эквивалентные
-     *    - Изменение реквизитов, контактных лиц
-     *    - Изменение спецификации без изменения стоимости
-     *    - Изменение графика платежей
-     *    - Изменение условий гарантии
-     *    - В этом случае события НЕ создаются, т.к. финансовое состояние контракта не меняется
-     */
     public function create(SupplementaryAgreementDTO $dto): SupplementaryAgreement
     {
-        $agreement = $this->repository->create($dto->toArray());
-        
-        // Загружаем контракт для создания событий
-        $contract = $agreement->fresh('contract')->contract;
-        
-        // Если контракт использует Event Sourcing, создаем события
-        if ($contract && $contract->usesEventSourcing()) {
-            try {
-                // Если указан supersede_agreement_ids - создаем события аннулирования
-                if (!empty($dto->supersede_agreement_ids)) {
-                    if ($dto->change_amount !== null && $dto->change_amount != 0) {
-                        // Аннулируем выбранные ДС и создаем событие с change_amount
-                        $supersedeEvents = $this->getStateEventService()->supersedeAgreementsWithoutAmountChange(
-                            $contract,
-                            $agreement,
-                            $dto->supersede_agreement_ids
-                        );
-                        
-                        // Создаем событие AMENDED с change_amount
-                        $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
-                        $effectiveDate = $dto->agreement_date ? \Carbon\Carbon::parse($dto->agreement_date) : now();
-                        $this->getStateEventService()->createAmendedEvent(
-                            $contract,
-                            $activeSpecification?->id,
-                            (float) $dto->change_amount,
-                            $agreement,
-                            $effectiveDate,
-                            [
-                                'agreement_number' => $agreement->number,
-                                'reason' => 'Применено дополнительное соглашение после аннулирования ДС',
-                                'superseded_agreement_ids' => $dto->supersede_agreement_ids,
-                            ]
-                        );
-                        
-                        // Пересчитываем состояние и обновляем сумму контракта
-                        $this->getStateCalculatorService()->recalculateContractState($contract);
-                        $contract->refresh();
-                        $currentState = $this->getStateEventService()->getCurrentState($contract);
-                        $calculatedAmount = $currentState['total_amount'];
-                        $contract->total_amount = $calculatedAmount;
-                        $contract->save();
-                    } else {
-                        // Только аннулирование без изменения суммы
-                        $events = $this->getStateEventService()->supersedeAgreementsWithoutAmountChange(
-                            $contract,
-                            $agreement,
-                            $dto->supersede_agreement_ids
-                        );
-                        
-                        // Пересчитываем состояние и обновляем сумму контракта
-                        $this->getStateCalculatorService()->recalculateContractState($contract);
-                        $contract->refresh();
-                        $currentState = $this->getStateEventService()->getCurrentState($contract);
-                        $calculatedAmount = $currentState['total_amount'];
-                        $contract->total_amount = $calculatedAmount;
-                        $contract->save();
-                    }
-                } elseif ($dto->change_amount !== null && $dto->change_amount != 0) {
-                    // Простое изменение суммы - создаем событие
-                    $this->getStateEventService()->createSupplementaryAgreementEvent($contract, $agreement);
-                    
-                    // Пересчитываем состояние и обновляем сумму контракта
-                    $this->getStateCalculatorService()->recalculateContractState($contract);
-                    $contract->refresh();
-                    $currentState = $this->getStateEventService()->getCurrentState($contract);
-                    $calculatedAmount = $currentState['total_amount'];
-                    $contract->total_amount = $calculatedAmount;
-                    $contract->save();
-                }
-                // Если нет ни change_amount, ни supersede_agreement_ids:
-                // ДС создано для изменения неценовых условий (сроки, спецификация и т.д.)
-                // События НЕ создаются, т.к. финансовое состояние контракта не меняется
-            } catch (Exception $e) {
-                // КРИТИЧЕСКАЯ ОШИБКА - откатываем транзакцию и пробрасываем исключение
-                \Illuminate\Support\Facades\Log::error('Failed to create supplementary agreement events', [
-                    'agreement_id' => $agreement->id,
-                    'contract_id' => $contract->id,
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-                
-                throw new \RuntimeException(
-                    "Не удалось создать события для дополнительного соглашения: {$e->getMessage()}"
-                );
-            }
-        } elseif ($contract) {
-            // Для legacy контрактов (без Event Sourcing) также обновляем total_amount
-            if ($dto->change_amount !== null && $dto->change_amount != 0) {
-                $contract->total_amount = ($contract->total_amount ?? 0) + (float) $dto->change_amount;
-                $contract->save();
-            }
-            // Если нет change_amount - ДС создано для изменения неценовых условий
-            
-            // Если указан supersede_agreement_ids для legacy контракта - это не поддерживается без Event Sourcing
-            if (!empty($dto->supersede_agreement_ids)) {
-                \Illuminate\Support\Facades\Log::warning('Attempted to supersede agreements for legacy contract without Event Sourcing', [
-                    'contract_id' => $contract->id,
-                    'agreement_id' => $agreement->id,
-                ]);
-            }
-        }
-        
-        return $agreement;
+        return $this->repository->create($dto->toArray());
     }
 
     public function update(int $id, SupplementaryAgreementDTO $dto): bool
     {
         $agreement = $this->getById($id);
-        if (!$agreement) {
+        if (! $agreement) {
             return false;
         }
-        
+
         $contract = $agreement->contract;
         $oldChangeAmount = $agreement->change_amount;
-        
+
         // Обновляем ДС
         $updated = $this->repository->update($id, $dto->toArray());
-        
-        if (!$updated) {
+
+        if (! $updated) {
             return false;
         }
-        
+
         // Если контракт использует Event Sourcing и изменилась сумма - пересчитываем
         if ($contract && $contract->usesEventSourcing()) {
             $newChangeAmount = $dto->change_amount;
-            
+
             // Проверяем, изменилась ли сумма
             if ($oldChangeAmount != $newChangeAmount) {
                 try {
@@ -190,7 +64,7 @@ class SupplementaryAgreementService
                     $calculatedAmount = $currentState['total_amount'];
                     $contract->total_amount = $calculatedAmount;
                     $contract->save();
-                    
+
                     // BUSINESS: Логирование изменения ДС
                     $this->logging->business('agreement.updated', [
                         'agreement_id' => $id,
@@ -207,41 +81,41 @@ class SupplementaryAgreementService
                         'agreement_id' => $id,
                         'contract_id' => $contract->id,
                         'error' => $e->getMessage(),
-                        'trace' => $e->getTraceAsString()
+                        'trace' => $e->getTraceAsString(),
                     ]);
-                    
+
                     throw new \RuntimeException(
                         "Не удалось пересчитать состояние контракта после обновления ДС: {$e->getMessage()}"
                     );
                 }
             }
         }
-        
+
         return true;
     }
 
     public function delete(int $id): bool
     {
         $agreement = $this->getById($id);
-        if (!$agreement) {
+        if (! $agreement) {
             return false;
         }
-        
+
         // Загружаем контракт для создания события
         $contract = $agreement->contract;
-        
+
         // Если контракт использует Event Sourcing, создаем события аннулирования
         if ($contract && $contract->usesEventSourcing()) {
             try {
                 // Находим все активные события, связанные с этим ДС
                 $activeEvents = $this->getStateEventService()->getTimeline($contract);
                 $agreementEvents = $activeEvents
-                    ->filter(function($event) use ($id) {
-                        return $event->isActive() 
+                    ->filter(function ($event) use ($id) {
+                        return $event->isActive()
                             && $event->triggered_by_type === SupplementaryAgreement::class
                             && $event->triggered_by_id === $id;
                     });
-                
+
                 if ($agreementEvents->isNotEmpty()) {
                     // Аннулируем все события, связанные с этим ДС
                     foreach ($agreementEvents as $eventToSupersede) {
@@ -257,7 +131,7 @@ class SupplementaryAgreementService
                             ]
                         );
                     }
-                    
+
                     // Пересчитываем состояние и обновляем сумму контракта
                     $this->getStateCalculatorService()->recalculateContractState($contract);
                     $contract->refresh();
@@ -265,7 +139,7 @@ class SupplementaryAgreementService
                     $calculatedAmount = $currentState['total_amount'];
                     $contract->total_amount = $calculatedAmount;
                     $contract->save();
-                    
+
                     // BUSINESS: Логирование удаления ДС
                     $this->logging->business('agreement.deleted', [
                         'agreement_id' => $id,
@@ -291,15 +165,15 @@ class SupplementaryAgreementService
                     'agreement_id' => $id,
                     'contract_id' => $contract->id,
                     'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
+                    'trace' => $e->getTraceAsString(),
                 ]);
-                
+
                 throw new \RuntimeException(
                     "Не удалось удалить события дополнительного соглашения: {$e->getMessage()}"
                 );
             }
         }
-        
+
         // Удаляем ДС
         return $this->repository->delete($id);
     }
@@ -315,8 +189,7 @@ class SupplementaryAgreementService
         array $filters = [],
         string $sortBy = 'agreement_date',
         string $sortDirection = 'desc'
-    )
-    {
+    ) {
         return $this->repository->paginateByContract($contractId, $perPage, $filters, $sortBy, $sortDirection);
     }
 
@@ -327,8 +200,7 @@ class SupplementaryAgreementService
         array $filters = [],
         string $sortBy = 'agreement_date',
         string $sortDirection = 'desc'
-    )
-    {
+    ) {
         return $this->repository->paginateByProject($projectId, $organizationId, $perPage, $filters, $sortBy, $sortDirection);
     }
 
@@ -337,8 +209,7 @@ class SupplementaryAgreementService
         array $filters = [],
         string $sortBy = 'agreement_date',
         string $sortDirection = 'desc'
-    )
-    {
+    ) {
         return $this->repository->paginate($perPage, $filters, $sortBy, $sortDirection);
     }
 
@@ -359,6 +230,28 @@ class SupplementaryAgreementService
                 ->lockForUpdate()
                 ->firstOrFail();
 
+            $existingFinancialEvent = ContractStateEvent::query()
+                ->where('contract_id', $contract->id)
+                ->where('triggered_by_type', SupplementaryAgreement::class)
+                ->where('triggered_by_id', $lockedAgreement->id)
+                ->whereIn('event_type', [
+                    ContractStateEventTypeEnum::AMENDED->value,
+                    ContractStateEventTypeEnum::SUPPLEMENTARY_AGREEMENT_CREATED->value,
+                ])
+                ->oldest('created_at')
+                ->oldest('id')
+                ->first();
+
+            if ($existingFinancialEvent instanceof ContractStateEvent) {
+                $lockedAgreement->forceFill([
+                    'applied_at' => $existingFinancialEvent->created_at ?? now(),
+                    'applied_by_user_id' => $existingFinancialEvent->created_by_user_id ?? $actorId,
+                    'application_key' => "supplementary-agreement:{$lockedAgreement->id}",
+                ])->save();
+
+                return $contract;
+            }
+
             $changeAmount = (float) ($lockedAgreement->change_amount ?? 0);
             $oldTotalAmount = (float) ($contract->total_amount ?? 0);
             $newTotalAmount = round($oldTotalAmount + $changeAmount, 2);
@@ -368,7 +261,7 @@ class SupplementaryAgreementService
             }
 
             if (abs($changeAmount) > 0.001) {
-                if (!$contract->usesEventSourcing()) {
+                if (! $contract->usesEventSourcing()) {
                     $this->getStateEventService()->createContractCreatedEvent($contract, null, $actorId);
                 }
 
@@ -389,7 +282,7 @@ class SupplementaryAgreementService
 
             $contract->save();
 
-            if (!empty($lockedAgreement->supersede_agreement_ids)) {
+            if (! empty($lockedAgreement->supersede_agreement_ids)) {
                 $this->getStateEventService()->supersedeAgreementsWithoutAmountChange(
                     $contract,
                     $lockedAgreement,
@@ -397,7 +290,7 @@ class SupplementaryAgreementService
                 );
             }
 
-            if (abs($changeAmount) > 0.001 && !empty($lockedAgreement->supersede_agreement_ids)) {
+            if (abs($changeAmount) > 0.001 && ! empty($lockedAgreement->supersede_agreement_ids)) {
                 $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
                 $this->getStateEventService()->createAmendedEvent(
                     $contract,
@@ -450,7 +343,7 @@ class SupplementaryAgreementService
     {
         $agreement = $this->getById($agreementId);
 
-        if (!$agreement instanceof SupplementaryAgreement) {
+        if (! $agreement instanceof SupplementaryAgreement) {
             throw new Exception('Дополнительное соглашение не найдено');
         }
 
@@ -458,6 +351,7 @@ class SupplementaryAgreementService
 
         return true;
     }
+
     private function applySubcontractChanges(Contract $contract, array $changes): void
     {
         if (isset($changes['amount'])) {
@@ -467,10 +361,10 @@ class SupplementaryAgreementService
                     "Невозможно применить изменения: сумма субподряда не может быть отрицательной ({$changes['amount']})"
                 );
             }
-            
+
             $oldAmount = $contract->subcontract_amount;
             $contract->subcontract_amount = $changes['amount'];
-            
+
             // TECHNICAL: Изменение суммы субподряда
             $this->logging->technical('agreement.subcontract_amount_changed', [
                 'contract_id' => $contract->id,
@@ -526,14 +420,14 @@ class SupplementaryAgreementService
     private function applyAdvanceChanges(Contract $contract, array $changes): void
     {
         foreach ($changes as $change) {
-            if (!isset($change['payment_id']) || !isset($change['new_amount'])) {
+            if (! isset($change['payment_id']) || ! isset($change['new_amount'])) {
                 continue;
             }
 
             // Валидация: сумма платежа не может быть отрицательной
             if ($change['new_amount'] < 0) {
                 throw new Exception(
-                    "Невозможно применить изменения: сумма авансового платежа не может быть отрицательной " .
+                    'Невозможно применить изменения: сумма авансового платежа не может быть отрицательной '.
                     "(платеж ID: {$change['payment_id']}, сумма: {$change['new_amount']})"
                 );
             }
@@ -577,56 +471,6 @@ class SupplementaryAgreementService
     }
 
     /**
-     * Создать доп.соглашение с аннулированием предыдущего через Event Sourcing
-     */
-    public function createWithSupersede(
-        Contract $contract,
-        SupplementaryAgreementDTO $dto,
-        ?ContractStateEvent $previousActiveEvent = null,
-        ?int $newSpecificationId = null
-    ): SupplementaryAgreement {
-        return DB::transaction(function () use ($contract, $dto, $previousActiveEvent, $newSpecificationId) {
-            // Создаем доп.соглашение
-            $agreement = $this->repository->create(array_merge($dto->toArray(), [
-                'contract_id' => $contract->id,
-            ]));
-
-            // Если договор использует Event Sourcing, создаем события
-            if ($contract->usesEventSourcing()) {
-                try {
-                    $events = $this->getStateEventService()->createAmendmentWithSupersede(
-                        $contract,
-                        $agreement,
-                        $previousActiveEvent,
-                        $newSpecificationId,
-                        $agreement->change_amount ?? null
-                    );
-
-                    // Обновляем материализованное представление
-                    $this->getStateCalculatorService()->recalculateContractState($contract);
-
-                    $this->logging->business('agreement.created_with_supersede', [
-                        'agreement_id' => $agreement->id,
-                        'contract_id' => $contract->id,
-                        'events_created' => count($events),
-                        'user_id' => Auth::id(),
-                    ]);
-                } catch (Exception $e) {
-                    $this->logging->technical('agreement.event_creation.failed', [
-                        'agreement_id' => $agreement->id,
-                        'contract_id' => $contract->id,
-                        'error' => $e->getMessage(),
-                        'user_id' => Auth::id(),
-                    ], 'error');
-                    // Не прерываем транзакцию - доп.соглашение уже создано
-                }
-            }
-
-            return $agreement;
-        });
-    }
-
-    /**
      * Аннулировать доп.соглашение
      */
     public function supersedeAgreement(
@@ -653,7 +497,7 @@ class SupplementaryAgreementService
                             $contract,
                             $activeEvent,
                             $newAgreement,
-                            ['reason' => 'Аннулировано доп. соглашением ' . $newAgreement->number]
+                            ['reason' => 'Аннулировано доп. соглашением '.$newAgreement->number]
                         );
 
                         // Обновляем материализованное представление
@@ -686,6 +530,7 @@ class SupplementaryAgreementService
         if ($this->stateEventService === null) {
             $this->stateEventService = app(ContractStateEventService::class);
         }
+
         return $this->stateEventService;
     }
 
@@ -697,6 +542,7 @@ class SupplementaryAgreementService
         if ($this->stateCalculatorService === null) {
             $this->stateCalculatorService = app(ContractStateCalculatorService::class);
         }
+
         return $this->stateCalculatorService;
     }
-} 
+}
