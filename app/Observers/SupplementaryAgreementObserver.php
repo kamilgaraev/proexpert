@@ -55,7 +55,7 @@ class SupplementaryAgreementObserver
             $contract = $agreement->contract;
 
             if (! $contract) {
-                return;
+                throw new \RuntimeException('supplementary_agreement_contract_not_found');
             }
 
             // Пересчет только для контрактов с нефиксированной суммой
@@ -123,9 +123,16 @@ class SupplementaryAgreementObserver
                 }
             }
         } catch (\Exception $e) {
-            if (isset($newTotalAmount) && $contract instanceof \App\Models\Contract && is_numeric($newTotalAmount)) {
-                $this->reconciliation->recordDebt($contract, 'supplementary_agreement', (string) $agreement->id, $this->changeFingerprint($agreement, $reason), (float) $newTotalAmount, $e);
-            }
+            $this->reconciliation->recordDebt(
+                $contract ?? null,
+                (int) $agreement->contract_id,
+                'supplementary_agreement',
+                (string) $agreement->id,
+                $this->changeFingerprint($agreement, $reason),
+                isset($newTotalAmount) && is_numeric($newTotalAmount) ? (float) $newTotalAmount : null,
+                $e,
+                ['reason' => $reason, 'agreement_id' => (int) $agreement->id],
+            );
             // Не критично - логируем и продолжаем
             Log::warning('Failed to recalculate contract total_amount from agreement', [
                 'agreement_id' => $agreement->id,

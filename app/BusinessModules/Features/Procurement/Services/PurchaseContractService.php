@@ -29,7 +29,7 @@ class PurchaseContractService
         DB::beginTransaction();
 
         try {
-            $contract = Contract::create([
+            $attributes = [
                 'organization_id' => $organizationId,
                 'project_id' => $data['project_id'] ?? null,
                 'supplier_id' => $data['supplier_id'],
@@ -45,13 +45,12 @@ class PurchaseContractService
                 'end_date' => $data['end_date'] ?? null,
                 'notes' => $data['notes'] ?? null,
                 'is_fixed_amount' => true,
-            ]);
+            ];
+            $contract = $this->contractMutations->create($attributes, Auth::id(), function (Contract $created): array {
+                $stateEvent = $this->stateEventService->createContractCreatedEvent($created);
 
-            $stateEvent = $this->stateEventService->createContractCreatedEvent($contract);
-            $this->contractMutations->recordCreated($contract, Auth::id(), [
-                'source_event_id' => 'contract_state_event:'.(string) $stateEvent->id,
-                'origin' => 'procurement_manual',
-            ]);
+                return ['source_event_id' => 'contract_state_event:'.(string) $stateEvent->id, 'origin' => 'procurement_manual'];
+            });
 
             DB::commit();
 
@@ -80,7 +79,7 @@ class PurchaseContractService
 
             $contractNumber = $this->generateContractNumber($order->organization_id);
 
-            $contract = Contract::create([
+            $attributes = [
                 'organization_id' => $order->organization_id,
                 'project_id' => $order->purchaseRequest?->siteRequest?->project_id,
                 'contractor_id' => $externalContractor?->id,
@@ -95,15 +94,14 @@ class PurchaseContractService
                 'status' => ContractStatusEnum::DRAFT,
                 'notes' => "Создан из заказа поставщику: {$order->order_number}",
                 'is_fixed_amount' => true,
-            ]);
+            ];
+            $contract = $this->contractMutations->create($attributes, Auth::id(), function (Contract $created) use ($order): array {
+                $stateEvent = $this->stateEventService->createContractCreatedEvent($created);
+
+                return ['source_event_id' => 'contract_state_event:'.(string) $stateEvent->id, 'purchase_order_id' => (int) $order->id];
+            });
 
             $order->update(['contract_id' => $contract->id]);
-
-            $stateEvent = $this->stateEventService->createContractCreatedEvent($contract);
-            $this->contractMutations->recordCreated($contract, Auth::id(), [
-                'source_event_id' => 'contract_state_event:'.(string) $stateEvent->id,
-                'purchase_order_id' => (int) $order->id,
-            ]);
 
             DB::commit();
 

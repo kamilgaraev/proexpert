@@ -54,10 +54,17 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->bind(\App\Services\Contract\ContractAuditedMutationService::class, function ($app) {
+            return new \App\Services\Contract\ContractAuditedMutationService(
+                $app->make(\App\Services\LegalArchive\Audit\LegalDocumentAudit::class),
+                $app->make('db')->connection(),
+            );
+        });
         $this->app->bind(\App\Services\Contract\ContractAuditReconciliationService::class, function ($app) {
             return new \App\Services\Contract\ContractAuditReconciliationService(
                 $app->make('db')->connection(),
                 $app->make(\App\Services\Contract\ContractAuditedMutationService::class),
+                logger: $app->make(\Psr\Log\LoggerInterface::class),
             );
         });
         $this->app->bind(

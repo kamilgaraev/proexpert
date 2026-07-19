@@ -236,7 +236,10 @@ $oneCExchangeScheduledLimit = max(1, (int) config('one_c_exchange.delivery.sched
 Schedule::command('contracts:reconcile-audit-debts --limit=100')
     ->everyFiveMinutes()
     ->withoutOverlapping(10)
-    ->runInBackground();
+    ->runInBackground()
+    ->onFailure(function (): void {
+        Log::error('contract.audit_reconciliation.schedule_failed');
+    });
 
 if ((bool) config('one_c_exchange.delivery.enabled', false)) {
     Schedule::command("one-c-exchange:deliver --limit={$oneCExchangeScheduledLimit}")

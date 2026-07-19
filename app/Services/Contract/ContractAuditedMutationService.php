@@ -17,6 +17,17 @@ final readonly class ContractAuditedMutationService
         private ConnectionInterface $connection,
     ) {}
 
+    public function create(array $attributes, ?int $actorId, ?Closure $auditContext = null): Contract
+    {
+        return $this->connection->transaction(function () use ($attributes, $actorId, $auditContext): Contract {
+            $contract = (new Contract)->setConnection($this->connection->getName())->newQuery()->create($attributes);
+            $context = $auditContext?->__invoke($contract) ?? [];
+            $this->recordCreated($contract, $actorId, is_array($context) ? $context : []);
+
+            return $contract;
+        }, 3);
+    }
+
     public function update(
         Contract $contract,
         array $attributes,

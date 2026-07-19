@@ -275,6 +275,28 @@ final class LegalDocumentAuditChainTest extends TestCase
         ]);
     }
 
+    public function test_dual_source_lookup_reuses_legacy_raw_and_preexisting_namespaced_event_with_stable_outbox(): void
+    {
+        $service = $this->service();
+        $document = $this->document(5, 2);
+        $actor = $this->actor(9, 2);
+        $context = ['source_event_id' => 'external:17', 'after' => ['status' => 'draft']];
+        $service->record('create', $document, $actor, $context);
+        $eventId = (string) ImmutableAuditEvent::query()->value('id');
+        $outboxId = (string) LegalDocumentOutboxMessage::query()->value('id');
+
+        $service->record('create', $document, $actor, $context);
+        self::assertSame($eventId, (string) ImmutableAuditEvent::query()->value('id'));
+        self::assertSame($outboxId, (string) LegalDocumentOutboxMessage::query()->value('id'));
+
+        $this->database->table('immutable_audit_events')->where('id', $eventId)->update([
+            'source_event_id' => 'legal_document:5:external:17',
+        ]);
+        $service->record('create', $document, $actor, $context);
+        self::assertSame(1, ImmutableAuditEvent::query()->count());
+        self::assertSame($outboxId, (string) LegalDocumentOutboxMessage::query()->value('id'));
+    }
+
     public function test_duplicate_comparison_rejects_changed_project_and_evidence_fields(): void
     {
         $recorder = new ImmutableAuditRecorder(
@@ -328,6 +350,19 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertStringContainsString('immutable_audit_source_event_legacy_unique', $rollout);
         self::assertStringContainsString('phase_b_writer_fence_not_confirmed', $rollout);
         self::assertStringContainsString('--confirm-writer-version=', $command);
+        self::assertStringContainsString('indisvalid', $rollout);
+        self::assertStringContainsString('indisready', $rollout);
+        self::assertStringContainsString('DROP INDEX CONCURRENTLY', $rollout);
+        self::assertStringContainsString("if (\$phase === 'phase_b')", $rollout);
+    }
+
+    public function test_phase_a_global_lock_precedes_and_replaces_chain_lock_until_cutover(): void
+    {
+        $recorder = file_get_contents(__DIR__.'/../../../app/BusinessModules/Core/ImmutableAudit/Services/ImmutableAuditRecorder.php');
+        self::assertIsString($recorder);
+        $branch = "if (\$this->phaseACompatibilityMode()) {\n                        \$this->database()->statement('LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE');\n                    } else {";
+        self::assertStringContainsString($branch, $recorder);
+        self::assertStringContainsString("return (\$row->phase ?? null) === 'phase_a';", $recorder);
     }
 
     public function test_opt_in_postgres_test_exercises_production_recorder_integrity_and_outbox(): void

@@ -36,11 +36,12 @@ final class ImmutableAuditRecorder
         try {
             return $this->database()->transaction(function () use ($data): ImmutableAuditEvent {
                 if ($this->database()->getDriverName() === 'pgsql') {
-                    $chainScope = $data->chainScope ?? 'organization:'.$data->organizationId;
-                    $this->database()->select(
-                        'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
-                        [$chainScope],
-                    );
+                    if ($this->phaseACompatibilityMode()) {
+                        $this->database()->statement('LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE');
+                    } else {
+                        $chainScope = $data->chainScope ?? 'organization:'.$data->organizationId;
+                        $this->database()->select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [$chainScope]);
+                    }
                 }
 
                 if ($data->sourceEventId !== null) {
@@ -210,6 +211,13 @@ final class ImmutableAuditRecorder
         }
 
         return ((int) $this->query()->max('sequence_id')) + 1;
+    }
+
+    private function phaseACompatibilityMode(): bool
+    {
+        $row = $this->database()->selectOne("SELECT CASE WHEN to_regclass('immutable_audit_rollout') IS NULL THEN NULL ELSE (SELECT phase FROM immutable_audit_rollout WHERE singleton = true) END AS phase");
+
+        return ($row->phase ?? null) === 'phase_a';
     }
 
     private function previousHash(string $chainScope): ?string

@@ -13,14 +13,11 @@ final class ContractAuditMutationCoverageTest extends TestCase
     {
         $root = dirname(__DIR__, 2).'/app';
         $exemptions = [
-            'BusinessModules/Features/Procurement/Services/PurchaseContractService.php:32',
-            'BusinessModules/Features/Procurement/Services/PurchaseContractService.php:83',
-            'Console/Commands/CleanupFilesCommand.php:98',
-            'Console/Commands/CleanupFilesCommand.php:148',
-            'Console/Commands/SetupRBACTestEnvironment.php:96',
-            'Console/Commands/SetupRBACTestEnvironment.php:103',
-            'Services/Contract/ContractAuditedMutationService.php:58',
-            'Services/Contract/ContractAuditedMutationService.php:134',
+            'ContractAuditedMutationService|persistUpdate|update|$contract',
+            'ContractAuditedMutationService|delete|delete|$contract',
+            'ContractSideMutationService|create|create|$this->contractRepository',
+            "SetupRBACTestEnvironment|cleanupTestData|delete|DB::table('contracts')->whereIn('organization_id',\$orgIds)",
+            "SetupRBACTestEnvironment|cleanupTestData|delete|DB::table('contracts')->whereIn('project_id',\$projectIds)",
         ];
         $violations = [];
         $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root));
@@ -38,10 +35,9 @@ final class ContractAuditMutationCoverageTest extends TestCase
             if (! is_string($source)) {
                 continue;
             }
-            foreach ($scanner->scan($source) as $line) {
-                $location = "{$relative}:{$line}";
-                if (! in_array($location, $exemptions, true)) {
-                    $violations[] = $location;
+            foreach ($scanner->findings($source) as $finding) {
+                if (! in_array($finding['fingerprint'], $exemptions, true)) {
+                    $violations[] = "{$relative}:{$finding['line']}:{$finding['fingerprint']}";
                 }
             }
         }
@@ -108,15 +104,31 @@ use App\Models\Contract;
 use Illuminate\Support\Facades\DB;
 function mutate(): void {
     $targetContract = Contract::query()->findOrFail(1);
-    $targetContract->save();
-    Contract::query()->whereKey(2)->update(['number' => 'x']);
-    DB::connection()->table('contracts')->delete();
+    $alias = $targetContract;
+    $alias->save();
+    Contract::query()->whereKey(2)->increment('version');
+    Contract::query()->upsert([], ['id']);
+    DB::connection('tenant')->table('contracts')->delete();
     DB::statement('UPDATE contracts SET number = 1');
+    $relationContract = $act->contract;
+    $relationContract->touch();
+    $loadedContract = $act->contract()->first();
+    $loadedContract->restore();
+    $repositoryContract = $this->contractRepository->findOrFail(3);
+    $repositoryContract->forceDelete();
     $audit->recordCreated($targetContract);
     $targetContract->update(['number' => 'still-detected']);
 }
+class Contract { public function mutateSelf(): void { $this->saveQuietly(); } }
+class PurchaseContract { public function harmless(): void { $this->save(); } }
+class RepoService {
+    public function __construct(private ContractRepositoryInterface $contracts) {}
+    public function mutate(): void { $alias = $this->contracts; $alias->update(1, []); }
+}
 PHP;
 
-        self::assertSame([6, 7, 8, 9, 11], $scanner->scan($source));
+        $findings = $scanner->findings($source);
+        self::assertSame(['save', 'increment', 'upsert', 'delete', 'statement', 'touch', 'restore', 'forceDelete', 'update', 'saveQuietly', 'update'], array_column($findings, 'operation'));
+        self::assertNotContains('PurchaseContract', array_column($findings, 'class'));
     }
 }

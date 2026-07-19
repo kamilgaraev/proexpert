@@ -63,7 +63,7 @@ final readonly class LegalDocumentAuditService implements LegalDocumentAudit
                 actorUserId: $actorId,
                 sourceModel: Contract::class,
                 sourceTable: $contract->getTable(),
-                sourceEventId: $this->sourceEventId($context, 'contract', $contractId),
+                sourceEventId: $this->sourceEventId($context, $organizationId, 'contracts', 'contracts', 'contract', $contractId),
                 idempotencyKey: $this->idempotencyKey($context),
                 subjectType: 'contract',
                 subjectId: $contractId,
@@ -103,7 +103,7 @@ final readonly class LegalDocumentAuditService implements LegalDocumentAudit
                 actorSnapshot: $actorSnapshot,
                 sourceModel: LegalArchiveDocument::class,
                 sourceTable: $document->getTable(),
-                sourceEventId: $this->sourceEventId($context, 'legal_document', $documentId),
+                sourceEventId: $this->sourceEventId($context, $organizationId, 'legal_archive', 'legal_archive', 'legal_document', $documentId),
                 idempotencyKey: $this->idempotencyKey($context),
                 subjectType: 'legal_document',
                 subjectId: $documentId,
@@ -144,13 +144,37 @@ final readonly class LegalDocumentAuditService implements LegalDocumentAudit
         }
     }
 
-    private function sourceEventId(array $context, string $aggregateType, string $aggregateId): ?string
-    {
+    private function sourceEventId(
+        array $context,
+        int $organizationId,
+        string $domain,
+        string $source,
+        string $aggregateType,
+        string $aggregateId,
+    ): ?string {
         $value = $context['source_event_id'] ?? null;
+        if (! is_string($value) || $value === '') {
+            return null;
+        }
+        $namespaced = "{$aggregateType}:{$aggregateId}:{$value}";
+        $existing = $this->connection->table('immutable_audit_events')
+            ->where('organization_id', $organizationId)
+            ->where('domain', $domain)
+            ->where('source', $source)
+            ->whereIn('source_event_id', [$value, $namespaced])
+            ->where('subject_type', $aggregateType)
+            ->where('subject_id', $aggregateId)
+            ->value('source_event_id');
+        if (is_string($existing)) {
+            return $existing;
+        }
 
-        return is_string($value) && $value !== ''
-            ? "{$aggregateType}:{$aggregateId}:{$value}"
-            : null;
+        if ($this->connection->getDriverName() !== 'pgsql') {
+            return $value;
+        }
+        $phase = $this->connection->table('immutable_audit_rollout')->where('singleton', true)->value('phase');
+
+        return $phase === 'phase_b' ? $namespaced : $value;
     }
 
     private function idempotencyKey(array $context): ?string

@@ -44,7 +44,10 @@ class ContractPerformanceActObserver
         try {
             $contract = $act->contract;
 
-            if (! $contract || $contract->is_fixed_amount) {
+            if (! $contract) {
+                throw new \RuntimeException('performance_act_contract_not_found');
+            }
+            if ($contract->is_fixed_amount) {
                 return;
             }
 
@@ -110,9 +113,16 @@ class ContractPerformanceActObserver
                 ]);
             }
         } catch (\Exception $e) {
-            if (isset($newTotalAmount) && $contract instanceof \App\Models\Contract && is_numeric($newTotalAmount)) {
-                $this->reconciliation->recordDebt($contract, 'performance_act', (string) $act->id, $this->changeFingerprint($act, $reason), (float) $newTotalAmount, $e);
-            }
+            $this->reconciliation->recordDebt(
+                $contract ?? null,
+                (int) $act->contract_id,
+                'performance_act',
+                (string) $act->id,
+                $this->changeFingerprint($act, $reason),
+                isset($newTotalAmount) && is_numeric($newTotalAmount) ? (float) $newTotalAmount : null,
+                $e,
+                ['reason' => $reason, 'act_id' => (int) $act->id],
+            );
             Log::warning('Failed to recalculate contract total_amount from act', [
                 'act_id' => $act->id,
                 'contract_id' => $act->contract_id,
