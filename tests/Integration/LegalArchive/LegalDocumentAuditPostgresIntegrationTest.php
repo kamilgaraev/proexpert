@@ -43,6 +43,12 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
 
     private string $schema;
 
+    /** @var list<string> */
+    private array $externalSchemas = [];
+
+    /** @var list<string> */
+    private array $createdRoles = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -73,8 +79,14 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
 
     protected function tearDown(): void
     {
+        foreach ($this->externalSchemas as $schema) {
+            $this->first->statement("DROP SCHEMA IF EXISTS {$schema} CASCADE");
+        }
         if (isset($this->first, $this->schema) && str_starts_with($this->schema, 'legal_doc_it_')) {
             $this->first->statement("DROP SCHEMA {$this->schema} CASCADE");
+        }
+        foreach ($this->createdRoles as $role) {
+            $this->first->statement("DROP ROLE IF EXISTS {$role}");
         }
         parent::tearDown();
     }
@@ -428,6 +440,74 @@ SQL);
             $rollout->repairPermanentInvariants($this->first, true, self::WRITER_TOKEN);
             self::assertTrue((new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN)['ready'], $drift);
         }
+    }
+
+    public function test_same_named_trigger_functions_from_another_schema_fail_readiness_and_repair_all_trigger_oids(): void
+    {
+        $this->activatePhaseB();
+        $rollout = new ImmutableAuditRolloutService;
+        $evilSchema = 'legal_doc_evil_'.bin2hex(random_bytes(6));
+        $this->externalSchemas[] = $evilSchema;
+        $this->first->statement("CREATE SCHEMA {$evilSchema}");
+        $cases = [
+            ['immutable_audit_writer_guard', 'immutable_audit_writer_guard', 'BEFORE INSERT'],
+            ['immutable_audit_events_append_only', 'immutable_audit_prevent_mutation', 'BEFORE UPDATE OR DELETE'],
+            ['immutable_audit_sequence_sync', 'immutable_audit_sync_sequence_after_insert', 'AFTER INSERT'],
+        ];
+        foreach ($cases as [$trigger, $function, $events]) {
+            $this->first->unprepared("CREATE OR REPLACE FUNCTION {$evilSchema}.{$function}() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN RETURN NEW; END \$\$");
+            $this->first->unprepared("DROP TRIGGER {$trigger} ON immutable_audit_events; CREATE TRIGGER {$trigger} {$events} ON immutable_audit_events FOR EACH ROW EXECUTE FUNCTION {$evilSchema}.{$function}()");
+            self::assertFalse((new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN)['ready'], $trigger);
+            $rollout->confirmDrain($this->first, true);
+            $rollout->repairPermanentInvariants($this->first, true, self::WRITER_TOKEN);
+            self::assertTrue((new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN)['ready'], $trigger);
+            $identity = $this->first->selectOne(<<<'SQL'
+SELECT trigger.tgfoid = canonical.oid AS canonical
+FROM pg_trigger trigger
+JOIN pg_class relation ON relation.oid = trigger.tgrelid
+JOIN pg_proc canonical ON canonical.pronamespace = current_schema()::regnamespace
+    AND canonical.proname = ? AND pg_get_function_identity_arguments(canonical.oid) = ''
+WHERE trigger.tgname = ? AND relation.oid = 'immutable_audit_events'::regclass
+SQL, [$function, $trigger]);
+            self::assertTrue((bool) $identity->canonical, $trigger);
+        }
+    }
+
+    public function test_repair_restores_current_user_ownership_and_removes_every_explicit_function_grant(): void
+    {
+        $this->activatePhaseB();
+        $rollout = new ImmutableAuditRolloutService;
+        $role = 'legal_doc_acl_'.bin2hex(random_bytes(6));
+        $this->createdRoles[] = $role;
+        $this->first->statement("CREATE ROLE {$role}");
+
+        $this->first->statement("GRANT EXECUTE ON FUNCTION immutable_audit_writer_guard() TO {$role} WITH GRANT OPTION");
+        self::assertFalse((new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN)['ready']);
+        $rollout->confirmDrain($this->first, true);
+        $rollout->repairPermanentInvariants($this->first, true, self::WRITER_TOKEN);
+
+        $this->first->statement("ALTER FUNCTION immutable_audit_writer_guard() OWNER TO {$role}");
+        $this->first->statement("ALTER TABLE immutable_audit_events OWNER TO {$role}");
+        $this->first->statement("ALTER SEQUENCE immutable_audit_sequence OWNER TO {$role}");
+        self::assertFalse((new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN)['ready']);
+        $rollout->confirmDrain($this->first, true);
+        $rollout->repairPermanentInvariants($this->first, true, self::WRITER_TOKEN);
+
+        self::assertTrue((new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN)['ready']);
+        $catalog = $this->first->selectOne(<<<'SQL'
+SELECT pg_get_userbyid(table_class.relowner) = current_user AS table_owner,
+       pg_get_userbyid(sequence_class.relowner) = current_user AS sequence_owner,
+       pg_get_userbyid(function.proowner) = current_user AS function_owner,
+       cardinality(COALESCE(function.proacl, '{}'::aclitem[])) AS explicit_acl_count
+FROM pg_class table_class
+JOIN pg_class sequence_class ON sequence_class.oid = 'immutable_audit_sequence'::regclass
+JOIN pg_proc function ON function.oid = 'immutable_audit_writer_guard()'::regprocedure
+WHERE table_class.oid = 'immutable_audit_events'::regclass
+SQL);
+        self::assertTrue((bool) $catalog->table_owner);
+        self::assertTrue((bool) $catalog->sequence_owner);
+        self::assertTrue((bool) $catalog->function_owner);
+        self::assertSame(0, (int) $catalog->explicit_acl_count);
     }
 
     public function test_real_rollout_phases_preserve_global_index_until_explicit_writer_fence(): void

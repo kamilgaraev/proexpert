@@ -100,7 +100,7 @@ final class ImmutableAuditPhaseBInvariantServiceTest extends TestCase
         self::assertStringContainsString('p.proparallel', $source);
         self::assertStringContainsString('p.prokind', $source);
         self::assertStringContainsString('owner_matches_relation', $source);
-        foreach (['pg_get_triggerdef', 't.tgqual', 't.tgargs', 't.tgconstraint', 't.tgparentid', 't.tgoldtable', 't.tgnewtable', 'function_dependency'] as $catalogField) {
+        foreach (['pg_get_triggerdef', 't.tgqual', 't.tgargs', 't.tgconstraint', 't.tgparentid', 't.tgoldtable', 't.tgnewtable', 'function_dependency', 'function_schema_identity', 'function_oid_identity', 'function_identity_arguments', 'function_oid_matches_expected'] as $catalogField) {
             self::assertStringContainsString($catalogField, $source);
         }
         foreach (['aclexplode', 'public_execute', 'p.procost', 'p.prorows', 'p.prosupport', 'owner_identity', 'relation_owner_identity'] as $catalogField) {
@@ -116,7 +116,7 @@ final class ImmutableAuditPhaseBInvariantServiceTest extends TestCase
         self::assertStringContainsString("'kind' => 'f'", $definitions);
         self::assertStringContainsString("'owner_identity' => '\$database_owner'", $definitions);
         self::assertStringContainsString("'relation_owner_identity' => '\$database_owner'", $definitions);
-        self::assertStringContainsString("'acl' => ['\$database_owner:EXECUTE:false:\$database_owner']", $definitions);
+        self::assertStringContainsString("'acl' => []", $definitions);
         self::assertStringContainsString("'public_execute' => false", $definitions);
         self::assertStringContainsString("'cost' => '100'", $definitions);
         self::assertStringContainsString("'rows' => '0'", $definitions);
@@ -125,6 +125,9 @@ final class ImmutableAuditPhaseBInvariantServiceTest extends TestCase
         self::assertStringContainsString("'arguments_hex' => ''", $definitions);
         self::assertStringContainsString("'constraint_oid' => '0'", $definitions);
         self::assertStringContainsString("'parent_trigger_oid' => '0'", $definitions);
+        self::assertStringContainsString("'function_schema_identity' => '\$current_schema'", $definitions);
+        self::assertStringContainsString("'function_oid_identity' => '\$canonical_function_oid'", $definitions);
+        self::assertStringContainsString("'function_oid_matches_expected' => true", $definitions);
     }
 
     public function test_canonical_ddl_explicitly_resets_every_security_attribute_and_sequence_start_metadata(): void
@@ -141,8 +144,11 @@ final class ImmutableAuditPhaseBInvariantServiceTest extends TestCase
         self::assertStringContainsString('NOT LEAKPROOF', $definitions);
         self::assertStringContainsString('START WITH 1', $definitions);
         self::assertStringContainsString('COST 100', $definitions);
-        self::assertStringContainsString('REVOKE ALL ON FUNCTION', $definitions);
-        self::assertStringContainsString('GRANT EXECUTE ON FUNCTION', $definitions);
+        self::assertStringContainsString('ALTER TABLE immutable_audit_events OWNER TO CURRENT_USER', $definitions);
+        self::assertStringContainsString('ALTER SEQUENCE immutable_audit_sequence OWNER TO CURRENT_USER', $definitions);
+        self::assertStringContainsString('FROM pg_proc proc', $definitions);
+        self::assertStringContainsString('REVOKE ALL PRIVILEGES ON FUNCTION', $definitions);
+        self::assertStringContainsString('FROM %%I CASCADE', $definitions);
     }
 
     public function test_repair_uses_global_lock_order_rechecks_marker_under_writer_fence_and_consumes_it_atomically(): void

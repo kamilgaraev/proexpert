@@ -84,6 +84,7 @@ SQL;
             'increment_by' => '1',
             'cycle' => false,
             'cache_size' => '1',
+            'owner_identity' => '$database_owner',
             'owned_table' => 'immutable_audit_events',
             'owned_column' => 'sequence_id',
         ];
@@ -92,6 +93,23 @@ SQL;
     public static function canonicalCoreSql(): string
     {
         return sprintf(<<<'SQL'
+DO $canonical_owners$
+DECLARE function_name text;
+BEGIN
+    ALTER TABLE immutable_audit_events OWNER TO CURRENT_USER;
+    ALTER SEQUENCE immutable_audit_sequence OWNER TO CURRENT_USER;
+    FOREACH function_name IN ARRAY ARRAY[
+        'immutable_audit_allocate_sequence',
+        'immutable_audit_sync_sequence_after_insert',
+        'immutable_audit_writer_guard',
+        'immutable_audit_prevent_mutation'
+    ] LOOP
+        IF to_regprocedure(format('%%I.%%I()', current_schema(), function_name)) IS NOT NULL THEN
+            EXECUTE format('ALTER FUNCTION %%I.%%I() OWNER TO CURRENT_USER', current_schema(), function_name);
+        END IF;
+    END LOOP;
+END
+$canonical_owners$;
 CREATE OR REPLACE FUNCTION immutable_audit_allocate_sequence() RETURNS bigint
 LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SECURITY INVOKER PARALLEL UNSAFE
 SET search_path = pg_catalog, public AS $function$
@@ -128,25 +146,38 @@ ALTER FUNCTION immutable_audit_allocate_sequence() SET search_path = pg_catalog,
 ALTER FUNCTION immutable_audit_sync_sequence_after_insert() SET search_path = pg_catalog, public;
 ALTER FUNCTION immutable_audit_writer_guard() SET search_path = pg_catalog, public;
 ALTER FUNCTION immutable_audit_prevent_mutation() SET search_path = pg_catalog, public;
-DO $owner$
-DECLARE canonical_owner text;
+DO $acl$
+DECLARE function_name text;
+DECLARE grantee record;
 BEGIN
-    SELECT pg_get_userbyid(relowner) INTO canonical_owner
-    FROM pg_class WHERE oid = 'immutable_audit_events'::regclass;
-    EXECUTE format('ALTER FUNCTION immutable_audit_allocate_sequence() OWNER TO %%I', canonical_owner);
-    EXECUTE format('ALTER FUNCTION immutable_audit_sync_sequence_after_insert() OWNER TO %%I', canonical_owner);
-    EXECUTE format('ALTER FUNCTION immutable_audit_writer_guard() OWNER TO %%I', canonical_owner);
-    EXECUTE format('ALTER FUNCTION immutable_audit_prevent_mutation() OWNER TO %%I', canonical_owner);
-    EXECUTE 'REVOKE ALL ON FUNCTION immutable_audit_allocate_sequence() FROM PUBLIC';
-    EXECUTE 'REVOKE ALL ON FUNCTION immutable_audit_sync_sequence_after_insert() FROM PUBLIC';
-    EXECUTE 'REVOKE ALL ON FUNCTION immutable_audit_writer_guard() FROM PUBLIC';
-    EXECUTE 'REVOKE ALL ON FUNCTION immutable_audit_prevent_mutation() FROM PUBLIC';
-    EXECUTE format('GRANT EXECUTE ON FUNCTION immutable_audit_allocate_sequence() TO %%I', canonical_owner);
-    EXECUTE format('GRANT EXECUTE ON FUNCTION immutable_audit_sync_sequence_after_insert() TO %%I', canonical_owner);
-    EXECUTE format('GRANT EXECUTE ON FUNCTION immutable_audit_writer_guard() TO %%I', canonical_owner);
-    EXECUTE format('GRANT EXECUTE ON FUNCTION immutable_audit_prevent_mutation() TO %%I', canonical_owner);
+    FOREACH function_name IN ARRAY ARRAY[
+        'immutable_audit_allocate_sequence',
+        'immutable_audit_sync_sequence_after_insert',
+        'immutable_audit_writer_guard',
+        'immutable_audit_prevent_mutation'
+    ] LOOP
+        FOR grantee IN
+            SELECT DISTINCT expanded.grantee, pg_get_userbyid(expanded.grantee) AS role_name
+            FROM pg_proc proc
+            CROSS JOIN LATERAL aclexplode(COALESCE(proc.proacl, acldefault('f', proc.proowner))) expanded
+            WHERE proc.oid = to_regprocedure(format('%%I.%%I()', current_schema(), function_name))
+              AND expanded.grantee <> 0
+        LOOP
+            EXECUTE format(
+                'REVOKE ALL PRIVILEGES ON FUNCTION %%I.%%I() FROM %%I CASCADE',
+                current_schema(),
+                function_name,
+                grantee.role_name
+            );
+        END LOOP;
+        EXECUTE format(
+            'REVOKE ALL PRIVILEGES ON FUNCTION %%I.%%I() FROM PUBLIC CASCADE',
+            current_schema(),
+            function_name
+        );
+    END LOOP;
 END
-$owner$;
+$acl$;
 DROP TRIGGER IF EXISTS immutable_audit_writer_guard ON immutable_audit_events;
 CREATE TRIGGER immutable_audit_writer_guard BEFORE INSERT ON immutable_audit_events FOR EACH ROW EXECUTE FUNCTION immutable_audit_writer_guard();
 DROP TRIGGER IF EXISTS immutable_audit_events_append_only ON immutable_audit_events;
@@ -169,7 +200,7 @@ SQL, self::ALLOCATOR_BODY, self::SEQUENCE_SYNC_BODY, self::WRITER_GUARD_BODY, se
             'owner_matches_relation' => true,
             'owner_identity' => '$database_owner',
             'relation_owner_identity' => '$database_owner',
-            'acl' => ['$database_owner:EXECUTE:false:$database_owner'],
+            'acl' => [],
             'public_execute' => false,
             'cost' => '100',
             'rows' => '0',
@@ -191,6 +222,10 @@ SQL, self::ALLOCATOR_BODY, self::SEQUENCE_SYNC_BODY, self::WRITER_GUARD_BODY, se
             'internal' => false,
             'relation' => 'immutable_audit_events',
             'function_name' => $function,
+            'function_schema_identity' => '$current_schema',
+            'function_oid_identity' => '$canonical_function_oid',
+            'function_identity_arguments' => '',
+            'function_oid_matches_expected' => true,
             'type' => $type,
             'definition' => self::normalizeTriggerDefinition(sprintf(
                 'CREATE TRIGGER %s %s ON immutable_audit_events FOR EACH ROW EXECUTE FUNCTION %s()',

@@ -99,8 +99,8 @@ final class ImmutableAuditPhaseBInvariantService
                 $descriptors[$key] = $this->functionDescriptor($row);
             }
         }
-        foreach (['writer_guard_trigger' => 'immutable_audit_writer_guard', 'append_only_trigger' => 'immutable_audit_events_append_only', 'sequence_sync_trigger' => 'immutable_audit_sequence_sync'] as $key => $trigger) {
-            $row = $this->triggerCatalog($connection, $trigger);
+        foreach (['writer_guard_trigger' => ['immutable_audit_writer_guard', 'immutable_audit_writer_guard'], 'append_only_trigger' => ['immutable_audit_events_append_only', 'immutable_audit_prevent_mutation'], 'sequence_sync_trigger' => ['immutable_audit_sequence_sync', 'immutable_audit_sync_sequence_after_insert']] as $key => [$trigger, $function]) {
+            $row = $this->triggerCatalog($connection, $trigger, $function);
             if ($row !== null) {
                 $descriptors[$key] = $this->triggerDescriptor($row);
             }
@@ -157,11 +157,16 @@ WHERE p.pronamespace = current_schema()::regnamespace AND p.proname = ?
 SQL, [$name]);
     }
 
-    private function triggerCatalog(ConnectionInterface $connection, string $name): ?object
+    private function triggerCatalog(ConnectionInterface $connection, string $name, string $expectedFunction): ?object
     {
         return $connection->selectOne(<<<'SQL'
 SELECT t.tgname AS name, t.tgenabled AS enabled, t.tgisinternal AS internal,
        c.relname AS relation, p.proname AS function_name, t.tgtype AS type,
+       CASE WHEN function_namespace.nspname = current_schema() THEN '$current_schema' ELSE function_namespace.nspname END AS function_schema_identity,
+       CASE WHEN t.tgfoid = expected_function.oid THEN '$canonical_function_oid' ELSE t.tgfoid::text END AS function_oid_identity,
+       pg_get_function_identity_arguments(p.oid) AS function_identity_arguments,
+       t.tgfoid = expected_function.oid AS function_oid_matches_expected,
+       current_schema() AS current_schema_name,
        pg_get_triggerdef(t.oid, true) AS definition,
        COALESCE(pg_get_expr(t.tgqual, t.tgrelid, true), '') AS when_expression,
        encode(t.tgargs, 'hex') AS arguments_hex,
@@ -182,18 +187,23 @@ SELECT t.tgname AS name, t.tgenabled AS enabled, t.tgisinternal AS internal,
 FROM pg_trigger t
 JOIN pg_class c ON c.oid = t.tgrelid
 JOIN pg_proc p ON p.oid = t.tgfoid
+JOIN pg_namespace function_namespace ON function_namespace.oid = p.pronamespace
+LEFT JOIN pg_proc expected_function ON expected_function.pronamespace = current_schema()::regnamespace
+    AND expected_function.proname = ?
+    AND pg_get_function_identity_arguments(expected_function.oid) = ''
 LEFT JOIN pg_constraint con ON con.oid = t.tgconstraint
 LEFT JOIN pg_trigger parent_trigger ON parent_trigger.oid = t.tgparentid
 LEFT JOIN pg_class parent_relation ON parent_relation.oid = parent_trigger.tgrelid
 WHERE t.tgname = ? AND c.relname = 'immutable_audit_events'
   AND c.relnamespace = current_schema()::regnamespace
-SQL, [$name]);
+SQL, [$expectedFunction, $name]);
     }
 
     private function sequenceCatalog(ConnectionInterface $connection): ?object
     {
         return $connection->selectOne(<<<'SQL'
 SELECT s.data_type, s.start_value, s.min_value, s.max_value, s.increment_by, s.cycle, s.cache_size,
+       CASE WHEN pg_get_userbyid(q.relowner) = current_user THEN '$database_owner' ELSE pg_get_userbyid(q.relowner) END AS owner_identity,
        c.relname AS owned_table, a.attname AS owned_column
 FROM pg_sequences s
 JOIN pg_class q ON q.relname = s.sequencename AND q.relnamespace = current_schema()::regnamespace
@@ -294,8 +304,16 @@ SQL, [$name]);
             'internal' => $this->postgresBoolean($row->internal),
             'relation' => (string) $row->relation,
             'function_name' => (string) $row->function_name,
+            'function_schema_identity' => (string) $row->function_schema_identity,
+            'function_oid_identity' => (string) $row->function_oid_identity,
+            'function_identity_arguments' => (string) $row->function_identity_arguments,
+            'function_oid_matches_expected' => $this->postgresBoolean($row->function_oid_matches_expected),
             'type' => (int) $row->type,
-            'definition' => $this->normalizeTriggerDefinition((string) $row->definition),
+            'definition' => $this->normalizeTriggerDefinition(
+                (string) $row->definition,
+                (string) $row->current_schema_name,
+                $this->postgresBoolean($row->function_oid_matches_expected),
+            ),
             'when' => $this->normalizeSql((string) $row->when_expression),
             'arguments_hex' => (string) $row->arguments_hex,
             'constraint_oid' => (string) $row->constraint_oid,
@@ -322,6 +340,7 @@ SQL, [$name]);
             'increment_by' => (string) $row->increment_by,
             'cycle' => $this->postgresBoolean($row->cycle),
             'cache_size' => (string) $row->cache_size,
+            'owner_identity' => (string) $row->owner_identity,
             'owned_table' => (string) $row->owned_table,
             'owned_column' => (string) $row->owned_column,
         ];
@@ -384,9 +403,12 @@ SQL, [$name]);
         return $this->normalizeSql($definition);
     }
 
-    private function normalizeTriggerDefinition(string $definition): string
+    private function normalizeTriggerDefinition(string $definition, string $currentSchema, bool $canonicalFunction): string
     {
-        $definition = (string) preg_replace('/(?:(?:"[^"]+"|[a-z_][a-z0-9_$]*)\.)?(immutable_audit_(?:events|writer_guard|prevent_mutation|sync_sequence_after_insert))/i', '$1', $definition);
+        if ($canonicalFunction) {
+            $schema = preg_quote($currentSchema, '/');
+            $definition = (string) preg_replace('/(?:"'.$schema.'"|'.$schema.')\./i', '', $definition);
+        }
 
         return strtolower((string) preg_replace('/[;\s"]+/', '', $definition));
     }

@@ -57,11 +57,11 @@ ImmutableAuditPhaseBInvariantService|ensurePhaseBIndex|9a92dbbba1d6f22dfa1d20013
 ImmutableAuditPhaseBInvariantService|ensurePhaseBIndex|9a92dbbba1d6f22dfa1d20013e76f924016abdd8cde7181a120f566d4b89a641|evidence=statement:argument="DROPINDEXCONCURRENTLYIFEXISTS{$name}"=1
 ImmutableAuditPhaseBInvariantService|functionCatalog|39222f16e4f6b21e8dfe2aa481aa9c8da38a717745a61cef8b274540f08e885f|evidence=selectOne:sql=SELECT p.prosrc, pg_get_function_identity_arguments(p.oid) AS identity_arguments, pg_get_function_result(p.oid) AS result, l.lanname AS language, p.provolatile AS volatility, p.pro…=1
 ImmutableAuditPhaseBInvariantService|index|8533f18a4db53d84bd1cb91bcc1591f855827e92566e8c8b44c501cfedcbc246|evidence=selectOne:sql=SELECT i.indisvalid, i.indisready, i.indisunique, ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) JOIN pg_attribute a ON a.attrelid = i.indrelid AND …=1
-ImmutableAuditPhaseBInvariantService|installCanonicalCore|01a8868817a2d81a8e551219573a3be644947d8c14ef6cca96dcb8f61a9d8fd8|evidence=unprepared:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::canonicalCoreSql()=1
-ImmutableAuditPhaseBInvariantService|installCanonicalCore|071e1e1c15a0a8a7698334a4d39c32b3da042385e727954e7a65f58295df4925|evidence=statement:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::SEQUENCE_ALTER_SQL=1
-ImmutableAuditPhaseBInvariantService|installCanonicalCore|071e1e1c15a0a8a7698334a4d39c32b3da042385e727954e7a65f58295df4925|evidence=statement:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::SEQUENCE_CREATE_SQL=1
-ImmutableAuditPhaseBInvariantService|sequenceCatalog|f35e630b2184d2cbb568655972f85a449c69fb2b99dc2dbee26b5bab27c9776b|evidence=selectOne:sql=SELECT s.data_type, s.start_value, s.min_value, s.max_value, s.increment_by, s.cycle, s.cache_size, c.relname AS owned_table, a.attname AS owned_column FROM pg_sequences s JOIN pg_…=1
-ImmutableAuditPhaseBInvariantService|triggerCatalog|72ce81a0150c0d7ddd48929d95abb85a6c4dd51a69ed2a3c77ffa593c9694e15|evidence=selectOne:sql=SELECT t.tgname AS name, t.tgenabled AS enabled, t.tgisinternal AS internal, c.relname AS relation, p.proname AS function_name, t.tgtype AS type, pg_get_triggerdef(t.oid, true) AS …=1
+ImmutableAuditPhaseBInvariantService|installCanonicalCore|197d1f05556ef7ddec11535d08e3d1d91a5eca2d23b0290916c46126decdbac9|evidence=unprepared:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::canonicalCoreSql()=1
+ImmutableAuditPhaseBInvariantService|installCanonicalCore|cfec38cfc7fecafda89316c15ded5c4de6ad2271c1f24a4fedf49a2f36063ac4|evidence=statement:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::SEQUENCE_ALTER_SQL=1
+ImmutableAuditPhaseBInvariantService|installCanonicalCore|cfec38cfc7fecafda89316c15ded5c4de6ad2271c1f24a4fedf49a2f36063ac4|evidence=statement:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::SEQUENCE_CREATE_SQL=1
+ImmutableAuditPhaseBInvariantService|sequenceCatalog|003c10eed535f2ee9e9be91879fd76184920845f42e44443545f89276c66996c|evidence=selectOne:sql=SELECT s.data_type, s.start_value, s.min_value, s.max_value, s.increment_by, s.cycle, s.cache_size, CASE WHEN pg_get_userbyid(q.relowner) = current_user THEN '$database_owner' ELSE…=1
+ImmutableAuditPhaseBInvariantService|triggerCatalog|415242921953fc646198f320b21b170385a3f955d9eeee6594604c611d20b7e7|evidence=selectOne:sql=SELECT t.tgname AS name, t.tgenabled AS enabled, t.tgisinternal AS internal, c.relname AS relation, p.proname AS function_name, t.tgtype AS type, CASE WHEN function_namespace.nspna…=1
 ImmutableAuditRolloutService|cutover|86e4e5b604d45cefffabb63b0b368e392b540f163d726516721ff75e584b835a|evidence=select:sql=SELECT pg_advisory_lock(hashtextextended(?, 0))=2
 ImmutableAuditRolloutService|cutover|86e4e5b604d45cefffabb63b0b368e392b540f163d726516721ff75e584b835a|evidence=select:sql=SELECT pg_advisory_unlock(hashtextextended(?, 0))=2
 ImmutableAuditRolloutService|cutover|86e4e5b604d45cefffabb63b0b368e392b540f163d726516721ff75e584b835a|evidence=statement:sql=SELECT setval('immutable_audit_sequence', GREATEST((SELECT last_value FROM immutable_audit_sequence), COALESCE((SELECT MAX(sequence_id) FROM immutable_audit_events), 1)), EXISTS (S…=1
@@ -567,6 +567,74 @@ interface StatementMarker {}
 PHP);
 
         self::assertSame(['execute', 'execute', 'execute'], array_column($findings, 'operation'));
+    }
+
+    public function test_ast_tracks_statement_factories_in_static_injected_and_static_property_flows(): void
+    {
+        $findings = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+final class StatementFactory {
+    public static \PDOStatement $shared;
+    public static function make(): \PDOStatement { return self::$shared; }
+    public function build(): \PDOStatement { return self::$shared; }
+}
+final class StatementConsumer {
+    public function __construct(private StatementFactory $factory) {}
+    public function run(): void {
+        StatementFactory::make()->execute();
+        $this->factory->build()->execute();
+        StatementFactory::$shared->execute();
+    }
+}
+PHP);
+
+        self::assertSame(['execute', 'execute', 'execute'], array_column($findings, 'operation'));
+    }
+
+    public function test_project_statement_factory_index_is_cross_file_content_sensitive_and_unknown_call_chains_fail_closed(): void
+    {
+        $directory = sys_get_temp_dir().'/most-statement-factory-'.bin2hex(random_bytes(6));
+        self::assertTrue(mkdir($directory));
+        $caller = $directory.'/Caller.php';
+        $factory = $directory.'/StatementFactory.php';
+        file_put_contents($caller, <<<'PHP'
+<?php
+namespace StatementProject;
+final class Caller {
+    public function __construct(private StatementFactory $factory) {}
+    public function run(): void {
+        StatementFactory::make()->execute();
+        $this->factory->build()->execute();
+        UnknownStatementFactory::make()->execute();
+    }
+}
+PHP);
+        $firstFactory = <<<'PHP'
+<?php
+namespace StatementProject;
+final class StatementFactory {
+    public static function make(): \PDOStatement { return self::source(); }
+    public function build(): \PDOStatement { return self::source(); }
+    private static function source(): \PDOStatement { throw new \RuntimeException('first'); }
+}
+PHP;
+        file_put_contents($factory, $firstFactory);
+        $scanner = new ContractMutationAstScanner;
+        $first = $scanner->findingsInFiles([$caller, $factory]);
+        file_put_contents($factory, str_replace("'first'", "'second'", $firstFactory));
+        $second = $scanner->findingsInFiles([$caller, $factory]);
+
+        self::assertCount(3, $first);
+        self::assertCount(3, $second);
+        self::assertStringContainsString('|builder=unresolved-', $first[2]['fingerprint']);
+        self::assertNotSame($first[0]['fingerprint'], $second[0]['fingerprint']);
+        self::assertNotSame($first[1]['fingerprint'], $second[1]['fingerprint']);
+        self::assertSame($first[2]['fingerprint'], $second[2]['fingerprint']);
+        self::assertSame(['hits' => 0, 'misses' => 2], $scanner->projectCacheMetrics());
+
+        unlink($caller);
+        unlink($factory);
+        rmdir($directory);
     }
 
     public function test_structural_manifest_uses_explicit_machine_checked_evidence(): void

@@ -25,12 +25,12 @@ Repair под fence заново устанавливает функции, тр
 
 Mutable database baseline отсутствует. Ожидаемые descriptors определены в versioned `ImmutableAuditInvariantDefinitions` и не могут быть изменены записью в БД. Readiness сравнивает напрямую:
 
-- тело, identity arguments, return type, language, volatility, SECURITY INVOKER, точный owner функции и таблицы, равный аутентифицированной роли deployment/readiness, ACL без EXECUTE для PUBLIC, cost, rows, support, exact `search_path`, strict, leakproof, parallel и kind каждой функции;
-- нормализованное полное определение, relation, function dependency, row/timing/events type, WHEN, arguments, constraint/deferrability, parent/partition binding, transition tables, enabled и internal каждого trigger;
+- тело, identity arguments, return type, language, volatility, SECURITY INVOKER, точный owner функции и таблицы, равный аутентифицированной роли deployment/readiness, пустой explicit ACL без grantee и grant option, cost, rows, support, exact `search_path`, strict, leakproof, parallel и kind каждой функции;
+- нормализованное полное определение, relation, точные schema/OID/identity arguments trigger function, function dependency, row/timing/events type, WHEN, arguments, constraint/deferrability, parent/partition binding, transition tables, enabled и internal каждого trigger;
 - data type, START, min/max, increment, cache, cycle и ownership sequence без сравнения текущего значения;
 - valid/ready/unique, колонки, predicate и полное определение обоих Phase B индексов.
 
-Canonical repair явно сбрасывает все function attributes и configuration, возвращает owner к владельцу audit-таблицы, отзывает EXECUTE у PUBLIC, оставляет EXECUTE владельцу и восстанавливает sequence START metadata. Любой drift закрывает `/ready` с HTTP 503. Устаревшая таблица `immutable_audit_invariant_baselines`, если она осталась в предварительном окружении, удаляется и больше нигде не читается.
+Canonical repair явно сбрасывает все function attributes и configuration, возвращает таблицу, sequence и функции аутентифицированной deployment-роли, по catalog ACL отзывает с `CASCADE` все явные права и grant option у любых ролей и `PUBLIC`, сохраняя только неявные права владельца, и восстанавливает sequence START metadata. Недостаточные права repair завершают операцию ошибкой; readiness остаётся закрытым. Любой drift закрывает `/ready` с HTTP 503. Устаревшая таблица `immutable_audit_invariant_baselines`, если она осталась в предварительном окружении, удаляется и больше нигде не читается.
 
 ## Поведение при ошибке
 
