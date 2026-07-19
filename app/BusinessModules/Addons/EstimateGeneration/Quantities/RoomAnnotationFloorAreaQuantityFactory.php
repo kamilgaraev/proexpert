@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
+use Illuminate\Support\Facades\Log;
 
 final readonly class RoomAnnotationFloorAreaQuantityFactory
 {
@@ -36,29 +37,48 @@ final readonly class RoomAnnotationFloorAreaQuantityFactory
         foreach ($model->assumptions as $assumption) {
             if ($assumption->severity === 'blocking'
                 && ! in_array($assumption->code, ['scale_missing', 'scale_estimated'], true)) {
-                return null;
+                return $this->reject($context, 'blocking_model_assumption', [
+                    'assumption_code' => $assumption->code,
+                ]);
             }
         }
         foreach ($model->floors as $floor) {
             $floorSource = $this->floorSource($context, $floor->rooms, $floor->evidenceIds);
             if ($floorSource === 'unknown') {
-                return null;
+                return $this->reject($context, 'floor_source_unknown', [
+                    'floor_key' => $floor->key,
+                    'room_count' => count($floor->rooms),
+                    'floor_evidence_count' => count($floor->evidenceIds),
+                ]);
             }
             if ($floorSource === 'reference') {
                 continue;
             }
             if ($floor->rooms === []) {
-                return null;
+                return $this->reject($context, 'primary_floor_rooms_missing', ['floor_key' => $floor->key]);
             }
             $primaryFloorCount++;
             foreach ($floor->rooms as $room) {
                 $annotation = $this->parser->parse($room->name);
                 if ($annotation === null) {
-                    return null;
+                    return $this->reject($context, 'room_annotation_invalid', [
+                        'floor_key' => $floor->key,
+                        'room_key' => $room->key,
+                    ]);
                 }
                 $areaEvidenceId = $this->areaEvidenceId($context, $room->evidenceIds, $annotation['area_m2']);
-                if ($areaEvidenceId === null || isset($usedEvidenceIds[$areaEvidenceId])) {
-                    return null;
+                if ($areaEvidenceId === null) {
+                    return $this->reject($context, 'room_area_evidence_missing', [
+                        'floor_key' => $floor->key,
+                        'room_key' => $room->key,
+                        'room_evidence_count' => count($room->evidenceIds),
+                    ]);
+                }
+                if (isset($usedEvidenceIds[$areaEvidenceId])) {
+                    return $this->reject($context, 'room_area_evidence_reused', [
+                        'floor_key' => $floor->key,
+                        'room_key' => $room->key,
+                    ]);
                 }
                 $usedEvidenceIds[$areaEvidenceId] = true;
                 if (! $annotation['included_in_floor_area']) {
@@ -84,7 +104,11 @@ final readonly class RoomAnnotationFloorAreaQuantityFactory
         }
         if ($items === []
             || ($expectedFloorCount !== null && ($expectedFloorCount < 1 || $primaryFloorCount !== $expectedFloorCount))) {
-            return null;
+            return $this->reject($context, 'floor_area_coverage_incomplete', [
+                'item_count' => count($items),
+                'primary_floor_count' => $primaryFloorCount,
+                'expected_floor_count' => $expectedFloorCount,
+            ]);
         }
         ksort($evidenceIds, SORT_NUMERIC);
 
@@ -100,6 +124,22 @@ final readonly class RoomAnnotationFloorAreaQuantityFactory
             modelVersion: $model->modelVersion,
             assumptions: ['vision_room_area_extraction'],
         );
+    }
+
+    /** @param array<string, int|string|null> $details */
+    private function reject(BuildingModelOperationContext $context, string $reason, array $details = []): ?QuantityData
+    {
+        $application = Log::getFacadeApplication();
+        if ($application !== null && $application->bound('log') && $application->bound('config')) {
+            Log::info('estimate_generation.room_area_quantity_rejected', [
+                'session_id' => $context->sessionId,
+                'project_id' => $context->projectId,
+                'reason' => $reason,
+                ...$details,
+            ]);
+        }
+
+        return null;
     }
 
     /** @param list<int> $ids */
