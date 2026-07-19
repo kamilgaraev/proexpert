@@ -18,7 +18,7 @@ return new class extends Migration
         (new ImmutableAuditRolloutService)->installCompatibilityPhase(
             DB::connection(),
             (int) config('legal_archive.audit_phase_a_max_duration_hours', 24),
-            (string) config('legal_archive.audit_writer_token', ''),
+            (string) config('legal_archive.audit_writer_secret', ''),
         );
         DB::unprepared(<<<'SQL'
 DO $$
@@ -50,7 +50,6 @@ SQL);
         DB::statement('DROP TRIGGER IF EXISTS immutable_audit_sequence_sync ON immutable_audit_events');
         DB::statement('DROP TRIGGER IF EXISTS immutable_audit_writer_guard ON immutable_audit_events');
         DB::statement('DROP FUNCTION IF EXISTS immutable_audit_allocate_sequence()');
-        DB::statement('DROP FUNCTION IF EXISTS immutable_audit_allocate_compatible_sequence()');
         DB::statement('DROP FUNCTION IF EXISTS immutable_audit_sync_sequence_after_insert()');
         DB::statement('DROP FUNCTION IF EXISTS immutable_audit_writer_guard()');
         DB::statement('DROP TABLE IF EXISTS immutable_audit_rollout');

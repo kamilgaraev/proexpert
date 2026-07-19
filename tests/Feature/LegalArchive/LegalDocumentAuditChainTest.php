@@ -247,10 +247,12 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertStringContainsString('immutable_audit_allocate_sequence', $rollout);
         self::assertStringContainsString('CREATE TRIGGER immutable_audit_sequence_sync', $rollout);
         self::assertStringContainsString('AFTER INSERT', $rollout);
-        self::assertStringContainsString('MAX(sequence_id), 0) + 1', $rollout);
+        self::assertStringContainsString("rollout_phase <> 'phase_b'", $rollout);
+        self::assertStringContainsString('immutable_audit_writer_not_ready', $rollout);
         self::assertStringNotContainsString('LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE', $rollout);
         self::assertStringContainsString('immutable_audit_writer_guard', $rollout);
         self::assertStringContainsString('immutable_audit_phase_a_expired', $rollout);
+        self::assertStringContainsString('clock_timestamp() > rollout.phase_a_expires_at', $rollout);
         self::assertStringContainsString('immutable_audit_writer_version_rejected', $rollout);
         self::assertStringNotContainsString('NEW.sequence_id :=', $rollout);
         self::assertStringNotContainsString('SET DEFAULT nextval', $extension);
@@ -354,7 +356,10 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertStringContainsString('immutable_audit_source_event_legacy_unique', $rollout);
         self::assertStringContainsString('phase_b_writer_fence_not_confirmed', $rollout);
         self::assertStringContainsString('--confirm-writer-version=', $command);
-        self::assertStringContainsString('--confirm-drain-token=', $command);
+        self::assertStringNotContainsString('confirm-drain-secret', $command);
+        $drainCommand = file_get_contents(__DIR__.'/../../../app/Console/Commands/ImmutableAuditConfirmDrainCommand.php');
+        self::assertIsString($drainCommand);
+        self::assertStringNotContainsString('--token=', $drainCommand);
         $statusCommand = file_get_contents(__DIR__.'/../../../app/Console/Commands/ImmutableAuditRolloutStatusCommand.php');
         self::assertIsString($statusCommand);
         self::assertStringContainsString('return self::FAILURE', $statusCommand);
@@ -362,10 +367,22 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertStringContainsString('indisvalid', $rollout);
         self::assertStringContainsString('indisready', $rollout);
         self::assertStringContainsString('DROP INDEX CONCURRENTLY', $rollout);
-        self::assertStringContainsString("if (\$phase === 'phase_b')", $rollout);
-        self::assertStringContainsString('most.immutable_audit_writer_token', $rollout);
-        self::assertStringContainsString("sha256(convert_to('immutable-audit-writer-v2:'", $rollout);
-        self::assertStringContainsString("config('legal_archive.audit_writer_token'", $command);
+        self::assertStringContainsString('FOR UPDATE', $rollout);
+        self::assertStringContainsString('drain_marker', $rollout);
+        self::assertStringContainsString('most.immutable_audit_writer_credential', $rollout);
+        self::assertStringContainsString("sha256(convert_to('immutable-audit-writer-credential:'", $rollout);
+        self::assertStringContainsString("config('legal_archive.audit_writer_secret'", $command);
+        self::assertTrue(strpos($rollout, '$this->preparePhaseBIndexes($connection)') < strpos($rollout, 'pg_advisory_lock(hashtextextended'));
+        self::assertTrue(strpos($rollout, 'LOCK TABLE immutable_audit_events IN ACCESS EXCLUSIVE MODE') < strpos($rollout, '$this->verifyPhaseBIndexes($connection)'));
+        $readinessCommand = file_get_contents(__DIR__.'/../../../app/Console/Commands/ImmutableAuditWriterReadinessCommand.php');
+        $webRoutes = file_get_contents(__DIR__.'/../../../routes/web.php');
+        $bootstrap = file_get_contents(__DIR__.'/../../../bootstrap/app.php');
+        self::assertIsString($readinessCommand);
+        self::assertIsString($webRoutes);
+        self::assertIsString($bootstrap);
+        self::assertStringContainsString('self::FAILURE', $readinessCommand);
+        self::assertStringContainsString("Route::get('/ready'", $webRoutes);
+        self::assertStringContainsString("health: '/up'", $bootstrap);
     }
 
     public function test_rollout_status_reports_overdue_phase_a_and_clears_after_cutover_marker(): void
@@ -388,13 +405,16 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertFalse($rollout->status($connection)['overdue']);
     }
 
-    public function test_compatibility_writer_has_no_table_lock_and_uses_fence_chain_and_bounded_retry(): void
+    public function test_v2_writer_requires_phase_b_before_setting_derived_transaction_credential(): void
     {
         $recorder = file_get_contents(__DIR__.'/../../../app/BusinessModules/Core/ImmutableAudit/Services/ImmutableAuditRecorder.php');
         self::assertIsString($recorder);
         self::assertStringNotContainsString('LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE', $recorder);
         self::assertStringContainsString('pg_advisory_xact_lock_shared', $recorder);
-        self::assertStringContainsString("set_config('most.immutable_audit_writer_token', ?, true)", $recorder);
+        self::assertStringContainsString('readiness->assertReady', $recorder);
+        self::assertStringContainsString('getPdo()->prepare', $recorder);
+        self::assertStringContainsString("set_config('most.immutable_audit_writer_credential', ?, true)", $recorder);
+        self::assertStringNotContainsString("set_config('most.immutable_audit_writer_secret'", $recorder);
         self::assertStringContainsString('pg_advisory_xact_lock(hashtextextended', $recorder);
         self::assertStringContainsString('for ($attempt = 1; $attempt <= 5; $attempt++)', $recorder);
         self::assertStringContainsString('immutable_audit_events_sequence_id_unique', $recorder);
@@ -418,7 +438,10 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertStringContainsString('confirmDrain($this->first', $test);
         self::assertStringContainsString('phase_b_drain_marker_required', $test);
         self::assertStringContainsString('immutable_audit_source_event_unique', $test);
-        self::assertStringContainsString("'legacy:1', 'legacy'", $test);
+        self::assertStringContainsString('test_staged_phase_a_allows_old_writer_and_rejects_v2_writer', $test);
+        self::assertStringContainsString("'legacy:1', 'legacy_after'", $test);
+        self::assertStringContainsString('test_cutover_crash_rolls_back_switch_and_retry_consumes_same_marker', $test);
+        self::assertStringContainsString('test_cutover_builds_indexes_before_fence_and_rechecks_expired_drain_after_fence', $test);
         self::assertStringContainsString('immutable_audit_writer_version_rejected', $test);
         self::assertStringNotContainsString('SKIP LOCKED', $test);
         self::assertStringNotContainsString('pg_try_advisory', $test);

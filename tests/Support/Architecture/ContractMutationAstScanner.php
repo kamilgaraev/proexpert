@@ -15,6 +15,8 @@ final class ContractMutationAstScanner
 {
     private const MUTATIONS = ['save', 'saveQuietly', 'update', 'updateQuietly', 'delete', 'forceDelete', 'insert', 'upsert', 'increment', 'decrement', 'touch', 'restore', 'create'];
 
+    private const RAW_SQL_MUTATIONS = ['statement', 'unprepared', 'insert', 'update', 'delete', 'affectingStatement', 'raw'];
+
     /** @return list<int> */
     public function scan(string $source): array
     {
@@ -24,8 +26,10 @@ final class ContractMutationAstScanner
     /** @return list<array{line:int,class:string,method:string,operation:string,receiver:string,fingerprint:string}> */
     public function findings(string $source): array
     {
-        if (preg_match('/(?:\bContract\b|\bcontracts?\b|ContractRepository|contractRepository)/', $source) !== 1
-            || preg_match('/\b(?:save|saveQuietly|update|updateQuietly|delete|forceDelete|insert|upsert|increment|decrement|touch|restore|create|updateOrCreate|firstOrCreate|destroy|forceDestroy|statement|unprepared)\b/i', $source) !== 1) {
+        $contractContext = preg_match('/(?:\bContract\b|\bcontracts?\b|ContractRepository|contractRepository)/', $source) === 1;
+        $mutation = preg_match('/\b(?:save|saveQuietly|update|updateQuietly|delete|forceDelete|insert|upsert|increment|decrement|touch|restore|create|updateOrCreate|firstOrCreate|destroy|forceDestroy)\b/i', $source) === 1;
+        $rawSqlCall = preg_match('/\bDB::(?:connection\([^)]*\)->)?(?:statement|unprepared|insert|update|delete|affectingStatement|raw)\s*\(/', $source) === 1;
+        if ((! $contractContext || ! $mutation) && ! $rawSqlCall) {
             return [];
         }
         $nodes = (new ParserFactory)->createForNewestSupportedVersion()->parse($source) ?? [];
@@ -70,6 +74,12 @@ final class ContractMutationAstScanner
         }
         $stringConstants = [];
         $assignments = $finder->findInstanceOf($scope->getStmts() ?? [], Node\Expr\Assign::class);
+        $assignmentCounts = [];
+        foreach ($assignments as $assignment) {
+            if ($assignment->var instanceof Node\Expr\Variable && is_string($assignment->var->name)) {
+                $assignmentCounts[$assignment->var->name] = ($assignmentCounts[$assignment->var->name] ?? 0) + 1;
+            }
+        }
         do {
             $changed = false;
             foreach ($assignments as $assignment) {
@@ -85,7 +95,7 @@ final class ContractMutationAstScanner
                     $repositoryVariables[$name] = true;
                     $changed = true;
                 }
-                $constant = $this->constantString($assignment->expr, $stringConstants);
+                $constant = $assignmentCounts[$name] === 1 ? $this->constantString($assignment->expr, $stringConstants) : null;
                 if ($constant !== null && ($stringConstants[$name] ?? null) !== $constant) {
                     $stringConstants[$name] = $constant;
                     $changed = true;
@@ -113,13 +123,22 @@ final class ContractMutationAstScanner
             if ($this->isExactContractName($class) && in_array($operation, ['create', 'updateOrCreate', 'firstOrCreate', 'destroy', 'forceDestroy'], true)) {
                 return true;
             }
-            if ($this->shortName($class) === 'DB' && in_array($operation, ['statement', 'unprepared', 'insert', 'update', 'delete'], true)) {
+            if ($this->shortName($class) === 'DB' && in_array($operation, self::RAW_SQL_MUTATIONS, true)) {
                 $sql = isset($node->args[0]) ? $this->constantString($node->args[0]->value, $stringConstants) : null;
 
-                return $sql !== null && preg_match('/\b(insert\s+into|update|delete\s+from)\s+["`]?contracts\b/i', $sql) === 1;
+                return $sql === null || preg_match('/\b(insert\s+into|update|delete\s+from)\s+["`]?contracts\b/i', $sql) === 1;
             }
         }
-        if (! $node instanceof Node\Expr\MethodCall || ! $node->name instanceof Node\Identifier || ! in_array($node->name->toString(), self::MUTATIONS, true)) {
+        if (! $node instanceof Node\Expr\MethodCall || ! $node->name instanceof Node\Identifier) {
+            return false;
+        }
+        $operation = $node->name->toString();
+        if (in_array($operation, self::RAW_SQL_MUTATIONS, true) && $this->rootedAtDatabaseConnection($node->var)) {
+            $sql = isset($node->args[0]) ? $this->constantString($node->args[0]->value, $stringConstants) : null;
+
+            return $sql === null || preg_match('/\b(insert\s+into|update|delete\s+from)\s+["`]?contracts\b/i', $sql) === 1;
+        }
+        if (! in_array($operation, self::MUTATIONS, true)) {
             return false;
         }
         $receiver = $printer->prettyPrintExpr($node->var);
@@ -178,11 +197,27 @@ final class ContractMutationAstScanner
         return $this->isExactContractName($expression->class->toString());
     }
 
+    private function rootedAtDatabaseConnection(Node\Expr $expression): bool
+    {
+        while ($expression instanceof Node\Expr\MethodCall || $expression instanceof Node\Expr\PropertyFetch) {
+            $expression = $expression->var;
+        }
+
+        return $expression instanceof Node\Expr\StaticCall
+            && $expression->class instanceof Node\Name
+            && $this->shortName($expression->class->toString()) === 'DB'
+            && $expression->name instanceof Node\Identifier
+            && $expression->name->toString() === 'connection';
+    }
+
     /** @param array<string, string> $constants */
     private function constantString(Node\Expr $expression, array $constants): ?string
     {
         if ($expression instanceof Node\Scalar\String_) {
             return $expression->value;
+        }
+        if ($expression instanceof Node\Scalar\Int_ || $expression instanceof Node\Scalar\Float_) {
+            return (string) $expression->value;
         }
         if ($expression instanceof Node\Expr\Variable && is_string($expression->name)) {
             return $constants[$expression->name] ?? null;

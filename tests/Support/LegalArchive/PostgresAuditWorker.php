@@ -6,6 +6,7 @@ use App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventData;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditIntegrityService;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRecorder;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRedactor;
+use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRolloutService;
 use Illuminate\Database\Capsule\Manager as Capsule;
 
 require dirname(__DIR__, 3).'/vendor/autoload.php';
@@ -37,7 +38,17 @@ $database->setAsGlobal();
 $database->bootEloquent();
 $connection = $database->getConnection();
 $connection->statement("SET search_path TO {$schema}");
-if (in_array($mode, ['legacy', 'legacy_after'], true)) {
+if ($mode === 'cutover') {
+    (new ImmutableAuditRolloutService)->cutover(
+        $connection,
+        true,
+        ImmutableAuditRolloutService::PHASE_B_WRITER_VERSION,
+        'test-immutable-audit-writer-token-2026-07-19',
+        1,
+    );
+    exit(0);
+}
+if (in_array($mode, ['legacy', 'legacy_after', 'legacy_expiry_boundary'], true)) {
     $connection->transaction(function () use ($connection, $action, $sourceEventId, $mode, $barrier): void {
         $sequence = ((int) $connection->table('immutable_audit_events')->max('sequence_id')) + 1;
         if ($mode === 'legacy') {
@@ -50,6 +61,10 @@ if (in_array($mode, ['legacy', 'legacy_after'], true)) {
             while (! is_file($release)) {
                 time_nanosleep(0, 10_000_000);
             }
+        }
+        if ($mode === 'legacy_expiry_boundary') {
+            $connection->statement("UPDATE immutable_audit_rollout SET phase_a_expires_at = clock_timestamp() + INTERVAL '100 milliseconds' WHERE singleton = true");
+            usleep(200_000);
         }
         $now = now()->setMicrosecond(0);
         $connection->table('immutable_audit_events')->insert([

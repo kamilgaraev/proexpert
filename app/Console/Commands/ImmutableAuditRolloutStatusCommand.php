@@ -13,7 +13,7 @@ final class ImmutableAuditRolloutStatusCommand extends Command
 {
     protected $signature = 'immutable-audit:rollout-status';
 
-    protected $description = 'Проверяет срок временной compatibility Phase A';
+    protected $description = 'Проверяет статус поэтапной раскатки ImmutableAudit';
 
     public function handle(ImmutableAuditRolloutService $rollout): int
     {

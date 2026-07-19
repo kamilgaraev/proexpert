@@ -19,6 +19,57 @@ final class ContractAuditMutationCoverageTest extends TestCase
             "SetupRBACTestEnvironment|cleanupTestData|delete|\\Illuminate\\Support\\Facades\\DB::table('contracts')->whereIn('organization_id',\$orgIds)" => 1,
             "SetupRBACTestEnvironment|cleanupTestData|delete|\\Illuminate\\Support\\Facades\\DB::table('contracts')->whereIn('project_id',\$projectIds)" => 1,
         ];
+        $rawSqlExemptions = array_filter(explode("\n", <<<'FINGERPRINTS'
+EstimateGenerationResourceIndexRuntime|dropAll|statement|\Illuminate\Support\Facades\DB::statement($index['dropIfExists'])
+EstimateGenerationResourceIndexRuntime|ensureConcurrentIndex|statement|\Illuminate\Support\Facades\DB::statement($index['drop'])
+EstimateGenerationResourceIndexRuntime|ensureConcurrentIndex|statement|\Illuminate\Support\Facades\DB::statement($index['create'])
+TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|statement|\Illuminate\Support\Facades\DB::statement('DROPINDEXCONCURRENTLYIFEXISTS'.$expectedSchema.'.'.$probe)
+TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|statement|\Illuminate\Support\Facades\DB::statement((string)$probeSql)
+TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|statement|\Illuminate\Support\Facades\DB::statement('DROPINDEXCONCURRENTLY'.$expectedSchema.'.'.$probe)
+TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|statement|\Illuminate\Support\Facades\DB::statement('DROPINDEXCONCURRENTLY'.$expectedSchema.'.'.$name)
+TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|statement|\Illuminate\Support\Facades\DB::statement($createSql)
+TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|statement|\Illuminate\Support\Facades\DB::statement("ALTERTABLE{$qualified}ADDCONSTRAINT{$name}{$definition}NOTVALID")
+TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|statement|\Illuminate\Support\Facades\DB::statement("ALTERTABLE{$qualified}DROPCONSTRAINTIFEXISTS{$probe}")
+TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|statement|\Illuminate\Support\Facades\DB::statement("ALTERTABLE{$qualified}ADDCONSTRAINT{$probe}{$definition}NOTVALID")
+TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|statement|\Illuminate\Support\Facades\DB::statement("ALTERTABLE{$qualified}DROPCONSTRAINT{$probe}")
+TrainingBenchmarkOnlineMigrationRuntime|validateConstraint|statement|\Illuminate\Support\Facades\DB::statement("ALTERTABLE{$schema}.{$table}VALIDATECONSTRAINT{$name}")
+TrainingBenchmarkOnlineMigrationRuntime|swapValidatedConstraint|statement|\Illuminate\Support\Facades\DB::statement("LOCKTABLE{$schema}.{$table}INACCESSEXCLUSIVEMODE")
+TrainingBenchmarkOnlineMigrationRuntime|swapValidatedConstraint|statement|\Illuminate\Support\Facades\DB::statement("ALTERTABLE{$schema}.{$table}DROPCONSTRAINTIFEXISTS{$finalName}")
+TrainingBenchmarkOnlineMigrationRuntime|swapValidatedConstraint|statement|\Illuminate\Support\Facades\DB::statement("ALTERTABLE{$schema}.{$table}RENAMECONSTRAINT{$temporaryName}TO{$finalName}")
+HoldingReportService|getContractsByContractor|raw|\Illuminate\Support\Facades\DB::raw("({$query->toSql()})assub")
+ResetInvoiceNumberSequences|handle|statement|\Illuminate\Support\Facades\DB::statement("DROPSEQUENCEIFEXISTS".$seq->relname)
+ResetPaymentDocumentSequences|handle|statement|\Illuminate\Support\Facades\DB::statement("DROPSEQUENCEIFEXISTS".$seq->relname)
+RagIndexer|storeVector|update|\Illuminate\Support\Facades\DB::update($sql,[$vector,$chunk->id])
+LaravelNotificationSnapshotDatabase|statement|statement|\Illuminate\Support\Facades\DB::statement($sql)
+NotificationQueryService|unreadAggregatesForQuery|raw|\Illuminate\Support\Facades\DB::raw($categoryExpression)
+NotificationQueryService|unreadAggregatesForQuery|raw|\Illuminate\Support\Facades\DB::raw($typeExpression)
+NotificationQueryService|unreadAggregatesForQuery|raw|\Illuminate\Support\Facades\DB::raw($notificationTypeExpression)
+ErrorTrackingController|timeseries|raw|\Illuminate\Support\Facades\DB::raw("DATE_TRUNC('{$interval}',last_seen_at)astime")
+DashboardController|contractsRequiringAttention|raw|\Illuminate\Support\Facades\DB::raw('CASEWHEN(CASEWHENcontracts.total_amount>0THENROUND((COALESCE(cw.completed_amount,0)/contracts.total_amount)*100,2)ELSE0END)>=100THEN3WHENend_date<CURRENT_TIMESTAMPANDstatus=\''.\App\Enums\Contract\ContractStatusEnum::ACTIVE->value.'\'THEN2WHEN(CASEWHENcontracts.total_amount>0THENROUND((COALESCE(cw.completed_amount,0)/contracts.total_amount)*100,2)ELSE0END)>=90THEN1ELSE0END')
+ContractService|getContractsSummary|raw|\Illuminate\Support\Facades\DB::raw("({$nearingLimitSubquery->toSql()})assubquery")
+ReportService|getContractPaymentsReport|raw|\Illuminate\Support\Facades\DB::raw('(SELECTCOALESCE(SUM(paid_amount),0)FROMpayment_documentsWHEREinvoiceable_type=\'App\\\\Models\\\\Contract\'ANDinvoiceable_id=contracts.idANDpayment_documents.organization_id='.$organizationId.'ANDdeleted_atISNULL)aspaid_amount')
+ReportService|getContractPaymentsReport|raw|\Illuminate\Support\Facades\DB::raw('(SELECTCOALESCE(SUM(amount),0)FROMcontract_performance_actsWHEREcontract_id=contracts.idANDproject_id='.$projectId.'ANDis_approved=true)ascompleted_amount')
+ReportService|getContractorSettlementsReport|raw|\Illuminate\Support\Facades\DB::raw($completedAmountSubquery)
+ReportService|getContractorSettlementsReport|raw|\Illuminate\Support\Facades\DB::raw('COALESCE(SUM((SELECTSUM(paid_amount)FROMpayment_documentsWHEREinvoiceable_type=\'App\\\\Models\\\\Contract\'ANDinvoiceable_id=contracts.idANDpayment_documents.organization_id='.$organizationId.'ANDdeleted_atISNULL)),0)astotal_paid')
+ReportService|getProjectProfitabilityReport|raw|\Illuminate\Support\Facades\DB::raw('(SELECTCOALESCE(SUM(total_amount),0)FROMcontractsWHEREproject_id=projects.idANDcontracts.organization_id='.$organizationId.')ascontractor_costs')
+ReportService|getProjectProfitabilityReport|raw|\Illuminate\Support\Facades\DB::raw('(SELECTCOALESCE(SUM(quantity*price),0)FROMwarehouse_movementsWHEREproject_id=projects.idANDwarehouse_movements.organization_id='.$organizationId.'ANDmovement_type=\'receipt\')asmaterial_costs')
+ReportService|getProjectTimelinesReport|raw|\Illuminate\Support\Facades\DB::raw('(SELECTCOALESCE(SUM(total_amount),0)FROMcontractsWHEREproject_id=projects.idANDcontracts.organization_id='.$organizationId.')astotal_contract_amount')
+FINGERPRINTS));
+        $exemptions += array_fill_keys($rawSqlExemptions, 1);
+        $rawSqlEvidence = [];
+        foreach ($rawSqlExemptions as $fingerprint) {
+            $rawSqlEvidence[$fingerprint] = match (true) {
+                str_starts_with($fingerprint, 'EstimateGenerationResourceIndexRuntime|') => 'SQL берётся только из закрытого INDEXES allowlist для estimate_generation_* индексов.',
+                str_starts_with($fingerprint, 'TrainingBenchmarkOnlineMigrationRuntime|') => 'assertNotContractTable структурно запрещает contracts до выполнения любого dynamic DDL.',
+                str_starts_with($fingerprint, 'ResetInvoiceNumberSequences|') => 'Имена поступают из pg_class с relkind=S и жёстким invoice_seq_% prefix.',
+                str_starts_with($fingerprint, 'ResetPaymentDocumentSequences|') => 'Имена поступают из pg_class с relkind=S и жёстким payment_doc_seq_% prefix.',
+                str_starts_with($fingerprint, 'RagIndexer|') => 'Обе ветки локальной константы SQL обновляют только ai_rag_chunks.embedding по id.',
+                str_starts_with($fingerprint, 'LaravelNotificationSnapshotDatabase|') => 'Метод принимает только точную константу SET TRANSACTION ISOLATION LEVEL REPEATABLE READ и иначе fail-closed.',
+                str_contains($fingerprint, '|raw|') => 'DB::raw формирует выражение read-only SELECT/query-builder и сам не исполняет mutation statement.',
+            };
+        }
+        self::assertSame(count($rawSqlExemptions), count($rawSqlEvidence));
+        self::assertNotContains('', $rawSqlEvidence);
         $seenExemptions = array_fill_keys(array_keys($exemptions), 0);
         $violations = [];
         $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root));
@@ -124,6 +175,14 @@ function mutate(): void {
     DB::statement('UPDATE contracts SET number = 1');
     $sql = 'UPDATE contracts SET subject = 1';
     DB::statement($sql);
+    $runtimeSql = $request->sql;
+    DB::statement($runtimeSql);
+    DB::unprepared("UPDATE contracts SET number = {$number}");
+    DB::update(buildContractSql());
+    DB::delete($enabled ? 'DELETE FROM contracts' : helperSql());
+    $parts = ['sql' => 'INSERT INTO contracts DEFAULT VALUES'];
+    DB::insert($parts['sql']);
+    DB::raw($runtimeSql);
     $relationContract = $act->contract;
     $relationContract->touch();
     $loadedContract = $act->contract()->first();
@@ -144,7 +203,7 @@ class RepoService {
 PHP;
 
         $findings = $scanner->findings($source);
-        self::assertSame(['save', 'update', 'increment', 'decrement', 'upsert', 'delete', 'statement', 'statement', 'touch', 'restore', 'forceDelete', 'update', 'delete', 'forceDelete', 'saveQuietly', 'update'], array_column($findings, 'operation'));
+        self::assertSame(['save', 'update', 'increment', 'decrement', 'upsert', 'delete', 'statement', 'statement', 'statement', 'unprepared', 'update', 'delete', 'insert', 'raw', 'touch', 'restore', 'forceDelete', 'update', 'delete', 'forceDelete', 'saveQuietly', 'update'], array_column($findings, 'operation'));
         self::assertNotContains('PurchaseContract', array_column($findings, 'class'));
     }
 
@@ -162,5 +221,21 @@ class Example {
 PHP);
 
         self::assertCount(2, array_filter($findings, static fn (array $finding): bool => $finding['fingerprint'] === 'Example|create|create|$this->contractRepository'));
+    }
+
+    public function test_dynamic_sql_exemptions_have_runtime_guards_before_database_execution(): void
+    {
+        $runtime = new \App\BusinessModules\Addons\EstimateGeneration\Support\TrainingBenchmarkOnlineMigrationRuntime;
+        try {
+            $runtime->ensureConstraint('contracts', 'forbidden_probe', 'CHECK (id > 0)');
+            self::fail('Online migration runtime must reject the contracts table.');
+        } catch (\InvalidArgumentException $error) {
+            self::assertSame('estimate_generation_online_migration_contract_table_forbidden', $error->getMessage());
+        }
+
+        $database = new \App\BusinessModules\Features\Notifications\Services\LaravelNotificationSnapshotDatabase;
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('notification_snapshot_statement_forbidden');
+        $database->statement('UPDATE contracts SET number = number');
     }
 }

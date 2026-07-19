@@ -8,6 +8,7 @@ use App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventData;
 use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
 use DateTimeInterface;
 use DomainException;
+use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
@@ -19,13 +20,14 @@ final class ImmutableAuditRecorder
         private readonly ImmutableAuditRedactor $redactor,
         private readonly ImmutableAuditIntegrityService $integrity,
         private readonly ?ConnectionInterface $connection = null,
-        private readonly ?string $writerToken = null,
+        private readonly ?string $writerSecret = null,
+        private readonly ImmutableAuditWriterReadinessService $readiness = new ImmutableAuditWriterReadinessService,
     ) {}
 
     public function record(ImmutableAuditEventData $data): ImmutableAuditEvent
     {
         for ($attempt = 1; $attempt <= 5; $attempt++) {
-            if ($data->sourceEventId !== null) {
+            if ($this->database()->getDriverName() !== 'pgsql' && $data->sourceEventId !== null) {
                 $existing = $this->findExisting($data);
                 if ($existing !== null) {
                     $this->assertSameLogicalEvent($existing, $data);
@@ -38,7 +40,8 @@ final class ImmutableAuditRecorder
                 return $this->database()->transaction(function () use ($data): ImmutableAuditEvent {
                     if ($this->database()->getDriverName() === 'pgsql') {
                         $this->database()->select('SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))', ['immutable_audit_writer_fence']);
-                        $this->database()->select("SELECT set_config('most.immutable_audit_writer_version', '2', true), set_config('most.immutable_audit_writer_token', ?, true)", [$this->writerToken()]);
+                        $credential = $this->readiness->assertReady($this->database(), $this->writerSecret());
+                        $this->activateWriterCredential($credential);
                         $chainScope = $data->chainScope ?? 'organization:'.$data->organizationId;
                         $this->database()->select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [$chainScope]);
                     }
@@ -245,14 +248,24 @@ final class ImmutableAuditRecorder
         return $this->connection ?? DB::connection();
     }
 
-    private function writerToken(): string
+    private function writerSecret(): string
     {
-        $token = $this->writerToken ?? (string) config('legal_archive.audit_writer_token', '');
-        if (strlen($token) < 32) {
-            throw new DomainException('immutable_audit_writer_token_not_configured');
+        $secret = $this->writerSecret ?? (string) config('legal_archive.audit_writer_secret', '');
+        if (strlen($secret) < 32) {
+            throw new DomainException('immutable_audit_writer_secret_not_configured');
         }
 
-        return $token;
+        return $secret;
+    }
+
+    private function activateWriterCredential(string $credential): void
+    {
+        $database = $this->database();
+        if (! $database instanceof Connection) {
+            throw new DomainException('immutable_audit_writer_connection_not_supported');
+        }
+        $statement = $database->getPdo()->prepare("SELECT set_config('most.immutable_audit_writer_version', '2', true), set_config('most.immutable_audit_writer_credential', ?, true)");
+        $statement->execute([$credential]);
     }
 
     private function assertSameLogicalEvent(ImmutableAuditEvent $existing, ImmutableAuditEventData $data): void
