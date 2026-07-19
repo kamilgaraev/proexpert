@@ -18,6 +18,11 @@ use PHPUnit\Framework\TestCase;
 
 final class PipelineBaseInputVersionTest extends TestCase
 {
+    public function test_room_area_extraction_contract_has_its_own_cache_generation(): void
+    {
+        self::assertSame(4, PipelineBaseInputVersion::SCHEMA_VERSION);
+    }
+
     public function test_schema_version_is_part_of_base_input_version(): void
     {
         $input = ['description' => 'Дом'];
