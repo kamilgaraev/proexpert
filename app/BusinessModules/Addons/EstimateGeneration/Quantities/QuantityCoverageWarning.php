@@ -32,6 +32,7 @@ final class QuantityCoverageWarning
         'total_internal_area_missing',
         'ventilation_duct_takeoff_missing',
         'wet_room_annotations_missing',
+        'wet_zone_finish_specification_missing',
         'window_schedule_missing',
     ];
 

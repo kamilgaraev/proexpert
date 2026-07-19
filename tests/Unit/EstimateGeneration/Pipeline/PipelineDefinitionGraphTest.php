@@ -20,13 +20,13 @@ final class PipelineDefinitionGraphTest extends TestCase
         self::assertSame(ProcessingStage::cases(), array_map(static fn ($definition) => $definition->stage, $graph->ordered()));
         self::assertSame([], $graph->get(ProcessingStage::UnderstandDocuments)->dependencies);
         self::assertSame([ProcessingStage::UnderstandDocuments], $graph->get(ProcessingStage::UnderstandObject)->dependencies);
-        self::assertSame(6, $graph->get(ProcessingStage::UnderstandObject)->schemaVersion);
+        self::assertSame(7, $graph->get(ProcessingStage::UnderstandObject)->schemaVersion);
         self::assertSame([ProcessingStage::UnderstandObject], $graph->get(ProcessingStage::ExtractQuantities)->dependencies);
-        self::assertSame(10, $graph->get(ProcessingStage::ExtractQuantities)->schemaVersion);
+        self::assertSame(11, $graph->get(ProcessingStage::ExtractQuantities)->schemaVersion);
         self::assertSame([ProcessingStage::UnderstandObject, ProcessingStage::ExtractQuantities], $graph->get(ProcessingStage::PlanWorkItems)->dependencies);
-        self::assertSame(54, $graph->get(ProcessingStage::PlanWorkItems)->schemaVersion);
+        self::assertSame(55, $graph->get(ProcessingStage::PlanWorkItems)->schemaVersion);
         self::assertSame([ProcessingStage::PlanWorkItems], $graph->get(ProcessingStage::MatchNormatives)->dependencies);
-        self::assertSame(21, $graph->get(ProcessingStage::MatchNormatives)->schemaVersion);
+        self::assertSame(22, $graph->get(ProcessingStage::MatchNormatives)->schemaVersion);
         self::assertSame([ProcessingStage::MatchNormatives], $graph->get(ProcessingStage::AssembleResources)->dependencies);
         self::assertSame(5, $graph->get(ProcessingStage::AssembleResources)->schemaVersion);
         self::assertSame([ProcessingStage::AssembleResources], $graph->get(ProcessingStage::ResolvePrices)->dependencies);
