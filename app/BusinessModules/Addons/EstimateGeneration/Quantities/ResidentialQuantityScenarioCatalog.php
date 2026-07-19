@@ -13,9 +13,9 @@ use Brick\Math\RoundingMode;
 
 final class ResidentialQuantityScenarioCatalog
 {
-    public const VERSION = '2.2.0';
+    public const VERSION = '2.3.0';
 
-    public const SCENARIO_ID = 'residential_preliminary_scenario:v5';
+    public const SCENARIO_ID = 'residential_preliminary_scenario:v6';
 
     private const UNITS = [
         'electrical.grounding' => 'm',
@@ -31,6 +31,7 @@ final class ResidentialQuantityScenarioCatalog
         'roof.flat_area' => 'm2',
         'roof.gutter' => 'm',
         'roof.rafters' => 'm2',
+        'rough.ceiling' => 'm2',
         'sanitary.points' => 'pcs',
         'sanitary.tile' => 'm2',
         'sanitary.waterproofing' => 'm2',
@@ -41,6 +42,7 @@ final class ResidentialQuantityScenarioCatalog
         'stairs.flights' => 'm2',
         'stairs.landings' => 'm2',
         'stairs.railings' => 'm',
+        'finish.ceiling' => 'm2',
         'ventilation.air_exchange' => 'm2',
     ];
 
@@ -53,6 +55,7 @@ final class ResidentialQuantityScenarioCatalog
         }
 
         $floorArea = $this->quantity($baseQuantities['floor_area'] ?? null);
+        $ceilingArea = $this->quantity($baseQuantities['ceiling_area'] ?? null);
         $firstFloorArea = $this->quantity($baseQuantities['first_floor_internal_area'] ?? null);
         $floors = $model->floors;
         $floorCount = count($floors);
@@ -142,6 +145,23 @@ final class ResidentialQuantityScenarioCatalog
             ] as $key) {
                 $omissions[] = $this->omission($key, 'total_internal_area_missing');
             }
+        }
+
+        if ($ceilingArea !== null && $ceilingArea->evidenceIds !== []) {
+            $quantities['rough.ceiling'] = $this->scaled(
+                'rough.ceiling',
+                'm2',
+                $ceilingArea,
+                '1.00',
+                ['residential_internal_ceiling_preparation_area'],
+            );
+            $quantities['finish.ceiling'] = $this->scaled(
+                'finish.ceiling',
+                'm2',
+                $ceilingArea,
+                '1.00',
+                ['residential_internal_ceiling_finish_area'],
+            );
         }
 
         $omissions[] = $this->omission('heating.radiators', 'radiator_schedule_missing');

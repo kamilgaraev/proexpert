@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final readonly class AbstractResourceSemanticPriceSelector
 {
-    /** @return array{material: string, polarity: ?string, diameter: ?int, family?: string}|null */
+    /** @return array{family: string, material: string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float}|null */
     public function queryHints(string $normName, string $groupName): ?array
     {
         $attributes = $this->targetAttributes($normName, $groupName);
@@ -19,9 +19,12 @@ final readonly class AbstractResourceSemanticPriceSelector
             'polarity' => $attributes['polarity'],
             'diameter' => $attributes['diameter'],
         ];
-
         if (in_array($attributes['family'], ['gutter_pipe', 'gutter_fitting'], true)) {
             $hints['family'] = $attributes['family'];
+        } elseif (in_array($attributes['family'], ['window_block', 'duct'], true)) {
+            $hints['family'] = $attributes['family'];
+            $hints['diameter_max'] = $attributes['diameter_max'];
+            $hints['thickness'] = $attributes['thickness'];
         }
 
         return $hints;
@@ -37,18 +40,18 @@ final readonly class AbstractResourceSemanticPriceSelector
         string $requiredUnit,
         int $regionalPriceVersionId,
         array $candidates,
+        array $baseDatasetIds = [],
     ): ?array {
         $target = $this->targetAttributes($normName, $groupName);
         if ($regionalPriceVersionId <= 0 || $requiredUnit === '' || ! $this->isStrongTarget($target)) {
             return null;
         }
 
-        $eligible = array_values(array_filter(
+        $compatible = array_values(array_filter(
             $candidates,
-            function (object $candidate) use ($target, $requiredUnit, $regionalPriceVersionId): bool {
+            function (object $candidate) use ($target, $requiredUnit): bool {
                 $price = $candidate->base_price ?? null;
                 if ((int) ($candidate->price_id ?? 0) <= 0
-                    || (int) ($candidate->regional_price_version_id ?? 0) !== $regionalPriceVersionId
                     || ! is_numeric($price)
                     || (float) $price <= 0
                     || ! hash_equals($requiredUnit, (string) ($candidate->price_unit ?? ''))) {
@@ -60,6 +63,26 @@ final readonly class AbstractResourceSemanticPriceSelector
                 return $this->hardAttributesMatch($target, $candidateAttributes);
             },
         ));
+        $regional = array_values(array_filter(
+            $compatible,
+            static fn (object $candidate): bool => (int) ($candidate->regional_price_version_id ?? 0) === $regionalPriceVersionId,
+        ));
+        $eligible = $regional;
+        $source = 'regional';
+        if ($eligible === []) {
+            $base = array_values(array_filter(
+                $compatible,
+                static fn (object $candidate): bool => in_array((int) ($candidate->dataset_version_id ?? 0), $baseDatasetIds, true)
+                    && ($candidate->regional_price_version_id ?? null) === null
+                    && in_array((string) ($candidate->price_dataset_source_type ?? ''), ['fsbc', 'fsnb_2022'], true),
+            ));
+            $fsbc = array_values(array_filter(
+                $base,
+                static fn (object $candidate): bool => ($candidate->price_dataset_source_type ?? null) === 'fsbc',
+            ));
+            $eligible = $fsbc !== [] ? $fsbc : $base;
+            $source = $fsbc !== [] ? 'fsbc' : 'fsnb';
+        }
         if ($eligible === []) {
             return null;
         }
@@ -74,17 +97,21 @@ final readonly class AbstractResourceSemanticPriceSelector
             return $byCode !== 0 ? $byCode : (int) $left->price_id <=> (int) $right->price_id;
         });
 
+        $policy = match (true) {
+            $source === 'regional' && in_array($target['family'], ['gutter_pipe', 'gutter_fitting'], true) => 'regional_semantic_metal_gutter_family_median:v1',
+            $source === 'regional' && $target['family'] === 'pipe' => 'regional_semantic_pipe_hard_attributes_median:v1',
+            default => $source.'_semantic_hard_attributes_median:v2',
+        };
+
         return [
             'row' => $eligible[intdiv(count($eligible) - 1, 2)],
             'candidates_count' => count($eligible),
-            'policy' => in_array($target['family'], ['gutter_pipe', 'gutter_fitting'], true)
-                ? 'regional_semantic_metal_gutter_family_median:v1'
-                : 'regional_semantic_pipe_hard_attributes_median:v1',
+            'policy' => $policy,
         ];
     }
 
     /**
-     * @return array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, purposes: list<string>}
+     * @return array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, purposes: list<string>}
      */
     private function targetAttributes(string $normName, string $groupName): array
     {
@@ -114,13 +141,15 @@ final readonly class AbstractResourceSemanticPriceSelector
     }
 
     /**
-     * @return array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, purposes: list<string>}
+     * @return array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, purposes: list<string>}
      */
     private function attributes(string $source): array
     {
         $text = $this->normalize($source);
         $isGutter = str_contains($text, 'водосточ');
         $family = match (true) {
+            str_contains($text, 'воздуховод') => 'duct',
+            preg_match('/окон\w*\s+блок|блок\w*\s+окон/u', $text) === 1 => 'window_block',
             $isGutter && preg_match('/^\s*труб[\p{L}]*/u', $text) === 1 => 'gutter_pipe',
             $isGutter && preg_match('/^\s*(?:колен|ворон|соединител|тройник|хомут|угол|заглуш|муфт|слив|кронштейн|держател|наконечник|паук|ограничител)/u', $text) === 1 => 'gutter_fitting',
             str_contains($text, 'труб') => 'pipe',
@@ -142,6 +171,14 @@ final readonly class AbstractResourceSemanticPriceSelector
             };
         }
         $diameter = $this->diameter($text);
+        $diameterMax = null;
+        if (preg_match('/диаметр\w*\s*(?:не\s+более|до)\s*(\d{1,4})/u', $text, $diameterMaxMatch) === 1) {
+            $diameterMax = (int) $diameterMaxMatch[1];
+        }
+        $thickness = null;
+        if (preg_match('/толщин\w*\s*[:=]?\s*(\d{1,2}(?:[.,]\d+)?)/u', $text, $thicknessMatch) === 1) {
+            $thickness = (float) str_replace(',', '.', $thicknessMatch[1]);
+        }
         $purposeText = str_replace('водогазопровод', 'вгп', $text);
         $purposeMarkers = [
             'sewerage' => '/(?:канализац|водоотвед)/u',
@@ -160,7 +197,15 @@ final readonly class AbstractResourceSemanticPriceSelector
             }
         }
 
-        return compact('family', 'material', 'polarity', 'diameter', 'purposes');
+        return [
+            'family' => $family,
+            'material' => $material,
+            'polarity' => $polarity,
+            'diameter' => $diameter,
+            'diameter_max' => $diameterMax,
+            'thickness' => $thickness,
+            'purposes' => $purposes,
+        ];
     }
 
     private function diameter(string $text): ?int
@@ -181,12 +226,23 @@ final readonly class AbstractResourceSemanticPriceSelector
         return null;
     }
 
-    /** @param array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, purposes: list<string>} $attributes */
+    /** @param array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, purposes: list<string>} $attributes */
     private function isStrongTarget(array $attributes): bool
     {
         if (in_array($attributes['family'], ['gutter_pipe', 'gutter_fitting'], true)) {
             return $attributes['material'] === 'metal'
                 && in_array('stormwater', $attributes['purposes'], true);
+        }
+
+        if ($attributes['family'] === 'window_block') {
+            return $attributes['material'] === 'pvc';
+        }
+
+        if ($attributes['family'] === 'duct') {
+            return $attributes['material'] === 'steel'
+                && $attributes['polarity'] === 'galvanized'
+                && $attributes['thickness'] !== null
+                && ($attributes['diameter_max'] !== null || $attributes['diameter'] !== null);
         }
 
         return $attributes['family'] === 'pipe'
@@ -196,8 +252,8 @@ final readonly class AbstractResourceSemanticPriceSelector
     }
 
     /**
-     * @param  array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, purposes: list<string>}  $target
-     * @param  array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, purposes: list<string>}  $candidate
+     * @param  array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, purposes: list<string>}  $target
+     * @param  array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, purposes: list<string>}  $candidate
      */
     private function hardAttributesMatch(array $target, array $candidate): bool
     {
@@ -206,6 +262,24 @@ final readonly class AbstractResourceSemanticPriceSelector
                 && in_array($candidate['material'], ['metal', 'steel'], true)
                 && in_array('stormwater', $candidate['purposes'], true)
                 && ($target['diameter'] === null || $candidate['diameter'] === $target['diameter']);
+        }
+
+        if ($target['family'] === 'window_block') {
+            return $candidate['family'] === 'window_block'
+                && $candidate['material'] === 'pvc';
+        }
+
+        if ($target['family'] === 'duct') {
+            $candidateLimit = $candidate['diameter_max'] ?? $candidate['diameter'];
+            $targetLimit = $target['diameter_max'] ?? $target['diameter'];
+
+            return $candidate['family'] === 'duct'
+                && $candidate['material'] === 'steel'
+                && $candidate['polarity'] === 'galvanized'
+                && $candidate['thickness'] === $target['thickness']
+                && $candidateLimit !== null
+                && $targetLimit !== null
+                && $candidateLimit <= $targetLimit;
         }
 
         if ($candidate['family'] !== $target['family']

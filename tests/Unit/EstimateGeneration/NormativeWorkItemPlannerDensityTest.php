@@ -771,6 +771,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         foreach ($this->knownPackageScopes() as $packageKey => $scopeType) {
             $localEstimate = $this->localEstimate($packageKey, $packageKey, $scopeType, 4);
             $items = $planner->build($localEstimate, $localEstimate['sections'][0], [
+                'object' => ['object_type' => 'mixed_warehouse_office'],
                 'document_context' => [
                     'quantity_takeoffs' => [
                         $this->confirmedTakeoffForPackage($packageKey),
@@ -812,6 +813,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         foreach ($this->knownPackageScopes() as $packageKey => $scopeType) {
             $localEstimate = $this->localEstimate($packageKey, $packageKey, $scopeType, 4);
             $items = $this->pricedItems($planner->build($localEstimate, $localEstimate['sections'][0], [
+                'object' => ['object_type' => 'mixed_warehouse_office'],
                 'document_context' => [
                     'quantity_takeoffs' => [
                         $this->confirmedTakeoffForPackage($packageKey),
@@ -883,6 +885,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
     public function test_mixed_office_warehouse_uses_document_scope_and_flat_roof_quantities(): void
     {
         $analysis = [
+            'object' => ['object_type' => 'mixed_warehouse_office'],
             'document_context' => [
                 'facts' => [
                     [
@@ -1336,13 +1339,15 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
     public function test_floor_plan_rough_and_finish_packages_do_not_duplicate_finish_intents(): void
     {
         $analysis = [
+            'object' => ['object_type' => 'house'],
             'document_context' => [
                 'quantity_takeoffs' => [
                     $this->confirmedTakeoff('rough.floor', 87.14, 'м2'),
                     $this->confirmedTakeoff('rough.walls', 235.28, 'м2'),
+                    $this->confirmedTakeoff('rough.ceiling', 87.14, 'м2'),
                     $this->confirmedTakeoff('finish.floor', 87.14, 'м2'),
                     $this->confirmedTakeoff('finish.paint', 235.28, 'м2'),
-                    $this->confirmedTakeoff('office.ceiling', 87.14, 'м2'),
+                    $this->confirmedTakeoff('finish.ceiling', 87.14, 'м2'),
                 ],
             ],
         ];
@@ -1363,8 +1368,8 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             static fn (array $item): bool => ($item['metadata']['quantity_source'] ?? null) === 'planner_fallback'
         ));
 
-        self::assertSame(['rough.floor', 'rough.walls'], $roughFormulas);
-        self::assertSame(['finish.floor', 'finish.paint', 'office.ceiling'], $sourceBackedFinishFormulas);
+        self::assertSame(['rough.floor', 'rough.walls', 'rough.ceiling'], $roughFormulas);
+        self::assertSame(['finish.floor', 'finish.paint', 'finish.ceiling'], $sourceBackedFinishFormulas);
         self::assertContains('finish.baseboard', $finishFormulas);
         self::assertSame([], array_values(array_intersect($roughFormulas, $finishFormulas)));
 

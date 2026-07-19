@@ -88,6 +88,64 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
+    public function semantic_project_resource_selector_uses_approved_base_pvc_window_outside_group_children(): void
+    {
+        $selection = (new AbstractResourceSemanticPriceSelector)->select(
+            'Установка оконных блоков из ПВХ профилей двухстворчатых площадью проёма до 2 м2',
+            'Блоки оконные пластиковые',
+            'м2',
+            11,
+            [
+                (object) [
+                    'price_id' => 941, 'price_resource_code' => '09.4.03.01-1000',
+                    'price_resource_name' => 'Блок оконный дерево-алюминиевый площадью до 1,5 м2',
+                    'price_unit' => 'м2', 'base_price' => '7692.10', 'regional_price_version_id' => null,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+                (object) [
+                    'price_id' => 942, 'price_resource_code' => '09.4.02.05-0042',
+                    'price_resource_name' => 'Блок оконный из ПВХ профилей двухстворчатый',
+                    'price_unit' => 'м2', 'base_price' => '11200.50', 'regional_price_version_id' => null,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+            ],
+            [42],
+        );
+
+        self::assertSame(942, $selection['row']->price_id ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v2', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function semantic_project_resource_selector_requires_exact_galvanized_duct_attributes(): void
+    {
+        $selection = (new AbstractResourceSemanticPriceSelector)->select(
+            'Прокладка воздуховодов из листовой оцинкованной стали толщиной 0,5 мм, диаметром до 200 мм',
+            'Воздуховоды металлические',
+            'м2',
+            11,
+            [
+                (object) [
+                    'price_id' => 951, 'price_resource_code' => '19.1.01.02-0013',
+                    'price_resource_name' => 'Воздуховод из листовой стали, толщина 1,0 мм, диаметр до 250 мм',
+                    'price_unit' => 'м2', 'base_price' => '2040.98', 'regional_price_version_id' => null,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+                (object) [
+                    'price_id' => 952, 'price_resource_code' => '19.1.01.01-0052',
+                    'price_resource_name' => 'Воздуховод из листовой оцинкованной стали, толщина 0,5 мм, диаметр до 200 мм',
+                    'price_unit' => 'м2', 'base_price' => '1380.25', 'regional_price_version_id' => null,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+            ],
+            [42],
+        );
+
+        self::assertSame(952, $selection['row']->price_id ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v2', $selection['policy'] ?? null);
+    }
+
+    #[Test]
     public function semantic_project_resource_query_hints_bound_the_catalog_pool_by_hard_attributes(): void
     {
         self::assertSame([
@@ -1281,6 +1339,28 @@ final class NormativeContextPinResolverTest extends TestCase
 
         self::assertSame('fgis_labor_base', $mapped->resource['price_source']);
         self::assertSame('2026.2', $mapped->resource['price_source_version']);
+    }
+
+    #[Test]
+    public function database_resource_row_accepts_semantically_selected_base_project_resource(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101, 'norm_resource_id' => 7001,
+            'construction_resource_id' => null, 'price_construction_resource_id' => 812,
+            'price_id' => 9001, 'resource_type' => 'material',
+            'resource_code' => '09.4.03.01', 'price_resource_code' => '09.4.02.05-0042',
+            'resource_name' => 'Блоки оконные пластиковые',
+            'price_resource_name' => 'Блок оконный из ПВХ профилей двухстворчатый',
+            'unit' => 'м2', 'price_unit' => 'м2', 'quantity' => '100.000000', 'unit_price' => '11200.500000',
+            'regional_price_version_id' => null, 'regional_price_version_key' => null,
+            'price_dataset_source_type' => 'fsnb_2022', 'price_dataset_version' => '2026-05-07',
+            'raw_source_tag' => 'AbstractResource', 'project_resource_candidates_count' => 2,
+            'project_resource_price_policy' => 'fsnb_semantic_hard_attributes_median:v2',
+        ]);
+
+        self::assertSame('fsnb_base', $mapped->resource['price_source']);
+        self::assertSame('09.4.02.05-0042', $mapped->resource['project_resource_selection']['selected_resource_code'] ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v2', $mapped->resource['project_resource_selection']['policy'] ?? null);
     }
 
     private function semanticPrice(

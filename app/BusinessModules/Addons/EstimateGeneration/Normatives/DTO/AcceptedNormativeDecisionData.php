@@ -169,8 +169,11 @@ final readonly class AcceptedNormativeDecisionData
         $isSemanticSelection = in_array($policy, [
             'regional_semantic_pipe_hard_attributes_median:v1',
             'regional_semantic_metal_gutter_family_median:v1',
+            'regional_semantic_hard_attributes_median:v2',
+            'fsbc_semantic_hard_attributes_median:v2',
+            'fsnb_semantic_hard_attributes_median:v2',
         ], true)
-            && ($selection['price_source'] ?? null) === 'regional_catalog'
+            && self::policyMatchesPriceSource($policy, $selection['price_source'] ?? null)
             && is_string($selectedResourceCode)
             && trim($selectedResourceCode) !== '';
         $isExactGroupSelection = is_string($groupCode)

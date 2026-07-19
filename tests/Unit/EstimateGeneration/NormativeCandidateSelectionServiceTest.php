@@ -5,12 +5,18 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionHardGate;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSearchProfileCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSemanticCompatibilityService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use Illuminate\Validation\ValidationException;
 use PHPUnit\Framework\TestCase;
@@ -60,7 +66,81 @@ final class NormativeCandidateSelectionServiceTest extends TestCase
         ]));
     }
 
-    private function service(): TestableNormativeCandidateSelectionService
+    public function test_rejects_candidate_blocked_by_selection_hard_gate(): void
+    {
+        $service = $this->service($this->selectionHardGate());
+
+        $this->expectException(ValidationException::class);
+
+        $service->assertSafeMatch(['name' => 'Монтаж радиаторов отопления', 'unit' => 'шт'], [
+            'scope_type' => 'engineering',
+            'section_title' => 'Отопление',
+            'object_type' => 'residential',
+        ], [
+            'selected' => [
+                'name' => 'Монтаж воздухораспределителей офиса',
+                'unit' => 'шт',
+                'object_type' => 'office',
+                'section' => ['code' => '20'],
+            ],
+        ]);
+    }
+
+    public function test_unsafe_catalog_candidate_is_rejected_before_apply_price_and_learning(): void
+    {
+        $matcher = $this->createMock(EstimateNormativeMatcher::class);
+        $matcher->expects(self::once())
+            ->method('matchSelectedNorm')
+            ->willReturn([
+                'selected' => [
+                    'name' => 'Монтаж воздухораспределителей офиса',
+                    'unit' => 'шт',
+                    'object_type' => 'office',
+                    'section' => ['code' => '20'],
+                ],
+            ]);
+        $resourceAssembly = $this->createMock(ResourceAssemblyService::class);
+        $resourceAssembly->expects(self::never())->method('applySelectedNormativeMatch');
+        $pricing = $this->createMock(EstimatePricingService::class);
+        $pricing->expects(self::never())->method('price');
+        $service = new TestableNormativeCandidateSelectionService(
+            $matcher,
+            $resourceAssembly,
+            $pricing,
+            $this->createMock(EstimateValidationService::class),
+            $this->createMock(EstimateGenerationPackagePersistenceService::class),
+            (new \ReflectionClass(EstimateGenerationLearningRecorder::class))->newInstanceWithoutConstructor(),
+            (new \ReflectionClass(AdvanceEstimateGeneration::class))->newInstanceWithoutConstructor(),
+            $this->selectionHardGate(),
+        );
+        $session = new EstimateGenerationSession;
+        $session->forceFill([
+            'input_payload' => [],
+            'analysis_payload' => [],
+            'draft_payload' => [
+                'object_profile' => ['object_type' => 'residential'],
+                'local_estimates' => [[
+                    'scope_type' => 'engineering',
+                    'title' => 'Инженерные системы',
+                    'sections' => [[
+                        'title' => 'Отопление',
+                        'work_items' => [[
+                            'key' => 'heating.radiators',
+                            'name' => 'Монтаж радиаторов отопления',
+                            'unit' => 'шт',
+                            'normative_candidates' => [],
+                        ]],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $this->expectException(ValidationException::class);
+
+        $service->selectWithoutTransaction($session, 'heating.radiators', 501, true);
+    }
+
+    private function service(?NormativeCandidateSelectionHardGate $selectionHardGate = null): TestableNormativeCandidateSelectionService
     {
         return new TestableNormativeCandidateSelectionService(
             $this->createMock(EstimateNormativeMatcher::class),
@@ -70,6 +150,16 @@ final class NormativeCandidateSelectionServiceTest extends TestCase
             $this->createMock(EstimateGenerationPackagePersistenceService::class),
             (new \ReflectionClass(EstimateGenerationLearningRecorder::class))->newInstanceWithoutConstructor(),
             (new \ReflectionClass(AdvanceEstimateGeneration::class))->newInstanceWithoutConstructor(),
+            $selectionHardGate ?? (new \ReflectionClass(NormativeCandidateSelectionHardGate::class))->newInstanceWithoutConstructor(),
+        );
+    }
+
+    private function selectionHardGate(): NormativeCandidateSelectionHardGate
+    {
+        return new NormativeCandidateSelectionHardGate(
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
+            new NormativeSearchProfileCatalog,
+            new NormativeSemanticCompatibilityService,
         );
     }
 }
@@ -101,6 +191,26 @@ final class TestableNormativeCandidateSelectionService extends NormativeCandidat
         $method->setAccessible(true);
 
         return (bool) $method->invoke($this, $draft);
+    }
+
+    /**
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $context
+     * @param  array<string, mixed>  $match
+     */
+    public function assertSafeMatch(array $workItem, array $context, array $match): void
+    {
+        $this->assertMatchPassesHardGate($workItem, $context, $match);
+    }
+
+    /** @return array<string, mixed> */
+    public function selectWithoutTransaction(
+        EstimateGenerationSession $session,
+        string $workItemKey,
+        int $normId,
+        bool $allowCatalogSelection,
+    ): array {
+        return $this->selectLocked($session, $workItemKey, $normId, $allowCatalogSelection);
     }
 
     protected function message(string $key): string

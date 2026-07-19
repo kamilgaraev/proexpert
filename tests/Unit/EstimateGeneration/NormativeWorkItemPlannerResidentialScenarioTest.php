@@ -160,6 +160,55 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
     }
 
     #[Test]
+    public function residential_electrical_package_exposes_planned_lighting_lines(): void
+    {
+        $analysis = [
+            'object' => ['object_type' => 'house'],
+            'document_context' => ['canonical_building_quantities' => [
+                $this->currentScenarioQuantity('lighting.lines', 'm', '154.240000')->toArray(),
+            ]],
+        ];
+        $estimate = $this->estimate('electrical', 'electrical');
+
+        $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+
+        self::assertContains('lighting.lines', array_column($items, 'quantity_formula'));
+    }
+
+    #[Test]
+    public function residential_rough_finishing_exposes_ceiling_preparation(): void
+    {
+        $analysis = [
+            'object' => ['object_type' => 'house'],
+            'document_context' => ['canonical_building_quantities' => [
+                $this->currentScenarioQuantity('rough.ceiling', 'm2', '192.800000')->toArray(),
+            ]],
+        ];
+        $estimate = $this->estimate('rough_finishing', 'finishing');
+
+        $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+
+        self::assertContains('rough.ceiling', array_column($items, 'quantity_formula'));
+    }
+
+    #[Test]
+    public function residential_finish_finishing_exposes_ceiling_painting(): void
+    {
+        $analysis = [
+            'object' => ['object_type' => 'house'],
+            'document_context' => ['canonical_building_quantities' => [
+                $this->currentScenarioQuantity('finish.ceiling', 'm2', '192.800000')->toArray(),
+            ]],
+        ];
+        $estimate = $this->estimate('finish_finishing', 'finishing');
+
+        $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+
+        self::assertContains('finish.ceiling', array_column($items, 'quantity_formula'));
+        self::assertNotContains('office.ceiling', array_column($items, 'quantity_formula'));
+    }
+
+    #[Test]
     public function trusted_document_material_overrides_preliminary_residential_material_scenarios(): void
     {
         foreach ([

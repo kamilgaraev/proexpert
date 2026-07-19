@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearn
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\Integrations\EstimateGeneration\EstimateGenerationLearningBootstrapService;
 use App\Models\Estimate;
@@ -21,6 +22,71 @@ use Tests\TestCase;
 
 class EstimateNormativeMatcherTest extends TestCase
 {
+    public function test_matcher_does_not_price_abstract_resource_from_exact_group_price(): void
+    {
+        $versionId = $this->createVersion('fsnb_2022', '2026-07-19');
+        $priceVersionId = $this->createVersion('fsbc', '2026-07-19');
+        $collectionId = $this->createCollection($versionId);
+        $sectionId = $this->createSection($collectionId, 'Оконные блоки', '10');
+        $normId = $this->createNorm(
+            $collectionId,
+            $sectionId,
+            '10-01-034-05',
+            'Установка оконных блоков из ПВХ профилей двухстворчатых площадью до 2 м2',
+            '100 м2',
+            '10-01-034',
+        );
+        $this->createNormResource(
+            $normId,
+            '09.4.03.01',
+            'Блоки оконные пластиковые',
+            'м2',
+            100.0,
+            'material',
+            ['source_tag' => 'AbstractResource'],
+        );
+        $this->createResourcePrice(
+            $priceVersionId,
+            '09.4.03.01',
+            'Блоки оконные пластиковые',
+            'м2',
+            7500.0,
+            'material',
+        );
+
+        $match = app(EstimateNormativeMatcher::class)->searchWorkItemCandidates([
+            'name' => 'Монтаж оконных блоков',
+            'description' => 'Установка оконных блоков из ПВХ профилей',
+            'normative_rate_code' => '10-01-034-05',
+            'work_category' => 'openings',
+            'unit' => 'м2',
+            'quantity' => 23.136,
+        ], [
+            'scope_type' => 'openings',
+            'section_title' => 'Окна и двери',
+            'local_estimate_title' => 'Оконные блоки',
+        ]);
+
+        self::assertNotNull($match);
+        $candidate = collect($match['candidates'])->firstWhere('code', '10-01-034-05');
+        self::assertIsArray($candidate);
+        $resource = $candidate['resources']['materials'][0];
+        self::assertTrue($resource['is_abstract_resource']);
+        self::assertTrue($resource['requires_project_resource_selection']);
+        self::assertNull($resource['price_source']);
+        self::assertSame(0.0, $resource['unit_price']);
+
+        $preview = (new NormativeCandidatePresenter)->present($candidate, [
+            'unit' => 'м2',
+            'quantity' => 23.136,
+        ]);
+        self::assertFalse($preview['preview_calculable']);
+        self::assertSame(0, $preview['priced_resources_count']);
+        self::assertSame(1, $preview['unpriced_resources_count']);
+        self::assertNull($preview['unit_price_preview']);
+        self::assertSame([], $preview['resource_prices']);
+    }
+
     public function test_latest_fsnb_version_skips_newer_empty_import(): void
     {
         $populatedVersionId = $this->createVersion('fsnb_2022', '2026-05-06');
@@ -563,8 +629,16 @@ class EstimateNormativeMatcherTest extends TestCase
         ]);
     }
 
-    private function createNormResource(int $normId, string $code, string $name, string $unit, float $quantity, string $type): void
-    {
+    /** @param array<string, mixed> $rawPayload */
+    private function createNormResource(
+        int $normId,
+        string $code,
+        string $name,
+        string $unit,
+        float $quantity,
+        string $type,
+        array $rawPayload = [],
+    ): void {
         DB::table('estimate_norm_resources')->insert([
             'estimate_norm_id' => $normId,
             'construction_resource_id' => null,
@@ -573,6 +647,9 @@ class EstimateNormativeMatcherTest extends TestCase
             'unit' => $unit,
             'quantity' => $quantity,
             'resource_type' => $type,
+            'raw_payload' => $rawPayload !== []
+                ? json_encode($rawPayload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)
+                : null,
             'created_at' => now(),
             'updated_at' => now(),
         ]);

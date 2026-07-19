@@ -503,22 +503,54 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->all();
         $semanticProjectPrices = $semanticRequiredUnits === [] || $semanticSearchHints === [] ? collect() : $this->database
             ->table('estimate_resource_prices as semantic_project_prices')
-            ->join(
+            ->leftJoin(
                 'estimate_regional_price_versions as semantic_project_versions',
                 'semantic_project_versions.id',
                 '=',
                 'semantic_project_prices.regional_price_version_id',
             )
+            ->leftJoin(
+                'estimate_dataset_versions as semantic_project_datasets',
+                'semantic_project_datasets.id',
+                '=',
+                'semantic_project_prices.dataset_version_id',
+            )
             ->whereIn('semantic_project_prices.unit', $semanticRequiredUnits)
-            ->where('semantic_project_prices.regional_price_version_id', $requested->regionalPriceVersionId)
-            ->where('semantic_project_prices.region_id', $requested->regionId)
-            ->where('semantic_project_prices.price_zone_id', $requested->priceZoneId)
-            ->where('semantic_project_prices.period_id', $requested->periodId)
+            ->where(function ($scope) use ($requested, $basePriceDatasetIds): void {
+                $scope->where(function ($regional) use ($requested): void {
+                    $regional->where('semantic_project_prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                        ->where('semantic_project_prices.region_id', $requested->regionId)
+                        ->where('semantic_project_prices.price_zone_id', $requested->priceZoneId)
+                        ->where('semantic_project_prices.period_id', $requested->periodId);
+                })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                    $base->whereNull('semantic_project_prices.regional_price_version_id')
+                        ->whereIn('semantic_project_prices.dataset_version_id', $basePriceDatasetIds)
+                        ->whereIn('semantic_project_datasets.source_type', ['fsbc', 'fsnb_2022']);
+                });
+            })
             ->where('semantic_project_prices.base_price', '>', 0)
             ->where(function ($targets) use ($semanticSearchHints): void {
                 foreach ($semanticSearchHints as $index => $hint) {
                     $method = $index === 0 ? 'where' : 'orWhere';
                     $targets->{$method}(function ($target) use ($hint): void {
+                        if (($hint['family'] ?? null) === 'window_block') {
+                            $target->where('semantic_project_prices.resource_name', 'ilike', '%окон%')
+                                ->where('semantic_project_prices.resource_name', 'ilike', '%блок%')
+                                ->where(function ($material): void {
+                                    $material->where('semantic_project_prices.resource_name', 'ilike', '%пвх%')
+                                        ->orWhere('semantic_project_prices.resource_name', 'ilike', '%поливинилхлорид%')
+                                        ->orWhere('semantic_project_prices.resource_name', 'ilike', '%пластиков%');
+                                });
+
+                            return;
+                        }
+                        if (($hint['family'] ?? null) === 'duct') {
+                            $target->where('semantic_project_prices.resource_name', 'ilike', '%воздуховод%')
+                                ->where('semantic_project_prices.resource_name', 'ilike', '%стал%')
+                                ->where('semantic_project_prices.resource_name', 'ilike', '%оцинк%');
+
+                            return;
+                        }
                         if (in_array(($hint['family'] ?? 'pipe'), ['gutter_pipe', 'gutter_fitting'], true)) {
                             $target->where('semantic_project_prices.resource_name', 'ilike', '%водосточ%')
                                 ->where(function ($metal): void {
@@ -570,8 +602,11 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'semantic_project_prices.unit as price_unit',
                 'semantic_project_prices.base_price as unit_price',
                 'semantic_project_prices.base_price',
+                'semantic_project_prices.dataset_version_id',
                 'semantic_project_prices.regional_price_version_id',
                 'semantic_project_versions.version_key as regional_price_version_key',
+                'semantic_project_datasets.source_type as price_dataset_source_type',
+                'semantic_project_datasets.version_key as price_dataset_version',
             ]);
         if ($semanticProjectPrices->count() <= 5_000) {
             foreach ($unresolvedAbstractDefinitions as $definition) {
@@ -585,6 +620,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     (string) $definition->unit,
                     $requested->regionalPriceVersionId,
                     $semanticProjectPrices->all(),
+                    $basePriceDatasetIds,
                 );
                 if ($selection === null) {
                     continue;
