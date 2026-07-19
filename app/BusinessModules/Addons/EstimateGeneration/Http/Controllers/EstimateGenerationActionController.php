@@ -106,9 +106,11 @@ final class EstimateGenerationActionController extends Controller
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
+            report($e);
             Log::error('[EstimateGeneration] Generate failed', [
                 'failure_code' => 'generation_request_failed',
                 'session_id' => $session->id,
+                'exception_class' => $e::class,
             ]);
 
             return AdminResponse::error(trans_message('estimate_generation.generation_error'), 500);
