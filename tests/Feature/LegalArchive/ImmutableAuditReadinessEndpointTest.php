@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\LegalArchive;
 
+use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditPhaseBInvariantService;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditWriterCredential;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\Schema\Blueprint;
@@ -28,6 +29,13 @@ final class ImmutableAuditReadinessEndpointTest extends TestCase
         parent::setUp();
         config()->set('app.key', 'base64:'.base64_encode(str_repeat('k', 32)));
         config()->set('legal_archive.audit_writer_secret', self::SECRET);
+        $this->app->instance(ImmutableAuditPhaseBInvariantService::class, new ImmutableAuditPhaseBInvariantService(static fn (): array => [
+            'sequence_exists' => true,
+            'allocator_valid' => true,
+            'guard_trigger_valid' => true,
+            'aggregate_index_valid' => true,
+            'legacy_index_valid' => true,
+        ]));
         Schema::create('immutable_audit_rollout', function (Blueprint $table): void {
             $table->boolean('singleton')->primary();
             $table->string('phase');

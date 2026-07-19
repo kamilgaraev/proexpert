@@ -16,6 +16,7 @@ final class ImmutableAuditRolloutService
 
     public function __construct(
         private readonly ImmutableAuditWriterCredential $credential = new ImmutableAuditWriterCredential,
+        private readonly ImmutableAuditPhaseBInvariantService $invariants = new ImmutableAuditPhaseBInvariantService,
     ) {}
 
     public function installCompatibilityPhase(ConnectionInterface $connection, int $maximumPhaseAHours, string $writerSecret): void
@@ -116,7 +117,12 @@ SQL);
         $ttl = max(1, min($drainTtlMinutes, 60));
         $this->assertCutoverMarker($this->lockedRolloutMarker($connection, $ttl, false), $credentialHash);
 
-        $this->preparePhaseBIndexes($connection);
+        $connection->select('SELECT pg_advisory_lock(hashtextextended(?, 0))', ['immutable_audit_phase_b_index_prep']);
+        try {
+            $this->preparePhaseBIndexes($connection);
+        } finally {
+            $connection->select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', ['immutable_audit_phase_b_index_prep']);
+        }
         $connection->select('SELECT pg_advisory_lock(hashtextextended(?, 0))', ['immutable_audit_writer_fence']);
         try {
             $connection->transaction(function () use ($connection, $credentialHash, $ttl): void {
@@ -182,11 +188,11 @@ SQL, [$ttlMinutes]);
     /** @param list<string> $columns */
     private function ensurePhaseBIndex(ConnectionInterface $connection, string $name, array $columns, string $predicate): void
     {
-        $index = $this->phaseBIndex($connection, $name);
-        if (! $this->phaseBIndexIsValid($index, $name, $columns, $predicate) && $index !== null) {
+        $valid = $this->invariants->indexIsValid($connection, $name, $columns, $predicate);
+        if (! $valid && $this->invariants->indexExists($connection, $name)) {
             $connection->statement("DROP INDEX CONCURRENTLY IF EXISTS {$name}");
         }
-        if (! $this->phaseBIndexIsValid($index, $name, $columns, $predicate)) {
+        if (! $valid) {
             $columnSql = implode(', ', $columns);
             $connection->statement("CREATE UNIQUE INDEX CONCURRENTLY {$name} ON immutable_audit_events ({$columnSql}) WHERE {$predicate}");
         }
@@ -196,58 +202,9 @@ SQL, [$ttlMinutes]);
     /** @param list<string> $columns */
     private function verifyPhaseBIndex(ConnectionInterface $connection, string $name, array $columns, string $predicate): void
     {
-        if (! $this->phaseBIndexIsValid($this->phaseBIndex($connection, $name), $name, $columns, $predicate)) {
+        if (! $this->invariants->indexIsValid($connection, $name, $columns, $predicate)) {
             throw new RuntimeException('immutable_audit_phase_b_index_not_ready:'.$name);
         }
-    }
-
-    private function phaseBIndex(ConnectionInterface $connection, string $name): ?object
-    {
-        return $connection->selectOne(<<<'SQL'
-SELECT i.indisvalid, i.indisready, i.indisunique,
-       ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
-             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum ORDER BY k.ord) AS columns,
-       pg_get_expr(i.indpred, i.indrelid) AS predicate,
-       pg_get_indexdef(i.indexrelid) AS definition
-FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
-WHERE c.relname = ? AND c.relnamespace = current_schema()::regnamespace
-SQL, [$name]);
-    }
-
-    /** @param list<string> $columns */
-    private function phaseBIndexIsValid(?object $index, string $name, array $columns, string $predicate): bool
-    {
-        return $index !== null
-            && $this->postgresBoolean($index->indisvalid)
-            && $this->postgresBoolean($index->indisready)
-            && $this->postgresBoolean($index->indisunique)
-            && $this->postgresArray($index->columns) === $columns
-            && $this->normalizeSql((string) $index->predicate) === $this->normalizeSql($predicate)
-            && $this->normalizeIndexDefinition((string) $index->definition) === $this->expectedIndexDefinition($name, $columns, $predicate);
-    }
-
-    /** @return list<string> */
-    private function postgresArray(mixed $value): array
-    {
-        return is_string($value) ? str_getcsv(trim($value, '{}')) : [];
-    }
-
-    private function normalizeSql(string $sql): string
-    {
-        return strtolower((string) preg_replace('/[()\s"]+/', '', $sql));
-    }
-
-    private function normalizeIndexDefinition(string $definition): string
-    {
-        $definition = (string) preg_replace('/\s+ON\s+(?:(?:"[^"]+"|[a-z_][a-z0-9_$]*)\.)?/i', ' ON ', $definition, 1);
-
-        return $this->normalizeSql($definition);
-    }
-
-    /** @param list<string> $columns */
-    private function expectedIndexDefinition(string $name, array $columns, string $predicate): string
-    {
-        return $this->normalizeSql("CREATE UNIQUE INDEX {$name} ON immutable_audit_events USING btree (".implode(', ', $columns).") WHERE {$predicate}");
     }
 
     private function postgresBoolean(mixed $value): bool

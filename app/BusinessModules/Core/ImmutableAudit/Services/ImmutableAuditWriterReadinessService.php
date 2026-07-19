@@ -11,6 +11,7 @@ final class ImmutableAuditWriterReadinessService
 {
     public function __construct(
         private readonly ImmutableAuditWriterCredential $credential = new ImmutableAuditWriterCredential,
+        private readonly ImmutableAuditPhaseBInvariantService $invariants = new ImmutableAuditPhaseBInvariantService,
     ) {}
 
     /** @return array{ready:bool,phase:?string,reason:?string} */
@@ -31,6 +32,10 @@ final class ImmutableAuditWriterReadinessService
         }
         if (! isset($row->writer_credential_hash) || ! hash_equals((string) $row->writer_credential_hash, $fingerprint)) {
             return ['ready' => false, 'phase' => $phase, 'reason' => 'writer_credential_mismatch'];
+        }
+        $invariantFailure = $this->invariants->failureReason($connection);
+        if ($invariantFailure !== null) {
+            return ['ready' => false, 'phase' => $phase, 'reason' => $invariantFailure];
         }
 
         return ['ready' => true, 'phase' => $phase, 'reason' => null];

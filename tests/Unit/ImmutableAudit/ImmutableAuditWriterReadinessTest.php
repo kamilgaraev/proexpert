@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\ImmutableAudit;
 
+use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditPhaseBInvariantService;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditWriterCredential;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditWriterReadinessService;
 use DomainException;
@@ -57,7 +58,7 @@ final class ImmutableAuditWriterReadinessTest extends TestCase
     {
         $secret = 'v2-test-secret-4f6b9c20-8d31-47ae-b571-53d8412a';
         $credential = new ImmutableAuditWriterCredential;
-        $readiness = new ImmutableAuditWriterReadinessService($credential);
+        $readiness = new ImmutableAuditWriterReadinessService($credential, $this->readyInvariants());
         $this->connection->table('immutable_audit_rollout')->insert([
             'singleton' => true,
             'phase' => 'phase_a',
@@ -75,7 +76,7 @@ final class ImmutableAuditWriterReadinessTest extends TestCase
     {
         $secret = 'v2-test-secret-4f6b9c20-8d31-47ae-b571-53d8412a';
         $credential = new ImmutableAuditWriterCredential;
-        $readiness = new ImmutableAuditWriterReadinessService($credential);
+        $readiness = new ImmutableAuditWriterReadinessService($credential, $this->readyInvariants());
         $this->connection->table('immutable_audit_rollout')->insert([
             'singleton' => true,
             'phase' => 'phase_b',
@@ -89,5 +90,53 @@ final class ImmutableAuditWriterReadinessTest extends TestCase
             $this->connection,
             'other-test-secret-3104e955-c814-4e63-9ea8-5d303efe',
         )['reason']);
+    }
+
+    public function test_phase_b_schema_drift_fails_readiness_without_cache(): void
+    {
+        $secret = 'v2-test-secret-4f6b9c20-8d31-47ae-b571-53d8412a';
+        $credential = new ImmutableAuditWriterCredential;
+        $snapshots = [
+            [
+                'sequence_exists' => true,
+                'allocator_valid' => true,
+                'guard_trigger_valid' => true,
+                'aggregate_index_valid' => true,
+                'legacy_index_valid' => true,
+            ],
+            [
+                'sequence_exists' => true,
+                'allocator_valid' => true,
+                'guard_trigger_valid' => false,
+                'aggregate_index_valid' => true,
+                'legacy_index_valid' => true,
+            ],
+        ];
+        $readiness = new ImmutableAuditWriterReadinessService(
+            $credential,
+            new ImmutableAuditPhaseBInvariantService(static function () use (&$snapshots): array {
+                return array_shift($snapshots);
+            }),
+        );
+        $this->connection->table('immutable_audit_rollout')->insert([
+            'singleton' => true,
+            'phase' => 'phase_b',
+            'writer_version' => 2,
+            'writer_credential_hash' => $credential->fingerprint($secret),
+        ]);
+
+        self::assertTrue($readiness->status($this->connection, $secret)['ready']);
+        self::assertSame('immutable_audit_writer_guard_invalid', $readiness->status($this->connection, $secret)['reason']);
+    }
+
+    private function readyInvariants(): ImmutableAuditPhaseBInvariantService
+    {
+        return new ImmutableAuditPhaseBInvariantService(static fn (): array => [
+            'sequence_exists' => true,
+            'allocator_valid' => true,
+            'guard_trigger_valid' => true,
+            'aggregate_index_valid' => true,
+            'legacy_index_valid' => true,
+        ]);
     }
 }

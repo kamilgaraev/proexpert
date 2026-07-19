@@ -15,7 +15,21 @@ final class ContractMutationAstScanner
 {
     private const MUTATIONS = ['save', 'saveQuietly', 'update', 'updateQuietly', 'delete', 'forceDelete', 'insert', 'upsert', 'increment', 'decrement', 'touch', 'restore', 'create'];
 
-    private const RAW_SQL_MUTATIONS = ['statement', 'unprepared', 'insert', 'update', 'delete', 'affectingStatement', 'raw'];
+    private const RAW_SQL_ENTRY_POINTS = [
+        'statement',
+        'unprepared',
+        'insert',
+        'update',
+        'delete',
+        'affectingStatement',
+        'raw',
+        'select',
+        'selectOne',
+        'selectResultSets',
+        'selectFromWriteConnection',
+        'scalar',
+        'cursor',
+    ];
 
     /** @return list<int> */
     public function scan(string $source): array
@@ -26,36 +40,55 @@ final class ContractMutationAstScanner
     /** @return list<array{line:int,class:string,method:string,operation:string,receiver:string,fingerprint:string}> */
     public function findings(string $source): array
     {
-        $contractContext = preg_match('/(?:\bContract\b|\bcontracts?\b|ContractRepository|contractRepository)/', $source) === 1;
-        $mutation = preg_match('/\b(?:save|saveQuietly|update|updateQuietly|delete|forceDelete|insert|upsert|increment|decrement|touch|restore|create|updateOrCreate|firstOrCreate|destroy|forceDestroy)\b/i', $source) === 1;
-        $rawSqlCall = preg_match('/\bDB::(?:connection\([^)]*\)->)?(?:statement|unprepared|insert|update|delete|affectingStatement|raw)\s*\(/', $source) === 1;
-        if ((! $contractContext || ! $mutation) && ! $rawSqlCall) {
-            return [];
-        }
         $nodes = (new ParserFactory)->createForNewestSupportedVersion()->parse($source) ?? [];
         $traverser = new NodeTraverser;
         $traverser->addVisitor(new NameResolver);
         $nodes = $traverser->traverse($nodes);
         $finder = new NodeFinder;
-        $scopes = $finder->find($nodes, static fn (Node $node): bool => $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Stmt\Function_);
+        $candidate = $finder->findFirst($nodes, function (Node $node): bool {
+            if ($node instanceof Node\Expr\StaticCall && $node->name instanceof Node\Identifier) {
+                return in_array($node->name->toString(), array_merge(self::MUTATIONS, self::RAW_SQL_ENTRY_POINTS), true);
+            }
+
+            return $node instanceof Node\Expr\MethodCall
+                && $node->name instanceof Node\Identifier
+                && in_array($node->name->toString(), array_merge(self::MUTATIONS, self::RAW_SQL_ENTRY_POINTS), true);
+        });
+        if ($candidate === null) {
+            return [];
+        }
+        $scopes = $finder->findInstanceOf($nodes, Node\FunctionLike::class);
         $repositoryProperties = $this->repositoryProperties($nodes);
         $findings = [];
         foreach ($scopes as $scope) {
             $class = $this->enclosingClassName($nodes, $scope);
-            $method = $scope->name->toString();
-            $findings = array_merge($findings, $this->scopeFindings($scope, $class, $method, $repositoryProperties[$class] ?? []));
+            $method = $this->scopeMethodName($nodes, $scope);
+            $findings = array_merge($findings, $this->scopeFindings(
+                $scope,
+                $class,
+                $method,
+                $repositoryProperties[$class] ?? [],
+                $this->inheritedTypedVariables($nodes, $scope, true),
+                $this->inheritedTypedVariables($nodes, $scope, false),
+            ));
         }
 
         return $findings;
     }
 
     /** @return list<array{line:int,class:string,method:string,operation:string,receiver:string,fingerprint:string}> */
-    private function scopeFindings(Node $scope, string $class, string $method, array $repositoryProperties): array
-    {
+    private function scopeFindings(
+        Node\FunctionLike $scope,
+        string $class,
+        string $method,
+        array $repositoryProperties,
+        array $inheritedContractVariables,
+        array $inheritedRepositoryVariables,
+    ): array {
         $finder = new NodeFinder;
         $printer = new Standard;
-        $contractVariables = $class === 'Contract' ? ['this' => true] : [];
-        $repositoryVariables = [];
+        $contractVariables = $class === 'Contract' ? ['this' => true] : $inheritedContractVariables;
+        $repositoryVariables = $inheritedRepositoryVariables;
         foreach ($scope->getParams() as $parameter) {
             if ($parameter->var instanceof Node\Expr\Variable && $this->isExactContractType($parameter->type)) {
                 $contractVariables[(string) $parameter->var->name] = true;
@@ -64,16 +97,9 @@ final class ContractMutationAstScanner
                 $repositoryVariables[(string) $parameter->var->name] = true;
             }
         }
-        foreach ($finder->findInstanceOf($scope->getStmts() ?? [], Node\Param::class) as $parameter) {
-            if ($parameter->var instanceof Node\Expr\Variable && $this->isExactContractType($parameter->type)) {
-                $contractVariables[(string) $parameter->var->name] = true;
-            }
-            if ($parameter->var instanceof Node\Expr\Variable && $this->isContractRepositoryType($parameter->type)) {
-                $repositoryVariables[(string) $parameter->var->name] = true;
-            }
-        }
+        $scopeNodes = $this->nodesWithinScope($scope);
         $stringConstants = [];
-        $assignments = $finder->findInstanceOf($scope->getStmts() ?? [], Node\Expr\Assign::class);
+        $assignments = array_values(array_filter($scopeNodes, static fn (Node $node): bool => $node instanceof Node\Expr\Assign));
         $assignmentCounts = [];
         foreach ($assignments as $assignment) {
             if ($assignment->var instanceof Node\Expr\Variable && is_string($assignment->var->name)) {
@@ -104,7 +130,7 @@ final class ContractMutationAstScanner
         } while ($changed);
 
         $results = [];
-        foreach ($finder->find($scope->getStmts() ?? [], fn (Node $node): bool => $this->isMutation($node, $contractVariables, $repositoryVariables, $repositoryProperties, $stringConstants, $printer)) as $node) {
+        foreach (array_filter($scopeNodes, fn (Node $node): bool => $this->isMutation($node, $contractVariables, $repositoryVariables, $repositoryProperties, $stringConstants, $printer)) as $node) {
             $operation = $node->name instanceof Node\Identifier ? $node->name->toString() : 'raw_sql';
             $receiver = $node instanceof Node\Expr\MethodCall ? $printer->prettyPrintExpr($node->var) : $printer->prettyPrintExpr($node);
             $fingerprint = implode('|', [$class, $method, $operation, preg_replace('/\s+/', '', $receiver)]);
@@ -123,20 +149,20 @@ final class ContractMutationAstScanner
             if ($this->isExactContractName($class) && in_array($operation, ['create', 'updateOrCreate', 'firstOrCreate', 'destroy', 'forceDestroy'], true)) {
                 return true;
             }
-            if ($this->shortName($class) === 'DB' && in_array($operation, self::RAW_SQL_MUTATIONS, true)) {
+            if ($this->isDatabaseFacadeName($class) && in_array($operation, self::RAW_SQL_ENTRY_POINTS, true)) {
                 $sql = isset($node->args[0]) ? $this->constantString($node->args[0]->value, $stringConstants) : null;
 
-                return $sql === null || preg_match('/\b(insert\s+into|update|delete\s+from)\s+["`]?contracts\b/i', $sql) === 1;
+                return $sql === null || $this->sqlMutatesContracts($sql);
             }
         }
         if (! $node instanceof Node\Expr\MethodCall || ! $node->name instanceof Node\Identifier) {
             return false;
         }
         $operation = $node->name->toString();
-        if (in_array($operation, self::RAW_SQL_MUTATIONS, true) && $this->rootedAtDatabaseConnection($node->var)) {
+        if (in_array($operation, self::RAW_SQL_ENTRY_POINTS, true) && $this->rootedAtDatabaseConnection($node->var)) {
             $sql = isset($node->args[0]) ? $this->constantString($node->args[0]->value, $stringConstants) : null;
 
-            return $sql === null || preg_match('/\b(insert\s+into|update|delete\s+from)\s+["`]?contracts\b/i', $sql) === 1;
+            return $sql === null || $this->sqlMutatesContracts($sql);
         }
         if (! in_array($operation, self::MUTATIONS, true)) {
             return false;
@@ -154,7 +180,7 @@ final class ContractMutationAstScanner
             || $repositoryProperty
             || $this->receiverContainsRepositoryProperty($receiver, $repositoryProperties)
             || $this->rootedAtExactContractStatic($node->var)
-            || preg_match('/DB::(?:connection\([^)]*\)->)?table\([\'"]contracts[\'"]\)/', $receiver) === 1
+            || $this->rootedAtContractsTable($node->var)
             || str_contains($receiver, 'contractRepository')
             || str_contains($receiver, 'contracts()');
     }
@@ -173,7 +199,7 @@ final class ContractMutationAstScanner
         return $this->rootedAtExactContractStatic($expression)
             || preg_match('/contractRepository->(?:find|findOrFail|getById)/', $printed) === 1
             || preg_match('/->contract\(\)->/', $printed) === 1
-            || preg_match('/DB::(?:connection\([^)]*\)->)?table\([\'"]contracts[\'"]\)/', $printed) === 1;
+            || $this->rootedAtContractsTable($expression);
     }
 
     private function rootVariable(Node\Expr $expression): ?string
@@ -205,7 +231,7 @@ final class ContractMutationAstScanner
 
         return $expression instanceof Node\Expr\StaticCall
             && $expression->class instanceof Node\Name
-            && $this->shortName($expression->class->toString()) === 'DB'
+            && $this->isDatabaseFacadeName($expression->class->toString())
             && $expression->name instanceof Node\Identifier
             && $expression->name->toString() === 'connection';
     }
@@ -230,6 +256,80 @@ final class ContractMutationAstScanner
         }
 
         return null;
+    }
+
+    /** @return list<Node> */
+    private function nodesWithinScope(Node\FunctionLike $scope): array
+    {
+        $roots = $scope instanceof Node\Expr\ArrowFunction
+            ? [$scope->expr]
+            : ($scope->getStmts() ?? []);
+        $nodes = [];
+        $walk = function (Node $node) use (&$walk, &$nodes, $scope): void {
+            if ($node instanceof Node\FunctionLike && $node !== $scope) {
+                return;
+            }
+            $nodes[] = $node;
+            foreach ($node->getSubNodeNames() as $name) {
+                $child = $node->{$name};
+                if ($child instanceof Node) {
+                    $walk($child);
+                } elseif (is_array($child)) {
+                    foreach ($child as $item) {
+                        if ($item instanceof Node) {
+                            $walk($item);
+                        }
+                    }
+                }
+            }
+        };
+        foreach ($roots as $root) {
+            $walk($root);
+        }
+
+        return $nodes;
+    }
+
+    private function sqlMutatesContracts(string $sql): bool
+    {
+        $identifier = '(?:"contracts"|`contracts`|contracts)';
+        $qualifier = '(?:(?:"[^"]+"|`[^`]+`|[a-z_][a-z0-9_$]*)\s*\.\s*)?';
+        $mutation = '/\b(?:insert\s+into|update|delete\s+from|merge\s+into|truncate(?:\s+table)?|copy)\s+(?:only\s+)?'.$qualifier.$identifier.'(?![a-z0-9_$])/is';
+        $writableFunction = '/\b(?:(?:mutate|update|delete|insert|create|save|upsert)_?contracts?|contracts?_(?:mutate|update|delete|insert|create|save|upsert))\s*\(/i';
+
+        return preg_match($mutation, $sql) === 1 || preg_match($writableFunction, $sql) === 1;
+    }
+
+    private function isDatabaseFacadeName(string $name): bool
+    {
+        return ltrim($name, '\\') === 'Illuminate\\Support\\Facades\\DB';
+    }
+
+    private function rootedAtContractsTable(Node\Expr $expression): bool
+    {
+        while ($expression instanceof Node\Expr\MethodCall || $expression instanceof Node\Expr\PropertyFetch) {
+            if ($expression instanceof Node\Expr\MethodCall
+                && $expression->name instanceof Node\Identifier
+                && $expression->name->toString() === 'table'
+                && isset($expression->args[0])
+                && $expression->args[0]->value instanceof Node\Scalar\String_
+                && strtolower($expression->args[0]->value->value) === 'contracts'
+                && $this->rootedAtDatabaseConnection($expression->var)) {
+                return true;
+            }
+            $expression = $expression->var;
+        }
+        if (! $expression instanceof Node\Expr\StaticCall
+            || ! $expression->class instanceof Node\Name
+            || ! $this->isDatabaseFacadeName($expression->class->toString())
+            || ! $expression->name instanceof Node\Identifier
+            || $expression->name->toString() !== 'table'
+            || ! isset($expression->args[0])
+            || ! $expression->args[0]->value instanceof Node\Scalar\String_) {
+            return false;
+        }
+
+        return strtolower($expression->args[0]->value->value) === 'contracts';
     }
 
     private function isExactContractType(?Node $node): bool
@@ -303,6 +403,56 @@ final class ContractMutationAstScanner
         $parts = explode('\\', ltrim($name, '\\'));
 
         return (string) end($parts);
+    }
+
+    /** @param list<Node> $nodes */
+    private function scopeMethodName(array $nodes, Node\FunctionLike $scope): string
+    {
+        if ($scope instanceof Node\Stmt\ClassMethod || $scope instanceof Node\Stmt\Function_) {
+            return $scope->name->toString();
+        }
+        $parent = $this->enclosingNamedFunction($nodes, $scope);
+        if ($parent !== null) {
+            return $parent->name->toString();
+        }
+
+        return ($scope instanceof Node\Expr\Closure ? 'closure@' : 'arrow@').$scope->getStartLine();
+    }
+
+    /** @param list<Node> $nodes @return array<string,true> */
+    private function inheritedTypedVariables(array $nodes, Node\FunctionLike $scope, bool $contracts): array
+    {
+        if ($scope instanceof Node\Stmt\ClassMethod || $scope instanceof Node\Stmt\Function_) {
+            return [];
+        }
+        $parent = $this->enclosingNamedFunction($nodes, $scope);
+        $variables = [];
+        foreach ($parent?->getParams() ?? [] as $parameter) {
+            if (! $parameter->var instanceof Node\Expr\Variable || ! is_string($parameter->var->name)) {
+                continue;
+            }
+            if (($contracts && $this->isExactContractType($parameter->type))
+                || (! $contracts && $this->isContractRepositoryType($parameter->type))) {
+                $variables[$parameter->var->name] = true;
+            }
+        }
+
+        return $variables;
+    }
+
+    /** @param list<Node> $nodes */
+    private function enclosingNamedFunction(array $nodes, Node\FunctionLike $scope): Node\Stmt\ClassMethod|Node\Stmt\Function_|null
+    {
+        $candidate = null;
+        foreach ((new NodeFinder)->find($nodes, static fn (Node $node): bool => $node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Stmt\Function_) as $function) {
+            if ($function->getStartFilePos() <= $scope->getStartFilePos() && $function->getEndFilePos() >= $scope->getEndFilePos()) {
+                if ($candidate === null || $function->getStartFilePos() >= $candidate->getStartFilePos()) {
+                    $candidate = $function;
+                }
+            }
+        }
+
+        return $candidate;
     }
 
     /** @param list<Node> $nodes */

@@ -82,11 +82,12 @@ jobs:
           host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
-          timeout: 15m
-          command_timeout: 15m
+          timeout: 3h
+          command_timeout: 3h
           envs: YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS
           script: |
             set -euo pipefail
+            umask 077
             RELEASE_SHA="${{ steps.meta.outputs.release_sha }}"
             IMAGE_REPO="${{ steps.meta.outputs.image_repo }}"
             IMAGE_DIGEST="${{ steps.build.outputs.digest }}"
@@ -114,6 +115,74 @@ jobs:
               rm -f "${temporary_file}"
             }
 
+            remove_env_key() {
+              local key="$1"
+              local temporary_file
+              temporary_file="$(mktemp)"
+              awk -v key="${key}" 'index($0, key "=") != 1 { print }' .env > "${temporary_file}"
+              cat "${temporary_file}" > .env
+              rm -f "${temporary_file}"
+            }
+
+            ensure_immutable_audit_writer_secret() {
+              local current_secret=''
+              local secret_lines=0
+              local unique_characters=0
+              secret_lines="$(grep -c '^LEGAL_ARCHIVE_AUDIT_WRITER_SECRET=' .env || true)"
+              if [ "${secret_lines}" -gt 1 ]; then
+                echo 'Immutable audit writer secret is declared more than once; refusing deployment'
+                return 1
+              fi
+              if grep -q '^LEGAL_ARCHIVE_AUDIT_WRITER_SECRET=' .env; then
+                current_secret="$(grep -m1 '^LEGAL_ARCHIVE_AUDIT_WRITER_SECRET=' .env | cut -d= -f2-)"
+              fi
+              if [ -n "${current_secret}" ]; then
+                unique_characters="$(printf '%s' "${current_secret}" | fold -w1 | sort -u | wc -l)"
+                if [ "${#current_secret}" -lt 32 ] || [ "${unique_characters}" -lt 12 ]; then
+                  unset current_secret
+                  echo 'Immutable audit writer secret is configured but weak; refusing deployment'
+                  return 1
+                fi
+                unset current_secret
+                return 0
+              fi
+              current_secret="$(openssl rand -hex 32)"
+              test "${#current_secret}" -eq 64
+              upsert_env LEGAL_ARCHIVE_AUDIT_WRITER_SECRET "${current_secret}"
+              unset current_secret
+            }
+
+            stop_legacy_supervisor_processes() {
+              local supervisor_status
+              local program
+              supervisor_status="$(supervisorctl status 2>/dev/null || true)"
+              while read -r program; do
+                [ -n "${program}" ] && supervisorctl stop "${program}"
+              done < <(awk '/laravel-worker|horizon|scheduler|queue|artisan/ { print $1 }' <<< "${supervisor_status}")
+            }
+
+            assert_legacy_runtime_stopped() {
+              test -z "$(docker compose ps --status running -q ${BACKEND_SERVICES})"
+              if pgrep -af '^php /var/www/prohelper/artisan queue:work( |$)' >/dev/null; then
+                echo 'Legacy Laravel queue workers are still running; refusing dual queue ownership'
+                return 1
+              fi
+              if pgrep -af '^php /var/www/prohelper/artisan (horizon|schedule:work|octane:start|reverb:start)( |$)' >/dev/null; then
+                echo 'A legacy Laravel runtime is still active; refusing deployment'
+                return 1
+              fi
+            }
+
+            deployment_failed() {
+              local exit_code=$?
+              trap - ERR
+              set +e
+              systemctl stop nginx
+              docker compose stop --timeout 30 ${BACKEND_SERVICES}
+              stop_legacy_supervisor_processes
+              exit "${exit_code}"
+            }
+
             if [ -n "${YOOKASSA_SHOP_ID:-}" ] && [ -n "${YOOKASSA_SECRET_KEY:-}" ]; then
               upsert_env YOOKASSA_MODE yookassa_test
               upsert_env YOOKASSA_SHOP_ID "${YOOKASSA_SHOP_ID}"
@@ -133,45 +202,35 @@ jobs:
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             docker pull "${IMAGE_REF}"
 
-            if grep -q '^MOST_IMAGE_REF=' .env; then
-              sed -i "s|^MOST_IMAGE_REF=.*|MOST_IMAGE_REF=${IMAGE_REF}|" .env
-            else
-              printf '\nMOST_IMAGE_REF=%s\n' "${IMAGE_REF}" >> .env
-            fi
-            if grep -q '^MOST_RELEASE_SHA=' .env; then
-              sed -i "s/^MOST_RELEASE_SHA=.*/MOST_RELEASE_SHA=${RELEASE_SHA}/" .env
-            else
-              printf 'MOST_RELEASE_SHA=%s\n' "${RELEASE_SHA}" >> .env
-            fi
-            if grep -q '^SENTRY_RELEASE=' .env; then
-              sed -i "s/^SENTRY_RELEASE=.*/SENTRY_RELEASE=prohelper@${RELEASE_SHA}/" .env
-            else
-              printf 'SENTRY_RELEASE=prohelper@%s\n' "${RELEASE_SHA}" >> .env
-            fi
-            if grep -q '^REVERB_APP_KEY=' .env; then
-              sed -i "s|^REVERB_APP_KEY=.*|REVERB_APP_KEY=${REVERB_APP_KEY}|" .env
-            else
-              printf 'REVERB_APP_KEY=%s\n' "${REVERB_APP_KEY}" >> .env
-            fi
+            upsert_env MOST_IMAGE_REF "${IMAGE_REF}"
+            upsert_env MOST_RELEASE_SHA "${RELEASE_SHA}"
+            upsert_env SENTRY_RELEASE "prohelper@${RELEASE_SHA}"
+            upsert_env REVERB_APP_KEY "${REVERB_APP_KEY}"
+            remove_env_key LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED
 
-            SUPERVISOR_STATUS="$(supervisorctl status 2>/dev/null || true)"
-            if grep -Eq '^laravel-worker(_[0-9]+|:)' <<< "${SUPERVISOR_STATUS}"; then
-              supervisorctl stop 'laravel-worker:*'
-            fi
-
-            if pgrep -af '^php /var/www/prohelper/artisan queue:work( |$)' >/dev/null; then
-              echo 'Legacy Laravel queue workers are still running; refusing dual queue ownership'
-              exit 1
-            fi
-
+            ensure_immutable_audit_writer_secret
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps geometry-worker /usr/local/bin/geometry-runtime-smoke
+
+            trap deployment_failed ERR
+            systemctl stop nginx
+            stop_legacy_supervisor_processes
+            docker compose stop --timeout 7200 ${BACKEND_SERVICES}
+            assert_legacy_runtime_stopped
+
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan migrate:safe --force
+            MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true api php artisan immutable-audit:confirm-drain
+            MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true api php artisan immutable-audit:phase-b-cutover --confirm-writer-version=2
+            MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan immutable-audit:writer-readiness
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
 
             for attempt in $(seq 1 24); do
-              if docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null \
+              if docker compose exec -T api curl -fsS http://localhost:8000/ready >/dev/null \
+                && docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null \
                 && docker compose exec -T websockets php -r 'exit(@fsockopen("127.0.0.1", 8080) ? 0 : 1);' \
                 && docker compose exec -T geometry-worker /usr/local/bin/geometry-runtime-smoke; then
+                systemctl start nginx
+                systemctl is-active --quiet nginx
+                trap - ERR
                 echo "Backend deployment successful: ${IMAGE_REF}"
                 exit 0
               fi

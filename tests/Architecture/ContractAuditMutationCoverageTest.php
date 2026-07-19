@@ -23,6 +23,8 @@ final class ContractAuditMutationCoverageTest extends TestCase
 EstimateGenerationResourceIndexRuntime|dropAll|statement|\Illuminate\Support\Facades\DB::statement($index['dropIfExists'])
 EstimateGenerationResourceIndexRuntime|ensureConcurrentIndex|statement|\Illuminate\Support\Facades\DB::statement($index['drop'])
 EstimateGenerationResourceIndexRuntime|ensureConcurrentIndex|statement|\Illuminate\Support\Facades\DB::statement($index['create'])
+EstimateGenerationReviewQueueQuery|paginate|selectOne|\Illuminate\Support\Facades\DB::selectOne($this->summarySql($where),$bindings)
+EstimateGenerationReviewQueueQuery|paginate|select|\Illuminate\Support\Facades\DB::select($this->pageSql($where),$pageBindings)
 TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|statement|\Illuminate\Support\Facades\DB::statement('DROPINDEXCONCURRENTLYIFEXISTS'.$expectedSchema.'.'.$probe)
 TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|statement|\Illuminate\Support\Facades\DB::statement((string)$probeSql)
 TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|statement|\Illuminate\Support\Facades\DB::statement('DROPINDEXCONCURRENTLY'.$expectedSchema.'.'.$probe)
@@ -40,6 +42,7 @@ HoldingReportService|getContractsByContractor|raw|\Illuminate\Support\Facades\DB
 ResetInvoiceNumberSequences|handle|statement|\Illuminate\Support\Facades\DB::statement("DROPSEQUENCEIFEXISTS".$seq->relname)
 ResetPaymentDocumentSequences|handle|statement|\Illuminate\Support\Facades\DB::statement("DROPSEQUENCEIFEXISTS".$seq->relname)
 RagIndexer|storeVector|update|\Illuminate\Support\Facades\DB::update($sql,[$vector,$chunk->id])
+RagRetriever|postgresRows|select|\Illuminate\Support\Facades\DB::select($sql,$bindings)
 LaravelNotificationSnapshotDatabase|statement|statement|\Illuminate\Support\Facades\DB::statement($sql)
 NotificationQueryService|unreadAggregatesForQuery|raw|\Illuminate\Support\Facades\DB::raw($categoryExpression)
 NotificationQueryService|unreadAggregatesForQuery|raw|\Illuminate\Support\Facades\DB::raw($typeExpression)
@@ -60,10 +63,12 @@ FINGERPRINTS));
         foreach ($rawSqlExemptions as $fingerprint) {
             $rawSqlEvidence[$fingerprint] = match (true) {
                 str_starts_with($fingerprint, 'EstimateGenerationResourceIndexRuntime|') => 'SQL берётся только из закрытого INDEXES allowlist для estimate_generation_* индексов.',
+                str_starts_with($fingerprint, 'EstimateGenerationReviewQueueQuery|') => 'Private SQL builders return fixed read-only CTEs over estimate generation projection tables and never interpolate a table name.',
                 str_starts_with($fingerprint, 'TrainingBenchmarkOnlineMigrationRuntime|') => 'assertNotContractTable структурно запрещает contracts до выполнения любого dynamic DDL.',
                 str_starts_with($fingerprint, 'ResetInvoiceNumberSequences|') => 'Имена поступают из pg_class с relkind=S и жёстким invoice_seq_% prefix.',
                 str_starts_with($fingerprint, 'ResetPaymentDocumentSequences|') => 'Имена поступают из pg_class с relkind=S и жёстким payment_doc_seq_% prefix.',
                 str_starts_with($fingerprint, 'RagIndexer|') => 'Обе ветки локальной константы SQL обновляют только ai_rag_chunks.embedding по id.',
+                str_starts_with($fingerprint, 'RagRetriever|') => 'Local SQL is a fixed read-only SELECT over ai_rag_chunks and ai_rag_sources; only value placeholders and a closed source filter are dynamic.',
                 str_starts_with($fingerprint, 'LaravelNotificationSnapshotDatabase|') => 'Метод принимает только точную константу SET TRANSACTION ISOLATION LEVEL REPEATABLE READ и иначе fail-closed.',
                 str_contains($fingerprint, '|raw|') => 'DB::raw формирует выражение read-only SELECT/query-builder и сам не исполняет mutation statement.',
             };
@@ -221,6 +226,44 @@ class Example {
 PHP);
 
         self::assertCount(2, array_filter($findings, static fn (array $finding): bool => $finding['fingerprint'] === 'Example|create|create|$this->contractRepository'));
+    }
+
+    public function test_ast_prefilter_resolves_facade_aliases_and_catches_writable_read_entry_points_in_all_scopes(): void
+    {
+        $findings = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB as Database;
+use Vendor\Telemetry\DB as TelemetryDb;
+
+$topClosure = function () use ($runtimeSql): void {
+    Database::selectOne($runtimeSql);
+};
+$topArrow = fn () => Database::scalar('SELECT mutate_contracts()');
+
+function executeContractSql(string $runtimeSql): void
+{
+    Database::select('WITH changed AS (UPDATE "legal"."contracts" SET number = 1 RETURNING *) SELECT * FROM changed');
+    \Illuminate\Support\Facades\DB::selectResultSets('DELETE FROM `tenant`.`contracts` RETURNING id');
+    Database::connection('tenant')->cursor($runtimeSql);
+    Database::selectFromWriteConnection($runtimeSql);
+    Database::selectOne(contractSql());
+    TelemetryDb::statement('UPDATE contracts SET number = 2');
+}
+PHP);
+
+        self::assertSame(
+            ['selectOne', 'scalar', 'select', 'selectResultSets', 'cursor', 'selectFromWriteConnection', 'selectOne'],
+            array_column($findings, 'operation'),
+        );
+        self::assertNotContains('statement', array_column($findings, 'operation'));
+        self::assertSame(
+            ['global', 'global', 'global', 'global', 'global', 'global', 'global'],
+            array_column($findings, 'class'),
+        );
+        self::assertSame(
+            ['closure@5', 'arrow@8', 'executeContractSql', 'executeContractSql', 'executeContractSql', 'executeContractSql', 'executeContractSql'],
+            array_column($findings, 'method'),
+        );
     }
 
     public function test_dynamic_sql_exemptions_have_runtime_guards_before_database_execution(): void

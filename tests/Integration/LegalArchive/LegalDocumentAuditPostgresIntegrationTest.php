@@ -195,6 +195,27 @@ final class LegalDocumentAuditPostgresIntegrationTest extends TestCase
         self::assertSame('phase_a', $this->first->table('immutable_audit_rollout')->value('phase'));
     }
 
+    public function test_concurrent_cutover_waits_on_dedicated_index_prep_lock_before_ddl(): void
+    {
+        $rollout = new ImmutableAuditRolloutService;
+        $rollout->confirmDrain($this->first, true);
+        $this->second->select('SELECT pg_advisory_lock(hashtextextended(?, 0))', ['immutable_audit_phase_b_index_prep']);
+        $worker = dirname(__DIR__, 2).'/Support/LegalArchive/PostgresAuditWorker.php';
+        $cutover = new Process([PHP_BINARY, $worker, $this->schema, 'cutover', 'cutover:prep-lock', 'cutover']);
+        try {
+            $cutover->start();
+            usleep(500_000);
+            self::assertTrue($cutover->isRunning());
+            self::assertSame(0, (int) $this->first->selectOne("SELECT COUNT(*) AS value FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'immutable_audit_source_event_aggregate_unique'")->value);
+        } finally {
+            $this->second->select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', ['immutable_audit_phase_b_index_prep']);
+        }
+        $cutover->wait();
+
+        self::assertTrue($cutover->isSuccessful(), $cutover->getErrorOutput());
+        self::assertSame('phase_b', $this->first->table('immutable_audit_rollout')->value('phase'));
+    }
+
     public function test_cutover_crash_rolls_back_switch_and_retry_consumes_same_marker(): void
     {
         $rollout = new ImmutableAuditRolloutService;
