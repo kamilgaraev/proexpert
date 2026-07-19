@@ -18,6 +18,8 @@ use Illuminate\Validation\Rules\Enum;
 
 class UpdateContractRequest extends FormRequest
 {
+    private bool $scopeUpdateRequested = false;
+
     public function authorize(): bool
     {
         $user = $this->user();
@@ -42,7 +44,7 @@ class UpdateContractRequest extends FormRequest
 
         if ($routeProjectId !== null) {
             $projectIds = array_merge($projectIds, $this->contractProjectIds($contract));
-            if ($this->requestedMultiProjectState($contract)) {
+            if ($this->scopeUpdateRequested && $this->requestedMultiProjectState($contract)) {
                 $projectIds = array_merge($projectIds, $this->numericProjectIds($this->input('project_ids', [])));
             }
         }
@@ -160,7 +162,7 @@ class UpdateContractRequest extends FormRequest
             Rule::exists('projects', 'id')->where('organization_id', $organizationId),
         ];
 
-        if ($routeProjectId !== null) {
+        if ($routeProjectId !== null && $this->scopeUpdateRequested) {
             $projectIdRules = [
                 $isMultiProject ? 'nullable' : 'required',
                 'integer',
@@ -169,12 +171,16 @@ class UpdateContractRequest extends FormRequest
             ];
             $projectIdsItemRules[] = 'distinct';
             if ($isMultiProject) {
-                $projectIdsRules[] = 'required';
-                $projectIdsRules[] = static function (string $attribute, mixed $value, \Closure $fail) use ($routeProjectId): void {
-                    if (is_array($value) && ! in_array($routeProjectId, array_map('intval', $value), true)) {
-                        $fail(trans_message('contracts.route_project_required'));
-                    }
-                };
+                $projectIdsRules = [
+                    'required',
+                    'array',
+                    'min:1',
+                    static function (string $attribute, mixed $value, \Closure $fail) use ($routeProjectId): void {
+                        if (is_array($value) && ! in_array($routeProjectId, array_map('intval', $value), true)) {
+                            $fail(trans_message('contracts.route_project_required'));
+                        }
+                    },
+                ];
             }
         }
 
@@ -259,8 +265,9 @@ class UpdateContractRequest extends FormRequest
     {
         $input = $this->all();
         $routeProjectId = $this->routeProjectId();
+        $this->scopeUpdateRequested = $this->containsScopeField($input);
 
-        if ($routeProjectId !== null && ! array_key_exists('project_id', $input)) {
+        if ($routeProjectId !== null && $this->scopeUpdateRequested && ! array_key_exists('project_id', $input)) {
             $input['project_id'] = $this->requestedMultiProjectState($this->resolveContract()) ? null : $routeProjectId;
         }
 
@@ -439,5 +446,13 @@ class UpdateContractRequest extends FormRequest
         return $this->has('is_multi_project')
             ? $this->boolean('is_multi_project')
             : (bool) $contract->is_multi_project;
+    }
+
+    /** @param array<string, mixed> $input */
+    private function containsScopeField(array $input): bool
+    {
+        return array_key_exists('is_multi_project', $input)
+            || array_key_exists('project_id', $input)
+            || array_key_exists('project_ids', $input);
     }
 }

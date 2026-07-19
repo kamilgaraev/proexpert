@@ -359,6 +359,70 @@ final class ContractPermissionAndLifecycleTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_project_partial_update_preserves_existing_multi_project_scope(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(77, 11);
+        $contract->forceFill(['project_id' => null, 'is_multi_project' => true])->save();
+        \DB::table('contract_project')->insert([
+            ['contract_id' => $contract->id, 'project_id' => 11, 'created_at' => now(), 'updated_at' => now()],
+            ['contract_id' => $contract->id, 'project_id' => 17, 'created_at' => now(), 'updated_at' => now()],
+        ]);
+        $this->app->instance(AuthorizationService::class, $this->projectAuthorization([11, 17]));
+
+        Route::put('/__review/projects/{project}/partial-contracts/{contract}', static function (
+            UpdateContractRequest $request,
+            int $project,
+            int $contract
+        ) {
+            $contractModel = Contract::query()->findOrFail($contract);
+            $dto = $request->toDto();
+            $contractModel->forceFill([
+                'subject' => $dto->subject,
+                'start_date' => $dto->start_date,
+                'end_date' => $dto->end_date,
+            ])->save();
+
+            return AdminResponse::success([
+                'is_multi_project' => (bool) $contractModel->fresh()->is_multi_project,
+                'project_ids' => $contractModel->projects()->orderBy('projects.id')->pluck('projects.id')->all(),
+                'dto_project_ids' => $dto->project_ids,
+                'validated_scope_fields' => array_keys(array_intersect_key(
+                    $request->validated(),
+                    array_flip(['is_multi_project', 'project_id', 'project_ids'])
+                )),
+            ]);
+        });
+
+        $this->actingAs($this->user(7))
+            ->putJson("/__review/projects/11/partial-contracts/{$contract->id}", [
+                'subject' => 'Обновлённый предмет договора',
+                'start_date' => '2026-08-01',
+                'end_date' => '2026-12-31',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.is_multi_project', true)
+            ->assertJsonPath('data.project_ids', [11, 17])
+            ->assertJsonPath('data.dto_project_ids', null)
+            ->assertJsonPath('data.validated_scope_fields', []);
+
+        $this->assertDatabaseHas('contracts', [
+            'id' => $contract->id,
+            'subject' => 'Обновлённый предмет договора',
+            'start_date' => '2026-08-01 00:00:00',
+            'end_date' => '2026-12-31 00:00:00',
+            'is_multi_project' => true,
+        ]);
+
+        $this->app->instance(AuthorizationService::class, $this->projectAuthorization([11]));
+
+        $this->actingAs($this->user(7))
+            ->putJson("/__review/projects/11/partial-contracts/{$contract->id}", [
+                'subject' => 'Недоступное изменение',
+            ])
+            ->assertForbidden();
+    }
+
     public function test_project_update_rejects_contract_outside_route_project(): void
     {
         $this->createContractTables();
@@ -705,6 +769,9 @@ final class ContractPermissionAndLifecycleTest extends TestCase
             $table->unsignedBigInteger('project_id')->nullable();
             $table->string('number');
             $table->date('date');
+            $table->text('subject')->nullable();
+            $table->date('start_date')->nullable();
+            $table->date('end_date')->nullable();
             $table->string('status');
             $table->decimal('total_amount', 15, 2)->nullable();
             $table->boolean('is_multi_project')->default(false);
