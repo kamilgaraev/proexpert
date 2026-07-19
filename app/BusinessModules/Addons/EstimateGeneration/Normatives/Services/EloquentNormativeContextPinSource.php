@@ -475,9 +475,10 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             })
             ->filter()
             ->unique(static fn (array $hint): string => implode(':', [
+                $hint['family'] ?? 'pipe',
                 $hint['material'],
                 $hint['polarity'] ?? '-',
-                (string) $hint['diameter'],
+                (string) ($hint['diameter'] ?? '-'),
             ]))
             ->values()
             ->all();
@@ -495,15 +496,26 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->where('semantic_project_prices.price_zone_id', $requested->priceZoneId)
             ->where('semantic_project_prices.period_id', $requested->periodId)
             ->where('semantic_project_prices.base_price', '>', 0)
-            ->where(function ($pipeFamily): void {
-                $pipeFamily->where('semantic_project_prices.resource_name', 'ilike', '%труб%')
-                    ->orWhere('semantic_project_prices.resource_name', 'ilike', '%пнд%')
-                    ->orWhere('semantic_project_prices.resource_name', 'ilike', '%hdpe%');
-            })
             ->where(function ($targets) use ($semanticSearchHints): void {
                 foreach ($semanticSearchHints as $index => $hint) {
                     $method = $index === 0 ? 'where' : 'orWhere';
                     $targets->{$method}(function ($target) use ($hint): void {
+                        if (in_array(($hint['family'] ?? 'pipe'), ['gutter_pipe', 'gutter_fitting'], true)) {
+                            $target->where('semantic_project_prices.resource_name', 'ilike', '%водосточ%')
+                                ->where(function ($metal): void {
+                                    $metal->where('semantic_project_prices.resource_name', 'ilike', '%металл%')
+                                        ->orWhere('semantic_project_prices.resource_name', 'ilike', '%стал%')
+                                        ->orWhere('semantic_project_prices.resource_name', 'ilike', '%чугун%')
+                                        ->orWhere('semantic_project_prices.resource_name', 'ilike', '%оцинк%');
+                                });
+                            if ($hint['family'] === 'gutter_pipe') {
+                                $target->where('semantic_project_prices.resource_name', 'ilike', 'труб%');
+                            } else {
+                                $target->where('semantic_project_prices.resource_name', 'not ilike', 'труб%');
+                            }
+
+                            return;
+                        }
                         $target->where('semantic_project_prices.resource_name', 'ilike', '%'.$hint['diameter'].'%')
                             ->where(function ($material) use ($hint): void {
                                 if ($hint['material'] === 'steel') {

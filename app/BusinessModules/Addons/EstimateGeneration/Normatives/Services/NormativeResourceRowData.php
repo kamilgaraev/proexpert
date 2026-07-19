@@ -42,7 +42,10 @@ final readonly class NormativeResourceRowData
         $isAbstractResource = strcasecmp(trim((string) ($row->raw_source_tag ?? '')), 'AbstractResource') === 0;
         $projectResourcePricePolicy = trim((string) ($row->project_resource_price_policy
             ?? ($regionalPriceVersionId !== null ? 'regional_child_median:v1' : '')));
-        $isSemanticProjectSelection = $projectResourcePricePolicy === 'regional_semantic_pipe_hard_attributes_median:v1'
+        $isSemanticProjectSelection = in_array($projectResourcePricePolicy, [
+            'regional_semantic_pipe_hard_attributes_median:v1',
+            'regional_semantic_metal_gutter_family_median:v1',
+        ], true)
             && $regionalPriceVersionId !== null
             && $priceResourceCode !== ''
             && trim((string) ($row->price_resource_name ?? '')) !== '';

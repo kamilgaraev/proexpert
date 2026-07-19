@@ -486,7 +486,7 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
-    public function resolved_material_reaches_ranker_semantic_gate(): void
+    public function resolved_material_without_source_evidence_does_not_confirm_specialized_norm(): void
     {
         $source = new class implements NormativeContextPinSource
         {
@@ -542,8 +542,8 @@ final class NormativeContextPinResolverTest extends TestCase
             'normative_sections' => ['15'],
         ]]);
 
-        self::assertSame('pinned', $pin['status']);
-        self::assertSame('150106401', $pin['catalog_candidates'][0]['candidate_id']);
+        self::assertSame('review_required', $pin['status']);
+        self::assertNull($pin['catalog_candidates']);
     }
 
     #[Test]

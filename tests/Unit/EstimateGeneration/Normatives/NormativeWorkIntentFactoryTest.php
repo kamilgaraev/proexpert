@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use PHPUnit\Framework\TestCase;
@@ -112,5 +113,85 @@ final class NormativeWorkIntentFactoryTest extends TestCase
 
         self::assertSame('cable_tray_installation', $intent->technology);
         self::assertSame('electrical', $intent->system);
+    }
+
+    public function test_specialization_provenance_is_limited_to_current_source_evidence(): void
+    {
+        $intent = (new NormativeWorkIntentFactory(new WorkIntentClassifier(new NormativeScopeRuleCatalog)))->intent([
+            'key' => 'finish.floor',
+            'name' => 'Чистовое покрытие пола',
+            'unit' => 'm2',
+            'work_intent' => [
+                'scope' => 'finishing',
+                'action' => 'floor_covering',
+                'specialization_evidence' => [
+                    [
+                        'text' => 'Ведомость отделки: линолеум',
+                        'source' => 'document',
+                        'evidence_refs' => ['doc:1'],
+                    ],
+                    [
+                        'text' => 'Паркет',
+                        'source' => 'document',
+                        'evidence_refs' => ['doc:forged'],
+                    ],
+                ],
+            ],
+        ], [
+            'organization_id' => 1,
+            'project_id' => 89,
+            'session_id' => 58,
+            'scope_type' => 'finishing',
+            'object_type' => 'house',
+            'applicability_date' => '2026-07-17',
+            'source_refs' => ['doc:1'],
+        ], 'fsnb-2026.1');
+
+        self::assertSame([[
+            'text' => 'Ведомость отделки: линолеум',
+            'source' => 'document',
+            'evidence_refs' => ['doc:1'],
+        ]], $intent->specializationEvidence);
+    }
+
+    public function test_only_catalog_signed_scenario_reaches_normative_intent(): void
+    {
+        $catalog = new ResidentialMaterialScenarioCatalog;
+        $factory = new NormativeWorkIntentFactory(
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
+            null,
+            $catalog,
+        );
+        $context = [
+            'organization_id' => 1,
+            'project_id' => 89,
+            'session_id' => 58,
+            'scope_type' => 'finishing',
+            'object_type' => 'house',
+            'applicability_date' => '2026-07-17',
+            'source_refs' => ['doc:1'],
+        ];
+        $item = [
+            'key' => 'finish-norm-intent-1',
+            'name' => 'Чистовое покрытие пола',
+            'unit' => 'm2',
+            'metadata' => ['quantity_key' => 'finish.floor'],
+            'work_intent' => [
+                'scope' => 'finishing',
+                'action' => 'floor_covering',
+                'specialization_scenario' => [
+                    'version' => 'residential_finish_material:v1',
+                    'text' => 'паркет',
+                ],
+            ],
+        ];
+
+        self::assertNull($factory->intent($item, $context, 'fsnb-2026.1')->specializationScenario);
+
+        $item['specialization_scenario'] = $catalog->issue('finish.floor', 'residential');
+        $intent = $factory->intent($item, $context, 'fsnb-2026.1');
+
+        self::assertSame(['ламинат'], $intent->specializationScenario['material_markers'] ?? null);
+        self::assertSame('residential_preliminary_common:v1', $intent->specializationScenario['scenario_id'] ?? null);
     }
 }

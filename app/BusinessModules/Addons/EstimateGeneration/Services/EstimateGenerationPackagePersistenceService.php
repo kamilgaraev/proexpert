@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateItemMetadataFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -21,6 +22,7 @@ class EstimateGenerationPackagePersistenceService
         private readonly ?AuthoritativePackagePricingGuard $pricingGuard = null,
         private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
         private readonly ?SessionBaseInputVersionResolver $baseInputVersions = null,
+        private readonly GeneratedEstimateItemMetadataFactory $itemMetadata = new GeneratedEstimateItemMetadataFactory,
     ) {}
 
     /**
@@ -703,6 +705,7 @@ class EstimateGenerationPackagePersistenceService
     private function itemPayload(EstimateGenerationPackage $package, array $workItem, int $index): array
     {
         $workComposition = $this->workComposition($workItem);
+        $quantityCalculation = $this->itemMetadata->quantityCalculation($workItem);
 
         return [
             'package_id' => $package->id,
@@ -713,10 +716,7 @@ class EstimateGenerationPackagePersistenceService
             'name' => (string) ($workItem['name'] ?? 'Работа'),
             'unit' => $workItem['unit'] ?? null,
             'quantity' => isset($workItem['quantity']) ? (string) BigDecimal::of((string) $workItem['quantity']) : null,
-            'quantity_basis' => [
-                'description' => $workItem['quantity_basis'] ?? null,
-                'formula' => $workItem['quantity_formula'] ?? null,
-            ],
+            'quantity_basis' => $quantityCalculation,
             'price_source' => $workItem['price_source'] ?? null,
             'price_snapshot' => $workItem['price_snapshot'] ?? null,
             'normative_status' => $workItem['normative_match']['status'] ?? null,
@@ -748,6 +748,11 @@ class EstimateGenerationPackagePersistenceService
                 'work_category' => $workItem['work_category'] ?? null,
                 'confidence' => $workItem['confidence'] ?? null,
                 ...($workItem['metadata'] ?? []),
+                'quantity_evidence' => is_array($workItem['quantity_evidence'] ?? null)
+                    ? $workItem['quantity_evidence']
+                    : null,
+                'quantity_calculation' => $quantityCalculation,
+                'applied_price' => $this->itemMetadata->appliedPrice($workItem),
                 'work_composition' => $workComposition,
                 'composition_items_count' => count($workComposition),
             ],

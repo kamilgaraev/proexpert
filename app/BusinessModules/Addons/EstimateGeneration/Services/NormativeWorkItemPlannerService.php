@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\DirectTakeoffRequiredWorkItems;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Throwable;
@@ -14,6 +17,8 @@ final class NormativeWorkItemPlannerService
     public function __construct(
         private readonly ProjectDocumentNormativeReferenceExtractor $projectDocumentNormativeReferenceExtractor,
         private readonly EstimatorScopeInferenceService $scopeInferenceService,
+        private readonly ?ResidentialMaterialScenarioCatalog $materialScenarioCatalog = null,
+        private readonly RoofTypeResolver $roofTypeResolver = new RoofTypeResolver,
     ) {}
 
     /**
@@ -89,6 +94,7 @@ final class NormativeWorkItemPlannerService
         array $quantityModel,
         int $index
     ): ?array {
+        $definition = $this->withResidentialMaterialScenario($definition, $analysis);
         $quantity = $this->quantityForDefinition($definition, $analysis, $quantityModel);
 
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
@@ -111,8 +117,12 @@ final class NormativeWorkItemPlannerService
                 quantityFormula: (string) $definition['quantity_key'],
                 quantityBasis: (string) $quantity['basis'],
                 sourceRefs: [],
-                confidence: (float) ($definition['confidence'] ?? $quantity['confidence'] ?? 0.48),
-                validationFlags: ['normative_required', 'document_takeoff_required'],
+                confidence: $this->plannedQuantityConfidence($definition, $quantity, 0.48),
+                validationFlags: [
+                    'normative_required',
+                    'document_takeoff_required',
+                    ...$this->materialScenarioFlags($definition),
+                ],
                 metadata: [
                     'generation_source' => $definition['generation_source'] ?? 'normative_intent_catalog',
                     'quantity_key' => $definition['quantity_key'],
@@ -148,8 +158,14 @@ final class NormativeWorkItemPlannerService
             quantityFormula: (string) $definition['quantity_key'],
             quantityBasis: (string) $quantity['basis'],
             sourceRefs: $quantity['source_refs'] !== [] ? $quantity['source_refs'] : ($section['source_refs'] ?? $localEstimate['source_refs'] ?? []),
-            confidence: (float) ($definition['confidence'] ?? $quantity['confidence'] ?? 0.7),
-            validationFlags: ['normative_required'],
+            confidence: $this->plannedQuantityConfidence($definition, $quantity, 0.7),
+            validationFlags: [
+                'normative_required',
+                ...$this->materialScenarioFlags($definition),
+                ...(($quantity['source'] ?? null) === 'residential_preliminary_scenario'
+                    ? ['preliminary_quantity_scenario']
+                    : []),
+            ],
             metadata: [
                 'generation_source' => $definition['generation_source'] ?? 'normative_intent_catalog',
                 'quantity_key' => $definition['quantity_key'],
@@ -226,6 +242,11 @@ final class NormativeWorkItemPlannerService
             'pricing_status' => 'not_calculated',
             'pricing_blocker' => 'normative_required',
             'pricing_blocker_message' => null,
+            ...(
+                isset($metadata['specialization_scenario']) && is_array($metadata['specialization_scenario'])
+                    ? ['specialization_scenario' => $metadata['specialization_scenario']]
+                    : []
+            ),
             'metadata' => [
                 ...$metadata,
                 'normative_grounding_policy' => 'fsnb_required',
@@ -234,6 +255,105 @@ final class NormativeWorkItemPlannerService
                 'composition_source' => 'planner_intent',
             ],
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $definition
+     * @param  array<string, mixed>  $analysis
+     * @return array<string, mixed>
+     */
+    private function withResidentialMaterialScenario(array $definition, array $analysis): array
+    {
+        if (! $this->isResidentialAnalysis($analysis)) {
+            return $definition;
+        }
+
+        $workItemKey = $this->materialScenarioWorkItemKey($definition);
+        if ($workItemKey === '') {
+            return $definition;
+        }
+
+        $catalog = $this->materialScenarioCatalog ?? new ResidentialMaterialScenarioCatalog;
+        $scenario = $catalog->issue($workItemKey, 'residential');
+        if ($scenario === null) {
+            return $definition;
+        }
+
+        $metadata = is_array($definition['metadata'] ?? null) ? $definition['metadata'] : [];
+        $assumptionCode = (string) $scenario['assumption_code'];
+        $translationKey = 'estimate_generation.material_scenarios.'.$assumptionCode;
+        $definition['metadata'] = [
+            ...$metadata,
+            'material_scenario_work_key' => $workItemKey,
+            'specialization_scenario' => $scenario,
+            'material_assumption' => [
+                'code' => $assumptionCode,
+                'translation_key' => $translationKey,
+                'message' => $this->materialScenarioMessage($assumptionCode),
+                'severity' => 'warning',
+                'requires_confirmation' => true,
+                'scenario_id' => $scenario['scenario_id'],
+                'version' => $scenario['version'],
+            ],
+        ];
+
+        return $definition;
+    }
+
+    /** @param array<string, mixed> $definition */
+    private function materialScenarioWorkItemKey(array $definition): string
+    {
+        $quantityKey = (string) ($definition['quantity_key'] ?? '');
+        if ($quantityKey !== 'roof.area') {
+            return $quantityKey;
+        }
+
+        $text = mb_strtolower((string) ($definition['normative_search_text'] ?? $definition['name'] ?? ''));
+
+        return str_contains($text, 'утепл') ? 'roof.insulation' : '';
+    }
+
+    /** @param array<string, mixed> $analysis */
+    private function isResidentialAnalysis(array $analysis): bool
+    {
+        $object = is_array($analysis['object'] ?? null) ? $analysis['object'] : [];
+        $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
+        $factsSummary = is_array($documentContext['facts_summary'] ?? null) ? $documentContext['facts_summary'] : [];
+
+        foreach ([
+            $object['object_type'] ?? null,
+            $object['building_type'] ?? null,
+            $object['description'] ?? null,
+            $factsSummary['object_type'] ?? null,
+            $factsSummary['building_type'] ?? null,
+        ] as $value) {
+            if (is_string($value) && ObjectTypeSignalClassifier::isResidential($value)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param array<string, mixed> $definition @return list<string> */
+    private function materialScenarioFlags(array $definition): array
+    {
+        return isset($definition['metadata']['specialization_scenario']) ? ['preliminary_material_assumption'] : [];
+    }
+
+    private function materialScenarioMessage(string $assumptionCode): string
+    {
+        $fallback = match ($assumptionCode) {
+            'foundation_coating_waterproofing' => 'Предварительно принята обмазочная мастичная гидроизоляция фундамента. Материал нужно уточнить по проекту.',
+            'external_walls_aerated_concrete' => 'Предварительно приняты наружные стены из газобетонных блоков. Материал нужно уточнить по проекту.',
+            'internal_partitions_aerated_concrete' => 'Предварительно приняты внутренние перегородки из газобетонных блоков. Материал нужно уточнить по проекту.',
+            'pitched_roof_mineral_wool' => 'Предварительно принято утепление скатной кровли минераловатными плитами. Материал нужно уточнить по проекту.',
+            'floor_laminate' => 'Предварительно принято чистовое покрытие пола из ламината. Материал нужно уточнить по ведомости отделки.',
+            'baseboard_pvc' => 'Предварительно принят плинтус из ПВХ. Материал нужно уточнить по ведомости отделки.',
+            default => $assumptionCode,
+        };
+
+        return $this->estimateGenerationMessage('material_scenarios.'.$assumptionCode, $fallback);
     }
 
     /**
@@ -286,7 +406,7 @@ final class NormativeWorkItemPlannerService
             'other_resources' => [],
             'work_composition' => array_values($definition['operations'] ?? $this->operationBank((string) $definition['category'])),
             'source_refs' => $this->normalizeSourceRefs($quantity['source_refs'] ?? []),
-            'confidence' => round(max(min((float) ($definition['confidence'] ?? $quantity['confidence'] ?? 0.7), 0.98), 0.35), 4),
+            'confidence' => round(max(min($this->plannedQuantityConfidence($definition, $quantity, 0.7), 0.98), 0.35), 4),
             'validation_flags' => ['quantity_review_required'],
             'price_source' => null,
             'pricing_status' => 'not_applicable',
@@ -346,6 +466,10 @@ final class NormativeWorkItemPlannerService
         }
 
         if ($this->hasConfirmedSanitaryPointsTakeoff($analysis)) {
+            return true;
+        }
+
+        if ($this->hasApprovedResidentialScenarioQuantity($analysis, $quantityKey)) {
             return true;
         }
 
@@ -608,14 +732,13 @@ final class NormativeWorkItemPlannerService
      */
     private function packageDefinitions(string $packageKey, string $scopeType, array $quantityModel): array
     {
-        $flatRoof = (string) ($quantityModel['features']['roof_type'] ?? '') === 'flat';
+        $roofType = $quantityModel['features']['roof_type'] ?? null;
         $definitionKey = $this->packageDefinitionKey($packageKey, $scopeType);
 
         return match ($definitionKey) {
             'preconstruction', 'site_preparation' => [
                 $this->definition('Подготовка строительной площадки', 'site', 'подготовка строительной площадки', 'site.setup'),
                 $this->definition('Геодезическая разбивка осей', 'site', 'геодезическая разбивка осей здания', 'site.geodesy'),
-                $this->definition('Планировка основания площадки', 'earthworks', 'планировка площадки механизированным способом', 'earth.plan'),
             ],
             'earthworks' => [
                 $this->definition('Разработка грунта под фундаменты', 'earthworks', 'разработка грунта в траншеях и котлованах', 'earth.trench'),
@@ -671,18 +794,20 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Монтаж фасонных элементов', 'facade', 'монтаж доборных элементов фасада', 'warehouse.panel_flashings'),
                 $this->definition('Отделка фасада', 'facade', 'отделка фасада здания', 'facade.area'),
             ],
-            'roof' => $flatRoof ? [
+            'roof' => $roofType === 'flat' ? [
                 $this->definition('Устройство основания плоской кровли', 'roof', 'устройство основания плоской кровли', 'roof.flat_area'),
                 $this->definition('Пароизоляция плоской кровли', 'roof', 'устройство пароизоляции плоской кровли', 'roof.flat_area'),
                 $this->definition('Утепление плоской кровли', 'roof', 'утепление плоской кровли', 'roof.flat_area'),
                 $this->definition('Гидроизоляционный ковер кровли', 'roof', 'устройство рулонной гидроизоляции кровли', 'roof.flat_area'),
                 $this->definition('Водоотвод плоской кровли', 'roof', 'устройство внутреннего водостока кровли', 'roof.gutter'),
-            ] : [
+            ] : ($roofType === 'pitched' ? [
                 $this->definition('Монтаж стропильной системы', 'roof', 'монтаж стропильной системы кровли', 'roof.rafters'),
                 $this->definition('Утепление кровли', 'roof', 'утепление скатной кровли', 'roof.area'),
                 $this->definition('Монтаж кровельного покрытия', 'roof', 'монтаж кровельного покрытия', 'roof.area'),
                 $this->definition('Водосточная система кровли', 'roof', 'монтаж водосточной системы кровли', 'roof.gutter'),
-            ],
+            ] : [
+                $this->definition('Устройство кровельного покрытия', 'roof', 'устройство кровельного покрытия без уточнения конструкции кровли', 'roof.area'),
+            ]),
             'openings', 'gates', 'entrance_group' => [
                 $this->definition('Монтаж оконных блоков', 'openings', 'монтаж оконных блоков', 'openings.windows'),
                 $this->definition('Монтаж дверных блоков', 'openings', 'монтаж дверных блоков', 'openings.doors'),
@@ -707,13 +832,31 @@ final class NormativeWorkItemPlannerService
             'plumbing', 'water_supply', 'sanitary_rooms' => [
                 $this->definition('Прокладка труб водоснабжения', 'plumbing', 'прокладка трубопроводов водоснабжения', 'plumbing.pipe'),
                 $this->definition('Сантехнические точки', 'plumbing', 'подключение сантехнических приборов', 'sanitary.points'),
-                $this->definition('Гидроизоляция и плитка мокрых зон', 'finishing', 'отделка мокрых зон плиткой', 'sanitary.tile'),
+                $this->definition('Гидроизоляция мокрых зон', 'finishing', 'устройство гидроизоляции мокрых зон', 'sanitary.waterproofing', [
+                    'Подготовка основания',
+                    'Нанесение гидроизоляции',
+                    'Герметизация примыканий',
+                ]),
+                $this->definition('Облицовка плиткой мокрых зон', 'finishing', 'облицовка плиткой мокрых зон', 'sanitary.tile', [
+                    'Подготовка поверхности',
+                    'Укладка плитки',
+                    'Заполнение швов',
+                ]),
             ],
             'water_sewerage' => [
                 $this->definition('Прокладка труб водоснабжения', 'plumbing', 'прокладка трубопроводов водоснабжения', 'plumbing.pipe'),
                 $this->definition('Сантехнические точки', 'plumbing', 'подключение сантехнических приборов', 'sanitary.points'),
                 $this->definition('Прокладка труб канализации', 'sewerage', 'прокладка трубопроводов канализации', 'sewerage.pipe'),
-                $this->definition('Гидроизоляция и плитка мокрых зон', 'finishing', 'отделка мокрых зон плиткой', 'sanitary.tile'),
+                $this->definition('Гидроизоляция мокрых зон', 'finishing', 'устройство гидроизоляции мокрых зон', 'sanitary.waterproofing', [
+                    'Подготовка основания',
+                    'Нанесение гидроизоляции',
+                    'Герметизация примыканий',
+                ]),
+                $this->definition('Облицовка плиткой мокрых зон', 'finishing', 'облицовка плиткой мокрых зон', 'sanitary.tile', [
+                    'Подготовка поверхности',
+                    'Укладка плитки',
+                    'Заполнение швов',
+                ]),
             ],
             'sewerage' => [
                 $this->definition('Прокладка труб канализации', 'sewerage', 'прокладка трубопроводов канализации', 'sewerage.pipe'),
@@ -982,6 +1125,10 @@ final class NormativeWorkItemPlannerService
             $quantities[$key] = $quantity;
         }
 
+        foreach ($this->quantitiesFromCanonicalBuildingQuantities($documentContext) as $key => $quantity) {
+            $quantities[$key] = $quantity;
+        }
+
         $quantities = $this->withQuantityLearningHints($quantities, $documentContext);
 
         return [
@@ -990,6 +1137,79 @@ final class NormativeWorkItemPlannerService
                 'roof_type' => $this->roofTypeFromDocumentContext($analysis, $documentContext),
             ],
         ];
+    }
+
+    /** @return array<string, array<string, mixed>> */
+    private function quantitiesFromCanonicalBuildingQuantities(array $documentContext): array
+    {
+        $rows = is_array($documentContext['canonical_building_quantities'] ?? null)
+            ? $documentContext['canonical_building_quantities']
+            : [];
+        $quantities = [];
+
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            try {
+                $quantity = QuantityData::fromArray($row);
+            } catch (Throwable) {
+                continue;
+            }
+
+            if ($quantity->evidenceIds === [] || (float) $quantity->amount <= 0) {
+                continue;
+            }
+
+            $quantities[$quantity->key] = [
+                'value' => (float) $quantity->amount,
+                'unit' => $quantity->unit,
+                'basis' => $quantity->formulaKey,
+                'confidence' => (float) ($quantity->formulaInputs['scenario']['confidence'] ?? 0.9),
+                'source_refs' => array_map(
+                    static fn (string $evidenceId): array => ['evidence_id' => $evidenceId],
+                    $quantity->evidenceIds,
+                ),
+                'review_required' => $quantity->reviewBlockers !== [],
+                'source' => ResidentialQuantityScenarioCatalog::owns($quantity)
+                    ? 'residential_preliminary_scenario'
+                    : 'canonical_building_quantity',
+            ];
+        }
+
+        return $quantities;
+    }
+
+    private function plannedQuantityConfidence(array $definition, array $quantity, float $default): float
+    {
+        $definitionConfidence = (float) ($definition['confidence'] ?? $quantity['confidence'] ?? $default);
+
+        return ($quantity['source'] ?? null) === 'residential_preliminary_scenario'
+            ? min($definitionConfidence, (float) ($quantity['confidence'] ?? $default))
+            : $definitionConfidence;
+    }
+
+    private function hasApprovedResidentialScenarioQuantity(array $analysis, string $quantityKey): bool
+    {
+        $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
+        $rows = is_array($documentContext['canonical_building_quantities'] ?? null)
+            ? $documentContext['canonical_building_quantities']
+            : [];
+
+        foreach ($rows as $row) {
+            if (! is_array($row) || ($row['key'] ?? null) !== $quantityKey) {
+                continue;
+            }
+
+            try {
+                return ResidentialQuantityScenarioCatalog::owns(QuantityData::fromArray($row));
+            } catch (Throwable) {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -1386,11 +1606,12 @@ final class NormativeWorkItemPlannerService
      * @param  array<string, mixed>  $analysis
      * @param  array<string, mixed>  $documentContext
      */
-    private function roofTypeFromDocumentContext(array $analysis, array $documentContext): string
+    private function roofTypeFromDocumentContext(array $analysis, array $documentContext): ?string
     {
-        $haystack = mb_strtolower(implode(' ', $this->documentTextFragments($analysis, $documentContext)));
-
-        return str_contains($haystack, 'плоск') || str_contains($haystack, 'flat') ? 'flat' : 'pitched';
+        return $this->roofTypeResolver->resolve([
+            ...$analysis,
+            'document_context' => $documentContext,
+        ]);
     }
 
     /**

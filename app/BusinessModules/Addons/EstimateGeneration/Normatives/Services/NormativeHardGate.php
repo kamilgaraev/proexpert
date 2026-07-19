@@ -111,6 +111,8 @@ final class NormativeHardGate
                 'object' => $intent->workObject,
                 'object_type' => $intent->objectType,
                 'candidate_title' => $candidate->name,
+                'specialization_evidence' => $intent->specializationEvidence,
+                'specialization_scenario' => $intent->specializationScenario,
             ],
         )) {
             $reasons[] = 'semantic_mismatch';

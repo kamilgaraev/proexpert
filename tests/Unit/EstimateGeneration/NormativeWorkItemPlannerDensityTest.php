@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
 use PHPUnit\Framework\TestCase;
@@ -74,12 +76,16 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                         'name' => 'Длина силовых линий по ведомости',
                         'unit' => 'м',
                         'quantity' => 120,
+                        'source_refs' => [['type' => 'document', 'filename' => 'electrical.pdf', 'page_number' => 2]],
+                        'normalized_payload' => ['review_required' => false],
                     ],
                     [
                         'quantity_key' => 'plumbing.pipe',
                         'name' => 'Длина труб водоснабжения по ведомости',
                         'unit' => 'м',
                         'quantity' => 64,
+                        'source_refs' => [['type' => 'document', 'filename' => 'plumbing.pdf', 'page_number' => 3]],
+                        'normalized_payload' => ['review_required' => false],
                     ],
                 ],
             ],
@@ -281,11 +287,11 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         $quantityKeys = array_column($items, 'quantity_formula');
 
         self::assertNotContains('sanitary.points', $quantityKeys);
-        self::assertContains('plumbing.pipe', $quantityKeys);
-        self::assertContains('sewerage.pipe', $quantityKeys);
+        self::assertNotContains('plumbing.pipe', $quantityKeys);
+        self::assertNotContains('sewerage.pipe', $quantityKeys);
     }
 
-    public function test_explicit_fixture_evidence_or_direct_takeoff_keeps_sanitary_points(): void
+    public function test_only_explicit_fixture_takeoff_with_quantity_keeps_sanitary_points(): void
     {
         $localEstimate = $this->localEstimate('water_sewerage', 'Водоснабжение и канализация', 'plumbing', 12);
         $planner = $this->planner();
@@ -318,7 +324,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                 ],
             ));
 
-            self::assertContains('sanitary.points', array_column($fixtureMentions, 'quantity_formula'), $fixture);
+            self::assertNotContains('sanitary.points', array_column($fixtureMentions, 'quantity_formula'), $fixture);
         }
 
         foreach (['Установка ванны.', 'Монтаж ванной.', 'Подключение ванны.'] as $statement) {
@@ -331,7 +337,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                 ],
             ));
 
-            self::assertContains('sanitary.points', array_column($projectStatement, 'quantity_formula'), $statement);
+            self::assertNotContains('sanitary.points', array_column($projectStatement, 'quantity_formula'), $statement);
         }
 
         $nestedUnderstanding = $this->pricedItems($planner->build(
@@ -352,7 +358,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             ],
         ));
 
-        self::assertContains('sanitary.points', array_column($nestedUnderstanding, 'quantity_formula'));
+        self::assertNotContains('sanitary.points', array_column($nestedUnderstanding, 'quantity_formula'));
 
         $directTakeoff = $this->pricedItems($planner->build(
             $localEstimate,
@@ -624,8 +630,8 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertContains('Устройство внутренних перегородок', $names);
         self::assertContains('Бетонирование монолитного перекрытия', $names);
         self::assertContains('Армирование монолитного перекрытия', $names);
-        self::assertContains('Монтаж оконных блоков', $names);
-        self::assertContains('Монтаж дверных блоков', $names);
+        self::assertNotContains('Монтаж оконных блоков', $names);
+        self::assertNotContains('Монтаж дверных блоков', $names);
         self::assertNotContains('Устройство плиты пола', $names);
         self::assertNotContains('Офисные перегородки', $names);
         self::assertNotContains('Топпинг промышленного пола', $names);
@@ -1209,6 +1215,22 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                             'review_required' => false,
                         ],
                     ],
+                    [
+                        'scope_key' => 'wet_zone_waterproofing_area',
+                        'name' => 'Wet zone waterproofing area from floor plan',
+                        'unit' => 'м2',
+                        'quantity' => 41.6,
+                        'confidence' => 0.67,
+                        'source_refs' => [[
+                            'type' => 'drawing',
+                            'filename' => 'flat-plan.png',
+                            'page_number' => 1,
+                        ]],
+                        'normalized_payload' => [
+                            'quantity_key' => 'sanitary.waterproofing',
+                            'review_required' => false,
+                        ],
+                    ],
                 ],
             ],
         ];
@@ -1226,6 +1248,10 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             $plumbingItems,
             static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'sanitary.tile'
         ))[0] ?? null;
+        $waterproofingItem = array_values(array_filter(
+            $plumbingItems,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'sanitary.waterproofing'
+        ))[0] ?? null;
 
         self::assertIsArray($paintItem);
         self::assertSame(312.4, (float) $paintItem['quantity']);
@@ -1234,6 +1260,70 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertSame(54.2, (float) $tileItem['quantity']);
         self::assertNotContains('quantity_review_required', $tileItem['validation_flags']);
         self::assertNotSame('компл', $tileItem['unit']);
+        self::assertSame('Облицовка плиткой мокрых зон', $tileItem['name']);
+        self::assertIsArray($waterproofingItem);
+        self::assertSame(41.6, (float) $waterproofingItem['quantity']);
+        self::assertNotContains('quantity_review_required', $waterproofingItem['validation_flags']);
+        self::assertSame('Гидроизоляция мокрых зон', $waterproofingItem['name']);
+        self::assertNotSame($tileItem['normative_search_key'], $waterproofingItem['normative_search_key']);
+
+        $classifier = new WorkIntentClassifier(new NormativeScopeRuleCatalog);
+        self::assertSame('tiling', $classifier->classify($tileItem)->action);
+        self::assertSame('waterproofing', $classifier->classify($waterproofingItem)->action);
+    }
+
+    public function test_site_preparation_does_not_duplicate_earthworks_base_planning(): void
+    {
+        $analysis = [
+            'document_context' => [
+                'quantity_takeoffs' => [
+                    $this->confirmedTakeoff('earth.plan', 192.8, 'м2'),
+                ],
+            ],
+        ];
+        $preconstruction = $this->localEstimate('preconstruction', 'Подготовительные работы', 'site', 3);
+        $earthworks = $this->localEstimate('earthworks', 'Земляные работы', 'foundation', 4);
+        $planner = $this->planner();
+
+        $preconstructionFormulas = array_column(
+            $planner->build($preconstruction, $preconstruction['sections'][0], $analysis),
+            'quantity_formula'
+        );
+        $earthworkFormulas = array_column(
+            $planner->build($earthworks, $earthworks['sections'][0], $analysis),
+            'quantity_formula'
+        );
+
+        self::assertNotContains('earth.plan', $preconstructionFormulas);
+        self::assertSame(1, count(array_keys($earthworkFormulas, 'earth.plan', true)));
+    }
+
+    public function test_wet_zone_operations_require_their_own_document_takeoff(): void
+    {
+        $localEstimate = $this->localEstimate('plumbing', 'Водоснабжение', 'plumbing', 4);
+
+        $formulas = array_column(
+            $this->planner()->build($localEstimate, $localEstimate['sections'][0], []),
+            'quantity_formula'
+        );
+
+        self::assertNotContains('sanitary.tile', $formulas);
+        self::assertNotContains('sanitary.waterproofing', $formulas);
+
+        $analysis = [
+            'document_context' => [
+                'quantity_takeoffs' => [
+                    $this->confirmedTakeoff('sanitary.tile', 21.4, 'м2'),
+                ],
+            ],
+        ];
+        $formulas = array_column(
+            $this->planner()->build($localEstimate, $localEstimate['sections'][0], $analysis),
+            'quantity_formula'
+        );
+
+        self::assertContains('sanitary.tile', $formulas);
+        self::assertNotContains('sanitary.waterproofing', $formulas);
     }
 
     public function test_floor_plan_rough_and_finish_packages_do_not_duplicate_finish_intents(): void
@@ -1274,6 +1364,40 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         foreach ($fallbackFinishItems as $fallbackItem) {
             self::assertContains('document_takeoff_required', $fallbackItem['validation_flags']);
         }
+    }
+
+    public function test_residential_preliminary_items_receive_catalog_material_scenario_and_warning(): void
+    {
+        $localEstimate = $this->localEstimate('finish_finishing', 'Чистовая отделка', 'finishing', 6);
+        $analysis = [
+            'object' => ['object_type' => 'house'],
+            'document_context' => [
+                'quantity_takeoffs' => [
+                    $this->confirmedTakeoff('finish.floor', 87.14, 'м2'),
+                ],
+            ],
+        ];
+
+        $items = $this->pricedItems($this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            $analysis,
+        ));
+        $floor = array_values(array_filter(
+            $items,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'finish.floor',
+        ))[0] ?? null;
+
+        self::assertIsArray($floor);
+        self::assertSame('residential_preliminary_common:v1', $floor['specialization_scenario']['scenario_id'] ?? null);
+        self::assertSame(['ламинат'], $floor['specialization_scenario']['material_markers'] ?? null);
+        self::assertSame('warning', $floor['metadata']['material_assumption']['severity'] ?? null);
+        self::assertTrue($floor['metadata']['material_assumption']['requires_confirmation'] ?? false);
+        self::assertSame(
+            'Предварительно принято чистовое покрытие пола из ламината. Материал нужно уточнить по ведомости отделки.',
+            $floor['metadata']['material_assumption']['message'] ?? null,
+        );
+        self::assertContains('preliminary_material_assumption', $floor['validation_flags']);
     }
 
     public function test_engineering_takeoff_scope_maps_to_matching_heating_quantity_key(): void

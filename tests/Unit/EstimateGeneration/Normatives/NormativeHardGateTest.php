@@ -327,6 +327,11 @@ final class NormativeHardGateTest extends TestCase
             1, 2, 3, 'facade-finish', 'Отделка фасада', 'm2', 'area',
             'fiber_cement', 'general_work', 'facade', '15', 'residential', 'v1', 'published', '78',
             new DateTimeImmutable('2026-01-01'), ['doc:1'], ['15'],
+            specializationEvidence: [[
+                'text' => 'Фасадные плиты: фиброцемент',
+                'source' => 'document',
+                'evidence_refs' => ['doc:1'],
+            ]],
         );
         $candidate = $this->candidate([
             'name' => 'Облицовка фасадов фиброцементными плитами',

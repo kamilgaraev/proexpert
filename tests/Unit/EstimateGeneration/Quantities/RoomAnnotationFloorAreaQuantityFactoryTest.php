@@ -196,6 +196,102 @@ final class RoomAnnotationFloorAreaQuantityFactoryTest extends TestCase
         self::assertSame('42.700000', $quantity?->amount);
     }
 
+    #[Test]
+    public function exposes_separate_evidence_backed_areas_for_a_two_storey_house(): void
+    {
+        $evidence = new InMemoryEvidenceRepository;
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('a', 64));
+        $floors = [];
+        foreach ([
+            'floor-1' => [['Kitchen 70,0', 70.0], ['Hall 43,3', 43.3]],
+            'floor-2' => [['Bedroom 50,0', 50.0], ['Study 29,5', 29.5]],
+        ] as $floorKey => $roomDefinitions) {
+            $rooms = [];
+            foreach ($roomDefinitions as $roomIndex => [$name, $area]) {
+                $node = $evidence->insertOrGet(new EvidenceData(
+                    10,
+                    20,
+                    30,
+                    EvidenceType::Extracted,
+                    EvidenceSourceType::DocumentUnit,
+                    'document:'.($floorKey === 'floor-1' ? '501' : '502'),
+                    'sha256:'.hash('sha256', $floorKey),
+                    [
+                        'document_id' => $floorKey === 'floor-1' ? 501 : 502,
+                        'unit_type' => 'raster_image',
+                        'unit_index' => 1,
+                        'page' => 1,
+                        'element_key' => 'element:'.hash('sha256', $floorKey.'-room-'.$roomIndex),
+                    ],
+                    ['field_key' => 'room_area', 'field_value' => $area, 'unit' => 'm2'],
+                    0.95,
+                    EvidenceProducer::DrawingAnalyzer->value,
+                    'model:v2',
+                ));
+                $rooms[] = new RoomData($floorKey.'-room-'.$roomIndex, $name, null, [$node->id], 0.95, 'unknown');
+            }
+            $floors[] = new FloorData(
+                $floorKey,
+                null,
+                null,
+                $rooms,
+                [],
+                [],
+                [],
+                array_merge(...array_column($rooms, 'evidenceIds')),
+                0.95,
+                'unknown',
+            );
+        }
+        $model = new NormalizedBuildingModelData(
+            'm',
+            'unknown',
+            null,
+            $floors,
+            [new AssumptionData('scale_missing', 'blocking', ['floor-1', 'floor-2'], [1], true)],
+            'building-model:v1',
+        );
+
+        $quantities = (new RoomAnnotationFloorAreaQuantityFactory($evidence))->makeAll($context, $model, 2);
+
+        self::assertSame('192.800000', $quantities['floor_area']->amount);
+        self::assertSame('113.300000', $quantities['first_floor_internal_area']->amount);
+        self::assertSame('79.500000', $quantities['upper_floor_internal_area']->amount);
+        self::assertCount(2, $quantities['first_floor_internal_area']->evidenceIds);
+        self::assertCount(2, $quantities['upper_floor_internal_area']->evidenceIds);
+    }
+
+    #[Test]
+    public function does_not_expose_floor_specific_areas_when_floor_role_is_not_identifiable(): void
+    {
+        $evidence = new InMemoryEvidenceRepository;
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('a', 64));
+        $area = $evidence->insertOrGet(new EvidenceData(
+            10,
+            20,
+            30,
+            EvidenceType::Extracted,
+            EvidenceSourceType::DocumentUnit,
+            'document:501',
+            'sha256:'.str_repeat('b', 64),
+            ['document_id' => 501, 'unit_type' => 'raster_image', 'unit_index' => 1, 'page' => 1],
+            ['field_key' => 'room_area', 'field_value' => 42.7, 'unit' => 'm2'],
+            0.95,
+            EvidenceProducer::DrawingAnalyzer->value,
+            'model:v2',
+        ));
+        $room = new RoomData('room-1', 'Kitchen 42,7', null, [$area->id], 0.95, 'unknown');
+        $model = new NormalizedBuildingModelData('m', 'unknown', null, [new FloorData(
+            'level-a', null, null, [$room], [], [], [], [$area->id], 0.95, 'unknown',
+        )], [new AssumptionData('scale_missing', 'blocking', ['level-a'], [$area->id], true)], 'building-model:v1');
+
+        $quantities = (new RoomAnnotationFloorAreaQuantityFactory($evidence))->makeAll($context, $model, 1);
+
+        self::assertSame('42.700000', $quantities['floor_area']->amount);
+        self::assertArrayNotHasKey('first_floor_internal_area', $quantities);
+        self::assertArrayNotHasKey('upper_floor_internal_area', $quantities);
+    }
+
     private function quantityForConfidence(float $confidence): ?\App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData
     {
         $evidence = new InMemoryEvidenceRepository;

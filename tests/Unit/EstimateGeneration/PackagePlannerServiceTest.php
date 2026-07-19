@@ -38,6 +38,18 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertContains('heating', $keys);
         $this->assertGreaterThanOrEqual(250, $plan->targetItemsMinTotal());
         $this->assertGreaterThanOrEqual(15, count($plan->packages));
+        $this->assertSame(['preconstruction'], array_values(array_map(
+            static fn (array $package): string => (string) $package['key'],
+            array_filter(
+                $plan->packages,
+                static fn (array $package): bool => ($package['coverage_required'] ?? null) !== true,
+            ),
+        )));
+        $preconstruction = array_values(array_filter(
+            $plan->packages,
+            static fn (array $package): bool => ($package['key'] ?? null) === 'preconstruction',
+        ))[0];
+        $this->assertSame('document_scope_required', $preconstruction['coverage_warning'] ?? null);
     }
 
     public function test_house_plan_does_not_include_optional_site_packages_without_explicit_scope(): void
