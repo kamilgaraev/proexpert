@@ -22,6 +22,13 @@ use PHPUnit\Framework\TestCase;
 final class RoomAnnotationFloorAreaQuantityFactoryTest extends TestCase
 {
     #[Test]
+    public function accepts_complete_room_annotations_at_the_document_quality_threshold(): void
+    {
+        self::assertSame('42.700000', $this->quantityForConfidence(0.70)?->amount);
+        self::assertNull($this->quantityForConfidence(0.69));
+    }
+
+    #[Test]
     public function sums_only_document_backed_internal_room_annotations_without_scale(): void
     {
         $evidence = new InMemoryEvidenceRepository;
@@ -187,5 +194,25 @@ final class RoomAnnotationFloorAreaQuantityFactoryTest extends TestCase
         $quantity = (new RoomAnnotationFloorAreaQuantityFactory($evidence))->make($context, $model, 1);
 
         self::assertSame('42.700000', $quantity?->amount);
+    }
+
+    private function quantityForConfidence(float $confidence): ?\App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData
+    {
+        $evidence = new InMemoryEvidenceRepository;
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('a', 64));
+        $area = $evidence->insertOrGet(new EvidenceData(
+            10, 20, 30, EvidenceType::Extracted, EvidenceSourceType::DocumentUnit, 'document:501',
+            'sha256:'.str_repeat('b', 64),
+            ['document_id' => 501, 'unit_type' => 'raster_image', 'unit_index' => 1, 'page' => 1],
+            ['field_key' => 'room_area', 'field_value' => 42.7, 'unit' => 'm2'],
+            $confidence, EvidenceProducer::DrawingAnalyzer->value, 'model:v2',
+        ));
+        $model = new NormalizedBuildingModelData('m', 'unknown', null, [new FloorData(
+            'floor-1', null, null, [
+                new RoomData('room-1', 'Кухня 42,7', null, [$area->id], $confidence, 'unknown'),
+            ], [], [], [], [$area->id], $confidence, 'unknown',
+        )], [new AssumptionData('scale_missing', 'blocking', ['floor-1'], [$area->id], true)], 'building-model:v1');
+
+        return (new RoomAnnotationFloorAreaQuantityFactory($evidence))->make($context, $model, 1);
     }
 }
