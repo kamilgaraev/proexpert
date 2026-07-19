@@ -162,7 +162,7 @@ final class NormativeContextPinResolverTest extends TestCase
                 ],
                 (object) [
                     'price_id' => 962, 'price_resource_code' => '11.3.02.04-0021',
-                    'price_resource_name' => 'Блок оконный из ПВХ-профилей, двухстворчатый, площадь до 2 м2',
+                    'price_resource_name' => 'Блок оконный из ПВХ-профилей, двустворчатый, площадь до 2 м2',
                     'price_unit' => 'м2', 'base_price' => '5200', 'regional_price_version_id' => 11,
                     'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
                 ],
