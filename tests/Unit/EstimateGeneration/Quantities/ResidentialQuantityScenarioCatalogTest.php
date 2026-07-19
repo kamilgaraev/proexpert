@@ -31,7 +31,10 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         ]);
 
         foreach ([
+            'foundation.prep',
+            'walls.lintels',
             'stairs.flights',
+            'stairs.railings',
             'roof.rafters',
             'roof.area',
             'roof.gutter',
@@ -39,13 +42,24 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'openings.doors',
             'electrical.main_cable',
             'electrical.power_lines',
+            'electrical.panel',
+            'electrical.outlets',
+            'electrical.switches',
             'electrical.grounding',
+            'lighting.fixtures',
             'plumbing.pipe',
             'sewerage.pipe',
             'heating.unit',
             'heating.pipe',
+            'heating.radiators',
             'ventilation.air_exchange',
             'sanitary.waterproofing',
+            'rough.floor',
+            'sanitary.tile',
+            'sanitary.points',
+            'sewerage.outlets',
+            'sewerage.risers',
+            'sewerage.revisions',
         ] as $quantityKey) {
             self::assertArrayHasKey($quantityKey, $result->quantities, $quantityKey);
             self::assertTrue(ResidentialQuantityScenarioCatalog::owns($result->quantities[$quantityKey]), $quantityKey);
@@ -54,10 +68,6 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         }
 
         self::assertArrayNotHasKey('electrical.trays', $result->quantities);
-        foreach (['sanitary.points', 'sewerage.outlets', 'sewerage.risers', 'sewerage.revisions', 'sanitary.tile'] as $quantityKey) {
-            self::assertArrayNotHasKey($quantityKey, $result->quantities, $quantityKey);
-            self::assertContains($quantityKey, array_column($result->omissions, 'quantity_key'), $quantityKey);
-        }
         self::assertArrayNotHasKey('ventilation.office_points', $result->quantities);
         self::assertArrayNotHasKey('ventilation.warehouse_points', $result->quantities);
         foreach ($result->omissions as $omission) {
@@ -80,13 +90,16 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertSame('23.136000', $result->quantities['openings.windows']->amount);
         self::assertSame('9.000000', $result->quantities['openings.doors']->amount);
         self::assertSame('8.000000', $result->quantities['stairs.flights']->amount);
-        self::assertArrayNotHasKey('stairs.landings', $result->quantities);
-        self::assertArrayNotHasKey('stairs.railings', $result->quantities);
+        self::assertSame('8.000000', $result->quantities['stairs.railings']->amount);
         self::assertSame('77.120000', $result->quantities['electrical.main_cable']->amount);
+        self::assertSame('1.000000', $result->quantities['electrical.panel']->amount);
+        self::assertGreaterThan(0, (float) $result->quantities['electrical.outlets']->amount);
+        self::assertGreaterThan(0, (float) $result->quantities['electrical.switches']->amount);
+        self::assertGreaterThan(0, (float) $result->quantities['lighting.fixtures']->amount);
         self::assertSame('67.480000', $result->quantities['plumbing.pipe']->amount);
         self::assertSame('12.980000', $result->quantities['sanitary.waterproofing']->amount);
-        self::assertArrayNotHasKey('sanitary.points', $result->quantities);
-        self::assertArrayNotHasKey('sanitary.tile', $result->quantities);
+        self::assertGreaterThan(0, (float) $result->quantities['sanitary.points']->amount);
+        self::assertGreaterThan(0, (float) $result->quantities['sanitary.tile']->amount);
         self::assertArrayNotHasKey('electrical.trays', $result->quantities);
 
         foreach ($result->quantities as $quantity) {
@@ -104,10 +117,9 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertContains('networks.external', array_column($result->omissions, 'quantity_key'));
         self::assertContains('electrical.trays', array_column($result->omissions, 'quantity_key'));
         self::assertNotContains('stairs.flights', array_column($result->omissions, 'quantity_key'));
-        self::assertContains('stairs.landings', array_column($result->omissions, 'quantity_key'));
-        self::assertContains('stairs.railings', array_column($result->omissions, 'quantity_key'));
+        self::assertNotContains('stairs.railings', array_column($result->omissions, 'quantity_key'));
         self::assertNotContains('openings.windows', array_column($result->omissions, 'quantity_key'));
-        self::assertContains('heating.radiators', array_column($result->omissions, 'quantity_key'));
+        self::assertNotContains('heating.radiators', array_column($result->omissions, 'quantity_key'));
         self::assertNotContains('ventilation.air_exchange', array_column($result->omissions, 'quantity_key'));
     }
 
@@ -126,7 +138,7 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
     }
 
     #[Test]
-    public function preliminary_house_scope_does_not_invent_fixture_types_or_sewer_fittings(): void
+    public function preliminary_house_scope_estimates_connection_counts_without_inventing_fixture_types(): void
     {
         $result = (new ResidentialQuantityScenarioCatalog)->build([
             'floor_area' => $this->quantity('floor_area', '192.800000', ['room:1', 'room:2']),
@@ -142,8 +154,9 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'sewerage.revisions',
             'sanitary.tile',
         ] as $quantityKey) {
-            self::assertArrayNotHasKey($quantityKey, $result->quantities, $quantityKey);
-            self::assertContains($quantityKey, array_column($result->omissions, 'quantity_key'), $quantityKey);
+            self::assertArrayHasKey($quantityKey, $result->quantities, $quantityKey);
+            self::assertGreaterThan(0, (float) $result->quantities[$quantityKey]->amount, $quantityKey);
+            self::assertContains('preliminary_quantity_scenario', $result->quantities[$quantityKey]->formulaInputs['scenario']['warnings']);
         }
 
         self::assertArrayHasKey('plumbing.pipe', $result->quantities);

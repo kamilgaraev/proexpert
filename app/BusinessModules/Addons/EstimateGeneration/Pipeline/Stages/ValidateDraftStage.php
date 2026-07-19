@@ -10,13 +10,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessInspector;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector;
 
 final readonly class ValidateDraftStage implements LeaseAwarePipelineStage
 {
     use RenewsPipelineLease;
 
-    public function __construct(private EstimateValidationService $validation, private DraftReadinessInspector $readiness, private StageResultFactory $results) {}
+    public function __construct(private EstimateValidationService $validation, private DraftReadinessProjector $readiness, private StageResultFactory $results) {}
 
     public function stage(): ProcessingStage
     {
@@ -27,18 +27,8 @@ final readonly class ValidateDraftStage implements LeaseAwarePipelineStage
     {
         $input = $context->priorOutputs->payload(ProcessingStage::BuildDraft);
         $draft = $this->validation->validate($input['draft']);
-        $inspection = $this->readiness->inspect($draft);
-        $blockingCodes = array_column($inspection->blockingIssues, 'code');
-        $warningCodes = array_column($inspection->warnings, 'code');
-        $draft['readiness_summary'] = $inspection->toArray();
-        $draft['quality_summary'] = [
-            ...($draft['quality_summary'] ?? []),
-            'status' => $blockingCodes === [] ? 'passed' : 'review_required',
-            'level' => $blockingCodes === [] ? 'passed' : 'critical',
-            'critical_flags' => $blockingCodes,
-            'warning_flags' => $warningCodes,
-        ];
-        $draft['problem_flags'] = array_values(array_unique([...($draft['problem_flags'] ?? []), ...$blockingCodes, ...$warningCodes]));
+        $draft = $this->readiness->project($draft);
+        $blockingCodes = array_column((array) ($draft['readiness_summary']['blocking_issues'] ?? []), 'code');
 
         return $this->results->make($context, $this->stage(), ['draft' => $draft, 'requires_review' => $blockingCodes !== []]);
     }

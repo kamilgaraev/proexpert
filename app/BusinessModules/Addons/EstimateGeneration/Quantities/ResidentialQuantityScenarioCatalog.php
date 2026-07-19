@@ -13,17 +13,24 @@ use Brick\Math\RoundingMode;
 
 final class ResidentialQuantityScenarioCatalog
 {
-    public const VERSION = '2.3.0';
+    public const VERSION = '2.5.0';
 
-    public const SCENARIO_ID = 'residential_preliminary_scenario:v6';
+    public const SCENARIO_ID = 'residential_preliminary_scenario:v8';
 
     private const UNITS = [
         'electrical.grounding' => 'm',
         'electrical.main_cable' => 'm',
+        'electrical.outlets' => 'pcs',
+        'electrical.panel' => 'pcs',
         'electrical.power_lines' => 'm',
+        'electrical.switches' => 'pcs',
+        'earth.export' => 'm3',
+        'foundation.prep' => 'm2',
         'heating.pipe' => 'm',
+        'heating.radiators' => 'pcs',
         'heating.unit' => 'pcs',
         'lighting.lines' => 'm',
+        'lighting.fixtures' => 'pcs',
         'openings.doors' => 'm2',
         'openings.windows' => 'm2',
         'plumbing.pipe' => 'm',
@@ -31,6 +38,7 @@ final class ResidentialQuantityScenarioCatalog
         'roof.flat_area' => 'm2',
         'roof.gutter' => 'm',
         'roof.rafters' => 'm2',
+        'rough.floor' => 'm2',
         'rough.ceiling' => 'm2',
         'sanitary.points' => 'pcs',
         'sanitary.tile' => 'm2',
@@ -40,8 +48,8 @@ final class ResidentialQuantityScenarioCatalog
         'sewerage.revisions' => 'pcs',
         'sewerage.risers' => 'pcs',
         'stairs.flights' => 'm2',
-        'stairs.landings' => 'm2',
         'stairs.railings' => 'm',
+        'walls.lintels' => 'pcs',
         'finish.ceiling' => 'm2',
         'ventilation.air_exchange' => 'm2',
     ];
@@ -64,9 +72,30 @@ final class ResidentialQuantityScenarioCatalog
             : array_merge(...array_map(static fn ($floor): array => $floor->rooms, $floors));
         $roomCount = count($rooms);
         $serviceRooms = array_values(array_filter($rooms, fn (RoomData $room): bool => $this->isServiceRoom($room)));
+        $finishedWetRooms = array_values(array_filter($rooms, fn (RoomData $room): bool => $this->isFinishedWetRoom($room)));
         $quantities = [];
         $omissions = [];
         $roofType = $this->roofTypes->resolve($analysis);
+
+        if ($firstFloorArea !== null && $firstFloorArea->evidenceIds !== []) {
+            $quantities['foundation.prep'] = $this->scaled(
+                'foundation.prep',
+                'm2',
+                $firstFloorArea,
+                '1.00',
+                ['residential_foundation_preparation_by_footprint'],
+            );
+            $quantities['earth.export'] = $this->scaled(
+                'earth.export',
+                'm3',
+                $firstFloorArea,
+                '0.15',
+                ['preliminary_surplus_soil_by_footprint_factor:0.15'],
+            );
+        } else {
+            $omissions[] = $this->omission('foundation.prep', 'foundation_footprint_missing');
+            $omissions[] = $this->omission('earth.export', 'soil_balance_missing');
+        }
 
         if ($firstFloorArea !== null && $firstFloorArea->evidenceIds !== [] && in_array($roofType, ['pitched', 'flat'], true)) {
             if ($roofType === 'pitched') {
@@ -116,6 +145,13 @@ final class ResidentialQuantityScenarioCatalog
         }
 
         if ($floorArea !== null && $floorArea->evidenceIds !== []) {
+            $quantities['rough.floor'] = $this->scaled(
+                'rough.floor',
+                'm2',
+                $floorArea,
+                '1.00',
+                ['residential_rough_floor_area'],
+            );
             foreach ([
                 'openings.windows' => ['m2', '0.12', 'residential_window_area_ratio:0.12'],
                 'electrical.main_cable' => ['m', '0.40', 'residential_main_cable_length_ratio:0.40'],
@@ -137,9 +173,35 @@ final class ResidentialQuantityScenarioCatalog
                 $serviceRooms !== [] ? 'service_room_count' : 'residential_heat_source_count',
                 [$serviceRooms !== [] ? 'one_heat_source_for_documented_service_rooms' : 'one_heat_source_per_house'],
             );
+            $quantities['heating.radiators'] = $this->countBased(
+                'heating.radiators',
+                'pcs',
+                max(1, (int) ceil((float) $floorArea->amount / 15)),
+                '1',
+                $model,
+                'heated_area_per_radiator_m2:15',
+                ['preliminary_radiator_count_by_heated_area'],
+            );
+            $quantities['electrical.panel'] = $this->countBased(
+                'electrical.panel', 'pcs', 1, '1', $model, 'residential_house_count',
+                ['one_preliminary_distribution_panel_per_house'],
+            );
+            $quantities['electrical.outlets'] = $this->countBased(
+                'electrical.outlets', 'pcs', max(1, max($roomCount * 4, (int) ceil((float) $floorArea->amount / 8))),
+                '1', $model, 'room_and_floor_area_allowance', ['preliminary_outlet_count_by_rooms_and_area'],
+            );
+            $quantities['electrical.switches'] = $this->countBased(
+                'electrical.switches', 'pcs', max(1, max($roomCount, (int) ceil((float) $floorArea->amount / 15))),
+                '1', $model, 'room_and_floor_area_allowance', ['preliminary_switch_count_by_rooms_and_area'],
+            );
+            $quantities['lighting.fixtures'] = $this->countBased(
+                'lighting.fixtures', 'pcs', max(1, max($roomCount, (int) ceil((float) $floorArea->amount / 10))),
+                '1', $model, 'room_and_floor_area_allowance', ['preliminary_luminaire_count_by_rooms_and_area'],
+            );
         } else {
             foreach ([
                 'openings.windows', 'electrical.main_cable', 'electrical.power_lines', 'lighting.lines',
+                'electrical.panel', 'electrical.outlets', 'electrical.switches', 'lighting.fixtures',
                 'plumbing.pipe', 'sewerage.pipe', 'heating.pipe', 'heating.unit',
                 'ventilation.air_exchange',
             ] as $key) {
@@ -164,8 +226,6 @@ final class ResidentialQuantityScenarioCatalog
             );
         }
 
-        $omissions[] = $this->omission('heating.radiators', 'radiator_schedule_missing');
-
         if ($roomCount > 0) {
             $quantities['openings.doors'] = $this->countBased(
                 'openings.doors',
@@ -175,6 +235,15 @@ final class ResidentialQuantityScenarioCatalog
                 $model,
                 'annotated_room_count',
                 ['one_door_leaf_area_per_annotated_room_m2:1.8'],
+            );
+            $quantities['walls.lintels'] = $this->countBased(
+                'walls.lintels',
+                'pcs',
+                max(1, (int) ceil($roomCount * 0.8)),
+                '1',
+                $model,
+                'annotated_room_count',
+                ['preliminary_lintel_count_by_room_count_factor:0.8'],
             );
         } else {
             $omissions[] = $this->omission('openings.doors', 'room_annotations_missing');
@@ -191,20 +260,48 @@ final class ResidentialQuantityScenarioCatalog
                 'documented_interfloor_transition_count',
                 ['residential_stair_horizontal_projection_per_transition_m2:8'],
             );
-            $omissions[] = $this->omission('stairs.landings', 'included_in_residential_stair_assembly');
-            $omissions[] = $this->omission('stairs.railings', 'stair_railing_geometry_missing');
+            $quantities['stairs.railings'] = $this->countBased(
+                'stairs.railings',
+                'm',
+                $transitions,
+                '8',
+                $model,
+                'documented_interfloor_transition_count',
+                ['residential_stair_railing_length_per_transition_m:8'],
+            );
         } else {
-            foreach (['stairs.flights', 'stairs.landings', 'stairs.railings'] as $key) {
+            foreach (['stairs.flights', 'stairs.railings'] as $key) {
                 $omissions[] = $this->omission($key, $floorCount === 1 ? 'single_storey_house' : 'floor_count_missing');
             }
         }
 
-        $omissions[] = $this->omission('sanitary.points', 'plumbing_design_takeoff_missing');
-        foreach (['sewerage.outlets', 'sewerage.risers', 'sewerage.revisions'] as $key) {
-            $omissions[] = $this->omission($key, 'sewerage_design_takeoff_missing');
+        $wetRoomCount = count($finishedWetRooms);
+        if ($wetRoomCount > 0) {
+            $quantities['sanitary.points'] = $this->countBased(
+                'sanitary.points',
+                'pcs',
+                $wetRoomCount,
+                '3',
+                $model,
+                'documented_wet_room_count',
+                ['preliminary_sanitary_connection_points_per_wet_room:3'],
+            );
+        } else {
+            $omissions[] = $this->omission('sanitary.points', 'documented_wet_rooms_missing');
         }
+        $quantities['sewerage.outlets'] = $this->countBased(
+            'sewerage.outlets', 'pcs', 1, '1', $model, 'residential_house_count',
+            ['one_preliminary_sewer_outlet_per_house'],
+        );
+        $quantities['sewerage.risers'] = $this->countBased(
+            'sewerage.risers', 'pcs', max(1, $floorCount), '1', $model, 'documented_floor_count',
+            ['one_preliminary_sewer_riser_per_floor'],
+        );
+        $quantities['sewerage.revisions'] = $this->countBased(
+            'sewerage.revisions', 'pcs', max(1, $floorCount), '1', $model, 'documented_floor_count',
+            ['one_preliminary_sewer_revision_per_floor'],
+        );
 
-        $finishedWetRooms = array_values(array_filter($rooms, fn (RoomData $room): bool => $this->isFinishedWetRoom($room)));
         $finishedWetRoomAreas = array_values(array_filter(array_map(
             fn (RoomData $room): ?array => $this->roomArea($room),
             $finishedWetRooms,
@@ -229,7 +326,15 @@ final class ResidentialQuantityScenarioCatalog
                 $model->modelVersion,
                 ['wet_zone_floor_area_with_perimeter_upturn_factor:1.10'],
             );
-            $omissions[] = $this->omission('sanitary.tile', 'wet_zone_finish_specification_missing');
+            $quantities['sanitary.tile'] = $this->make(
+                'sanitary.tile',
+                'm2',
+                (string) $wetFloorArea->multipliedBy('3.35')->toScale(6, RoundingMode::HalfUp),
+                ['documented_wet_rooms' => $wetRoomInputs, 'preliminary_wall_finish_factor' => '3.35'],
+                $wetRoomEvidenceIds,
+                $model->modelVersion,
+                ['preliminary_wet_room_wall_tile_factor:3.35'],
+            );
         } else {
             $omissions[] = $this->omission('sanitary.waterproofing', 'finished_wet_room_area_missing');
             $omissions[] = $this->omission('sanitary.tile', 'finished_wet_room_area_missing');
@@ -237,8 +342,6 @@ final class ResidentialQuantityScenarioCatalog
 
         $omissions[] = $this->omission('electrical.trays', 'not_applicable_to_residential_preliminary_scenario');
         $omissions[] = $this->omission('networks.external', 'external_network_route_missing');
-        $omissions[] = $this->omission('foundation.prep', 'foundation_build_up_missing');
-        $omissions[] = $this->omission('earth.export', 'soil_balance_missing');
 
         ksort($quantities, SORT_STRING);
         usort($omissions, static fn (array $left, array $right): int => $left['quantity_key'] <=> $right['quantity_key']);

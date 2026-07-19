@@ -39,6 +39,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFac
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\UnderstandDocumentsStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\UnderstandObjectStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ValidateDraftStage;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\AiResidentialWorkCompositionAdvisor;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkCompositionLlmClient;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
@@ -49,7 +51,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessInspector;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\Test;
@@ -102,12 +104,23 @@ final class PipelineStageFunctionalTest extends TestCase
                     new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository,
                 ),
             ),
-            new PlanWorkItemsStage(new \App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler(new PackagePlannerService, new EstimateDecompositionService, new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService), new NormativeContextPinResolver), $results, new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceMaterializer(new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository)),
+            new PlanWorkItemsStage(new \App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler(new PackagePlannerService, new EstimateDecompositionService, new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService), new NormativeContextPinResolver), $results, new \App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceMaterializer(new \App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository), new AiResidentialWorkCompositionAdvisor(new class implements WorkCompositionLlmClient
+            {
+                public function isAvailable(): bool
+                {
+                    return false;
+                }
+
+                public function chat(array $messages, PipelineContext $context, string $candidateSetHash): array
+                {
+                    throw new \LogicException('Must not be called.');
+                }
+            })),
             new MatchNormativesStage($matcher, $workflow, new NormativeWorkIntentFactory, $results),
             new AssembleResourcesStage(new AssembleMatchedResources, $results),
             new ResolvePricesStage(new EstimatePricingService, $results),
             new BuildDraftStage($results),
-            new ValidateDraftStage(new EstimateValidationService, new DraftReadinessInspector, $results),
+            new ValidateDraftStage(new EstimateValidationService, new DraftReadinessProjector, $results),
         ];
         $base = 'sha256:'.str_repeat('a', 64);
         $attempt = '00000000-0000-4000-8000-000000000001';

@@ -193,6 +193,7 @@ final class WorkItemQuantityMapper
             'warehouse.floor_rebar' => ['sources' => [['key' => 'floor_area', 'factor' => '9']], 'unit' => 'kg'],
             'slabs.concrete' => ['sources' => [['key' => 'upper_floor_internal_area', 'factor' => '0.12']], 'unit' => 'm3'],
             'slabs.rebar' => ['sources' => [['key' => 'upper_floor_internal_area', 'factor' => '12']], 'unit' => 'kg'],
+            'slabs.formwork' => ['sources' => [['key' => 'upper_floor_internal_area', 'factor' => '1']], 'unit' => 'm2'],
             'warehouse.frame_weight' => ['sources' => [['key' => 'floor_area', 'factor' => '35']], 'unit' => 'kg'],
             'warehouse.columns', 'warehouse.beams' => ['sources' => [['key' => 'floor_area', 'factor' => '18']], 'unit' => 'kg'],
 
@@ -202,7 +203,7 @@ final class WorkItemQuantityMapper
                 ],
                 'unit' => 'm2',
             ],
-            'finish.baseboard' => $floorLength('0.40'),
+            'finish.baseboard' => $floorLength('0.80'),
             'warehouse.floor_joints' => $floorLength('0.25'),
             'stairs.railings' => $floorLength('0.08'),
             'stairs.flights' => $floorArea('0.05'),

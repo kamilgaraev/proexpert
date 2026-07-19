@@ -68,7 +68,7 @@ final class WorkPlanCompilerTest extends TestCase
         $lightingItems = $packages['lighting']['sections'][0]['work_items'];
 
         self::assertNotContains('lighting.lines', array_column($electricalItems, 'quantity_formula'));
-        self::assertSame(['lighting.lines'], array_column($lightingItems, 'quantity_formula'));
+        self::assertSame(['lighting.lines', 'lighting.fixtures'], array_column($lightingItems, 'quantity_formula'));
     }
 
     public function test_quantity_coverage_warnings_are_attached_only_to_the_affected_packages(): void

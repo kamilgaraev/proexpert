@@ -99,6 +99,19 @@ final class ProductionReadinessGateTest extends TestCase
         self::assertTrue($result->canApply);
     }
 
+    #[Test]
+    public function unavailable_ai_composition_review_is_visible_but_deterministic_catalog_remains_usable(): void
+    {
+        $draft = $this->readyDraft();
+        $draft['package_plan']['work_composition_advice'] = ['status' => 'unavailable'];
+
+        $inspection = (new DraftReadinessInspector)->inspect($draft);
+        $result = (new EstimatorReadinessEvaluator)->evaluate($this->input($inspection->metrics));
+
+        self::assertContains('work_composition_ai_unavailable', array_column($inspection->warnings, 'code'));
+        self::assertTrue($result->canApply);
+    }
+
     private function input(array $draftMetrics): EstimatorReadinessInput
     {
         return new EstimatorReadinessInput('ready_to_apply', true, 'passed', 'passed', array_merge([
