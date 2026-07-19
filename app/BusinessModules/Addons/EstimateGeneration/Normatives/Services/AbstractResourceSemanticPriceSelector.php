@@ -184,7 +184,7 @@ final readonly class AbstractResourceSemanticPriceSelector
         }
         $windowLeafCount = match (true) {
             preg_match('/(?:одно|1)[-\s]?створчат/u', $text) === 1 => 1,
-            preg_match('/(?:двух|2)[-\s]?створчат/u', $text) === 1 => 2,
+            preg_match('/(?:дву(?:х)?|2)[-\s]?створчат/u', $text) === 1 => 2,
             preg_match('/(?:тр[её]х|3)[-\s]?створчат/u', $text) === 1 => 3,
             default => null,
         };
