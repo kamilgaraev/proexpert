@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Quantities;
 
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalEvidenceJson;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
@@ -66,6 +67,47 @@ final class WorkItemQuantityMapperTest extends TestCase
         self::assertSame('0.45', $quantity->formulaInputs['factor']);
         self::assertSame('floor_area', $quantity->formulaInputs['source_quantity']['key']);
         self::assertSame([], $quantity->reviewBlockers);
+    }
+
+    #[Test]
+    public function derived_quantity_keeps_bounded_source_provenance_for_evidence_materialization(): void
+    {
+        $source = new QuantityData(
+            key: 'floor_area',
+            unit: 'm2',
+            amount: '192.800000',
+            formulaKey: 'floor.area.room_annotations',
+            formulaVersion: '1.0.0',
+            formulaInputs: [
+                'items' => [[
+                    'evidence_id' => 'room:1',
+                    'named_operands' => ['area' => ['value' => '21.900000', 'unit' => 'm2']],
+                ]],
+            ],
+            source: QuantitySource::Evidenced,
+            evidenceIds: ['room:1'],
+            modelVersion: 'building-model:v1',
+        );
+
+        $quantity = (new WorkItemQuantityMapper)->map('earth.trench', ['floor_area' => $source]);
+
+        self::assertNotNull($quantity);
+        self::assertSame([
+            'key' => 'floor_area',
+            'unit' => 'm2',
+            'amount' => '192.800000',
+            'formula_key' => 'floor.area.room_annotations',
+            'formula_version' => '1.0.0',
+            'source' => 'evidenced',
+            'model_version' => 'building-model:v1',
+        ], $quantity->formulaInputs['source_quantity']);
+
+        self::assertIsArray(CanonicalEvidenceJson::normalize([
+            'key' => $quantity->formulaKey,
+            'version' => $quantity->formulaVersion,
+            'inputs' => $quantity->formulaInputs,
+            'model_version' => $quantity->modelVersion,
+        ]));
     }
 
     #[Test]
