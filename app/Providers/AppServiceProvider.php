@@ -54,6 +54,13 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->bind(
+            \App\Services\LegalArchive\Files\LegalDocumentScanner::class,
+            $this->app->environment('testing')
+                ? \App\Services\LegalArchive\Files\TestingLegalDocumentScanner::class
+                : \App\Services\LegalArchive\Files\FailClosedLegalDocumentScanner::class,
+        );
+
         // Регистрируем FileService как singleton
         $this->app->singleton(FileService::class, function ($app) {
             return new FileService($app->make(\Illuminate\Contracts\Filesystem\Factory::class));

@@ -21,6 +21,7 @@ final class LegalArchiveDocumentVersionResource extends JsonResource
             'version_label' => $this->version_label,
             'is_current' => (bool) $this->is_current,
             'status' => $this->status,
+            'processing_status' => $this->processing_status,
             'status_label' => LegalArchiveDictionary::label('version_statuses', $this->status),
             'original_filename' => $this->original_filename,
             'mime_type' => $this->mime_type,

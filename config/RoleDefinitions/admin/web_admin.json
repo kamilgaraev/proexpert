@@ -53,7 +53,8 @@
     "legal_archive.update",
     "legal_archive.files.upload",
     "legal_archive.versions.create",
-    "legal_archive.retention.manage"
+    "legal_archive.retention.manage",
+    "legal_archive.legal_hold.manage"
   ],
   "module_permissions": {
     "projects": [
@@ -444,7 +445,8 @@
       "legal_archive.update",
       "legal_archive.files.upload",
       "legal_archive.versions.create",
-      "legal_archive.retention.manage"
+      "legal_archive.retention.manage",
+      "legal_archive.legal_hold.manage"
     ],
     "access_recertification": [
       "access_recertification.campaigns.view",

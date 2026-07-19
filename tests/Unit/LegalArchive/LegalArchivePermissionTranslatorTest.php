@@ -18,8 +18,8 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
-        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang');
         $translator = new Translator($loader, 'ru');
         $container->instance('translator', $translator);
 
@@ -45,6 +45,7 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
                     'legal_archive.files.upload',
                     'legal_archive.versions.create',
                     'legal_archive.retention.manage',
+                    'legal_archive.legal_hold.manage',
                 ],
             ],
         ]);
@@ -54,6 +55,7 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
         $this->assertSame('Юридический архив', $translated['module_groups']['legal-archive']);
         $this->assertSame('Просмотр юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.view']);
         $this->assertSame('Создание версий документов юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.versions.create']);
+        $this->assertSame('Управление запретом удаления документов юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.legal_hold.manage']);
         $this->assertStringNotContainsString('legal_archive.view', $flattenedValues);
         $this->assertStringNotContainsString('legal_archive.versions.create', $flattenedValues);
     }

@@ -41,11 +41,6 @@ final class LegalArchiveDocument extends Model
         'legal_significance_status',
         'edo_status',
         'one_c_status',
-        'retention_policy',
-        'retention_basis',
-        'retention_started_at',
-        'retention_until',
-        'legal_hold',
         'archived_at',
         'archived_by_user_id',
         'owner_user_id',
@@ -115,6 +110,11 @@ final class LegalArchiveDocument extends Model
     public function versions(): HasMany
     {
         return $this->hasMany(LegalArchiveDocumentVersion::class, 'document_id')->orderByDesc('created_at');
+    }
+
+    public function files(): HasMany
+    {
+        return $this->hasMany(LegalArchiveDocumentFile::class, 'document_id')->orderBy('sort_order');
     }
 
     public function links(): HasMany

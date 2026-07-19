@@ -5,26 +5,29 @@ declare(strict_types=1);
 namespace App\Services\LegalArchive;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
-use App\Models\Organization;
 use App\Models\Project;
-use App\Services\Storage\FileService;
+use App\Models\User;
+use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
+use App\Services\LegalArchive\Files\LegalDocumentFileService;
+use App\Services\LegalArchive\Files\VersionInput;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-use RuntimeException;
+use Throwable;
 
 use function trans_message;
 
 final class LegalArchiveRegistryService
 {
     public function __construct(
-        private readonly FileService $fileService,
-    ) {
-    }
+        private readonly LegalDocumentFileService $documentFileService,
+        private readonly LegalDocumentDownloadService $downloadService,
+    ) {}
 
     public function paginate(int $organizationId, array $filters): LengthAwarePaginator
     {
@@ -79,23 +82,41 @@ final class LegalArchiveRegistryService
 
     public function create(int $organizationId, ?int $userId, array $data, ?UploadedFile $file = null): LegalArchiveDocument
     {
-        return DB::transaction(function () use ($organizationId, $userId, $data, $file): LegalArchiveDocument {
+        [$document, $documentFile] = DB::transaction(function () use ($organizationId, $userId, $data, $file): array {
             $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
 
             $document = LegalArchiveDocument::query()->create($this->documentPayload($organizationId, $userId, $data));
             $this->replaceLinks($document, $data['links'] ?? []);
+            $documentFile = $file instanceof UploadedFile
+                ? LegalArchiveDocumentFile::query()->create([
+                    'document_id' => $document->id,
+                    'organization_id' => $organizationId,
+                    'role' => 'primary',
+                    'title' => $document->title,
+                    'sort_order' => 0,
+                    'is_required' => true,
+                ])
+                : null;
 
-            if ($file instanceof UploadedFile) {
-                $this->addVersion($document, $organizationId, $userId, [
-                    'version_number' => $data['version_number'] ?? '1.0',
-                    'version_label' => $data['version_label'] ?? null,
-                    'status' => $data['version_status'] ?? 'uploaded',
-                    'metadata' => $data['version_metadata'] ?? null,
-                ], $file);
-            }
-
-            return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
+            return [$document, $documentFile];
         });
+
+        if ($file instanceof UploadedFile && $documentFile instanceof LegalArchiveDocumentFile) {
+            try {
+                $this->documentFileService->addVersion($documentFile, $file, new VersionInput(
+                    versionNumber: isset($data['version_number']) ? (string) $data['version_number'] : '1.0',
+                    versionLabel: isset($data['version_label']) ? (string) $data['version_label'] : null,
+                    uploadedByUserId: $userId,
+                    metadata: is_array($data['version_metadata'] ?? null) ? $data['version_metadata'] : null,
+                ));
+            } catch (Throwable $exception) {
+                DB::transaction(static fn () => $document->forceDelete());
+
+                throw $exception;
+            }
+        }
+
+        return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
     }
 
     public function update(LegalArchiveDocument $document, int $organizationId, ?int $userId, array $data): LegalArchiveDocument
@@ -121,54 +142,37 @@ final class LegalArchiveRegistryService
         UploadedFile $file,
         bool $makeCurrent = true
     ): LegalArchiveDocumentVersion {
-        $organization = Organization::query()->find($organizationId);
-
-        if (! $organization instanceof Organization) {
-            throw ValidationException::withMessages([
-                'organization' => [trans_message('legal_archive.messages.organization_not_found')],
-            ]);
-        }
-
-        $path = $this->fileService->upload(
-            $file,
-            "legal-archive/documents/{$document->id}/versions",
-            null,
-            'private',
-            $organization
+        $documentFile = LegalArchiveDocumentFile::query()->firstOrCreate(
+            [
+                'document_id' => $document->id,
+                'organization_id' => $organizationId,
+                'role' => 'primary',
+            ],
+            [
+                'title' => $document->title,
+                'sort_order' => 0,
+                'is_required' => true,
+            ],
         );
 
-        if ($path === false) {
-            throw new RuntimeException(trans_message('legal_archive.messages.file_upload_error'));
+        try {
+            return $this->documentFileService->addVersion($documentFile, $file, new VersionInput(
+                versionNumber: isset($data['version_number']) ? (string) $data['version_number'] : null,
+                versionLabel: isset($data['version_label']) ? (string) $data['version_label'] : null,
+                uploadedByUserId: $userId,
+                metadata: is_array($data['metadata'] ?? null) ? $data['metadata'] : null,
+                makeCurrent: $makeCurrent,
+            ));
+        } catch (Throwable $exception) {
+            if ($documentFile->wasRecentlyCreated) {
+                $documentFile->delete();
+            }
+
+            throw $exception;
         }
-
-        if ($makeCurrent) {
-            LegalArchiveDocumentVersion::query()
-                ->where('document_id', $document->id)
-                ->update(['is_current' => false]);
-        }
-
-        $metadata = $data['metadata'] ?? null;
-
-        return LegalArchiveDocumentVersion::query()->create([
-            'document_id' => $document->id,
-            'organization_id' => $organizationId,
-            'version_number' => (string) ($data['version_number'] ?? $this->nextVersionNumber($document)),
-            'version_label' => $data['version_label'] ?? null,
-            'is_current' => $makeCurrent,
-            'status' => $data['status'] ?? 'uploaded',
-            'file_path' => $path,
-            'original_filename' => $file->getClientOriginalName(),
-            'mime_type' => $file->getClientMimeType(),
-            'size_bytes' => (int) ($file->getSize() ?: 0),
-            'content_hash' => $this->contentHash($file),
-            'metadata_hash' => $metadata === null ? null : hash('sha256', json_encode($metadata, JSON_THROW_ON_ERROR)),
-            'uploaded_by_user_id' => $userId,
-            'uploaded_at' => now(),
-            'metadata' => $metadata,
-        ]);
     }
 
-    public function currentVersionWithUrl(LegalArchiveDocument $document, int $organizationId): ?LegalArchiveDocumentVersion
+    public function currentVersionWithUrl(LegalArchiveDocument $document, User $actor): ?LegalArchiveDocumentVersion
     {
         $version = $document->currentVersion()->first();
 
@@ -178,7 +182,7 @@ final class LegalArchiveRegistryService
 
         $version->setAttribute(
             'download_url',
-            $this->fileService->temporaryUrl($version->file_path, 10, $document->organization)
+            $this->downloadService->temporaryUrl($version, $actor, 'download')
         );
 
         return $version;
@@ -205,9 +209,9 @@ final class LegalArchiveRegistryService
 
         if (! empty($filters['counterparty'])) {
             if (DB::connection()->getDriverName() === 'pgsql') {
-                $query->where('counterparty_name', 'ILIKE', '%' . $filters['counterparty'] . '%');
+                $query->where('counterparty_name', 'ILIKE', '%'.$filters['counterparty'].'%');
             } else {
-                $query->whereRaw('LOWER(counterparty_name) LIKE ?', ['%' . mb_strtolower((string) $filters['counterparty']) . '%']);
+                $query->whereRaw('LOWER(counterparty_name) LIKE ?', ['%'.mb_strtolower((string) $filters['counterparty']).'%']);
             }
         }
 
@@ -252,7 +256,7 @@ final class LegalArchiveRegistryService
 
         $query->where(static function (Builder $nested) use ($needle): void {
             foreach (LegalArchiveSearchQuery::columns() as $column) {
-                $nested->orWhereRaw("LOWER({$column}) LIKE ?", ['%' . $needle . '%']);
+                $nested->orWhereRaw("LOWER({$column}) LIKE ?", ['%'.$needle.'%']);
             }
         });
     }
@@ -275,11 +279,6 @@ final class LegalArchiveRegistryService
             'legal_significance_status',
             'edo_status',
             'one_c_status',
-            'retention_policy',
-            'retention_basis',
-            'retention_started_at',
-            'retention_until',
-            'legal_hold',
             'metadata',
         ];
 
@@ -336,19 +335,5 @@ final class LegalArchiveRegistryService
                 'primary_project_id' => [trans_message('legal_archive.messages.project_not_available')],
             ]);
         }
-    }
-
-    private function nextVersionNumber(LegalArchiveDocument $document): string
-    {
-        $count = LegalArchiveDocumentVersion::query()->where('document_id', $document->id)->count();
-
-        return (string) ($count + 1);
-    }
-
-    private function contentHash(UploadedFile $file): ?string
-    {
-        $realPath = $file->getRealPath();
-
-        return $realPath === false ? null : hash_file('sha256', $realPath);
     }
 }

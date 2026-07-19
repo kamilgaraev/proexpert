@@ -13,11 +13,13 @@ final class LegalArchiveDocumentVersion extends Model
 {
     protected $fillable = [
         'document_id',
+        'document_file_id',
         'organization_id',
         'version_number',
         'version_label',
         'is_current',
         'status',
+        'processing_status',
         'file_path',
         'original_filename',
         'mime_type',
@@ -39,6 +41,11 @@ final class LegalArchiveDocumentVersion extends Model
     public function document(): BelongsTo
     {
         return $this->belongsTo(LegalArchiveDocument::class, 'document_id');
+    }
+
+    public function documentFile(): BelongsTo
+    {
+        return $this->belongsTo(LegalArchiveDocumentFile::class, 'document_file_id');
     }
 
     public function organization(): BelongsTo

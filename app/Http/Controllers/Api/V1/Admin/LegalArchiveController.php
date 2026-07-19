@@ -13,6 +13,7 @@ use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentResource;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentVersionResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\User;
+use App\Services\LegalArchive\Files\LegalDocumentFileRejected;
 use App\Services\LegalArchive\LegalArchiveDictionary;
 use App\Services\LegalArchive\LegalArchiveRegistryService;
 use Illuminate\Http\JsonResponse;
@@ -28,8 +29,7 @@ final class LegalArchiveController extends Controller
 {
     public function __construct(
         private readonly LegalArchiveRegistryService $registryService,
-    ) {
-    }
+    ) {}
 
     public function dictionaries(): JsonResponse
     {
@@ -121,6 +121,14 @@ final class LegalArchiveController extends Controller
                 201
             );
         } catch (Throwable $e) {
+            if ($e instanceof LegalDocumentFileRejected) {
+                return AdminResponse::error(
+                    trans_message('legal_archive.messages.validation_error'),
+                    422,
+                    ['file' => [$e->getMessage()]],
+                );
+            }
+
             if ($e instanceof ValidationException) {
                 return $this->validationError($e);
             }
@@ -203,6 +211,14 @@ final class LegalArchiveController extends Controller
                 201
             );
         } catch (Throwable $e) {
+            if ($e instanceof LegalDocumentFileRejected) {
+                return AdminResponse::error(
+                    trans_message('legal_archive.messages.validation_error'),
+                    422,
+                    ['file' => [$e->getMessage()]],
+                );
+            }
+
             if ($e instanceof ValidationException) {
                 return $this->validationError($e);
             }
@@ -227,7 +243,12 @@ final class LegalArchiveController extends Controller
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
 
-            $version = $this->registryService->currentVersionWithUrl($found, $this->organizationId($request));
+            $actor = $request->user();
+            if (! $actor instanceof User) {
+                return AdminResponse::error(trans_message('legal_archive.messages.current_version_not_found'), 404);
+            }
+
+            $version = $this->registryService->currentVersionWithUrl($found, $actor);
 
             if ($version === null) {
                 return AdminResponse::error(trans_message('legal_archive.messages.current_version_not_found'), 404);

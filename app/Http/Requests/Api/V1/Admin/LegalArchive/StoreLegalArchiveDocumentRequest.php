@@ -32,11 +32,23 @@ final class StoreLegalArchiveDocumentRequest extends FormRequest
     public function authorize(): bool
     {
         $user = $this->user();
+        $organizationContext = [
+            'organization_id' => (int) $this->attributes->get('current_organization_id'),
+        ];
 
-        return $user instanceof User
-            && app(AuthorizationService::class)->can($user, 'legal_archive.create', [
-                'organization_id' => (int) $this->attributes->get('current_organization_id'),
-            ]);
+        if (! $user instanceof User) {
+            return false;
+        }
+
+        $authorization = app(AuthorizationService::class);
+        if (! $authorization->can($user, 'legal_archive.create', $organizationContext)) {
+            return false;
+        }
+
+        return ! $this->hasFile('file') || (
+            $authorization->can($user, 'legal_archive.files.upload', $organizationContext)
+            && $authorization->can($user, 'legal_archive.versions.create', $organizationContext)
+        );
     }
 
     public function rules(): array
@@ -57,11 +69,6 @@ final class StoreLegalArchiveDocumentRequest extends FormRequest
             'legal_significance_status' => ['nullable', 'string', Rule::in(LegalArchiveDictionary::values('legal_significance_statuses'))],
             'edo_status' => ['nullable', 'string', 'max:64'],
             'one_c_status' => ['nullable', 'string', 'max:64'],
-            'retention_policy' => ['nullable', 'string', 'max:128'],
-            'retention_basis' => ['nullable', 'string', 'max:2000'],
-            'retention_started_at' => ['nullable', 'date'],
-            'retention_until' => ['nullable', 'date'],
-            'legal_hold' => ['nullable', 'boolean'],
             'metadata' => ['nullable', 'array'],
             'links' => ['nullable', 'array', 'max:20'],
             'links.*.link_type' => ['required_with:links', 'string', Rule::in(LegalArchiveDictionary::values('link_types'))],
