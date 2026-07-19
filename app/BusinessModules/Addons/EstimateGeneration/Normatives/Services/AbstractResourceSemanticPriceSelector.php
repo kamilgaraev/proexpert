@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final readonly class AbstractResourceSemanticPriceSelector
 {
-    /** @return array{family: string, material: string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, window_leaf_count: ?int, window_area_max: ?float, duct_component: ?string}|null */
+    /** @return array{family: string, material: string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, window_leaf_count: ?int, window_area_max: ?float, window_operable: ?bool, duct_component: ?string}|null */
     public function queryHints(string $normName, string $groupName): ?array
     {
         $attributes = $this->targetAttributes($normName, $groupName);
@@ -27,6 +27,7 @@ final readonly class AbstractResourceSemanticPriceSelector
             $hints['thickness'] = $attributes['thickness'];
             $hints['window_leaf_count'] = $attributes['window_leaf_count'];
             $hints['window_area_max'] = $attributes['window_area_max'];
+            $hints['window_operable'] = $attributes['window_operable'];
             $hints['duct_component'] = $attributes['duct_component'];
         }
 
@@ -103,7 +104,7 @@ final readonly class AbstractResourceSemanticPriceSelector
         $policy = match (true) {
             $source === 'regional' && in_array($target['family'], ['gutter_pipe', 'gutter_fitting'], true) => 'regional_semantic_metal_gutter_family_median:v1',
             $source === 'regional' && $target['family'] === 'pipe' => 'regional_semantic_pipe_hard_attributes_median:v1',
-            default => $source.'_semantic_hard_attributes_median:v3',
+            default => $source.'_semantic_hard_attributes_median:v4',
         };
 
         return [
@@ -114,7 +115,7 @@ final readonly class AbstractResourceSemanticPriceSelector
     }
 
     /**
-     * @return array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, window_leaf_count: ?int, window_area_max: ?float, duct_component: ?string, purposes: list<string>}
+     * @return array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, window_leaf_count: ?int, window_area_max: ?float, window_operable: ?bool, duct_component: ?string, purposes: list<string>}
      */
     private function targetAttributes(string $normName, string $groupName): array
     {
@@ -144,7 +145,7 @@ final readonly class AbstractResourceSemanticPriceSelector
     }
 
     /**
-     * @return array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, window_leaf_count: ?int, window_area_max: ?float, duct_component: ?string, purposes: list<string>}
+     * @return array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, window_leaf_count: ?int, window_area_max: ?float, window_operable: ?bool, duct_component: ?string, purposes: list<string>}
      */
     private function attributes(string $source): array
     {
@@ -194,6 +195,9 @@ final readonly class AbstractResourceSemanticPriceSelector
         } elseif (preg_match('/площад\w*[^\d]{0,30}от\s*\d+(?:[.,]\d+)?\s*до\s*(\d+(?:[.,]\d+)?)\s*м2/u', $text, $windowAreaMaxMatch) === 1) {
             $windowAreaMax = (float) str_replace(',', '.', $windowAreaMaxMatch[1]);
         }
+        $windowOperable = preg_match('/(?:поворот|откид)/u', $text) === 1
+            ? true
+            : (str_contains($text, 'глух') ? false : null);
         $ductComponent = $family === 'duct'
             ? (preg_match('/(?:издел\w*\s+фасон|фасонн\w*\s+издел)/u', $text) === 1 ? 'fitting' : 'straight')
             : null;
@@ -224,6 +228,7 @@ final readonly class AbstractResourceSemanticPriceSelector
             'thickness' => $thickness,
             'window_leaf_count' => $windowLeafCount,
             'window_area_max' => $windowAreaMax,
+            'window_operable' => $windowOperable,
             'duct_component' => $ductComponent,
             'purposes' => $purposes,
         ];
@@ -247,7 +252,7 @@ final readonly class AbstractResourceSemanticPriceSelector
         return null;
     }
 
-    /** @param array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, window_leaf_count: ?int, window_area_max: ?float, duct_component: ?string, purposes: list<string>} $attributes */
+    /** @param array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, window_leaf_count: ?int, window_area_max: ?float, window_operable: ?bool, duct_component: ?string, purposes: list<string>} $attributes */
     private function isStrongTarget(array $attributes): bool
     {
         if (in_array($attributes['family'], ['gutter_pipe', 'gutter_fitting'], true)) {
@@ -273,8 +278,8 @@ final readonly class AbstractResourceSemanticPriceSelector
     }
 
     /**
-     * @param  array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, window_leaf_count: ?int, window_area_max: ?float, duct_component: ?string, purposes: list<string>}  $target
-     * @param  array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, window_leaf_count: ?int, window_area_max: ?float, duct_component: ?string, purposes: list<string>}  $candidate
+     * @param  array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, window_leaf_count: ?int, window_area_max: ?float, window_operable: ?bool, duct_component: ?string, purposes: list<string>}  $target
+     * @param  array{family: ?string, material: ?string, polarity: ?string, diameter: ?int, diameter_max: ?int, thickness: ?float, window_leaf_count: ?int, window_area_max: ?float, window_operable: ?bool, duct_component: ?string, purposes: list<string>}  $candidate
      */
     private function hardAttributesMatch(array $target, array $candidate): bool
     {
@@ -289,6 +294,7 @@ final readonly class AbstractResourceSemanticPriceSelector
             return $candidate['family'] === 'window_block'
                 && $candidate['material'] === 'pvc'
                 && ($target['window_leaf_count'] === null || $candidate['window_leaf_count'] === $target['window_leaf_count'])
+                && ($target['window_operable'] === null || $candidate['window_operable'] === $target['window_operable'])
                 && ($target['window_area_max'] === null
                     || $candidate['window_area_max'] === null
                     || $candidate['window_area_max'] <= $target['window_area_max']);
