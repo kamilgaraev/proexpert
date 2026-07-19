@@ -1333,10 +1333,41 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
             'Прокладка магистральных кабелей',
             ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
         ));
+        self::assertFalse($service->isCompatible(
+            'Короб со стойками и полками для прокладки кабелей до 35 кВ',
+            'Прокладка силовых кабельных линий',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
         self::assertTrue($service->isCompatible(
             'Прокладка кабелей по установленным конструкциям',
             'Прокладка магистральных кабелей',
             ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+    }
+
+    public function test_residential_heating_equipment_rejects_unrelated_industrial_process_equipment(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Оборудование регенераторного производства: девулканизатор непрерывного действия с тепловой станцией',
+            'Установка отопительного котла жилого дома',
+            [
+                'action' => 'heating_equipment',
+                'scope' => 'engineering',
+                'system' => 'heating',
+                'object_type' => 'residential',
+            ],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Установка котлов отопительных, поставляемых в сборе',
+            'Установка отопительного котла жилого дома',
+            [
+                'action' => 'heating_equipment',
+                'scope' => 'engineering',
+                'system' => 'heating',
+                'object_type' => 'residential',
+            ],
         ));
     }
 

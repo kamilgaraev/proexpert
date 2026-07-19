@@ -55,7 +55,11 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
         foreach ([
             ['stairs', 'stairs', 'stairs.flights', 'm2', '8.000000', '10-01-052-02'],
             ['openings', 'openings', 'openings.windows', 'm2', '23.136000', '10-01-034-05'],
+            ['electrical', 'electrical', 'electrical.main_cable', 'm', '77.120000', '08-02-401-01'],
+            ['electrical', 'electrical', 'electrical.power_lines', 'm', '154.240000', '08-02-404-01'],
+            ['lighting', 'electrical', 'lighting.lines', 'm', '154.240000', '08-02-403-03'],
             ['electrical', 'electrical', 'electrical.grounding', 'm', '42.576989', '08-02-472-01'],
+            ['heating', 'heating', 'heating.unit', 'pcs', '1.000000', '18-01-001-01'],
             ['plumbing', 'plumbing', 'sanitary.waterproofing', 'm2', '12.980000', '11-01-004-05'],
             ['plumbing', 'plumbing', 'sanitary.tile', 'm2', '39.497496', '15-01-019-05'],
         ] as [$package, $scope, $quantityKey, $unit, $amount, $normCode]) {
@@ -73,6 +77,9 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             self::assertIsArray($item, $quantityKey);
             self::assertSame($normCode, $item['normative_rate_code'], $quantityKey);
             self::assertContains('preliminary_material_assumption', $item['validation_flags'], $quantityKey);
+            if ($quantityKey === 'heating.unit') {
+                self::assertSame('Установка отопительного котла', $item['name']);
+            }
         }
     }
 

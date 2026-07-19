@@ -69,6 +69,9 @@ final class NormativeSemanticCompatibilityService
             'дизельн',
             'радиоактивн',
             'ядерн',
+            'регенераторного производства',
+            'девулканизатор',
+            'синтетического каучука',
         ]));
 
         foreach ($specializedDomains as $term) {
@@ -164,7 +167,7 @@ final class NormativeSemanticCompatibilityService
             'grounding_installation' => ['заземл', 'заземляющ', 'электрод'],
             'socket_installation' => ['розет', 'выключател'],
             'pipe_layout' => ['труб', 'трубопровод'],
-            'heating_equipment' => ['отопл', 'радиатор', 'котел', 'конвектор', 'теплов'],
+            'heating_equipment' => ['отопл', 'отопит', 'радиатор', 'котел', 'котл', 'конвектор', 'теплов'],
             'ventilation_installation' => ['вентиляц', 'воздуховод'],
             'window_installation' => ['окон', 'окн', 'двер', 'ворот'],
             'door_installation' => ['двер'],
@@ -225,6 +228,11 @@ final class NormativeSemanticCompatibilityService
 
             if ($this->containsAny($candidateTitle, ['транше'])
                 && ! $this->containsAny($workText, ['транше', 'наружн'])) {
+                return false;
+            }
+
+            if ($this->containsAny($candidateTitle, ['короб', 'лоток'])
+                && ! $this->containsAny($workText, ['короб', 'лоток'])) {
                 return false;
             }
 

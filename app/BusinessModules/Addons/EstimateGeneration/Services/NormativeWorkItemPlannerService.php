@@ -320,6 +320,10 @@ final class NormativeWorkItemPlannerService
             && trim($scenario['normative_search_text']) !== '') {
             $definition['normative_search_text'] = trim($scenario['normative_search_text']);
         }
+        if (is_string($scenario['work_item_name'] ?? null)
+            && trim($scenario['work_item_name']) !== '') {
+            $definition['name'] = trim($scenario['work_item_name']);
+        }
         if (is_string($scenario['normative_rate_code'] ?? null)
             && trim($scenario['normative_rate_code']) !== '') {
             $definition['normative_rate_code'] = trim($scenario['normative_rate_code']);

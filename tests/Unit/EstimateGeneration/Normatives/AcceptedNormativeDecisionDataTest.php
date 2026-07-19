@@ -189,7 +189,7 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
                 'selected_resource_name' => 'Труба напорная многослойная из полипропилена диаметром 20 мм',
                 'price_source' => 'regional_catalog',
                 'price_source_version' => 'prices-2026.06',
-                'policy' => 'regional_child_hard_attributes_median:v1',
+                'policy' => 'regional_child_hard_attributes_median:v2',
                 'candidates_count' => 1,
             ],
         ];
@@ -197,7 +197,7 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
         $decision = AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
 
         self::assertSame(
-            'regional_child_hard_attributes_median:v1',
+            'regional_child_hard_attributes_median:v2',
             $decision->resources['materials'][0]['project_resource_selection']['policy'],
         );
     }

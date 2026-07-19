@@ -56,6 +56,9 @@ final readonly class NormativeResourceRowData
             'regional_child_hard_attributes_median:v1',
             'fsbc_base_child_hard_attributes_median:v1',
             'fsnb_base_child_hard_attributes_median:v1',
+            'regional_child_hard_attributes_median:v2',
+            'fsbc_base_child_hard_attributes_median:v2',
+            'fsnb_base_child_hard_attributes_median:v2',
         ], true)
             && self::policyMatchesPriceSource($projectResourcePricePolicy, $priceSource)
             && preg_match('/^'.preg_quote($resourceCode, '/').'-\d{4}$/D', $priceResourceCode) === 1;

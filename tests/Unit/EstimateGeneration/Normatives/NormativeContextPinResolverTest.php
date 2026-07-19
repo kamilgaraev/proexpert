@@ -172,7 +172,106 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertNotNull($selection);
         self::assertSame(2, $selection['row']->price_id);
         self::assertSame(1, $selection['candidates_count']);
-        self::assertSame('regional_child_hard_attributes_median:v1', $selection['policy']);
+        self::assertSame('regional_child_hard_attributes_median:v2', $selection['policy']);
+    }
+
+    #[Test]
+    public function abstract_window_resource_selector_rejects_a_different_frame_material(): void
+    {
+        $selection = (new AbstractNormativeResourcePriceSelector)->select(
+            '09.4.03.01',
+            11,
+            [
+                (object) [
+                    'price_id' => 1,
+                    'price_resource_code' => '09.4.03.01-0001',
+                    'price_resource_name' => 'Блок оконный дерево-алюминиевый с двойным остеклением',
+                    'base_price' => '9000',
+                    'regional_price_version_id' => 11,
+                ],
+                (object) [
+                    'price_id' => 2,
+                    'price_resource_code' => '09.4.03.01-0002',
+                    'price_resource_name' => 'Блок оконный из ПВХ профилей двухстворчатый',
+                    'base_price' => '7000',
+                    'regional_price_version_id' => 11,
+                ],
+            ],
+            [],
+            'Установка оконных блоков из ПВХ профилей двухстворчатых',
+            'Блоки оконные',
+        );
+
+        self::assertSame(2, $selection['row']->price_id ?? null);
+        self::assertSame(1, $selection['candidates_count'] ?? null);
+        self::assertSame('regional_child_hard_attributes_median:v2', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function abstract_duct_resource_selector_matches_material_thickness_and_diameter_limit(): void
+    {
+        $selection = (new AbstractNormativeResourcePriceSelector)->select(
+            '19.1.01.02',
+            11,
+            [
+                (object) [
+                    'price_id' => 1,
+                    'price_resource_code' => '19.1.01.02-0001',
+                    'price_resource_name' => 'Воздуховоды из листовой оцинкованной стали толщиной 0,5 мм, диаметром до 200 мм',
+                    'base_price' => '1200',
+                    'regional_price_version_id' => 11,
+                ],
+                (object) [
+                    'price_id' => 2,
+                    'price_resource_code' => '19.1.01.02-0002',
+                    'price_resource_name' => 'Воздуховоды из листовой стали толщиной 2,0 мм, диаметром до 560 мм',
+                    'base_price' => '2800',
+                    'regional_price_version_id' => 11,
+                ],
+            ],
+            [],
+            'Прокладка воздуховодов из листовой оцинкованной стали толщиной 0,5 мм, диаметром до 200 мм',
+            'Воздуховоды из листовой стали',
+        );
+
+        self::assertSame(1, $selection['row']->price_id ?? null);
+        self::assertSame(1, $selection['candidates_count'] ?? null);
+        self::assertSame('regional_child_hard_attributes_median:v2', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function abstract_window_and_duct_resource_selection_fails_closed_without_compatible_child(): void
+    {
+        $selector = new AbstractNormativeResourcePriceSelector;
+
+        self::assertNull($selector->select(
+            '09.4.03.01',
+            11,
+            [(object) [
+                'price_id' => 1,
+                'price_resource_code' => '09.4.03.01-0001',
+                'price_resource_name' => 'Блок оконный дерево-алюминиевый',
+                'base_price' => '9000',
+                'regional_price_version_id' => 11,
+            ]],
+            [],
+            'Установка оконных блоков из ПВХ профилей',
+            'Блоки оконные',
+        ));
+        self::assertNull($selector->select(
+            '19.1.01.02',
+            11,
+            [(object) [
+                'price_id' => 2,
+                'price_resource_code' => '19.1.01.02-0002',
+                'price_resource_name' => 'Воздуховоды из листовой стали толщиной 2,0 мм, диаметром до 560 мм',
+                'base_price' => '2800',
+                'regional_price_version_id' => 11,
+            ]],
+            [],
+            'Прокладка воздуховодов из листовой оцинкованной стали толщиной 0,5 мм, диаметром до 200 мм',
+            'Воздуховоды из листовой стали',
+        ));
     }
 
     #[Test]
@@ -244,7 +343,7 @@ final class NormativeContextPinResolverTest extends TestCase
         );
 
         self::assertSame(2, $selection['row']->price_id ?? null);
-        self::assertSame('regional_child_hard_attributes_median:v1', $selection['policy'] ?? null);
+        self::assertSame('regional_child_hard_attributes_median:v2', $selection['policy'] ?? null);
     }
 
     #[Test]
@@ -938,6 +1037,24 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
+    public function pinned_candidate_factory_does_not_replace_a_missing_exact_code_with_a_similar_wrong_norm(): void
+    {
+        $candidates = (new PinnedNormativeCandidateFactory)->forWorkItem([[
+            'candidate_id' => 'wrong-box', 'normative_id' => 15301, 'dataset_id' => 77,
+            'dataset_version' => 'v1', 'dataset_status' => 'parsed', 'code' => '08-02-153-01',
+            'name' => 'Короб со стойками и полками для прокладки кабелей до 35 кВ',
+            'unit' => '100 м', 'section' => ['code' => '08'],
+        ]], [
+            'name' => 'Прокладка силовых линий',
+            'normative_search_text' => 'прокладка проводов силовой сети в готовых каналах сечением до 6 мм2',
+            'normative_rate_code' => '08-02-404-01',
+            'unit' => 'м',
+        ]);
+
+        self::assertSame([], $candidates);
+    }
+
+    #[Test]
     public function database_resource_row_uses_the_authoritative_resource_code_relation(): void
     {
         $row = (object) [
@@ -1025,11 +1142,11 @@ final class NormativeContextPinResolverTest extends TestCase
             'price_dataset_version' => null,
             'raw_source_tag' => 'AbstractResource',
             'project_resource_candidates_count' => 1,
-            'project_resource_price_policy' => 'regional_child_hard_attributes_median:v1',
+            'project_resource_price_policy' => 'regional_child_hard_attributes_median:v2',
         ]);
 
         self::assertSame(
-            'regional_child_hard_attributes_median:v1',
+            'regional_child_hard_attributes_median:v2',
             $mapped->resource['project_resource_selection']['policy'],
         );
     }

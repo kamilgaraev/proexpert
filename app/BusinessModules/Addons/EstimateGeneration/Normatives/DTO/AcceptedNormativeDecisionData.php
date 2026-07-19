@@ -182,6 +182,9 @@ final readonly class AcceptedNormativeDecisionData
                 'regional_child_hard_attributes_median:v1',
                 'fsbc_base_child_hard_attributes_median:v1',
                 'fsnb_base_child_hard_attributes_median:v1',
+                'regional_child_hard_attributes_median:v2',
+                'fsbc_base_child_hard_attributes_median:v2',
+                'fsnb_base_child_hard_attributes_median:v2',
             ], true)
             && self::policyMatchesPriceSource($policy, $selection['price_source'] ?? null)
             && preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', $selectedResourceCode) === 1;
