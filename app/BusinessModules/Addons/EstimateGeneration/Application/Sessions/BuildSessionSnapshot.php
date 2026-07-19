@@ -23,7 +23,7 @@ final class BuildSessionSnapshot
         'estimate_review_required' => [EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Cancel],
         'ready_to_apply' => [EstimateGenerationAction::Apply, EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Cancel],
         'failed' => [EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel, EstimateGenerationAction::Archive],
-        'applied' => [EstimateGenerationAction::Export, EstimateGenerationAction::Archive],
+        'applied' => [EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Archive],
         'cancelled' => [EstimateGenerationAction::Archive],
     ];
 
@@ -164,14 +164,20 @@ final class BuildSessionSnapshot
 
         return [
             'action' => $action->value,
-            'label' => trans_message('estimate_generation.action_'.$action->value),
+            'label' => trans_message(
+                $action === EstimateGenerationAction::Generate
+                    && $session->status === EstimateGenerationStatus::Applied
+                        ? 'estimate_generation.action_regenerate'
+                        : 'estimate_generation.action_'.$action->value,
+            ),
             'method' => $method,
             'endpoint' => $base.$suffix,
             'requires_confirmation' => in_array($action, [
                 EstimateGenerationAction::Apply,
                 EstimateGenerationAction::Cancel,
                 EstimateGenerationAction::Archive,
-            ], true),
+            ], true) || ($action === EstimateGenerationAction::Generate
+                && $session->status === EstimateGenerationStatus::Applied),
         ];
     }
 

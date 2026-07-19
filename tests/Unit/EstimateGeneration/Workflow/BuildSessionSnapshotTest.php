@@ -186,17 +186,30 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
-    public function applied_and_cancelled_sessions_expose_only_archive(): void
+    public function applied_session_exposes_confirmed_regeneration_without_hiding_archive(): void
     {
-        foreach ([EstimateGenerationStatus::Applied, EstimateGenerationStatus::Cancelled] as $status) {
-            $snapshot = app(BuildSessionSnapshot::class)->handle(
-                session: $this->makeSession($status),
-                permissions: ['estimate_generation.generate'],
-                readinessSummary: ['blockers' => [], 'warnings' => []],
-            );
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::Applied),
+            permissions: ['estimate_generation.generate'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
 
-            self::assertSame(['archive'], array_column($snapshot->availableActions, 'action'));
-        }
+        self::assertSame(['generate', 'archive'], array_column($snapshot->availableActions, 'action'));
+        self::assertSame('Сформировать заново', $snapshot->availableActions[0]['label']);
+        self::assertTrue($snapshot->availableActions[0]['requires_confirmation']);
+        self::assertSame('open_estimate', $snapshot->nextAction);
+    }
+
+    #[Test]
+    public function cancelled_session_exposes_only_archive(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::Cancelled),
+            permissions: ['estimate_generation.generate'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+
+        self::assertSame(['archive'], array_column($snapshot->availableActions, 'action'));
     }
 
     #[Test]

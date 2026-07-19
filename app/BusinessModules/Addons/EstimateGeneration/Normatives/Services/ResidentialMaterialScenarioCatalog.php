@@ -6,11 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v2';
+    private const CATALOG_VERSION = 'residential_material_scenario:v3';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v2';
+    private const SCENARIO_ID = 'residential_preliminary_common:v3';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v2';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v3';
 
     /**
      * @var array<string, array{
@@ -67,6 +67,42 @@ final class ResidentialMaterialScenarioCatalog
             'assumption_code' => 'residential_small_galvanized_ducts',
             'normative_search_text' => 'монтаж воздуховодов',
             'normative_rate_code' => '20-01-001-01',
+        ],
+        'stairs.flights' => [
+            'material_markers' => ['внутриквартирн', 'лестниц', 'без подшив'],
+            'assumption_code' => 'residential_stair_without_soffit',
+            'normative_search_text' => 'устройство внутриквартирных лестниц без подшивки',
+            'normative_rate_code' => '10-01-052-02',
+        ],
+        'openings.windows' => [
+            'material_markers' => ['оконн', 'пвх', 'поворотно-откид', 'двухстворчат', 'до 2 м2'],
+            'assumption_code' => 'residential_pvc_windows',
+            'normative_search_text' => 'установка оконных блоков из ПВХ профилей двухстворчатых площадью до 2 м2',
+            'normative_rate_code' => '10-01-034-05',
+        ],
+        'electrical.grounding' => [
+            'material_markers' => ['заземлител', 'горизонтальн', 'кругл', '12 мм'],
+            'assumption_code' => 'residential_round_steel_grounding',
+            'normative_search_text' => 'заземлитель горизонтальный из круглой стали диаметром 12 мм',
+            'normative_rate_code' => '08-02-472-01',
+        ],
+        'heating.radiators' => [
+            'material_markers' => ['радиатор', 'стальн'],
+            'assumption_code' => 'residential_steel_radiators',
+            'normative_search_text' => 'установка стальных радиаторов',
+            'normative_rate_code' => '18-03-001-02',
+        ],
+        'sanitary.waterproofing' => [
+            'material_markers' => ['гидроизоляц', 'обмазочн', 'мастик'],
+            'assumption_code' => 'wet_zone_coating_waterproofing',
+            'normative_search_text' => 'устройство обмазочной гидроизоляции битумной мастикой в один слой толщиной 2 мм',
+            'normative_rate_code' => '11-01-004-05',
+        ],
+        'sanitary.tile' => [
+            'material_markers' => ['облицовк', 'стен', 'керамическ', 'кле'],
+            'assumption_code' => 'wet_zone_ceramic_wall_tile',
+            'normative_search_text' => 'гладкая облицовка стен керамическими плитками на клее по кирпичу и бетону',
+            'normative_rate_code' => '15-01-019-05',
         ],
     ];
 

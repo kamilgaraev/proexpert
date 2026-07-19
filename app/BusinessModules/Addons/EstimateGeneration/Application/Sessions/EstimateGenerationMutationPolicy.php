@@ -43,6 +43,7 @@ final class EstimateGenerationMutationPolicy
             EstimateGenerationStatus::Generating,
             EstimateGenerationStatus::EstimateReviewRequired,
             EstimateGenerationStatus::ReadyToApply,
+            EstimateGenerationStatus::Applied,
         ], 'generate');
     }
 

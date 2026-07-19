@@ -40,14 +40,19 @@ final class RequestEstimateGeneration
         $generationMode = EstimateGenerationMode::fromInput(
             $requestedMode ?? ($session->input_payload['generation_mode'] ?? null),
         )->value;
+        $generationInput = [];
         if (($session->input_payload['generation_mode'] ?? null) !== $generationMode) {
-            $session = $this->advance->update($session, [
-                EstimateGenerationStatus::Draft,
-                EstimateGenerationStatus::ProcessingDocuments,
-                EstimateGenerationStatus::ReadyToGenerate,
-                EstimateGenerationStatus::EstimateReviewRequired,
-                EstimateGenerationStatus::ReadyToApply,
-            ], ['input_payload' => [...($session->input_payload ?? []), 'generation_mode' => $generationMode]]);
+            if ($session->status === EstimateGenerationStatus::Applied) {
+                $generationInput['generation_mode'] = $generationMode;
+            } else {
+                $session = $this->advance->update($session, [
+                    EstimateGenerationStatus::Draft,
+                    EstimateGenerationStatus::ProcessingDocuments,
+                    EstimateGenerationStatus::ReadyToGenerate,
+                    EstimateGenerationStatus::EstimateReviewRequired,
+                    EstimateGenerationStatus::ReadyToApply,
+                ], ['input_payload' => [...($session->input_payload ?? []), 'generation_mode' => $generationMode]]);
+            }
         }
 
         $readiness = $this->readiness->evaluate($session->load('documents'));
@@ -70,7 +75,7 @@ final class RequestEstimateGeneration
         $this->buildingModels->rebuild((int) $session->getKey());
         $session = $this->advance->documentsReady($session);
         $attemptId = (string) Str::uuid();
-        $session = $this->advance->generationStarted($session, $attemptId);
+        $session = $this->advance->generationStarted($session, $attemptId, $generationInput);
         GenerateEstimateDraftJob::dispatch(
             (int) $session->getKey(),
             $session->state_version,

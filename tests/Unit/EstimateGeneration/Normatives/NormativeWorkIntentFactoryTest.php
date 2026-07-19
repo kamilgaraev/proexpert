@@ -192,7 +192,7 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         $intent = $factory->intent($item, $context, 'fsnb-2026.1');
 
         self::assertSame(['ламинат', 'ламинированн'], $intent->specializationScenario['material_markers'] ?? null);
-        self::assertSame('residential_preliminary_common:v2', $intent->specializationScenario['scenario_id'] ?? null);
+        self::assertSame('residential_preliminary_common:v3', $intent->specializationScenario['scenario_id'] ?? null);
     }
 
     public function test_trusted_specialization_evidence_suppresses_preliminary_scenario(): void

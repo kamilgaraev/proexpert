@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\WallData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
@@ -20,6 +21,61 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
 {
+    #[Test]
+    public function current_residential_scenario_exposes_traceable_required_work_items(): void
+    {
+        foreach ([
+            ['stairs', 'stairs', 'stairs.flights', 'm2', '8.000000'],
+            ['roof', 'roof', 'roof.area', 'm2', '152.955000'],
+            ['openings', 'openings', 'openings.windows', 'm2', '23.136000'],
+            ['electrical', 'electrical', 'electrical.main_cable', 'm', '77.120000'],
+            ['plumbing', 'plumbing', 'plumbing.pipe', 'm', '67.480000'],
+            ['sewerage', 'sewerage', 'sewerage.pipe', 'm', '48.200000'],
+            ['heating', 'heating', 'heating.pipe', 'm', '96.400000'],
+            ['ventilation', 'ventilation', 'ventilation.air_exchange', 'm2', '23.136000'],
+        ] as [$package, $scope, $quantityKey, $unit, $amount]) {
+            $analysis = [
+                'object' => ['object_type' => 'house', 'roof_type' => 'pitched'],
+                'document_context' => ['canonical_building_quantities' => [
+                    $this->currentScenarioQuantity($quantityKey, $unit, $amount)->toArray(),
+                ]],
+            ];
+            $estimate = $this->estimate($package, $scope);
+
+            $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+
+            self::assertContains($quantityKey, array_column($items, 'quantity_formula'), $quantityKey);
+        }
+    }
+
+    #[Test]
+    public function preliminary_house_items_use_semantically_verified_norms_with_compatible_units(): void
+    {
+        foreach ([
+            ['stairs', 'stairs', 'stairs.flights', 'm2', '8.000000', '10-01-052-02'],
+            ['openings', 'openings', 'openings.windows', 'm2', '23.136000', '10-01-034-05'],
+            ['electrical', 'electrical', 'electrical.grounding', 'm', '42.576989', '08-02-472-01'],
+            ['heating', 'heating', 'heating.radiators', 'kw', '19.280000', '18-03-001-02'],
+            ['plumbing', 'plumbing', 'sanitary.waterproofing', 'm2', '12.980000', '11-01-004-05'],
+            ['plumbing', 'plumbing', 'sanitary.tile', 'm2', '39.497496', '15-01-019-05'],
+        ] as [$package, $scope, $quantityKey, $unit, $amount, $normCode]) {
+            $analysis = [
+                'object' => ['object_type' => 'house'],
+                'document_context' => ['canonical_building_quantities' => [
+                    $this->currentScenarioQuantity($quantityKey, $unit, $amount)->toArray(),
+                ]],
+            ];
+            $estimate = $this->estimate($package, $scope);
+
+            $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+            $item = array_column($items, null, 'quantity_formula')[$quantityKey] ?? null;
+
+            self::assertIsArray($item, $quantityKey);
+            self::assertSame($normCode, $item['normative_rate_code'], $quantityKey);
+            self::assertContains('preliminary_material_assumption', $item['validation_flags'], $quantityKey);
+        }
+    }
+
     #[Test]
     public function estimated_residential_scenario_does_not_expose_direct_opening_takeoffs(): void
     {
@@ -304,6 +360,27 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             evidenceIds: ['room:1'],
             modelVersion: 'building-model:v1',
             assumptions: ['residential_preliminary_scenario:v1'],
+        );
+    }
+
+    private function currentScenarioQuantity(string $key, string $unit, string $amount): QuantityData
+    {
+        return new QuantityData(
+            key: $key,
+            unit: $unit,
+            amount: $amount,
+            formulaKey: 'residential_preliminary.'.$key,
+            formulaVersion: ResidentialQuantityScenarioCatalog::VERSION,
+            formulaInputs: ['scenario' => [
+                'id' => ResidentialQuantityScenarioCatalog::SCENARIO_ID,
+                'version' => ResidentialQuantityScenarioCatalog::VERSION,
+                'confidence' => 0.62,
+                'warnings' => ['preliminary_quantity_scenario'],
+            ]],
+            source: QuantitySource::Estimated,
+            evidenceIds: ['room:1'],
+            modelVersion: 'building-model:v1',
+            assumptions: [ResidentialQuantityScenarioCatalog::SCENARIO_ID],
         );
     }
 
