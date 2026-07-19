@@ -25,6 +25,20 @@ final class EstimateGenerationQueueBackpressureTest extends TestCase
         self::assertStringContainsString('public function rateLimitKey(): string', $source);
     }
 
+    public function test_draft_generation_job_discards_stale_pipeline_attempts_without_failure_workflow(): void
+    {
+        $source = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Jobs/GenerateEstimateDraftJob.php'));
+
+        self::assertIsString($source);
+        self::assertStringContainsString('use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;', $source);
+        self::assertStringContainsString('} catch (StaleEstimateGenerationState) {', $source);
+        self::assertStringContainsString('if ($error instanceof StaleEstimateGenerationState) {', $source);
+        self::assertLessThan(
+            strpos($source, 'app(HandleEstimateGenerationDraftFailure::class)->handle('),
+            strpos($source, 'if ($error instanceof StaleEstimateGenerationState) {'),
+        );
+    }
+
     public function test_document_dispatcher_and_unit_job_have_separate_backpressure(): void
     {
         $source = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Jobs/ProcessEstimateGenerationDocumentJob.php'));

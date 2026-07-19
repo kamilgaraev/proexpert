@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\HandleEstimateGenerationDraftFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use Illuminate\Bus\Queueable;
@@ -63,11 +64,19 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public function handle(RunEstimateGenerationDraft $generation): void
     {
-        $generation->handle($this->failureSnapshot, $this->expectedStateVersion, $this->attemptId);
+        try {
+            $generation->handle($this->failureSnapshot, $this->expectedStateVersion, $this->attemptId);
+        } catch (StaleEstimateGenerationState) {
+            return;
+        }
     }
 
     public function failed(Throwable $error): void
     {
+        if ($error instanceof StaleEstimateGenerationState) {
+            return;
+        }
+
         app(HandleEstimateGenerationDraftFailure::class)->handle($this->failureSnapshot, $error);
     }
 
