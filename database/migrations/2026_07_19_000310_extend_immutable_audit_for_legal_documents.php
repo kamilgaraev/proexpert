@@ -14,13 +14,50 @@ return new class extends Migration
             return;
         }
 
+        DB::statement('LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE');
         DB::statement('CREATE SEQUENCE IF NOT EXISTS immutable_audit_sequence');
         DB::statement(<<<'SQL'
 SELECT setval(
     'immutable_audit_sequence',
-    GREATEST(COALESCE((SELECT MAX(sequence_id) FROM immutable_audit_events), 1), 1),
-    EXISTS (SELECT 1 FROM immutable_audit_events)
+    GREATEST(
+        (SELECT last_value FROM immutable_audit_sequence),
+        COALESCE((SELECT MAX(sequence_id) FROM immutable_audit_events), 1),
+        1
+    ),
+    (SELECT is_called FROM immutable_audit_sequence) OR EXISTS (SELECT 1 FROM immutable_audit_events)
 )
+SQL);
+        DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION immutable_audit_sequence_sync()
+RETURNS trigger AS $$
+DECLARE
+    current_value bigint;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('immutable_audit_sequence_sync', 0));
+
+    IF NEW.sequence_id IS NULL THEN
+        NEW.sequence_id := nextval('immutable_audit_sequence');
+        RETURN NEW;
+    END IF;
+
+    SELECT last_value INTO current_value FROM immutable_audit_sequence;
+    IF NEW.sequence_id > current_value THEN
+        PERFORM setval('immutable_audit_sequence', NEW.sequence_id, true);
+    ELSE
+        NEW.sequence_id := nextval('immutable_audit_sequence');
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS immutable_audit_sequence_sync ON immutable_audit_events;
+CREATE TRIGGER immutable_audit_sequence_sync
+BEFORE INSERT ON immutable_audit_events
+FOR EACH ROW EXECUTE FUNCTION immutable_audit_sequence_sync();
+
+ALTER TABLE immutable_audit_events
+    ALTER COLUMN sequence_id SET DEFAULT nextval('immutable_audit_sequence');
 SQL);
         DB::unprepared(<<<'SQL'
 DO $$
@@ -70,6 +107,7 @@ SQL);
             return;
         }
 
+        DB::statement('LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE');
         DB::statement('ALTER TABLE immutable_audit_events DROP CONSTRAINT IF EXISTS immutable_audit_events_domain_check');
         DB::statement(<<<'SQL'
 ALTER TABLE immutable_audit_events

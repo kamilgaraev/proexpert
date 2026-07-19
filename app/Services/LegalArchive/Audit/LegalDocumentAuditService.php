@@ -11,12 +11,14 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Models\Contract;
 use App\Models\User;
 use DomainException;
+use Illuminate\Database\ConnectionInterface;
 
 final readonly class LegalDocumentAuditService implements LegalDocumentAudit
 {
     public function __construct(
         private ImmutableAuditRecorder $recorder,
-        private ?LegalDocumentOutbox $outbox = null,
+        private LegalDocumentOutbox $outbox,
+        private ConnectionInterface $connection,
     ) {}
 
     public function record(
@@ -49,30 +51,32 @@ final readonly class LegalDocumentAuditService implements LegalDocumentAudit
         $contractId = (string) $contract->getKey();
         $this->assertIdentity($organizationId, $contractId);
 
-        $auditEvent = $this->recorder->record(new ImmutableAuditEventData(
-            organizationId: $organizationId,
-            domain: 'contracts',
-            eventType: "contract.{$event}",
-            action: $event,
-            source: 'contracts',
-            projectId: $contract->project_id === null ? null : (int) $contract->project_id,
-            actorType: $actorId === null ? 'system' : 'user',
-            actorUserId: $actorId,
-            sourceModel: Contract::class,
-            sourceTable: $contract->getTable(),
-            sourceEventId: $this->sourceEventId($context),
-            idempotencyKey: $this->idempotencyKey($context),
-            subjectType: 'contract',
-            subjectId: $contractId,
-            subjectLabel: (string) ($contract->number ?? ''),
-            beforeState: $this->arrayContext($context, 'before'),
-            afterState: $this->arrayContext($context, 'after'),
-            diff: $this->arrayContext($context, 'diff'),
-            domainContext: $this->businessContext($context),
-            chainScope: "organization:{$organizationId}:contract:{$contractId}",
-        ));
+        $this->connection->transaction(function () use ($organizationId, $contractId, $event, $contract, $actorId, $context): void {
+            $auditEvent = $this->recorder->record(new ImmutableAuditEventData(
+                organizationId: $organizationId,
+                domain: 'contracts',
+                eventType: "contract.{$event}",
+                action: $event,
+                source: 'contracts',
+                projectId: $contract->project_id === null ? null : (int) $contract->project_id,
+                actorType: $actorId === null ? 'system' : 'user',
+                actorUserId: $actorId,
+                sourceModel: Contract::class,
+                sourceTable: $contract->getTable(),
+                sourceEventId: $this->sourceEventId($context),
+                idempotencyKey: $this->idempotencyKey($context),
+                subjectType: 'contract',
+                subjectId: $contractId,
+                subjectLabel: (string) ($contract->number ?? ''),
+                beforeState: $this->arrayContext($context, 'before'),
+                afterState: $this->arrayContext($context, 'after'),
+                diff: $this->arrayContext($context, 'diff'),
+                domainContext: $this->businessContext($context),
+                chainScope: "organization:{$organizationId}:contract:{$contractId}",
+            ));
 
-        $this->enqueue($auditEvent, 'contract', $contractId);
+            $this->enqueue($auditEvent, 'contract', $contractId);
+        }, 3);
     }
 
     private function recordLegalDocument(
@@ -86,36 +90,38 @@ final readonly class LegalDocumentAuditService implements LegalDocumentAudit
         $documentId = (string) $document->getKey();
         $this->assertIdentity($organizationId, $documentId);
 
-        $auditEvent = $this->recorder->record(new ImmutableAuditEventData(
-            organizationId: $organizationId,
-            domain: 'legal_archive',
-            eventType: "legal_document.{$event}",
-            action: $event,
-            source: 'legal_archive',
-            projectId: $document->primary_project_id === null ? null : (int) $document->primary_project_id,
-            actorType: $actorId === null ? 'system' : 'user',
-            actorUserId: $actorId,
-            actorSnapshot: $actorSnapshot,
-            sourceModel: LegalArchiveDocument::class,
-            sourceTable: $document->getTable(),
-            sourceEventId: $this->sourceEventId($context),
-            idempotencyKey: $this->idempotencyKey($context),
-            subjectType: 'legal_document',
-            subjectId: $documentId,
-            subjectLabel: (string) ($document->title ?? ''),
-            beforeState: $this->arrayContext($context, 'before'),
-            afterState: $this->arrayContext($context, 'after'),
-            diff: $this->arrayContext($context, 'diff'),
-            domainContext: $this->businessContext($context),
-            chainScope: "organization:{$organizationId}:legal_document:{$documentId}",
-        ));
+        $this->connection->transaction(function () use ($organizationId, $documentId, $event, $document, $actorId, $actorSnapshot, $context): void {
+            $auditEvent = $this->recorder->record(new ImmutableAuditEventData(
+                organizationId: $organizationId,
+                domain: 'legal_archive',
+                eventType: "legal_document.{$event}",
+                action: $event,
+                source: 'legal_archive',
+                projectId: $document->primary_project_id === null ? null : (int) $document->primary_project_id,
+                actorType: $actorId === null ? 'system' : 'user',
+                actorUserId: $actorId,
+                actorSnapshot: $actorSnapshot,
+                sourceModel: LegalArchiveDocument::class,
+                sourceTable: $document->getTable(),
+                sourceEventId: $this->sourceEventId($context),
+                idempotencyKey: $this->idempotencyKey($context),
+                subjectType: 'legal_document',
+                subjectId: $documentId,
+                subjectLabel: (string) ($document->title ?? ''),
+                beforeState: $this->arrayContext($context, 'before'),
+                afterState: $this->arrayContext($context, 'after'),
+                diff: $this->arrayContext($context, 'diff'),
+                domainContext: $this->businessContext($context),
+                chainScope: "organization:{$organizationId}:legal_document:{$documentId}",
+            ));
 
-        $this->enqueue($auditEvent, 'legal_document', $documentId);
+            $this->enqueue($auditEvent, 'legal_document', $documentId);
+        }, 3);
     }
 
     private function enqueue(ImmutableAuditEvent $event, string $aggregateType, string $aggregateId): void
     {
-        $this->outbox?->enqueue(
+        $this->outbox->enqueue(
             (string) $event->event_type,
             $aggregateType,
             $aggregateId,

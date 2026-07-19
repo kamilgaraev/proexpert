@@ -8,7 +8,6 @@ use App\Enums\Contract\ContractStatusEnum;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Contract;
 use App\Models\User;
-use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use Illuminate\Support\Facades\DB;
 
 final class ContractLifecycleService
@@ -23,7 +22,7 @@ final class ContractLifecycleService
 
     public function __construct(
         private readonly ContractStateEventService $stateEventService,
-        private readonly LegalDocumentAudit $audit,
+        private readonly ContractAuditedMutationService $contractMutations,
     ) {}
 
     public function transition(Contract $contract, string $action, User $actor, ?string $reason): Contract
@@ -39,24 +38,21 @@ final class ContractLifecycleService
             }
 
             $contract->status = ContractStatusEnum::from($targetStatus);
-            $contract->save();
 
-            if ($contract->exists) {
+            $this->contractMutations->saveDirty($contract, $action, (int) $actor->id, [
+                'reason' => $reason,
+            ], function (Contract $mutated) use ($action, $currentStatus, $targetStatus, $reason, $actor): array {
                 $stateEvent = $this->stateEventService->createStatusTransitionEvent(
-                    $contract,
+                    $mutated,
                     $action,
                     $currentStatus,
                     $targetStatus,
                     $reason,
-                    (int) $actor->id
+                    (int) $actor->id,
                 );
-                $this->audit->recordContractForActorId($action, $contract, (int) $actor->id, [
-                    'before' => ['status' => $currentStatus],
-                    'after' => ['status' => $targetStatus],
-                    'reason' => $reason,
-                    'source_event_id' => 'contract_state_event:'.(string) $stateEvent->id,
-                ]);
-            }
+
+                return ['source_event_id' => 'contract_state_event:'.(string) $stateEvent->id];
+            });
 
             return $contract->exists ? $contract->refresh() : $contract;
         };

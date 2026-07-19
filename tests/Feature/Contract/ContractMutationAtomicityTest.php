@@ -16,6 +16,7 @@ use App\Observers\ContractObserver;
 use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
 use App\Services\Contract\ContractAccessService;
+use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Contract\ContractPartySnapshotService;
 use App\Services\Contract\ContractPaymentDocumentService;
 use App\Services\Contract\ContractSideMutationService;
@@ -24,6 +25,7 @@ use App\Services\Contractor\SelfExecutionService;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\Logging\LoggingService;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
 use RuntimeException;
@@ -180,7 +182,10 @@ class ContractMutationAtomicityTest extends TestCase
             Mockery::mock(SelfExecutionService::class),
             app(ContractStateEventService::class),
             $snapshotService,
-            $audit ?? Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(),
+            new ContractAuditedMutationService(
+                $audit ?? Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(),
+                DB::connection(),
+            ),
         );
     }
 

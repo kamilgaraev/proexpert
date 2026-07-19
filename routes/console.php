@@ -1,6 +1,7 @@
 <?php
 
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverExpiredTrainingDatasetLeasesJob;
+use App\Jobs\LegalArchive\MonitorLegalDocumentOutboxDeadLetters;
 use App\Jobs\LegalArchive\RecoverLegalDocumentOutboxMessages;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -31,6 +32,11 @@ Schedule::job(new RecoverExpiredTrainingDatasetLeasesJob)
 Schedule::job(new RecoverLegalDocumentOutboxMessages)
     ->everyMinute()
     ->withoutOverlapping(5)
+    ->onOneServer();
+
+Schedule::job(new MonitorLegalDocumentOutboxDeadLetters)
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
     ->onOneServer();
 use App\Console\Commands\ReverifyOrganizationsCommand;
 use Illuminate\Support\Facades\File;

@@ -8,13 +8,20 @@ use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Modules\Core\AccessController;
+use App\Services\Contract\ContractAuditedMutationService;
+use App\Services\Contract\ContractStateEventService;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 use function trans_message;
 
 class PurchaseContractService
 {
+    public function __construct(
+        private readonly ContractAuditedMutationService $contractMutations,
+        private readonly ContractStateEventService $stateEventService,
+    ) {}
+
     public function createManualContract(array $data, int $organizationId): Contract
     {
         $this->validateProcurementContractCreation($data, $organizationId);
@@ -40,15 +47,11 @@ class PurchaseContractService
                 'is_fixed_amount' => true,
             ]);
 
-            try {
-                app(\App\Services\Contract\ContractStateEventService::class)
-                    ->createContractCreatedEvent($contract);
-            } catch (\Exception $e) {
-                Log::warning('Failed to create contract state event for manual procurement contract', [
-                    'contract_id' => $contract->id,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+            $stateEvent = $this->stateEventService->createContractCreatedEvent($contract);
+            $this->contractMutations->recordCreated($contract, Auth::id(), [
+                'source_event_id' => 'contract_state_event:'.(string) $stateEvent->id,
+                'origin' => 'procurement_manual',
+            ]);
 
             DB::commit();
 
@@ -96,15 +99,11 @@ class PurchaseContractService
 
             $order->update(['contract_id' => $contract->id]);
 
-            try {
-                app(\App\Services\Contract\ContractStateEventService::class)
-                    ->createContractCreatedEvent($contract);
-            } catch (\Exception $e) {
-                Log::warning('Failed to create contract state event for procurement', [
-                    'contract_id' => $contract->id,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+            $stateEvent = $this->stateEventService->createContractCreatedEvent($contract);
+            $this->contractMutations->recordCreated($contract, Auth::id(), [
+                'source_event_id' => 'contract_state_event:'.(string) $stateEvent->id,
+                'purchase_order_id' => (int) $order->id,
+            ]);
 
             DB::commit();
 
@@ -182,7 +181,16 @@ class PurchaseContractService
 
         try {
             $order->update(['contract_id' => $contract->id]);
-            $contract->update(['supplier_id' => $order->supplier_id]);
+            $this->contractMutations->update(
+                $contract,
+                ['supplier_id' => $order->supplier_id],
+                'purchase_order_linked',
+                Auth::id(),
+                [
+                    'purchase_order_id' => (int) $order->id,
+                    'source_event_id' => "purchase_order:{$order->id}:contract_link",
+                ],
+            );
 
             DB::commit();
         } catch (\Exception $e) {

@@ -2,45 +2,53 @@
 
 namespace App\Services\CompletedWork;
 
-use App\Models\CompletedWork;
-use App\Models\Project;
+use App\Domain\Project\ValueObjects\ProjectContext;
 use App\DTOs\CompletedWork\CompletedWorkDTO;
 use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
-use App\Services\Logging\LoggingService;
-use App\Services\Project\ProjectContextService;
-use App\Domain\Project\ValueObjects\ProjectContext;
-use Illuminate\Pagination\LengthAwarePaginator;
-use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
+use App\Enums\Contract\ContractStatusEnum;
+use App\Enums\ProjectOrganizationRole;
+use App\Enums\RateCoefficient\RateCoefficientAppliesToEnum;
 use App\Exceptions\BusinessLogicException;
 use App\Exceptions\ContractException;
+use App\Models\CompletedWork;
 use App\Models\Contract;
 use App\Models\Contractor;
-use App\Enums\ProjectOrganizationRole;
-use App\Enums\Contract\ContractStatusEnum;
+use App\Models\Project;
+use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
+use App\Rules\ProjectAccessibleRule;
+use App\Services\Contract\ContractAuditedMutationService;
+use App\Services\Logging\LoggingService;
+use App\Services\Project\ProjectContextService;
+use App\Services\RateCoefficient\RateCoefficientService;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use App\Rules\ProjectAccessibleRule;
-use App\Services\RateCoefficient\RateCoefficientService;
-use App\Enums\RateCoefficient\RateCoefficientAppliesToEnum;
 
 class CompletedWorkService
 {
     protected CompletedWorkRepositoryInterface $completedWorkRepository;
+
     protected RateCoefficientService $rateCoefficientService;
+
     protected LoggingService $logging;
+
     protected ProjectContextService $projectContextService;
+
+    protected ContractAuditedMutationService $contractMutations;
 
     public function __construct(
         CompletedWorkRepositoryInterface $completedWorkRepository,
         RateCoefficientService $rateCoefficientService,
         LoggingService $logging,
-        ProjectContextService $projectContextService
+        ProjectContextService $projectContextService,
+        ContractAuditedMutationService $contractMutations,
     ) {
         $this->completedWorkRepository = $completedWorkRepository;
         $this->rateCoefficientService = $rateCoefficientService;
         $this->logging = $logging;
         $this->projectContextService = $projectContextService;
+        $this->contractMutations = $contractMutations;
     }
 
     public function getAll(array $filters = [], int $perPage = 15, string $sortBy = 'completion_date', string $sortDirection = 'desc', array $relations = []): LengthAwarePaginator
@@ -52,9 +60,10 @@ class CompletedWorkService
     public function getById(int $id, int $organizationId): CompletedWork
     {
         $completedWork = $this->completedWorkRepository->findById($id, $organizationId);
-        if (!$completedWork) {
+        if (! $completedWork) {
             throw new BusinessLogicException('Запись о выполненной работе не найдена.', 404);
         }
+
         return $completedWork;
     }
 
@@ -63,9 +72,9 @@ class CompletedWorkService
         // Project-Based RBAC: валидация прав и auto-fill contractor_org_id
         if ($projectContext) {
             // Проверка: может ли роль создавать работы
-            if (!$projectContext->roleConfig->canManageWorks) {
+            if (! $projectContext->roleConfig->canManageWorks) {
                 throw new BusinessLogicException(
-                    'Ваша роль "' . $projectContext->roleConfig->displayLabel . 
+                    'Ваша роль "'.$projectContext->roleConfig->displayLabel.
                     '" не позволяет создавать работы в этом проекте',
                     403
                 );
@@ -73,14 +82,14 @@ class CompletedWorkService
 
             // Auto-fill contractor_id для contractor/subcontractor ролей
             $contractorId = $dto->contractor_id;
-            
+
             if (in_array($projectContext->roleConfig->role, [ProjectOrganizationRole::CONTRACTOR, ProjectOrganizationRole::SUBCONTRACTOR], true)) {
                 $resolvedContractorId = Contractor::query()
                     ->where('organization_id', $dto->organization_id)
                     ->where('source_organization_id', $projectContext->organizationId)
                     ->value('id');
 
-                if (!$resolvedContractorId) {
+                if (! $resolvedContractorId) {
                     throw new BusinessLogicException(trans_message('completed_work.not_found'), 404);
                 }
 
@@ -89,7 +98,7 @@ class CompletedWorkService
                 }
 
                 $contractorId = (int) $resolvedContractorId;
-                
+
                 // Создаем новый DTO с исправленным contractor_id
                 $dto = new CompletedWorkDTO(
                     id: $dto->id,
@@ -114,7 +123,7 @@ class CompletedWorkService
                     additional_info: $dto->additional_info,
                     materials: $dto->materials
                 );
-                
+
                 $this->logging->technical('contractor_id auto-filled', [
                     'organization_id' => $dto->organization_id,
                     'contractor_id' => $contractorId,
@@ -127,7 +136,7 @@ class CompletedWorkService
             // Подрядчик может быть внешним контрагентом (не зарегистрирован как организация)
             // Проверка доступности подрядчика происходит через ContractorSharing в других местах
         }
-        
+
         // BUSINESS: Начало создания выполненной работы
         $this->logging->business('completed_work.creation.started', [
             'project_id' => $dto->project_id,
@@ -139,23 +148,23 @@ class CompletedWorkService
             'price' => $dto->price,
             'total_amount' => $dto->total_amount,
             'status' => $dto->status,
-            'has_materials' => !empty($dto->materials),
+            'has_materials' => ! empty($dto->materials),
             'materials_count' => count($dto->materials ?? []),
             'has_project_context' => $projectContext !== null,
         ]);
 
         return DB::transaction(function () use ($dto) {
             // Проверяем, доступен ли проект для текущей организации безопасности
-            $rule = new ProjectAccessibleRule();
-            if (!$rule->passes('project_id', $dto->project_id)) {
+            $rule = new ProjectAccessibleRule;
+            if (! $rule->passes('project_id', $dto->project_id)) {
                 // SECURITY: Попытка создать работу для недоступного проекта
                 $this->logging->security('completed_work.creation.unauthorized', [
                     'project_id' => $dto->project_id,
                     'organization_id' => $dto->organization_id,
                     'user_id' => request()->user()?->id,
-                    'attempted_by_ip' => request()->ip()
+                    'attempted_by_ip' => request()->ip(),
                 ], 'warning');
-                
+
                 throw new BusinessLogicException('Проект недоступен для вашей организации.', 422);
             }
 
@@ -183,7 +192,7 @@ class CompletedWorkService
             }
 
             // Если всё ещё нет суммы, пытаемся рассчитать из материалов
-            if ($data['total_amount'] === null && !empty($dto->materials)) {
+            if ($data['total_amount'] === null && ! empty($dto->materials)) {
                 $materialsSum = 0;
                 foreach ($dto->materials as $m) {
                     if ($m instanceof \App\DTOs\CompletedWork\CompletedWorkMaterialDTO) {
@@ -217,14 +226,14 @@ class CompletedWorkService
 
             $createdModel = $this->completedWorkRepository->create($data);
 
-            if (!$createdModel) {
+            if (! $createdModel) {
                 // TECHNICAL: Ошибка создания записи в БД
                 $this->logging->technical('completed_work.creation.failed.database', [
                     'project_id' => $dto->project_id,
                     'contract_id' => $dto->contract_id,
-                    'organization_id' => $dto->organization_id
+                    'organization_id' => $dto->organization_id,
                 ], 'error');
-                
+
                 throw new BusinessLogicException('Не удалось создать запись о выполненной работе.', 500);
             }
 
@@ -247,7 +256,7 @@ class CompletedWorkService
                 'final_amount' => $createdModel->total_amount,
                 'quantity' => $createdModel->quantity,
                 'status' => $createdModel->status,
-                'has_materials' => $createdModel->materials()->count() > 0
+                'has_materials' => $createdModel->materials()->count() > 0,
             ]);
 
             // AUDIT: Создание финансово значимой записи
@@ -259,7 +268,7 @@ class CompletedWorkService
                 'amount' => $createdModel->total_amount,
                 'completion_date' => $createdModel->completion_date,
                 'status' => $createdModel->status,
-                'performed_by' => request()->user()?->id
+                'performed_by' => request()->user()?->id,
             ]);
 
             return $createdModel->fresh(['materials.measurementUnit']);
@@ -275,7 +284,7 @@ class CompletedWorkService
             if ($dto->contract_id && ($dto->total_amount !== $existingWork->total_amount || $dto->status !== $existingWork->status)) {
                 // Расчет разницы в сумме
                 $amountDifference = ($dto->total_amount ?? 0) - ($existingWork->total_amount ?? 0);
-                
+
                 if ($amountDifference > 0) {
                     $this->validateContract(
                         $dto->contract_id,
@@ -298,7 +307,7 @@ class CompletedWorkService
                 $data['total_amount'] = round($data['price'] * $data['quantity'], 2);
             }
 
-            if ($data['total_amount'] === null && !empty($dto->materials)) {
+            if ($data['total_amount'] === null && ! empty($dto->materials)) {
                 $materialsSum = 0;
                 foreach ($dto->materials as $m) {
                     if ($m instanceof \App\DTOs\CompletedWork\CompletedWorkMaterialDTO) {
@@ -331,7 +340,7 @@ class CompletedWorkService
             }
 
             $success = $this->completedWorkRepository->update($id, $data);
-            if (!$success) {
+            if (! $success) {
                 throw new BusinessLogicException('Не удалось обновить запись о выполненной работе.', 500);
             }
 
@@ -353,18 +362,19 @@ class CompletedWorkService
     public function delete(int $id, int $organizationId): bool
     {
         $this->getById($id, $organizationId);
-        
+
         $success = $this->completedWorkRepository->delete($id);
-        if (!$success) {
+        if (! $success) {
             throw new BusinessLogicException('Не удалось удалить запись о выполненной работе.', 500);
         }
+
         return true;
     }
 
     protected function syncMaterials(CompletedWork $completedWork, array $materials): void
     {
         $syncData = [];
-        
+
         foreach ($materials as $materialData) {
             if ($materialData instanceof CompletedWorkMaterialDTO) {
                 $syncData[$materialData->material_id] = $materialData->toArray();
@@ -385,11 +395,10 @@ class CompletedWorkService
         ?int $organizationId = null,
         ?int $projectId = null,
         ?int $contractorId = null
-    ): void
-    {
+    ): void {
         $contract = Contract::find($contractId);
-        
-        if (!$contract) {
+
+        if (! $contract) {
             throw new BusinessLogicException('Контракт не найден.', 404);
         }
 
@@ -415,7 +424,7 @@ class CompletedWorkService
         }
 
         // Проверка лимита суммы
-        if ($workAmount && !$contract->canAddWork($workAmount)) {
+        if ($workAmount && ! $contract->canAddWork($workAmount)) {
             throw ContractException::amountExceedsLimit(
                 $contract->completed_works_amount,
                 $contract->total_amount,
@@ -430,13 +439,15 @@ class CompletedWorkService
     protected function updateContractStatus(int $contractId): void
     {
         $contract = Contract::find($contractId);
-        
-        if (!$contract) {
+
+        if (! $contract) {
             return;
         }
 
         // Автоматическое обновление статуса
-        $statusChanged = $contract->updateStatusBasedOnCompletion();
+        $this->contractMutations->syncCompletionStatus($contract, Auth::id(), [
+            'origin' => 'completed_work',
+        ]);
 
         // Проверка приближения к лимиту (для уведомлений)
         if ($contract->isNearingLimit()) {
@@ -457,7 +468,7 @@ class CompletedWorkService
             'organization_id' => $contract->organization_id,
             'completed_amount' => $contract->completed_works_amount,
             'total_amount' => $contract->total_amount,
-            'completion_percentage' => $contract->completion_percentage
+            'completion_percentage' => $contract->completion_percentage,
         ]);
 
         // Отправляем real-time уведомление
@@ -465,4 +476,4 @@ class CompletedWorkService
 
         // Здесь можно добавить отправку email, push-уведомлений и т.д.
     }
-} 
+}

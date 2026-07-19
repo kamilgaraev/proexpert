@@ -2,24 +2,21 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Relations\HasManyThrough;
-
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
-use App\Models\Estimate;
 use App\Enums\Contract\ContractPartySideEnum;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
-use Carbon\Carbon;
 use App\Traits\HasOnboardingDemo;
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
  * @property int|null $supplier_id
@@ -28,7 +25,7 @@ use App\Traits\HasOnboardingDemo;
  */
 class Contract extends Model
 {
-    use HasFactory, SoftDeletes, HasOnboardingDemo;
+    use HasFactory, HasOnboardingDemo, SoftDeletes;
 
     protected $fillable = [
         'organization_id',
@@ -106,7 +103,7 @@ class Contract extends Model
     public function projects(): BelongsToMany
     {
         return $this->belongsToMany(Project::class, 'contract_project')
-                    ->withTimestamps();
+            ->withTimestamps();
     }
 
     /**
@@ -216,8 +213,8 @@ class Contract extends Model
     public function specifications(): BelongsToMany
     {
         return $this->belongsToMany(Specification::class, 'contract_specification')
-                    ->withPivot('attached_at', 'is_active')
-                    ->withTimestamps();
+            ->withPivot('attached_at', 'is_active')
+            ->withTimestamps();
     }
 
     /**
@@ -226,8 +223,8 @@ class Contract extends Model
     public function activeSpecification()
     {
         return $this->specifications()
-                    ->wherePivot('is_active', true)
-                    ->first();
+            ->wherePivot('is_active', true)
+            ->first();
     }
 
     /**
@@ -265,12 +262,12 @@ class Contract extends Model
         if ($value !== null) {
             return (float) $value;
         }
-        
+
         // Для контрактов с нефиксированной суммой возвращаем null
-        if (!$this->is_fixed_amount) {
+        if (! $this->is_fixed_amount) {
             return null;
         }
-        
+
         // Legacy: для старых контрактов без base_amount используем total_amount
         return (float) ($this->attributes['total_amount'] ?? 0);
     }
@@ -283,29 +280,30 @@ class Contract extends Model
     public function getGpAmountAttribute(): float
     {
         // Для контрактов с нефиксированной суммой ГП не применим
-        if (!$this->is_fixed_amount) {
+        if (! $this->is_fixed_amount) {
             return 0.00;
         }
-        
+
         $baseAmount = $this->base_amount ?? 0;
         $calculationType = $this->gp_calculation_type ?? GpCalculationTypeEnum::PERCENTAGE;
-        
+
         if ($calculationType === GpCalculationTypeEnum::COEFFICIENT) {
             $coefficient = $this->gp_coefficient ?? 0;
+
             // Формула: gp_amount = base_amount × (coefficient - 1)
             // Коэффициент 1.0 → изменение 0
             // Коэффициент 0.944 → изменение -5.6% от базы
             // Коэффициент 1.1 → изменение +10% от базы
             return round($baseAmount * ($coefficient - 1), 2);
         }
-        
+
         $percentage = $this->gp_percentage ?? 0;
         if ($percentage != 0 && $baseAmount > 0) {
             // Расчет: base_amount * (gp_percentage / 100)
             // Например: 7961111.72 * (-0.944 / 100) = -75152.89
             return round(($baseAmount * $percentage) / 100, 2);
         }
-        
+
         return 0.00;
     }
 
@@ -317,11 +315,12 @@ class Contract extends Model
     public function getTotalAmountWithGpAttribute(): ?float
     {
         // Для контрактов с нефиксированной суммой итоговая сумма не определена
-        if (!$this->is_fixed_amount) {
+        if (! $this->is_fixed_amount) {
             return null;
         }
-        
+
         $baseAmount = $this->base_amount ?? 0;
+
         return round($baseAmount, 2);
     }
 
@@ -338,21 +337,22 @@ class Contract extends Model
         }
 
         $totalContractAmount = $this->total_amount_with_gp ?? 0;
-        
+
         if ($totalContractAmount == 0) {
             return 0.00;
         }
-        
+
         if ($this->warranty_retention_calculation_type === GpCalculationTypeEnum::COEFFICIENT) {
             $coefficient = $this->warranty_retention_coefficient ?? 0;
+
             return round($totalContractAmount * (1 - $coefficient), 2);
         }
-        
+
         $percentage = $this->warranty_retention_percentage ?? 2.5;
         if ($percentage != 0) {
             return round(($totalContractAmount * $percentage) / 100, 2);
         }
-        
+
         return 0.00;
     }
 
@@ -367,6 +367,7 @@ class Contract extends Model
     {
         $planned = $this->planned_advance_amount ?? 0;
         $actual = $this->actual_advance_amount ?? 0;
+
         return round(max(0, $planned - $actual), 2);
     }
 
@@ -377,6 +378,7 @@ class Contract extends Model
     {
         $planned = $this->planned_advance_amount ?? 0;
         $actual = $this->actual_advance_amount ?? 0;
+
         return $planned > 0 && $actual >= $planned;
     }
 
@@ -387,10 +389,11 @@ class Contract extends Model
     {
         $planned = $this->planned_advance_amount ?? 0;
         $actual = $this->actual_advance_amount ?? 0;
-        
+
         if ($planned <= 0) {
             return 0.0;
         }
+
         return round(($actual / $planned) * 100, 2);
     }
 
@@ -414,12 +417,13 @@ class Contract extends Model
     public function getRemainingAmountAttribute(): ?float
     {
         // Для контрактов с нефиксированной суммой остаток не определен
-        if (!$this->is_fixed_amount) {
+        if (! $this->is_fixed_amount) {
             return null;
         }
-        
+
         $totalAmount = $this->total_amount ?? 0;
         $completedAmount = $this->completed_works_amount ?? 0;
+
         return round(max(0, $totalAmount - $completedAmount), 2);
     }
 
@@ -430,16 +434,17 @@ class Contract extends Model
     public function getCompletionPercentageAttribute(): float
     {
         // Для контрактов с нефиксированной суммой процент выполнения не применим
-        if (!$this->is_fixed_amount) {
+        if (! $this->is_fixed_amount) {
             return 0.0;
         }
-        
+
         $totalAmount = $this->total_amount ?? 0;
         $completedAmount = $this->completed_works_amount ?? 0;
-        
+
         if ($totalAmount <= 0) {
             return 0.0;
         }
+
         return round(($completedAmount / $totalAmount) * 100, 2);
     }
 
@@ -455,15 +460,16 @@ class Contract extends Model
         }
 
         // Для контрактов с нефиксированной суммой нет лимита
-        if (!$this->is_fixed_amount) {
+        if (! $this->is_fixed_amount) {
             return true;
         }
 
         $totalAmount = $this->total_amount ?? 0;
         $completedAmount = $this->completed_works_amount ?? 0;
-        
+
         // Проверяем лимит суммы (с допуском 1%)
         $allowedOverrun = $totalAmount * 0.01;
+
         return ($completedAmount + $amount) <= ($totalAmount + $allowedOverrun);
     }
 
@@ -512,24 +518,8 @@ class Contract extends Model
      */
     public function updateStatusBasedOnCompletion(): bool
     {
-        $oldStatus = $this->status;
-        
-        if ($this->completion_percentage >= 100 && $this->status === ContractStatusEnum::ACTIVE) {
-            $this->status = ContractStatusEnum::COMPLETED;
-        } elseif ($this->completion_percentage > 0 && $this->status === ContractStatusEnum::DRAFT) {
-            $this->status = ContractStatusEnum::ACTIVE;
-        }
-
-        if ($this->status !== $oldStatus) {
-            $this->save();
-            
-            // Отправляем событие об изменении статуса
-            event(new \App\Events\ContractStatusChanged($this, $oldStatus->value, $this->status->value));
-            
-            return true;
-        }
-
-        return false;
+        throw new \LogicException('contract_status_mutation_requires_audited_boundary');
+        // Отправляем событие об изменении статуса
     }
 
     /**
@@ -537,11 +527,12 @@ class Contract extends Model
      */
     public function getCurrentState()
     {
-        if (!$this->usesEventSourcing()) {
+        if (! $this->usesEventSourcing()) {
             return null; // Legacy договор - возвращаем null
         }
 
         $service = app(\App\Services\Contract\ContractStateEventService::class);
+
         return $service->getCurrentState($this);
     }
 
@@ -550,11 +541,12 @@ class Contract extends Model
      */
     public function getStateAtDate(Carbon $date)
     {
-        if (!$this->usesEventSourcing()) {
+        if (! $this->usesEventSourcing()) {
             return null; // Legacy договор - возвращаем null
         }
 
         $service = app(\App\Services\Contract\ContractStateEventService::class);
+
         return $service->getStateAtDate($this, $date);
     }
 
@@ -563,18 +555,19 @@ class Contract extends Model
      */
     public function getTimeline(?Carbon $asOfDate = null)
     {
-        if (!$this->usesEventSourcing()) {
+        if (! $this->usesEventSourcing()) {
             return collect(); // Legacy договор - возвращаем пустую коллекцию
         }
 
         $service = app(\App\Services\Contract\ContractStateEventService::class);
+
         return $service->getTimeline($this, $asOfDate);
     }
 
     /**
      * Пересчитать total_amount для контрактов с нефиксированной суммой
      * total_amount = сумма всех одобренных актов + сумма всех дополнительных соглашений
-     * 
+     *
      * @return float Новая сумма контракта
      */
     public function recalculateTotalAmountForNonFixed(): ?float
@@ -654,8 +647,8 @@ class Contract extends Model
     {
         return $query->where(function ($q) {
             $q->whereNotNull('supplier_id')
-              ->orWhere('contract_category', 'procurement')
-              ->orWhere('work_type_category', ContractWorkTypeCategoryEnum::SUPPLY->value);
+                ->orWhere('contract_category', 'procurement')
+                ->orWhere('work_type_category', ContractWorkTypeCategoryEnum::SUPPLY->value);
         });
     }
 
@@ -666,14 +659,14 @@ class Contract extends Model
     {
         return $query->where(function ($q) {
             $q->whereNotNull('contractor_id')
-              ->where(function ($subQ) {
-                  $subQ->whereNull('supplier_id')
-                       ->orWhere('contract_category', 'work')
-                       ->orWhere(function ($catQ) {
-                           $catQ->whereNull('contract_category')
+                ->where(function ($subQ) {
+                    $subQ->whereNull('supplier_id')
+                        ->orWhere('contract_category', 'work')
+                        ->orWhere(function ($catQ) {
+                            $catQ->whereNull('contract_category')
                                 ->where('work_type_category', '!=', ContractWorkTypeCategoryEnum::SUPPLY->value);
-                       });
-              });
+                        });
+                });
         });
     }
 
@@ -682,7 +675,7 @@ class Contract extends Model
      */
     public function isProcurementContract(): bool
     {
-        return $this->supplier_id !== null 
+        return $this->supplier_id !== null
             || $this->contract_category === 'procurement'
             || $this->work_type_category === ContractWorkTypeCategoryEnum::SUPPLY;
     }
@@ -692,7 +685,7 @@ class Contract extends Model
      */
     public function isWorkContract(): bool
     {
-        return $this->contractor_id !== null && !$this->isProcurementContract();
+        return $this->contractor_id !== null && ! $this->isProcurementContract();
     }
 
     /**
@@ -705,13 +698,14 @@ class Contract extends Model
         if ($this->is_multi_project) {
             return $this->projects()->pluck('projects.id')->toArray();
         }
-        
+
         return $this->project_id ? [$this->project_id] : [];
     }
 
     /**
      * Синхронизировать проекты для контракта
-     * @param array $projectIds - массив ID проектов
+     *
+     * @param  array  $projectIds  - массив ID проектов
      */
     public function syncProjects(array $projectIds): void
     {
@@ -719,9 +713,8 @@ class Contract extends Model
             $this->projects()->sync($projectIds);
         } else {
             // Для обычного контракта устанавливаем первый проект из массива
-            $this->project_id = !empty($projectIds) ? $projectIds[0] : null;
-            $this->save();
-            
+            $this->project_id = ! empty($projectIds) ? $projectIds[0] : null;
+
             // Синхронизируем pivot таблицу для консистентности
             if ($this->project_id) {
                 $this->projects()->sync([$this->project_id]);
@@ -733,8 +726,8 @@ class Contract extends Model
 
     /**
      * Получить выделенную сумму для проекта
-     * @param int|null $projectId - ID проекта
-     * @return float
+     *
+     * @param  int|null  $projectId  - ID проекта
      */
     public function getAllocatedAmount(?int $projectId = null): float
     {
@@ -757,7 +750,7 @@ class Contract extends Model
         }
 
         // Если распределения нет и контракт не мультипроектный, возвращаем полную сумму
-        if (!$this->is_multi_project) {
+        if (! $this->is_multi_project) {
             return (float) $this->total_amount;
         }
 
@@ -768,8 +761,6 @@ class Contract extends Model
 
     /**
      * Автоматический расчет распределения на основе актов
-     * @param int $projectId
-     * @return float
      */
     protected function calculateAutoAllocation(int $projectId): float
     {
@@ -781,8 +772,9 @@ class Contract extends Model
         // Если актов нет, распределяем поровну между проектами
         if ($totalActsAmount == 0) {
             $projectsCount = $this->projects()->count();
-            return $projectsCount > 0 
-                ? (float) $this->total_amount / $projectsCount 
+
+            return $projectsCount > 0
+                ? (float) $this->total_amount / $projectsCount
                 : (float) $this->total_amount;
         }
 

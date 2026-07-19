@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\ImmutableAudit\Services;
 use App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventData;
 use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
 use DateTimeInterface;
+use DomainException;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
@@ -26,6 +27,8 @@ final class ImmutableAuditRecorder
             $existing = $this->findExisting($data);
 
             if ($existing !== null) {
+                $this->assertSameLogicalEvent($existing, $data);
+
                 return $existing;
             }
         }
@@ -44,19 +47,27 @@ final class ImmutableAuditRecorder
                     $existing = $this->findExisting($data);
 
                     if ($existing !== null) {
+                        $this->assertSameLogicalEvent($existing, $data);
+
                         return $existing;
                     }
                 }
 
                 $attributes = $this->buildAttributes($data);
 
-                return ImmutableAuditEvent::query()->create($attributes);
+                $event = new ImmutableAuditEvent;
+                $event->setConnection($this->database()->getName());
+                $event->fill($attributes)->save();
+
+                return $event;
             }, 3);
         } catch (QueryException $e) {
             if ($data->sourceEventId !== null) {
                 $existing = $this->findExisting($data);
 
                 if ($existing !== null) {
+                    $this->assertSameLogicalEvent($existing, $data);
+
                     return $existing;
                 }
             }
@@ -180,9 +191,11 @@ final class ImmutableAuditRecorder
 
     private function findExisting(ImmutableAuditEventData $data): ?ImmutableAuditEvent
     {
-        return ImmutableAuditEvent::query()
+        return $this->query()
             ->forOrganization($data->organizationId)
             ->where('domain', $data->domain)
+            ->where('subject_type', $data->subjectType)
+            ->where('subject_id', $data->subjectId === null ? null : (string) $data->subjectId)
             ->where('source', $data->source)
             ->where('source_event_id', $data->sourceEventId)
             ->first();
@@ -196,12 +209,12 @@ final class ImmutableAuditRecorder
             return (int) ($row->value ?? 0);
         }
 
-        return ((int) ImmutableAuditEvent::query()->max('sequence_id')) + 1;
+        return ((int) $this->query()->max('sequence_id')) + 1;
     }
 
     private function previousHash(string $chainScope): ?string
     {
-        return ImmutableAuditEvent::query()
+        return $this->query()
             ->where('chain_scope', $chainScope)
             ->orderByDesc('sequence_id')
             ->value('record_hash');
@@ -217,5 +230,52 @@ final class ImmutableAuditRecorder
     private function database(): ConnectionInterface
     {
         return $this->connection ?? DB::connection();
+    }
+
+    private function assertSameLogicalEvent(ImmutableAuditEvent $existing, ImmutableAuditEventData $data): void
+    {
+        $redacted = $this->redactPayloads($data);
+        $expected = [
+            'event_type' => $data->eventType,
+            'action' => $data->action,
+            'result' => $data->result,
+            'severity' => $data->severity,
+            'actor_type' => $data->actorType,
+            'actor_user_id' => $data->actorUserId,
+            'actor_snapshot' => $redacted['actor_snapshot'],
+            'impersonator_user_id' => $data->impersonatorUserId,
+            'source_route' => $data->sourceRoute,
+            'source_model' => $data->sourceModel,
+            'source_table' => $data->sourceTable,
+            'correlation_id' => $data->correlationId,
+            'idempotency_key' => $data->idempotencyKey,
+            'subject_label' => $data->subjectLabel,
+            'related_subjects' => $redacted['related_subjects'],
+            'reason' => $data->reason,
+            'before_state' => $redacted['before_state'],
+            'after_state' => $redacted['after_state'],
+            'diff' => $redacted['diff'],
+            'domain_context' => $redacted['domain_context'],
+            'chain_scope' => $data->chainScope ?? 'organization:'.$data->organizationId,
+            'chain_version' => $data->chainVersion,
+        ];
+        $actual = [];
+        foreach (array_keys($expected) as $field) {
+            $actual[$field] = $existing->getAttribute($field);
+        }
+
+        $expectedHash = hash('sha256', $this->integrity->canonicalJson($expected));
+        $actualHash = hash('sha256', $this->integrity->canonicalJson($actual));
+        if (! hash_equals($expectedHash, $actualHash)) {
+            throw new DomainException('immutable_audit_idempotency_conflict');
+        }
+    }
+
+    private function query(): \Illuminate\Database\Eloquent\Builder
+    {
+        $event = new ImmutableAuditEvent;
+        $event->setConnection($this->database()->getName());
+
+        return $event->newQuery();
     }
 }

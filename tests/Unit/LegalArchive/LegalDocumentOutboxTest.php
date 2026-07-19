@@ -201,6 +201,26 @@ final class LegalDocumentOutboxTest extends TestCase
         self::assertSame($message->id, $publisher->published[0]['message_id']);
     }
 
+    public function test_receiver_can_deduplicate_retry_after_publisher_crashes_after_delivery(): void
+    {
+        $outbox = new LegalDocumentOutbox(dispatchJobs: false, connection: $this->database->getConnection());
+        $message = $outbox->enqueue(
+            'legal_document.updated',
+            'legal_document',
+            '42',
+            ['organization_id' => 15],
+            'document:42:update:6',
+        );
+        $publisher = new CrashAfterDeliveryPublisher;
+
+        self::assertSame('retry_scheduled', $outbox->publish((string) $message->id, $publisher)->status);
+        $message->refresh()->forceFill(['available_at' => now()->subSecond()])->save();
+        self::assertSame('published', $outbox->publish((string) $message->id, $publisher)->status);
+
+        self::assertSame([$message->id, $message->id], $publisher->deliveryAttempts);
+        self::assertSame([$message->id], array_keys($publisher->received));
+    }
+
     public function test_pending_dispatch_scan_recovers_unclaimed_and_stale_messages(): void
     {
         $outbox = new LegalDocumentOutbox(
@@ -240,6 +260,28 @@ final class LegalDocumentOutboxTest extends TestCase
             $outbox->pendingMessageIdsForDispatch()->all(),
         );
     }
+
+    public function test_operational_reconciliation_is_tenant_scoped_limited_and_scheduled(): void
+    {
+        $command = file_get_contents(
+            __DIR__.'/../../../app/Console/Commands/LegalArchive/ReconcileLegalDocumentOutbox.php',
+        );
+        $monitor = file_get_contents(
+            __DIR__.'/../../../app/Jobs/LegalArchive/MonitorLegalDocumentOutboxDeadLetters.php',
+        );
+        $schedule = file_get_contents(__DIR__.'/../../../routes/console.php');
+
+        self::assertIsString($command);
+        self::assertIsString($monitor);
+        self::assertIsString($schedule);
+        self::assertStringContainsString('{--organization=', $command);
+        self::assertStringContainsString('{--message=', $command);
+        self::assertStringContainsString('{--retry ', $command);
+        self::assertStringContainsString('min($limit, 100)', $command);
+        self::assertStringContainsString('retryReconciled($organizationId, $messageId)', $command);
+        self::assertStringContainsString('MonitorLegalDocumentOutboxDeadLetters', $schedule);
+        self::assertStringContainsString('everyFiveMinutes()', $schedule);
+    }
 }
 
 final class RecordingPublisher implements LegalDocumentOutboxPublisher
@@ -262,5 +304,25 @@ final class FailingPublisher implements LegalDocumentOutboxPublisher
     public function publish(LegalDocumentOutboxMessage $message): void
     {
         throw new RuntimeException('provider unavailable');
+    }
+}
+
+final class CrashAfterDeliveryPublisher implements LegalDocumentOutboxPublisher
+{
+    /** @var list<string> */
+    public array $deliveryAttempts = [];
+
+    /** @var array<string, true> */
+    public array $received = [];
+
+    public function publish(LegalDocumentOutboxMessage $message): void
+    {
+        $messageId = (string) $message->id;
+        $this->deliveryAttempts[] = $messageId;
+        $this->received[$messageId] = true;
+
+        if (count($this->deliveryAttempts) === 1) {
+            throw new RuntimeException('publisher crashed after receiver accepted message');
+        }
     }
 }

@@ -13,6 +13,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentOutboxMessage;
 use App\Models\User;
 use App\Services\LegalArchive\Audit\LegalDocumentAuditService;
 use App\Services\LegalArchive\Audit\LegalDocumentOutbox;
+use DomainException;
 use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Eloquent\Model;
@@ -84,7 +85,14 @@ final class LegalDocumentAuditChainTest extends TestCase
             $table->string('integrity_status');
             $table->timestamp('retention_until');
             $table->timestamp('created_at');
-            $table->unique(['organization_id', 'domain', 'source', 'source_event_id']);
+            $table->unique([
+                'organization_id',
+                'domain',
+                'subject_type',
+                'subject_id',
+                'source',
+                'source_event_id',
+            ]);
         });
         $this->database->schema()->create('legal_document_outbox', function (Blueprint $table): void {
             $table->uuid('id')->primary();
@@ -176,7 +184,7 @@ final class LegalDocumentAuditChainTest extends TestCase
 
     public function test_audit_and_outbox_are_committed_or_rolled_back_together(): void
     {
-        $service = $this->service(withOutbox: true);
+        $service = $this->service();
 
         $this->database->getConnection()->transaction(function () use ($service): void {
             $service->record('create', $this->document(5, 2), $this->actor(9, 2));
@@ -228,17 +236,107 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertStringContainsString('immutable_audit_sequence', $extension);
         self::assertStringContainsString('NOT VALID', $extension);
         self::assertStringContainsString('VALIDATE CONSTRAINT', $extension);
+        self::assertStringContainsString('immutable_audit_sequence_sync', $extension);
+        self::assertStringContainsString('SET DEFAULT nextval', $extension);
+        self::assertStringContainsString('LOCK TABLE immutable_audit_events', $extension);
     }
 
-    private function service(bool $withOutbox = false): LegalDocumentAuditService
+    public function test_source_idempotency_is_aggregate_scoped_and_conflicts_are_rejected(): void
     {
-        $connection = $this->database->getConnection();
+        $service = $this->service();
+        $actor = $this->actor(9, 2);
+        $context = [
+            'source_event_id' => 'external:17',
+            'after' => ['status' => 'draft'],
+        ];
+
+        $service->record('create', $this->document(5, 2), $actor, $context);
+        $service->record('create', $this->document(6, 2), $actor, $context);
+        $service->record('create', $this->document(5, 2), $actor, $context);
+
+        self::assertSame(2, ImmutableAuditEvent::query()->count());
+        self::assertSame(2, LegalDocumentOutboxMessage::query()->count());
+
+        $this->expectException(DomainException::class);
+        $service->record('update', $this->document(5, 2), $actor, [
+            'source_event_id' => 'external:17',
+            'after' => ['status' => 'active'],
+        ]);
+    }
+
+    public function test_service_uses_only_injected_connection_for_audit_and_outbox(): void
+    {
+        $this->database->addConnection(
+            ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => ''],
+            'isolated',
+        );
+        $connection = $this->database->getConnection('isolated');
+        foreach (['immutable_audit_events', 'legal_document_outbox'] as $table) {
+            $connection->getSchemaBuilder()->create($table, function (Blueprint $schema) use ($table): void {
+                if ($table === 'immutable_audit_events') {
+                    $schema->uuid('id')->primary();
+                    $schema->unsignedBigInteger('sequence_id')->unique();
+                    $schema->unsignedBigInteger('organization_id');
+                    $schema->unsignedBigInteger('project_id')->nullable();
+                    foreach (['domain', 'event_type', 'action', 'result', 'severity', 'actor_type', 'source', 'redaction_policy_version', 'payload_hash', 'record_hash', 'chain_scope', 'integrity_status'] as $column) {
+                        $schema->string($column);
+                    }
+                    foreach (['source_route', 'source_model', 'source_table', 'source_event_id', 'correlation_id', 'idempotency_key', 'subject_type', 'subject_id', 'subject_label', 'reason', 'previous_hash', 'seal_id'] as $column) {
+                        $schema->string($column)->nullable();
+                    }
+                    foreach (['actor_snapshot', 'related_subjects', 'before_state', 'after_state', 'diff', 'domain_context', 'sensitive_fields'] as $column) {
+                        $schema->json($column)->nullable();
+                    }
+                    $schema->unsignedBigInteger('actor_user_id')->nullable();
+                    $schema->unsignedBigInteger('impersonator_user_id')->nullable();
+                    $schema->unsignedSmallInteger('chain_version');
+                    foreach (['occurred_at', 'recorded_at', 'sealed_at', 'retention_until', 'created_at'] as $column) {
+                        $schema->timestamp($column)->nullable();
+                    }
+                } else {
+                    $schema->uuid('id')->primary();
+                    $schema->unsignedBigInteger('organization_id');
+                    foreach (['aggregate_type', 'aggregate_id', 'event', 'payload_hash', 'idempotency_key'] as $column) {
+                        $schema->string($column);
+                    }
+                    $schema->json('payload');
+                    $schema->unsignedInteger('attempts')->default(0);
+                    foreach (['available_at', 'published_at', 'claimed_at', 'dead_lettered_at', 'reconciliation_required_at', 'created_at', 'updated_at'] as $column) {
+                        $schema->timestamp($column)->nullable();
+                    }
+                    $schema->text('last_error')->nullable();
+                    $schema->uuid('claim_token')->nullable();
+                }
+            });
+        }
+
+        $service = $this->service(connection: $connection);
+        $service->record('create', $this->document(55, 2), $this->actor(9, 2));
+
+        self::assertSame(0, ImmutableAuditEvent::query()->count());
+        self::assertSame(1, $connection->table('immutable_audit_events')->count());
+        self::assertSame(1, $connection->table('legal_document_outbox')->count());
+    }
+
+    public function test_registry_source_idempotency_includes_document_identity(): void
+    {
+        $source = file_get_contents(
+            __DIR__.'/../../../app/Services/LegalArchive/LegalArchiveRegistryService.php',
+        );
+
+        self::assertIsString($source);
+        self::assertStringContainsString('"{$action}:{$documentId}:{$key}"', $source);
+    }
+
+    private function service(?\Illuminate\Database\ConnectionInterface $connection = null): LegalDocumentAuditService
+    {
+        $connection ??= $this->database->getConnection();
 
         return new LegalDocumentAuditService(new ImmutableAuditRecorder(
             new ImmutableAuditRedactor,
             new ImmutableAuditIntegrityService,
             $connection,
-        ), $withOutbox ? new LegalDocumentOutbox(dispatchJobs: false, connection: $connection) : null);
+        ), new LegalDocumentOutbox(dispatchJobs: false, connection: $connection), $connection);
     }
 
     private function document(int $id, int $organizationId): LegalArchiveDocument

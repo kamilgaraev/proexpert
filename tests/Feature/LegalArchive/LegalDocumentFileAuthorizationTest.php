@@ -85,13 +85,21 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
         [$version, $actor] = $this->versionAndActor(10, 10, 'ready');
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('can')->willReturn(true);
+        $auditRecorded = false;
         $storage = $this->createMock(FileService::class);
         $storage->expects(self::once())->method('temporaryUrl')
             ->with('org-10/legal-archive/files/7/version.pdf', 5, self::isInstanceOf(Organization::class))
-            ->willReturn('https://signed.example/version.pdf');
+            ->willReturnCallback(function () use (&$auditRecorded): string {
+                self::assertTrue($auditRecorded, 'Audit/outbox unit must commit before issuing a signed URL.');
+
+                return 'https://signed.example/version.pdf';
+            });
         $audit = $this->createMock(LegalDocumentAudit::class);
         $audit->expects(self::once())->method('record')
-            ->with('preview', self::isInstanceOf(LegalArchiveDocument::class), $actor, self::isType('array'));
+            ->with('preview', self::isInstanceOf(LegalArchiveDocument::class), $actor, self::isType('array'))
+            ->willReturnCallback(function () use (&$auditRecorded): void {
+                $auditRecorded = true;
+            });
 
         $url = (new LegalDocumentDownloadService(
             $storage,
@@ -124,6 +132,7 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
             $authorization,
             new LegalDocumentFilePolicy([]),
             new NullLogger,
+            $this->createMock(LegalDocumentAudit::class),
         ))->temporaryUrl($version, $actor, $purpose);
     }
 
@@ -150,6 +159,7 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
             $authorization,
             new LegalDocumentFilePolicy([]),
             new NullLogger,
+            $this->createMock(LegalDocumentAudit::class),
         ))->temporaryUrl($version, $actor, 'download');
     }
 

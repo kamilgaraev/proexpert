@@ -58,10 +58,26 @@ class AppServiceProvider extends ServiceProvider
             \App\Services\LegalArchive\Audit\LegalDocumentOutboxPublisher::class,
             \App\Services\LegalArchive\Audit\LaravelLegalDocumentOutboxPublisher::class,
         );
-        $this->app->bind(
-            \App\Services\LegalArchive\Audit\LegalDocumentAudit::class,
-            \App\Services\LegalArchive\Audit\LegalDocumentAuditService::class,
-        );
+        $this->app->bind(\App\Services\LegalArchive\Audit\LegalDocumentAudit::class, function ($app) {
+            $connection = $app->make('db')->connection();
+            $redactor = $app->make(\App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRedactor::class);
+            $integrity = $app->make(\App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditIntegrityService::class);
+
+            return new \App\Services\LegalArchive\Audit\LegalDocumentAuditService(
+                new \App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRecorder(
+                    $redactor,
+                    $integrity,
+                    $connection,
+                ),
+                new \App\Services\LegalArchive\Audit\LegalDocumentOutbox(
+                    redactor: $redactor,
+                    integrity: $integrity,
+                    connection: $connection,
+                    logger: $app->make(\Psr\Log\LoggerInterface::class),
+                ),
+                $connection,
+            );
+        });
 
         $this->app->bind(
             \App\Services\LegalArchive\Files\LegalDocumentScanner::class,

@@ -3,6 +3,10 @@
 declare(strict_types=1);
 
 return [
+    'commands' => [
+        'organization_required' => 'Укажите корректный идентификатор организации.',
+        'message_required' => 'Для повторной отправки укажите идентификатор сообщения.',
+    ],
     'messages' => [
         'dictionaries_loaded' => 'Справочники юридического архива загружены',
         'documents_loaded' => 'Документы юридического архива загружены',

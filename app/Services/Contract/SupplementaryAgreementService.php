@@ -25,7 +25,8 @@ class SupplementaryAgreementService
 
     public function __construct(
         protected SupplementaryAgreementRepositoryInterface $repository,
-        protected LoggingService $logging
+        protected LoggingService $logging,
+        protected ContractAuditedMutationService $contractMutations,
     ) {}
 
     public function create(SupplementaryAgreementDTO $dto): SupplementaryAgreement
@@ -63,7 +64,9 @@ class SupplementaryAgreementService
                     $currentState = $this->getStateEventService()->getCurrentState($contract);
                     $calculatedAmount = $currentState['total_amount'];
                     $contract->total_amount = $calculatedAmount;
-                    $contract->save();
+                    $this->contractMutations->saveDirty($contract, 'agreement_amount_recalculated', Auth::id(), [
+                        'agreement_id' => $id,
+                    ]);
 
                     // BUSINESS: Логирование изменения ДС
                     $this->logging->business('agreement.updated', [
@@ -138,7 +141,9 @@ class SupplementaryAgreementService
                     $currentState = $this->getStateEventService()->getCurrentState($contract);
                     $calculatedAmount = $currentState['total_amount'];
                     $contract->total_amount = $calculatedAmount;
-                    $contract->save();
+                    $this->contractMutations->saveDirty($contract, 'agreement_deleted_recalculated', Auth::id(), [
+                        'agreement_id' => $id,
+                    ]);
 
                     // BUSINESS: Логирование удаления ДС
                     $this->logging->business('agreement.deleted', [
@@ -271,7 +276,10 @@ class SupplementaryAgreementService
             }
 
             if (! $financialAlreadyApplied) {
-                $contract->save();
+                $this->contractMutations->saveDirty($contract, 'agreement_financial_terms_applied', $actorId, [
+                    'agreement_id' => (int) $lockedAgreement->id,
+                    'source_event_id' => "supplementary_agreement:{$lockedAgreement->id}:financial",
+                ]);
             }
 
             if (! $financialAlreadyApplied && ! empty($lockedAgreement->supersede_agreement_ids)) {
@@ -323,7 +331,12 @@ class SupplementaryAgreementService
                 $this->applyAdvanceChanges($contract, $lockedAgreement->advance_changes);
             }
 
-            $contract->save();
+            if ($contract->isDirty()) {
+                $this->contractMutations->saveDirty($contract, 'agreement_legal_terms_applied', $actorId, [
+                    'agreement_id' => (int) $lockedAgreement->id,
+                    'source_event_id' => "supplementary_agreement:{$lockedAgreement->id}:legal",
+                ]);
+            }
 
             $lockedAgreement->forceFill([
                 'applied_at' => now(),

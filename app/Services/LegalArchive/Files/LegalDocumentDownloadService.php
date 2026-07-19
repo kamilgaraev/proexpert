@@ -24,7 +24,7 @@ final class LegalDocumentDownloadService
         private readonly AuthorizationService $authorization,
         private readonly LegalDocumentFilePolicy $policy,
         private readonly LoggerInterface $logger,
-        private readonly ?LegalDocumentAudit $audit = null,
+        private readonly LegalDocumentAudit $audit,
     ) {}
 
     public function temporaryUrl(LegalArchiveDocumentVersion $version, User $actor, string $purpose): string
@@ -50,6 +50,23 @@ final class LegalDocumentDownloadService
             throw $exception;
         }
 
+        $document = $version->documentFile?->document;
+        if (! $document instanceof LegalArchiveDocument) {
+            $documentModel = new LegalArchiveDocument;
+            $documentModel->setConnection($version->getConnectionName());
+            $document = $documentModel->newQuery()
+                ->forOrganization($organizationId)
+                ->find($version->document_id);
+        }
+        if (! $document instanceof LegalArchiveDocument) {
+            throw new RuntimeException('legal_document_not_found_for_audit');
+        }
+        $this->audit->record($purpose, $document, $actor, [
+            'version_id' => (int) $version->id,
+            'document_file_id' => (int) $version->document_file_id,
+            'source_event_id' => $purpose.':'.(string) $version->id.':'.(string) Str::uuid(),
+        ]);
+
         $organization = $version->organization;
         if (! $organization instanceof Organization) {
             $organization = new Organization;
@@ -74,20 +91,6 @@ final class LegalDocumentDownloadService
             'version_id' => $version->id,
             'purpose' => $purpose,
         ]);
-
-        if ($this->audit !== null) {
-            $document = $version->documentFile?->document
-                ?? LegalArchiveDocument::query()
-                    ->forOrganization($organizationId)
-                    ->find($version->document_id);
-            if ($document instanceof LegalArchiveDocument) {
-                $this->audit->record($purpose, $document, $actor, [
-                    'version_id' => (int) $version->id,
-                    'document_file_id' => (int) $version->document_file_id,
-                    'source_event_id' => $purpose.':'.(string) $version->id.':'.(string) Str::uuid(),
-                ]);
-            }
-        }
 
         return $url;
     }

@@ -101,7 +101,7 @@ final class LegalArchiveRegistryService
                 : null;
             $this->audit->recordForActorId('create', $document, $userId, [
                 'after' => $this->auditSnapshot($document),
-                'source_event_id' => $this->sourceEventId($data, 'create'),
+                'source_event_id' => $this->sourceEventId($data, 'create', (string) $document->id),
             ]);
 
             return [$document, $documentFile];
@@ -140,7 +140,7 @@ final class LegalArchiveRegistryService
             $this->audit->recordForActorId('update', $document, $userId, [
                 'before' => $before,
                 'after' => $this->auditSnapshot($document->refresh()),
-                'source_event_id' => $this->sourceEventId($data, 'update'),
+                'source_event_id' => $this->sourceEventId($data, 'update', (string) $document->id),
             ]);
 
             return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
@@ -369,10 +369,10 @@ final class LegalArchiveRegistryService
         ]);
     }
 
-    private function sourceEventId(array $data, string $action): ?string
+    private function sourceEventId(array $data, string $action, string $documentId): ?string
     {
         $key = $data['idempotency_key'] ?? null;
 
-        return is_string($key) && $key !== '' ? "{$action}:{$key}" : null;
+        return is_string($key) && $key !== '' ? "{$action}:{$documentId}:{$key}" : null;
     }
 }

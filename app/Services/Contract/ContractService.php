@@ -25,16 +25,20 @@ class ContractService
 
     protected ContractSideMutationService $contractSideMutationService;
 
+    protected ContractAuditedMutationService $contractMutations;
+
     public function __construct(
         ContractRepositoryInterface $contractRepository,
         LoggingService $logging,
         ContractAccessService $contractAccessService,
-        ContractSideMutationService $contractSideMutationService
+        ContractSideMutationService $contractSideMutationService,
+        ContractAuditedMutationService $contractMutations,
     ) {
         $this->contractRepository = $contractRepository;
         $this->logging = $logging;
         $this->contractAccessService = $contractAccessService;
         $this->contractSideMutationService = $contractSideMutationService;
+        $this->contractMutations = $contractMutations;
     }
 
     public function getAllContracts(int $organizationId, int $perPage = 15, array $filters = [], string $sortBy = 'date', string $sortDirection = 'desc'): LengthAwarePaginator
@@ -112,7 +116,9 @@ class ContractService
         try {
             // Возможно, стоит проверить наличие связанных актов/платежей перед удалением
             // или настроить каскадное удаление/soft deletes на уровне БД
-            $deleted = $this->contractRepository->delete($contract->id);
+            $deleted = $this->contractMutations->delete($contract, Auth::id(), [
+                'source_event_id' => 'contract:'.$contractId.':delete',
+            ]);
 
             if ($deleted) {
                 // BUSINESS: Договор успешно удалён
@@ -427,7 +433,9 @@ class ContractService
             }
 
             $contract->parent_contract_id = $parentContractId;
-            $contract->save();
+            $this->contractMutations->saveDirty($contract, 'parent_attached', Auth::id(), [
+                'source_event_id' => "parent:{$contractId}:{$parentContractId}:attach",
+            ]);
 
             DB::commit();
 
@@ -472,7 +480,9 @@ class ContractService
 
             $oldParentId = $contract->parent_contract_id;
             $contract->parent_contract_id = null;
-            $contract->save();
+            $this->contractMutations->saveDirty($contract, 'parent_detached', Auth::id(), [
+                'source_event_id' => "parent:{$contractId}:{$oldParentId}:detach",
+            ]);
 
             DB::commit();
 

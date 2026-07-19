@@ -74,7 +74,9 @@ final class LegalDocumentOutbox
 
                 $created = true;
 
-                return LegalDocumentOutboxMessage::query()->create([
+                $message = new LegalDocumentOutboxMessage;
+                $message->setConnection($this->database()->getName());
+                $message->fill([
                     'organization_id' => $organizationId,
                     'aggregate_type' => $aggregateType,
                     'aggregate_id' => $aggregateId,
@@ -84,7 +86,9 @@ final class LegalDocumentOutbox
                     'idempotency_key' => $idempotencyKey,
                     'attempts' => 0,
                     'available_at' => now(),
-                ]);
+                ])->save();
+
+                return $message;
             }, 3);
         } catch (QueryException $exception) {
             $message = $this->findExisting($organizationId, $aggregateType, $aggregateId, $idempotencyKey);
@@ -120,7 +124,7 @@ final class LegalDocumentOutbox
             return $this->markFailure($message, $claimToken, $exception);
         }
 
-        $updated = LegalDocumentOutboxMessage::query()
+        $updated = $this->query()
             ->whereKey($message->id)
             ->where('claim_token', $claimToken)
             ->whereNull('published_at')
@@ -141,7 +145,7 @@ final class LegalDocumentOutbox
 
     public function reconciliationCandidates(int $organizationId, int $limit = 100): Collection
     {
-        return LegalDocumentOutboxMessage::query()
+        return $this->query()
             ->where('organization_id', $organizationId)
             ->whereNull('published_at')
             ->where(function ($query): void {
@@ -161,7 +165,7 @@ final class LegalDocumentOutbox
     {
         $staleBefore = now()->subSeconds($this->claimTimeoutSeconds);
 
-        return LegalDocumentOutboxMessage::query()
+        return $this->query()
             ->whereNull('published_at')
             ->whereNull('dead_lettered_at')
             ->where('available_at', '<=', now())
@@ -178,7 +182,7 @@ final class LegalDocumentOutbox
     public function retryReconciled(int $organizationId, string $messageId): bool
     {
         $requeued = $this->database()->transaction(function () use ($organizationId, $messageId): bool {
-            $message = LegalDocumentOutboxMessage::query()
+            $message = $this->query()
                 ->whereKey($messageId)
                 ->where('organization_id', $organizationId)
                 ->whereNull('published_at')
@@ -211,10 +215,22 @@ final class LegalDocumentOutbox
         return $requeued;
     }
 
+    public function reconciliationCounts(int $limit = 100): Collection
+    {
+        return $this->query()
+            ->whereNull('published_at')
+            ->whereNotNull('reconciliation_required_at')
+            ->selectRaw('organization_id, count(*) as messages_count, min(reconciliation_required_at) as oldest_at')
+            ->groupBy('organization_id')
+            ->orderByDesc('messages_count')
+            ->limit(max(1, min($limit, 1000)))
+            ->get();
+    }
+
     private function claim(string $messageId): array
     {
         return $this->database()->transaction(function () use ($messageId): array {
-            $message = LegalDocumentOutboxMessage::query()->whereKey($messageId)->lockForUpdate()->first();
+            $message = $this->query()->whereKey($messageId)->lockForUpdate()->first();
             if (! $message instanceof LegalDocumentOutboxMessage) {
                 return ['status' => 'not_found', 'message' => null, 'retry_at' => null];
             }
@@ -259,7 +275,7 @@ final class LegalDocumentOutbox
     ): LegalDocumentOutboxPublishResult {
         $deadLettered = (int) $message->attempts >= max(1, $this->maximumAttempts);
         $retryAt = $deadLettered ? null : now()->addSeconds($this->backoffSeconds((int) $message->attempts));
-        $updated = LegalDocumentOutboxMessage::query()
+        $updated = $this->query()
             ->whereKey($message->id)
             ->where('claim_token', $claimToken)
             ->whereNull('published_at')
@@ -311,7 +327,7 @@ final class LegalDocumentOutbox
         string $aggregateId,
         string $idempotencyKey,
     ): ?LegalDocumentOutboxMessage {
-        return LegalDocumentOutboxMessage::query()
+        return $this->query()
             ->where('organization_id', $organizationId)
             ->where('aggregate_type', $aggregateType)
             ->where('aggregate_id', $aggregateId)
@@ -332,5 +348,13 @@ final class LegalDocumentOutbox
     private function database(): ConnectionInterface
     {
         return $this->connection ?? DB::connection();
+    }
+
+    private function query(): \Illuminate\Database\Eloquent\Builder
+    {
+        $message = new LegalDocumentOutboxMessage;
+        $message->setConnection($this->database()->getName());
+
+        return $message->newQuery();
     }
 }
