@@ -1396,7 +1396,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         ))[0] ?? null;
 
         self::assertIsArray($floor);
-        self::assertSame('residential_preliminary_common:v5', $floor['specialization_scenario']['scenario_id'] ?? null);
+        self::assertSame('residential_preliminary_common:v6', $floor['specialization_scenario']['scenario_id'] ?? null);
         self::assertSame(['ламинат', 'ламинированн'], $floor['specialization_scenario']['material_markers'] ?? null);
         self::assertSame('warning', $floor['metadata']['material_assumption']['severity'] ?? null);
         self::assertTrue($floor['metadata']['material_assumption']['requires_confirmation'] ?? false);

@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v5', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v6', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -85,6 +85,16 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             $issued,
             $catalog->resolve($issued, 'ventilation.air_exchange', 'residential'),
         );
+    }
+
+    public function test_issues_signed_intent_actions_for_residential_engineering_scenarios(): void
+    {
+        $catalog = new ResidentialMaterialScenarioCatalog;
+
+        self::assertSame('cable_installation', $catalog->issue('electrical.main_cable', 'residential')['intent_action'] ?? null);
+        self::assertSame('cable_installation', $catalog->issue('electrical.power_lines', 'residential')['intent_action'] ?? null);
+        self::assertSame('cable_installation', $catalog->issue('lighting.lines', 'residential')['intent_action'] ?? null);
+        self::assertSame('heating_equipment', $catalog->issue('heating.unit', 'residential')['intent_action'] ?? null);
     }
 
     #[DataProvider('verifiedNormativeSpecializations')]

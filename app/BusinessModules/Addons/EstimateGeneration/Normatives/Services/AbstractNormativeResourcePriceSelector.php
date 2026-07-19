@@ -109,8 +109,11 @@ final readonly class AbstractNormativeResourcePriceSelector
                 || ($target['diameter'] !== null && $candidateAttributes['diameter'] !== $target['diameter'])) {
                 return false;
             }
-            if ($target['diameter_max'] !== null && $candidateAttributes['diameter_max'] !== $target['diameter_max']) {
-                return false;
+            if ($target['diameter_max'] !== null) {
+                $candidateLimit = $candidateAttributes['diameter_max'] ?? $candidateAttributes['diameter'];
+                if ($candidateLimit === null || $candidateLimit > $target['diameter_max']) {
+                    return false;
+                }
             }
             if ($target['thickness'] !== null && $candidateAttributes['thickness'] !== $target['thickness']) {
                 return false;
@@ -222,10 +225,11 @@ final readonly class AbstractNormativeResourcePriceSelector
             preg_match('/дерев\w*[-\s]?алюмини|дерево-алюмини/u', $text) === 1 => 'wood_aluminum',
             preg_match('/полипропилен/u', $text) === 1 => 'polypropylene',
             preg_match('/(?:\bпнд\b|\bhdpe\b|полиэтилен)/u', $text) === 1 => 'polyethylene',
-            preg_match('/(?:\bпвх\b|поливинилхлорид)/u', $text) === 1 => 'pvc',
+            preg_match('/(?:\bпвх\b|поливинилхлорид|пластиков)/u', $text) === 1 => 'pvc',
+            preg_match('/оцинкован/u', $text) === 1 && preg_match('/стал\w*/u', $text) === 1 => 'steel',
             preg_match('/алюмини/u', $text) === 1 => 'aluminum',
             preg_match('/деревян|древес/u', $text) === 1 => 'wood',
-            preg_match('/(?:сталь\w*|стальн\w*|\bвгп\b)/u', $text) === 1 => 'steel',
+            preg_match('/(?:стал\w*|\bвгп\b)/u', $text) === 1 => 'steel',
             preg_match('/чугун/u', $text) === 1 => 'cast_iron',
             preg_match('/медн\w*/u', $text) === 1 => 'copper',
             preg_match('/асбестоцемент|хризотилцемент/u', $text) === 1 => 'asbestos_cement',

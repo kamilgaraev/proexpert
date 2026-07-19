@@ -192,7 +192,7 @@ final class NormativeContextPinResolverTest extends TestCase
                 (object) [
                     'price_id' => 2,
                     'price_resource_code' => '09.4.03.01-0002',
-                    'price_resource_name' => 'Блок оконный из ПВХ профилей двухстворчатый',
+                    'price_resource_name' => 'Блок оконный пластиковый двухстворчатый',
                     'base_price' => '7000',
                     'regional_price_version_id' => 11,
                 ],
@@ -230,7 +230,7 @@ final class NormativeContextPinResolverTest extends TestCase
                 ],
             ],
             [],
-            'Прокладка воздуховодов из листовой оцинкованной стали толщиной 0,5 мм, диаметром до 200 мм',
+            'Прокладка воздуховодов из листовой оцинкованной стали и алюминия толщиной 0,5 мм, диаметром до 200 мм',
             'Воздуховоды из листовой стали',
         );
 

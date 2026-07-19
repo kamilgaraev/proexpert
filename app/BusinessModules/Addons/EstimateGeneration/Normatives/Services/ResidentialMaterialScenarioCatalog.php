@@ -6,16 +6,17 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v5';
+    private const CATALOG_VERSION = 'residential_material_scenario:v6';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v5';
+    private const SCENARIO_ID = 'residential_preliminary_common:v6';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v5';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v6';
 
     /**
      * @var array<string, array{
      *     material_markers: list<string>,
      *     assumption_code: string,
+     *     intent_action?: string,
      *     work_item_name?: string,
      *     normative_search_text?: string,
      *     normative_rate_code?: string
@@ -96,24 +97,28 @@ final class ResidentialMaterialScenarioCatalog
         'electrical.main_cable' => [
             'material_markers' => ['кабел', 'скоб', 'ответвительн'],
             'assumption_code' => 'residential_feeder_cable_clips',
+            'intent_action' => 'cable_installation',
             'normative_search_text' => 'прокладка кабеля с креплением скобами и установкой ответвительных коробок',
             'normative_rate_code' => '08-02-401-01',
         ],
         'electrical.power_lines' => [
             'material_markers' => ['силов', 'магистрал', 'стояк', 'готовых канал'],
             'assumption_code' => 'residential_power_wiring_channels',
+            'intent_action' => 'cable_installation',
             'normative_search_text' => 'прокладка проводов силовой сети в готовых каналах сечением до 6 мм2',
             'normative_rate_code' => '08-02-404-01',
         ],
         'lighting.lines' => [
             'material_markers' => ['осветительн', 'под штукатур', 'борозд'],
             'assumption_code' => 'residential_lighting_wiring_chases',
+            'intent_action' => 'cable_installation',
             'normative_search_text' => 'прокладка проводов групповых осветительных сетей под штукатурку или в бороздах',
             'normative_rate_code' => '08-02-403-03',
         ],
         'heating.unit' => [
             'material_markers' => ['котел', 'котл', 'отопительн'],
             'assumption_code' => 'residential_assembled_heating_boiler',
+            'intent_action' => 'heating_equipment',
             'work_item_name' => 'Установка отопительного котла',
             'normative_search_text' => 'установка отопительного котла поставляемого в сборе',
             'normative_rate_code' => '18-01-001-01',
@@ -147,6 +152,9 @@ final class ResidentialMaterialScenarioCatalog
             'object_type' => 'residential',
             'material_markers' => $definition['material_markers'],
             'assumption_code' => $definition['assumption_code'],
+            ...isset($definition['intent_action'])
+                ? ['intent_action' => $definition['intent_action']]
+                : [],
             ...isset($definition['normative_search_text'])
                 ? ['normative_search_text' => $definition['normative_search_text']]
                 : [],
