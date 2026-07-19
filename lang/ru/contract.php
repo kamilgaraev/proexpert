@@ -48,6 +48,7 @@ return [
         'completed' => 'Завершен',
         'on_hold' => 'Приостановлен',
         'terminated' => 'Расторгнут',
+        'archived' => 'В архиве',
     ],
     'work_type_category' => [
         'smr' => 'СМР',

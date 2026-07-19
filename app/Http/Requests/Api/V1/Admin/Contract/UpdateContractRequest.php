@@ -2,24 +2,31 @@
 
 namespace App\Http\Requests\Api\V1\Admin\Contract;
 
-use App\DTOs\Contract\ContractDTO;
 use App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\DTOs\Contract\ContractDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
-use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Models\Contract;
 use App\Rules\ParentContractValid;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rules\Enum;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Enum;
 
 class UpdateContractRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        $user = $this->user();
+
+        return $user !== null && app(AuthorizationService::class)->can($user, 'contracts.edit', [
+            'organization_id' => (int) (
+                $this->attributes->get('current_organization_id')
+                ?? $user->current_organization_id
+            ),
+        ]);
     }
 
     public function withValidator($validator): void
@@ -40,22 +47,22 @@ class UpdateContractRequest extends FormRequest
                 if ($organizationId) {
                     $accessController = app(\App\Modules\Core\AccessController::class);
 
-                    if (!$accessController->hasModuleAccess($organizationId, 'procurement')) {
+                    if (! $accessController->hasModuleAccess($organizationId, 'procurement')) {
                         $validator->errors()->add('supplier_id', 'Модуль "Управление закупками" не активирован.');
                     }
 
-                    if (!$accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
+                    if (! $accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
                         $validator->errors()->add('supplier_id', 'Модуль "Базовое управление складом" не активирован.');
                     }
                 }
             }
 
-            if (!$sideType) {
+            if (! $sideType) {
                 return;
             }
 
             if ($sideType->requiresSupplier()) {
-                if (!$supplierId) {
+                if (! $supplierId) {
                     $validator->errors()->add('supplier_id', 'Для этого типа договора нужно выбрать поставщика.');
                 }
 
@@ -69,7 +76,7 @@ class UpdateContractRequest extends FormRequest
             }
 
             if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR) {
-                if (!$contractorId && !$isSelfExecution) {
+                if (! $contractorId && ! $isSelfExecution) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать подрядчика или включить собственные силы.');
                 }
 
@@ -79,7 +86,7 @@ class UpdateContractRequest extends FormRequest
             }
 
             if ($sideType === ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR) {
-                if (!$contractorId) {
+                if (! $contractorId) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать субподрядчика.');
                 }
 
@@ -149,7 +156,7 @@ class UpdateContractRequest extends FormRequest
             'subcontract_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'planned_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'actual_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'status' => ['sometimes', 'nullable', new Enum(ContractStatusEnum::class)],
+            'status' => ['prohibited'],
             'start_date' => ['sometimes', 'nullable', 'date'],
             'end_date' => ['sometimes', 'nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['sometimes', 'nullable', 'string'],
@@ -159,6 +166,13 @@ class UpdateContractRequest extends FormRequest
                 'integer',
                 Rule::exists('projects', 'id')->where('organization_id', $organizationId),
             ],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'status.prohibited' => trans_message('contracts.status_transition_only'),
         ];
     }
 
@@ -176,11 +190,11 @@ class UpdateContractRequest extends FormRequest
     private function availableContractorRule(int $organizationId): \Closure
     {
         return static function (string $attribute, mixed $value, \Closure $fail) use ($organizationId): void {
-            if (!$value) {
+            if (! $value) {
                 return;
             }
 
-            if (!app(ContractorSharingInterface::class)->canUseContractor((int) $value, $organizationId)) {
+            if (! app(ContractorSharingInterface::class)->canUseContractor((int) $value, $organizationId)) {
                 $fail(trans_message('contract.contractor_not_available'));
             }
         };
@@ -288,7 +302,7 @@ class UpdateContractRequest extends FormRequest
             actual_advance_amount: array_key_exists('actual_advance_amount', $validatedData)
                 ? ($validatedData['actual_advance_amount'] !== null ? (float) $validatedData['actual_advance_amount'] : null)
                 : $contract->actual_advance_amount,
-            status: isset($validatedData['status']) ? ContractStatusEnum::from($validatedData['status']) : $contract->status,
+            status: $contract->status,
             start_date: array_key_exists('start_date', $validatedData)
                 ? ($validatedData['start_date'] ? \Carbon\Carbon::parse($validatedData['start_date'])->format('Y-m-d') : null)
                 : ($contract->start_date ? $contract->start_date->format('Y-m-d') : null),

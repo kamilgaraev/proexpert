@@ -2,22 +2,27 @@
 
 namespace App\Http\Requests\Api\V1\Admin\Contract;
 
-use App\DTOs\Contract\ContractDTO;
 use App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\DTOs\Contract\ContractDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Rules\ParentContractValid;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rules\Enum;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Enum;
 
 class StoreContractRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        $user = $this->user();
+
+        return $user !== null && app(AuthorizationService::class)->can($user, 'contracts.create', [
+            'organization_id' => $this->currentOrganizationId(),
+        ]);
     }
 
     public function withValidator($validator): void
@@ -35,14 +40,14 @@ class StoreContractRequest extends FormRequest
                 if ($organizationId) {
                     $accessController = app(\App\Modules\Core\AccessController::class);
 
-                    if (!$accessController->hasModuleAccess($organizationId, 'procurement')) {
+                    if (! $accessController->hasModuleAccess($organizationId, 'procurement')) {
                         $validator->errors()->add(
                             'supplier_id',
                             'Модуль "Управление закупками" не активирован. Активируйте модуль для создания договоров поставки.'
                         );
                     }
 
-                    if (!$accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
+                    if (! $accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
                         $validator->errors()->add(
                             'supplier_id',
                             'Модуль "Базовое управление складом" не активирован. Он необходим для работы с договорами поставки.'
@@ -51,12 +56,12 @@ class StoreContractRequest extends FormRequest
                 }
             }
 
-            if (!$sideType) {
+            if (! $sideType) {
                 return;
             }
 
             if ($sideType->requiresSupplier()) {
-                if (!$supplierId) {
+                if (! $supplierId) {
                     $validator->errors()->add('supplier_id', 'Для этого типа договора нужно выбрать поставщика.');
                 }
 
@@ -70,7 +75,7 @@ class StoreContractRequest extends FormRequest
             }
 
             if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR) {
-                if (!$contractorId && !$isSelfExecution) {
+                if (! $contractorId && ! $isSelfExecution) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать подрядчика или включить собственные силы.');
                 }
 
@@ -80,7 +85,7 @@ class StoreContractRequest extends FormRequest
             }
 
             if ($sideType === ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR) {
-                if (!$contractorId) {
+                if (! $contractorId) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать субподрядчика.');
                 }
 
@@ -178,11 +183,11 @@ class StoreContractRequest extends FormRequest
     private function availableContractorRule(int $organizationId): \Closure
     {
         return static function (string $attribute, mixed $value, \Closure $fail) use ($organizationId): void {
-            if (!$value) {
+            if (! $value) {
                 return;
             }
 
-            if (!app(ContractorSharingInterface::class)->canUseContractor((int) $value, $organizationId)) {
+            if (! app(ContractorSharingInterface::class)->canUseContractor((int) $value, $organizationId)) {
                 $fail(trans_message('contract.contractor_not_available'));
             }
         };

@@ -26,7 +26,8 @@
       "contracts.view",
       "contracts.create",
       "contracts.edit",
-      "contracts.delete"
+      "contracts.delete",
+      "contracts.archive"
     ],
     "works": [
       "works.view",
@@ -114,4 +115,3 @@
   
   "conditions": {}
 }
-

@@ -54,11 +54,23 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
 
     // === CONTRACTS ===
     Route::prefix('contracts')->group(function () {
-        Route::get('/', [ContractController::class, 'index']);
-        Route::post('/', [ContractController::class, 'store']);
-        Route::get('/{contract}', [ContractController::class, 'show']);
-        Route::put('/{contract}', [ContractController::class, 'update']);
-        Route::delete('/{contract}', [ContractController::class, 'destroyForProject']);
+        Route::get('/', [ContractController::class, 'index'])->middleware('authorize:contracts.view,project,project');
+        Route::post('/', [ContractController::class, 'store'])->middleware('authorize:contracts.create,project,project');
+        Route::get('/{contract}', [ContractController::class, 'show'])->middleware('authorize:contracts.view,project,project');
+        Route::match(['put', 'patch'], '/{contract}', [ContractController::class, 'update'])
+            ->middleware('authorize:contracts.edit,project,project');
+        Route::delete('/{contract}', [ContractController::class, 'destroyForProject'])
+            ->middleware('authorize:contracts.delete,project,project');
+
+        foreach (['activate', 'suspend', 'resume', 'complete', 'terminate'] as $action) {
+            Route::post("/{contract}/{$action}", [ContractController::class, 'transition'])
+                ->defaults('action', $action)
+                ->middleware('authorize:contracts.edit,project,project');
+        }
+
+        Route::post('/{contract}/archive', [ContractController::class, 'transition'])
+            ->defaults('action', 'archive')
+            ->middleware('authorize:contracts.archive,project,project');
 
         // Contract Performance Acts
         Route::prefix('{contract}/performance-acts')->group(function () {

@@ -1,14 +1,40 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
+use App\Http\Controllers\Api\V1\Admin\ContractController;
+use Illuminate\Support\Facades\Route;
+
 // ContractPaymentController удален - используйте модуль Payments
-use App\Http\Controllers\Api\V1\Admin\Contract\ContractSpecificationController;
 
 // Маршруты для Контрактов
 // Префикс 'admin' и middleware применяются в главном файле routes/api.php
-Route::apiResource('contracts', ContractController::class);
+Route::get('contracts', [ContractController::class, 'index'])
+    ->middleware('authorize:contracts.view')
+    ->name('contracts.index');
+Route::post('contracts', [ContractController::class, 'store'])
+    ->middleware('authorize:contracts.create')
+    ->name('contracts.store');
+Route::get('contracts/{contract}', [ContractController::class, 'show'])
+    ->middleware('authorize:contracts.view')
+    ->name('contracts.show');
+Route::match(['put', 'patch'], 'contracts/{contract}', [ContractController::class, 'update'])
+    ->middleware('authorize:contracts.edit')
+    ->name('contracts.update');
+Route::delete('contracts/{contract}', [ContractController::class, 'destroy'])
+    ->middleware('authorize:contracts.delete')
+    ->name('contracts.destroy');
+
+foreach (['activate', 'suspend', 'resume', 'complete', 'terminate'] as $action) {
+    Route::post("contracts/{contract}/{$action}", [ContractController::class, 'transition'])
+        ->defaults('action', $action)
+        ->middleware('authorize:contracts.edit')
+        ->name("contracts.{$action}");
+}
+
+Route::post('contracts/{contract}/archive', [ContractController::class, 'transition'])
+    ->defaults('action', 'archive')
+    ->middleware('authorize:contracts.archive')
+    ->name('contracts.archive');
 
 // Дополнительные маршруты для контрактов
 Route::group(['prefix' => 'contracts'], function () {
@@ -57,6 +83,4 @@ Route::get('performance-acts/{performance_act}/files', [ContractPerformanceActCo
 // Используйте маршруты: /api/v1/admin/projects/{project}/contracts/{contract}/...
 
 // Маршруты для распределения контрактов по проектам (allocations)
-require __DIR__ . '/contract_allocations.php';
-
-?>
+require __DIR__.'/contract_allocations.php';

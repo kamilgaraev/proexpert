@@ -182,6 +182,7 @@ return [
         'legal_archive.files.upload' => 'Загрузка файлов юридического архива',
         'legal_archive.versions.create' => 'Создание версий документов юридического архива',
         'legal_archive.retention.manage' => 'Управление сроками хранения юридического архива',
+        'contracts.archive' => 'Архивация договоров',
         'access_recertification.campaigns.view' => 'Просмотр кампаний пересмотра доступов',
         'access_recertification.campaigns.manage' => 'Управление кампаниями пересмотра доступов',
         'access_recertification.campaigns.launch' => 'Запуск кампаний пересмотра доступов',
