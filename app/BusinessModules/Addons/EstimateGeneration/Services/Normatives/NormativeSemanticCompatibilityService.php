@@ -162,7 +162,7 @@ final class NormativeSemanticCompatibilityService
             'floor_preparation' => ['подготов', 'стяжк', 'подстилающ', 'основани пола'],
             'ceiling_finishing' => ['потол', 'подвесн'],
             'baseboard_installation' => ['плинтус', 'галтел'],
-            'cable_installation' => ['кабел', 'электропровод', 'проводк', 'лотк'],
+            'cable_installation' => ['кабел', 'электропровод', 'провод', 'проводк', 'лотк'],
             'cable_tray_installation' => ['лотк'],
             'grounding_installation' => ['заземл', 'заземляющ', 'электрод'],
             'socket_installation' => ['розет', 'выключател'],
@@ -225,6 +225,13 @@ final class NormativeSemanticCompatibilityService
             $explicitInstallation = $this->containsAny($candidateTitle, ['проклад', 'прокладыв', 'уклад', 'затягив', 'протяж']);
             $catalogInstallationForm = $this->containsAny($candidateTitle, ['кабел'])
                 && $this->containsAny($candidateTitle, ['по установленн конструкц', 'по установленн лотк', 'по установленным конструкциям', 'по установленным лоткам']);
+            $catalogCableFasteningForm = $this->containsAny($candidateTitle, ['кабел'])
+                && $this->containsAny($candidateTitle, ['креплен', 'ответвительн'])
+                && $this->containsAny($candidateTitle, ['скоб', 'короб']);
+            $catalogWireNetworkForm = $this->containsAny($candidateTitle, ['провод'])
+                && $this->containsAny($candidateTitle, ['магистрал', 'силов', 'группов'])
+                && $this->containsAny($candidateTitle, ['сет', 'провод'])
+                && $this->containsAny($workText, ['магистрал', 'силов', 'группов']);
 
             if ($this->containsAny($candidateTitle, ['транше'])
                 && ! $this->containsAny($workText, ['транше', 'наружн'])) {
@@ -237,7 +244,7 @@ final class NormativeSemanticCompatibilityService
             }
 
             return $this->containsAny($candidateTitle, ['кабел', 'электропровод', 'провод'])
-                && ($explicitInstallation || $catalogInstallationForm);
+                && ($explicitInstallation || $catalogInstallationForm || $catalogCableFasteningForm || $catalogWireNetworkForm);
         }
 
         if ($action === 'waterproofing'

@@ -231,12 +231,14 @@ final class WorkPlanCompilerTest extends TestCase
     public function test_normative_pin_preserves_signed_specialization_contract(): void
     {
         $scenario = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog)
-            ->issue('finish.floor', 'residential');
+            ->issue('lighting.lines', 'residential');
         self::assertIsArray($scenario);
         $pins = $this->createMock(NormativeContextPinResolver::class);
         $pins->expects(self::once())
             ->method('resolve')
-            ->with([], self::callback(static fn (array $intents): bool => ($intents[0]['specialization_scenario'] ?? null) === $scenario))
+            ->with([], self::callback(static fn (array $intents): bool => ($intents[0]['specialization_scenario'] ?? null) === $scenario
+                && ($intents[0]['action'] ?? null) === 'cable_installation'
+                && ($intents[0]['normative_sections'] ?? null) === ['08']))
             ->willReturn(['status' => 'pinned']);
         $compiler = new WorkPlanCompiler(
             new PackagePlannerService,
@@ -249,11 +251,12 @@ final class WorkPlanCompilerTest extends TestCase
             'sections' => [[
                 'work_items' => [[
                     'item_type' => 'priced_work',
-                    'name' => 'Чистовое покрытие пола',
+                    'name' => 'Прокладка линий освещения',
                     'normative_search_text' => $scenario['normative_search_text'],
                     'normative_rate_code' => $scenario['normative_rate_code'],
-                    'unit' => 'm2',
+                    'unit' => 'm',
                     'specialization_scenario' => $scenario,
+                    'metadata' => ['quantity_key' => 'lighting.lines'],
                 ]],
             ]],
         ]], 'house');

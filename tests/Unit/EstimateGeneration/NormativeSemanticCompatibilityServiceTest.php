@@ -1371,6 +1371,27 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         ));
     }
 
+    public function test_catalog_noun_forms_are_valid_for_residential_cable_work(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertTrue($service->isCompatible(
+            'Кабели с креплением накладными скобами, полосками с установкой ответвительных коробок: Кабель трех-пятижильный сечением жилы до 16 мм2 с креплением накладными скобами, полосками с установкой ответвительных коробок',
+            'прокладка кабеля с креплением скобами и установкой ответвительных коробок',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Магистрали, стояки и силовые сети в готовых каналах или асбестоцементных трубах, количество проводов и сечение: до 2х6 мм2',
+            'прокладка проводов силовой сети в готовых каналах сечением до 6 мм2',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Провода групповых осветительных сетей в защитной оболочке под штукатурку или в бороздах',
+            'прокладка проводов групповых осветительных сетей под штукатурку или в бороздах',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+    }
+
     public function test_rough_wall_preparation_rejects_decorative_finish(): void
     {
         $service = new NormativeSemanticCompatibilityService;
