@@ -7,9 +7,11 @@ namespace Tests\Integration\LegalArchive;
 use App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventData;
 use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditIntegrityService;
+use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditPhaseBInvariantService;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRecorder;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRedactor;
 use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRolloutService;
+use App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditWriterReadinessService;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentOutboxMessage;
 use App\Models\Contract;
@@ -348,6 +350,31 @@ SQL);
 
         $this->expectException(\Illuminate\Database\QueryException::class);
         $this->first->table('immutable_audit_events')->where('id', $event->id)->update(['action' => 'tampered']);
+    }
+
+    public function test_neutered_guard_with_legacy_marker_strings_fails_exact_fingerprint_readiness(): void
+    {
+        $this->activatePhaseB();
+        $invariants = new ImmutableAuditPhaseBInvariantService;
+        $invariants->repairPermanentInvariants($this->first);
+        $this->first->unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION immutable_audit_writer_guard() RETURNS trigger AS $$
+BEGIN
+    PERFORM 'most.immutable_audit_writer_version';
+    PERFORM 'most.immutable_audit_writer_credential';
+    PERFORM 'immutable_audit_writer_version_rejected';
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+SQL);
+
+        $status = (new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN);
+
+        self::assertFalse($status['ready']);
+        self::assertSame('immutable_audit_writer_guard_invalid', $status['reason']);
+        $invariants->repairPermanentInvariants($this->first);
+        $invariants->repairPermanentInvariants($this->first);
+        self::assertTrue((new ImmutableAuditWriterReadinessService)->status($this->first, self::WRITER_TOKEN)['ready']);
     }
 
     public function test_real_rollout_phases_preserve_global_index_until_explicit_writer_fence(): void

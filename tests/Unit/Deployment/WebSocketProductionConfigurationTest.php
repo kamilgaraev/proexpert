@@ -45,8 +45,10 @@ final class WebSocketProductionConfigurationTest extends TestCase
 
         self::assertIsString($workflow);
         self::assertStringContainsString('stop_legacy_supervisor_processes', $workflow);
-        self::assertStringContainsString("awk '/laravel-worker|horizon|scheduler|queue|artisan/", $workflow);
-        self::assertStringContainsString("pgrep -af '^php /var/www/prohelper/artisan queue:work( |$)'", $workflow);
+        self::assertStringContainsString('source deploy/backend-runtime-allowlist.sh', $workflow);
+        self::assertStringContainsString('MOST_SUPERVISOR_WRITER_PROGRAM_PATTERN', $workflow);
+        self::assertStringContainsString('/proc/[0-9]*', $workflow);
+        self::assertStringContainsString('MOST backend writer process remains active', $workflow);
         self::assertStringContainsString('REVERB_APP_KEY="${{ secrets.REVERB_APP_KEY }}"', $workflow);
         self::assertStringContainsString('upsert_env REVERB_APP_KEY "${REVERB_APP_KEY}"', $workflow);
         self::assertStringContainsString('@fsockopen', $workflow);

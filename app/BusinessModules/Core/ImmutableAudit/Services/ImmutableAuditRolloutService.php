@@ -27,51 +27,11 @@ final class ImmutableAuditRolloutService
         $credentialHash = $this->credential->fingerprint($writerSecret);
         $hours = max(1, min($maximumPhaseAHours, 168));
 
-        $connection->statement('CREATE SEQUENCE IF NOT EXISTS immutable_audit_sequence');
         $connection->statement("CREATE TABLE IF NOT EXISTS immutable_audit_rollout (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton), phase text NOT NULL CHECK (phase IN ('phase_a', 'phase_b')), writer_version integer NOT NULL, writer_credential_hash char(64) NULL, phase_a_expires_at timestamptz NULL, drain_confirmed_at timestamptz NULL, drain_marker uuid NULL, updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)");
         $connection->statement("INSERT INTO immutable_audit_rollout (singleton, phase, writer_version, writer_credential_hash, phase_a_expires_at) VALUES (true, 'phase_a', 1, ?, clock_timestamp() + make_interval(hours => ?)) ON CONFLICT (singleton) DO NOTHING", [$credentialHash, $hours]);
         $connection->statement('UPDATE immutable_audit_rollout SET writer_credential_hash = ?, phase_a_expires_at = COALESCE(phase_a_expires_at, clock_timestamp() + make_interval(hours => ?)), updated_at = clock_timestamp() WHERE singleton = true', [$credentialHash, $hours]);
-        $connection->unprepared(<<<'SQL'
-CREATE OR REPLACE FUNCTION immutable_audit_allocate_sequence() RETURNS bigint AS $$
-DECLARE rollout_phase text;
-BEGIN
-    SELECT phase INTO rollout_phase FROM immutable_audit_rollout WHERE singleton = true;
-    IF rollout_phase <> 'phase_b' THEN
-        RAISE EXCEPTION 'immutable_audit_writer_not_ready' USING ERRCODE = '55000';
-    END IF;
-    RETURN nextval('immutable_audit_sequence');
-END;
-$$ LANGUAGE plpgsql VOLATILE;
-CREATE OR REPLACE FUNCTION immutable_audit_sync_sequence_after_insert() RETURNS trigger AS $$
-BEGIN
-    PERFORM setval('immutable_audit_sequence', GREATEST((SELECT last_value FROM immutable_audit_sequence), NEW.sequence_id), true);
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-CREATE OR REPLACE FUNCTION immutable_audit_writer_guard() RETURNS trigger AS $$
-DECLARE rollout immutable_audit_rollout%ROWTYPE;
-BEGIN
-    SELECT * INTO rollout FROM immutable_audit_rollout WHERE singleton = true;
-    IF rollout.phase = 'phase_a' AND rollout.phase_a_expires_at IS NOT NULL AND clock_timestamp() > rollout.phase_a_expires_at THEN
-        RAISE EXCEPTION 'immutable_audit_phase_a_expired' USING ERRCODE = '55000';
-    END IF;
-    IF rollout.phase = 'phase_b' AND (
-        COALESCE(current_setting('most.immutable_audit_writer_version', true), '') <> '2'
-        OR rollout.writer_credential_hash IS NULL
-        OR encode(sha256(convert_to('immutable-audit-writer-credential:' || COALESCE(current_setting('most.immutable_audit_writer_credential', true), ''), 'UTF8')), 'hex') <> rollout.writer_credential_hash
-    ) THEN
-        RAISE EXCEPTION 'immutable_audit_writer_version_rejected' USING ERRCODE = '55000';
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-DROP TRIGGER IF EXISTS immutable_audit_writer_guard ON immutable_audit_events;
-CREATE TRIGGER immutable_audit_writer_guard BEFORE INSERT ON immutable_audit_events
-FOR EACH ROW EXECUTE FUNCTION immutable_audit_writer_guard();
-DROP TRIGGER IF EXISTS immutable_audit_sequence_sync ON immutable_audit_events;
-CREATE TRIGGER immutable_audit_sequence_sync AFTER INSERT ON immutable_audit_events
-FOR EACH ROW EXECUTE FUNCTION immutable_audit_sync_sequence_after_insert();
-SQL);
+        $this->invariants->installCanonicalCore($connection);
+        $this->invariants->captureBaseline($connection, false);
     }
 
     public function confirmDrain(ConnectionInterface $connection, bool $enabled): void

@@ -98,18 +98,16 @@ final class ImmutableAuditWriterReadinessTest extends TestCase
         $credential = new ImmutableAuditWriterCredential;
         $snapshots = [
             [
-                'sequence_exists' => true,
-                'allocator_valid' => true,
-                'guard_trigger_valid' => true,
-                'aggregate_index_valid' => true,
-                'legacy_index_valid' => true,
+                'sequence' => true, 'allocator' => true, 'writer_guard_function' => true,
+                'writer_guard_trigger' => true, 'append_only_function' => true, 'append_only_trigger' => true,
+                'sequence_sync_function' => true, 'sequence_sync_trigger' => true,
+                'aggregate_index' => true, 'legacy_index' => true,
             ],
             [
-                'sequence_exists' => true,
-                'allocator_valid' => true,
-                'guard_trigger_valid' => false,
-                'aggregate_index_valid' => true,
-                'legacy_index_valid' => true,
+                'sequence' => true, 'allocator' => true, 'writer_guard_function' => false,
+                'writer_guard_trigger' => true, 'append_only_function' => true, 'append_only_trigger' => true,
+                'sequence_sync_function' => true, 'sequence_sync_trigger' => true,
+                'aggregate_index' => true, 'legacy_index' => true,
             ],
         ];
         $readiness = new ImmutableAuditWriterReadinessService(
@@ -132,11 +130,10 @@ final class ImmutableAuditWriterReadinessTest extends TestCase
     private function readyInvariants(): ImmutableAuditPhaseBInvariantService
     {
         return new ImmutableAuditPhaseBInvariantService(static fn (): array => [
-            'sequence_exists' => true,
-            'allocator_valid' => true,
-            'guard_trigger_valid' => true,
-            'aggregate_index_valid' => true,
-            'legacy_index_valid' => true,
+            'sequence' => true, 'allocator' => true, 'writer_guard_function' => true,
+            'writer_guard_trigger' => true, 'append_only_function' => true, 'append_only_trigger' => true,
+            'sequence_sync_function' => true, 'sequence_sync_trigger' => true,
+            'aggregate_index' => true, 'legacy_index' => true,
         ]);
     }
 }

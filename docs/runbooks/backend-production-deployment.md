@@ -1,24 +1,30 @@
 # Production-развёртывание backend МОСТ
 
-Единственный штатный путь production-развёртывания — `.github/workflows/deploy-backend.yml`. Workflow использует неизменяемый digest образа и сериализуется через `prod-backend-deploy`.
+Единственный штатный путь — `.github/workflows/deploy-backend.yml`. Workflow развёртывает неизменяемый digest образа и сериализуется группой `prod-backend-deploy`.
 
 ## Admission-последовательность
 
-1. Workflow собирает и загружает образ, production-сервер скачивает exact digest до остановки трафика.
-2. На сервере проверяется `LEGAL_ARCHIVE_AUDIT_WRITER_SECRET`. Если ключ отсутствует, он один раз создаётся через `openssl rand -hex 32` и сохраняется в `.env` с `umask 077`. Существующий сильный секрет сохраняется; слабый секрет блокирует deployment. Значение не передаётся из GitHub, не выводится и не становится аргументом внешней команды.
-3. Останавливаются nginx, API, WebSocket, Horizon, scheduler, специализированные queue workers и старые supervisor-процессы. Compose ждёт их завершения; наличие оставшегося Laravel runtime блокирует продолжение.
-4. One-off контейнер нового образа выполняет `migrate:safe --force`, пока ни один новый runtime не обслуживает трафик.
-5. One-off процессы выполняют `immutable-audit:confirm-drain`, Phase B cutover и `immutable-audit:writer-readiness`. Флаг `LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true` передаётся только двум процессам cutover через `docker compose run -e` и никогда не сохраняется в `.env`.
-6. Только после успешного worker-readiness пересоздаются backend-сервисы. API допускается compose healthcheck по `/ready`; `/up` проверяется отдельно как liveness. Nginx запускается последним после внутренних `/ready`, `/up`, WebSocket и geometry-проверок.
+1. Сервер получает точный commit и digest образа до остановки трафика.
+2. Все изменения `.env` выполняет `.github/scripts/atomic-env.sh`: временный файл создаётся рядом с `.env`, получает владельца исходного файла и режим `0600`, после чего атомарно заменяет `.env`. После каждой операции `stat` повторно проверяет mode, uid и gid. EXIT-trap удаляет незавершённый временный файл. Существующий inode никогда не перезаписывается через перенаправление или `cat`.
+3. `LEGAL_ARCHIVE_AUDIT_WRITER_SECRET` создаётся на сервере через `openssl rand -hex 32`, если отсутствует. Слабое или повторное значение блокирует deployment. Секрет не пересекает GitHub/SSH boundary, не попадает в аргументы команд и вывод.
+4. Nginx и writer-runtime останавливаются по tracked allowlist `deploy/backend-runtime-allowlist.sh`: compose, supervisor и systemd. Затем `/proc` проверяется по command line, cwd и cgroup; оставшийся PHP, Artisan, Octane или RoadRunner-процесс МОСТ блокирует продолжение.
+5. One-off контейнер выполняет `migrate:safe --force`. Затем с process-local флагом выполняются drain confirmation и Phase B cutover.
+6. Привилегированный one-off `immutable-audit:repair-invariants --confirm-repair` запускается только с process-local `LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true`. Он под advisory lock заново устанавливает канонические функции, триггеры, sequence и индексы, точно проверяет каталоги PostgreSQL и только после этого обновляет baseline криптографических отпечатков.
+7. `immutable-audit:writer-readiness` без кеша сравнивает свежие fingerprints с baseline. Только после успеха запускаются backend-сервисы. API проходит `/ready`, отдельно проверяются `/up`, WebSocket и geometry runtime; nginx запускается последним.
 
 ## Поведение при ошибке
 
-После начала остановки любой ненулевой код активирует failure trap: nginx и все backend writer-сервисы остаются остановленными, workflow завершается ошибкой. Автоматического отката на старый writer нет, потому что после миграции и Phase B такой откат был бы ложным и небезопасным. Повторный запуск использует тот же серверный секрет, идемпотентные миграции, свежий drain marker и восстановление concurrent indexes под отдельной advisory-блокировкой.
+После начала остановки любой ненулевой код активирует failure trap. Nginx, compose writer-сервисы и tracked host runtimes остаются остановленными, workflow завершается ошибкой. Автоматического отката к старому writer нет. Повторный запуск идемпотентно восстанавливает канонические инварианты до допуска трафика.
 
-Перед разбором ошибки разрешены только чтение логов и состояния. Нельзя вручную включать ingress или workers, пока one-off `immutable-audit:writer-readiness` не завершится успешно.
+## Постоянные инварианты
 
-## Постоянные инварианты admission
+Readiness проверяет точные catalog fingerprints, а не наличие marker-строк:
 
-Каждый `/ready` и `immutable-audit:writer-readiness` без кеша проверяет Phase B marker, writer version, fingerprint, sequence, allocator, включённый DB guard и точные valid/ready определения обоих idempotency indexes. Дрейф любого элемента закрывает admission.
+- тело, identity arguments, return type, language и volatility allocator-функции;
+- writer guard function и точную привязку trigger;
+- append-only function и trigger;
+- sequence-sync function и trigger;
+- тип, increment, cache, cycle и ownership sequence;
+- valid/ready/unique, колонки, predicate и полное определение обоих Phase B индексов.
 
-Временный Phase A-контур удаляется по критерию из `PHERP-138`: все production-окружения работают в Phase B не менее 30 дней, legacy-writer rejection отсутствует, а откат к старому writer исключён из release-плана.
+Изменённая функция не может легитимизировать себя обновлением baseline: repair всегда сначала заменяет объект каноническим определением, выполняет точную проверку и лишь затем сохраняет новый fingerprint. Любой последующий drift закрывает `/ready` с HTTP 503.

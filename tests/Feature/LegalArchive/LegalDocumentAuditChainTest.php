@@ -243,18 +243,20 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertStringNotContainsString('VALIDATE CONSTRAINT', $extension);
         self::assertStringContainsString('VALIDATE CONSTRAINT', $validation);
         $rollout = file_get_contents(__DIR__.'/../../../app/BusinessModules/Core/ImmutableAudit/Services/ImmutableAuditRolloutService.php');
+        $invariants = file_get_contents(__DIR__.'/../../../app/BusinessModules/Core/ImmutableAudit/Services/ImmutableAuditPhaseBInvariantService.php');
         self::assertIsString($rollout);
-        self::assertStringContainsString('immutable_audit_allocate_sequence', $rollout);
-        self::assertStringContainsString('CREATE TRIGGER immutable_audit_sequence_sync', $rollout);
-        self::assertStringContainsString('AFTER INSERT', $rollout);
-        self::assertStringContainsString("rollout_phase <> 'phase_b'", $rollout);
-        self::assertStringContainsString('immutable_audit_writer_not_ready', $rollout);
+        self::assertIsString($invariants);
+        self::assertStringContainsString('immutable_audit_allocate_sequence', $invariants);
+        self::assertStringContainsString('CREATE TRIGGER immutable_audit_sequence_sync', $invariants);
+        self::assertStringContainsString('AFTER INSERT', $invariants);
+        self::assertStringContainsString("rollout_phase <> 'phase_b'", $invariants);
+        self::assertStringContainsString('immutable_audit_writer_not_ready', $invariants);
         self::assertStringNotContainsString('LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE', $rollout);
-        self::assertStringContainsString('immutable_audit_writer_guard', $rollout);
-        self::assertStringContainsString('immutable_audit_phase_a_expired', $rollout);
-        self::assertStringContainsString('clock_timestamp() > rollout.phase_a_expires_at', $rollout);
-        self::assertStringContainsString('immutable_audit_writer_version_rejected', $rollout);
-        self::assertStringNotContainsString('NEW.sequence_id :=', $rollout);
+        self::assertStringContainsString('immutable_audit_writer_guard', $invariants);
+        self::assertStringContainsString('immutable_audit_phase_a_expired', $invariants);
+        self::assertStringContainsString('clock_timestamp() > rollout.phase_a_expires_at', $invariants);
+        self::assertStringContainsString('immutable_audit_writer_version_rejected', $invariants);
+        self::assertStringNotContainsString('NEW.sequence_id :=', $invariants);
         self::assertStringNotContainsString('SET DEFAULT nextval', $extension);
     }
 
@@ -371,8 +373,8 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertStringContainsString('DROP INDEX CONCURRENTLY', $rollout);
         self::assertStringContainsString('FOR UPDATE', $rollout);
         self::assertStringContainsString('drain_marker', $rollout);
-        self::assertStringContainsString('most.immutable_audit_writer_credential', $rollout);
-        self::assertStringContainsString("sha256(convert_to('immutable-audit-writer-credential:'", $rollout);
+        self::assertStringContainsString('most.immutable_audit_writer_credential', $invariants);
+        self::assertStringContainsString("sha256(convert_to('immutable-audit-writer-credential:'", $invariants);
         self::assertStringContainsString("pg_advisory_lock(hashtextextended(?, 0))', ['immutable_audit_phase_b_index_prep']", $rollout);
         self::assertStringContainsString("pg_advisory_unlock(hashtextextended(?, 0))', ['immutable_audit_phase_b_index_prep']", $rollout);
         self::assertTrue(strpos($rollout, 'immutable_audit_phase_b_index_prep') < strpos($rollout, '$this->preparePhaseBIndexes($connection)'));

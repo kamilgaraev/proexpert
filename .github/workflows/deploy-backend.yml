@@ -92,7 +92,6 @@ jobs:
             IMAGE_REPO="${{ steps.meta.outputs.image_repo }}"
             IMAGE_DIGEST="${{ steps.build.outputs.digest }}"
             IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"
-            BACKEND_SERVICES="api websockets horizon geometry-worker geometry-recovery-worker worker-heavy worker-ifc scheduler"
             REVERB_APP_KEY="${{ secrets.REVERB_APP_KEY }}"
 
             [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
@@ -103,26 +102,11 @@ jobs:
             git fetch origin "${RELEASE_SHA}"
             git reset --hard "${RELEASE_SHA}"
             test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"
-
-            upsert_env() {
-              local key="$1"
-              local value="$2"
-              local temporary_file
-              temporary_file="$(mktemp)"
-              awk -v key="${key}" 'index($0, key "=") != 1 { print }' .env > "${temporary_file}"
-              printf '%s=%s\n' "${key}" "${value}" >> "${temporary_file}"
-              cat "${temporary_file}" > .env
-              rm -f "${temporary_file}"
-            }
-
-            remove_env_key() {
-              local key="$1"
-              local temporary_file
-              temporary_file="$(mktemp)"
-              awk -v key="${key}" 'index($0, key "=") != 1 { print }' .env > "${temporary_file}"
-              cat "${temporary_file}" > .env
-              rm -f "${temporary_file}"
-            }
+            source .github/scripts/atomic-env.sh
+            source deploy/backend-runtime-allowlist.sh
+            BACKEND_SERVICES="${MOST_COMPOSE_WRITER_SERVICES[*]}"
+            trap cleanup_deployment_temporary_files EXIT
+            initialize_secure_env
 
             ensure_immutable_audit_writer_secret() {
               local current_secret=''
@@ -158,19 +142,36 @@ jobs:
               supervisor_status="$(supervisorctl status 2>/dev/null || true)"
               while read -r program; do
                 [ -n "${program}" ] && supervisorctl stop "${program}"
-              done < <(awk '/laravel-worker|horizon|scheduler|queue|artisan/ { print $1 }' <<< "${supervisor_status}")
+              done < <(awk -v pattern="${MOST_SUPERVISOR_WRITER_PROGRAM_PATTERN}" '$1 ~ pattern { print $1 }' <<< "${supervisor_status}")
+            }
+
+            stop_legacy_systemd_processes() {
+              local unit
+              for unit in "${MOST_SYSTEMD_WRITER_UNITS[@]}"; do
+                if systemctl is-active --quiet "${unit}"; then
+                  systemctl stop "${unit}"
+                fi
+              done
             }
 
             assert_legacy_runtime_stopped() {
+              local process_directory process_id command_line working_directory cgroup
               test -z "$(docker compose ps --status running -q ${BACKEND_SERVICES})"
-              if pgrep -af '^php /var/www/prohelper/artisan queue:work( |$)' >/dev/null; then
-                echo 'Legacy Laravel queue workers are still running; refusing dual queue ownership'
-                return 1
-              fi
-              if pgrep -af '^php /var/www/prohelper/artisan (horizon|schedule:work|octane:start|reverb:start)( |$)' >/dev/null; then
-                echo 'A legacy Laravel runtime is still active; refusing deployment'
-                return 1
-              fi
+              for process_directory in /proc/[0-9]*; do
+                process_id="${process_directory##*/}"
+                [ "${process_id}" = "$$" ] && continue
+                command_line="$(tr '\0' ' ' < "${process_directory}/cmdline" 2>/dev/null || true)"
+                [ -z "${command_line}" ] && continue
+                working_directory="$(readlink -f "${process_directory}/cwd" 2>/dev/null || true)"
+                cgroup="$(tr '\n' ' ' < "${process_directory}/cgroup" 2>/dev/null || true)"
+                if [[ "${working_directory}" == /var/www/prohelper* || "${command_line}" == *'/var/www/prohelper/'* || "${command_line}" == *'prohelper@'* || "${cgroup}" == *'most-'* || "${cgroup}" == *'prohelper'* ]]; then
+                  if [[ "${command_line}" =~ (^|[[:space:]/])(php([0-9.]+)?|rr|roadrunner)([[:space:]]|$) ]] \
+                    && [[ "${command_line}" =~ (artisan([[:space:]]|$)|queue:work|horizon|schedule:work|octane:start|reverb:start|rr[[:space:]]+serve|roadrunner) ]]; then
+                    echo "MOST backend writer process remains active (pid=${process_id}); refusing deployment"
+                    return 1
+                  fi
+                fi
+              done
             }
 
             deployment_failed() {
@@ -180,6 +181,7 @@ jobs:
               systemctl stop nginx
               docker compose stop --timeout 30 ${BACKEND_SERVICES}
               stop_legacy_supervisor_processes
+              stop_legacy_systemd_processes
               exit "${exit_code}"
             }
 
@@ -214,12 +216,14 @@ jobs:
             trap deployment_failed ERR
             systemctl stop nginx
             stop_legacy_supervisor_processes
+            stop_legacy_systemd_processes
             docker compose stop --timeout 7200 ${BACKEND_SERVICES}
             assert_legacy_runtime_stopped
 
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan migrate:safe --force
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true api php artisan immutable-audit:confirm-drain
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true api php artisan immutable-audit:phase-b-cutover --confirm-writer-version=2
+            MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true api php artisan immutable-audit:repair-invariants --confirm-repair
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan immutable-audit:writer-readiness
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
 

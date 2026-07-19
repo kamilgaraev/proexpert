@@ -30,11 +30,10 @@ final class ImmutableAuditReadinessEndpointTest extends TestCase
         config()->set('app.key', 'base64:'.base64_encode(str_repeat('k', 32)));
         config()->set('legal_archive.audit_writer_secret', self::SECRET);
         $this->app->instance(ImmutableAuditPhaseBInvariantService::class, new ImmutableAuditPhaseBInvariantService(static fn (): array => [
-            'sequence_exists' => true,
-            'allocator_valid' => true,
-            'guard_trigger_valid' => true,
-            'aggregate_index_valid' => true,
-            'legacy_index_valid' => true,
+            'sequence' => true, 'allocator' => true, 'writer_guard_function' => true,
+            'writer_guard_trigger' => true, 'append_only_function' => true, 'append_only_trigger' => true,
+            'sequence_sync_function' => true, 'sequence_sync_trigger' => true,
+            'aggregate_index' => true, 'legacy_index' => true,
         ]));
         Schema::create('immutable_audit_rollout', function (Blueprint $table): void {
             $table->boolean('singleton')->primary();
@@ -65,5 +64,26 @@ final class ImmutableAuditReadinessEndpointTest extends TestCase
         config()->set('legal_archive.audit_writer_secret', '');
 
         $this->getJson('/ready')->assertStatus(503)->assertJsonPath('reason', 'writer_secret_invalid');
+    }
+
+    public function test_semantically_neutered_writer_guard_fingerprint_keeps_traffic_closed(): void
+    {
+        $this->app->instance(ImmutableAuditPhaseBInvariantService::class, new ImmutableAuditPhaseBInvariantService(static fn (): array => [
+            'sequence' => true, 'allocator' => true, 'writer_guard_function' => false,
+            'writer_guard_trigger' => true, 'append_only_function' => true, 'append_only_trigger' => true,
+            'sequence_sync_function' => true, 'sequence_sync_trigger' => true,
+            'aggregate_index' => true, 'legacy_index' => true,
+        ]));
+        $credential = new ImmutableAuditWriterCredential;
+        DB::table('immutable_audit_rollout')->insert([
+            'singleton' => true,
+            'phase' => 'phase_b',
+            'writer_version' => 2,
+            'writer_credential_hash' => $credential->fingerprint(self::SECRET),
+        ]);
+
+        $this->getJson('/ready')
+            ->assertStatus(503)
+            ->assertJsonPath('reason', 'immutable_audit_writer_guard_invalid');
     }
 }

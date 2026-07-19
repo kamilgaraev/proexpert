@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Deployment;
 
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Process\Process;
 use Symfony\Component\Yaml\Yaml;
 
 final class ImmutableAuditDeploymentAdmissionTest extends TestCase
@@ -25,6 +26,7 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
             'php artisan migrate:safe --force',
             'php artisan immutable-audit:confirm-drain',
             'php artisan immutable-audit:phase-b-cutover --confirm-writer-version=2',
+            'php artisan immutable-audit:repair-invariants',
             'php artisan immutable-audit:writer-readiness',
             'docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}',
             'curl -fsS http://localhost:8000/ready',
@@ -50,11 +52,62 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
         self::assertSame(2, substr_count($workflow, '-e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true'));
         self::assertStringContainsString('remove_env_key LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED', $workflow);
         self::assertStringNotContainsString('upsert_env LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED', $workflow);
+        self::assertStringContainsString('-e LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true api php artisan immutable-audit:repair-invariants --confirm-repair', $workflow);
+        self::assertStringNotContainsString('upsert_env LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED', $workflow);
         self::assertStringNotContainsString('LEGAL_ARCHIVE_AUDIT_WRITER_SECRET: ${{ secrets.', $workflow);
         self::assertStringNotContainsString('envs: LEGAL_ARCHIVE_AUDIT_WRITER_SECRET', $workflow);
         self::assertStringNotContainsString('echo "${LEGAL_ARCHIVE_AUDIT_WRITER_SECRET', $workflow);
         self::assertStringNotContainsString('set -x', $workflow);
         self::assertStringNotContainsString('sed -i', $workflow);
+        self::assertStringContainsString('source .github/scripts/atomic-env.sh', $workflow);
+        self::assertStringContainsString('trap cleanup_deployment_temporary_files EXIT', $workflow);
+    }
+
+    public function test_atomic_env_replacement_hardens_mode_preserves_owner_content_and_emits_nothing(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $directory = sys_get_temp_dir().'/most-env-'.bin2hex(random_bytes(6));
+        self::assertTrue(mkdir($directory, 0777, true));
+        $env = $directory.'/.env';
+        file_put_contents($env, "APP_NAME=MOST\nKEEP=value\nSECRET=original\n");
+        chmod($env, 0644);
+        $originalUid = fileowner($env);
+        $script = $directory.'/atomic-env.sh';
+        $helper = file_get_contents($root.'/.github/scripts/atomic-env.sh');
+        self::assertIsString($helper);
+        file_put_contents($script, str_replace("\r\n", "\n", $helper));
+        if (PHP_OS_FAMILY === 'Windows') {
+            $env = $this->wslPath($env);
+            $script = $this->wslPath($script);
+        }
+        $process = new Process([
+            'bash', '-c',
+            'ENV_FILE='.escapeshellarg($env).'; source '.escapeshellarg($script).'; initialize_secure_env; upsert_env SECRET replacement; remove_env_key MISSING; assert_env_security',
+        ]);
+        $process->run();
+
+        self::assertTrue($process->isSuccessful(), $process->getErrorOutput());
+        self::assertSame('', $process->getOutput());
+        $nativeEnv = $directory.'/.env';
+        if (PHP_OS_FAMILY !== 'Windows') {
+            self::assertSame(0600, fileperms($nativeEnv) & 0777);
+        }
+        self::assertSame($originalUid, fileowner($nativeEnv));
+        self::assertSame("APP_NAME=MOST\nKEEP=value\nSECRET=replacement\n", file_get_contents($nativeEnv));
+        unlink($nativeEnv);
+        unlink($directory.'/atomic-env.sh');
+        rmdir($directory);
+    }
+
+    public function test_atomic_env_helper_never_overwrites_the_existing_inode(): void
+    {
+        $helper = file_get_contents(dirname(__DIR__, 3).'/.github/scripts/atomic-env.sh');
+
+        self::assertIsString($helper);
+        self::assertStringContainsString('mv -f -- "${ENV_TEMP_FILE}" "${ENV_FILE}"', $helper);
+        self::assertStringContainsString('chmod 600', $helper);
+        self::assertStringContainsString("stat -c '%a'", $helper);
+        self::assertStringNotContainsString('cat "${ENV_TEMP_FILE}" >', $helper);
     }
 
     public function test_any_post_stop_failure_keeps_ingress_and_writers_stopped(): void
@@ -70,6 +123,43 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
         self::assertStringNotContainsString('rollback', strtolower($workflow));
     }
 
+    public function test_host_runtime_drain_uses_committed_allowlist_and_fail_closed_proc_inspection(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $workflow = file_get_contents($root.'/.github/workflows/deploy-backend.yml');
+        $allowlist = file_get_contents($root.'/deploy/backend-runtime-allowlist.sh');
+
+        self::assertIsString($workflow);
+        self::assertIsString($allowlist);
+        self::assertStringContainsString('source deploy/backend-runtime-allowlist.sh', $workflow);
+        self::assertStringContainsString('MOST_COMPOSE_WRITER_SERVICES', $allowlist);
+        self::assertStringContainsString('MOST_SYSTEMD_WRITER_UNITS', $allowlist);
+        self::assertStringContainsString('MOST_SUPERVISOR_WRITER_PROGRAM_PATTERN', $allowlist);
+        self::assertStringContainsString('/proc/[0-9]*', $workflow);
+        self::assertStringContainsString('/cmdline', $workflow);
+        self::assertStringContainsString('/cgroup', $workflow);
+        self::assertStringContainsString('readlink -f', $workflow);
+        self::assertStringContainsString('php([0-9.]+)?', $workflow);
+        self::assertStringContainsString('rr[[:space:]]+serve', $workflow);
+        self::assertStringContainsString('MOST backend writer process remains active', $workflow);
+        self::assertStringContainsString('stop_legacy_systemd_processes', $workflow);
+        $compose = Yaml::parseFile($root.'/docker-compose.yml');
+        self::assertIsArray($compose);
+        foreach (['api', 'websockets', 'horizon', 'geometry-worker', 'geometry-recovery-worker', 'worker-heavy', 'worker-ifc', 'scheduler'] as $service) {
+            self::assertArrayHasKey($service, $compose['services']);
+            self::assertStringContainsString($service, $allowlist);
+        }
+        foreach ([
+            'php8.2 artisan queue:work',
+            'php -d memory_limit=1G ./artisan horizon',
+            '/usr/bin/php artisan schedule:work',
+            './rr serve -c .rr.yaml',
+            'roadrunner serve',
+        ] as $command) {
+            self::assertMatchesRegularExpression('/(?:php(?:[0-9.]+)?|rr|roadrunner).*?(?:artisan|queue:work|horizon|schedule:work|serve|roadrunner)/', $command);
+        }
+    }
+
     public function test_api_compose_health_is_traffic_readiness_not_liveness(): void
     {
         $compose = file_get_contents(dirname(__DIR__, 3).'/docker-compose.yml');
@@ -77,5 +167,15 @@ final class ImmutableAuditDeploymentAdmissionTest extends TestCase
         self::assertIsString($compose);
         self::assertStringContainsString('curl -f http://localhost:8000/ready', $compose);
         self::assertStringNotContainsString('curl -f http://localhost:8000/up', $compose);
+    }
+
+    private function wslPath(string $path): string
+    {
+        $path = str_replace('\\', '/', $path);
+        if (preg_match('/^([A-Za-z]):\/(.*)$/', $path, $matches) !== 1) {
+            return $path;
+        }
+
+        return '/mnt/'.strtolower($matches[1]).'/'.$matches[2];
     }
 }
