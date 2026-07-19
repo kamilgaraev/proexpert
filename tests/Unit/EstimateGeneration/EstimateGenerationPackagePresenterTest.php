@@ -12,6 +12,31 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateGenerationPackagePresenterTest extends TestCase
 {
+    public function test_package_summary_exposes_human_readable_coverage_warnings(): void
+    {
+        $package = new EstimateGenerationPackage([
+            'id' => 7,
+            'key' => 'stairs',
+            'title' => 'Лестницы',
+            'totals' => [],
+            'metadata' => [
+                'coverage_warnings' => [[
+                    'quantity_key' => 'stairs.flights',
+                    'reason' => 'stair_construction_geometry_missing',
+                    'package_key' => 'stairs',
+                    'message' => 'Лестница не включена: в документах нет размеров.',
+                ]],
+            ],
+        ]);
+
+        $payload = (new EstimateGenerationPackagePresenter)->summary($package);
+
+        self::assertSame(
+            'Лестница не включена: в документах нет размеров.',
+            $payload['coverage_warnings'][0]['message'] ?? null,
+        );
+    }
+
     #[Test]
     public function test_item_preserves_exact_quantity_as_canonical_string(): void
     {

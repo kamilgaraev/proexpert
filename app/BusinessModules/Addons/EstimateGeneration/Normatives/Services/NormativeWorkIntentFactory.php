@@ -39,6 +39,10 @@ final class NormativeWorkIntentFactory
         $evidence = $this->evidence($context['source_refs'] ?? []);
         $objectType = ObjectTypeSignalClassifier::canonical((string) ($context['object_type'] ?? ''));
         $quantityKey = $this->quantityKey($item);
+        $specializationEvidence = $this->specializationEvidence(
+            $recorded['specialization_evidence'] ?? $item['specialization_evidence'] ?? [],
+            $evidence,
+        );
 
         $preferredSections = array_values(array_filter(
             $classified['preferred_section_prefixes'] ?? [],
@@ -60,15 +64,14 @@ final class NormativeWorkIntentFactory
                 : null,
             (string) ($intent->system ?? ''),
             (string) ($classified['object'] ?? ''),
-            $this->specializationEvidence(
-                $recorded['specialization_evidence'] ?? $item['specialization_evidence'] ?? [],
-                $evidence,
-            ),
-            $this->specializationScenario(
-                $item['specialization_scenario'] ?? $recorded['specialization_scenario'] ?? null,
-                $quantityKey,
-                $objectType,
-            ),
+            $specializationEvidence,
+            $specializationEvidence === []
+                ? $this->specializationScenario(
+                    $item['specialization_scenario'] ?? $recorded['specialization_scenario'] ?? null,
+                    $quantityKey,
+                    $objectType,
+                )
+                : null,
         );
     }
 
@@ -110,7 +113,44 @@ final class NormativeWorkIntentFactory
             return [];
         }
 
-        return array_slice(array_values(array_unique(array_filter($evidence, static fn (mixed $ref): bool => is_string($ref) && $ref !== '' && strlen($ref) <= 128))), 0, 32);
+        $references = [];
+        foreach ($evidence as $reference) {
+            $normalized = $this->evidenceReference($reference);
+            if ($normalized !== null) {
+                $references[] = $normalized;
+            }
+        }
+
+        return array_slice(array_values(array_unique($references)), 0, 32);
+    }
+
+    private function evidenceReference(mixed $reference): ?string
+    {
+        if (is_string($reference) || is_int($reference)) {
+            $value = trim((string) $reference);
+
+            return $value !== '' && strlen($value) <= 128 ? $value : null;
+        }
+
+        if (! is_array($reference)) {
+            return null;
+        }
+
+        foreach (['evidence_id', 'source_evidence_id', 'id'] as $key) {
+            if (is_string($reference[$key] ?? null) || is_int($reference[$key] ?? null)) {
+                return $this->evidenceReference($reference[$key]);
+            }
+        }
+
+        ksort($reference);
+        $encoded = json_encode($reference, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (! is_string($encoded) || $encoded === '') {
+            return null;
+        }
+
+        $value = 'source-ref:'.$encoded;
+
+        return strlen($value) <= 128 ? $value : 'source-ref-sha256:'.hash('sha256', $encoded);
     }
 
     /**

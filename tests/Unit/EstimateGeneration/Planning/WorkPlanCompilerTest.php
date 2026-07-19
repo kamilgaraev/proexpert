@@ -17,6 +17,58 @@ use PHPUnit\Framework\TestCase;
 
 final class WorkPlanCompilerTest extends TestCase
 {
+    public function test_quantity_coverage_warnings_are_attached_only_to_the_affected_packages(): void
+    {
+        $analysis = $this->analysis();
+        $analysis['document_context']['quantity_coverage_warnings'] = [
+            [
+                'quantity_key' => 'stairs.flights',
+                'reason' => 'stair_construction_geometry_missing',
+                'package_key' => 'stairs',
+            ],
+            [
+                'quantity_key' => 'electrical.grounding',
+                'reason' => 'grounding_installation_type_missing',
+                'package_key' => 'electrical',
+            ],
+            [
+                'quantity_key' => 'stairs.railings',
+                'reason' => 'stair_railing_geometry_missing',
+                'package_key' => 'stairs',
+            ],
+        ];
+
+        $payload = $this->compiler()->compile($analysis, deferNormativePin: true);
+        $packages = array_column($payload['local_estimates'], null, 'key');
+
+        self::assertContains(
+            'Лестничные марши и площадки не включены: в документах нет конструкции, размеров и объёмов лестницы.',
+            $packages['stairs']['assumptions'],
+        );
+        self::assertContains(
+            'Контур заземления не включён: в документах не указан тип и схема устройства заземления.',
+            $packages['electrical']['assumptions'],
+        );
+        self::assertContains(
+            'Лестничные ограждения не включены: в документах нет длины, материала и конструкции ограждений.',
+            $packages['stairs']['assumptions'],
+        );
+        self::assertSame(2, count($packages['stairs']['coverage_warnings']));
+        self::assertSame('stairs', $packages['stairs']['coverage_warnings'][0]['package_key']);
+        self::assertContains(
+            $packages['stairs']['coverage_warnings'][0]['message'],
+            $packages['stairs']['assumptions'],
+        );
+        self::assertNotContains(
+            'Контур заземления не включён: в документах не указан тип и схема устройства заземления.',
+            $packages['stairs']['assumptions'],
+        );
+        self::assertNotContains(
+            'Лестничные марши и площадки не включены: в документах нет конструкции, размеров и объёмов лестницы.',
+            $packages['electrical']['assumptions'],
+        );
+    }
+
     public function test_runtime_compilation_is_identical_to_legacy_algorithm(): void
     {
         $analysis = $this->analysis();

@@ -1,0 +1,24 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\EstimateGeneration\Quantities;
+
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityCoverageWarning;
+use PHPUnit\Framework\TestCase;
+
+final class QuantityCoverageWarningTest extends TestCase
+{
+    public function test_every_allowed_reason_has_a_human_readable_russian_message(): void
+    {
+        $translations = require dirname(__DIR__, 4).'/lang/ru/estimate_generation.php';
+        $messages = $translations['quantity_coverage_warnings'] ?? [];
+
+        foreach (QuantityCoverageWarning::reasons() as $reason) {
+            self::assertArrayHasKey($reason, $messages);
+            self::assertIsString($messages[$reason]);
+            self::assertNotSame('', trim($messages[$reason]));
+            self::assertStringNotContainsString($reason, $messages[$reason]);
+        }
+    }
+}

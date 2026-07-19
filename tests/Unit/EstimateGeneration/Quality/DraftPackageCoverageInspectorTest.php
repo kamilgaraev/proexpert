@@ -53,6 +53,46 @@ final class DraftPackageCoverageInspectorTest extends TestCase
     }
 
     #[Test]
+    public function explicit_scope_omission_warning_keeps_an_empty_required_package_non_blocking(): void
+    {
+        $localEstimate = $this->localEstimate('stairs', []);
+        $localEstimate['coverage_warnings'] = [[
+            'quantity_key' => 'stairs.railings',
+            'reason' => 'stair_railing_geometry_missing',
+            'package_key' => 'stairs',
+        ]];
+
+        $missing = (new DraftPackageCoverageInspector)->missingPackages([
+            'package_plan' => ['packages' => [
+                ['key' => 'stairs', 'title' => 'Лестницы', 'coverage_required' => true],
+            ]],
+            'local_estimates' => [$localEstimate],
+        ]);
+
+        self::assertSame([], $missing);
+    }
+
+    #[Test]
+    public function malformed_or_foreign_scope_warning_does_not_cover_an_empty_package(): void
+    {
+        foreach ([
+            ['quantity_key' => '', 'reason' => 'missing', 'package_key' => 'stairs'],
+            ['quantity_key' => 'stairs.railings', 'reason' => '', 'package_key' => 'stairs'],
+            ['quantity_key' => 'stairs.railings', 'reason' => 'missing', 'package_key' => 'electrical'],
+        ] as $warning) {
+            $localEstimate = $this->localEstimate('stairs', []);
+            $localEstimate['coverage_warnings'] = [$warning];
+
+            self::assertSame([['key' => 'stairs', 'title' => 'Лестницы']], (new DraftPackageCoverageInspector)->missingPackages([
+                'package_plan' => ['packages' => [
+                    ['key' => 'stairs', 'title' => 'Лестницы', 'coverage_required' => true],
+                ]],
+                'local_estimates' => [$localEstimate],
+            ]));
+        }
+    }
+
+    #[Test]
     public function complete_house_draft_is_not_blocked_by_undocumented_preconstruction_scope(): void
     {
         $profile = new ObjectProfileData(
