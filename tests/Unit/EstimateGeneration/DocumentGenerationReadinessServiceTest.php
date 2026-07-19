@@ -67,7 +67,7 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
         self::assertTrue($disabled['can_generate']);
     }
 
-    public function test_confirmed_input_allows_generation_with_reviewable_ready_document(): void
+    public function test_acknowledged_input_allows_generation_with_reviewable_ready_document(): void
     {
         $settings = $this->settings(true, '0.7000');
         $store = new class($settings) implements EffectiveSettingsOperationStore
@@ -79,28 +79,30 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
                 return new EffectiveSettingsPair($this->settings, $this->settings);
             }
         };
-        $session = new EstimateGenerationSession;
-        $session->forceFill([
-            'id' => 55,
-            'organization_id' => 7,
-            'state_version' => 3,
-            'status' => EstimateGenerationStatus::ReadyToGenerate,
-        ]);
-        $session->exists = true;
-        $session->setRelation('documents', collect([
-            $this->qualitySignalDocument([
-                'classification' => ['confidence' => 0.69],
-                'geometry' => ['confidence' => 0.81],
-            ]),
-        ]));
+        foreach ([EstimateGenerationStatus::ReadyToGenerate, EstimateGenerationStatus::Applied] as $status) {
+            $session = new EstimateGenerationSession;
+            $session->forceFill([
+                'id' => 55,
+                'organization_id' => 7,
+                'state_version' => 3,
+                'status' => $status,
+            ]);
+            $session->exists = true;
+            $session->setRelation('documents', collect([
+                $this->qualitySignalDocument([
+                    'classification' => ['confidence' => 0.69],
+                    'geometry' => ['confidence' => 0.81],
+                ]),
+            ]));
 
-        $result = (new DocumentGenerationReadinessService(new EffectiveSettingsResolver($store)))
-            ->evaluate($session);
+            $result = (new DocumentGenerationReadinessService(new EffectiveSettingsResolver($store)))
+                ->evaluate($session);
 
-        self::assertSame(1, $result['summary']['quality_review_count']);
-        self::assertTrue($result['summary']['review_acknowledged']);
-        self::assertTrue($result['summary']['can_generate']);
-        self::assertTrue($result['can_generate']);
+            self::assertSame(1, $result['summary']['quality_review_count']);
+            self::assertTrue($result['summary']['review_acknowledged']);
+            self::assertTrue($result['summary']['can_generate']);
+            self::assertTrue($result['can_generate']);
+        }
     }
 
     public function test_geometry_hard_blocker_cannot_be_disabled(): void
