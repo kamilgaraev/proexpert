@@ -23,6 +23,7 @@ class SupplementaryAgreement extends Model
         'subcontract_changes',
         'gp_changes',
         'advance_changes',
+        'financial_applied_at',
         'applied_at',
         'applied_by_user_id',
         'application_key',
@@ -36,6 +37,7 @@ class SupplementaryAgreement extends Model
         'subcontract_changes' => 'array',
         'gp_changes' => 'array',
         'advance_changes' => 'array',
+        'financial_applied_at' => 'datetime',
         'applied_at' => 'datetime',
         'applied_by_user_id' => 'integer',
     ];

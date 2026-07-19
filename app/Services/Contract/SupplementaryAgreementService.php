@@ -242,30 +242,73 @@ class SupplementaryAgreementService
                 ->oldest('id')
                 ->first();
 
-            if ($existingFinancialEvent instanceof ContractStateEvent) {
+            $financialAlreadyApplied = $lockedAgreement->financial_applied_at !== null
+                || $existingFinancialEvent instanceof ContractStateEvent;
+
+            if ($lockedAgreement->financial_applied_at === null && $existingFinancialEvent instanceof ContractStateEvent) {
                 $lockedAgreement->forceFill([
-                    'applied_at' => $existingFinancialEvent->created_at ?? now(),
-                    'applied_by_user_id' => $existingFinancialEvent->created_by_user_id ?? $actorId,
+                    'financial_applied_at' => $existingFinancialEvent->created_at ?? now(),
                     'application_key' => "supplementary-agreement:{$lockedAgreement->id}",
                 ])->save();
-
-                return $contract;
             }
 
             $changeAmount = (float) ($lockedAgreement->change_amount ?? 0);
             $oldTotalAmount = (float) ($contract->total_amount ?? 0);
-            $newTotalAmount = round($oldTotalAmount + $changeAmount, 2);
+            $newTotalAmount = $financialAlreadyApplied
+                ? $oldTotalAmount
+                : round($oldTotalAmount + $changeAmount, 2);
 
-            if ($newTotalAmount < 0) {
+            if (! $financialAlreadyApplied && $newTotalAmount < 0) {
                 throw new Exception('Невозможно применить изменения: новая сумма договора будет отрицательной.');
             }
 
-            if (abs($changeAmount) > 0.001) {
+            if (! $financialAlreadyApplied && abs($changeAmount) > 0.001) {
                 if (! $contract->usesEventSourcing()) {
                     $this->getStateEventService()->createContractCreatedEvent($contract, null, $actorId);
                 }
 
                 $contract->total_amount = $newTotalAmount;
+            }
+
+            if (! $financialAlreadyApplied) {
+                $contract->save();
+            }
+
+            if (! $financialAlreadyApplied && ! empty($lockedAgreement->supersede_agreement_ids)) {
+                $this->getStateEventService()->supersedeAgreementsWithoutAmountChange(
+                    $contract,
+                    $lockedAgreement,
+                    $lockedAgreement->supersede_agreement_ids
+                );
+            }
+
+            if (! $financialAlreadyApplied && abs($changeAmount) > 0.001 && ! empty($lockedAgreement->supersede_agreement_ids)) {
+                $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
+                $this->getStateEventService()->createAmendedEvent(
+                    $contract,
+                    $activeSpecification?->id,
+                    $changeAmount,
+                    $lockedAgreement,
+                    $lockedAgreement->agreement_date ?? now(),
+                    [
+                        'agreement_number' => $lockedAgreement->number,
+                        'superseded_agreement_ids' => $lockedAgreement->supersede_agreement_ids,
+                    ],
+                    $actorId
+                );
+            } elseif (! $financialAlreadyApplied && abs($changeAmount) > 0.001) {
+                $this->getStateEventService()->createSupplementaryAgreementEvent(
+                    $contract,
+                    $lockedAgreement,
+                    $actorId
+                );
+            }
+
+            if ($lockedAgreement->financial_applied_at === null) {
+                $lockedAgreement->forceFill([
+                    'financial_applied_at' => now(),
+                    'application_key' => "supplementary-agreement:{$lockedAgreement->id}",
+                ])->save();
             }
 
             if (is_array($lockedAgreement->subcontract_changes)) {
@@ -281,36 +324,6 @@ class SupplementaryAgreementService
             }
 
             $contract->save();
-
-            if (! empty($lockedAgreement->supersede_agreement_ids)) {
-                $this->getStateEventService()->supersedeAgreementsWithoutAmountChange(
-                    $contract,
-                    $lockedAgreement,
-                    $lockedAgreement->supersede_agreement_ids
-                );
-            }
-
-            if (abs($changeAmount) > 0.001 && ! empty($lockedAgreement->supersede_agreement_ids)) {
-                $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
-                $this->getStateEventService()->createAmendedEvent(
-                    $contract,
-                    $activeSpecification?->id,
-                    $changeAmount,
-                    $lockedAgreement,
-                    $lockedAgreement->agreement_date ?? now(),
-                    [
-                        'agreement_number' => $lockedAgreement->number,
-                        'superseded_agreement_ids' => $lockedAgreement->supersede_agreement_ids,
-                    ],
-                    $actorId
-                );
-            } elseif (abs($changeAmount) > 0.001) {
-                $this->getStateEventService()->createSupplementaryAgreementEvent(
-                    $contract,
-                    $lockedAgreement,
-                    $actorId
-                );
-            }
 
             $lockedAgreement->forceFill([
                 'applied_at' => now(),
