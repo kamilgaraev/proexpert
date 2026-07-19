@@ -4,15 +4,22 @@ declare(strict_types=1);
 
 namespace Tests\Feature\LegalArchive;
 
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
+use App\Exceptions\ImmutableDataException;
 use App\Services\LegalArchive\Files\LegalDocumentFilePolicy;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
+use App\Services\LegalArchive\Files\LegalDocumentScanFailed;
 use App\Services\LegalArchive\Files\LegalDocumentScanner;
 use App\Services\LegalArchive\Files\VersionInput;
 use App\Services\Storage\FileService;
+use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Events\Dispatcher;
 use Illuminate\Http\UploadedFile;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -36,8 +43,18 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             'foreign_key_constraints' => true,
         ]);
         $this->database->setAsGlobal();
+        $this->database->setEventDispatcher(new Dispatcher(new Container));
         $this->database->bootEloquent();
+        Model::clearBootedModels();
 
+        $this->database->schema()->create('legal_archive_documents', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('current_primary_version_id')->nullable();
+            $table->string('title');
+            $table->timestamps();
+            $table->softDeletes();
+        });
         $this->database->schema()->create('legal_archive_document_files', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('document_id');
@@ -81,6 +98,7 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
 
     public function test_adds_versions_append_only_and_keeps_exactly_one_current_version(): void
     {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Договор']);
         $file = LegalArchiveDocumentFile::query()->create([
             'document_id' => 10,
             'organization_id' => 20,
@@ -111,6 +129,7 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
 
     public function test_deletes_only_newly_uploaded_object_when_persistence_fails(): void
     {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Договор']);
         $file = LegalArchiveDocumentFile::query()->create([
             'document_id' => 10,
             'organization_id' => 20,
@@ -144,17 +163,169 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         self::assertSame(0, $file->versions()->count());
     }
 
+    public function test_persists_quarantine_before_scanning_and_transitions_to_ready(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Договор']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10, 'organization_id' => 20, 'role' => 'primary', 'title' => 'Договор',
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->method('upload')->willReturn('org-20/legal-archive/files/1/a.pdf');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::once())->method('assertClean')->willReturnCallback(function () use ($file): void {
+            $quarantine = $file->versions()->firstOrFail();
+            self::assertSame('quarantine', $quarantine->processing_status);
+            self::assertTrue((bool) $quarantine->is_current);
+        });
+
+        $version = $this->service($storage, $scanner)->addVersion(
+            $file,
+            $this->pdf('ready.pdf'),
+            new VersionInput(uploadedByUserId: 30, makeCurrent: false),
+        );
+
+        self::assertSame('ready', $version->fresh()->processing_status);
+        self::assertTrue((bool) $version->fresh()->is_current);
+        self::assertSame($version->id, $file->fresh()->current_version_id);
+        self::assertSame($version->id, LegalArchiveDocument::query()->findOrFail(10)->current_primary_version_id);
+    }
+
+    public function test_scanner_failure_persists_failed_evidence_without_s3_compensation(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Договор']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10, 'organization_id' => 20, 'role' => 'primary', 'title' => 'Договор',
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->method('upload')->willReturn('org-20/legal-archive/files/1/rejected.pdf');
+        $storage->expects(self::never())->method('delete');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->method('assertClean')->willThrowException(new RuntimeException('malware'));
+
+        try {
+            $this->service($storage, $scanner)->addVersion(
+                $file,
+                $this->pdf('rejected.pdf'),
+                new VersionInput(uploadedByUserId: 30),
+            );
+            self::fail('Scanner failure was expected.');
+        } catch (LegalDocumentScanFailed $exception) {
+            self::assertSame('malware', $exception->getPrevious()?->getMessage());
+        }
+
+        $failed = $file->versions()->sole();
+        self::assertSame('failed', $failed->processing_status);
+        self::assertFalse((bool) $failed->is_current);
+        self::assertNull($file->fresh()->current_version_id);
+        self::assertNull(LegalArchiveDocument::query()->findOrFail(10)->current_primary_version_id);
+    }
+
+    public function test_direct_version_mutation_and_deletion_are_prohibited(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Договор']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10, 'organization_id' => 20, 'role' => 'primary', 'title' => 'Договор',
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->method('upload')->willReturn('org-20/legal-archive/files/1/a.pdf');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->method('assertClean');
+        $version = $this->service($storage, $scanner)->addVersion($file, $this->pdf('a.pdf'), new VersionInput);
+
+        foreach (['update', 'delete', 'forceDelete'] as $operation) {
+            try {
+                if ($operation === 'update') {
+                    $version->update(['file_path' => 'org-20/changed.pdf']);
+                } else {
+                    $version->{$operation}();
+                }
+                self::fail("{$operation} must be rejected.");
+            } catch (ImmutableDataException) {
+                self::assertTrue(true);
+            }
+        }
+
+        self::assertSame('org-20/legal-archive/files/1/a.pdf', $version->fresh()->file_path);
+    }
+
+    public function test_rejects_invalid_processing_transition_and_frozen_version_transition(): void
+    {
+        $version = new LegalArchiveDocumentVersion;
+        $version->forceFill(['id' => 1, 'processing_status' => 'ready', 'status' => 'uploaded']);
+        $version->exists = true;
+        $service = $this->service($this->createMock(FileService::class), $this->createMock(LegalDocumentScanner::class));
+
+        $this->expectException(ImmutableDataException::class);
+        $service->transitionProcessingStatus($version, 'failed');
+    }
+
+    public function test_signed_version_cannot_use_technical_transition(): void
+    {
+        $version = new LegalArchiveDocumentVersion;
+        $version->forceFill(['id' => 1, 'processing_status' => 'quarantine', 'status' => 'signed']);
+        $version->exists = true;
+
+        $this->expectException(ImmutableDataException::class);
+
+        $this->service(
+            $this->createMock(FileService::class),
+            $this->createMock(LegalDocumentScanner::class),
+        )->transitionProcessingStatus($version, 'ready');
+    }
+
+    public function test_each_logical_file_has_own_current_and_document_points_to_primary_current(): void
+    {
+        $document = LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Досье']);
+        $primary = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10, 'organization_id' => 20, 'role' => 'primary', 'title' => 'Основной',
+        ]);
+        $attachment = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10, 'organization_id' => 20, 'role' => 'attachment', 'title' => 'Приложение',
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->method('upload')->willReturnOnConsecutiveCalls(
+            'org-20/legal-archive/files/1/primary.pdf',
+            'org-20/legal-archive/files/2/attachment.pdf',
+        );
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->method('assertClean');
+        $service = $this->service($storage, $scanner);
+
+        $primaryVersion = $service->addVersion($primary, $this->pdf('primary.pdf'), new VersionInput(makeCurrent: false));
+        $attachmentVersion = $service->addVersion($attachment, $this->pdf('attachment.pdf'), new VersionInput(makeCurrent: false));
+
+        self::assertTrue((bool) $primaryVersion->fresh()->is_current);
+        self::assertTrue((bool) $attachmentVersion->fresh()->is_current);
+        self::assertSame($primaryVersion->id, $document->fresh()->current_primary_version_id);
+        self::assertSame($primaryVersion->id, $document->fresh()->currentVersion()->firstOrFail()->id);
+    }
+
     public function test_migration_keeps_legacy_rows_nullable_and_enforces_logical_file_invariants(): void
     {
-        $migration = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000200_create_legal_document_files_and_harden_versions.php');
+        $schema = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000200_create_legal_document_files_and_harden_versions.php');
+        $indexes = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000210_create_legal_document_file_indexes.php');
+        $constraints = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000220_add_legal_document_file_constraints.php');
+        $validation = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000230_validate_legal_document_file_constraints.php');
 
-        self::assertIsString($migration);
-        self::assertStringContainsString("->unsignedBigInteger('document_file_id')->nullable()", $migration);
-        self::assertStringContainsString('legal_archive_document_file_versions_unique', $migration);
-        self::assertStringContainsString('legal_archive_document_file_current_unique', $migration);
-        self::assertStringContainsString("processing_status IN ('quarantine', 'ready', 'failed')", $migration);
-        self::assertStringContainsString('NOT VALID', $migration);
-        self::assertStringNotContainsString('UPDATE legal_archive_document_versions', $migration);
+        foreach ([$schema, $indexes, $constraints, $validation] as $phase) {
+            self::assertIsString($phase);
+        }
+        self::assertStringContainsString("->unsignedBigInteger('document_file_id')->nullable()", $schema);
+        self::assertStringContainsString("Schema::hasTable('legal_archive_document_files')", $schema);
+        self::assertStringContainsString("Schema::hasColumn('legal_archive_document_versions', 'document_file_id')", $schema);
+        self::assertStringNotContainsString('CREATE INDEX CONCURRENTLY', $schema);
+        self::assertStringContainsString('public $withinTransaction = false;', $indexes);
+        self::assertStringContainsString('CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS', $indexes);
+        self::assertStringContainsString('indisvalid', $indexes);
+        self::assertStringContainsString('assertLegacyRollbackCompatible', $indexes);
+        self::assertStringContainsString('legal_archive_document_file_versions_unique', $indexes);
+        self::assertStringContainsString('legal_archive_document_file_current_unique', $indexes);
+        self::assertStringContainsString("processing_status IN ('quarantine', 'ready', 'failed')", $constraints);
+        self::assertStringContainsString('legal_archive_versions_immutable_guard', $constraints);
+        self::assertStringContainsString("current_setting('most.legal_archive_version_mutation', true)", $constraints);
+        self::assertStringContainsString('NOT VALID', $constraints);
+        self::assertStringContainsString('VALIDATE CONSTRAINT', $validation);
+        self::assertStringNotContainsString('UPDATE legal_archive_document_versions', $schema.$indexes.$constraints.$validation);
     }
 
     private function pdf(string $name): UploadedFile
@@ -165,5 +336,15 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
     private function connection(): ConnectionInterface
     {
         return $this->database->getConnection();
+    }
+
+    private function service(FileService $storage, LegalDocumentScanner $scanner): LegalDocumentFileService
+    {
+        return new LegalDocumentFileService(
+            $storage,
+            new LegalDocumentFilePolicy($this->configuration),
+            $scanner,
+            $this->connection(),
+        );
     }
 }

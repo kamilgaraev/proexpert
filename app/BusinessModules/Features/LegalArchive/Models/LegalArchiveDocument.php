@@ -11,7 +11,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 
@@ -90,9 +89,9 @@ final class LegalArchiveDocument extends Model
         return $this->belongsTo(Project::class, 'primary_project_id');
     }
 
-    public function currentVersion(): HasOne
+    public function currentVersion(): BelongsTo
     {
-        return $this->hasOne(LegalArchiveDocumentVersion::class, 'document_id')->where('is_current', true);
+        return $this->belongsTo(LegalArchiveDocumentVersion::class, 'current_primary_version_id');
     }
 
     public function currentPrimaryVersion(): BelongsTo

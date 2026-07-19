@@ -8,6 +8,8 @@ use App\Services\LegalArchive\LegalArchiveDictionary;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
+use function trans_message;
+
 final class LegalArchiveDocumentVersionResource extends JsonResource
 {
     public function toArray(Request $request): array
@@ -22,6 +24,9 @@ final class LegalArchiveDocumentVersionResource extends JsonResource
             'is_current' => (bool) $this->is_current,
             'status' => $this->status,
             'processing_status' => $this->processing_status,
+            'processing_status_label' => trans_message(
+                'legal_archive.processing_statuses.'.(string) $this->processing_status,
+            ),
             'status_label' => LegalArchiveDictionary::label('version_statuses', $this->status),
             'original_filename' => $this->original_filename,
             'mime_type' => $this->mime_type,

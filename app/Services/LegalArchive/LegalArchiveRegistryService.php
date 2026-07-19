@@ -11,6 +11,7 @@ use App\Models\Project;
 use App\Models\User;
 use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
+use App\Services\LegalArchive\Files\LegalDocumentVersionPersistenceFailed;
 use App\Services\LegalArchive\Files\VersionInput;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -18,7 +19,6 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-use Throwable;
 
 use function trans_message;
 
@@ -109,7 +109,7 @@ final class LegalArchiveRegistryService
                     uploadedByUserId: $userId,
                     metadata: is_array($data['version_metadata'] ?? null) ? $data['version_metadata'] : null,
                 ));
-            } catch (Throwable $exception) {
+            } catch (LegalDocumentVersionPersistenceFailed $exception) {
                 DB::transaction(static fn () => $document->forceDelete());
 
                 throw $exception;
@@ -163,7 +163,7 @@ final class LegalArchiveRegistryService
                 metadata: is_array($data['metadata'] ?? null) ? $data['metadata'] : null,
                 makeCurrent: $makeCurrent,
             ));
-        } catch (Throwable $exception) {
+        } catch (LegalDocumentVersionPersistenceFailed $exception) {
             if ($documentFile->wasRecentlyCreated) {
                 $documentFile->delete();
             }

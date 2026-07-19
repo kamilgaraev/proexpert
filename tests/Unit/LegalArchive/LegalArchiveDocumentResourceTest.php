@@ -24,11 +24,12 @@ final class LegalArchiveDocumentResourceTest extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
-        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang');
         $translator = new Translator($loader, 'ru');
 
-        $container->instance('app', new class {
+        $container->instance('app', new class
+        {
             public function getLocale(): string
             {
                 return 'ru';
@@ -66,6 +67,7 @@ final class LegalArchiveDocumentResourceTest extends TestCase
             'retention_policy' => 'default_5y',
             'legal_hold' => true,
         ]);
+        $document->forceFill(['retention_policy' => 'default_5y', 'legal_hold' => true]);
         $document->id = 42;
 
         $version = new LegalArchiveDocumentVersion([
@@ -74,6 +76,7 @@ final class LegalArchiveDocumentResourceTest extends TestCase
             'version_number' => '1.0',
             'is_current' => true,
             'status' => 'uploaded',
+            'processing_status' => 'quarantine',
             'file_path' => 'org-15/legal-archive/documents/42/versions/file.pdf',
             'original_filename' => 'contract.pdf',
             'mime_type' => 'application/pdf',
@@ -105,6 +108,7 @@ final class LegalArchiveDocumentResourceTest extends TestCase
         $this->assertSame('Правовой статус не подтвержден', $payload['legal_significance_status_label']);
         $this->assertTrue($payload['retention']['legal_hold']);
         $this->assertSame('1.0', $payload['current_version']['version_number']);
+        $this->assertSame('На проверке безопасности', $payload['current_version']['processing_status_label']);
         $this->assertSame('Проект', $payload['links'][0]['link_type_label']);
         $this->assertArrayNotHasKey('file_path', $payload['current_version']);
     }
