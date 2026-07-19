@@ -108,6 +108,20 @@ final class NormativeSearchProfileCatalogTest extends TestCase
         self::assertSame(['grounding_installation'], $profile->allowedAnalogActions);
     }
 
+    public function test_panel_and_lighting_profiles_search_only_their_electrical_targets(): void
+    {
+        $catalog = new NormativeSearchProfileCatalog;
+        $panel = $catalog->forIntent('engineering', 'electrical_panel_installation', 'electrical');
+        $lighting = $catalog->forIntent('engineering', 'lighting_fixture_installation', 'electrical');
+
+        self::assertSame(['08'], $panel->allowedSectionPrefixes);
+        self::assertContains('щит', $panel->requiredTerms);
+        self::assertSame(['electrical_panel_installation'], $panel->allowedAnalogActions);
+        self::assertSame(['08'], $lighting->allowedSectionPrefixes);
+        self::assertContains('светильн', $lighting->requiredTerms);
+        self::assertSame(['lighting_fixture_installation'], $lighting->allowedAnalogActions);
+    }
+
     public function test_soil_haulage_profile_requires_transport_in_earthwork_section(): void
     {
         $profile = (new NormativeSearchProfileCatalog)->forIntent('foundation', 'soil_haulage', null);

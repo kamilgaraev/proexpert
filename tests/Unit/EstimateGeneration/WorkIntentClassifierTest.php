@@ -194,6 +194,8 @@ final class WorkIntentClassifierTest extends TestCase
     {
         return [
             ['Монтаж кабельных лотков', 'Электроснабжение', 'cable_tray_installation'],
+            ['Монтаж квартирного распределительного щита', 'Электроснабжение', 'electrical_panel_installation'],
+            ['Установка потолочных светильников', 'Освещение', 'lighting_fixture_installation'],
             ['Монтаж сантехнических точек', 'Водоснабжение', 'sanitary_fixture_installation'],
             ['Монтаж дверных блоков', 'Окна и двери', 'door_installation'],
             ['Монтаж канализационных ревизий', 'Канализация', 'sewer_revision_installation'],
