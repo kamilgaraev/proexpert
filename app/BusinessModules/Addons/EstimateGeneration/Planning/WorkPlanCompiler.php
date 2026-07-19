@@ -148,6 +148,12 @@ final readonly class WorkPlanCompiler
                     if (is_string($objectType) && trim($objectType) !== '') {
                         $resolvedIntent['object_type'] = trim($objectType);
                     }
+                    if (is_array($item['specialization_scenario'] ?? null)) {
+                        $resolvedIntent['specialization_scenario'] = $item['specialization_scenario'];
+                    }
+                    if (is_array($item['specialization_evidence'] ?? null)) {
+                        $resolvedIntent['specialization_evidence'] = $item['specialization_evidence'];
+                    }
                     $intents[] = $resolvedIntent;
                 }
             }

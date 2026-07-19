@@ -228,6 +228,39 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertSame(['status' => 'pinned'], $pin);
     }
 
+    public function test_normative_pin_preserves_signed_specialization_contract(): void
+    {
+        $scenario = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog)
+            ->issue('finish.floor', 'residential');
+        self::assertIsArray($scenario);
+        $pins = $this->createMock(NormativeContextPinResolver::class);
+        $pins->expects(self::once())
+            ->method('resolve')
+            ->with([], self::callback(static fn (array $intents): bool => ($intents[0]['specialization_scenario'] ?? null) === $scenario))
+            ->willReturn(['status' => 'pinned']);
+        $compiler = new WorkPlanCompiler(
+            new PackagePlannerService,
+            new EstimateDecompositionService,
+            new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService),
+            $pins,
+        );
+
+        $pin = $compiler->resolveNormativeContextPin([], [[
+            'sections' => [[
+                'work_items' => [[
+                    'item_type' => 'priced_work',
+                    'name' => 'Чистовое покрытие пола',
+                    'normative_search_text' => $scenario['normative_search_text'],
+                    'normative_rate_code' => $scenario['normative_rate_code'],
+                    'unit' => 'm2',
+                    'specialization_scenario' => $scenario,
+                ]],
+            ]],
+        ]], 'house');
+
+        self::assertSame(['status' => 'pinned'], $pin);
+    }
+
     private function compiler(): WorkPlanCompiler
     {
         return new WorkPlanCompiler(

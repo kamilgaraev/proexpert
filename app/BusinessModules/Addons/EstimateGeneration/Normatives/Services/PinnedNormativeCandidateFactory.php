@@ -56,6 +56,10 @@ final readonly class PinnedNormativeCandidateFactory
                 : null),
             'object_type' => $canonicalIntent?->objectType,
             'normative_sections' => $normativeSections,
+            'specialization_evidence' => $canonicalIntent?->specializationEvidence
+                ?? (is_array($workItem['specialization_evidence'] ?? null) ? $workItem['specialization_evidence'] : []),
+            'specialization_scenario' => $canonicalIntent?->specializationScenario
+                ?? (is_array($workItem['specialization_scenario'] ?? null) ? $workItem['specialization_scenario'] : null),
         ]]);
         if ($selected === null) {
             return [];

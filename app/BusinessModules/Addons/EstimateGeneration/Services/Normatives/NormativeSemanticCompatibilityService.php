@@ -640,6 +640,8 @@ final class NormativeSemanticCompatibilityService
             'декоративн',
             'финишн',
             'мелкозернист',
+            'облицов',
+            'плитк',
         ]);
 
         return ! ($roughWallPreparation && $candidateIsFinish);

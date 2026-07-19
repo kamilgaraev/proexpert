@@ -527,6 +527,11 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
             'Черновая подготовка стен',
             ['action' => 'general_work', 'scope' => 'finishing'],
         ));
+        self::assertFalse($service->isCompatible(
+            'Облицовка стен на цементном растворе плитками',
+            'Черновая подготовка стен',
+            ['action' => 'general_work', 'scope' => 'finishing'],
+        ));
         self::assertTrue($service->isCompatible(
             'Подготовка поверхностей стен под отделку',
             'Черновая подготовка стен',
