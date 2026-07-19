@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Quantities;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\DirectTakeoffRequiredWorkItems;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
@@ -22,23 +23,33 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'upper_floor_internal_area' => $this->quantity('upper_floor_internal_area', '79.500000', ['room:2']),
         ], $this->model(), ['object' => ['object_type' => 'house', 'floors' => 2, 'roof_type' => 'pitched']]);
 
-        self::assertSame('152.955000', $result->quantities['roof.area']->amount);
-        self::assertSame('46.834688', $result->quantities['roof.gutter']->amount);
-        self::assertSame('23.136000', $result->quantities['openings.windows']->amount);
-        self::assertSame('9.000000', $result->quantities['openings.doors']->amount);
-        self::assertSame('8.000000', $result->quantities['stairs.flights']->amount);
-        self::assertSame('4.000000', $result->quantities['stairs.landings']->amount);
-        self::assertSame('8.000000', $result->quantities['stairs.railings']->amount);
-        self::assertSame('77.120000', $result->quantities['electrical.main_cable']->amount);
-        self::assertSame('67.480000', $result->quantities['plumbing.pipe']->amount);
-        self::assertSame('2.000000', $result->quantities['sanitary.points']->amount);
+        self::assertArrayNotHasKey('roof.area', $result->quantities);
+        self::assertArrayNotHasKey('roof.gutter', $result->quantities);
+        self::assertArrayNotHasKey('openings.windows', $result->quantities);
+        self::assertArrayNotHasKey('openings.doors', $result->quantities);
+        self::assertArrayNotHasKey('stairs.flights', $result->quantities);
+        self::assertArrayNotHasKey('stairs.landings', $result->quantities);
+        self::assertArrayNotHasKey('stairs.railings', $result->quantities);
+        self::assertArrayNotHasKey('electrical.grounding', $result->quantities);
+        self::assertArrayNotHasKey('heating.radiators', $result->quantities);
+        self::assertArrayNotHasKey('ventilation.air_exchange', $result->quantities);
+        self::assertArrayNotHasKey('electrical.main_cable', $result->quantities);
+        self::assertArrayNotHasKey('plumbing.pipe', $result->quantities);
+        self::assertArrayNotHasKey('sanitary.points', $result->quantities);
         self::assertArrayNotHasKey('electrical.trays', $result->quantities);
+
+        foreach (array_keys($result->quantities) as $quantityKey) {
+            self::assertFalse(
+                DirectTakeoffRequiredWorkItems::contains($quantityKey),
+                $quantityKey.' must come only from a direct document takeoff',
+            );
+        }
 
         foreach ($result->quantities as $quantity) {
             self::assertSame(QuantitySource::Estimated, $quantity->source, $quantity->key);
             self::assertSame(ResidentialQuantityScenarioCatalog::VERSION, $quantity->formulaVersion, $quantity->key);
             self::assertNotSame([], $quantity->evidenceIds, $quantity->key);
-            self::assertContains('residential_preliminary_scenario:v1', $quantity->assumptions, $quantity->key);
+            self::assertContains(ResidentialQuantityScenarioCatalog::SCENARIO_ID, $quantity->assumptions, $quantity->key);
             self::assertSame([], $quantity->reviewBlockers, $quantity->key);
             self::assertSame(0.55, $quantity->formulaInputs['scenario']['confidence'], $quantity->key);
             self::assertSame(['preliminary_quantity_scenario'], $quantity->formulaInputs['scenario']['warnings'], $quantity->key);
@@ -47,6 +58,41 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertContains('roof.rafters', array_column($result->omissions, 'quantity_key'));
         self::assertContains('networks.external', array_column($result->omissions, 'quantity_key'));
         self::assertContains('electrical.trays', array_column($result->omissions, 'quantity_key'));
+        self::assertContains([
+            'quantity_key' => 'stairs.flights',
+            'reason' => 'stair_construction_geometry_missing',
+            'package_key' => 'stairs',
+        ], $result->omissions);
+        self::assertContains([
+            'quantity_key' => 'stairs.landings',
+            'reason' => 'stair_construction_geometry_missing',
+            'package_key' => 'stairs',
+        ], $result->omissions);
+        self::assertContains([
+            'quantity_key' => 'stairs.railings',
+            'reason' => 'stair_railing_geometry_missing',
+            'package_key' => 'stairs',
+        ], $result->omissions);
+        self::assertContains([
+            'quantity_key' => 'electrical.grounding',
+            'reason' => 'grounding_installation_type_missing',
+            'package_key' => 'electrical',
+        ], $result->omissions);
+        self::assertContains([
+            'quantity_key' => 'openings.windows',
+            'reason' => 'window_schedule_missing',
+            'package_key' => 'openings',
+        ], $result->omissions);
+        self::assertContains([
+            'quantity_key' => 'heating.radiators',
+            'reason' => 'radiator_schedule_missing',
+            'package_key' => 'heating',
+        ], $result->omissions);
+        self::assertContains([
+            'quantity_key' => 'ventilation.air_exchange',
+            'reason' => 'ventilation_duct_takeoff_missing',
+            'package_key' => 'ventilation',
+        ], $result->omissions);
     }
 
     #[Test]
@@ -71,7 +117,8 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'object' => ['object_type' => 'building', 'description' => 'Индивидуальный жилой дом'],
         ]);
 
-        self::assertArrayHasKey('roof.area', $result->quantities);
+        self::assertSame([], $result->quantities);
+        self::assertContains('roof.area', array_column($result->omissions, 'quantity_key'));
     }
 
     #[Test]
@@ -93,11 +140,10 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'first_floor_internal_area' => $this->quantity('first_floor_internal_area', '113.300000', ['room:1']),
         ], $this->model(), ['object' => ['object_type' => 'house']]);
 
-        self::assertSame('113.300000', $result->quantities['roof.area']->amount);
-        self::assertContains('generic_roof_projection_factor:1.00', $result->quantities['roof.area']->assumptions);
+        self::assertArrayNotHasKey('roof.area', $result->quantities);
         self::assertArrayNotHasKey('roof.gutter', $result->quantities);
         self::assertContains(
-            ['quantity_key' => 'roof.gutter', 'reason' => 'roof_type_missing'],
+            ['quantity_key' => 'roof.gutter', 'reason' => 'roof_drainage_takeoff_missing', 'package_key' => 'roof'],
             $result->omissions,
         );
     }
@@ -109,11 +155,15 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'first_floor_internal_area' => $this->quantity('first_floor_internal_area', '113.300000', ['room:1']),
         ], $this->model(), ['object' => ['object_type' => 'house', 'roof_type' => 'flat']]);
 
-        self::assertSame('113.300000', $result->quantities['roof.flat_area']->amount);
+        self::assertArrayNotHasKey('roof.flat_area', $result->quantities);
         self::assertArrayNotHasKey('roof.area', $result->quantities);
         self::assertArrayNotHasKey('roof.gutter', $result->quantities);
         self::assertContains(
-            ['quantity_key' => 'roof.gutter', 'reason' => 'external_gutter_not_inferred_for_flat_roof'],
+            [
+                'quantity_key' => 'roof.gutter',
+                'reason' => 'external_gutter_not_inferred_for_flat_roof',
+                'package_key' => 'roof',
+            ],
             $result->omissions,
         );
     }

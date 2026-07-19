@@ -89,7 +89,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         'local_estimate_title' => $localEstimate['title'] ?? null,
                         'section_title' => $section['title'] ?? null,
                         'object_type' => $data['object_profile']['object_type'] ?? null,
-                        'source_refs' => $section['source_refs'] ?? $localEstimate['source_refs'] ?? [],
+                        'source_refs' => $workItem['source_refs'] ?? $section['source_refs'] ?? $localEstimate['source_refs'] ?? [],
                         'regional_context' => $regionalContext,
                         'applicability_date' => $applicabilityDate,
                         'progress_callback' => $heartbeat === null ? null : static fn () => self::renewLease($heartbeat),

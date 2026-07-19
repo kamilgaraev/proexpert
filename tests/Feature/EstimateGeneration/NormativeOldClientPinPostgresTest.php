@@ -261,7 +261,12 @@ final class NormativeOldClientPinPostgresTest extends TestCase
         PipelineDefinitionGraph $graph,
     ): PipelineContext {
         $understand = $this->priorOutput(ProcessingStage::UnderstandObject, ['analysis' => $analysis], $graph);
-        $quantities = $this->priorOutput(ProcessingStage::ExtractQuantities, ['quantity_learning_hints' => []], $graph);
+        $quantityPayload = [
+            'quantity_learning_hints' => [],
+            'quantity_coverage_warnings' => [],
+            'building_quantities' => [],
+        ];
+        $quantities = $this->priorOutput(ProcessingStage::ExtractQuantities, $quantityPayload, $graph);
         $dependencies = [
             ProcessingStage::UnderstandObject->value => $understand->version,
             ProcessingStage::ExtractQuantities->value => $quantities->version,
@@ -278,7 +283,10 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             'generating',
             priorOutputs: new PipelinePriorOutputs(
                 [ProcessingStage::UnderstandObject->value => $understand, ProcessingStage::ExtractQuantities->value => $quantities],
-                [ProcessingStage::UnderstandObject->value => ['analysis' => $analysis], ProcessingStage::ExtractQuantities->value => ['quantity_learning_hints' => []]],
+                [
+                    ProcessingStage::UnderstandObject->value => ['analysis' => $analysis],
+                    ProcessingStage::ExtractQuantities->value => $quantityPayload,
+                ],
             ),
             generationAttemptId: '00000000-0000-4000-8000-000000000001',
             baseInputVersion: $base,

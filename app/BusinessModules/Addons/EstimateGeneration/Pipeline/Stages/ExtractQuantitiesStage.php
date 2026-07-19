@@ -45,7 +45,11 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
         $analysis = $context->priorOutputs->payload(ProcessingStage::UnderstandObject)['analysis'];
         $hints = $this->learning->hintsForAnalysis($context->organizationId, $context->projectId, $analysis);
 
-        $data = ['quantity_learning_hints' => $hints, 'building_quantities' => []];
+        $data = [
+            'quantity_learning_hints' => $hints,
+            'quantity_coverage_warnings' => [],
+            'building_quantities' => [],
+        ];
         $normalized = $analysis['normalized_building_model'] ?? null;
         $quantities = [];
         $diagnostics = [];
@@ -90,6 +94,7 @@ final readonly class ExtractQuantitiesStage implements LeaseAwarePipelineStage
                     'path' => 'quantities.'.$omission['quantity_key'].'.'.$omission['reason'],
                 ];
             }
+            $data['quantity_coverage_warnings'] = $scenario->omissions;
             if ($scenario->quantities !== []) {
                 $metrics['residential_scenario_quantity_count'] = count($scenario->quantities);
                 $metrics['residential_scenario_omission_count'] = count($scenario->omissions);

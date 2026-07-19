@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Quality;
 
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityCoverageWarning;
+
 final class DraftPackageCoverageInspector
 {
     /**
@@ -20,7 +22,7 @@ final class DraftPackageCoverageInspector
             }
 
             $packageKey = trim((string) ($localEstimate['key'] ?? ''));
-            if ($packageKey === '' || ! $this->hasVisibleScopeItem($localEstimate)) {
+            if ($packageKey === '' || (! $this->hasVisibleScopeItem($localEstimate) && ! $this->hasCoverageWarning($localEstimate))) {
                 continue;
             }
 
@@ -47,6 +49,20 @@ final class DraftPackageCoverageInspector
         }
 
         return $missing;
+    }
+
+    /** @param array<string, mixed> $localEstimate */
+    private function hasCoverageWarning(array $localEstimate): bool
+    {
+        $packageKey = trim((string) ($localEstimate['key'] ?? ''));
+
+        foreach (is_array($localEstimate['coverage_warnings'] ?? null) ? $localEstimate['coverage_warnings'] : [] as $warning) {
+            if (QuantityCoverageWarning::isValid($warning) && $warning['package_key'] === $packageKey) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @param array<string, mixed> $localEstimate */

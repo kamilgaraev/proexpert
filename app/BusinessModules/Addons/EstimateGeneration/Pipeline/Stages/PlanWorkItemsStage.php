@@ -39,6 +39,12 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         if ($hints !== []) {
             $analysis['document_context']['quantity_learning_hints'] = $hints;
         }
+        $coverageWarnings = is_array($quantityOutput['quantity_coverage_warnings'] ?? null)
+            ? array_values(array_filter($quantityOutput['quantity_coverage_warnings'], 'is_array'))
+            : [];
+        if ($coverageWarnings !== []) {
+            $analysis['document_context']['quantity_coverage_warnings'] = $coverageWarnings;
+        }
         $quantities = [];
         foreach (($quantityOutput['building_quantities']['quantities'] ?? []) as $quantity) {
             if (! is_array($quantity)) {

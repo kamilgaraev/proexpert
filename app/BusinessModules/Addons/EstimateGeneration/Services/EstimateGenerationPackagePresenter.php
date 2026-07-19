@@ -68,10 +68,39 @@ class EstimateGenerationPackagePresenter
                 'critical_flags' => [],
                 'warning_flags' => [],
             ],
+            'coverage_warnings' => $this->coverageWarnings($package),
             'sort_order' => $package->sort_order,
             'approved_at' => $package->approved_at?->toISOString(),
             'updated_at' => $package->updated_at?->toISOString(),
         ];
+    }
+
+    /** @return list<array{quantity_key: string, reason: string, package_key: string, message: string}> */
+    private function coverageWarnings(EstimateGenerationPackage $package): array
+    {
+        $metadata = is_array($package->metadata) ? $package->metadata : [];
+        $warnings = is_array($metadata['coverage_warnings'] ?? null) ? $metadata['coverage_warnings'] : [];
+        $result = [];
+
+        foreach ($warnings as $warning) {
+            if (! is_array($warning)) {
+                continue;
+            }
+
+            $message = trim((string) ($warning['message'] ?? ''));
+            if ($message === '') {
+                continue;
+            }
+
+            $result[] = [
+                'quantity_key' => trim((string) ($warning['quantity_key'] ?? '')),
+                'reason' => trim((string) ($warning['reason'] ?? '')),
+                'package_key' => trim((string) ($warning['package_key'] ?? $package->key)),
+                'message' => $message,
+            ];
+        }
+
+        return $result;
     }
 
     /**

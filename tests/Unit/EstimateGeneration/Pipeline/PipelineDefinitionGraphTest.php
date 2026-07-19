@@ -22,11 +22,11 @@ final class PipelineDefinitionGraphTest extends TestCase
         self::assertSame([ProcessingStage::UnderstandDocuments], $graph->get(ProcessingStage::UnderstandObject)->dependencies);
         self::assertSame(6, $graph->get(ProcessingStage::UnderstandObject)->schemaVersion);
         self::assertSame([ProcessingStage::UnderstandObject], $graph->get(ProcessingStage::ExtractQuantities)->dependencies);
-        self::assertSame(6, $graph->get(ProcessingStage::ExtractQuantities)->schemaVersion);
+        self::assertSame(8, $graph->get(ProcessingStage::ExtractQuantities)->schemaVersion);
         self::assertSame([ProcessingStage::UnderstandObject, ProcessingStage::ExtractQuantities], $graph->get(ProcessingStage::PlanWorkItems)->dependencies);
-        self::assertSame(48, $graph->get(ProcessingStage::PlanWorkItems)->schemaVersion);
+        self::assertSame(51, $graph->get(ProcessingStage::PlanWorkItems)->schemaVersion);
         self::assertSame([ProcessingStage::PlanWorkItems], $graph->get(ProcessingStage::MatchNormatives)->dependencies);
-        self::assertSame(18, $graph->get(ProcessingStage::MatchNormatives)->schemaVersion);
+        self::assertSame(19, $graph->get(ProcessingStage::MatchNormatives)->schemaVersion);
         self::assertSame([ProcessingStage::MatchNormatives], $graph->get(ProcessingStage::AssembleResources)->dependencies);
         self::assertSame(5, $graph->get(ProcessingStage::AssembleResources)->schemaVersion);
         self::assertSame([ProcessingStage::AssembleResources], $graph->get(ProcessingStage::ResolvePrices)->dependencies);
@@ -34,6 +34,7 @@ final class PipelineDefinitionGraphTest extends TestCase
         self::assertSame([ProcessingStage::UnderstandDocuments, ProcessingStage::UnderstandObject, ProcessingStage::PlanWorkItems, ProcessingStage::ResolvePrices], $graph->get(ProcessingStage::BuildDraft)->dependencies);
         self::assertSame(1_572_864, $graph->get(ProcessingStage::BuildDraft)->maxArtifactBytes);
         self::assertSame([ProcessingStage::BuildDraft], $graph->get(ProcessingStage::ValidateDraft)->dependencies);
+        self::assertSame(2, $graph->get(ProcessingStage::ValidateDraft)->schemaVersion);
         self::assertSame(1_572_864, $graph->get(ProcessingStage::ValidateDraft)->maxArtifactBytes);
         self::assertLessThanOrEqual(10_485_760, array_sum(array_map(static fn ($definition): int => $definition->maxArtifactBytes, $graph->ordered())));
     }

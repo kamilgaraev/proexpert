@@ -127,7 +127,7 @@ final class NormativeSemanticCompatibilityService
             'стропил' => ['стропил'],
             'водосток|водосточ' => ['водосток', 'водосточ'],
             'фасад' => ['фасад'],
-            'пол' => ['пол', 'стяжк', 'основани под покрыт'],
+            'пол' => ['пол', 'покрыт', 'стяжк', 'основани под покрыт'],
             'лотк' => ['лотк'],
             'заземл' => ['заземл'],
             'розет|выключател' => ['розет', 'выключател'],
@@ -155,7 +155,7 @@ final class NormativeSemanticCompatibilityService
             'plastering' => ['штукатур'],
             'painting' => ['окраск', 'покраск'],
             'tiling' => ['плитк', 'облицов'],
-            'floor_covering' => ['покрыт', 'пол', 'линолеум', 'ламинат', 'паркет'],
+            'floor_covering' => ['покрыт', 'пол', 'линолеум', 'ламинат', 'ламинированн', 'паркет'],
             'floor_preparation' => ['подготов', 'стяжк', 'подстилающ', 'основани пола'],
             'ceiling_finishing' => ['потол', 'подвесн'],
             'baseboard_installation' => ['плинтус', 'галтел'],
@@ -186,6 +186,11 @@ final class NormativeSemanticCompatibilityService
         }
 
         if ($action === 'door_installation') {
+            if ($this->containsAny($candidateTitle, ['балконн'])
+                && ! $this->containsAny($workText, ['балконн'])) {
+                return false;
+            }
+
             if ($this->containsAny($candidateTitle, ['конопат', 'уплотнен'])
                 && ! $this->containsAny($workText, ['конопат', 'уплотнен'])) {
                 return false;
@@ -218,8 +223,19 @@ final class NormativeSemanticCompatibilityService
             $catalogInstallationForm = $this->containsAny($candidateTitle, ['кабел'])
                 && $this->containsAny($candidateTitle, ['по установленн конструкц', 'по установленн лотк', 'по установленным конструкциям', 'по установленным лоткам']);
 
+            if ($this->containsAny($candidateTitle, ['транше'])
+                && ! $this->containsAny($workText, ['транше', 'наружн'])) {
+                return false;
+            }
+
             return $this->containsAny($candidateTitle, ['кабел', 'электропровод', 'провод'])
                 && ($explicitInstallation || $catalogInstallationForm);
+        }
+
+        if ($action === 'waterproofing'
+            && $this->containsAny($candidateTitle, ['выравниван', 'подготовк поверхност', 'оштукатур'])
+            && ! $this->containsAny($workText, ['выравниван', 'подготовк поверхност', 'оштукатур'])) {
+            return false;
         }
 
         if ($action === 'sanitary_fixture_installation') {
@@ -383,7 +399,8 @@ final class NormativeSemanticCompatibilityService
         $specializationEvidenceText = $this->specializationEvidenceText($intent);
 
         if (! $this->finishingPhaseCompatible($candidateTitle, $workText, $intent)
-            || ! $this->finishingMaterialCompatible($candidateTitle, $specializationEvidenceText, $intent)) {
+            || ! $this->finishingMaterialCompatible($candidateTitle, $specializationEvidenceText, $intent)
+            || ! $this->materialScenarioCandidateCompatible($candidateTitle, $intent)) {
             return false;
         }
 
@@ -432,6 +449,28 @@ final class NormativeSemanticCompatibilityService
         }
 
         return true;
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function materialScenarioCandidateCompatible(string $candidateTitle, array $intent): bool
+    {
+        $scenario = is_array($intent['specialization_scenario'] ?? null) ? $intent['specialization_scenario'] : [];
+        $this->materialScenarioCatalog ??= new ResidentialMaterialScenarioCatalog;
+        $resolvedScenario = $this->materialScenarioCatalog->resolve(
+            $scenario,
+            (string) ($scenario['work_item_key'] ?? ''),
+            ObjectTypeSignalClassifier::canonical((string) ($intent['object_type'] ?? '')),
+        );
+        if ($resolvedScenario === null) {
+            return true;
+        }
+
+        $markers = array_values(array_filter(
+            $resolvedScenario['material_markers'] ?? [],
+            static fn (mixed $marker): bool => is_string($marker) && trim($marker) !== '',
+        ));
+
+        return $markers === [] || $this->containsAny($candidateTitle, $markers);
     }
 
     /** @param array<string, mixed> $intent */
@@ -592,15 +631,18 @@ final class NormativeSemanticCompatibilityService
 
         $roughWallPreparation = $this->containsAny($workText, ['чернов', 'подготов'])
             && $this->containsAny($workText, ['стен', 'поверхност']);
-        $candidateIsPainting = $this->containsAny($candidateTitle, [
+        $candidateIsFinish = $this->containsAny($candidateTitle, [
             'окраск',
             'окрашив',
             'покраск',
             'побелк',
             'нанесение краск',
+            'декоративн',
+            'финишн',
+            'мелкозернист',
         ]);
 
-        return ! ($roughWallPreparation && $candidateIsPainting);
+        return ! ($roughWallPreparation && $candidateIsFinish);
     }
 
     /** @param array<string, mixed> $intent */
@@ -615,7 +657,7 @@ final class NormativeSemanticCompatibilityService
             'floor_covering' => [
                 ['линолеум'],
                 ['поливинилхлорид', 'пвх'],
-                ['ламинат'],
+                ['ламинат', 'ламинированн'],
                 ['паркет'],
                 ['дощат', 'доск', 'деревян', 'древес'],
                 ['керамическ', 'керамогранит', 'плитк'],

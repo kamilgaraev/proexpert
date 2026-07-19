@@ -35,7 +35,7 @@ final class GeneratedEstimateItemMetadataFactoryTest extends TestCase
                     'code' => 'floor_laminate',
                     'message' => 'Предварительно принято покрытие пола из ламината.',
                     'severity' => 'warning',
-                    'scenario_id' => 'residential_preliminary_common:v1',
+                    'scenario_id' => 'residential_preliminary_common:v2',
                 ],
             ],
         ]);

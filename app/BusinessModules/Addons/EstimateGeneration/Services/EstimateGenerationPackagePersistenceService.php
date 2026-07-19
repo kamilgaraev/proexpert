@@ -161,6 +161,9 @@ class EstimateGenerationPackagePersistenceService
                     'generated_from' => 'estimate_generation_v2',
                     'input_version' => $inputVersion,
                     'source_input_version' => is_string($sourceInputVersion) ? $sourceInputVersion : null,
+                    'coverage_warnings' => is_array($localEstimate['coverage_warnings'] ?? null)
+                        ? array_values(array_filter($localEstimate['coverage_warnings'], 'is_array'))
+                        : [],
                 ],
                 'sort_order' => ($localIndex + 1) * 100,
                 'finished_at' => now(),

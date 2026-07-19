@@ -7,8 +7,10 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\DirectTakeoffRequiredWorkItems;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\BuildingModelMaterialEvidenceExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Throwable;
 
@@ -19,6 +21,7 @@ final class NormativeWorkItemPlannerService
         private readonly EstimatorScopeInferenceService $scopeInferenceService,
         private readonly ?ResidentialMaterialScenarioCatalog $materialScenarioCatalog = null,
         private readonly RoofTypeResolver $roofTypeResolver = new RoofTypeResolver,
+        private readonly ?BuildingModelMaterialEvidenceExtractor $buildingModelMaterialEvidenceExtractor = null,
     ) {}
 
     /**
@@ -247,6 +250,11 @@ final class NormativeWorkItemPlannerService
                     ? ['specialization_scenario' => $metadata['specialization_scenario']]
                     : []
             ),
+            ...(
+                isset($metadata['specialization_evidence']) && is_array($metadata['specialization_evidence'])
+                    ? ['specialization_evidence' => $metadata['specialization_evidence']]
+                    : []
+            ),
             'metadata' => [
                 ...$metadata,
                 'normative_grounding_policy' => 'fsnb_required',
@@ -273,6 +281,11 @@ final class NormativeWorkItemPlannerService
             return $definition;
         }
 
+        $trustedEvidence = $this->trustedSpecializationEvidence($analysis, $workItemKey);
+        if ($trustedEvidence !== []) {
+            return $this->withTrustedSpecializationEvidence($definition, $trustedEvidence);
+        }
+
         $catalog = $this->materialScenarioCatalog ?? new ResidentialMaterialScenarioCatalog;
         $scenario = $catalog->issue($workItemKey, 'residential');
         if ($scenario === null) {
@@ -296,6 +309,14 @@ final class NormativeWorkItemPlannerService
                 'version' => $scenario['version'],
             ],
         ];
+        if (is_string($scenario['normative_search_text'] ?? null)
+            && trim($scenario['normative_search_text']) !== '') {
+            $definition['normative_search_text'] = trim($scenario['normative_search_text']);
+        }
+        if (is_string($scenario['normative_rate_code'] ?? null)
+            && trim($scenario['normative_rate_code']) !== '') {
+            $definition['normative_rate_code'] = trim($scenario['normative_rate_code']);
+        }
 
         return $definition;
     }
@@ -311,6 +332,97 @@ final class NormativeWorkItemPlannerService
         $text = mb_strtolower((string) ($definition['normative_search_text'] ?? $definition['name'] ?? ''));
 
         return str_contains($text, 'утепл') ? 'roof.insulation' : '';
+    }
+
+    /**
+     * @param  array<string, mixed>  $analysis
+     * @return list<array<string, mixed>>
+     */
+    private function trustedSpecializationEvidence(array $analysis, string $workItemKey): array
+    {
+        $buildingModelEvidence = ($this->buildingModelMaterialEvidenceExtractor ?? new BuildingModelMaterialEvidenceExtractor)
+            ->extract($analysis, $workItemKey);
+        $documentContext = is_array($analysis['document_context'] ?? null)
+            ? $analysis['document_context']
+            : [];
+        $sources = [
+            $analysis['specialization_evidence'] ?? null,
+            $analysis['material_evidence'] ?? null,
+            $documentContext['specialization_evidence'] ?? null,
+            $documentContext['material_evidence'] ?? null,
+        ];
+        $result = $buildingModelEvidence;
+
+        foreach ($sources as $source) {
+            if (! is_array($source) || ! is_array($source[$workItemKey] ?? null)) {
+                continue;
+            }
+            foreach ($source[$workItemKey] as $evidence) {
+                if (! is_array($evidence)
+                    || ! in_array($evidence['source'] ?? null, ['document', 'building_model', 'user_confirmation'], true)) {
+                    continue;
+                }
+                $text = trim((string) ($evidence['text'] ?? ''));
+                $refs = is_array($evidence['evidence_refs'] ?? null)
+                    ? array_values(array_unique(array_filter(
+                        $evidence['evidence_refs'],
+                        static fn (mixed $ref): bool => is_string($ref) && trim($ref) !== '',
+                    )))
+                    : [];
+                if ($text === '' || $refs === []) {
+                    continue;
+                }
+                $search = trim((string) ($evidence['normative_search_text'] ?? ''));
+                $code = trim((string) ($evidence['normative_rate_code'] ?? ''));
+                $result[] = array_filter([
+                    'text' => mb_substr($text, 0, 2000),
+                    'source' => $evidence['source'],
+                    'evidence_refs' => $refs,
+                    'normative_search_text' => $search !== '' ? mb_substr($search, 0, 500) : null,
+                    'normative_rate_code' => preg_match('/^\d{2}-\d{2}-\d{3}-\d{2}$/', $code) === 1 ? $code : null,
+                ], static fn (mixed $value): bool => $value !== null && $value !== '');
+            }
+        }
+
+        return array_slice($result, 0, 32);
+    }
+
+    /**
+     * @param  array<string, mixed>  $definition
+     * @param  list<array<string, mixed>>  $evidence
+     * @return array<string, mixed>
+     */
+    private function withTrustedSpecializationEvidence(array $definition, array $evidence): array
+    {
+        $metadata = is_array($definition['metadata'] ?? null) ? $definition['metadata'] : [];
+        unset($metadata['specialization_scenario'], $metadata['material_assumption'], $metadata['material_scenario_work_key']);
+
+        $searches = $this->uniqueEvidenceValues($evidence, 'normative_search_text');
+        $codes = $this->uniqueEvidenceValues($evidence, 'normative_rate_code');
+        $evidenceText = implode(' ', array_column($evidence, 'text'));
+        $definition['normative_search_text'] = count($searches) === 1
+            ? $searches[0]
+            : trim((string) ($definition['normative_search_text'] ?? $definition['name'] ?? '').' '.$evidenceText);
+        $definition['normative_rate_code'] = count($codes) === 1 ? $codes[0] : null;
+        $definition['metadata'] = [
+            ...$metadata,
+            'specialization_evidence' => $evidence,
+            'material_evidence_priority' => 'trusted_source',
+        ];
+
+        return $definition;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $evidence
+     * @return list<string>
+     */
+    private function uniqueEvidenceValues(array $evidence, string $key): array
+    {
+        return array_values(array_unique(array_filter(
+            array_map(static fn (array $item): string => trim((string) ($item[$key] ?? '')), $evidence),
+            static fn (string $value): bool => $value !== '',
+        )));
     }
 
     /** @param array<string, mixed> $analysis */
@@ -350,6 +462,7 @@ final class NormativeWorkItemPlannerService
             'pitched_roof_mineral_wool' => 'Предварительно принято утепление скатной кровли минераловатными плитами. Материал нужно уточнить по проекту.',
             'floor_laminate' => 'Предварительно принято чистовое покрытие пола из ламината. Материал нужно уточнить по ведомости отделки.',
             'baseboard_pvc' => 'Предварительно принят плинтус из ПВХ. Материал нужно уточнить по ведомости отделки.',
+            'residential_small_galvanized_ducts' => 'Предварительно приняты воздуховоды из оцинкованной стали класса Н диаметром до 200 мм. Материал и сечение нужно уточнить по проекту вентиляции.',
             default => $assumptionCode,
         };
 
@@ -1162,6 +1275,17 @@ final class NormativeWorkItemPlannerService
                 continue;
             }
 
+            $isResidentialScenario = ResidentialQuantityScenarioCatalog::owns($quantity);
+            if ($quantity->source === QuantitySource::Estimated
+                && $quantity->reviewBlockers === []
+                && ! $isResidentialScenario) {
+                continue;
+            }
+            if (DirectTakeoffRequiredWorkItems::contains($quantity->key)
+                && $quantity->source !== QuantitySource::Evidenced) {
+                continue;
+            }
+
             $quantities[$quantity->key] = [
                 'value' => (float) $quantity->amount,
                 'unit' => $quantity->unit,
@@ -1172,7 +1296,7 @@ final class NormativeWorkItemPlannerService
                     $quantity->evidenceIds,
                 ),
                 'review_required' => $quantity->reviewBlockers !== [],
-                'source' => ResidentialQuantityScenarioCatalog::owns($quantity)
+                'source' => $isResidentialScenario
                     ? 'residential_preliminary_scenario'
                     : 'canonical_building_quantity',
             ];

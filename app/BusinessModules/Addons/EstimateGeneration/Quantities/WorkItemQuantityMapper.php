@@ -24,7 +24,8 @@ final class WorkItemQuantityMapper
             return $direct;
         }
 
-        if (DirectTakeoffRequiredWorkItems::contains($workItemKey)) {
+        $isRoofGeometryAlias = in_array($workItemKey, ['roof.area', 'roof.flat_area'], true);
+        if (DirectTakeoffRequiredWorkItems::contains($workItemKey) && ! $isRoofGeometryAlias) {
             return null;
         }
 
@@ -36,6 +37,10 @@ final class WorkItemQuantityMapper
         foreach ($rule['sources'] as $candidate) {
             $source = $this->quantity($quantities[$candidate['key']] ?? null);
             if ($source === null || BigDecimal::of($source->amount)->isLessThanOrEqualTo(BigDecimal::zero())) {
+                continue;
+            }
+            if ($isRoofGeometryAlias
+                && ($source->source !== QuantitySource::Evidenced || $source->reviewBlockers !== [])) {
                 continue;
             }
 

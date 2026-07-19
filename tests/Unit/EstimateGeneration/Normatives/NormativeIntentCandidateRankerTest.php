@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeIntentCandidateRanker;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use PHPUnit\Framework\TestCase;
 
 final class NormativeIntentCandidateRankerTest extends TestCase
@@ -213,6 +214,44 @@ final class NormativeIntentCandidateRankerTest extends TestCase
         self::assertSame(
             [150106401],
             array_column((new NormativeIntentCandidateRanker)->select([$candidate], [$intent]) ?? [], 'id'),
+        );
+    }
+
+    public function test_exact_ventilation_scenario_code_never_falls_back_to_another_size(): void
+    {
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('ventilation.air_exchange', 'residential');
+        self::assertIsArray($scenario);
+        $intent = [
+            'search_text' => 'монтаж воздуховодов',
+            'unit' => 'm2',
+            'code' => '20-01-001-01',
+            'action' => 'ventilation_installation',
+            'scope' => 'engineering',
+            'system' => 'ventilation',
+            'object_type' => 'residential',
+            'normative_sections' => ['20'],
+            'specialization_scenario' => $scenario,
+        ];
+        $wrongSize = $this->candidate(
+            200100102,
+            '20-01-001-02',
+            'Прокладка воздуховодов из листовой оцинкованной стали класса Н диаметром до 250 мм',
+            '100 m2',
+            '20-01',
+        );
+
+        self::assertNull((new NormativeIntentCandidateRanker)->select([$wrongSize], [$intent]));
+
+        $exact = $this->candidate(
+            200100101,
+            '20-01-001-01',
+            'Прокладка воздуховодов из листовой оцинкованной стали класса Н диаметром до 200 мм',
+            '100 m2',
+            '20-01',
+        );
+        self::assertSame(
+            [200100101],
+            array_column((new NormativeIntentCandidateRanker)->select([$wrongSize, $exact], [$intent]) ?? [], 'id'),
         );
     }
 

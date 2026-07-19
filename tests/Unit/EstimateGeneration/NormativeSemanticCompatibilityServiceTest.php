@@ -491,6 +491,18 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
                 'specialization_scenario' => $scenario,
             ],
         ));
+        $floorScenario = (new ResidentialMaterialScenarioCatalog)->issue('finish.floor', 'residential');
+        self::assertIsArray($floorScenario);
+        self::assertTrue($service->isCompatible(
+            'Устройство покрытий из досок ламинированных замковым способом',
+            'Чистовое покрытие пола',
+            [
+                'action' => 'floor_covering',
+                'scope' => 'finishing',
+                'object_type' => 'residential',
+                'specialization_scenario' => $floorScenario,
+            ],
+        ));
         self::assertFalse($service->isCompatible(
             'Устройство плинтусов деревянных',
             'Монтаж плинтуса',
@@ -1207,6 +1219,126 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
             'Кабель трехжильный, прокладываемый по установленным конструкциям и лоткам',
             'Прокладка силовых кабельных линий',
             ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+    }
+
+    public function test_signed_residential_material_scenario_is_a_positive_candidate_contract(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $catalog = new ResidentialMaterialScenarioCatalog;
+
+        foreach ([
+            [
+                'walls.external_volume',
+                'Кладка наружных стен',
+                'Кладка стен из керамических или силикатных камней',
+                'Кладка наружных стен из газобетонных блоков',
+                'masonry',
+                'walls',
+            ],
+            [
+                'walls.internal',
+                'Устройство внутренних перегородок',
+                'Устройство межкомнатных перегородок с однослойной обшивкой цементно-стружечными плитами',
+                'Кладка внутренних перегородок из газобетонных блоков',
+                'masonry',
+                'walls',
+            ],
+            [
+                'foundation.waterproofing',
+                'Гидроизоляция фундаментов',
+                'Выравнивание поверхности бутовой кладки цементным раствором',
+                'Гидроизоляция боковая обмазочная битумная стен фундаментов',
+                'waterproofing',
+                'foundation',
+            ],
+            [
+                'finish.floor',
+                'Чистовое покрытие пола',
+                'Устройство покрытий полов из гетерогенного линолеума',
+                'Устройство покрытий полов из ламината',
+                'floor_covering',
+                'finishing',
+            ],
+            [
+                'finish.baseboard',
+                'Монтаж плинтуса',
+                'Устройство плинтусов из терраццевого раствора',
+                'Устройство плинтусов из поливинилхлорида',
+                'baseboard_installation',
+                'finishing',
+            ],
+        ] as [$key, $work, $wrongCandidate, $rightCandidate, $action, $scope]) {
+            $scenario = $catalog->issue($key, 'residential');
+            self::assertIsArray($scenario);
+            $intent = [
+                'action' => $action,
+                'scope' => $scope,
+                'object_type' => 'residential',
+                'specialization_scenario' => $scenario,
+            ];
+
+            self::assertFalse($service->isCompatible($wrongCandidate, $work, $intent), $key.' rejected');
+            self::assertTrue($service->isCompatible($rightCandidate, $work, $intent), $key.' accepted');
+        }
+    }
+
+    public function test_foundation_waterproofing_rejects_surface_leveling_operation(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Гидроизоляция стен, фундаментов: выравнивание поверхности бутовой кладки цементным раствором',
+            'Гидроизоляция фундаментов',
+            ['action' => 'waterproofing', 'scope' => 'foundation'],
+        ));
+    }
+
+    public function test_internal_door_work_rejects_balcony_door_norm(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Установка блоков балконных дверных из ПВХ профилей',
+            'Монтаж внутренних дверных блоков',
+            ['action' => 'door_installation', 'scope' => 'openings'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Установка блоков дверных внутренних',
+            'Монтаж внутренних дверных блоков',
+            ['action' => 'door_installation', 'scope' => 'openings'],
+        ));
+    }
+
+    public function test_cable_work_rejects_conduit_and_trench_norm(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Прокладка гофрированных труб в траншеях',
+            'Прокладка магистральных кабелей',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Прокладка кабеля в траншее',
+            'Прокладка магистральных кабелей',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Прокладка кабелей по установленным конструкциям',
+            'Прокладка магистральных кабелей',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+    }
+
+    public function test_rough_wall_preparation_rejects_decorative_finish(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Нанесение декоративного мелкозернистого покрытия на стены',
+            'Черновая подготовка стен',
+            ['action' => 'general_work', 'scope' => 'finishing'],
         ));
     }
 }

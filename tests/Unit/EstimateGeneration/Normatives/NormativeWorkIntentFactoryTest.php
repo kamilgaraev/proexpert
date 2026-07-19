@@ -191,7 +191,76 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         $item['specialization_scenario'] = $catalog->issue('finish.floor', 'residential');
         $intent = $factory->intent($item, $context, 'fsnb-2026.1');
 
-        self::assertSame(['ламинат'], $intent->specializationScenario['material_markers'] ?? null);
-        self::assertSame('residential_preliminary_common:v1', $intent->specializationScenario['scenario_id'] ?? null);
+        self::assertSame(['ламинат', 'ламинированн'], $intent->specializationScenario['material_markers'] ?? null);
+        self::assertSame('residential_preliminary_common:v2', $intent->specializationScenario['scenario_id'] ?? null);
+    }
+
+    public function test_trusted_specialization_evidence_suppresses_preliminary_scenario(): void
+    {
+        $catalog = new ResidentialMaterialScenarioCatalog;
+        $factory = new NormativeWorkIntentFactory(
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
+            null,
+            $catalog,
+        );
+        $scenario = $catalog->issue('finish.floor', 'residential');
+        self::assertIsArray($scenario);
+
+        $intent = $factory->intent([
+            'key' => 'finish-floor',
+            'name' => 'Чистовое покрытие пола',
+            'unit' => 'm2',
+            'metadata' => ['quantity_key' => 'finish.floor'],
+            'specialization_scenario' => $scenario,
+            'specialization_evidence' => [[
+                'text' => 'Ведомость отделки: линолеум',
+                'source' => 'document',
+                'evidence_refs' => ['doc:1'],
+            ]],
+        ], [
+            'organization_id' => 1,
+            'project_id' => 89,
+            'session_id' => 58,
+            'scope_type' => 'finishing',
+            'object_type' => 'house',
+            'applicability_date' => '2026-07-17',
+            'source_refs' => ['doc:1'],
+        ], 'fsnb-2026.1');
+
+        self::assertSame('Ведомость отделки: линолеум', $intent->specializationEvidence[0]['text'] ?? null);
+        self::assertNull($intent->specializationScenario);
+    }
+
+    public function test_structured_source_reference_preserves_matching_specialization_evidence(): void
+    {
+        $factory = new NormativeWorkIntentFactory(
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
+        );
+
+        $intent = $factory->intent([
+            'key' => 'external-wall',
+            'name' => 'Кладка наружных стен',
+            'normative_search_text' => 'кладка наружных стен из кирпича',
+            'unit' => 'm3',
+            'metadata' => ['quantity_key' => 'walls.external_volume'],
+            'specialization_evidence' => [[
+                'text' => 'Материал наружной стены: кирпич',
+                'source' => 'building_model',
+                'evidence_refs' => ['14201'],
+            ]],
+        ], [
+            'organization_id' => 1,
+            'project_id' => 89,
+            'session_id' => 58,
+            'scope_type' => 'walls',
+            'object_type' => 'house',
+            'applicability_date' => '2026-07-17',
+            'source_refs' => [['evidence_id' => '14201']],
+        ], 'fsnb-2026.1');
+
+        self::assertSame(['14201'], $intent->sourceEvidence);
+        self::assertSame(['14201'], $intent->specializationEvidence[0]['evidence_refs'] ?? null);
+        self::assertSame('brick', $intent->material);
+        self::assertNull($intent->specializationScenario);
     }
 }

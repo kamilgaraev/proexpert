@@ -22,6 +22,8 @@ final class DirectTakeoffRequiredWorkItems
         'openings.windows',
         'plumbing.pipe',
         'roof.gutter',
+        'roof.area',
+        'roof.flat_area',
         'roof.rafters',
         'site.setup',
         'site.geodesy',

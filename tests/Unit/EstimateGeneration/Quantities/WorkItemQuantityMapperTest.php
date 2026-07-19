@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\CanonicalEvidenceJson
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -216,7 +217,7 @@ final class WorkItemQuantityMapperTest extends TestCase
     }
 
     #[Test]
-    public function estimated_direct_takeoff_is_accepted_only_from_versioned_residential_scenario(): void
+    public function estimated_direct_takeoff_is_rejected_even_when_it_claims_a_residential_scenario(): void
     {
         $forged = new QuantityData(
             key: 'roof.gutter',
@@ -226,7 +227,7 @@ final class WorkItemQuantityMapperTest extends TestCase
             formulaVersion: '1.0.0',
             formulaInputs: [
                 'scenario' => [
-                    'id' => 'residential_preliminary_scenario:v1',
+                    'id' => ResidentialQuantityScenarioCatalog::SCENARIO_ID,
                     'version' => '1.0.0',
                     'confidence' => 0.55,
                     'warnings' => ['preliminary_quantity_scenario'],
@@ -243,11 +244,11 @@ final class WorkItemQuantityMapperTest extends TestCase
             unit: 'm',
             amount: '42.000000',
             formulaKey: 'residential_preliminary.roof.gutter',
-            formulaVersion: '1.0.0',
+            formulaVersion: ResidentialQuantityScenarioCatalog::VERSION,
             formulaInputs: [
                 'scenario' => [
-                    'id' => 'residential_preliminary_scenario:v1',
-                    'version' => '1.0.0',
+                    'id' => ResidentialQuantityScenarioCatalog::SCENARIO_ID,
+                    'version' => ResidentialQuantityScenarioCatalog::VERSION,
                     'confidence' => 0.55,
                     'warnings' => ['preliminary_quantity_scenario'],
                 ],
@@ -255,7 +256,7 @@ final class WorkItemQuantityMapperTest extends TestCase
             source: QuantitySource::Estimated,
             evidenceIds: ['page:plan:1'],
             modelVersion: 'building-model:v1',
-            assumptions: ['residential_preliminary_scenario:v1'],
+            assumptions: [ResidentialQuantityScenarioCatalog::SCENARIO_ID],
             reviewBlockers: [],
         );
         $unlisted = new QuantityData(
@@ -268,12 +269,12 @@ final class WorkItemQuantityMapperTest extends TestCase
             source: QuantitySource::Estimated,
             evidenceIds: ['page:plan:1'],
             modelVersion: 'building-model:v1',
-            assumptions: ['residential_preliminary_scenario:v1'],
+            assumptions: [ResidentialQuantityScenarioCatalog::SCENARIO_ID],
             reviewBlockers: [],
         );
 
         self::assertNull((new WorkItemQuantityMapper)->map('roof.gutter', ['roof.gutter' => $forged]));
-        self::assertSame($scenario, (new WorkItemQuantityMapper)->map('roof.gutter', ['roof.gutter' => $scenario]));
+        self::assertNull((new WorkItemQuantityMapper)->map('roof.gutter', ['roof.gutter' => $scenario]));
         self::assertNull((new WorkItemQuantityMapper)->map('site.setup', ['site.setup' => $unlisted]));
     }
 
