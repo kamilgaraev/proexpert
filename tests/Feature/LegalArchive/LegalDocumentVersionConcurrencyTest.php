@@ -6,7 +6,6 @@ namespace Tests\Feature\LegalArchive;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
-use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\Exceptions\ImmutableDataException;
 use App\Services\LegalArchive\Files\LegalDocumentFilePolicy;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
@@ -87,6 +86,17 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             $table->json('metadata')->nullable();
             $table->timestamps();
             $table->unique(['document_file_id', 'version_number']);
+        });
+        $this->database->schema()->create('legal_archive_file_cleanup_debts', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->text('storage_path');
+            $table->string('reason');
+            $table->unsignedInteger('attempts')->default(0);
+            $table->timestamp('next_attempt_at')->nullable();
+            $table->text('last_error')->nullable();
+            $table->timestamp('resolved_at')->nullable();
+            $table->timestamps();
         });
 
         $this->configuration = [
@@ -211,6 +221,7 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             self::fail('Scanner failure was expected.');
         } catch (LegalDocumentScanFailed $exception) {
             self::assertSame('malware', $exception->getPrevious()?->getMessage());
+            self::assertSame('failed', $exception->version->processing_status);
         }
 
         $failed = $file->versions()->sole();
@@ -218,6 +229,65 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         self::assertFalse((bool) $failed->is_current);
         self::assertNull($file->fresh()->current_version_id);
         self::assertNull(LegalArchiveDocument::query()->findOrFail(10)->current_primary_version_id);
+    }
+
+    public function test_scanner_failure_status_and_current_reconciliation_are_atomic(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Договор']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10, 'organization_id' => 20, 'role' => 'primary', 'title' => 'Договор',
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->method('upload')->willReturn('org-20/legal-archive/files/1/rejected.pdf');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->method('assertClean')->willThrowException(new RuntimeException('malware'));
+        $this->connection()->statement(
+            'CREATE TRIGGER reject_failed_current_clear BEFORE UPDATE ON legal_archive_document_versions '
+            ."WHEN NEW.is_current = 0 BEGIN SELECT RAISE(FAIL, 'current reconciliation failed'); END"
+        );
+
+        try {
+            $this->service($storage, $scanner)->addVersion($file, $this->pdf('rejected.pdf'), new VersionInput);
+            self::fail('Scanner failure was expected.');
+        } catch (RuntimeException) {
+            self::assertTrue(true);
+        }
+
+        $persisted = $file->versions()->sole();
+        self::assertFalse(
+            $persisted->processing_status === 'failed' && (bool) $persisted->is_current,
+            'A partial failure must not leave a failed version current.',
+        );
+    }
+
+    public function test_failed_s3_compensation_creates_durable_cleanup_debt(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Договор']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10, 'organization_id' => 20, 'role' => 'primary', 'title' => 'Договор',
+        ]);
+        $failedPath = 'org-20/legal-archive/files/1/orphan.pdf';
+        $storage = $this->createMock(FileService::class);
+        $storage->method('upload')->willReturn($failedPath);
+        $storage->expects(self::once())->method('delete')->willReturn(false);
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $this->connection()->statement(
+            'CREATE TRIGGER reject_version_for_cleanup BEFORE INSERT ON legal_archive_document_versions '
+            ."BEGIN SELECT RAISE(FAIL, 'persistence failed'); END"
+        );
+
+        try {
+            $this->service($storage, $scanner)->addVersion($file, $this->pdf('orphan.pdf'), new VersionInput);
+            self::fail('Persistence failure was expected.');
+        } catch (RuntimeException) {
+            self::assertTrue(true);
+        }
+
+        $debt = $this->connection()->table('legal_archive_file_cleanup_debts')->sole();
+        self::assertSame(20, (int) $debt->organization_id);
+        self::assertSame($failedPath, $debt->storage_path);
+        self::assertSame('version_persistence_failed', $debt->reason);
+        self::assertNull($debt->resolved_at);
     }
 
     public function test_direct_version_mutation_and_deletion_are_prohibited(): void
@@ -246,31 +316,6 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         }
 
         self::assertSame('org-20/legal-archive/files/1/a.pdf', $version->fresh()->file_path);
-    }
-
-    public function test_rejects_invalid_processing_transition_and_frozen_version_transition(): void
-    {
-        $version = new LegalArchiveDocumentVersion;
-        $version->forceFill(['id' => 1, 'processing_status' => 'ready', 'status' => 'uploaded']);
-        $version->exists = true;
-        $service = $this->service($this->createMock(FileService::class), $this->createMock(LegalDocumentScanner::class));
-
-        $this->expectException(ImmutableDataException::class);
-        $service->transitionProcessingStatus($version, 'failed');
-    }
-
-    public function test_signed_version_cannot_use_technical_transition(): void
-    {
-        $version = new LegalArchiveDocumentVersion;
-        $version->forceFill(['id' => 1, 'processing_status' => 'quarantine', 'status' => 'signed']);
-        $version->exists = true;
-
-        $this->expectException(ImmutableDataException::class);
-
-        $this->service(
-            $this->createMock(FileService::class),
-            $this->createMock(LegalDocumentScanner::class),
-        )->transitionProcessingStatus($version, 'ready');
     }
 
     public function test_each_logical_file_has_own_current_and_document_points_to_primary_current(): void
@@ -306,8 +351,9 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         $indexes = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000210_create_legal_document_file_indexes.php');
         $constraints = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000220_add_legal_document_file_constraints.php');
         $validation = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000230_validate_legal_document_file_constraints.php');
+        $cleanupDebts = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000240_create_legal_archive_file_cleanup_debts.php');
 
-        foreach ([$schema, $indexes, $constraints, $validation] as $phase) {
+        foreach ([$schema, $indexes, $constraints, $validation, $cleanupDebts] as $phase) {
             self::assertIsString($phase);
         }
         self::assertStringContainsString("->unsignedBigInteger('document_file_id')->nullable()", $schema);
@@ -325,6 +371,10 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         self::assertStringContainsString("current_setting('most.legal_archive_version_mutation', true)", $constraints);
         self::assertStringContainsString('NOT VALID', $constraints);
         self::assertStringContainsString('VALIDATE CONSTRAINT', $validation);
+        self::assertStringContainsString("Schema::hasTable('legal_archive_file_cleanup_debts')", $cleanupDebts);
+        self::assertStringContainsString('legal_archive_cleanup_debts_pending_idx', $cleanupDebts);
+        self::assertStringContainsString('legal_archive_cleanup_debts_object_unique', $cleanupDebts);
+        self::assertStringContainsString('legal_archive_cleanup_debts_rollback_blocked', $cleanupDebts);
         self::assertStringNotContainsString('UPDATE legal_archive_document_versions', $schema.$indexes.$constraints.$validation);
     }
 

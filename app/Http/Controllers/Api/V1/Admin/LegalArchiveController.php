@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\LegalArchiveDocumentIndexRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\StoreLegalArchiveDocumentRequest;
@@ -14,6 +15,7 @@ use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentVersionReso
 use App\Http\Responses\AdminResponse;
 use App\Models\User;
 use App\Services\LegalArchive\Files\LegalDocumentFileRejected;
+use App\Services\LegalArchive\Files\LegalDocumentScanFailed;
 use App\Services\LegalArchive\LegalArchiveDictionary;
 use App\Services\LegalArchive\LegalArchiveRegistryService;
 use Illuminate\Http\JsonResponse;
@@ -121,6 +123,25 @@ final class LegalArchiveController extends Controller
                 201
             );
         } catch (Throwable $e) {
+            if ($e instanceof LegalDocumentScanFailed) {
+                $document = $this->registryService->findForOrganization(
+                    $this->organizationId($request),
+                    (int) $e->version->document_id,
+                );
+
+                return AdminResponse::success(
+                    $document instanceof LegalArchiveDocument ? new LegalArchiveDocumentResource($document) : null,
+                    trans_message('legal_archive.messages.document_file_processing_failed'),
+                    202,
+                    [
+                        'processing_status' => 'failed',
+                        'operation_result' => 'document_created',
+                        'retry_action' => 'add_version',
+                        'retry_document_id' => (int) $e->version->document_id,
+                    ],
+                );
+            }
+
             if ($e instanceof LegalDocumentFileRejected) {
                 return AdminResponse::error(
                     trans_message('legal_archive.messages.validation_error'),
@@ -211,6 +232,20 @@ final class LegalArchiveController extends Controller
                 201
             );
         } catch (Throwable $e) {
+            if ($e instanceof LegalDocumentScanFailed) {
+                return AdminResponse::success(
+                    new LegalArchiveDocumentVersionResource($e->version),
+                    trans_message('legal_archive.messages.version_file_processing_failed'),
+                    202,
+                    [
+                        'processing_status' => 'failed',
+                        'operation_result' => 'version_created',
+                        'retry_action' => 'add_version',
+                        'retry_document_id' => (int) $e->version->document_id,
+                    ],
+                );
+            }
+
             if ($e instanceof LegalDocumentFileRejected) {
                 return AdminResponse::error(
                     trans_message('legal_archive.messages.validation_error'),

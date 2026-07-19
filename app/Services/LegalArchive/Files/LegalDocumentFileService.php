@@ -58,7 +58,14 @@ final class LegalDocumentFileService
                 3,
             );
         } catch (Throwable $exception) {
-            $this->fileService->delete($storedPath, $organization);
+            if (! $this->fileService->delete($storedPath, $organization)) {
+                $this->recordCleanupDebt(
+                    (int) $file->organization_id,
+                    $storedPath,
+                    'version_persistence_failed',
+                    $exception,
+                );
+            }
 
             throw new LegalDocumentVersionPersistenceFailed($exception);
         }
@@ -66,19 +73,18 @@ final class LegalDocumentFileService
         try {
             $this->scanner->assertClean($upload);
         } catch (Throwable $exception) {
-            $this->transitionProcessingStatus($version, 'failed');
-            $this->removeFailedCurrent($version);
+            $failed = $this->markFailedAndReconcileCurrent($version);
 
-            throw new LegalDocumentScanFailed($exception);
+            throw new LegalDocumentScanFailed($failed, $exception);
         }
 
-        return $this->transitionProcessingStatus($version, 'ready');
+        return $this->markReady($version);
     }
 
-    public function transitionProcessingStatus(
+    private function assertProcessingTransitionAllowed(
         LegalArchiveDocumentVersion $version,
         string $target,
-    ): LegalArchiveDocumentVersion {
+    ): void {
         if (
             ! in_array($target, ['ready', 'failed'], true)
             || $version->processing_status !== 'quarantine'
@@ -86,13 +92,25 @@ final class LegalDocumentFileService
         ) {
             throw new ImmutableDataException(LegalArchiveDocumentVersion::class, 'transition');
         }
+    }
 
-        return $this->database()->transaction(function () use ($version, $target): LegalArchiveDocumentVersion {
+    private function markReady(LegalArchiveDocumentVersion $version): LegalArchiveDocumentVersion
+    {
+        return $this->database()->transaction(function () use ($version): LegalArchiveDocumentVersion {
+            $file = LegalArchiveDocumentFile::query()
+                ->whereKey($version->document_file_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $locked = LegalArchiveDocumentVersion::query()
+                ->where('document_file_id', $file->id)
+                ->whereKey($version->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            $this->assertProcessingTransitionAllowed($locked, 'ready');
             $this->authorizeDatabaseMutation();
-            $locked = LegalArchiveDocumentVersion::query()->whereKey($version->getKey())->lockForUpdate()->firstOrFail();
 
-            return LegalArchiveDocumentVersion::technicalMutation(function () use ($locked, $target): LegalArchiveDocumentVersion {
-                $locked->processing_status = $target;
+            return LegalArchiveDocumentVersion::technicalMutation(function () use ($locked): LegalArchiveDocumentVersion {
+                $locked->processing_status = 'ready';
                 $locked->save();
 
                 return $locked->refresh();
@@ -148,26 +166,66 @@ final class LegalDocumentFileService
         return $version;
     }
 
-    private function removeFailedCurrent(LegalArchiveDocumentVersion $failed): void
-    {
-        $this->database()->transaction(function () use ($failed): void {
+    private function markFailedAndReconcileCurrent(
+        LegalArchiveDocumentVersion $version,
+    ): LegalArchiveDocumentVersion {
+        return $this->database()->transaction(function () use ($version): LegalArchiveDocumentVersion {
+            $file = LegalArchiveDocumentFile::query()
+                ->whereKey($version->document_file_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $failed = LegalArchiveDocumentVersion::query()
+                ->where('document_file_id', $file->id)
+                ->whereKey($version->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            $this->assertProcessingTransitionAllowed($failed, 'failed');
             $this->authorizeDatabaseMutation();
-            $file = LegalArchiveDocumentFile::query()->whereKey($failed->document_file_id)->lockForUpdate()->firstOrFail();
-            if ((int) $file->current_version_id !== (int) $failed->id) {
-                return;
+            $wasCurrent = (int) $file->current_version_id === (int) $failed->id;
+            $fallback = $wasCurrent
+                ? $file->versions()
+                    ->whereKeyNot($failed->id)
+                    ->where('processing_status', 'ready')
+                    ->orderByDesc('id')
+                    ->lockForUpdate()
+                    ->first()
+                : null;
+
+            LegalArchiveDocumentVersion::technicalMutation(function () use ($failed, $wasCurrent): void {
+                $failed->processing_status = 'failed';
+                if ($wasCurrent) {
+                    $failed->is_current = false;
+                }
+                $failed->save();
+            });
+            if ($wasCurrent) {
+                if ($fallback instanceof LegalArchiveDocumentVersion) {
+                    $this->setVersionCurrent((int) $fallback->id, true);
+                }
+                $this->setCurrentPointers($file, $fallback?->id);
             }
 
-            $fallback = $file->versions()
-                ->whereKeyNot($failed->id)
-                ->where('processing_status', 'ready')
-                ->orderByDesc('id')
-                ->first();
-            $this->setVersionCurrent((int) $failed->id, false);
-            if ($fallback instanceof LegalArchiveDocumentVersion) {
-                $this->setVersionCurrent((int) $fallback->id, true);
-            }
-            $this->setCurrentPointers($file, $fallback?->id);
+            return $failed->refresh();
         }, 3);
+    }
+
+    private function recordCleanupDebt(
+        int $organizationId,
+        string $storagePath,
+        string $reason,
+        Throwable $exception,
+    ): void {
+        $this->database()->table('legal_archive_file_cleanup_debts')->insert([
+            'organization_id' => $organizationId,
+            'storage_path' => $storagePath,
+            'reason' => $reason,
+            'attempts' => 1,
+            'next_attempt_at' => now(),
+            'last_error' => $exception::class,
+            'resolved_at' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     private function setVersionCurrent(int $versionId, bool $current): void

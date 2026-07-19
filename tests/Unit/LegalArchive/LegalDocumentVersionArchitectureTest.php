@@ -46,5 +46,74 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
         self::assertStringContainsString('new PDO(', $source);
         self::assertGreaterThanOrEqual(2, substr_count($source, 'new PDO('));
         self::assertStringContainsString('FOR UPDATE NOWAIT', $source);
+        self::assertStringNotContainsString('CREATE TABLE {$table}', $source);
+        self::assertStringContainsString('legal_archive_document_files', $source);
+        self::assertStringContainsString('legal_archive_document_versions', $source);
+        self::assertStringContainsString('legal_archive_versions_immutable_guard', $source);
+        self::assertStringContainsString('legal_archive_document_file_current_unique', $source);
+        self::assertStringContainsString('rollBack()', $source);
+    }
+
+    public function test_processing_transition_is_not_a_public_application_api(): void
+    {
+        self::assertFalse(method_exists(
+            \App\Services\LegalArchive\Files\LegalDocumentFileService::class,
+            'transitionProcessingStatus',
+        ));
+
+        $source = file_get_contents(
+            __DIR__.'/../../../app/Services/LegalArchive/Files/LegalDocumentFileService.php',
+        );
+        self::assertIsString($source);
+        self::assertStringNotContainsString('public function transitionProcessingStatus', $source);
+    }
+
+    public function test_technical_mutation_capability_is_confined_to_model_and_file_service(): void
+    {
+        $root = realpath(__DIR__.'/../../../app');
+        self::assertIsString($root);
+        $allowed = array_filter(array_map(
+            static fn (string $path): string => str_replace('\\', '/', realpath($path) ?: ''),
+            [
+                __DIR__.'/../../../app/BusinessModules/Features/LegalArchive/Models/LegalArchiveDocumentVersion.php',
+                __DIR__.'/../../../app/Services/LegalArchive/Files/LegalDocumentFileService.php',
+            ],
+        ));
+        $violations = [];
+
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root)) as $file) {
+            if (! $file->isFile() || $file->getExtension() !== 'php') {
+                continue;
+            }
+            $path = str_replace('\\', '/', $file->getPathname());
+            if (in_array($path, $allowed, true)) {
+                continue;
+            }
+            $source = file_get_contents($path);
+            self::assertIsString($source);
+            if (
+                str_contains($source, 'LegalArchiveDocumentVersion::technicalMutation(')
+                || str_contains($source, 'most.legal_archive_version_mutation')
+            ) {
+                $violations[] = $path;
+            }
+        }
+
+        self::assertSame([], $violations, implode(PHP_EOL, $violations));
+    }
+
+    public function test_scanner_failure_has_an_explicit_accepted_api_contract(): void
+    {
+        $controller = file_get_contents(
+            __DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchiveController.php',
+        );
+        self::assertIsString($controller);
+        self::assertGreaterThanOrEqual(2, substr_count($controller, 'instanceof LegalDocumentScanFailed'));
+        self::assertStringContainsString('legal_archive.messages.document_file_processing_failed', $controller);
+        self::assertStringContainsString('legal_archive.messages.version_file_processing_failed', $controller);
+        self::assertGreaterThanOrEqual(2, substr_count($controller, '202'));
+        self::assertGreaterThanOrEqual(2, substr_count($controller, "'retry_action' => 'add_version'"));
+        self::assertStringContainsString('new LegalArchiveDocumentResource(', $controller);
+        self::assertStringContainsString('new LegalArchiveDocumentVersionResource($e->version)', $controller);
     }
 }
