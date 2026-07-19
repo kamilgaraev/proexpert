@@ -7,6 +7,7 @@ namespace App\Services\LegalArchive;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
+use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -15,7 +16,10 @@ use function trans_message;
 
 final class LegalDocumentGovernanceService
 {
-    public function __construct(private readonly AuthorizationService $authorization) {}
+    public function __construct(
+        private readonly AuthorizationService $authorization,
+        private readonly LegalDocumentAudit $audit,
+    ) {}
 
     /** @param array<string, mixed> $retention */
     public function updateRetention(LegalArchiveDocument $document, User $actor, array $retention): LegalArchiveDocument
@@ -23,6 +27,12 @@ final class LegalDocumentGovernanceService
         $this->assertAllowed($document, $actor, 'legal_archive.retention.manage');
 
         return DB::transaction(function () use ($document, $actor, $retention): LegalArchiveDocument {
+            $before = Arr::only($document->getAttributes(), [
+                'retention_policy',
+                'retention_basis',
+                'retention_started_at',
+                'retention_until',
+            ]);
             $document->forceFill(Arr::only($retention, [
                 'retention_policy',
                 'retention_basis',
@@ -30,6 +40,10 @@ final class LegalDocumentGovernanceService
                 'retention_until',
             ]));
             $document->forceFill(['updated_by_user_id' => $actor->id])->save();
+            $this->audit->record('retention_updated', $document, $actor, [
+                'before' => $before,
+                'after' => Arr::only($document->getAttributes(), array_keys($before)),
+            ]);
 
             return $document->refresh();
         });
@@ -40,10 +54,15 @@ final class LegalDocumentGovernanceService
         $this->assertAllowed($document, $actor, 'legal_archive.legal_hold.manage');
 
         return DB::transaction(function () use ($document, $actor, $enabled): LegalArchiveDocument {
+            $before = (bool) $document->legal_hold;
             $document->forceFill([
                 'legal_hold' => $enabled,
                 'updated_by_user_id' => $actor->id,
             ])->save();
+            $this->audit->record($enabled ? 'legal_hold_enabled' : 'legal_hold_disabled', $document, $actor, [
+                'before' => ['legal_hold' => $before],
+                'after' => ['legal_hold' => $enabled],
+            ]);
 
             return $document->refresh();
         });

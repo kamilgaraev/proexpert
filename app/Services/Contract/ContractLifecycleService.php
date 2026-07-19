@@ -8,6 +8,7 @@ use App\Enums\Contract\ContractStatusEnum;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Contract;
 use App\Models\User;
+use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use Illuminate\Support\Facades\DB;
 
 final class ContractLifecycleService
@@ -21,7 +22,8 @@ final class ContractLifecycleService
     ];
 
     public function __construct(
-        private readonly ContractStateEventService $stateEventService
+        private readonly ContractStateEventService $stateEventService,
+        private readonly LegalDocumentAudit $audit,
     ) {}
 
     public function transition(Contract $contract, string $action, User $actor, ?string $reason): Contract
@@ -40,7 +42,7 @@ final class ContractLifecycleService
             $contract->save();
 
             if ($contract->exists) {
-                $this->stateEventService->createStatusTransitionEvent(
+                $stateEvent = $this->stateEventService->createStatusTransitionEvent(
                     $contract,
                     $action,
                     $currentStatus,
@@ -48,6 +50,12 @@ final class ContractLifecycleService
                     $reason,
                     (int) $actor->id
                 );
+                $this->audit->recordContractForActorId($action, $contract, (int) $actor->id, [
+                    'before' => ['status' => $currentStatus],
+                    'after' => ['status' => $targetStatus],
+                    'reason' => $reason,
+                    'source_event_id' => 'contract_state_event:'.(string) $stateEvent->id,
+                ]);
             }
 
             return $contract->exists ? $contract->refresh() : $contract;

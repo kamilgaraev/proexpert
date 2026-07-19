@@ -15,6 +15,7 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\Services\Contractor\SelfExecutionService;
+use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\Logging\LoggingService;
 use Exception;
 use Illuminate\Support\Facades\Auth;
@@ -32,6 +33,7 @@ class ContractSideMutationService
         private readonly SelfExecutionService $selfExecutionService,
         private readonly ContractStateEventService $stateEventService,
         private readonly ContractPartySnapshotService $contractPartySnapshotService,
+        private readonly LegalDocumentAudit $audit,
     ) {}
 
     public function create(
@@ -95,7 +97,11 @@ class ContractSideMutationService
                 }
             }
 
-            $this->stateEventService->createContractCreatedEvent($contract);
+            $stateEvent = $this->stateEventService->createContractCreatedEvent($contract);
+            $this->audit->recordContractForActorId('create', $contract, Auth::id(), [
+                'after' => $this->auditSnapshot($contract),
+                'source_event_id' => 'contract_state_event:'.(string) $stateEvent->id,
+            ]);
 
             DB::commit();
 
@@ -165,6 +171,7 @@ class ContractSideMutationService
         ]);
 
         $previousTotalAmount = (float) ($contract->total_amount ?? 0);
+        $beforeAudit = $this->auditSnapshot($contract);
         $shouldRefreshParties = $this->shouldRefreshContractParties($contract, $contractDTO);
         $updateData = $contractDTO->toArray();
         $updateData['organization_id'] = $targetOrganizationId;
@@ -181,6 +188,10 @@ class ContractSideMutationService
             $contract->update($updateData);
             $this->syncProjects($contract, $contractDTO, $projectIds, $targetOrganizationId);
             $this->contractPartySnapshotService->syncParties($contract->refresh(), $shouldRefreshParties);
+            $this->audit->recordContractForActorId('update', $contract, Auth::id(), [
+                'before' => $beforeAudit,
+                'after' => $this->auditSnapshot($contract),
+            ]);
 
             DB::commit();
 
@@ -685,5 +696,22 @@ class ContractSideMutationService
                 throw new Exception('Некоторые проекты не принадлежат организации-владельцу договора.');
             }
         }
+    }
+
+    private function auditSnapshot(Contract $contract): array
+    {
+        $status = $contract->status;
+
+        return [
+            'id' => (int) $contract->id,
+            'organization_id' => (int) $contract->organization_id,
+            'project_id' => $contract->project_id === null ? null : (int) $contract->project_id,
+            'number' => (string) $contract->number,
+            'status' => $status instanceof \BackedEnum ? $status->value : (string) $status,
+            'contract_category' => $contract->contract_category,
+            'contract_side_type' => $contract->contract_side_type?->value,
+            'contractor_id' => $contract->contractor_id,
+            'supplier_id' => $contract->supplier_id,
+        ];
     }
 }

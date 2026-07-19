@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\ImmutableAudit\Models;
 
+use App\Exceptions\ImmutableDataException;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -90,6 +91,16 @@ final class ImmutableAuditEvent extends Model
         'retention_until' => 'datetime',
         'created_at' => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        self::updating(static function (): never {
+            throw new ImmutableDataException(self::class, 'update');
+        });
+        self::deleting(static function (): never {
+            throw new ImmutableDataException(self::class, 'delete');
+        });
+    }
 
     public function organization(): BelongsTo
     {

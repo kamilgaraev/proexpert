@@ -21,6 +21,7 @@ use App\Services\Contract\ContractPaymentDocumentService;
 use App\Services\Contract\ContractSideMutationService;
 use App\Services\Contract\ContractStateEventService;
 use App\Services\Contractor\SelfExecutionService;
+use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\Logging\LoggingService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -125,7 +126,23 @@ class ContractMutationAtomicityTest extends TestCase
         self::assertSame('1000.00', (string) $storedAmount);
     }
 
-    private function mutationService(): ContractSideMutationService
+    public function test_contract_and_audit_are_atomic(): void
+    {
+        $audit = Mockery::mock(LegalDocumentAudit::class);
+        $audit->shouldReceive('recordContractForActorId')
+            ->once()
+            ->andThrow(new RuntimeException('audit unavailable'));
+
+        $this->expectException(RuntimeException::class);
+
+        try {
+            $this->mutationService($audit)->create(1, $this->contractDto());
+        } finally {
+            self::assertFalse(Contract::query()->where('number', 'ATOMIC-100')->exists());
+        }
+    }
+
+    private function mutationService(?LegalDocumentAudit $audit = null): ContractSideMutationService
     {
         $repository = Mockery::mock(ContractRepositoryInterface::class);
         $repository->shouldReceive('create')
@@ -163,6 +180,7 @@ class ContractMutationAtomicityTest extends TestCase
             Mockery::mock(SelfExecutionService::class),
             app(ContractStateEventService::class),
             $snapshotService,
+            $audit ?? Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(),
         );
     }
 

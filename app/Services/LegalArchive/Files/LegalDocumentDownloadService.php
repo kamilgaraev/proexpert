@@ -4,13 +4,16 @@ declare(strict_types=1);
 
 namespace App\Services\LegalArchive\Files;
 
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\Storage\FileService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Container\Container;
+use Illuminate\Support\Str;
 use Psr\Log\LoggerInterface;
 use RuntimeException;
 
@@ -21,6 +24,7 @@ final class LegalDocumentDownloadService
         private readonly AuthorizationService $authorization,
         private readonly LegalDocumentFilePolicy $policy,
         private readonly LoggerInterface $logger,
+        private readonly ?LegalDocumentAudit $audit = null,
     ) {}
 
     public function temporaryUrl(LegalArchiveDocumentVersion $version, User $actor, string $purpose): string
@@ -70,6 +74,20 @@ final class LegalDocumentDownloadService
             'version_id' => $version->id,
             'purpose' => $purpose,
         ]);
+
+        if ($this->audit !== null) {
+            $document = $version->documentFile?->document
+                ?? LegalArchiveDocument::query()
+                    ->forOrganization($organizationId)
+                    ->find($version->document_id);
+            if ($document instanceof LegalArchiveDocument) {
+                $this->audit->record($purpose, $document, $actor, [
+                    'version_id' => (int) $version->id,
+                    'document_file_id' => (int) $version->document_file_id,
+                    'source_event_id' => $purpose.':'.(string) $version->id.':'.(string) Str::uuid(),
+                ]);
+            }
+        }
 
         return $url;
     }

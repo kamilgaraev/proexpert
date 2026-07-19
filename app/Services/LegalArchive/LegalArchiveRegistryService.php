@@ -9,6 +9,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
 use App\Services\LegalArchive\Files\LegalDocumentVersionPersistenceFailed;
@@ -27,6 +28,7 @@ final class LegalArchiveRegistryService
     public function __construct(
         private readonly LegalDocumentFileService $documentFileService,
         private readonly LegalDocumentDownloadService $downloadService,
+        private readonly LegalDocumentAudit $audit,
     ) {}
 
     public function paginate(int $organizationId, array $filters): LengthAwarePaginator
@@ -97,6 +99,10 @@ final class LegalArchiveRegistryService
                     'is_required' => true,
                 ])
                 : null;
+            $this->audit->recordForActorId('create', $document, $userId, [
+                'after' => $this->auditSnapshot($document),
+                'source_event_id' => $this->sourceEventId($data, 'create'),
+            ]);
 
             return [$document, $documentFile];
         });
@@ -123,12 +129,19 @@ final class LegalArchiveRegistryService
     {
         return DB::transaction(function () use ($document, $organizationId, $userId, $data): LegalArchiveDocument {
             $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
+            $before = $this->auditSnapshot($document);
 
             $document->update($this->documentPayload($organizationId, $userId, $data, true));
 
             if (array_key_exists('links', $data)) {
                 $this->replaceLinks($document, $data['links'] ?? []);
             }
+
+            $this->audit->recordForActorId('update', $document, $userId, [
+                'before' => $before,
+                'after' => $this->auditSnapshot($document->refresh()),
+                'source_event_id' => $this->sourceEventId($data, 'update'),
+            ]);
 
             return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
         });
@@ -335,5 +348,31 @@ final class LegalArchiveRegistryService
                 'primary_project_id' => [trans_message('legal_archive.messages.project_not_available')],
             ]);
         }
+    }
+
+    private function auditSnapshot(LegalArchiveDocument $document): array
+    {
+        return Arr::only($document->getAttributes(), [
+            'id',
+            'organization_id',
+            'primary_project_id',
+            'title',
+            'document_number',
+            'document_type',
+            'status',
+            'lifecycle_status',
+            'approval_status',
+            'signature_status',
+            'current_primary_version_id',
+            'lock_version',
+            'archived_at',
+        ]);
+    }
+
+    private function sourceEventId(array $data, string $action): ?string
+    {
+        $key = $data['idempotency_key'] ?? null;
+
+        return is_string($key) && $key !== '' ? "{$action}:{$key}" : null;
     }
 }

@@ -10,6 +10,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Files\LegalDocumentFilePolicy;
 use App\Services\LegalArchive\LegalArchiveRegistryService;
@@ -88,12 +89,16 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
         $storage->expects(self::once())->method('temporaryUrl')
             ->with('org-10/legal-archive/files/7/version.pdf', 5, self::isInstanceOf(Organization::class))
             ->willReturn('https://signed.example/version.pdf');
+        $audit = $this->createMock(LegalDocumentAudit::class);
+        $audit->expects(self::once())->method('record')
+            ->with('preview', self::isInstanceOf(LegalArchiveDocument::class), $actor, self::isType('array'));
 
         $url = (new LegalDocumentDownloadService(
             $storage,
             $authorization,
             new LegalDocumentFilePolicy([]),
             new NullLogger,
+            $audit,
         ))->temporaryUrl($version, $actor, 'preview');
 
         self::assertSame('https://signed.example/version.pdf', $url);

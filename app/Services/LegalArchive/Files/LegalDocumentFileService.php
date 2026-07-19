@@ -9,6 +9,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\Exceptions\ImmutableDataException;
 use App\Models\Organization;
+use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\Storage\FileService;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Http\UploadedFile;
@@ -23,6 +24,7 @@ final class LegalDocumentFileService
         private readonly LegalDocumentFilePolicy $policy,
         private readonly LegalDocumentScanner $scanner,
         private readonly ?ConnectionInterface $connection = null,
+        private readonly ?LegalDocumentAudit $audit = null,
     ) {}
 
     public function addVersion(
@@ -161,6 +163,18 @@ final class LegalDocumentFileService
 
         if ($makeCurrent) {
             $this->setCurrentPointers($lockedFile, $version->id);
+        }
+
+        if ($this->audit !== null) {
+            $document = LegalArchiveDocument::query()->whereKey($lockedFile->document_id)->firstOrFail();
+            $this->audit->recordForActorId('version_created', $document, $input->uploadedByUserId, [
+                'version_id' => (int) $version->id,
+                'document_file_id' => (int) $lockedFile->id,
+                'version_number' => $versionNumber,
+                'content_hash' => $version->content_hash,
+                'processing_status' => 'quarantine',
+                'source_event_id' => 'version:'.(string) $version->id,
+            ]);
         }
 
         return $version;

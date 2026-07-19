@@ -1,6 +1,7 @@
 <?php
 
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverExpiredTrainingDatasetLeasesJob;
+use App\Jobs\LegalArchive\RecoverLegalDocumentOutboxMessages;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -26,6 +27,11 @@ Schedule::command('commercial:reconcile --limit=100')
 Schedule::job(new RecoverExpiredTrainingDatasetLeasesJob)
     ->everyFiveMinutes()
     ->withoutOverlapping();
+
+Schedule::job(new RecoverLegalDocumentOutboxMessages)
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onOneServer();
 use App\Console\Commands\ReverifyOrganizationsCommand;
 use Illuminate\Support\Facades\File;
 

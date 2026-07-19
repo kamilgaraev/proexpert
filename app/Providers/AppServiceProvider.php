@@ -55,6 +55,15 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->bind(
+            \App\Services\LegalArchive\Audit\LegalDocumentOutboxPublisher::class,
+            \App\Services\LegalArchive\Audit\LaravelLegalDocumentOutboxPublisher::class,
+        );
+        $this->app->bind(
+            \App\Services\LegalArchive\Audit\LegalDocumentAudit::class,
+            \App\Services\LegalArchive\Audit\LegalDocumentAuditService::class,
+        );
+
+        $this->app->bind(
             \App\Services\LegalArchive\Files\LegalDocumentScanner::class,
             $this->app->environment('testing')
                 ? \App\Services\LegalArchive\Files\TestingLegalDocumentScanner::class

@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\ImmutableAudit\Services;
 use App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventData;
 use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
 use DateTimeInterface;
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +17,7 @@ final class ImmutableAuditRecorder
     public function __construct(
         private readonly ImmutableAuditRedactor $redactor,
         private readonly ImmutableAuditIntegrityService $integrity,
+        private readonly ?ConnectionInterface $connection = null,
     ) {}
 
     public function record(ImmutableAuditEventData $data): ImmutableAuditEvent
@@ -29,9 +31,13 @@ final class ImmutableAuditRecorder
         }
 
         try {
-            return DB::transaction(function () use ($data): ImmutableAuditEvent {
-                if (DB::getDriverName() === 'pgsql') {
-                    DB::statement('LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE');
+            return $this->database()->transaction(function () use ($data): ImmutableAuditEvent {
+                if ($this->database()->getDriverName() === 'pgsql') {
+                    $chainScope = $data->chainScope ?? 'organization:'.$data->organizationId;
+                    $this->database()->select(
+                        'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                        [$chainScope],
+                    );
                 }
 
                 if ($data->sourceEventId !== null) {
@@ -165,6 +171,10 @@ final class ImmutableAuditRecorder
             $normalized[$key] = $this->normalizeJsonPayload($item);
         }
 
+        if (! array_is_list($normalized)) {
+            ksort($normalized, SORT_STRING);
+        }
+
         return $normalized;
     }
 
@@ -180,6 +190,12 @@ final class ImmutableAuditRecorder
 
     private function nextSequenceId(): int
     {
+        if ($this->database()->getDriverName() === 'pgsql') {
+            $row = $this->database()->selectOne("SELECT nextval('immutable_audit_sequence') AS value");
+
+            return (int) ($row->value ?? 0);
+        }
+
         return ((int) ImmutableAuditEvent::query()->max('sequence_id')) + 1;
     }
 
@@ -196,5 +212,10 @@ final class ImmutableAuditRecorder
         $years = in_array($domain, ['warehouse', 'crm', 'procurement'], true) ? 5 : 7;
 
         return $occurredAt->copy()->addYearsNoOverflow($years);
+    }
+
+    private function database(): ConnectionInterface
+    {
+        return $this->connection ?? DB::connection();
     }
 }
