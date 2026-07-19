@@ -100,8 +100,10 @@ final class NormativeWorkItemPlannerService
         $definition = $this->withResidentialMaterialScenario($definition, $analysis);
         $quantity = $this->quantityForDefinition($definition, $analysis, $quantityModel);
 
+        $definitionMetadata = is_array($definition['metadata'] ?? null) ? $definition['metadata'] : [];
         if (($quantity['source'] ?? null) === 'residential_preliminary_scenario'
-            && in_array((string) ($definition['quantity_key'] ?? ''), ['roof.rafters', 'roof.gutter'], true)) {
+            && (in_array((string) ($definition['quantity_key'] ?? ''), ['roof.rafters', 'roof.gutter'], true)
+                || ($definitionMetadata['material_scenario_work_key'] ?? null) === 'roof.insulation')) {
             return null;
         }
 

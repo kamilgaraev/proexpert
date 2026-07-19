@@ -358,11 +358,11 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
         $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
 
         self::assertSame(
-            ['Утепление кровли', 'Монтаж кровельного покрытия'],
+            ['Монтаж кровельного покрытия'],
             array_column($items, 'name'),
         );
-        self::assertSame(['roof.area', 'roof.area'], array_column($items, 'quantity_formula'));
-        self::assertSame(['12-01-013-07', '12-01-023-01'], array_column($items, 'normative_rate_code'));
+        self::assertSame(['roof.area'], array_column($items, 'quantity_formula'));
+        self::assertSame(['12-01-023-01'], array_column($items, 'normative_rate_code'));
     }
 
     private function scenarioQuantity(string $key, string $unit, string $amount): QuantityData
