@@ -60,13 +60,3 @@
 ## Concerns
 
 Нет блокирующих замечаний. Визуальный browser smoke не выполнялся по прямому запрету задачи; перед релизом остаётся стандартная ручная проверка диалогов и адаптивной раскладки в staging.
-
-## Review fixes
-
-- Project-based lifecycle transition использует раздельные параметры `project` и `contract`; HTTP-регрессия подтверждает отсутствие подмены идентификаторов и проверку принадлежности договора проекту.
-- Создание договора игнорирует входной `status` и всегда сохраняет `draft`; форма и тип запроса создания больше не отправляют статус.
-- Маршруты актов закрыты каноническими правами `contracts.performance_acts.*`, а FormRequest передают в `AuthorizationService` контекст организации и проекта.
-- Право `contracts.archive` синхронизировано между модулем и JSON-конфигурацией.
-- Backend GREEN: `ContractPermissionAndLifecycleTest` — 12 тестов, 100 assertions; PHPStan — 0 ошибок; Pint и `php -l` — PASS; JSON-конфигурации корректны.
-- Admin GREEN: 3 файла Vitest, 27 тестов; TypeScript — exit 0; ESLint — 0 ошибок, 4 ранее существовавших предупреждения в `ProjectContractForm.tsx`; форматирование и `git diff --check` — PASS.
-- Хеши отдельных review-fix коммитов backend и admin указаны в итоговом handoff.
