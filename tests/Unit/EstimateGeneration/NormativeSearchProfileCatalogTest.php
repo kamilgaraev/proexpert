@@ -56,8 +56,17 @@ final class NormativeSearchProfileCatalogTest extends TestCase
         $this->assertContains('06', $profile->allowedSectionPrefixes);
         $this->assertContains('07', $profile->allowedSectionPrefixes);
         $this->assertContains('08', $profile->allowedSectionPrefixes);
+        $this->assertContains('10', $profile->allowedSectionPrefixes);
         $this->assertContains('лестниц', $profile->requiredTerms);
         $this->assertContains('землян', $profile->forbiddenDomainTerms);
+    }
+
+    public function test_wet_zone_waterproofing_profile_allows_floor_norms(): void
+    {
+        $profile = (new NormativeSearchProfileCatalog)->forIntent('finishing', 'waterproofing', null);
+
+        self::assertContains('11', $profile->allowedSectionPrefixes);
+        self::assertContains('гидроизоляц', $profile->requiredTerms);
     }
 
     public function test_baseboard_profile_limits_search_to_finishing_sections(): void

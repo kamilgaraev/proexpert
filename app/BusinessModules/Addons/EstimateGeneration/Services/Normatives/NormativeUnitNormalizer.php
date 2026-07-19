@@ -107,6 +107,7 @@ final class NormativeUnitNormalizer
             $unit === 'ед',
             str_starts_with($unit, 'единиц') => ['piece', 'ед', 1.0],
             in_array($unit, ['kg', 'кг', 'килограмм', 'килограмма', 'килограммы'], true) => ['mass', 'кг', 1.0],
+            in_array($unit, ['kw', 'квт', 'киловатт', 'киловатта', 'киловатты'], true) => ['power', 'кВт', 1.0],
             $unit === 'т',
             str_starts_with($unit, 'тонн') => ['mass', 'кг', 1000.0],
             in_array($unit, ['мес', 'месяц', 'месяца', 'месяцев'], true) => ['time', 'мес', 1.0],

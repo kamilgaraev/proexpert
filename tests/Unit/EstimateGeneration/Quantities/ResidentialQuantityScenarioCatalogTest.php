@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Quantities;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
-use App\BusinessModules\Addons\EstimateGeneration\Quantities\DirectTakeoffRequiredWorkItems;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
@@ -15,6 +14,56 @@ use PHPUnit\Framework\TestCase;
 final class ResidentialQuantityScenarioCatalogTest extends TestCase
 {
     #[Test]
+    public function confirmed_residential_plans_enable_traceable_preliminary_scope_for_required_sections(): void
+    {
+        $result = (new ResidentialQuantityScenarioCatalog)->build([
+            'floor_area' => $this->quantity('floor_area', '192.800000', ['room:1', 'room:2']),
+            'first_floor_internal_area' => $this->quantity('first_floor_internal_area', '113.300000', ['room:1']),
+            'upper_floor_internal_area' => $this->quantity('upper_floor_internal_area', '79.500000', ['room:2']),
+        ], $this->model(), [
+            'object' => [
+                'object_type' => 'house',
+                'floors' => 2,
+                'roof_type' => 'pitched',
+                'description' => 'Индивидуальный жилой дом с инженерными системами',
+            ],
+        ]);
+
+        foreach ([
+            'stairs.flights',
+            'roof.rafters',
+            'roof.area',
+            'roof.gutter',
+            'openings.windows',
+            'openings.doors',
+            'electrical.main_cable',
+            'electrical.power_lines',
+            'electrical.grounding',
+            'plumbing.pipe',
+            'sanitary.points',
+            'sewerage.pipe',
+            'sewerage.outlets',
+            'sewerage.risers',
+            'sewerage.revisions',
+            'heating.unit',
+            'heating.pipe',
+            'heating.radiators',
+            'ventilation.air_exchange',
+            'sanitary.waterproofing',
+            'sanitary.tile',
+        ] as $quantityKey) {
+            self::assertArrayHasKey($quantityKey, $result->quantities, $quantityKey);
+            self::assertTrue(ResidentialQuantityScenarioCatalog::owns($result->quantities[$quantityKey]), $quantityKey);
+            self::assertNotSame([], $result->quantities[$quantityKey]->evidenceIds, $quantityKey);
+            self::assertGreaterThan(0, (float) $result->quantities[$quantityKey]->amount, $quantityKey);
+        }
+
+        self::assertArrayNotHasKey('electrical.trays', $result->quantities);
+        self::assertArrayNotHasKey('ventilation.office_points', $result->quantities);
+        self::assertArrayNotHasKey('ventilation.warehouse_points', $result->quantities);
+    }
+
+    #[Test]
     public function documented_house_facts_produce_versioned_preliminary_quantities_with_review_contract(): void
     {
         $result = (new ResidentialQuantityScenarioCatalog)->build([
@@ -23,76 +72,43 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'upper_floor_internal_area' => $this->quantity('upper_floor_internal_area', '79.500000', ['room:2']),
         ], $this->model(), ['object' => ['object_type' => 'house', 'floors' => 2, 'roof_type' => 'pitched']]);
 
-        self::assertArrayNotHasKey('roof.area', $result->quantities);
-        self::assertArrayNotHasKey('roof.gutter', $result->quantities);
-        self::assertArrayNotHasKey('openings.windows', $result->quantities);
-        self::assertArrayNotHasKey('openings.doors', $result->quantities);
-        self::assertArrayNotHasKey('stairs.flights', $result->quantities);
+        self::assertSame('152.955000', $result->quantities['roof.area']->amount);
+        self::assertSame('152.955000', $result->quantities['roof.rafters']->amount);
+        self::assertSame('46.834688', $result->quantities['roof.gutter']->amount);
+        self::assertSame('23.136000', $result->quantities['openings.windows']->amount);
+        self::assertSame('9.000000', $result->quantities['openings.doors']->amount);
+        self::assertSame('8.000000', $result->quantities['stairs.flights']->amount);
         self::assertArrayNotHasKey('stairs.landings', $result->quantities);
         self::assertArrayNotHasKey('stairs.railings', $result->quantities);
-        self::assertArrayNotHasKey('electrical.grounding', $result->quantities);
-        self::assertArrayNotHasKey('heating.radiators', $result->quantities);
-        self::assertArrayNotHasKey('ventilation.air_exchange', $result->quantities);
-        self::assertArrayNotHasKey('electrical.main_cable', $result->quantities);
-        self::assertArrayNotHasKey('plumbing.pipe', $result->quantities);
-        self::assertArrayNotHasKey('sanitary.points', $result->quantities);
+        self::assertSame('77.120000', $result->quantities['electrical.main_cable']->amount);
+        self::assertSame('67.480000', $result->quantities['plumbing.pipe']->amount);
+        self::assertSame('6.000000', $result->quantities['sanitary.points']->amount);
+        self::assertSame('12.980000', $result->quantities['sanitary.waterproofing']->amount);
+        self::assertSame('39.497496', $result->quantities['sanitary.tile']->amount);
+        self::assertSame('19.280000', $result->quantities['heating.radiators']->amount);
+        self::assertSame('kw', $result->quantities['heating.radiators']->unit);
         self::assertArrayNotHasKey('electrical.trays', $result->quantities);
-
-        foreach (array_keys($result->quantities) as $quantityKey) {
-            self::assertFalse(
-                DirectTakeoffRequiredWorkItems::contains($quantityKey),
-                $quantityKey.' must come only from a direct document takeoff',
-            );
-        }
 
         foreach ($result->quantities as $quantity) {
             self::assertSame(QuantitySource::Estimated, $quantity->source, $quantity->key);
+            self::assertTrue(ResidentialQuantityScenarioCatalog::owns($quantity), $quantity->key);
             self::assertSame(ResidentialQuantityScenarioCatalog::VERSION, $quantity->formulaVersion, $quantity->key);
             self::assertNotSame([], $quantity->evidenceIds, $quantity->key);
             self::assertContains(ResidentialQuantityScenarioCatalog::SCENARIO_ID, $quantity->assumptions, $quantity->key);
             self::assertSame([], $quantity->reviewBlockers, $quantity->key);
-            self::assertSame(0.55, $quantity->formulaInputs['scenario']['confidence'], $quantity->key);
+            self::assertSame(0.62, $quantity->formulaInputs['scenario']['confidence'], $quantity->key);
             self::assertSame(['preliminary_quantity_scenario'], $quantity->formulaInputs['scenario']['warnings'], $quantity->key);
         }
 
-        self::assertContains('roof.rafters', array_column($result->omissions, 'quantity_key'));
+        self::assertNotContains('roof.rafters', array_column($result->omissions, 'quantity_key'));
         self::assertContains('networks.external', array_column($result->omissions, 'quantity_key'));
         self::assertContains('electrical.trays', array_column($result->omissions, 'quantity_key'));
-        self::assertContains([
-            'quantity_key' => 'stairs.flights',
-            'reason' => 'stair_construction_geometry_missing',
-            'package_key' => 'stairs',
-        ], $result->omissions);
-        self::assertContains([
-            'quantity_key' => 'stairs.landings',
-            'reason' => 'stair_construction_geometry_missing',
-            'package_key' => 'stairs',
-        ], $result->omissions);
-        self::assertContains([
-            'quantity_key' => 'stairs.railings',
-            'reason' => 'stair_railing_geometry_missing',
-            'package_key' => 'stairs',
-        ], $result->omissions);
-        self::assertContains([
-            'quantity_key' => 'electrical.grounding',
-            'reason' => 'grounding_installation_type_missing',
-            'package_key' => 'electrical',
-        ], $result->omissions);
-        self::assertContains([
-            'quantity_key' => 'openings.windows',
-            'reason' => 'window_schedule_missing',
-            'package_key' => 'openings',
-        ], $result->omissions);
-        self::assertContains([
-            'quantity_key' => 'heating.radiators',
-            'reason' => 'radiator_schedule_missing',
-            'package_key' => 'heating',
-        ], $result->omissions);
-        self::assertContains([
-            'quantity_key' => 'ventilation.air_exchange',
-            'reason' => 'ventilation_duct_takeoff_missing',
-            'package_key' => 'ventilation',
-        ], $result->omissions);
+        self::assertNotContains('stairs.flights', array_column($result->omissions, 'quantity_key'));
+        self::assertContains('stairs.landings', array_column($result->omissions, 'quantity_key'));
+        self::assertContains('stairs.railings', array_column($result->omissions, 'quantity_key'));
+        self::assertNotContains('openings.windows', array_column($result->omissions, 'quantity_key'));
+        self::assertNotContains('heating.radiators', array_column($result->omissions, 'quantity_key'));
+        self::assertNotContains('ventilation.air_exchange', array_column($result->omissions, 'quantity_key'));
     }
 
     #[Test]
@@ -117,7 +133,8 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'object' => ['object_type' => 'building', 'description' => 'Индивидуальный жилой дом'],
         ]);
 
-        self::assertSame([], $result->quantities);
+        self::assertArrayHasKey('electrical.main_cable', $result->quantities);
+        self::assertArrayHasKey('plumbing.pipe', $result->quantities);
         self::assertContains('roof.area', array_column($result->omissions, 'quantity_key'));
     }
 
@@ -155,7 +172,7 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'first_floor_internal_area' => $this->quantity('first_floor_internal_area', '113.300000', ['room:1']),
         ], $this->model(), ['object' => ['object_type' => 'house', 'roof_type' => 'flat']]);
 
-        self::assertArrayNotHasKey('roof.flat_area', $result->quantities);
+        self::assertSame('113.300000', $result->quantities['roof.flat_area']->amount);
         self::assertArrayNotHasKey('roof.area', $result->quantities);
         self::assertArrayNotHasKey('roof.gutter', $result->quantities);
         self::assertContains(
@@ -214,11 +231,11 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'floors' => [
                 $floor('floor-1', [
                     ['room-1', 'Гостиная 30,0 м2', 1],
-                    ['room-2', 'Санузел 6,0 м2', 2],
+                    ['room-2', 'СУ 4,9', 2],
                     ['room-3', 'Кухня 18,0 м2', 3],
                 ], [1, 2, 3]),
                 $floor('floor-2', [
-                    ['room-4', 'Спальня 20,0 м2', 4],
+                    ['room-4', 'СУ 6,9', 4],
                     ['room-5', 'Холл 12,0 м2', 5],
                 ], [4, 5]),
             ],

@@ -60,7 +60,10 @@ final class EstimateGenerationTransitionMap
             'archived' => 'archived',
         ],
         'cancelled' => ['archived' => 'archived'],
-        'applied' => ['archived' => 'archived'],
+        'applied' => [
+            'generation_started' => 'generating',
+            'archived' => 'archived',
+        ],
     ];
 
     public function resolve(

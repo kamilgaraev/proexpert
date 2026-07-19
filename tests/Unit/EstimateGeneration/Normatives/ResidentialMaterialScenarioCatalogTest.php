@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v2', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v3', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -134,6 +134,36 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'finish.baseboard',
             'устройство плинтусов поливинилхлоридных на винтах самонарезающих',
             '11-01-040-03',
+        ];
+        yield 'residential stair' => [
+            'stairs.flights',
+            'устройство внутриквартирных лестниц без подшивки',
+            '10-01-052-02',
+        ];
+        yield 'pvc windows' => [
+            'openings.windows',
+            'установка оконных блоков из ПВХ профилей двухстворчатых площадью до 2 м2',
+            '10-01-034-05',
+        ];
+        yield 'horizontal grounding conductor' => [
+            'electrical.grounding',
+            'заземлитель горизонтальный из круглой стали диаметром 12 мм',
+            '08-02-472-01',
+        ];
+        yield 'steel radiators' => [
+            'heating.radiators',
+            'установка стальных радиаторов',
+            '18-03-001-02',
+        ];
+        yield 'wet zone waterproofing' => [
+            'sanitary.waterproofing',
+            'устройство обмазочной гидроизоляции битумной мастикой в один слой толщиной 2 мм',
+            '11-01-004-05',
+        ];
+        yield 'wet zone wall tile' => [
+            'sanitary.tile',
+            'гладкая облицовка стен керамическими плитками на клее по кирпичу и бетону',
+            '15-01-019-05',
         ];
     }
 }

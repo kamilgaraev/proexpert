@@ -25,6 +25,16 @@ final class EstimateGenerationMutationPolicyTest extends TestCase
     }
 
     #[Test]
+    public function applied_session_can_be_regenerated_with_exact_version(): void
+    {
+        $session = $this->session(EstimateGenerationStatus::Applied, 8);
+
+        (new EstimateGenerationMutationPolicy)->generate($session, 8);
+
+        self::assertTrue(true);
+    }
+
+    #[Test]
     public function stale_version_is_rejected_before_state_policy(): void
     {
         $this->expectException(StaleEstimateGenerationState::class);
