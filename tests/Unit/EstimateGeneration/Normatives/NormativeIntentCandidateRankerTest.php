@@ -255,6 +255,43 @@ final class NormativeIntentCandidateRankerTest extends TestCase
         );
     }
 
+    public function test_exact_residential_material_scenario_norms_are_accepted(): void
+    {
+        $catalog = new ResidentialMaterialScenarioCatalog;
+        $ranker = new NormativeIntentCandidateRanker;
+        $cases = [
+            ['foundation.waterproofing', 'm2', 'waterproofing', 'foundation', '08', 'Гидроизоляция стен, фундаментов: Гидроизоляция боковая обмазочная битумная в 2 слоя по выровненной поверхности бутовой кладки, кирпичу, бетону'],
+            ['walls.external_volume', 'm3', 'masonry', 'walls', '08', 'Кладка стен из газобетонных блоков на клее без облицовки толщиной: 400 мм при высоте этажа до 4 м'],
+            ['walls.internal', 'm2', 'masonry', 'walls', '08', 'Кладка перегородок из газобетонных блоков на клее толщиной: 100 мм при высоте этажа до 4 м'],
+            ['finish.floor', 'm2', 'floor_covering', 'finishing', '11', 'Устройство покрытий: из досок ламинированных замковым способом'],
+            ['finish.baseboard', 'm', 'baseboard_installation', 'finishing', '11', 'Устройство плинтусов поливинилхлоридных: на винтах самонарезающих'],
+        ];
+
+        foreach ($cases as $index => [$workItemKey, $unit, $action, $scope, $section, $candidateName]) {
+            $scenario = $catalog->issue($workItemKey, 'residential');
+            self::assertIsArray($scenario);
+            $candidate = $this->candidate(
+                9000 + $index,
+                (string) $scenario['normative_rate_code'],
+                $candidateName,
+                '100 '.$unit,
+                $section,
+            );
+            $selected = $ranker->select([$candidate], [[
+                'search_text' => (string) $scenario['normative_search_text'],
+                'unit' => $unit,
+                'code' => (string) $scenario['normative_rate_code'],
+                'action' => $action,
+                'scope' => $scope,
+                'object_type' => 'residential',
+                'normative_sections' => [$section],
+                'specialization_scenario' => $scenario,
+            ]]);
+
+            self::assertSame([9000 + $index], array_column($selected ?? [], 'id'), $workItemKey);
+        }
+    }
+
     private function candidate(
         int $id,
         string $code,

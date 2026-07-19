@@ -151,6 +151,8 @@ class NormativeContextPinResolver
             $system = isset($intent['system']) ? trim((string) $intent['system']) : null;
             $object = isset($intent['object']) ? trim((string) $intent['object']) : null;
             $objectType = isset($intent['object_type']) ? trim((string) $intent['object_type']) : null;
+            $specializationScenario = $this->boundedSpecialization($intent['specialization_scenario'] ?? null);
+            $specializationEvidence = $this->boundedSpecialization($intent['specialization_evidence'] ?? null);
             $normativeSection = isset($intent['normative_section']) ? trim((string) $intent['normative_section']) : null;
             $normativeSections = is_array($intent['normative_sections'] ?? null)
                 ? array_values(array_unique(array_filter(array_map(
@@ -178,6 +180,7 @@ class NormativeContextPinResolver
                 $search, $unit, (string) $code, (string) $material, (string) $action, (string) $scope,
                 (string) $system, (string) $object, implode(',', $normativeSections),
                 (string) $objectType,
+                hash('sha256', json_encode([$specializationScenario, $specializationEvidence], JSON_THROW_ON_ERROR)),
             ]));
             $resolved[$key] = ['search_text' => $search, 'unit' => $unit, 'code' => $code];
             foreach (['material' => $material, 'action' => $action, 'scope' => $scope, 'system' => $system, 'object' => $object, 'object_type' => $objectType] as $field => $value) {
@@ -191,11 +194,29 @@ class NormativeContextPinResolver
                     $resolved[$key]['normative_section'] = $normativeSections[0];
                 }
             }
+            if ($specializationScenario !== null) {
+                $resolved[$key]['specialization_scenario'] = $specializationScenario;
+            }
+            if ($specializationEvidence !== null) {
+                $resolved[$key]['specialization_evidence'] = $specializationEvidence;
+            }
             if (count($resolved) > 64) {
                 return null;
             }
         }
 
         return array_values($resolved);
+    }
+
+    /** @return array<mixed>|null */
+    private function boundedSpecialization(mixed $value): ?array
+    {
+        if (! is_array($value)) {
+            return null;
+        }
+
+        $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        return is_string($encoded) && strlen($encoded) <= 16_384 ? $value : null;
     }
 }

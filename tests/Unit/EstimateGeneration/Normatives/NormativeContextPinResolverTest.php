@@ -357,6 +357,15 @@ final class NormativeContextPinResolverTest extends TestCase
         ];
 
         $intents = [['search_text' => 'РњРѕРЅС‚Р°Р¶ РєРёСЂРїРёС‡РЅС‹С… СЃС‚РµРЅ', 'unit' => 'm2', 'code' => null]];
+        $scenario = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog)
+            ->issue('walls.external_volume', 'residential');
+        self::assertIsArray($scenario);
+        $intents[0]['specialization_scenario'] = $scenario;
+        $intents[0]['specialization_evidence'] = [[
+            'text' => 'Материал стены подтверждён чертежом',
+            'source' => 'document',
+            'evidence_refs' => ['doc:1'],
+        ]];
         $pin = $resolver->resolve($context, $intents);
 
         self::assertSame('pinned', $pin['status']);
