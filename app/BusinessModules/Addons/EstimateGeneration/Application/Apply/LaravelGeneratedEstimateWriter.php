@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -20,6 +21,12 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
     private const ESTIMATE_NAME_MAX_LENGTH = 255;
 
     private const NUMBER_CREATE_ATTEMPTS = 4;
+
+    /** @var array<string, int|null> */
+    private array $measurementUnitIdCache = [];
+
+    /** @var array<int, list<array{id: int, organization_id: int|null, name: string, short_name: string}>> */
+    private array $measurementUnitsCache = [];
 
     public function __construct(
         private EstimateDraftPersistenceService $draftService,
@@ -288,15 +295,63 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         }
     }
 
-    private function resolveMeasurementUnitId(int $organizationId, string $unit): ?int
+    protected function resolveMeasurementUnitId(int $organizationId, string $unit): ?int
     {
         $normalized = mb_strtolower(trim($unit));
+        $cacheKey = $organizationId.'|'.$normalized;
 
-        return MeasurementUnit::query()
+        if (array_key_exists($cacheKey, $this->measurementUnitIdCache)) {
+            return $this->measurementUnitIdCache[$cacheKey];
+        }
+
+        $units = $this->measurementUnits($organizationId);
+        foreach ($units as $candidate) {
+            if (in_array($normalized, [
+                mb_strtolower(trim($candidate['short_name'])),
+                mb_strtolower(trim($candidate['name'])),
+            ], true)) {
+                return $this->measurementUnitIdCache[$cacheKey] = $candidate['id'];
+            }
+        }
+
+        $target = NormativeUnitNormalizer::parseDetailed($unit);
+        if ($target->baseUnit === '') {
+            return $this->measurementUnitIdCache[$cacheKey] = null;
+        }
+
+        foreach ($units as $candidate) {
+            foreach ([$candidate['short_name'], $candidate['name']] as $candidateUnit) {
+                $parsed = NormativeUnitNormalizer::parseDetailed($candidateUnit);
+                if (
+                    $parsed->baseUnit === $target->baseUnit
+                    && $parsed->dimension === $target->dimension
+                    && abs($parsed->multiplier - $target->multiplier) < 0.000001
+                ) {
+                    return $this->measurementUnitIdCache[$cacheKey] = $candidate['id'];
+                }
+            }
+        }
+
+        return $this->measurementUnitIdCache[$cacheKey] = null;
+    }
+
+    /** @return list<array{id: int, organization_id: int|null, name: string, short_name: string}> */
+    protected function measurementUnits(int $organizationId): array
+    {
+        return $this->measurementUnitsCache[$organizationId] ??= MeasurementUnit::query()
             ->where(fn ($query) => $query->where('organization_id', $organizationId)->orWhereNull('organization_id'))
-            ->where(fn ($query) => $query->whereRaw('LOWER(short_name) = ?', [$normalized])
-                ->orWhereRaw('LOWER(name) = ?', [$normalized]))
-            ->value('id');
+            ->orderByRaw('CASE WHEN organization_id = ? THEN 0 ELSE 1 END', [$organizationId])
+            ->orderBy('id')
+            ->get(['id', 'organization_id', 'name', 'short_name'])
+            ->map(static fn (MeasurementUnit $measurementUnit): array => [
+                'id' => (int) $measurementUnit->id,
+                'organization_id' => $measurementUnit->organization_id !== null
+                    ? (int) $measurementUnit->organization_id
+                    : null,
+                'name' => (string) $measurementUnit->name,
+                'short_name' => (string) $measurementUnit->short_name,
+            ])
+            ->all();
     }
 
     /** @param array<string, mixed> $draft */
