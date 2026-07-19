@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentSessionBuildingModelBridge;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DocumentVisualAttributeSummaryBuilder;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Str;
@@ -18,6 +19,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
         private ReconcileEstimateGenerationDocuments $sessions,
         private Connection $database,
         private EloquentSessionBuildingModelBridge $buildingModels,
+        private DocumentVisualAttributeSummaryBuilder $visualAttributes = new DocumentVisualAttributeSummaryBuilder,
     ) {}
 
     public function reconcile(int $documentId, string $sourceVersion): void
@@ -57,6 +59,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     ->orderBy('page_number')
                     ->get();
                 $qualitySignals = $this->qualitySignals($pages->pluck('normalized_payload')->all());
+                $visualAttributes = $this->visualAttributes->summarize($pages->pluck('normalized_payload')->all());
                 $document->forceFill([
                     'extracted_text' => $pages->pluck('text')->filter()->implode("\n\n"),
                     'structured_payload' => [
@@ -76,7 +79,10 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     'progress_percent' => 100,
                     'quality_score' => 1.0,
                     'quality_level' => 'good',
-                    'facts_summary' => $qualitySignals === [] ? [] : ['quality_signals' => $qualitySignals],
+                    'facts_summary' => [
+                        ...($qualitySignals === [] ? [] : ['quality_signals' => $qualitySignals]),
+                        ...$visualAttributes,
+                    ],
                     'ocr_finished_at' => now(),
                 ]);
             }

@@ -129,6 +129,7 @@ class ConstructionSemanticParser
             'zones' => [],
             'engineering_systems' => [],
             'conflicts' => [],
+            'roof_type' => null,
         ];
         $contextLines = [];
         $sourceRefs = [];
@@ -142,6 +143,7 @@ class ConstructionSemanticParser
         $hasRoomAreaTotal = false;
         $aggregateAreaCandidate = null;
         $nonPrimaryDocuments = [];
+        $roofTypes = [];
 
         foreach ($documentsPayload as $document) {
             if (! DocumentEvidencePolicy::isTrusted($document)) {
@@ -215,6 +217,15 @@ class ConstructionSemanticParser
             }
 
             $factsSummary = is_array($document['facts_summary'] ?? null) ? $document['facts_summary'] : [];
+
+            $roofType = match ($factsSummary['roof_type'] ?? null) {
+                'pitched', 'gable', 'hip' => 'pitched',
+                'flat' => 'flat',
+                default => null,
+            };
+            if ($roofType !== null) {
+                $roofTypes[$roofType] = true;
+            }
 
             if ($canUseQuantityEvidence && ($summary['total_area_m2'] ?? null) === null && isset($factsSummary['total_area_m2'])) {
                 $summary['total_area_m2'] = $factsSummary['total_area_m2'];
@@ -308,6 +319,10 @@ class ConstructionSemanticParser
             } elseif ($hasRoomAreaTotal) {
                 $summary['total_area_m2'] = round($roomAreaTotal, 4);
             }
+        }
+
+        if (count($roofTypes) === 1) {
+            $summary['roof_type'] = array_key_first($roofTypes);
         }
 
         return [

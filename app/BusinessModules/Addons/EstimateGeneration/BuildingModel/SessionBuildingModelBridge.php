@@ -360,6 +360,7 @@ final readonly class SessionBuildingModelBridge
         $usage = is_array($payload['usage'] ?? null) ? $payload['usage'] : [];
         $core = array_intersect_key($payload, array_flip([
             'schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings',
+            'visual_attributes',
         ]));
 
         return VisionAnalysisData::fromProviderArray(

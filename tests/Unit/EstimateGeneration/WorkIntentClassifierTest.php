@@ -84,6 +84,33 @@ final class WorkIntentClassifierTest extends TestCase
         $this->assertNotContains('16', $intent->preferredSectionPrefixes);
     }
 
+    public function test_wet_zone_waterproofing_uses_floor_construction_norms(): void
+    {
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
+            'name' => 'Гидроизоляция мокрых зон',
+            'unit' => 'м2',
+        ], [
+            'scope_type' => 'finishing',
+            'section_title' => 'Водоснабжение',
+        ]);
+
+        self::assertSame('finishing', $intent->scope);
+        self::assertSame('waterproofing', $intent->action);
+        self::assertSame(['11'], $intent->preferredSectionPrefixes);
+    }
+
+    public function test_residential_stair_area_allows_carpentry_stair_norms(): void
+    {
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
+            'name' => 'Устройство внутриквартирных лестниц без подшивки',
+            'unit' => 'м2',
+        ], ['scope_type' => 'stairs']);
+
+        self::assertSame('stairs', $intent->scope);
+        self::assertContains('10', $intent->preferredSectionPrefixes);
+        self::assertNotContains('10', $intent->forbiddenSectionPrefixes);
+    }
+
     public function test_pipe_layout_is_not_classified_as_masonry_because_of_prokladka(): void
     {
         $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([

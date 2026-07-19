@@ -41,16 +41,11 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'electrical.power_lines',
             'electrical.grounding',
             'plumbing.pipe',
-            'sanitary.points',
             'sewerage.pipe',
-            'sewerage.outlets',
-            'sewerage.risers',
-            'sewerage.revisions',
             'heating.unit',
             'heating.pipe',
             'ventilation.air_exchange',
             'sanitary.waterproofing',
-            'sanitary.tile',
         ] as $quantityKey) {
             self::assertArrayHasKey($quantityKey, $result->quantities, $quantityKey);
             self::assertTrue(ResidentialQuantityScenarioCatalog::owns($result->quantities[$quantityKey]), $quantityKey);
@@ -59,6 +54,10 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         }
 
         self::assertArrayNotHasKey('electrical.trays', $result->quantities);
+        foreach (['sanitary.points', 'sewerage.outlets', 'sewerage.risers', 'sewerage.revisions', 'sanitary.tile'] as $quantityKey) {
+            self::assertArrayNotHasKey($quantityKey, $result->quantities, $quantityKey);
+            self::assertContains($quantityKey, array_column($result->omissions, 'quantity_key'), $quantityKey);
+        }
         self::assertArrayNotHasKey('ventilation.office_points', $result->quantities);
         self::assertArrayNotHasKey('ventilation.warehouse_points', $result->quantities);
         foreach ($result->omissions as $omission) {
@@ -85,9 +84,9 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertArrayNotHasKey('stairs.railings', $result->quantities);
         self::assertSame('77.120000', $result->quantities['electrical.main_cable']->amount);
         self::assertSame('67.480000', $result->quantities['plumbing.pipe']->amount);
-        self::assertSame('6.000000', $result->quantities['sanitary.points']->amount);
         self::assertSame('12.980000', $result->quantities['sanitary.waterproofing']->amount);
-        self::assertSame('39.497496', $result->quantities['sanitary.tile']->amount);
+        self::assertArrayNotHasKey('sanitary.points', $result->quantities);
+        self::assertArrayNotHasKey('sanitary.tile', $result->quantities);
         self::assertArrayNotHasKey('electrical.trays', $result->quantities);
 
         foreach ($result->quantities as $quantity) {
@@ -110,6 +109,32 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertNotContains('openings.windows', array_column($result->omissions, 'quantity_key'));
         self::assertContains('heating.radiators', array_column($result->omissions, 'quantity_key'));
         self::assertNotContains('ventilation.air_exchange', array_column($result->omissions, 'quantity_key'));
+    }
+
+    #[Test]
+    public function preliminary_house_scope_does_not_invent_fixture_types_or_sewer_fittings(): void
+    {
+        $result = (new ResidentialQuantityScenarioCatalog)->build([
+            'floor_area' => $this->quantity('floor_area', '192.800000', ['room:1', 'room:2']),
+            'first_floor_internal_area' => $this->quantity('first_floor_internal_area', '113.300000', ['room:1']),
+        ], $this->model(), [
+            'object' => ['object_type' => 'house', 'floors' => 2, 'roof_type' => 'pitched'],
+        ]);
+
+        foreach ([
+            'sanitary.points',
+            'sewerage.outlets',
+            'sewerage.risers',
+            'sewerage.revisions',
+            'sanitary.tile',
+        ] as $quantityKey) {
+            self::assertArrayNotHasKey($quantityKey, $result->quantities, $quantityKey);
+            self::assertContains($quantityKey, array_column($result->omissions, 'quantity_key'), $quantityKey);
+        }
+
+        self::assertArrayHasKey('plumbing.pipe', $result->quantities);
+        self::assertArrayHasKey('sewerage.pipe', $result->quantities);
+        self::assertArrayHasKey('sanitary.waterproofing', $result->quantities);
     }
 
     #[Test]

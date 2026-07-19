@@ -10,6 +10,8 @@ final readonly class VisionAnalysisData
 {
     public const SCHEMA_VERSION = 1;
 
+    public const CURRENT_SCHEMA_VERSION = 2;
+
     private const SHEET_TYPES = ['floor_plan', 'elevation', 'section', 'detail', 'site_plan', 'schedule', 'sketch', 'photo', 'unknown'];
 
     private const WARNINGS = ['scale_missing', 'scale_conflict', 'low_confidence', 'perspective_confirmation_required', 'geometry_incomplete', 'text_uncertain'];
@@ -28,6 +30,7 @@ final readonly class VisionAnalysisData
         public string $usageStatus,
         public ?int $inputTokens,
         public ?int $outputTokens,
+        public array $visualAttributes = [],
     ) {
         if (! in_array($sheetType, self::SHEET_TYPES, true) || $evidence === [] || count($evidence) > 256 || count($elements) > 500 || count($scaleCandidates) > 32
             || array_diff($warnings, self::WARNINGS) !== [] || count($warnings) !== count(array_unique($warnings))
@@ -48,6 +51,21 @@ final readonly class VisionAnalysisData
         foreach ([...$elements, ...$scaleCandidates] as $item) {
             if (! in_array($item->evidenceRef, $evidenceKeys, true)) {
                 throw new VisionContractException('dangling_evidence');
+            }
+        }
+        if ($visualAttributes !== []) {
+            $roofType = $visualAttributes['roof_type'] ?? null;
+            if (array_keys($visualAttributes) !== ['roof_type']
+                || ! is_array($roofType)
+                || array_keys($roofType) !== ['value', 'confidence', 'evidence_ref']
+                || ! in_array($roofType['value'] ?? null, ['flat', 'pitched', 'gable', 'hip', 'unknown'], true)
+                || (! is_float($roofType['confidence'] ?? null) && ! is_int($roofType['confidence'] ?? null))
+                || ! is_finite((float) $roofType['confidence'])
+                || (float) $roofType['confidence'] < 0
+                || (float) $roofType['confidence'] > 1
+                || ! is_string($roofType['evidence_ref'] ?? null)
+                || ! in_array($roofType['evidence_ref'], $evidenceKeys, true)) {
+                throw new VisionContractException('invalid_visual_attributes');
             }
         }
         foreach ($elements as $element) {
@@ -87,9 +105,15 @@ final readonly class VisionAnalysisData
     /** @param array<string, mixed> $data */
     public static function fromProviderArray(array $data, string $provider, string $requestedModel, string $reportedModel, string $modelVersion, string $usageStatus, ?int $inputTokens, ?int $outputTokens, int $maxElements): self
     {
-        if (! self::hasExactKeys($data, ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings'])
-            || $data['schema_version'] !== self::SCHEMA_VERSION || ! is_string($data['sheet_type'])
+        $schemaVersion = $data['schema_version'] ?? null;
+        $expectedKeys = $schemaVersion === self::CURRENT_SCHEMA_VERSION
+            ? ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings', 'visual_attributes']
+            : ['schema_version', 'sheet_type', 'evidence', 'elements', 'scale_candidates', 'warnings'];
+        if (! self::hasExactKeys($data, $expectedKeys)
+            || ! in_array($schemaVersion, [self::SCHEMA_VERSION, self::CURRENT_SCHEMA_VERSION], true)
+            || ! is_string($data['sheet_type'])
             || ! is_array($data['evidence']) || ! is_array($data['elements']) || ! is_array($data['scale_candidates']) || ! is_array($data['warnings'])
+            || ($schemaVersion === self::CURRENT_SCHEMA_VERSION && ! is_array($data['visual_attributes']))
             || count($data['elements']) > $maxElements) {
             throw new VisionContractException('invalid_analysis_schema');
         }
@@ -102,7 +126,21 @@ final readonly class VisionAnalysisData
             }
         }
 
-        return new self($data['sheet_type'], $evidence, $elements, $scales, array_values($data['warnings']), $provider, $requestedModel, $reportedModel, $modelVersion, $usageStatus, $inputTokens, $outputTokens);
+        return new self(
+            $data['sheet_type'],
+            $evidence,
+            $elements,
+            $scales,
+            array_values($data['warnings']),
+            $provider,
+            $requestedModel,
+            $reportedModel,
+            $modelVersion,
+            $usageStatus,
+            $inputTokens,
+            $outputTokens,
+            is_array($data['visual_attributes'] ?? null) ? $data['visual_attributes'] : [],
+        );
     }
 
     public function mapPolygonsToSource(ProjectiveTransformData $transform): self
@@ -119,6 +157,7 @@ final readonly class VisionAnalysisData
             $this->sheetType, $evidence, $mapped, $this->scaleCandidates, $this->warnings,
             $this->provider, $this->requestedModel, $this->reportedModel, $this->modelVersion,
             $this->usageStatus, $this->inputTokens, $this->outputTokens,
+            $this->visualAttributes,
         );
     }
 
@@ -136,8 +175,8 @@ final readonly class VisionAnalysisData
 
     public function toArray(): array
     {
-        return [
-            'schema_version' => self::SCHEMA_VERSION,
+        $payload = [
+            'schema_version' => $this->visualAttributes === [] ? self::SCHEMA_VERSION : self::CURRENT_SCHEMA_VERSION,
             'sheet_type' => $this->sheetType,
             'evidence' => array_map(static fn (VisionEvidenceData $item): array => $item->toArray(), $this->evidence),
             'elements' => array_map(static fn (VisionElementData $item): array => $item->toArray(), $this->elements),
@@ -149,6 +188,11 @@ final readonly class VisionAnalysisData
             'model_version' => $this->modelVersion,
             'usage' => ['status' => $this->usageStatus, 'input_tokens' => $this->inputTokens, 'output_tokens' => $this->outputTokens],
         ];
+        if ($this->visualAttributes !== []) {
+            $payload['visual_attributes'] = $this->visualAttributes;
+        }
+
+        return $payload;
     }
 
     /** @param array<string, mixed> $data @param list<string> $keys */

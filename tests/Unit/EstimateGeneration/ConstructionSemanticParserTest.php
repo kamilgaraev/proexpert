@@ -9,6 +9,32 @@ use PHPUnit\Framework\TestCase;
 
 class ConstructionSemanticParserTest extends TestCase
 {
+    public function test_parser_propagates_consistent_visual_roof_type(): void
+    {
+        $documents = array_map(static fn (int $id): array => [
+            'id' => $id,
+            'filename' => 'facade-'.$id.'.jpg',
+            'status' => 'ready',
+            'quality' => ['level' => 'good', 'score' => 0.95, 'flags' => []],
+            'extracted_text' => '',
+            'facts_summary' => [
+                'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+                'roof_type' => 'pitched',
+                'zones' => [],
+                'engineering_systems' => [],
+                'conflicts' => [],
+            ],
+            'facts' => [],
+        ], [31, 32]);
+
+        $analysis = (new ConstructionSemanticParser)->parse([
+            'description' => 'Индивидуальный жилой дом',
+        ], $documents);
+
+        self::assertSame('pitched', $analysis['document_context']['facts_summary']['roof_type']);
+        self::assertSame('pitched', (new \App\BusinessModules\Addons\EstimateGeneration\Services\RoofTypeResolver)->resolve($analysis));
+    }
+
     public function test_parser_preserves_confirmed_object_dimensions_and_construction_type(): void
     {
         $analysis = (new ConstructionSemanticParser)->parse([
