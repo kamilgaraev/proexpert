@@ -39,7 +39,7 @@ final class OnlyOfficeDocumentEditor implements LegalDocumentEditor
         }
         $extension = strtolower(pathinfo($context->filename, PATHINFO_EXTENSION));
         $documentType = in_array($extension, ['xls', 'xlsx', 'ods'], true) ? 'cell' : 'word';
-        $key = $context->documentId.'.'.substr(hash('sha256', implode(':', [
+        $key = $context->versionId.'.'.substr(hash('sha256', implode(':', [
             $context->organizationId, $context->documentId, $context->versionId,
             $context->contentHash, $context->sessionId, $context->generation,
         ])), 0, 48);
@@ -49,12 +49,18 @@ final class OnlyOfficeDocumentEditor implements LegalDocumentEditor
                 'key' => $key,
                 'title' => $context->filename,
                 'url' => $context->sourceUrl,
-                'permissions' => ['edit' => true, 'download' => false, 'print' => false],
+                'permissions' => [
+                    'edit' => $context->mode === 'edit',
+                    'review' => $context->mode === 'review',
+                    'comment' => in_array($context->mode, ['edit', 'review'], true),
+                    'download' => false,
+                    'print' => false,
+                ],
             ],
             'documentType' => $documentType,
             'editorConfig' => [
-                'callbackUrl' => $context->callbackUrl,
-                'mode' => 'edit',
+                ...($context->callbackUrl === '' ? [] : ['callbackUrl' => $context->callbackUrl]),
+                'mode' => $context->mode === 'view' ? 'view' : 'edit',
                 'user' => ['id' => (string) $context->actorId, 'name' => $actorName],
             ],
             'exp' => $context->expiresAt->getTimestamp(),
@@ -63,7 +69,7 @@ final class OnlyOfficeDocumentEditor implements LegalDocumentEditor
         $configuration['token'] = $token;
 
         return new EditorSessionPayload(
-            true, 'edit', $key, $context->documentId.'.',
+            true, $context->mode, $key, $context->versionId.'.',
             rtrim((string) $this->configuration['url'], '/'), $token,
             $configuration, $context->expiresAt,
         );

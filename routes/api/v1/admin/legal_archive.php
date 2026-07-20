@@ -4,14 +4,10 @@ declare(strict_types=1);
 
 use App\Http\Controllers\Api\V1\Admin\LegalArchiveController;
 use App\Http\Controllers\Api\V1\Admin\LegalDocumentEditorController;
+use App\Http\Controllers\Api\V1\Admin\LegalDocumentVersionAccessController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void {
-    Route::post('editor/callback/{session}', [LegalDocumentEditorController::class, 'callback'])
-        ->middleware('throttle:60,1')
-        ->withoutMiddleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])
-        ->whereUuid('session')->name('editor.callback');
-
     Route::get('dictionaries', [LegalArchiveController::class, 'dictionaries'])
         ->middleware('authorize:legal_archive.view')
         ->name('dictionaries');
@@ -50,10 +46,10 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
     Route::get('documents/{document}/current-version', [LegalArchiveController::class, 'currentVersion'])
         ->name('documents.current-version');
 
-    Route::post('documents/{document}/versions/{version}/editor', [LegalDocumentEditorController::class, 'open'])
-        ->middleware('authorize:legal_archive.editor.edit')->name('documents.versions.editor');
-    Route::get('documents/{document}/versions/{version}/preview', [LegalDocumentEditorController::class, 'preview'])
-        ->middleware('authorize:legal_archive.view')->name('documents.versions.preview');
-    Route::get('documents/{document}/versions/{version}/download', [LegalDocumentEditorController::class, 'download'])
-        ->middleware('authorize:legal_archive.files.download')->name('documents.versions.download');
+    Route::post('document-file-versions/{version}/editor/session', [LegalDocumentEditorController::class, 'open'])
+        ->middleware('authorize:legal_archive.view')->name('document-file-versions.editor.session');
+    Route::get('document-file-versions/{version}/preview', [LegalDocumentVersionAccessController::class, 'preview'])
+        ->middleware('authorize:legal_archive.view')->name('document-file-versions.preview');
+    Route::get('document-file-versions/{version}/download', [LegalDocumentVersionAccessController::class, 'download'])
+        ->middleware('authorize:legal_archive.files.download')->name('document-file-versions.download');
 });

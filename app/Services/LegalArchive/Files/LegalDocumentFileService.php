@@ -11,6 +11,7 @@ use App\Exceptions\ImmutableDataException;
 use App\Models\Organization;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\CanonicalJson;
+use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\Storage\FileService;
 use DomainException;
@@ -107,6 +108,8 @@ final class LegalDocumentFileService
         if ($reservation->document_version_id !== null) {
             $existing = LegalArchiveDocumentVersion::query()->findOrFail((int) $reservation->document_version_id);
             if ((string) $reservation->status === 'completed') {
+                $attempt->complete($existing);
+
                 return $existing;
             }
             if ((string) $reservation->status === 'failed') {
@@ -410,7 +413,7 @@ final class LegalDocumentFileService
             && LegalArchiveDocumentVersion::query()->whereKey($lockedFile->current_version_id)->exists();
         $makeCurrent = $input->makeCurrent || ! $hasCurrent;
         if ($makeCurrent) {
-            $this->assertCurrentVersionRotationAllowed((int) $lockedDocument->id);
+            $this->assertCurrentVersionRotationAllowed($lockedDocument, $input->metadata['editor_session_id'] ?? null);
         }
 
         if ($makeCurrent && $hasCurrent) {
@@ -519,7 +522,8 @@ final class LegalDocumentFileService
                 && LegalArchiveDocumentVersion::query()->whereKey($file->current_version_id)->exists();
             $makeCurrent = ! $hasCurrent || $this->operationMakesCurrent($operationId);
             if ($makeCurrent) {
-                $this->assertCurrentVersionRotationAllowed((int) $document->id);
+                $operationInput = VersionInput::fromOperation($operation);
+                $this->assertCurrentVersionRotationAllowed($document, $operationInput->metadata['editor_session_id'] ?? null);
             }
             if ($makeCurrent && $hasCurrent) {
                 $this->setFencedVersionCurrent($document, (int) $file->current_version_id, false, $attempt);
@@ -539,6 +543,8 @@ final class LegalDocumentFileService
                 'status' => 'completed',
                 'updated_at' => now(),
             ]);
+
+            $attempt->complete($locked);
 
             return $locked->refresh();
         }, 3);
@@ -776,18 +782,9 @@ final class LegalDocumentFileService
         return (string) ($maximum + 1);
     }
 
-    private function assertCurrentVersionRotationAllowed(int $documentId): void
+    private function assertCurrentVersionRotationAllowed(LegalArchiveDocument $document, ?string $editorSessionId = null): void
     {
-        if (! $this->database()->getSchemaBuilder()->hasTable('legal_workflow_instances')) {
-            return;
-        }
-        if ($this->database()->table('legal_workflow_instances')
-            ->where('document_id', $documentId)
-            ->where('status', 'in_progress')
-            ->exists()
-        ) {
-            throw new DomainException('legal_document_active_workflow_exists');
-        }
+        (new LegalDocumentEditGuard($this->database()))->assertVersionMutationAllowed($document, $editorSessionId);
     }
 
     private function authorizeDatabaseMutation(): void

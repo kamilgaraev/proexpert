@@ -13,6 +13,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
 use App\Models\User;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Comments\LegalDocumentBlockingCommentGuard;
+use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowDecisionInput;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowOverride;
@@ -103,6 +104,7 @@ final class LegalDocumentWorkflowService
                 }
 
                 $version = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, $versionId);
+                (new LegalDocumentEditGuard($this->connection))->assertWorkflowSubmissionAllowed($lockedDocument);
                 $this->blockingComments->assertNone($lockedDocument, (int) $version->id);
                 $this->assertSubmittableVersion($lockedDocument, $version);
                 $template = $this->templates->resolveForDocument($lockedDocument, $override->templateId);

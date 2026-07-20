@@ -16,7 +16,7 @@ final class OnlyOfficeCallbackTest extends TestCase
         self::assertIsString($service);
         self::assertIsString($fetcher);
         self::assertStringContainsString('verifyCallbackToken', $service);
-        self::assertStringContainsString('callback_replay_hash', $service);
+        self::assertStringContainsString('replay_hash', $service);
         self::assertStringContainsString('LegalDocumentFileService', $service);
         self::assertStringContainsString('->addVersion(', $service);
         self::assertStringContainsString('source_version_id', $service);
@@ -30,11 +30,24 @@ final class OnlyOfficeCallbackTest extends TestCase
     {
         $routes = file_get_contents(__DIR__.'/../../../routes/api/v1/admin/legal_archive.php');
         self::assertIsString($routes);
-        self::assertStringContainsString('legal_archive.editor.edit', $routes);
+        self::assertStringContainsString("middleware('authorize:legal_archive.view')->name('document-file-versions.editor.session')", $routes);
         self::assertStringContainsString('legal_archive.view', $routes);
         self::assertStringContainsString('legal_archive.files.download', $routes);
         self::assertStringContainsString('/preview', $routes);
         self::assertStringContainsString('/download', $routes);
+        $editor = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/OnlyOfficeDocumentEditor.php');
+        self::assertIsString($editor);
+        self::assertStringContainsString("\$context->mode === 'view'", $editor);
+        self::assertStringContainsString("\$context->mode === 'review'", $editor);
+        self::assertStringContainsString('document-file-versions/{version}/editor/session', $routes);
+        self::assertStringNotContainsString('documents/{document}/versions/{version}/editor', $routes);
+        $api = file_get_contents(__DIR__.'/../../../routes/api.php');
+        self::assertIsString($api);
+        self::assertStringContainsString('legal-document-editor/callback/{session}', $api);
+        self::assertStringContainsString('throttle:legal-editor-callback', $api);
+        $limiter = file_get_contents(__DIR__.'/../../../app/Providers/RouteServiceProvider.php');
+        self::assertIsString($limiter);
+        self::assertStringContainsString("new \\Illuminate\\Http\\JsonResponse(['error' => 1], 429)", $limiter);
     }
 
     public function test_postgres_races_are_opt_in_and_process_level(): void
@@ -46,5 +59,20 @@ final class OnlyOfficeCallbackTest extends TestCase
         self::assertStringContainsString('pcntl_fork', $source);
         self::assertStringContainsString('callback_vs_new_version', $source);
         self::assertStringContainsString('callback_replay', $source);
+        self::assertStringContainsString('LegalDocumentEditorSessionService', $source);
+        self::assertStringContainsString('callback_force_save_then_final_save', $source);
+        self::assertStringNotContainsString('WHERE id=-1', $source);
+    }
+
+    public function test_force_save_uses_append_only_save_ledger_and_atomic_completion_hook(): void
+    {
+        $service = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/LegalDocumentEditorSessionService.php');
+        $attempt = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Files/LegalDocumentVersionAttempt.php');
+        self::assertIsString($service);
+        self::assertIsString($attempt);
+        self::assertStringContainsString('LegalDocumentEditorSave', $service);
+        self::assertStringContainsString('save_generation', $service);
+        self::assertStringContainsString('completionCallback', $attempt);
+        self::assertStringContainsString('$input->status === 6', $service);
     }
 }

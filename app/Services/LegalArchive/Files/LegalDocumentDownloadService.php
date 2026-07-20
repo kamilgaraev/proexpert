@@ -27,7 +27,7 @@ final class LegalDocumentDownloadService
         private readonly LegalDocumentAudit $audit,
     ) {}
 
-    public function temporaryUrl(LegalArchiveDocumentVersion $version, User $actor, string $purpose): string
+    public function temporaryUrl(LegalArchiveDocumentVersion $version, User $actor, string $purpose, ?int $ttlMinutes = null): string
     {
         $organizationId = (int) $version->organization_id;
 
@@ -70,7 +70,7 @@ final class LegalDocumentDownloadService
 
         $url = $this->fileService->temporaryUrl(
             (string) $version->file_path,
-            $this->temporaryUrlMinutes(),
+            $ttlMinutes === null ? $this->temporaryUrlMinutes() : max(1, min(15, $ttlMinutes)),
             $organization,
             [
                 'ResponseContentType' => (string) ($version->mime_type ?: 'application/octet-stream'),

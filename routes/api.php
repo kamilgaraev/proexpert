@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\Landing\UserInvitationController;
 use App\Http\Controllers\Api\V1\HoldingApiController;
 use App\Http\Controllers\Api\V1\System\GlitchTipController;
 use App\Http\Controllers\Api\V1\Webhook\YooKassaWebhookController;
+use App\Http\Controllers\Api\V1\Admin\LegalDocumentEditorController;
 
 /*
 |--------------------------------------------------------------------------
@@ -181,6 +182,12 @@ Route::prefix('v1/mobile')->name('api.v1.mobile.')->group(function () {
 });
 
 // --- Admin Panel API ---
+Route::post('v1/legal-document-editor/callback/{session}', [LegalDocumentEditorController::class, 'callback'])
+    ->middleware('throttle:legal-editor-callback')
+    ->withoutMiddleware(['throttle:api', \App\Http\Middleware\SetOrganizationContext::class])
+    ->whereUuid('session')
+    ->name('api.v1.legal-document-editor.callback');
+
 Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(function () {
     // Публичные маршруты аутентификации админки
     require __DIR__ . '/api/v1/admin/auth.php';

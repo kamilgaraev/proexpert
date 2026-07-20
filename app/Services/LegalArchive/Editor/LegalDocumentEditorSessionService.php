@@ -6,6 +6,8 @@ namespace App\Services\LegalArchive\Editor;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
+use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentEditorParticipant;
+use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentEditorSave;
 use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentEditorSession;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAbility;
@@ -36,8 +38,11 @@ final class LegalDocumentEditorSessionService
         private readonly LegalDocumentAggregateLock $aggregateLock = new LegalDocumentAggregateLock,
     ) {}
 
-    public function open(LegalArchiveDocumentVersion $version, User $actor): EditorSessionPayload
+    public function open(LegalArchiveDocumentVersion $version, User $actor, string $mode = 'edit'): EditorSessionPayload
     {
+        if (! in_array($mode, ['view', 'review', 'edit'], true)) {
+            throw new DomainException('legal_document_editor_mode_invalid');
+        }
         $document = $this->documentForVersion($version);
         $this->authorizer->authorize($actor, $document, LegalDocumentAbility::VIEW->value);
         $callbackBaseUrl = '';
@@ -47,23 +52,32 @@ final class LegalDocumentEditorSessionService
                 throw new DomainException('legal_document_editor_configuration_invalid');
             }
         }
-        $viewerUrl = $this->downloads->temporaryUrl($version, $actor, 'preview');
-        $sourceUrlMinutes = max(1, (int) config('file-uploads.legal_archive.temporary_url_minutes', 5));
-        $sessionMinutes = min(
-            max(1, (int) config('legal-document-editor.session_ttl_minutes', 4)),
-            max(1, $sourceUrlMinutes - 1),
-        );
+        $sourceTtlMinutes = max(1, min(15, (int) config('legal-document-editor.source_url_ttl_minutes', 10)));
+        $viewerUrl = $this->downloads->temporaryUrl($version, $actor, 'preview', $sourceTtlMinutes);
+        $sessionMinutes = max(5, min(720, (int) config('legal-document-editor.session_ttl_minutes', 120)));
         $expiresAt = new DateTimeImmutable("+{$sessionMinutes} minutes");
         if (! $this->editor->enabled()) {
             return new EditorSessionPayload(false, 'viewer', '', '', null, null, [], $expiresAt, $viewerUrl, 'not_configured');
         }
 
-        $this->authorizer->authorize($actor, $document, LegalDocumentAbility::EDIT->value);
-        $session = $this->connection->transaction(function () use ($version, $document, $actor, $expiresAt): LegalDocumentEditorSession {
+        if ($mode === 'view') {
+            return $this->editor->createSession(new EditorDocumentContext(
+                (string) Str::uuid(), (int) $document->organization_id, (int) $document->id,
+                (int) $version->id, (int) $version->document_file_id, (int) $actor->id, 0,
+                (string) $version->content_hash, (string) $version->original_filename, $viewerUrl, '', $expiresAt, 'view',
+            ), trim((string) ($actor->name ?? $actor->email ?? $actor->id)));
+        }
+
+        $this->authorizer->authorize($actor, $document, $mode === 'review'
+            ? LegalDocumentAbility::COMMENT->value
+            : LegalDocumentAbility::EDIT->value);
+        $session = $this->connection->transaction(function () use ($version, $document, $actor, $expiresAt, $mode): LegalDocumentEditorSession {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
             $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $version->id);
             $this->assertEditable($lockedDocument, $lockedVersion);
-            $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::EDIT->value);
+            $this->authorizer->authorize($actor, $lockedDocument, $mode === 'review'
+                ? LegalDocumentAbility::COMMENT->value
+                : LegalDocumentAbility::EDIT->value);
             $existing = $this->sessions()->where('organization_id', $lockedDocument->organization_id)
                 ->where('document_id', $lockedDocument->id)->where('source_version_id', $lockedVersion->id)
                 ->whereIn('status', ['active', 'processing'])->lockForUpdate()->first();
@@ -78,6 +92,7 @@ final class LegalDocumentEditorSessionService
                         'document_version_id' => (int) $lockedVersion->id,
                     ]);
                 } else {
+                    $this->recordParticipant($existing, $actor);
                     $this->audit->record('editor_session_accessed', $lockedDocument, $actor, [
                         'source_event_id' => 'editor-session:'.$existing->id.':access:'.Str::uuid(),
                         'session_id' => $existing->id,
@@ -87,18 +102,20 @@ final class LegalDocumentEditorSessionService
                     return $existing;
                 }
             }
-            $generation = ((int) $this->sessions()->where('organization_id', $lockedDocument->organization_id)
+            $latestGeneration = $this->sessions()->where('organization_id', $lockedDocument->organization_id)
                 ->where('document_id', $lockedDocument->id)->where('source_version_id', $lockedVersion->id)
-                ->lockForUpdate()->max('generation')) + 1;
+                ->orderByDesc('generation')->value('generation');
+            $generation = ((int) $latestGeneration) + 1;
             $sessionId = (string) Str::uuid();
             $session = $this->sessions()->create([
                 'id' => $sessionId, 'organization_id' => (int) $lockedDocument->organization_id,
                 'document_id' => (int) $lockedDocument->id, 'source_version_id' => (int) $lockedVersion->id,
                 'document_file_id' => (int) $lockedVersion->document_file_id, 'opened_by_user_id' => (int) $actor->id,
-                'provider' => $this->editor->provider(), 'mode' => 'edit', 'status' => 'active',
+                'provider' => $this->editor->provider(), 'mode' => $mode, 'status' => 'active',
                 'generation' => $generation, 'document_key' => $this->documentKey($lockedDocument, $lockedVersion, $sessionId, $generation),
                 'source_content_hash' => (string) $lockedVersion->content_hash, 'expires_at' => $expiresAt,
             ]);
+            $this->recordParticipant($session, $actor);
             $this->audit->record('editor_session_opened', $lockedDocument, $actor, [
                 'source_event_id' => 'editor-session:'.$session->id.':opened',
                 'session_id' => $session->id, 'document_version_id' => (int) $lockedVersion->id,
@@ -114,8 +131,9 @@ final class LegalDocumentEditorSessionService
             (int) $session->source_version_id, (int) $session->document_file_id, (int) $actor->id,
             (int) $session->generation, (string) $session->source_content_hash,
             (string) $version->original_filename, $viewerUrl,
-            $callbackBaseUrl.'/api/v1/admin/legal-archive/editor/callback/'.$session->id,
+            $callbackBaseUrl.'/api/v1/legal-document-editor/callback/'.$session->id,
             $sessionExpiry,
+            $mode,
         );
         $payload = $this->editor->createSession($context, trim((string) ($actor->name ?? $actor->email ?? $actor->id)));
         if (! hash_equals((string) $session->document_key, $payload->documentKey)) {
@@ -137,15 +155,13 @@ final class LegalDocumentEditorSessionService
         if (($claim['expired'] ?? false) === true) {
             throw new DomainException('legal_document_editor_session_expired');
         }
-        if ($claim['completed'] instanceof LegalArchiveDocumentVersion) {
+        if (($claim['completed'] ?? null) instanceof LegalArchiveDocumentVersion) {
             return $claim['completed'];
         }
         $session = $claim['session'];
-        if (! $input->requiresSave()) {
-            return $this->closeWithoutSave($session, $input, $leaseToken);
-        }
+        $save = $claim['save'];
         if (! is_string($input->downloadUrl) || $input->downloadUrl === '') {
-            $this->releaseClaim($session, $leaseToken, 'download_url_missing');
+            $this->releaseClaim($save, $leaseToken, 'download_url_missing');
             throw new DomainException('legal_document_editor_download_url_missing');
         }
 
@@ -156,21 +172,28 @@ final class LegalDocumentEditorSessionService
             $download = $this->fetcher->fetch($input->downloadUrl, $extension);
             $upload = new UploadedFile($download->path, $download->filename, $download->mimeType, null, true);
             $attempt = new LegalDocumentVersionAttempt(
-                'editor-session:'.$session->id,
+                (string) $save->operation_id,
                 $leaseToken,
-                fn (LegalArchiveDocument $document, string $token) => $this->assertCallbackLease($session, $document, $token),
+                fn (LegalArchiveDocument $document, string $token) => $this->assertCallbackLease($save, $document, $token),
+                heartbeatCallback: fn (string $token) => $this->renewSaveLease($save, $token),
+                completionCallback: fn (LegalArchiveDocumentVersion $version, string $token) => $this->completeSave($save, $version, $token),
             );
             $file = $source->documentFile()->firstOrFail();
             $saved = $this->files->addVersion($file, $upload, new VersionInput(
                 versionLabel: 'Редакция из встроенного редактора',
-                uploadedByUserId: (int) $session->opened_by_user_id,
-                metadata: ['editor_session_id' => (string) $session->id, 'editor_source_version_id' => (int) $source->id],
+                uploadedByUserId: null,
+                metadata: [
+                    'editor_session_id' => (string) $session->id,
+                    'editor_source_version_id' => (int) $source->id,
+                    'editor_save_generation' => (int) $save->save_generation,
+                    'editor_participant_user_ids' => $this->participantUserIds($session),
+                ],
                 makeCurrent: true,
             ), $attempt);
 
-            return $this->complete($session, $saved, $leaseToken);
+            return $saved;
         } catch (Throwable $error) {
-            $this->releaseClaim($session, $leaseToken, $error::class);
+            $this->releaseClaim($save, $leaseToken, $error::class);
             throw $error;
         } finally {
             $download?->cleanup();
@@ -190,12 +213,15 @@ final class LegalDocumentEditorSessionService
             if (! hash_equals((string) $session->document_key, $input->documentKey)) {
                 throw new DomainException('legal_document_editor_key_mismatch');
             }
-            if ($session->status === 'completed') {
-                if (! hash_equals((string) $session->callback_replay_hash, $replayHash)) {
-                    throw new DomainException('legal_document_editor_callback_conflict');
-                }
+            $this->reauthorizeSessionActor($session, $document);
+            $save = $this->saves()->where('editor_session_id', $session->id)
+                ->where('replay_hash', $replayHash)->lockForUpdate()->first();
+            if ($save instanceof LegalDocumentEditorSave && $save->state === 'completed') {
+                $completed = $save->saved_version_id === null
+                    ? $this->versions()->findOrFail((int) $session->source_version_id)
+                    : $this->versions()->findOrFail((int) $save->saved_version_id);
 
-                return ['session' => $session, 'completed' => $this->versions()->findOrFail((int) $session->saved_version_id)];
+                return ['session' => $session, 'save' => $save, 'completed' => $completed];
             }
             if ($session->expires_at?->isPast()) {
                 LegalDocumentEditorSession::serviceMutation(fn () => $session->forceFill(['status' => 'expired', 'completed_at' => now()])->save());
@@ -207,40 +233,98 @@ final class LegalDocumentEditorSessionService
 
                 return ['session' => $session, 'completed' => null, 'expired' => true];
             }
-            if ($session->status === 'processing' && $session->callback_lease_expires_at?->isFuture()) {
-                throw new DomainException('legal_document_editor_callback_in_progress');
-            }
-            if (! in_array($session->status, ['active', 'processing'], true)
-                || ($session->callback_replay_hash !== null && ! hash_equals((string) $session->callback_replay_hash, $replayHash))) {
+            if (! in_array($session->status, ['active', 'processing'], true)) {
                 throw new DomainException('legal_document_editor_callback_conflict');
             }
             if ($input->requiresSave()) {
-                $this->assertSourceStillEditable($session, $document);
+                (new LegalDocumentEditGuard($this->connection))->assertVersionMutationAllowed($document, (string) $session->id);
+                $this->assertSourceStillEditable($session, $document, true);
             }
-            LegalDocumentEditorSession::serviceMutation(function () use ($session, $replayHash, $leaseToken): void {
-                $session->forceFill([
-                    'status' => 'processing', 'callback_replay_hash' => $replayHash,
-                    'callback_lease_token_hash' => hash('sha256', $leaseToken),
-                    'callback_lease_expires_at' => now()->addMinutes(5),
-                    'callback_attempt_count' => ((int) $session->callback_attempt_count) + 1,
-                    'failure_code' => null,
-                ])->save();
-            });
+            if ($save instanceof LegalDocumentEditorSave
+                && $save->state === 'processing'
+                && $save->lease_expires_at?->isFuture()) {
+                throw new DomainException('legal_document_editor_callback_in_progress');
+            }
+            if (! $save instanceof LegalDocumentEditorSave) {
+                $generation = (int) $session->next_save_generation;
+                $save = $this->saves()->create([
+                    'id' => (string) Str::uuid(),
+                    'organization_id' => (int) $session->organization_id,
+                    'document_id' => (int) $session->document_id,
+                    'editor_session_id' => (string) $session->id,
+                    'source_version_id' => (int) $session->source_version_id,
+                    'document_file_id' => (int) $session->document_file_id,
+                    'save_generation' => $generation,
+                    'callback_status' => $input->status,
+                    'replay_hash' => $replayHash,
+                    'operation_id' => (string) Str::uuid(),
+                    'state' => 'reserved',
+                    'terminal' => in_array($input->status, [2, 4], true),
+                ]);
+                LegalDocumentEditorSession::serviceMutation(fn () => $session->forceFill([
+                    'next_save_generation' => $generation + 1,
+                ])->save());
+            }
+            if ($input->status === 4) {
+                LegalDocumentEditorSave::serviceMutation(fn () => $save->forceFill([
+                    'state' => 'completed', 'completed_at' => now(),
+                ])->save());
+                LegalDocumentEditorSession::serviceMutation(fn () => $session->forceFill([
+                    'status' => 'closed', 'completed_at' => now(),
+                ])->save());
 
-            return ['session' => $session->refresh(), 'completed' => null];
+                return [
+                    'session' => $session->refresh(),
+                    'save' => $save->refresh(),
+                    'completed' => $this->versions()->findOrFail((int) $session->source_version_id),
+                ];
+            }
+            $isForceSave = $input->status === 6;
+            LegalDocumentEditorSave::serviceMutation(fn () => $save->forceFill([
+                'state' => 'processing',
+                'lease_owner_hash' => hash('sha256', $leaseToken),
+                'lease_expires_at' => now()->addMinutes(5),
+                'failed_at' => null,
+            ])->save());
+            if ($isForceSave && (bool) $save->terminal) {
+                throw new DomainException('legal_document_editor_force_save_terminal_invalid');
+            }
+            if ($input->status === 2 && $session->status === 'active') {
+                LegalDocumentEditorSession::serviceMutation(fn () => $session->forceFill([
+                    'status' => 'processing',
+                ])->save());
+            }
+
+            return ['session' => $session->refresh(), 'save' => $save->refresh(), 'completed' => null];
         }, 3);
     }
 
-    private function assertCallbackLease(LegalDocumentEditorSession $candidate, LegalArchiveDocument $document, string $token): void
+    private function assertCallbackLease(LegalDocumentEditorSave $candidate, LegalArchiveDocument $document, string $token): void
     {
-        $session = $this->sessions()->find($candidate->id);
-        if (! $session instanceof LegalDocumentEditorSession || $session->status !== 'processing'
-            || $session->expires_at?->isPast()
-            || $session->callback_lease_expires_at?->isPast()
-            || ! hash_equals((string) $session->callback_lease_token_hash, hash('sha256', $token))) {
+        $save = $this->saves()->find($candidate->id);
+        $session = $this->sessions()->find($candidate->editor_session_id);
+        if (! $save instanceof LegalDocumentEditorSave || ! $session instanceof LegalDocumentEditorSession
+            || $save->state !== 'processing' || $session->expires_at?->isPast()
+            || $save->lease_expires_at?->isPast()
+            || ! hash_equals((string) $save->lease_owner_hash, hash('sha256', $token))) {
             throw new DomainException('legal_document_editor_callback_lease_lost');
         }
+        (new LegalDocumentEditGuard($this->connection))->assertVersionMutationAllowed($document, (string) $session->id);
         $this->assertSourceStillEditable($session, $document, true);
+    }
+
+    private function renewSaveLease(LegalDocumentEditorSave $candidate, string $token): void
+    {
+        $this->connection->transaction(function () use ($candidate, $token): void {
+            $save = $this->saves()->whereKey($candidate->id)->lockForUpdate()->first();
+            if (! $save instanceof LegalDocumentEditorSave || $save->state !== 'processing'
+                || ! hash_equals((string) $save->lease_owner_hash, hash('sha256', $token))) {
+                throw new DomainException('legal_document_editor_callback_lease_lost');
+            }
+            LegalDocumentEditorSave::serviceMutation(fn () => $save->forceFill([
+                'lease_expires_at' => now()->addMinutes(5),
+            ])->save());
+        }, 3);
     }
 
     private function assertSourceStillEditable(LegalDocumentEditorSession $session, LegalArchiveDocument $document, bool $allowOwnVersion = false): void
@@ -265,44 +349,49 @@ final class LegalDocumentEditorSessionService
         throw new DomainException('legal_document_editor_source_version_changed');
     }
 
-    private function complete(LegalDocumentEditorSession $candidate, LegalArchiveDocumentVersion $saved, string $leaseToken): LegalArchiveDocumentVersion
+    private function completeSave(LegalDocumentEditorSave $candidate, LegalArchiveDocumentVersion $saved, string $leaseToken): void
     {
-        return $this->connection->transaction(function () use ($candidate, $saved, $leaseToken): LegalArchiveDocumentVersion {
+        $complete = function () use ($candidate, $saved, $leaseToken): void {
             $document = $this->aggregateLock->lockDocument($this->connection, (int) $candidate->organization_id, (int) $candidate->document_id);
             $lockedSaved = $this->aggregateLock->lockVersion($this->connection, $document, (int) $saved->id);
-            $session = $this->sessions()->whereKey($candidate->id)->lockForUpdate()->firstOrFail();
-            if ($session->status === 'completed') {
-                return $this->versions()->findOrFail((int) $session->saved_version_id);
+            $save = $this->saves()->whereKey($candidate->id)->lockForUpdate()->firstOrFail();
+            $session = $this->sessions()->whereKey($save->editor_session_id)->lockForUpdate()->firstOrFail();
+            if ($save->state === 'completed') {
+                return;
             }
-            $this->assertCallbackLease($session, $document, $leaseToken);
-            LegalDocumentEditorSession::serviceMutation(fn () => $session->forceFill([
-                'status' => 'completed', 'saved_version_id' => (int) $lockedSaved->id, 'completed_at' => now(),
-                'callback_lease_token_hash' => null, 'callback_lease_expires_at' => null,
+            $this->assertCallbackLease($save, $document, $leaseToken);
+            LegalDocumentEditorSave::serviceMutation(fn () => $save->forceFill([
+                'state' => 'completed',
+                'saved_version_id' => (int) $lockedSaved->id,
+                'content_hash' => (string) $lockedSaved->content_hash,
+                'lease_owner_hash' => null,
+                'lease_expires_at' => null,
+                'completed_at' => now(),
             ])->save());
-            $this->audit->recordForActorId('editor_version_saved', $document, (int) $session->opened_by_user_id, [
-                'source_event_id' => 'editor-session:'.$session->id.':saved', 'session_id' => $session->id,
+            if ((bool) $save->terminal) {
+                LegalDocumentEditorSession::serviceMutation(fn () => $session->forceFill([
+                    'status' => 'completed',
+                    'saved_version_id' => (int) $lockedSaved->id,
+                    'completed_at' => now(),
+                ])->save());
+            }
+            $this->audit->recordForActorId('editor_version_saved', $document, null, [
+                'source_event_id' => 'editor-session:'.$session->id.':save:'.$save->save_generation,
+                'session_id' => $session->id,
                 'source_version_id' => (int) $session->source_version_id, 'saved_version_id' => (int) $lockedSaved->id,
+                'save_generation' => (int) $save->save_generation,
+                'callback_status' => (int) $save->callback_status,
+                'participant_user_ids' => $this->participantUserIds($session),
                 'content_hash' => (string) $lockedSaved->content_hash,
             ]);
+        };
 
-            return $lockedSaved;
-        }, 3);
-    }
+        if ($this->connection->transactionLevel() > 0) {
+            $complete();
 
-    private function closeWithoutSave(LegalDocumentEditorSession $candidate, EditorCallbackInput $input, string $leaseToken): LegalArchiveDocumentVersion
-    {
-        return $this->connection->transaction(function () use ($candidate, $input, $leaseToken): LegalArchiveDocumentVersion {
-            $document = $this->aggregateLock->lockDocument($this->connection, (int) $candidate->organization_id, (int) $candidate->document_id);
-            $source = $this->aggregateLock->lockVersion($this->connection, $document, (int) $candidate->source_version_id);
-            $session = $this->sessions()->whereKey($candidate->id)->lockForUpdate()->firstOrFail();
-            $this->assertCallbackLease($session, $document, $leaseToken);
-            LegalDocumentEditorSession::serviceMutation(fn () => $session->forceFill([
-                'status' => 'closed', 'completed_at' => now(), 'callback_lease_token_hash' => null,
-                'callback_lease_expires_at' => null, 'failure_code' => 'onlyoffice_status_'.$input->status,
-            ])->save());
-
-            return $source;
-        }, 3);
+            return;
+        }
+        $this->connection->transaction($complete, 3);
     }
 
     private function acknowledgeTransientStatus(EditorCallbackInput $input): LegalArchiveDocumentVersion
@@ -345,21 +434,28 @@ final class LegalDocumentEditorSessionService
         return $result;
     }
 
-    private function releaseClaim(LegalDocumentEditorSession $candidate, string $leaseToken, string $failure): void
+    private function releaseClaim(LegalDocumentEditorSave $candidate, string $leaseToken, string $failure): void
     {
         $this->connection->transaction(function () use ($candidate, $leaseToken, $failure): void {
             $document = $this->aggregateLock->lockDocument($this->connection, (int) $candidate->organization_id, (int) $candidate->document_id);
             $this->aggregateLock->lockVersion($this->connection, $document, (int) $candidate->source_version_id);
-            $session = $this->sessions()->whereKey($candidate->id)->lockForUpdate()->first();
-            if (! $session instanceof LegalDocumentEditorSession || $session->status !== 'processing'
-                || ! hash_equals((string) $session->callback_lease_token_hash, hash('sha256', $leaseToken))) {
+            $save = $this->saves()->whereKey($candidate->id)->lockForUpdate()->first();
+            $session = $this->sessions()->whereKey($candidate->editor_session_id)->lockForUpdate()->first();
+            if (! $save instanceof LegalDocumentEditorSave || ! $session instanceof LegalDocumentEditorSession
+                || $save->state !== 'processing'
+                || ! hash_equals((string) $save->lease_owner_hash, hash('sha256', $leaseToken))) {
                 return;
             }
             $expired = $session->expires_at?->isPast() === true;
+            LegalDocumentEditorSave::serviceMutation(fn () => $save->forceFill([
+                'state' => 'failed',
+                'lease_owner_hash' => null,
+                'lease_expires_at' => null,
+                'failed_at' => now(),
+            ])->save());
             LegalDocumentEditorSession::serviceMutation(fn () => $session->forceFill([
-                'status' => $expired ? 'expired' : 'active',
+                'status' => $expired ? 'expired' : ($session->status === 'processing' ? 'active' : $session->status),
                 'completed_at' => $expired ? now() : null,
-                'callback_lease_token_hash' => null, 'callback_lease_expires_at' => null,
                 'failure_code' => substr($failure, 0, 120),
             ])->save());
             if ($expired) {
@@ -374,13 +470,7 @@ final class LegalDocumentEditorSessionService
 
     private function assertEditable(LegalArchiveDocument $document, LegalArchiveDocumentVersion $version): void
     {
-        if ((int) $document->current_primary_version_id !== (int) $version->id || ! (bool) $version->is_current
-            || $version->processing_status !== 'ready' || $version->status !== 'uploaded'
-            || preg_match('/^[a-f0-9]{64}$/D', (string) $version->content_hash) !== 1
-            || $this->connection->table('legal_workflow_instances')->where('document_id', $document->id)->where('status', 'in_progress')->exists()
-            || $this->connection->table('legal_signature_requests')->where('document_id', $document->id)->where('status', 'pending')->exists()) {
-            throw new DomainException('legal_document_editor_version_not_editable');
-        }
+        (new LegalDocumentEditGuard($this->connection))->assertEditorOpenAllowed($document, $version);
     }
 
     private function documentForVersion(LegalArchiveDocumentVersion $version): LegalArchiveDocument
@@ -393,10 +483,47 @@ final class LegalDocumentEditorSessionService
         return $document;
     }
 
+    private function reauthorizeSessionActor(LegalDocumentEditorSession $session, LegalArchiveDocument $document): void
+    {
+        $actor = (new User)->setConnection($this->connection->getName())->newQuery()
+            ->whereKey((int) $session->opened_by_user_id)
+            ->where('is_active', true)
+            ->first();
+        if (! $actor instanceof User) {
+            throw new DomainException('legal_document_editor_actor_inactive');
+        }
+        $actor->forceFill(['current_organization_id' => (int) $session->organization_id]);
+        $this->authorizer->authorize($actor, $document, $session->mode === 'review'
+            ? LegalDocumentAbility::COMMENT->value
+            : LegalDocumentAbility::EDIT->value);
+    }
+
     private function documentKey(LegalArchiveDocument $document, LegalArchiveDocumentVersion $version, string $sessionId, int $generation): string
     {
-        return $document->id.'.'.substr(hash('sha256', implode(':', [$document->organization_id, $document->id, $version->id,
+        return $version->id.'.'.substr(hash('sha256', implode(':', [$document->organization_id, $document->id, $version->id,
             $version->content_hash, $sessionId, $generation])), 0, 48);
+    }
+
+    private function recordParticipant(LegalDocumentEditorSession $session, User $actor): void
+    {
+        $actorKey = hash('sha256', $session->organization_id.'|user|'.$actor->id);
+        $this->participants()->firstOrCreate([
+            'editor_session_id' => (string) $session->id,
+            'actor_key' => $actorKey,
+        ], [
+            'id' => (string) Str::uuid(),
+            'organization_id' => (int) $session->organization_id,
+            'user_id' => (int) $actor->id,
+            'provider_user_id' => (string) $actor->id,
+            'joined_at' => now(),
+        ]);
+    }
+
+    private function participantUserIds(LegalDocumentEditorSession $session): array
+    {
+        return $this->participants()->where('editor_session_id', $session->id)
+            ->whereNotNull('user_id')->orderBy('joined_at')->pluck('user_id')
+            ->map(static fn (mixed $id): int => (int) $id)->all();
     }
 
     private function sessions(): \Illuminate\Database\Eloquent\Builder
@@ -407,5 +534,15 @@ final class LegalDocumentEditorSessionService
     private function versions(): \Illuminate\Database\Eloquent\Builder
     {
         return (new LegalArchiveDocumentVersion)->setConnection($this->connection->getName())->newQuery();
+    }
+
+    private function saves(): \Illuminate\Database\Eloquent\Builder
+    {
+        return (new LegalDocumentEditorSave)->setConnection($this->connection->getName())->newQuery();
+    }
+
+    private function participants(): \Illuminate\Database\Eloquent\Builder
+    {
+        return (new LegalDocumentEditorParticipant)->setConnection($this->connection->getName())->newQuery();
     }
 }

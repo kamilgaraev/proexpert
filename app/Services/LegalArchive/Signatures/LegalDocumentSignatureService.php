@@ -16,6 +16,7 @@ use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\CanonicalJson;
 use App\Services\LegalArchive\Comments\LegalDocumentBlockingCommentGuard;
+use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
 use App\Services\LegalArchive\Files\LegalCleanupDebtKey;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
@@ -99,6 +100,7 @@ final class LegalDocumentSignatureService
         return $this->connection->transaction(function () use ($document, $version, $actor, $method, $provider, $partyId, $signers, $signerSnapshot, $key, $requestHash, $expiresAt, $replacesRequestId): LegalSignatureRequest {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
             $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $version->id);
+            (new LegalDocumentEditGuard($this->connection))->assertSignatureAllowed($lockedDocument);
             $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::REQUEST_SIGNATURE->value);
             $existing = $this->requests()->where('organization_id', $lockedDocument->organization_id)
                 ->where('requested_by_user_id', $actor->id)->where('idempotency_key', $key)->lockForUpdate()->first();

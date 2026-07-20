@@ -30,7 +30,7 @@ final class OnlyOfficeConfigTest extends TestCase
 
         self::assertTrue($payload->enabled);
         self::assertSame('edit', $payload->mode);
-        self::assertStringStartsWith('20.', $payload->documentKeyPrefix);
+        self::assertSame('30.', $payload->documentKeyPrefix);
         self::assertNotEmpty($payload->token);
         self::assertSame($payload->documentKey, $payload->configuration['document']['key']);
         self::assertSame($payload->token, $payload->configuration['token']);
@@ -42,6 +42,24 @@ final class OnlyOfficeConfigTest extends TestCase
         $editor->verifyCallbackToken($payload->token, new \App\Services\LegalArchive\Editor\EditorCallbackInput(
             'session-id', $payload->documentKey, 2, 'https://office.example.test/result.docx', 'replay', $payload->token,
         ));
+    }
+
+    public function test_editor_session_lifetime_is_not_clamped_to_source_url_ttl(): void
+    {
+        $source = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/LegalDocumentEditorSessionService.php');
+        self::assertIsString($source);
+        self::assertStringNotContainsString('sourceUrlMinutes', $source);
+        self::assertStringContainsString("session_ttl_minutes', 120", $source);
+        self::assertStringContainsString('source_url_ttl_minutes', $source);
+    }
+
+    public function test_transport_disables_proxy_and_checks_connected_ip(): void
+    {
+        $source = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/OnlyOfficeBoundedDocumentFetcher.php');
+        self::assertIsString($source);
+        self::assertStringContainsString("'proxy' => ''", $source);
+        self::assertStringContainsString("'no_proxy' => '*'", $source);
+        self::assertStringContainsString("'primary_ip'", $source);
     }
 
     public function test_callback_token_rejects_body_drift(): void
@@ -56,6 +74,29 @@ final class OnlyOfficeConfigTest extends TestCase
         $editor->verifyCallbackToken($token, new \App\Services\LegalArchive\Editor\EditorCallbackInput(
             'session', 'document-key', 6, 'https://office.example.test/result.docx', 'replay', $token,
         ));
+    }
+
+    public function test_view_and_review_modes_have_server_enforced_permissions(): void
+    {
+        $editor = new OnlyOfficeDocumentEditor([
+            'enabled' => true,
+            'url' => 'https://office.example.test',
+            'jwt_secret' => str_repeat('s', 48),
+        ]);
+        $base = ['session', 10, 20, 30, 40, 50, 3, str_repeat('a', 64), 'contract.docx',
+            'https://api.example.test/source', '', new DateTimeImmutable('+2 hours')];
+        $view = $editor->createSession(new EditorDocumentContext(...[...$base, 'view']), 'Иван Иванов');
+        self::assertSame('view', $view->mode);
+        self::assertFalse($view->configuration['document']['permissions']['edit']);
+        self::assertFalse($view->configuration['document']['permissions']['review']);
+        self::assertFalse($view->configuration['document']['permissions']['comment']);
+        self::assertArrayNotHasKey('callbackUrl', $view->configuration['editorConfig']);
+
+        $review = $editor->createSession(new EditorDocumentContext(...[...$base, 'review']), 'Иван Иванов');
+        self::assertSame('review', $review->mode);
+        self::assertFalse($review->configuration['document']['permissions']['edit']);
+        self::assertTrue($review->configuration['document']['permissions']['review']);
+        self::assertTrue($review->configuration['document']['permissions']['comment']);
     }
 
     public function test_invalid_or_incomplete_server_configuration_fails_closed(): void

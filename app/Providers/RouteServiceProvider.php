@@ -213,6 +213,17 @@ class RouteServiceProvider extends ServiceProvider
             return Limit::perMinute(30)->by($request->ip());
         });
 
+        RateLimiter::for('legal-editor-callback', function (Request $request) {
+            $session = (string) $request->route('session');
+            $key = (string) $request->input('key', '');
+            $response = static fn () => new \Illuminate\Http\JsonResponse(['error' => 1], 429);
+
+            return [
+                Limit::perMinute(600)->by('legal-editor-callback:global')->response($response),
+                Limit::perMinute(30)->by('legal-editor-callback:'.hash('sha256', $session.'|'.$key))->response($response),
+            ];
+        });
+
         RateLimiter::for('auth', function (Request $request) {
             $identity = strtolower(trim((string) $request->input('email', '')));
             $identity = $identity !== '' ? sha1($identity) : 'anonymous';

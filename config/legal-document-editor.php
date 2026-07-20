@@ -8,7 +8,8 @@ return [
     'url' => env('LEGAL_DOCUMENT_EDITOR_URL'),
     'jwt_secret' => env('LEGAL_DOCUMENT_EDITOR_JWT_SECRET'),
     'callback_base_url' => env('LEGAL_DOCUMENT_EDITOR_CALLBACK_BASE_URL', env('APP_URL')),
-    'session_ttl_minutes' => (int) env('LEGAL_DOCUMENT_EDITOR_SESSION_TTL_MINUTES', 4),
+    'session_ttl_minutes' => (int) env('LEGAL_DOCUMENT_EDITOR_SESSION_TTL_MINUTES', 120),
+    'source_url_ttl_minutes' => (int) env('LEGAL_DOCUMENT_EDITOR_SOURCE_URL_TTL_MINUTES', 10),
     'download' => [
         'allowed_hosts' => array_values(array_filter(array_map('trim', explode(',', (string) env('LEGAL_DOCUMENT_EDITOR_DOWNLOAD_ALLOWED_HOSTS', ''))))),
         'max_size_bytes' => (int) env('LEGAL_DOCUMENT_EDITOR_DOWNLOAD_MAX_SIZE_BYTES', 104857600),

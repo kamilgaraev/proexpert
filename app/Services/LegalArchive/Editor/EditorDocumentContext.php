@@ -21,5 +21,6 @@ final readonly class EditorDocumentContext
         public string $sourceUrl,
         public string $callbackUrl,
         public DateTimeImmutable $expiresAt,
+        public string $mode = 'edit',
     ) {}
 }

@@ -28,14 +28,32 @@ final class OnlyOfficeBoundedDocumentFetcher implements EditorDocumentFetcher
 
         for ($redirect = 0; $redirect <= $maxRedirects; $redirect++) {
             $resolved = $this->safeResolution($current, (array) ($config['allowed_hosts'] ?? []));
+            $pinnedIp = (string) reset($resolved);
+            $connectedIpValidated = false;
             $response = $this->client->request('GET', $current, [
                 'max_redirects' => 0,
                 'timeout' => $timeout,
                 'max_duration' => $timeout,
                 'headers' => ['Accept' => 'application/octet-stream'],
                 'resolve' => $resolved,
+                'proxy' => '',
+                'no_proxy' => '*',
+                'on_progress' => function (int $downloaded, int $downloadSize, array $info) use ($pinnedIp, &$connectedIpValidated): void {
+                    if (! isset($info['primary_ip'])) {
+                        return;
+                    }
+                    $primaryIp = trim((string) $info['primary_ip'], '[]');
+                    if (filter_var($primaryIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false
+                        || ! hash_equals(strtolower($pinnedIp), strtolower($primaryIp))) {
+                        throw new DomainException('legal_document_editor_download_url_denied');
+                    }
+                    $connectedIpValidated = true;
+                },
             ]);
             $status = $response->getStatusCode();
+            if (! $connectedIpValidated) {
+                throw new DomainException('legal_document_editor_download_url_denied');
+            }
             if (in_array($status, [301, 302, 303, 307, 308], true)) {
                 $location = $response->getHeaders(false)['location'][0] ?? null;
                 if (! is_string($location) || $redirect === $maxRedirects) {
