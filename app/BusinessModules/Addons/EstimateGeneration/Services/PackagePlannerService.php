@@ -108,8 +108,10 @@ class PackagePlannerService
             $type = 'house';
         } elseif (str_contains($type, 'mixed_warehouse_office') || (($hasWarehouse || $hasIndustrial) && $hasOffice)) {
             $type = 'mixed_warehouse_office';
-        } elseif ($hasWarehouse || $hasIndustrial || str_contains($type, 'industrial')) {
+        } elseif ($hasWarehouse || str_contains($type, 'warehouse')) {
             $type = 'warehouse';
+        } elseif ($hasIndustrial || str_contains($type, 'industrial')) {
+            $type = 'industrial';
         } elseif (($planningSignals['plan_only_geometry'] ?? false) === true) {
             $type = 'floor_plan_geometry';
         } elseif (! $hasExplicitObjectType && ! $hasExplicitBuildingType && $this->hasDocumentQuantityEvidence($planningSignals)) {
@@ -205,7 +207,7 @@ class PackagePlannerService
 
     private function containsIndustrialObjectSignal(string $text): bool
     {
-        return preg_match('/(?:^|[^\p{L}\p{N}])(?:производствен\p{L}*|цех\p{L}*|industrial)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
+        return ObjectTypeSignalClassifier::isIndustrial($text);
     }
 
     private function containsOfficeSignal(string $text): bool

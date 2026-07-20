@@ -378,8 +378,12 @@ class ConstructionSemanticParser
             return 'mixed_warehouse_office';
         }
 
-        if ($this->containsWarehouseObjectSignal($normalized) || $this->containsIndustrialObjectSignal($normalized)) {
+        if ($this->containsWarehouseObjectSignal($normalized)) {
             return 'warehouse';
+        }
+
+        if ($this->containsIndustrialObjectSignal($normalized)) {
+            return 'industrial';
         }
 
         return null;
@@ -407,15 +411,21 @@ class ConstructionSemanticParser
 
         $hasWarehouse = $this->containsWarehouseObjectSignal($normalized)
             || $this->containsWarehouseObjectSignal($zoneText);
+        $hasIndustrial = $this->containsIndustrialObjectSignal($normalized)
+            || $this->containsIndustrialObjectSignal($zoneText);
         $hasOffice = $this->containsOfficeSignal($normalized)
             || $this->containsOfficeSignal($zoneText);
 
-        if ($hasWarehouse && $hasOffice) {
+        if (($hasWarehouse || $hasIndustrial) && $hasOffice) {
             return 'mixed_warehouse_office';
         }
 
-        if ($hasWarehouse || $this->containsIndustrialObjectSignal($normalized)) {
+        if ($hasWarehouse) {
             return 'warehouse';
+        }
+
+        if ($hasIndustrial) {
+            return 'industrial';
         }
 
         return null;
@@ -788,7 +798,7 @@ class ConstructionSemanticParser
 
     private function containsIndustrialObjectSignal(string $text): bool
     {
-        return preg_match('/(?:^|[^\p{L}\p{N}])(?:производствен\p{L}*|цех\p{L}*|industrial)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
+        return ObjectTypeSignalClassifier::isIndustrial($text);
     }
 
     private function containsOfficeSignal(string $text): bool

@@ -14,6 +14,14 @@ final class ObjectTypeSignalClassifier
         ) === 1;
     }
 
+    public static function isIndustrial(string $text): bool
+    {
+        return preg_match(
+            '/(?:^|[^\p{L}\p{N}])(?:производствен\p{L}*|цех\p{L}*|завод\p{L}*|industrial|factory)(?=$|[^\p{L}\p{N}])/u',
+            mb_strtolower($text),
+        ) === 1;
+    }
+
     public static function canonical(string $text): string
     {
         $normalized = mb_strtolower(trim($text));
@@ -29,6 +37,9 @@ final class ObjectTypeSignalClassifier
         }
         if (preg_match('/(?:^|[^\p{L}\p{N}])(?:склад\p{L}*|warehouse)(?=$|[^\p{L}\p{N}])/u', $normalized) === 1) {
             return 'warehouse';
+        }
+        if (self::isIndustrial($normalized)) {
+            return 'industrial';
         }
 
         return $normalized;
