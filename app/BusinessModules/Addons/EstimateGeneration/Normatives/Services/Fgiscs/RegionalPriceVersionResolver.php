@@ -6,9 +6,19 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgis
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\RegionalPriceStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
 
 class RegionalPriceVersionResolver
 {
+    private const COMPONENT_SOURCE_KINDS = [
+        'worker_salary_imported' => ['regional_worker_salary'],
+        'building_resources_imported' => [
+            'regional_building_resource_index',
+            'regional_building_resource_export',
+            'regional_building_resource_direct',
+        ],
+    ];
+
     private const IMMUTABLE_STATUSES = [
         RegionalPriceStatus::ACTIVE,
         RegionalPriceStatus::SUPERSEDED,
@@ -36,6 +46,20 @@ class RegionalPriceVersionResolver
             ->latest('id')
             ->get();
 
+        $sourceKinds = self::COMPONENT_SOURCE_KINDS[$componentMetadataKey] ?? [];
+        if ($sourceKinds !== [] && $versions->isNotEmpty()) {
+            $counts = EstimateResourcePrice::query()
+                ->whereIn('regional_price_version_id', $versions->pluck('id'))
+                ->whereIn('source_price_kind', $sourceKinds)
+                ->selectRaw('regional_price_version_id, count(*) as aggregate')
+                ->groupBy('regional_price_version_id')
+                ->pluck('aggregate', 'regional_price_version_id');
+
+            $versions->each(static function (EstimateRegionalPriceVersion $version) use ($counts): void {
+                $version->setAttribute('component_rows_count', (int) ($counts[$version->id] ?? 0));
+            });
+        }
+
         return $this->resolveFromVersions($versions, $baseVersionKey, $componentMetadataKey, $force);
     }
 
@@ -50,7 +74,9 @@ class RegionalPriceVersionResolver
     ): string {
         $versions = collect($versions)->values();
         $writable = $versions->first(
-            static fn (EstimateRegionalPriceVersion $version): bool => ! in_array($version->status, self::IMMUTABLE_STATUSES, true)
+            static fn (EstimateRegionalPriceVersion $version): bool => $version->status !== RegionalPriceStatus::FAILED
+                && ! in_array($version->status, self::IMMUTABLE_STATUSES, true)
+                && (int) $version->getAttribute('component_rows_count') === 0
         );
 
         if ($writable !== null) {
@@ -63,7 +89,9 @@ class RegionalPriceVersionResolver
             return $baseVersionKey;
         }
 
-        if (! $force && (bool) ($latest->metadata[$componentMetadataKey] ?? false)) {
+        if ($latest->status !== RegionalPriceStatus::FAILED
+            && ! $force
+            && (bool) ($latest->metadata[$componentMetadataKey] ?? false)) {
             return $latest->version_key;
         }
 

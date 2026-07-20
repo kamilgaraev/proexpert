@@ -9,6 +9,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\Fgi
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePriceUpdateService;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use ReflectionMethod;
+use RuntimeException;
 
 class FgiscsBuildingResourcePricePriorityTest extends TestCase
 {
@@ -48,8 +50,27 @@ class FgiscsBuildingResourcePricePriorityTest extends TestCase
             strpos($source, '$this->conjuncturePrices->import('),
         );
         self::assertStringNotContainsString('Residential project material conjuncture analysis is incomplete.', $source);
+        self::assertStringContainsString('$this->recordImportFailure(', $source);
+        self::assertStringContainsString("Log::warning('[EstimateGeneration] Failed to record building resource import failure status.'", $source);
+        self::assertStringContainsString("'exception_class' => \$statusException::class", $source);
         self::assertStringContainsString('throw $exception;', $source);
         self::assertStringNotContainsString('catch (\\Throwable)', $source);
+    }
+
+    public function test_failure_status_update_cannot_mask_original_import_failure(): void
+    {
+        $service = (new ReflectionClass(FgiscsBuildingResourcePriceUpdateService::class))
+            ->newInstanceWithoutConstructor();
+        $method = new ReflectionMethod(FgiscsBuildingResourcePriceUpdateService::class, 'attemptFailureStatusUpdate');
+        $attempted = false;
+
+        $method->invoke($service, 'dataset_version', static function () use (&$attempted): never {
+            $attempted = true;
+
+            throw new RuntimeException('immutable status');
+        });
+
+        self::assertTrue($attempted);
     }
 
     private function price(float $value, string $sourcePriceKind): FgiscsBuildingResourcePriceDTO
