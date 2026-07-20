@@ -50,7 +50,7 @@ final class LegalDocumentNotificationRecoveryService
                 LegalDocumentNotificationDelivery::query()->whereKey($delivery->id)->where('lease_token', hash('sha256', $token))->update(['status' => 'delivered', 'delivered_at' => now(), 'lease_token' => null, 'lease_expires_at' => null]);
                 $recovered++;
             } catch (\Throwable) {
-                LegalDocumentNotificationDelivery::query()->whereKey($delivery->id)->where('lease_token', hash('sha256', $token))->update(['status' => 'failed', 'lease_token' => null, 'lease_expires_at' => null]);
+                LegalDocumentNotificationDelivery::query()->whereKey($delivery->id)->where('lease_token', hash('sha256', $token))->update(['status' => 'sending', 'lease_token' => null, 'lease_expires_at' => now()->subSecond()]);
             }
         }
 
