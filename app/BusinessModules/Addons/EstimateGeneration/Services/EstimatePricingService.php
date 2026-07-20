@@ -88,14 +88,16 @@ class EstimatePricingService
                     $workItem['pricing_finalized_at'] = $workItem['price_snapshot']['captured_at'];
                 }
             } catch (MissingRegionalPrice $exception) {
-                Log::warning('estimate_generation.price_snapshot_rejected', [
-                    'work_key' => $workItem['key'] ?? null,
-                    'work_name' => $workItem['name'] ?? null,
-                    'norm_code' => $workItem['normative_match']['code'] ?? null,
-                    'price_id' => $exception->priceId,
-                    'reason' => $exception->reason,
-                    ...$exception->context,
-                ]);
+                if ($this->canLog()) {
+                    Log::warning('estimate_generation.price_snapshot_rejected', [
+                        'work_key' => $workItem['key'] ?? null,
+                        'work_name' => $workItem['name'] ?? null,
+                        'norm_code' => $workItem['normative_match']['code'] ?? null,
+                        'price_id' => $exception->priceId,
+                        'reason' => $exception->reason,
+                        ...$exception->context,
+                    ]);
+                }
                 $this->blockMissingSnapshot($workItem);
 
                 continue;
@@ -116,6 +118,13 @@ class EstimatePricingService
         }
 
         return $workItems;
+    }
+
+    private function canLog(): bool
+    {
+        $application = Log::getFacadeApplication();
+
+        return $application !== null && $application->bound('log') && $application->bound('config');
     }
 
     public function quantityEvidenceRejectionReason(PipelineContext $context, array $workItem): ?string

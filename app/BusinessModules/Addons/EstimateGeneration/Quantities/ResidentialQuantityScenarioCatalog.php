@@ -13,9 +13,9 @@ use Brick\Math\RoundingMode;
 
 final class ResidentialQuantityScenarioCatalog
 {
-    public const VERSION = '2.8.0';
+    public const VERSION = '2.9.0';
 
-    public const SCENARIO_ID = 'residential_preliminary_scenario:v11';
+    public const SCENARIO_ID = 'residential_preliminary_scenario:v12';
 
     private const UNITS = [
         'electrical.grounding' => 'm',
@@ -26,7 +26,7 @@ final class ResidentialQuantityScenarioCatalog
         'electrical.switches' => 'pcs',
         'foundation.prep' => 'm3',
         'heating.pipe' => 'm',
-        'heating.radiators' => 'kw',
+        'heating.radiators' => 'pcs',
         'lighting.lines' => 'm',
         'lighting.fixtures' => 'pcs',
         'openings.doors' => 'm2',
@@ -171,10 +171,14 @@ final class ResidentialQuantityScenarioCatalog
             $omissions[] = $this->omission('heating.unit', 'heating_source_type_missing');
             $quantities['heating.radiators'] = $this->scaled(
                 'heating.radiators',
-                'kw',
+                'pcs',
                 $floorArea,
-                '0.10',
-                ['residential_heat_load_kw_per_m2:0.10', ...$areaBasisAssumptions],
+                '0.5555555556',
+                [
+                    'residential_heat_load_kw_per_m2:0.10',
+                    'residential_radiator_section_output_kw:0.18',
+                    ...$areaBasisAssumptions,
+                ],
             );
             $quantities['electrical.panel'] = $this->countBased(
                 'electrical.panel', 'pcs', 1, '1', $model, 'residential_house_count',
