@@ -37,9 +37,7 @@ final class ResidentialWorkCompositionCatalogTest extends TestCase
         self::assertContains('sanitary.showers', $requirements['plumbing']);
         self::assertContains('sanitary.toilets', $requirements['plumbing']);
         self::assertContains('sanitary.washbasins', $requirements['plumbing']);
-        self::assertContains('sewerage.risers', $requirements['sewerage']);
-        self::assertContains('sewerage.revisions', $requirements['sewerage']);
-        self::assertNotContains('sewerage.outlets', $requirements['sewerage']);
+        self::assertSame(['sewerage.pipe'], $requirements['sewerage']);
         self::assertNotContains('heating.unit', $requirements['heating']);
         self::assertContains('heating.radiators', $requirements['heating']);
 

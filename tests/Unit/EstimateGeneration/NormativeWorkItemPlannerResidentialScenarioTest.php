@@ -48,7 +48,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             'electrical.outlets' => 'pcs', 'electrical.switches' => 'pcs', 'electrical.grounding' => 'm',
             'lighting.lines' => 'm', 'lighting.fixtures' => 'pcs', 'plumbing.pipe' => 'm',
             'sanitary.showers' => 'pcs', 'sanitary.toilets' => 'pcs', 'sanitary.washbasins' => 'pcs',
-            'sanitary.waterproofing' => 'm2', 'sanitary.tile' => 'm2', 'sewerage.pipe' => 'm',
+            'sanitary.waterproofing' => 'm2', 'sanitary.tile' => 'm2', 'sanitary.floor_tile' => 'm2', 'sewerage.pipe' => 'm',
             'sewerage.outlets' => 'pcs', 'sewerage.risers' => 'pcs', 'sewerage.revisions' => 'pcs',
             'heating.pipe' => 'm', 'heating.radiators' => 'pcs',
             'ventilation.air_exchange' => 'm2', 'rough.floor' => 'm2', 'rough.walls' => 'm2',
@@ -127,6 +127,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             ['electrical', 'electrical', 'electrical.switches', 'pcs', '15.000000', '08-03-591-02'],
             ['lighting', 'electrical', 'lighting.fixtures', 'pcs', '18.000000', '08-03-593-06'],
             ['heating', 'heating', 'heating.radiators', 'pcs', '107.111111', '18-03-006-02'],
+            ['sewerage', 'sewerage', 'sewerage.pipe', 'm', '48.200000', '16-04-004-01'],
             ['plumbing', 'plumbing', 'sanitary.waterproofing', 'm2', '12.980000', '11-01-004-05'],
             ['plumbing', 'plumbing', 'sanitary.tile', 'm2', '39.497496', '15-01-019-05'],
         ] as [$package, $scope, $quantityKey, $unit, $amount, $normCode]) {
@@ -148,6 +149,32 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
                 self::assertSame('Установка алюминиевых или биметаллических секционных радиаторов', $item['name']);
             }
         }
+    }
+
+    #[Test]
+    public function residential_sewer_is_one_pipeline_position_covering_risers_and_revisions(): void
+    {
+        $analysis = [
+            'object' => ['object_type' => 'house'],
+            'document_context' => ['canonical_building_quantities' => [
+                $this->currentScenarioQuantity('sewerage.pipe', 'm', '48.200000')->toArray(),
+                $this->currentScenarioQuantity('sewerage.risers', 'pcs', '2.000000')->toArray(),
+                $this->currentScenarioQuantity('sewerage.revisions', 'pcs', '2.000000')->toArray(),
+            ]],
+        ];
+        $estimate = $this->estimate('sewerage', 'sewerage');
+
+        $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+
+        self::assertSame(['sewerage.pipe'], array_column($items, 'quantity_formula'));
+        self::assertSame('Прокладка внутренней канализации со стояками и ревизиями', $items[0]['name']);
+        self::assertSame('16-04-004-01', $items[0]['normative_rate_code']);
+        self::assertSame([
+            'Прокладка горизонтальных трубопроводов',
+            'Монтаж канализационных стояков',
+            'Установка фасонных частей и ревизий',
+            'Соединение внутренней канализационной сети',
+        ], $items[0]['metadata']['work_composition']);
     }
 
     #[Test]
@@ -209,6 +236,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             'object' => ['object_type' => 'house'],
             'document_context' => ['canonical_building_quantities' => [
                 $this->evidencedQuantity('ventilation.air_exchange', 'm2', '57.840000')->toArray(),
+                $this->evidencedQuantity('ventilation.distribution_devices', 'pcs', '7.000000')->toArray(),
             ]],
         ];
         $estimate = $this->estimate('ventilation', 'ventilation');
@@ -216,7 +244,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
         $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
         $item = array_column($items, null, 'quantity_formula')['ventilation.air_exchange'];
 
-        self::assertSame('Приточно-вытяжная вентиляция', $item['name']);
+        self::assertSame('Монтаж вытяжных воздуховодов жилого дома', $item['name']);
         self::assertSame('монтаж воздуховодов', $item['normative_search_text']);
         self::assertSame('20-01-001-01', $item['normative_rate_code']);
         self::assertSame(
@@ -224,6 +252,10 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             $item['metadata']['material_assumption']['code'] ?? null,
         );
         self::assertContains('preliminary_material_assumption', $item['validation_flags']);
+        $distribution = array_column($items, null, 'quantity_formula')['ventilation.distribution_devices'];
+        self::assertSame('Монтаж вентиляционных решеток и диффузоров', $distribution['name']);
+        self::assertNotContains('ventilation.office_points', array_column($items, 'quantity_formula'));
+        self::assertNotContains('ventilation.warehouse_points', array_column($items, 'quantity_formula'));
     }
 
     #[Test]
@@ -506,9 +538,40 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
         self::assertSame(
             [
                 '10-01-002-01', '12-01-015-03', '12-01-013-07',
-                null, '12-01-034-02', '12-01-023-01', null,
+                '12-01-015-03', '12-01-034-02', '12-01-023-01', null,
             ],
             array_column($items, 'normative_rate_code'),
+        );
+        $materialMessages = [
+            'Предварительно принята однослойная пароизоляция скатной кровли. Тип материала нужно уточнить по проекту.',
+            'Предварительно принята подкровельная гидроизоляционная диффузионная мембрана. Для монтажа использована расценка укладки одного прокладочного листового слоя с заменой материала ресурса на мембрану; тип материала нужно уточнить по проекту.',
+            'Предварительно принята деревянная обрешетка скатной кровли. Сечение и шаг нужно уточнить по проекту.',
+        ];
+        self::assertSame(
+            $materialMessages,
+            array_values(array_map(
+                static fn (array $item): ?string => $item['metadata']['material_assumption']['message'] ?? null,
+                array_filter(
+                    $items,
+                    static fn (array $item): bool => in_array(
+                        $item['quantity_formula'],
+                        ['roof.vapor_barrier', 'roof.membrane', 'roof.battens'],
+                        true,
+                    ),
+                ),
+            )),
+        );
+        $translations = require dirname(__DIR__, 3).'/lang/ru/estimate_generation.php';
+        self::assertSame(
+            $materialMessages,
+            array_map(
+                static fn (string $key): string => $translations['material_scenarios'][$key],
+                [
+                    'pitched_roof_single_layer_vapor_barrier',
+                    'pitched_roof_diffusion_membrane',
+                    'pitched_roof_timber_battens',
+                ],
+            ),
         );
     }
 

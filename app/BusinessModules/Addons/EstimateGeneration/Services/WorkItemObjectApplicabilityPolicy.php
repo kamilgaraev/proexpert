@@ -11,12 +11,18 @@ final class WorkItemObjectApplicabilityPolicy
      */
     public static function allows(string $quantityKey, array $analysis): bool
     {
+        $objectType = self::canonicalObjectType($analysis);
+        if ($objectType === 'residential' && in_array($quantityKey, [
+            'sewerage.risers',
+            'sewerage.revisions',
+        ], true)) {
+            return false;
+        }
+
         $allowedObjectTypes = self::allowedObjectTypes($quantityKey);
         if ($allowedObjectTypes === null) {
             return true;
         }
-
-        $objectType = self::canonicalObjectType($analysis);
 
         return $objectType !== null && in_array($objectType, $allowedObjectTypes, true);
     }
