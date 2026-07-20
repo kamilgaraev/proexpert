@@ -34,4 +34,19 @@ final class AiPricingCatalogTest extends TestCase
         $this->expectException(DomainException::class);
         (new AiPricingCatalog([]))->resolve('ocr', 'timeweb', 'unknown/model', new DateTimeImmutable);
     }
+
+    #[Test]
+    public function configured_reranker_fallback_has_a_versioned_budget_price(): void
+    {
+        $configuration = file_get_contents(dirname(__DIR__, 4).'/config/estimate-generation.php');
+
+        self::assertIsString($configuration);
+        self::assertStringContainsString("'openai/gpt-5-nano' => [[", $configuration);
+        self::assertStringContainsString("'ESTIMATE_GENERATION_RERANK_NANO_PRICE_INPUT_PER_MILLION', '7'", $configuration);
+        self::assertStringContainsString("'ESTIMATE_GENERATION_RERANK_NANO_PRICE_CACHED_INPUT_PER_MILLION', '7'", $configuration);
+        self::assertStringContainsString("'ESTIMATE_GENERATION_RERANK_NANO_PRICE_OUTPUT_PER_MILLION', '54'", $configuration);
+        self::assertStringContainsString("'ESTIMATE_GENERATION_RERANK_NANO_PRICE_CURRENCY', 'RUB'", $configuration);
+        self::assertStringContainsString("'ESTIMATE_GENERATION_RERANK_NANO_PRICE_VERSION', 'timeweb-ai-gateway-2026-07-20'", $configuration);
+        self::assertStringContainsString("'ESTIMATE_GENERATION_RERANK_NANO_PRICE_EFFECTIVE_AT', '2026-07-20T00:00:00+00:00'", $configuration);
+    }
 }
