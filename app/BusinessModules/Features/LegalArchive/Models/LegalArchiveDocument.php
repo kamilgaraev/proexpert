@@ -121,6 +121,11 @@ final class LegalArchiveDocument extends Model
         return $this->hasMany(LegalArchiveDocumentLink::class, 'document_id')->orderBy('link_type');
     }
 
+    public function workflowInstances(): HasMany
+    {
+        return $this->hasMany(LegalWorkflowInstance::class, 'document_id')->orderByDesc('id');
+    }
+
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');

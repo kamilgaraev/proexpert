@@ -24,7 +24,10 @@
     "legal_archive.create",
     "legal_archive.update",
     "legal_archive.files.upload",
-    "legal_archive.versions.create"
+    "legal_archive.versions.create",
+    "legal_archive.workflow.submit",
+    "legal_archive.workflow.decide",
+    "legal_archive.workflow.reassign"
   ],
   "module_permissions": {
     "contracts": [
@@ -136,7 +139,10 @@
       "legal_archive.create",
       "legal_archive.update",
       "legal_archive.files.upload",
-      "legal_archive.versions.create"
+      "legal_archive.versions.create",
+      "legal_archive.workflow.submit",
+      "legal_archive.workflow.decide",
+      "legal_archive.workflow.reassign"
     ],
     "budgeting": [
       "budgeting.budgets.view",

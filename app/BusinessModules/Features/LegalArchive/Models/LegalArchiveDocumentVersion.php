@@ -10,6 +10,7 @@ use App\Models\User;
 use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 final class LegalArchiveDocumentVersion extends Model
 {
@@ -99,5 +100,10 @@ final class LegalArchiveDocumentVersion extends Model
     public function uploadedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'uploaded_by_user_id');
+    }
+
+    public function workflowInstances(): HasMany
+    {
+        return $this->hasMany(LegalWorkflowInstance::class, 'document_version_id');
     }
 }
