@@ -17,7 +17,7 @@ final class FinalizedPackageDraftProjector
         'supplementary_project_material:v4',
     ];
 
-    private const ALLOWED_PACKAGE_STATUSES = ['ready_for_review', 'approved'];
+    private const ALLOWED_PACKAGE_STATUSES = ['ready_for_review', 'review_required', 'approved'];
 
     /**
      * @param  array<string, mixed>  $draft
@@ -279,7 +279,8 @@ final class FinalizedPackageDraftProjector
 
         $provenanceByResource = $this->indexByPositiveInt($provenance, 'norm_resource_id', 'resource provenance');
         $resources = [];
-        $exactTotal = BigDecimal::zero();
+        $baseExactTotal = BigDecimal::zero();
+        $projectExactTotal = BigDecimal::zero();
 
         foreach ($baseEvidence as $evidence) {
             if (! is_array($evidence)) {
@@ -330,7 +331,7 @@ final class FinalizedPackageDraftProjector
                     ),
                 ]),
             ];
-            $exactTotal = $exactTotal->plus($exact);
+            $baseExactTotal = $baseExactTotal->plus($exact);
             unset($stored['normative'][$normResourceId]);
             unset($provenanceByResource[$normResourceId]);
         }
@@ -382,7 +383,7 @@ final class FinalizedPackageDraftProjector
                     ),
                 ]),
             ];
-            $exactTotal = $exactTotal->plus($exact);
+            $projectExactTotal = $projectExactTotal->plus($exact);
             unset($stored['project'][$identity]);
         }
 
@@ -390,8 +391,16 @@ final class FinalizedPackageDraftProjector
             throw new \DomainException('Finalized resource mapping contains unexpected rows.');
         }
 
+        $baseTotal = $baseExactTotal->toScale(2, RoundingMode::HalfUp);
+        $projectTotal = $projectExactTotal->toScale(2, RoundingMode::HalfUp);
+        if ($formulaVersion === 'supplementary_project_material:v4'
+            && $this->money(data_get($snapshot, 'coefficients.project_material_amount'), 'project material amount')
+                ->compareTo($projectTotal) !== 0) {
+            throw new \DomainException('Finalized project material evidence total is inconsistent.');
+        }
+
         $itemTotal = $this->money($item->total_cost, 'item total');
-        if ($exactTotal->toScale(2, RoundingMode::HalfUp)->compareTo($itemTotal) !== 0) {
+        if ($baseTotal->plus($projectTotal)->compareTo($itemTotal) !== 0) {
             throw new \DomainException('Finalized resource evidence does not equal the package item total.');
         }
 
@@ -483,7 +492,7 @@ final class FinalizedPackageDraftProjector
     private function resourceGroup(string $resourceType): string
     {
         return match ($resourceType) {
-            'material', 'equipment' => 'materials',
+            'material', 'equipment', 'abstract', 'other' => 'materials',
             'labor', 'machine_labor' => 'labor',
             'machine', 'machinery' => 'machinery',
             default => throw new \DomainException('Finalized resource type is unsupported.'),

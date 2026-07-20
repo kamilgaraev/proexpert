@@ -285,6 +285,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                     'price_source' => $resource['price_source'] ?? null,
                     'price_source_version' => $resource['price_source_version'] ?? null,
                     'rounding_adjustment' => $resource['rounding_adjustment'] ?? null,
+                    'project_resource_selection' => $resource['project_resource_selection'] ?? null,
                     'project_material_selection' => $resource['project_material_selection'] ?? null,
                 ],
             ]);
