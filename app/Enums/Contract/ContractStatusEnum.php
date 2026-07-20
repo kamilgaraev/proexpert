@@ -11,6 +11,7 @@ enum ContractStatusEnum: string
     case COMPLETED = 'completed';
     case ON_HOLD = 'on_hold';
     case TERMINATED = 'terminated';
+    case ARCHIVED = 'archived';
 
     public function label(): string
     {

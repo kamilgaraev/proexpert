@@ -4,20 +4,28 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\LegalArchive\Models;
 
+use App\Exceptions\ImmutableDataException;
 use App\Models\Organization;
 use App\Models\User;
+use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 final class LegalArchiveDocumentVersion extends Model
 {
+    private static int $technicalMutationDepth = 0;
+
     protected $fillable = [
         'document_id',
+        'document_file_id',
         'organization_id',
         'version_number',
         'version_label',
         'is_current',
         'status',
+        'processing_status',
         'file_path',
         'original_filename',
         'mime_type',
@@ -36,9 +44,79 @@ final class LegalArchiveDocumentVersion extends Model
         'metadata' => 'array',
     ];
 
+    protected static function booted(): void
+    {
+        self::updating(static function (self $version): void {
+            $dirty = array_keys($version->getDirty());
+            $allowed = ['processing_status', 'is_current', 'status', 'updated_at'];
+            $originalStatus = (string) $version->getOriginal('status');
+
+            if (
+                self::$technicalMutationDepth < 1
+                || array_diff($dirty, $allowed) !== []
+                || $originalStatus === 'signed'
+                || ($originalStatus === 'frozen' && (! $version->isDirty('status') || (string) $version->status !== 'signed'))
+            ) {
+                throw new ImmutableDataException(self::class, 'update');
+            }
+
+            if ($version->isDirty('processing_status')) {
+                $from = (string) $version->getOriginal('processing_status');
+                $to = (string) $version->processing_status;
+                if (! (($from === 'quarantine' && in_array($to, ['ready', 'failed'], true))
+                    || ($from === 'failed' && $to === 'quarantine'))
+                ) {
+                    throw new ImmutableDataException(self::class, 'transition');
+                }
+            }
+            if ($version->isDirty('status')) {
+                $to = (string) $version->status;
+                $allowedStatusTransition = ($originalStatus === 'uploaded' && $to === 'frozen'
+                        && (string) $version->processing_status === 'ready' && (bool) $version->is_current)
+                    || ($originalStatus === 'frozen' && $to === 'signed');
+                if (! $allowedStatusTransition) {
+                    throw new ImmutableDataException(self::class, 'transition');
+                }
+            }
+        });
+        self::deleting(static function (): never {
+            throw new ImmutableDataException(self::class, 'delete');
+        });
+    }
+
+    public static function technicalMutation(Closure $mutation): mixed
+    {
+        self::$technicalMutationDepth++;
+
+        try {
+            return $mutation();
+        } finally {
+            self::$technicalMutationDepth--;
+        }
+    }
+
+    public function transitionForSignature(string $status): void
+    {
+        $from = (string) $this->status;
+        $allowed = ($from === 'uploaded' && $status === 'frozen'
+                && (string) $this->processing_status === 'ready' && (bool) $this->is_current)
+            || ($from === 'frozen' && $status === 'signed');
+        if (! $allowed) {
+            throw new ImmutableDataException(self::class, 'transition');
+        }
+        self::technicalMutation(function () use ($status): void {
+            $this->forceFill(['status' => $status])->save();
+        });
+    }
+
     public function document(): BelongsTo
     {
         return $this->belongsTo(LegalArchiveDocument::class, 'document_id');
+    }
+
+    public function documentFile(): BelongsTo
+    {
+        return $this->belongsTo(LegalArchiveDocumentFile::class, 'document_file_id');
     }
 
     public function organization(): BelongsTo
@@ -49,5 +127,30 @@ final class LegalArchiveDocumentVersion extends Model
     public function uploadedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'uploaded_by_user_id');
+    }
+
+    public function workflowInstances(): HasMany
+    {
+        return $this->hasMany(LegalWorkflowInstance::class, 'document_version_id');
+    }
+
+    public function comments(): HasMany
+    {
+        return $this->hasMany(LegalDocumentComment::class, 'document_version_id')->orderBy('id');
+    }
+
+    public function partySnapshotSet(): HasOne
+    {
+        return $this->hasOne(LegalDocumentPartySnapshotSet::class, 'document_version_id');
+    }
+
+    public function signatures(): HasMany
+    {
+        return $this->hasMany(LegalDocumentSignature::class, 'document_version_id')->orderBy('id');
+    }
+
+    public function editorSessions(): HasMany
+    {
+        return $this->hasMany(LegalDocumentEditorSession::class, 'source_version_id')->orderByDesc('created_at');
     }
 }

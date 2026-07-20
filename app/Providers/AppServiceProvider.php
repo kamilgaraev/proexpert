@@ -54,6 +54,100 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->bind(
+            \App\Services\Contract\ContractDossierDocumentCreator::class,
+            \App\Services\LegalArchive\LegalArchiveRegistryService::class,
+        );
+        $this->app->bind(\App\Services\Contract\ContractAuditedMutationService::class, function ($app) {
+            return new \App\Services\Contract\ContractAuditedMutationService(
+                $app->make(\App\Services\LegalArchive\Audit\LegalDocumentAudit::class),
+                $app->make('db')->connection(),
+            );
+        });
+        $this->app->bind(\App\Services\Contract\ContractAuditReconciliationService::class, function ($app) {
+            return new \App\Services\Contract\ContractAuditReconciliationService(
+                $app->make('db')->connection(),
+                $app->make(\App\Services\Contract\ContractAuditedMutationService::class),
+                logger: $app->make(\Psr\Log\LoggerInterface::class),
+            );
+        });
+        $this->app->bind(
+            \App\Services\LegalArchive\Audit\LegalDocumentOutboxPublisher::class,
+            \App\Services\LegalArchive\Audit\LaravelLegalDocumentOutboxPublisher::class,
+        );
+        $this->app->bind(\App\Services\LegalArchive\Audit\LegalDocumentAudit::class, function ($app) {
+            $connection = $app->make('db')->connection();
+            $redactor = $app->make(\App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRedactor::class);
+            $integrity = $app->make(\App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditIntegrityService::class);
+
+            return new \App\Services\LegalArchive\Audit\LegalDocumentAuditService(
+                new \App\BusinessModules\Core\ImmutableAudit\Services\ImmutableAuditRecorder(
+                    $redactor,
+                    $integrity,
+                    $connection,
+                ),
+                new \App\Services\LegalArchive\Audit\LegalDocumentOutbox(
+                    redactor: $redactor,
+                    integrity: $integrity,
+                    connection: $connection,
+                    logger: $app->make(\Psr\Log\LoggerInterface::class),
+                ),
+                $connection,
+            );
+        });
+
+        $this->app->bind(
+            \App\Services\LegalArchive\Files\LegalDocumentScanner::class,
+            $this->app->environment('testing')
+                ? \App\Services\LegalArchive\Files\TestingLegalDocumentScanner::class
+                : \App\Services\LegalArchive\Files\FailClosedLegalDocumentScanner::class,
+        );
+        $this->app->bind(
+            \App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class,
+            \App\Services\LegalArchive\Access\LegalDocumentAccessService::class,
+        );
+        $this->app->bind(
+            \App\Services\LegalArchive\Editor\EditorDocumentFetcher::class,
+            \App\Services\LegalArchive\Editor\OnlyOfficeBoundedDocumentFetcher::class,
+        );
+        $this->app->bind(\App\Services\LegalArchive\Editor\LegalDocumentEditor::class, function ($app) {
+            if (! (bool) config('legal-document-editor.enabled', false)
+                || (string) config('legal-document-editor.driver', 'onlyoffice') !== 'onlyoffice') {
+                return new \App\Services\LegalArchive\Editor\DisabledLegalDocumentEditor;
+            }
+
+            return new \App\Services\LegalArchive\Editor\OnlyOfficeDocumentEditor;
+        });
+        $this->app->bind(\App\Services\LegalArchive\Editor\LegalDocumentEditorSessionService::class, function ($app) {
+            return new \App\Services\LegalArchive\Editor\LegalDocumentEditorSessionService(
+                $app->make(\App\Services\LegalArchive\Editor\LegalDocumentEditor::class),
+                $app->make(\App\Services\LegalArchive\Editor\EditorDocumentFetcher::class),
+                $app->make(\App\Services\LegalArchive\Files\LegalDocumentFileService::class),
+                $app->make(\App\Services\LegalArchive\Files\LegalDocumentDownloadService::class),
+                $app->make(\App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class),
+                $app->make(\App\Services\LegalArchive\Audit\LegalDocumentAudit::class),
+                $app->make('db')->connection(),
+            );
+        });
+        $this->app->bind(\App\Services\LegalArchive\Signatures\ElectronicSignatureProvider::class, function ($app) {
+            $driver = (string) config('legal-document-signatures.driver', 'disabled');
+            $provider = config("legal-document-signatures.drivers.{$driver}");
+            if (! is_string($provider) || ! is_a($provider, \App\Services\LegalArchive\Signatures\ElectronicSignatureProvider::class, true)) {
+                $provider = \App\Services\LegalArchive\Signatures\DisabledElectronicSignatureProvider::class;
+            }
+
+            return $app->make($provider);
+        });
+        $this->app->bind(\App\Services\LegalArchive\Signatures\LegalDocumentSignatureService::class, function ($app) {
+            return new \App\Services\LegalArchive\Signatures\LegalDocumentSignatureService(
+                $app->make(\App\Services\LegalArchive\Signatures\ElectronicSignatureProvider::class),
+                $app->make(\App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class),
+                $app->make(\App\Services\LegalArchive\Audit\LegalDocumentAudit::class),
+                $app->make(\App\Services\Storage\FileService::class),
+                $app->make('db')->connection(),
+            );
+        });
+
         // Регистрируем FileService как singleton
         $this->app->singleton(FileService::class, function ($app) {
             return new FileService($app->make(\Illuminate\Contracts\Filesystem\Factory::class));

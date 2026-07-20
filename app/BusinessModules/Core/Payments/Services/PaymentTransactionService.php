@@ -17,6 +17,7 @@ class PaymentTransactionService
     public function __construct(
         private readonly PaymentDocumentService $paymentDocumentService,
         private readonly PaymentBudgetLimitService $budgetLimitService,
+        private readonly PurchaseOrderContractRequirementService $contractRequirement,
     ) {}
 
     /**
@@ -34,6 +35,17 @@ class PaymentTransactionService
         }
 
         return DB::transaction(function () use ($document, $data) {
+            $document = PaymentDocument::query()
+                ->whereKey($document->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            if (! $document->canBePaid()) {
+                throw new \DomainException(trans_message('payments.validation.document_pay_forbidden'));
+            }
+            if ($data['amount'] > $document->remaining_amount) {
+                throw new \DomainException(trans_message('payments.validation.payment_amount_exceeds_document_remaining'));
+            }
+            $this->contractRequirement->assertPaymentAllowed($document);
             $this->budgetLimitService->assertAllowed(
                 $document,
                 PaymentBudgetLimitService::OPERATION_PAYMENT_REGISTER,
@@ -202,4 +214,3 @@ class PaymentTransactionService
         return Carbon::parse($date);
     }
 }
-

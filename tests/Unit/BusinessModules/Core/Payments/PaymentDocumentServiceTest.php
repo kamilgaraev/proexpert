@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Payments\Services\PaymentAuditService;
 use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentStateMachine;
+use App\BusinessModules\Core\Payments\Services\PurchaseOrderContractRequirementService;
 use App\BusinessModules\Core\Payments\Services\PaymentValidationService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetLimitCheckService;
 use App\Domain\Authorization\Services\ModulePermissionChecker;
@@ -75,6 +76,7 @@ final class PaymentDocumentServiceTest extends TestCase
                 Mockery::mock(ModulePermissionChecker::class),
             ),
             Mockery::mock(PaymentAuditService::class),
+            Mockery::mock(PurchaseOrderContractRequirementService::class),
         );
 
         $this->expectException(DomainException::class);

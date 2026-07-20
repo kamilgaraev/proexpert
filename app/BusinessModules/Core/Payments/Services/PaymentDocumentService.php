@@ -30,7 +30,8 @@ class PaymentDocumentService
         private readonly ApprovalWorkflowService $approvalWorkflow,
         private readonly PaymentValidationService $validator,
         private readonly PaymentBudgetLimitService $budgetLimitService,
-        private readonly PaymentAuditService $auditService
+        private readonly PaymentAuditService $auditService,
+        private readonly PurchaseOrderContractRequirementService $contractRequirement,
     ) {}
 
     /**
@@ -396,18 +397,17 @@ class PaymentDocumentService
             'payment_data' => $paymentData,
         ]);
 
-        if (!$document->canBePaid()) {
-            Log::warning('payment_document.register_payment.cannot_be_paid', [
-                'document_id' => $document->id,
-                'status' => $document->status->value,
-                'remaining_amount' => $document->remaining_amount,
-            ]);
-            throw new \DomainException(trans_message('payments.validation.document_pay_forbidden'));
-        }
-
         DB::beginTransaction();
 
         try {
+            $document = PaymentDocument::query()
+                ->whereKey($document->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            if (! $document->canBePaid()) {
+                throw new \DomainException(trans_message('payments.validation.document_pay_forbidden'));
+            }
+            $this->contractRequirement->assertPaymentAllowed($document);
             Log::info('payment_document.register_payment.transaction_started', [
                 'document_id' => $document->id,
             ]);

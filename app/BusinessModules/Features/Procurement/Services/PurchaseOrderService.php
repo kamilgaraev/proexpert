@@ -347,10 +347,6 @@ class PurchaseOrderService
 
     public function createContractFromOrder(PurchaseOrder $order): Contract
     {
-        if ($order->hasContract()) {
-            throw new \DomainException(trans_message('procurement.purchase_orders.contract_already_exists'));
-        }
-
         return app(PurchaseContractService::class)->createFromOrder($order);
     }
 

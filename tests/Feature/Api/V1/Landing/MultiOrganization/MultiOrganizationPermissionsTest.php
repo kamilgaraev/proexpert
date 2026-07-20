@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Landing\MultiOrganization;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingContractsController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingDashboardController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingFilterController;
+use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingLegalArchiveController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingProjectsController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingReportsController;
 use Illuminate\Routing\Route as IlluminateRoute;
@@ -24,6 +25,9 @@ class MultiOrganizationPermissionsTest extends TestCase
             'api.v1.landing.multiOrganization.organizationData',
             'api.v1.landing.multiOrganization.getChildOrganizations',
             'api.v1.landing.multiOrganization.getRoleTemplates',
+            'api.v1.landing.multiOrganization.legalArchive.contracts.show',
+            'api.v1.landing.multiOrganization.legalArchive.versions.preview',
+            'api.v1.landing.multiOrganization.legalArchive.versions.download',
         ] as $routeName) {
             $this->assertRouteHasMiddleware($routeName, 'authorize:multi-organization.view');
         }
@@ -79,6 +83,7 @@ class MultiOrganizationPermissionsTest extends TestCase
             HoldingProjectsController::class,
             HoldingReportsController::class,
             HoldingContractsController::class,
+            HoldingLegalArchiveController::class,
         ] as $controllerClass) {
             $source = file_get_contents((new ReflectionClass($controllerClass))->getFileName());
 

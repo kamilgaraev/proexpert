@@ -4,16 +4,18 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Integration;
 
-use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService;
+use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Contract;
 use App\Models\ContractEstimateItem;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Services\CompletedWork\CompletedWorkFactService;
+use App\Services\Contract\ContractAuditedMutationService;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class EstimateCoverageService
@@ -30,6 +32,7 @@ class EstimateCoverageService
         private readonly ContractEstimateService $contractEstimateService,
         private readonly CompletedWorkFactService $completedWorkFactService,
         private readonly EstimateCacheService $estimateCacheService,
+        private readonly ContractAuditedMutationService $contractMutations,
     ) {}
 
     public function createFromContract(Contract $contract, array $additionalData = []): Estimate
@@ -38,7 +41,7 @@ class EstimateCoverageService
             $estimateData = array_merge([
                 'organization_id' => $contract->organization_id,
                 'project_id' => $contract->project_id,
-                'name' => 'Смета по договору ' . $contract->number,
+                'name' => 'Смета по договору '.$contract->number,
                 'type' => 'contractual',
                 'estimate_date' => now(),
             ], $additionalData);
@@ -284,15 +287,24 @@ class EstimateCoverageService
             return;
         }
 
-        $contracts->each(function (array $coverageItem) {
+        $contracts->each(function (array $coverageItem) use ($estimate) {
             $contract = Contract::find($coverageItem['contract_id']);
-            if (!$contract || $contract->is_fixed_amount) {
+            if (! $contract || $contract->is_fixed_amount) {
                 return;
             }
 
-            $contract->update([
-                'total_amount' => $coverageItem['linked_amount'],
-            ]);
+            $linkedAmount = (float) $coverageItem['linked_amount'];
+            if (abs((float) $contract->total_amount - $linkedAmount) < 0.001) {
+                return;
+            }
+
+            $this->contractMutations->update(
+                $contract,
+                ['total_amount' => $linkedAmount],
+                'estimate_coverage_amount_synced',
+                Auth::id(),
+                ['estimate_id' => (int) $estimate->id],
+            );
         });
     }
 
@@ -304,7 +316,7 @@ class EstimateCoverageService
             ->chunkById(100, function (EloquentCollection $estimates): void {
                 foreach ($estimates as $estimate) {
                     $contract = Contract::query()->find($estimate->contract_id);
-                    if (!$contract) {
+                    if (! $contract) {
                         continue;
                     }
 

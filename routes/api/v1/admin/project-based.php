@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractSpecificationController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractStateEventController;
 use App\Http\Controllers\Api\V1\Admin\ContractController;
+use App\Http\Controllers\Api\V1\Admin\ContractFromEstimateController;
 use App\Http\Controllers\Api\V1\Admin\MaterialAnalyticsController;
 // ContractPaymentController удален - используйте модуль Payments
 use App\Http\Controllers\Api\V1\Admin\ProjectContextController;
@@ -54,22 +55,42 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
 
     // === CONTRACTS ===
     Route::prefix('contracts')->group(function () {
-        Route::get('/', [ContractController::class, 'index']);
-        Route::post('/', [ContractController::class, 'store']);
-        Route::get('/{contract}', [ContractController::class, 'show']);
-        Route::put('/{contract}', [ContractController::class, 'update']);
-        Route::delete('/{contract}', [ContractController::class, 'destroyForProject']);
+        Route::get('/', [ContractController::class, 'index'])->middleware('authorize:contracts.view,project,project');
+        Route::post('/', [ContractController::class, 'store'])->middleware('authorize:contracts.create,project,project');
+        Route::post('/from-estimate', [ContractFromEstimateController::class, 'store'])
+            ->middleware('authorize:contracts.create,project,project');
+        Route::get('/{contract}', [ContractController::class, 'show'])->middleware('authorize:contracts.view,project,project');
+        Route::match(['put', 'patch'], '/{contract}', [ContractController::class, 'update'])
+            ->middleware('authorize:contracts.edit,project,project');
+        Route::delete('/{contract}', [ContractController::class, 'destroyForProject'])
+            ->middleware('authorize:contracts.delete,project,project');
+
+        foreach (['activate', 'suspend', 'resume', 'complete', 'terminate'] as $action) {
+            Route::post("/{contract}/{$action}", [ContractController::class, 'transition'])
+                ->defaults('action', $action)
+                ->middleware('authorize:contracts.edit,project,project');
+        }
+
+        Route::post('/{contract}/archive', [ContractController::class, 'transition'])
+            ->defaults('action', 'archive')
+            ->middleware('authorize:contracts.archive,project,project');
 
         // Contract Performance Acts
         Route::prefix('{contract}/performance-acts')->group(function () {
-            Route::get('/', [ContractPerformanceActController::class, 'index']);
-            Route::post('/', [ContractPerformanceActController::class, 'store']);
-            Route::get('/{performance_act}', [ContractPerformanceActController::class, 'show']);
-            Route::put('/{performance_act}', [ContractPerformanceActController::class, 'update']);
-            Route::delete('/{performance_act}', [ContractPerformanceActController::class, 'destroy']);
+            Route::get('/', [ContractPerformanceActController::class, 'index'])
+                ->middleware('authorize:contracts.performance_acts.view,project,project');
+            Route::post('/', [ContractPerformanceActController::class, 'store'])
+                ->middleware('authorize:contracts.performance_acts.create,project,project');
+            Route::get('/{performance_act}', [ContractPerformanceActController::class, 'show'])
+                ->middleware('authorize:contracts.performance_acts.view,project,project');
+            Route::match(['put', 'patch'], '/{performance_act}', [ContractPerformanceActController::class, 'update'])
+                ->middleware('authorize:contracts.performance_acts.edit,project,project');
+            Route::delete('/{performance_act}', [ContractPerformanceActController::class, 'destroy'])
+                ->middleware('authorize:contracts.performance_acts.delete,project,project');
         });
 
-        Route::get('/{contract}/available-works-for-acts', [ContractPerformanceActController::class, 'availableWorks']);
+        Route::get('/{contract}/available-works-for-acts', [ContractPerformanceActController::class, 'availableWorks'])
+            ->middleware('authorize:contracts.performance_acts.create,project,project');
 
         // УСТАРЕВШИЕ МАРШРУТЫ - УДАЛЕНЫ
         // Contract Payments теперь управляются через модуль Payments

@@ -7,6 +7,7 @@ use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingProjectsC
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingContractsController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingFilterController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingReportsController;
+use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingLegalArchiveController;
 
 Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'module.access:multi-organization'])
     ->prefix('multi-organization')
@@ -63,6 +64,15 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
         Route::get('/contracts/{contractId}', [HoldingContractsController::class, 'show'])
             ->middleware(['authorize:multi-organization.view'])
             ->name('contracts.show');
+        Route::get('/legal-archive/contracts/{contractId}', [HoldingLegalArchiveController::class, 'show'])
+            ->middleware(['authorize:multi-organization.view'])
+            ->name('legalArchive.contracts.show');
+        Route::get('/legal-archive/contracts/{contractId}/versions/{versionId}/preview', [HoldingLegalArchiveController::class, 'preview'])
+            ->middleware(['authorize:multi-organization.view'])
+            ->name('legalArchive.versions.preview');
+        Route::get('/legal-archive/contracts/{contractId}/versions/{versionId}/download', [HoldingLegalArchiveController::class, 'download'])
+            ->middleware(['authorize:multi-organization.view'])
+            ->name('legalArchive.versions.download');
 
         Route::get('/child-organizations', [MultiOrganizationController::class, 'getChildOrganizations'])
             ->middleware(['authorize:multi-organization.view'])

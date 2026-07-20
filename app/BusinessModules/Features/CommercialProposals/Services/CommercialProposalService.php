@@ -17,6 +17,13 @@ use App\BusinessModules\Features\CommercialProposals\Models\CommercialProposalTe
 use App\BusinessModules\Features\CommercialProposals\Models\CommercialProposalTimelineEvent;
 use App\BusinessModules\Features\CommercialProposals\Models\CommercialProposalVersion;
 use App\BusinessModules\Features\Crm\Models\CrmDeal;
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\DTOs\Contract\ContractDossierCreationInput;
+use App\DTOs\Contract\ContractDossierCreationResult;
+use App\Models\Contract;
+use App\Models\User;
+use App\Services\Contract\ContractDossierCreationService;
 use App\Services\Storage\FileService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
@@ -31,7 +38,9 @@ final class CommercialProposalService
 {
     public function __construct(
         private readonly FileService $fileService,
-        private readonly CommercialProposalExportService $exportService
+        private readonly CommercialProposalExportService $exportService,
+        private readonly ContractDossierCreationService $contractDossiers,
+        private readonly AuthorizationService $authorization,
     ) {
     }
 
@@ -596,6 +605,52 @@ final class CommercialProposalService
             );
 
             return $this->find($organizationId, $proposalId, true);
+        });
+    }
+
+    public function createContract(
+        int $organizationId,
+        string $proposalId,
+        User $actor,
+        ContractDossierCreationInput $input,
+    ): ContractDossierCreationResult {
+        return DB::transaction(function () use ($organizationId, $proposalId, $actor, $input): ContractDossierCreationResult {
+            $proposal = CommercialProposal::query()
+                ->whereKey($proposalId)
+                ->where('organization_id', $organizationId)
+                ->lockForUpdate()
+                ->firstOrFail();
+            if ($proposal->status !== CommercialProposalStatus::ACCEPTED
+                || $proposal->project_id === null
+                || (int) $proposal->project_id !== (int) $input->contract->project_id) {
+                $this->block('contract_only_from_accepted_proposal');
+            }
+            if (! $this->authorization->can($actor, 'contracts.create', [
+                'organization_id' => $organizationId,
+                'project_id' => (int) $proposal->project_id,
+            ])) {
+                $this->block('contract_create_forbidden');
+            }
+            if ($proposal->contract_id !== null) {
+                $contract = Contract::query()
+                    ->whereKey($proposal->contract_id)
+                    ->where('organization_id', $organizationId)
+                    ->first();
+                if ($contract === null || $contract->legal_archive_document_id === null) {
+                    $this->block('contract_dossier_creation_incomplete');
+                }
+                $document = $contract->legalArchiveDocument;
+                if (! $document instanceof LegalArchiveDocument
+                    || (int) $document->organization_id !== $organizationId) {
+                    $this->block('contract_dossier_creation_incomplete');
+                }
+
+                return new ContractDossierCreationResult($contract, $document, true);
+            }
+            $result = $this->contractDossiers->create($organizationId, $actor, $input);
+            $proposal->update(['contract_id' => $result->contract->id, 'updated_by_user_id' => $actor->id]);
+
+            return $result;
         });
     }
 

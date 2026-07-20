@@ -2,21 +2,48 @@
 
 namespace App\Http\Requests\Api\V1\Admin\Contract;
 
-use App\DTOs\Contract\ContractDTO;
 use App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\DTOs\Contract\ContractDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Rules\ParentContractValid;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rules\Enum;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Enum;
 
 class StoreContractRequest extends FormRequest
 {
     public function authorize(): bool
     {
+        $user = $this->user();
+        $routeProjectId = $this->routeProjectId();
+
+        if ($user === null) {
+            return false;
+        }
+
+        $projectIds = $routeProjectId !== null ? [$routeProjectId] : [];
+        if ($routeProjectId !== null && $this->boolean('is_multi_project')) {
+            $projectIds = array_merge($projectIds, $this->numericProjectIds($this->input('project_ids', [])));
+        }
+
+        $authorization = app(AuthorizationService::class);
+        $baseContext = ['organization_id' => $this->currentOrganizationId()];
+
+        if ($projectIds === []) {
+            return $authorization->can($user, 'contracts.create', $baseContext);
+        }
+
+        foreach (array_unique($projectIds) as $projectId) {
+            if (! $authorization->can($user, 'contracts.create', $baseContext + ['project_id' => $projectId])) {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -35,14 +62,14 @@ class StoreContractRequest extends FormRequest
                 if ($organizationId) {
                     $accessController = app(\App\Modules\Core\AccessController::class);
 
-                    if (!$accessController->hasModuleAccess($organizationId, 'procurement')) {
+                    if (! $accessController->hasModuleAccess($organizationId, 'procurement')) {
                         $validator->errors()->add(
                             'supplier_id',
                             'Модуль "Управление закупками" не активирован. Активируйте модуль для создания договоров поставки.'
                         );
                     }
 
-                    if (!$accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
+                    if (! $accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
                         $validator->errors()->add(
                             'supplier_id',
                             'Модуль "Базовое управление складом" не активирован. Он необходим для работы с договорами поставки.'
@@ -51,12 +78,12 @@ class StoreContractRequest extends FormRequest
                 }
             }
 
-            if (!$sideType) {
+            if (! $sideType) {
                 return;
             }
 
             if ($sideType->requiresSupplier()) {
-                if (!$supplierId) {
+                if (! $supplierId) {
                     $validator->errors()->add('supplier_id', 'Для этого типа договора нужно выбрать поставщика.');
                 }
 
@@ -70,7 +97,7 @@ class StoreContractRequest extends FormRequest
             }
 
             if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR) {
-                if (!$contractorId && !$isSelfExecution) {
+                if (! $contractorId && ! $isSelfExecution) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать подрядчика или включить собственные силы.');
                 }
 
@@ -80,7 +107,7 @@ class StoreContractRequest extends FormRequest
             }
 
             if ($sideType === ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR) {
-                if (!$contractorId) {
+                if (! $contractorId) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать субподрядчика.');
                 }
 
@@ -108,14 +135,39 @@ class StoreContractRequest extends FormRequest
     public function rules(): array
     {
         $organizationId = $this->currentOrganizationId();
+        $routeProjectId = $this->routeProjectId();
+        $isMultiProject = $this->boolean('is_multi_project');
+        $projectIdRules = [
+            'nullable',
+            'integer',
+            Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+            'required_without:project_ids',
+        ];
+        $projectIdsRules = ['nullable', 'required_if:is_multi_project,true,1', 'array', 'min:1'];
+        $projectIdsItemRules = [
+            'integer',
+            Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+        ];
 
-        return [
-            'project_id' => [
-                'nullable',
+        if ($routeProjectId !== null) {
+            $projectIdRules = [
+                $isMultiProject ? 'nullable' : 'required',
                 'integer',
                 Rule::exists('projects', 'id')->where('organization_id', $organizationId),
-                'required_without:project_ids',
-            ],
+                Rule::in([$routeProjectId]),
+            ];
+            $projectIdsItemRules[] = 'distinct';
+            if ($isMultiProject) {
+                $projectIdsRules[] = static function (string $attribute, mixed $value, \Closure $fail) use ($routeProjectId): void {
+                    if (is_array($value) && ! in_array($routeProjectId, array_map('intval', $value), true)) {
+                        $fail(trans_message('contracts.route_project_required'));
+                    }
+                };
+            }
+        }
+
+        return [
+            'project_id' => $projectIdRules,
             'contract_side_type' => ['required', new Enum(ContractSideTypeEnum::class)],
             'contractor_id' => [
                 'nullable',
@@ -152,21 +204,22 @@ class StoreContractRequest extends FormRequest
             'advance_payments.*.amount' => ['required', 'numeric', 'min:0'],
             'advance_payments.*.payment_date' => ['nullable', 'date'],
             'advance_payments.*.description' => ['nullable', 'string'],
-            'status' => ['required', new Enum(ContractStatusEnum::class)],
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['nullable', 'string'],
             'is_multi_project' => ['nullable', 'boolean'],
-            'project_ids' => ['nullable', 'required_if:is_multi_project,true,1', 'array', 'min:1'],
-            'project_ids.*' => [
-                'integer',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
-            ],
+            'project_ids' => $projectIdsRules,
+            'project_ids.*' => $projectIdsItemRules,
             'organization_id_for_creation' => ['sometimes', 'integer'],
+            'idempotency_key' => ['required', 'string', 'max:191'],
+            'document_title' => ['nullable', 'string', 'max:512'],
+            'document_profile_code' => ['nullable', 'string', 'max:191'],
+            'document_metadata' => ['nullable', 'array'],
+            'document_confidentiality_level' => ['nullable', 'in:internal,restricted,secret'],
         ];
     }
 
-    private function currentOrganizationId(): int
+    protected function currentOrganizationId(): int
     {
         return (int) (
             $this->attributes->get('current_organization_id')
@@ -175,14 +228,44 @@ class StoreContractRequest extends FormRequest
         );
     }
 
+    protected function prepareForValidation(): void
+    {
+        $routeProjectId = $this->routeProjectId();
+
+        if ($routeProjectId !== null && ! $this->has('project_id')) {
+            $this->merge(['project_id' => $this->boolean('is_multi_project') ? null : $routeProjectId]);
+        }
+    }
+
+    protected function routeProjectId(): ?int
+    {
+        $project = $this->route('project');
+
+        if ($project instanceof Model) {
+            return (int) $project->getKey();
+        }
+
+        return $project !== null ? (int) $project : null;
+    }
+
+    /** @return array<int, int> */
+    private function numericProjectIds(mixed $projectIds): array
+    {
+        if (! is_array($projectIds)) {
+            return [];
+        }
+
+        return array_map('intval', array_filter($projectIds, 'is_numeric'));
+    }
+
     private function availableContractorRule(int $organizationId): \Closure
     {
         return static function (string $attribute, mixed $value, \Closure $fail) use ($organizationId): void {
-            if (!$value) {
+            if (! $value) {
                 return;
             }
 
-            if (!app(ContractorSharingInterface::class)->canUseContractor((int) $value, $organizationId)) {
+            if (! app(ContractorSharingInterface::class)->canUseContractor((int) $value, $organizationId)) {
                 $fail(trans_message('contract.contractor_not_available'));
             }
         };
@@ -222,7 +305,7 @@ class StoreContractRequest extends FormRequest
             subcontract_amount: $this->validated('subcontract_amount') !== null ? (float) $this->validated('subcontract_amount') : null,
             planned_advance_amount: $this->validated('planned_advance_amount') !== null ? (float) $this->validated('planned_advance_amount') : null,
             actual_advance_amount: $this->validated('actual_advance_amount') !== null ? (float) $this->validated('actual_advance_amount') : null,
-            status: ContractStatusEnum::from($this->validated('status')),
+            status: ContractStatusEnum::DRAFT,
             start_date: $this->validated('start_date') ? \Carbon\Carbon::parse($this->validated('start_date'))->format('Y-m-d') : null,
             end_date: $this->validated('end_date') ? \Carbon\Carbon::parse($this->validated('end_date'))->format('Y-m-d') : null,
             notes: $this->validated('notes'),

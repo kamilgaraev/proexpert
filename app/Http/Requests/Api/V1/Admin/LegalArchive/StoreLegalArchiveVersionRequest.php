@@ -43,6 +43,7 @@ final class StoreLegalArchiveVersionRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'lock_version' => ['required', 'integer', 'min:0'],
             'file' => ['required', 'file', 'max:102400'],
             'version_number' => ['nullable', 'string', 'max:64'],
             'version_label' => ['nullable', 'string', 'max:255'],

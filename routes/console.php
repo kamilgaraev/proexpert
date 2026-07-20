@@ -1,6 +1,8 @@
 <?php
 
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverExpiredTrainingDatasetLeasesJob;
+use App\Jobs\LegalArchive\MonitorLegalDocumentOutboxDeadLetters;
+use App\Jobs\LegalArchive\RecoverLegalDocumentOutboxMessages;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -26,6 +28,21 @@ Schedule::command('commercial:reconcile --limit=100')
 Schedule::job(new RecoverExpiredTrainingDatasetLeasesJob)
     ->everyFiveMinutes()
     ->withoutOverlapping();
+
+Schedule::job(new RecoverLegalDocumentOutboxMessages)
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onOneServer();
+
+Schedule::command('legal-archive:recover-notification-deliveries --limit=100')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onOneServer();
+
+Schedule::job(new MonitorLegalDocumentOutboxDeadLetters)
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onOneServer();
 use App\Console\Commands\ReverifyOrganizationsCommand;
 use Illuminate\Support\Facades\File;
 
@@ -231,6 +248,49 @@ Schedule::command('estimates:regional-prices:sync-fgiscs-building-resources --al
     ->appendOutputTo(storage_path('logs/schedule-building-resource-prices-sync.log'));
 
 $oneCExchangeScheduledLimit = max(1, (int) config('one_c_exchange.delivery.scheduled_limit', 50));
+
+Schedule::command('contracts:reconcile-audit-debts --limit=100')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->runInBackground()
+    ->onFailure(function (): void {
+        Log::error('contract.audit_reconciliation.schedule_failed');
+    });
+
+Schedule::command('legal-signatures:expire --limit=200')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onFailure(function (): void {
+        Log::error('legal_signature.expiry_schedule_failed');
+    });
+
+Schedule::command('legal-signatures:cleanup-storage --limit=200')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onFailure(function (): void {
+        Log::error('legal_signature.cleanup_storage_schedule_failed');
+    });
+
+Schedule::command('legal-signatures:reconcile-artifacts --limit=200')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onFailure(function (): void {
+        Log::error('legal_signature.reconcile_artifacts_schedule_failed');
+    });
+
+Schedule::command('legal-documents:cleanup-file-storage --limit=200')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onFailure(function (): void {
+        Log::error('legal_document.file_cleanup_storage_schedule_failed');
+    });
+
+Schedule::command('immutable-audit:rollout-status')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(5)
+    ->onFailure(function (): void {
+        Log::critical('immutable_audit.rollout_status_failed');
+    });
 
 if ((bool) config('one_c_exchange.delivery.enabled', false)) {
     Schedule::command("one-c-exchange:deliver --limit={$oneCExchangeScheduledLimit}")
