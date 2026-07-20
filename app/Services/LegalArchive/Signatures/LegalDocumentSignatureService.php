@@ -378,6 +378,9 @@ final class LegalDocumentSignatureService
                 'provider' => null,
                 'signature_path' => null,
                 'signature_content_hash' => null,
+                'storage_version_id' => (string) $stored['version_id'],
+                'storage_etag' => is_string($stored['etag']) ? $stored['etag'] : null,
+                'detected_mime_type' => $detectedMimeType,
                 'certificate_metadata' => [],
                 'provider_metadata' => [
                     'party_role_snapshot' => $data->partyRoleSnapshot,
@@ -1116,14 +1119,23 @@ final class LegalDocumentSignatureService
     private function registerOriginal(LegalSignatureRequest $request, User $actor, string $method, string $idempotencyKey, array $data, bool $authorize = true): LegalDocumentSignature
     {
         $key = $this->validKey($idempotencyKey);
+        $requestHashExcludedFields = [
+            'callback_replay_hash' => true,
+            'callback_payload_hash' => true,
+            'artifact_attempt_token' => true,
+        ];
+        if ($method === 'paper') {
+            $requestHashExcludedFields += [
+                'artifact_key' => true,
+                'storage_version_id' => true,
+                'storage_etag' => true,
+                'detected_mime_type' => true,
+            ];
+        }
         $requestHash = CanonicalJson::fingerprint([
             'request_id' => (int) $request->id,
             'method' => $method,
-            ...array_diff_key($data, [
-                'callback_replay_hash' => true,
-                'callback_payload_hash' => true,
-                'artifact_attempt_token' => true,
-            ]),
+            ...array_diff_key($data, $requestHashExcludedFields),
         ]);
         $document = $this->documentForRequest($request);
         if ($authorize) {
@@ -1260,7 +1272,7 @@ final class LegalDocumentSignatureService
                 'idempotency_key' => $key,
                 'request_hash' => $requestHash,
             ]);
-            if ($method !== 'paper') {
+            if (isset($data['artifact_key'])) {
                 $artifact = $this->connection->table('legal_signature_artifacts')
                     ->where('organization_id', $lockedDocument->organization_id)
                     ->where('artifact_key', (string) ($data['artifact_key'] ?? ''))
@@ -1274,6 +1286,10 @@ final class LegalDocumentSignatureService
                     hash('sha256', (string) ($data['artifact_attempt_token'] ?? '')),
                 ) || $artifact->upload_lease_expires_at === null || now()->gte($artifact->upload_lease_expires_at)) {
                     throw new DomainException('legal_signature_artifact_attempt_stale');
+                }
+                if ($artifact->storage_version_id === null
+                    || ! hash_equals((string) $artifact->storage_version_id, (string) ($data['storage_version_id'] ?? ''))) {
+                    throw new DomainException('legal_signature_artifact_version_mismatch');
                 }
                 $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                     'state' => 'referenced',

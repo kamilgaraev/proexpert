@@ -191,6 +191,7 @@ final class ManualOriginalRegistrationTest extends TestCase
                 'created' => true,
             ];
         });
+        $storage->expects(self::never())->method('removeImmutable');
         $this->service = new LegalDocumentSignatureService(
             new DisabledElectronicSignatureProvider,
             $this->access,
@@ -199,13 +200,15 @@ final class ManualOriginalRegistrationTest extends TestCase
             $this->database->getConnection(),
         );
 
-        $signature = $this->service->registerPaperOriginalArtifact($request, $actor, new PaperOriginalData(
+        $data = new PaperOriginalData(
             new DateTimeImmutable('-1 day'),
             $this->signerSet('Иван'),
             $path,
             'paper-artifact-registration',
             expectedDocumentLockVersion: (int) $document->refresh()->lock_version,
-        ), $content, 'image/png');
+        );
+        $signature = $this->service->registerPaperOriginalArtifact($request, $actor, $data, $content, 'image/png');
+        $replay = $this->service->registerPaperOriginalArtifact($request->refresh(), $actor, $data, $content, 'image/png');
 
         $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->sole();
         self::assertSame('referenced', $artifact->state);
@@ -214,6 +217,10 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertSame($path, $artifact->storage_path);
         self::assertSame(0, (int) $artifact->claim_count);
         self::assertNull($artifact->upload_lease_token_hash);
+        self::assertSame((int) $signature->id, (int) $replay->id);
+        self::assertSame('paper-version', $signature->storage_version_id);
+        self::assertSame('paper-etag', $signature->storage_etag);
+        self::assertSame('image/png', $signature->detected_mime_type);
     }
 
     public function test_paper_original_artifact_cleans_the_uploaded_version_when_final_revalidation_detects_a_document_lock_change(): void
