@@ -47,6 +47,8 @@ class FgiscsBuildingResourcePricePriorityTest extends TestCase
         self::assertStringContainsString("'building_resources_imported' => false", $source);
         self::assertStringContainsString("'building_resources_imported',\n            \$force,", $source);
         self::assertStringContainsString("'building_resources_already_imported'", $source);
+        self::assertStringContainsString('&& $this->hasImportedBuildingResources($regionalVersion)', $source);
+        self::assertStringContainsString('private function hasImportedBuildingResources(', $source);
         self::assertStringContainsString("\$this->lifecycleService->finalize(\n                    \$regionalVersion", $source);
         self::assertStringContainsString('$regionalVersion->refresh();', $source);
         self::assertStringContainsString("'project_material_conjuncture_checked' => true", $source);

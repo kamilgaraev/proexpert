@@ -96,7 +96,9 @@ class FgiscsBuildingResourcePriceUpdateService
             ]
         );
 
-        if (! $force && (bool) ($regionalVersion->metadata['building_resources_imported'] ?? false)) {
+        if (! $force
+            && (bool) ($regionalVersion->metadata['building_resources_imported'] ?? false)
+            && $this->hasImportedBuildingResources($regionalVersion)) {
             $lifecycle = null;
 
             if (in_array($regionalVersion->status, [
@@ -228,6 +230,14 @@ class FgiscsBuildingResourcePriceUpdateService
             'complete_quality' => $lifecycle['quality'],
             'project_material_conjuncture' => $conjunctureStats,
         ]);
+    }
+
+    private function hasImportedBuildingResources(EstimateRegionalPriceVersion $regionalVersion): bool
+    {
+        return EstimateResourcePrice::query()
+            ->where('regional_price_version_id', $regionalVersion->id)
+            ->whereIn('source_price_kind', self::SOURCE_KINDS)
+            ->exists();
     }
 
     /**
