@@ -138,15 +138,25 @@ final class LegalDocumentReconciliationService
             return;
         }
 
-        DB::table('legal_document_reconciliation_cursors')->upsert([
-            [
-                'organization_id' => $organizationId ?? 0,
-                'source' => $source,
+        $identity = [
+            'organization_id' => $organizationId ?? 0,
+            'source' => $source,
+        ];
+        $now = now();
+
+        DB::table('legal_document_reconciliation_cursors')->insertOrIgnore([
+            ...$identity,
+            'last_source_id' => $lastSourceId,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('legal_document_reconciliation_cursors')
+            ->where($identity)
+            ->where('last_source_id', '<', $lastSourceId)
+            ->update([
                 'last_source_id' => $lastSourceId,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ],
-        ], ['organization_id', 'source'], ['last_source_id', 'updated_at']);
+                'updated_at' => $now,
+            ]);
     }
 
     /** @return array<string, mixed> */
