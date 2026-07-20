@@ -6,11 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v11';
+    private const CATALOG_VERSION = 'residential_material_scenario:v12';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v11';
+    private const SCENARIO_ID = 'residential_preliminary_common:v12';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v11';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v12';
 
     /**
      * @var array<string, array{
@@ -54,6 +54,13 @@ final class ResidentialMaterialScenarioCatalog
             'assumption_code' => 'residential_precast_concrete_lintels',
             'normative_search_text' => 'укладка перемычек при наибольшей массе монтажных элементов в здании до 5 т масса перемычки до 0,7 т',
             'normative_rate_code' => '07-01-021-01',
+        ],
+        'slabs.rebar' => [
+            'material_markers' => ['арматур', 'сталь', 'A500C'],
+            'assumption_code' => 'monolithic_floor_reinforcement_steel',
+            'intent_action' => 'reinforcement',
+            'normative_search_text' => 'установка заготовок арматурных в опалубку монолитных железобетонных конструкций надземной части здания перекрытий',
+            'normative_rate_code' => '06-23-003-05',
         ],
         'roof.insulation' => [
             'material_markers' => ['минераловат', 'минеральн'],

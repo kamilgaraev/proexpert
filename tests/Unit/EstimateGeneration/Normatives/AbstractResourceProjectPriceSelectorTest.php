@@ -50,6 +50,47 @@ final class AbstractResourceProjectPriceSelectorTest extends TestCase
     }
 
     #[Test]
+    public function verified_floor_reinforcement_scenario_rejects_embedded_parts_and_selects_reinforcement_steel(): void
+    {
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('slabs.rebar', 'residential');
+        self::assertIsArray($scenario);
+        $embeddedParts = (object) [
+            'price_resource_code' => '08.4.01.02-0011',
+            'price_resource_name' => 'Детали закладные и накладные',
+            'price_unit' => 'т',
+            'base_price' => 115_095,
+            'price_id' => 22,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+        $reinforcement = (object) [
+            'price_resource_code' => '08.4.03.03-0004',
+            'price_resource_name' => 'Сталь арматурная рифленая свариваемая, класс A500C, диаметр 12 мм',
+            'price_unit' => 'т',
+            'base_price' => 72_000,
+            'price_id' => 21,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+
+        $selection = (new AbstractResourceProjectPriceSelector)->select(
+            [['object_type' => 'house', 'specialization_scenario' => $scenario]],
+            '06-23-003-05',
+            'Установка заготовок арматурных в опалубку перекрытий',
+            '08.4.01.02',
+            'Заготовки арматурные',
+            11,
+            [$embeddedParts, $reinforcement],
+            [4],
+        );
+
+        self::assertSame('08.4.03.03-0004', $selection['row']->price_resource_code ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v4', $selection['policy'] ?? null);
+    }
+
+    #[Test]
     public function incompatible_exact_group_tile_is_left_for_semantic_catalog_selection(): void
     {
         $scenario = (new ResidentialMaterialScenarioCatalog)->issue('sanitary.tile', 'residential');
