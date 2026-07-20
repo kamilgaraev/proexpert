@@ -19,6 +19,7 @@ final class CustomerLegalArchiveDocumentResource extends JsonResource
             'document_number' => $this->document_number,
             'document_type' => $this->document_type,
             'status' => $this->status,
+            'lock_version' => (int) $this->lock_version,
             'document_date' => $this->document_date?->toDateString(),
             'effective_until' => $this->effective_until?->toDateString(),
             'project' => $this->whenLoaded('project', fn () => $this->project === null ? null : [
@@ -29,6 +30,7 @@ final class CustomerLegalArchiveDocumentResource extends JsonResource
             'versions' => $this->whenLoaded('versions', fn () => $this->versions->map(fn ($version) => $this->version($version))->values()),
             'workflow_summary' => $workflow,
             'obligations' => $this->whenLoaded('obligations', fn () => $this->obligations->map(fn ($obligation) => ['id' => $obligation->id, 'title' => $obligation->title, 'status' => $obligation->status, 'due_at' => $obligation->due_at?->toISOString()])->values()),
+            'signature_requests' => $this->whenLoaded('signatureRequests', fn () => $this->signatureRequests->where('status', 'pending')->map(fn ($request) => ['id' => $request->id, 'method' => $request->method])->values()),
         ];
     }
 

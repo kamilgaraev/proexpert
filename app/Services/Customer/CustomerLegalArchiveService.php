@@ -33,7 +33,7 @@ final class CustomerLegalArchiveService
     public function documents(User $actor, int $organizationId, ?Contract $contract = null): Collection
     {
         $query = LegalArchiveDocument::query()
-            ->with(['project:id,name', 'currentVersion', 'versions', 'obligations'])
+            ->with(['project:id,name', 'currentVersion', 'versions', 'obligations', 'signatureRequests'])
             ->orderByDesc('document_date')
             ->orderByDesc('id');
         $this->access->scopeAccessibleQuery($query, $actor, $organizationId);
@@ -58,7 +58,7 @@ final class CustomerLegalArchiveService
 
     public function document(User $actor, int $organizationId, int $documentId): ?LegalArchiveDocument
     {
-        $query = LegalArchiveDocument::query()->with(['project:id,name', 'currentVersion', 'versions', 'obligations']);
+        $query = LegalArchiveDocument::query()->with(['project:id,name', 'currentVersion', 'versions', 'obligations', 'signatureRequests']);
         $this->access->scopeAccessibleQuery($query, $actor, $organizationId);
         $document = $query->find($documentId);
 
