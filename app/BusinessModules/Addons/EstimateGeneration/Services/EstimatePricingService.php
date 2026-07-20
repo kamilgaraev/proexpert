@@ -200,6 +200,7 @@ class EstimatePricingService
         $priceId = (int) ($resource['normative_ref']['price_id'] ?? $resource['price_id'] ?? 0);
         $unitPrice = (string) ($resource['unit_price'] ?? '0');
         $resourceUnit = trim((string) ($resource['unit'] ?? ''));
+        $currentPriceUnit = trim((string) ($resource['price_unit'] ?? ''));
         $selections = is_array($workItem['normative_match']['project_resource_selections'] ?? null)
             ? $workItem['normative_match']['project_resource_selections']
             : [];
@@ -216,6 +217,27 @@ class EstimatePricingService
             }
 
             return $selection;
+        }
+
+        if (trim((string) ($workItem['key'] ?? '')) !== ''
+            && ! NormativeUnitNormalizer::compatible($resourceUnit, $currentPriceUnit)) {
+            Log::info('estimate_generation.project_resource_selection_recovery_miss', [
+                'work_key' => $workItem['key'] ?? null,
+                'norm_code' => $workItem['normative_match']['code'] ?? null,
+                'group_code' => $groupCode,
+                'price_id' => $priceId,
+                'unit_price' => $unitPrice,
+                'resource_unit' => $resourceUnit,
+                'current_price_unit' => $currentPriceUnit,
+                'selection_candidates' => array_map(static fn (mixed $selection): array => is_array($selection) ? [
+                    'group_code' => $selection['group_code'] ?? null,
+                    'selected_resource_code' => $selection['selected_resource_code'] ?? null,
+                    'price_id' => $selection['price_id'] ?? null,
+                    'applied_unit_price' => $selection['applied_unit_price'] ?? null,
+                    'price_unit' => $selection['price_unit'] ?? null,
+                    'policy' => $selection['policy'] ?? null,
+                ] : [], $selections),
+            ]);
         }
 
         return [];
