@@ -167,8 +167,13 @@ jobs:
             }
 
             assert_legacy_runtime_stopped() {
-              local process_directory process_id command_line working_directory cgroup unit unit_state supervisor_status
-              test -z "$(docker compose ps --status running -q ${BACKEND_SERVICES})"
+              local process_directory process_id command_line working_directory cgroup unit unit_state supervisor_status running_services
+              running_services="$(docker compose ps --status running -q ${BACKEND_SERVICES})"
+              if [ -n "${running_services}" ]; then
+                echo 'MOST backend compose writers remain active; refusing deployment'
+                docker compose ps --status running ${BACKEND_SERVICES}
+                return 1
+              fi
               for unit in "${MOST_SYSTEMD_WRITER_UNITS[@]}"; do
                 if ! systemd_unit_exists "${unit}"; then
                   continue
