@@ -304,8 +304,12 @@ final class ResolveRegionalPriceTest extends TestCase
         $resource['unit'] = 'm2';
         $resource['price_unit'] = 'м3';
         $selection = $resource['normative_ref']['project_resource_selection'];
-        unset($resource['project_resource_selection']);
-        unset($resource['normative_ref']['project_resource_selection']);
+        $staleSelection = [
+            ...$selection,
+            'policy' => 'fsnb_base_child_median:v1',
+        ];
+        $resource['project_resource_selection'] = $staleSelection;
+        $resource['normative_ref']['project_resource_selection'] = $staleSelection;
         $item = [
             'item_type' => 'priced_work',
             'materials' => [$resource],

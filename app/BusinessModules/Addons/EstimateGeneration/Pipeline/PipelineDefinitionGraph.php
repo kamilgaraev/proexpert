@@ -40,7 +40,7 @@ final readonly class PipelineDefinitionGraph
             new StageDefinition(ProcessingStage::PlanWorkItems, 68, [ProcessingStage::UnderstandObject, ProcessingStage::ExtractQuantities], 1_310_720),
             new StageDefinition(ProcessingStage::MatchNormatives, 27, [ProcessingStage::PlanWorkItems], 1_310_720),
             new StageDefinition(ProcessingStage::AssembleResources, 6, [ProcessingStage::MatchNormatives], 1_048_576),
-            new StageDefinition(ProcessingStage::ResolvePrices, 12, [ProcessingStage::AssembleResources], 1_441_792),
+            new StageDefinition(ProcessingStage::ResolvePrices, 13, [ProcessingStage::AssembleResources], 1_441_792),
             new StageDefinition(ProcessingStage::BuildDraft, 2, [ProcessingStage::UnderstandDocuments, ProcessingStage::UnderstandObject, ProcessingStage::PlanWorkItems, ProcessingStage::ResolvePrices], 1_966_080),
             new StageDefinition(ProcessingStage::ValidateDraft, 3, [ProcessingStage::BuildDraft], 1_966_080),
         ]);
