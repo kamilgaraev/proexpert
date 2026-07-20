@@ -846,7 +846,12 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         $rows = $this->database->table('estimate_resource_prices as project_prices')
             ->leftJoin('estimate_dataset_versions as project_datasets', 'project_datasets.id', '=', 'project_prices.dataset_version_id')
             ->leftJoin('estimate_regional_price_versions as project_regional_versions', 'project_regional_versions.id', '=', 'project_prices.regional_price_version_id')
-            ->whereIn('project_prices.resource_code', array_values(array_unique(array_column($requirements, 'resource_code'))))
+            ->where(function ($resourceCodes) use ($requirements): void {
+                $resourceCodes->whereIn('project_prices.resource_code', array_values(array_unique(array_column($requirements, 'resource_code'))));
+                foreach ($this->projectMaterials->fallbackGroupCodes() as $groupCode) {
+                    $resourceCodes->orWhere('project_prices.resource_code', 'like', $groupCode.'-____');
+                }
+            })
             ->where('project_prices.base_price', '>', 0)
             ->where(function ($context) use ($requested, $basePriceDatasetIds): void {
                 $context->where(function ($regional) use ($requested): void {
@@ -872,26 +877,18 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'project_regional_versions.version_key as regional_version',
             ]);
 
+        foreach ($rows as $row) {
+            $row->price_source = (int) ($row->regional_price_version_id ?? 0) === $requested->regionalPriceVersionId
+                    ? 'regional_catalog'
+                    : ((string) ($row->dataset_source_type ?? '') === 'fsbc' ? 'fsbc_base' : 'fsnb_base');
+            $row->price_source_version = $row->price_source === 'regional_catalog'
+                ? (string) $row->regional_version
+                : (string) $row->dataset_version;
+        }
+
         $result = [];
         foreach ($requirements as $requirement) {
-            $selected = null;
-            foreach ($rows as $row) {
-                if ((string) $row->resource_code === $requirement['resource_code']
-                    && trim((string) $row->unit) === $requirement['source_unit']) {
-                    $selected = $row;
-                    break;
-                }
-            }
-            $resource = null;
-            if ($selected !== null) {
-                $selected->price_source = (int) ($selected->regional_price_version_id ?? 0) === $requested->regionalPriceVersionId
-                    ? 'regional_catalog'
-                    : ((string) ($selected->dataset_source_type ?? '') === 'fsbc' ? 'fsbc_base' : 'fsnb_base');
-                $selected->price_source_version = $selected->price_source === 'regional_catalog'
-                    ? (string) $selected->regional_version
-                    : (string) $selected->dataset_version;
-                $resource = $this->projectMaterials->resourceFromPriceRow($requirement, $selected);
-            }
+            $resource = $this->projectMaterials->resourceFromPriceRows($requirement, $rows->all());
             $result[] = [
                 'work_item_key' => $requirement['work_item_key'],
                 'requirement' => $requirement,

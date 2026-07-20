@@ -81,6 +81,45 @@ final class ResidentialProjectMaterialCatalogTest extends TestCase
     }
 
     #[Test]
+    public function missing_preferred_panel_price_uses_regional_median_from_the_same_semantic_group(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $requirement = $catalog->requirementForIntent([
+            'specialization_scenario' => $scenarios->issue('electrical.panel', 'residential'),
+        ]);
+
+        self::assertIsArray($requirement);
+        $resource = $catalog->resourceFromPriceRows($requirement, [
+            (object) [
+                'price_id' => 40,
+                'resource_code' => '20.4.04.02-0100',
+                'resource_name' => 'Щиток осветительный навесной на 12 модулей',
+                'unit' => 'шт',
+                'base_price' => '1800.00',
+                'price_source' => 'fsnb_base',
+                'price_source_version' => 'fsnb-2022',
+            ],
+            (object) [
+                'price_id' => 41,
+                'resource_code' => '20.4.04.02-0101',
+                'resource_name' => 'Щиток осветительный встраиваемый на 24 модуля',
+                'unit' => 'шт',
+                'base_price' => '3200.00',
+                'price_source' => 'regional_catalog',
+                'price_source_version' => 'region-2026-q2',
+            ],
+        ]);
+
+        self::assertIsArray($resource);
+        self::assertSame('20.4.04.02-0101', $resource['code']);
+        self::assertSame('3200', $resource['unit_price']);
+        self::assertSame('regional_catalog', $resource['price_source']);
+        self::assertSame('20.4.04.02-0003', $resource['project_material_requirement']['preferred_resource_code']);
+        self::assertSame('semantic_group_median', $resource['project_material_requirement']['selection_policy']);
+    }
+
+    #[Test]
     public function mismatched_price_identity_fails_closed(): void
     {
         $scenarios = new ResidentialMaterialScenarioCatalog;

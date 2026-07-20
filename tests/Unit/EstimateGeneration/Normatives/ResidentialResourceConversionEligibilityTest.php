@@ -23,6 +23,9 @@ final class ResidentialResourceConversionEligibilityTest extends TestCase
             'object_type' => 'house',
             'specialization_scenario' => $scenario,
         ]], '12-01-013-07'));
+        self::assertTrue($policy->allows([[
+            'specialization_scenario' => $scenario,
+        ]], '12-01-013-07'));
         self::assertFalse($policy->allows([[
             'object_type' => 'warehouse',
             'specialization_scenario' => $scenario,

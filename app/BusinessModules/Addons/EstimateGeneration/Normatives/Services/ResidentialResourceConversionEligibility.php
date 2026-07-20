@@ -20,8 +20,11 @@ final readonly class ResidentialResourceConversionEligibility
         }
 
         foreach ($intents as $intent) {
-            if (! is_array($intent)
-                || ObjectTypeSignalClassifier::canonical((string) ($intent['object_type'] ?? '')) !== 'residential') {
+            if (! is_array($intent)) {
+                continue;
+            }
+            $objectType = trim((string) ($intent['object_type'] ?? ''));
+            if ($objectType !== '' && ObjectTypeSignalClassifier::canonical($objectType) !== 'residential') {
                 continue;
             }
             $scenario = $intent['specialization_scenario'] ?? null;
