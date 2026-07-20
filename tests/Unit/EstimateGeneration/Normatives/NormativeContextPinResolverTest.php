@@ -811,6 +811,11 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("->where('valid_conversions.factor', '>', 0)", $source);
         self::assertStringContainsString('pin_prices.unit IS NOT DISTINCT FROM pin_resources.unit', $source);
         self::assertStringContainsString("REGEXP_REPLACE(COALESCE(pin_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
+        self::assertStringContainsString('residentialAbstractResourcePriceSelector->supportedCandidateGroups()', $source);
+        self::assertStringContainsString('residentialAbstractResourcePriceSelector->supportedUnitPairs()', $source);
+        self::assertStringContainsString("->where('pin_resources.resource_code', \$pair['group_code'])", $source);
+        self::assertStringContainsString("->where('pin_prices.unit', \$pair['from_unit'])", $source);
+        self::assertStringNotContainsString("->where('pin_prices.regional_price_version_id', \$requested->regionalPriceVersionId);", $source);
         self::assertStringContainsString('valid_prices.unit IS NOT DISTINCT FROM required_resources.unit', $source);
         self::assertStringContainsString("REGEXP_REPLACE(COALESCE(valid_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString('candidate_prices.unit IS NOT DISTINCT FROM resources.unit', $source);

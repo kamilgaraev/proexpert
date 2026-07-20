@@ -106,14 +106,24 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                     $priced->selectRaw('1')
                         ->from('estimate_norm_resources as pin_resources')
                         ->join('estimate_resource_prices as pin_prices', function ($join) use ($requested, $basePriceDatasetIds): void {
-                            $join->where(function ($resourceRelation) use ($requested): void {
+                            $join->where(function ($resourceRelation): void {
                                 $resourceRelation->whereColumn('pin_prices.resource_code', 'pin_resources.resource_code')
-                                    ->orWhere(function ($projectResource) use ($requested): void {
+                                    ->orWhere(function ($projectResource): void {
                                         $projectResource->whereRaw("LOWER(COALESCE(pin_resources.raw_payload->>'source_tag', '')) = 'abstractresource'")
                                             ->whereRaw("pin_resources.resource_code ~ '^[0-9]{2}\\.[0-9]\\.[0-9]{2}\\.[0-9]{2}$'")
-                                            ->whereRaw("pin_prices.resource_code LIKE (pin_resources.resource_code || '-____')")
-                                            ->whereRaw("RIGHT(pin_prices.resource_code, 4) ~ '^[0-9]{4}$'")
-                                            ->where('pin_prices.regional_price_version_id', $requested->regionalPriceVersionId);
+                                            ->where(function ($resourceGroup): void {
+                                                $resourceGroup->whereRaw("pin_prices.resource_code LIKE (pin_resources.resource_code || '-____')");
+                                                foreach ($this->residentialAbstractResourcePriceSelector->supportedCandidateGroups() as $group) {
+                                                    if ($group['candidate_group_code'] === $group['group_code']) {
+                                                        continue;
+                                                    }
+                                                    $resourceGroup->orWhere(function ($mappedGroup) use ($group): void {
+                                                        $mappedGroup->where('pin_resources.resource_code', $group['group_code'])
+                                                            ->where('pin_prices.resource_code', 'like', $group['candidate_group_code'].'-____');
+                                                    });
+                                                }
+                                            })
+                                            ->whereRaw("RIGHT(pin_prices.resource_code, 4) ~ '^[0-9]{4}$'");
                                     });
                             })->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
                                 $priceContext->where(function ($regional) use ($requested): void {
@@ -144,6 +154,15 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                                         ->where('pin_conversions.version', 1)
                                         ->where('pin_conversions.is_active', true)
                                         ->where('pin_conversions.factor', '>', 0);
+                                })
+                                ->orWhere(function ($residentialConversion): void {
+                                    foreach ($this->residentialAbstractResourcePriceSelector->supportedUnitPairs() as $index => $pair) {
+                                        $method = $index === 0 ? 'where' : 'orWhere';
+                                        $residentialConversion->{$method}(function ($supported) use ($pair): void {
+                                            $supported->where('pin_resources.resource_code', $pair['group_code'])
+                                                ->where('pin_prices.unit', $pair['from_unit']);
+                                        });
+                                    }
                                 });
                         });
                 })
