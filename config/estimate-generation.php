@@ -133,14 +133,24 @@ return [
             'version' => (string) $envValue('ESTIMATE_GENERATION_OCR_PRICE_VERSION', ''),
             'effective_at' => (string) $envValue('ESTIMATE_GENERATION_OCR_PRICE_EFFECTIVE_AT', ''),
         ]]]],
-        'rerank' => ['timeweb' => [(string) $envValue('ESTIMATE_GENERATION_NORM_RERANKER_PRIMARY_MODEL', 'openai/gpt-5-mini') => [[
-            'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_INPUT_PER_MILLION', ''),
-            'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_CACHED_INPUT_PER_MILLION', ''),
-            'output_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_OUTPUT_PER_MILLION', ''),
-            'currency' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_CURRENCY', ''),
-            'version' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_VERSION', ''),
-            'effective_at' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_EFFECTIVE_AT', ''),
-        ]]]],
+        'rerank' => ['timeweb' => [
+            (string) $envValue('ESTIMATE_GENERATION_NORM_RERANKER_PRIMARY_MODEL', 'openai/gpt-5-mini') => [[
+                'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_INPUT_PER_MILLION', ''),
+                'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_CACHED_INPUT_PER_MILLION', ''),
+                'output_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_OUTPUT_PER_MILLION', ''),
+                'currency' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_CURRENCY', ''),
+                'version' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_VERSION', ''),
+                'effective_at' => (string) $envValue('ESTIMATE_GENERATION_RERANK_PRICE_EFFECTIVE_AT', ''),
+            ]],
+            'openai/gpt-5-nano' => [[
+                'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_NANO_PRICE_INPUT_PER_MILLION', '7'),
+                'cached_input_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_NANO_PRICE_CACHED_INPUT_PER_MILLION', '7'),
+                'output_per_million' => (string) $envValue('ESTIMATE_GENERATION_RERANK_NANO_PRICE_OUTPUT_PER_MILLION', '54'),
+                'currency' => (string) $envValue('ESTIMATE_GENERATION_RERANK_NANO_PRICE_CURRENCY', 'RUB'),
+                'version' => (string) $envValue('ESTIMATE_GENERATION_RERANK_NANO_PRICE_VERSION', 'timeweb-ai-gateway-2026-07-20'),
+                'effective_at' => (string) $envValue('ESTIMATE_GENERATION_RERANK_NANO_PRICE_EFFECTIVE_AT', '2026-07-20T00:00:00+00:00'),
+            ]],
+        ]],
     ],
     'generation' => [
         'max_draft_jobs_per_minute' => (int) env('ESTIMATE_GENERATION_MAX_DRAFT_JOBS_PER_MINUTE', 3),
