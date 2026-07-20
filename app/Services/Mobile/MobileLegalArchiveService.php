@@ -163,8 +163,7 @@ final readonly class MobileLegalArchiveService
             throw new DomainException('legal_signature_paper_original_invalid');
         }
         $path = "org-{$organizationId}/legal-archive/paper-originals/requests/{$request->id}/".hash('sha256', $content).".{$extension}";
-        $this->files->putImmutable($path, $content, $mimeType);
-        $this->signatures->registerPaperOriginal($request, $actor, new PaperOriginalData(
+        $original = new PaperOriginalData(
             signedAt: $signedAt,
             signers: SignerIdentitySet::fromSnapshot([[
                 'kind' => 'user',
@@ -175,6 +174,10 @@ final readonly class MobileLegalArchiveService
             storageLocation: $path,
             idempotencyKey: $idempotencyKey,
             expectedDocumentLockVersion: $documentLockVersion,
-        ));
+        );
+        if (! $this->signatures->preflightPaperOriginalUpload($request, $actor, $original)) {
+            $this->files->putImmutable($path, $content, $mimeType);
+        }
+        $this->signatures->registerPaperOriginal($request, $actor, $original);
     }
 }

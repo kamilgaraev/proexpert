@@ -260,6 +260,64 @@ final class LegalDocumentSignatureService
         ]);
     }
 
+    public function preflightPaperOriginalUpload(
+        LegalSignatureRequest $request,
+        User $actor,
+        PaperOriginalData $data,
+    ): bool {
+        if (trim($data->storageLocation) === '' || mb_strlen($data->storageLocation) > 2000) {
+            throw new DomainException('legal_signature_storage_location_required');
+        }
+        if ($data->signedAt > new DateTimeImmutable('now')) {
+            throw new DomainException('legal_signature_signed_at_invalid');
+        }
+        $key = $this->validKey($data->idempotencyKey);
+        $document = $this->documentForRequest($request);
+        $this->authorizer->authorize($actor, $document, LegalDocumentAbility::SIGN->value);
+
+        return $this->connection->transaction(function () use ($request, $actor, $data, $key, $document): bool {
+            $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
+            $existing = $this->signatures()->where('signature_request_id', $request->id)->where('idempotency_key', $key)->lockForUpdate()->exists();
+            if ($existing) {
+                return true;
+            }
+            if ($data->expectedDocumentLockVersion !== null && (int) $lockedDocument->lock_version !== $data->expectedDocumentLockVersion) {
+                throw LegalArchiveLockConflict::forDocument((int) $lockedDocument->id, (int) $lockedDocument->lock_version);
+            }
+            $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $request->document_version_id);
+            $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::SIGN->value);
+            $lockedRequest = $this->lockRequest($request);
+            $this->signingGuard->assertCompletionAllowed($lockedDocument, $lockedVersion, $lockedRequest);
+            if ($lockedRequest->status !== 'pending' || $lockedRequest->method !== 'paper') {
+                throw new DomainException('legal_signature_request_not_pending');
+            }
+            if ($lockedRequest->expires_at !== null && $lockedRequest->expires_at->isPast()) {
+                throw new DomainException('legal_signature_request_expired');
+            }
+            if ((int) $lockedDocument->current_primary_version_id !== (int) $lockedVersion->id
+                || ! (bool) $lockedVersion->is_current
+                || ! hash_equals((string) $lockedRequest->signed_content_hash, (string) $lockedVersion->content_hash)
+                || (string) $lockedVersion->processing_status !== 'ready') {
+                throw new DomainException('legal_signature_version_changed');
+            }
+            $this->assertNoActiveWorkflow((int) $lockedDocument->id);
+            $partyId = $data->partyId ?? $lockedRequest->party_id;
+            if (($lockedRequest->party_id === null) !== ($partyId === null)
+                || ($partyId !== null && (int) $partyId !== (int) $lockedRequest->party_id)) {
+                throw new DomainException('legal_signature_party_mismatch');
+            }
+            $requestedSigners = SignerIdentitySet::fromSnapshot((array) $lockedRequest->signers);
+            if (! $requestedSigners->equals($data->signers)
+                || ! hash_equals((string) $lockedRequest->signer_snapshot_hash, $data->signers->hash())) {
+                throw new DomainException('legal_signature_signers_mismatch');
+            }
+            $this->assertParty($lockedDocument, $lockedVersion, $partyId === null ? null : (int) $partyId);
+            $this->assertSignerIdentities($lockedDocument, $lockedVersion, $data->signers);
+
+            return false;
+        }, 3);
+    }
+
     public function registerExternalOriginal(
         LegalSignatureRequest $request,
         UploadedFile $upload,
