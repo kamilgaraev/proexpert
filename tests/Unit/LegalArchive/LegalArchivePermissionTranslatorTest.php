@@ -45,6 +45,7 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
                     'legal_archive.files.upload',
                     'legal_archive.files.download',
                     'legal_archive.versions.create',
+                    'legal_archive.editor.edit',
                     'legal_archive.external_access.manage',
                     'legal_archive.security_recovery.manage',
                     'legal_archive.signatures.request',
@@ -66,6 +67,11 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
 
         $flattenedValues = json_encode($this->valuesOnly($translated), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 
+        $this->assertSame(
+            'Редактирование юридических документов во встроенном редакторе',
+            $translated['module_permissions']['legal-archive']['legal_archive.editor.edit'],
+        );
+
         $this->assertSame('Юридический архив', $translated['module_groups']['legal-archive']);
         $this->assertSame('Просмотр юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.view']);
         $this->assertSame('Создание версий документов юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.versions.create']);
@@ -80,6 +86,7 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
         $this->assertSame('Настройка маршрутов согласования юридических документов', $translated['module_permissions']['legal-archive']['legal_archive.workflow_templates.manage']);
         $this->assertStringNotContainsString('legal_archive.view', $flattenedValues);
         $this->assertStringNotContainsString('legal_archive.versions.create', $flattenedValues);
+        $this->assertStringNotContainsString('legal_archive.editor.edit', $flattenedValues);
         $this->assertStringNotContainsString('legal_archive.external_access.manage', $flattenedValues);
         $this->assertStringNotContainsString('legal_archive.security_recovery.manage', $flattenedValues);
         $this->assertStringNotContainsString('legal_archive.signatures.request', $flattenedValues);

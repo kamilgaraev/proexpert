@@ -34,8 +34,12 @@ final class LegalDocumentEditorController extends Controller
             if (! in_array($mode, ['view', 'review', 'edit'], true)) {
                 throw new DomainException('legal_document_editor_mode_invalid');
             }
+            $upgradeMode = filter_var($request->input('upgrade_mode', false), FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
+            if (! is_bool($upgradeMode)) {
+                throw new DomainException('legal_document_editor_mode_invalid');
+            }
 
-            return AdminResponse::success($this->sessions->open($found, $actor, $mode), trans_message('legal_archive.messages.editor_opened'));
+            return AdminResponse::success($this->sessions->open($found, $actor, $mode, $upgradeMode), trans_message('legal_archive.messages.editor_opened'));
         } catch (Throwable $error) {
             if ($error instanceof AuthorizationException) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);

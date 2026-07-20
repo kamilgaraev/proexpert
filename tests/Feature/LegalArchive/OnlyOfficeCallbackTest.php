@@ -75,4 +75,37 @@ final class OnlyOfficeCallbackTest extends TestCase
         self::assertStringContainsString('completionCallback', $attempt);
         self::assertStringContainsString('$input->status === 6', $service);
     }
+
+    public function test_mode_and_permission_are_bound_to_persisted_session(): void
+    {
+        $service = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/LegalDocumentEditorSessionService.php');
+        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalDocumentEditorController.php');
+        self::assertIsString($service);
+        self::assertIsString($controller);
+        self::assertStringContainsString('(string) $existing->mode === $mode', $service);
+        self::assertStringContainsString('required_ability', $service);
+        self::assertStringContainsString('$session->mode', $service);
+        self::assertStringContainsString('upgrade_mode', $controller);
+    }
+
+    public function test_completed_replay_precedes_reauthorization_and_active_completion_reauthorizes_again(): void
+    {
+        $service = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/LegalDocumentEditorSessionService.php');
+        self::assertIsString($service);
+        $claim = substr($service, (int) strpos($service, 'private function claim'), 9000);
+        self::assertLessThan(strpos($claim, 'reauthorizeSessionActor'), strpos($claim, "state === 'completed'"));
+        $complete = substr($service, (int) strpos($service, 'private function completeSave'), 5000);
+        self::assertStringContainsString('reauthorizeSessionActor', $complete);
+    }
+
+    public function test_editor_version_label_is_translated_and_utf8_clean(): void
+    {
+        $service = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/LegalDocumentEditorSessionService.php');
+        $translations = file_get_contents(__DIR__.'/../../../lang/ru/legal_archive.php');
+        self::assertIsString($service);
+        self::assertIsString($translations);
+        self::assertStringContainsString("trans_message('legal_archive.messages.editor_version_label')", $service);
+        self::assertStringContainsString("'editor_version_label' => 'Редакция из встроенного редактора'", $translations);
+        self::assertStringNotContainsString('Р РµРґР°РєС†РёСЏ РёР·', $service);
+    }
 }
