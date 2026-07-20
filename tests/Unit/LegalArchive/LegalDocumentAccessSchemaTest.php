@@ -37,6 +37,8 @@ final class LegalDocumentAccessSchemaTest extends TestCase
         self::assertStringContainsString('$withinTransaction = false', $indexes);
         self::assertStringContainsString('CREATE UNIQUE INDEX CONCURRENTLY', $indexes);
         self::assertStringContainsString('legal_documents_source_identity_unique', $indexes);
+        self::assertStringContainsString('legal_documents_source_command_unique', $indexes);
+        self::assertStringContainsString('COALESCE(created_by_user_id, 0::bigint)', $indexes);
         self::assertStringContainsString('legal_document_access_active_subject_unique', $indexes);
         self::assertStringContainsString('counterparties_ownership_unique', $indexes);
         self::assertStringContainsString('legal_document_party_snapshot_sets_version_unique', $indexes);
@@ -56,6 +58,8 @@ final class LegalDocumentAccessSchemaTest extends TestCase
         self::assertStringContainsString('legal_document_comments_anchor_check', $constraints);
         self::assertStringContainsString('legal_document_party_immutable_guard', $constraints);
         self::assertStringContainsString('legal_document_access_grant_guard', $constraints);
+        self::assertStringContainsString('"manage"', $constraints);
+        self::assertStringContainsString("subject_kind IN ('internal_user','internal_role')", $constraints);
         self::assertStringContainsString('legal_document_comment_guard', $constraints);
         self::assertStringContainsString("str_replace(['=anyarray[', ']']", $constraints);
         self::assertStringContainsString('VALIDATE CONSTRAINT', $validate);
@@ -75,6 +79,7 @@ final class LegalDocumentAccessSchemaTest extends TestCase
         self::assertStringContainsString('test_counterparty_fk_descriptor_drift_fails_closed', $source);
         self::assertStringContainsString('test_invalid_concurrent_index_is_recovered', $source);
         self::assertStringContainsString('test_parallel_active_grants_preserve_unique_subject_invariant', $source);
+        self::assertStringContainsString('test_parallel_source_commands_preserve_actor_tenant_idempotency_namespace', $source);
         self::assertStringContainsString('test_index_descriptor_drift_variants_fail_closed', $source);
         self::assertStringContainsString('NULLS NOT DISTINCT', $source);
         self::assertStringContainsString('text_pattern_ops', $source);

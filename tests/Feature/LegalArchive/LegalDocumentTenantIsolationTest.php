@@ -17,6 +17,7 @@ use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Workflow\LegalWorkflowAuthorization;
 use App\Services\Project\UserProjectAccessService;
 use Carbon\CarbonImmutable;
+use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
@@ -131,6 +132,7 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         $actor = $this->actor(7, 10);
         $service = $this->service(true, true, new RecordingAccessAudit);
 
+        $service->bootstrapCreator($document, (int) $manager->id);
         $service->grant($document, $manager, LegalDocumentAccessSubject::internalUser(10, 7), ['view']);
         $service->authorize($actor, $document->refresh(), 'view');
 
@@ -144,8 +146,15 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         $document->forceFill(['confidentiality_level' => 'secret'])->save();
         $manager = $this->actor(1, 10);
         $actor = $this->actor(7, 10);
-        $service = $this->service(true, true, new RecordingAccessAudit, ['legal_reviewer']);
+        $service = $this->service(
+            true,
+            true,
+            new RecordingAccessAudit,
+            ['legal_reviewer'],
+            static fn (string $slug, int $organizationId): bool => $slug === 'legal_reviewer' && $organizationId === 10,
+        );
 
+        $service->bootstrapCreator($document, (int) $manager->id);
         $service->grant($document, $manager, LegalDocumentAccessSubject::internalRole(10, 'legal_reviewer'), ['view']);
         $service->authorize($actor, $document->refresh(), 'view');
 
@@ -180,6 +189,20 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         self::assertSame(['access_granted', 'access_revoked'], $audit->events);
         $this->expectException(AuthorizationException::class);
         $service->authorize($recipient, $document, 'view');
+    }
+
+    public function test_external_subject_cannot_receive_access_management_ability(): void
+    {
+        $this->database->table('organizations')->insert([['id' => 10], ['id' => 20]]);
+        $document = $this->document(10, null);
+
+        $this->expectException(DomainException::class);
+        $this->service(true, true, new RecordingAccessAudit)->grant(
+            $document,
+            $this->actor(1, 10),
+            LegalDocumentAccessSubject::externalOrganization(20),
+            ['view', 'manage'],
+        );
     }
 
     public function test_expired_grant_is_closed_and_replaced_without_losing_history(): void
@@ -231,6 +254,95 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         self::assertFalse($workflow->can($recipient, $document, 'legal_archive.workflow.reassign'));
     }
 
+    public function test_restricted_document_manager_cannot_bootstrap_access_by_granting_it_to_self(): void
+    {
+        $this->database->table('organizations')->insert(['id' => 10]);
+        $document = $this->document(10, null);
+        $document->forceFill([
+            'confidentiality_level' => 'restricted',
+            'created_by_user_id' => 1,
+            'owner_user_id' => 1,
+        ])->save();
+        $attacker = $this->actor(7, 10);
+
+        $this->expectException(AuthorizationException::class);
+        $this->service(true, true, new RecordingAccessAudit)->grant(
+            $document,
+            $attacker,
+            LegalDocumentAccessSubject::internalUser(10, 7),
+            ['view'],
+        );
+    }
+
+    public function test_creator_bootstrap_allows_confidential_access_management_and_is_idempotent(): void
+    {
+        $this->database->table('organizations')->insert(['id' => 10]);
+        $this->database->table('organization_user')->insert([
+            'organization_id' => 10,
+            'user_id' => 7,
+            'is_active' => true,
+        ]);
+        $document = $this->document(10, null);
+        $document->forceFill([
+            'confidentiality_level' => 'secret',
+            'created_by_user_id' => 1,
+            'owner_user_id' => 1,
+        ])->save();
+        $creator = $this->actor(1, 10);
+        $recipient = $this->actor(7, 10);
+        $service = $this->service(true, true, new RecordingAccessAudit);
+
+        $first = $service->bootstrapCreator($document, (int) $creator->id);
+        $second = $service->bootstrapCreator($document, (int) $creator->id);
+        $grant = $service->grant(
+            $document,
+            $creator,
+            LegalDocumentAccessSubject::internalUser(10, 7),
+            ['view'],
+        );
+
+        self::assertSame((int) $first->id, (int) $second->id);
+        self::assertContains('manage', $first->abilities);
+        self::assertSame(7, (int) $grant->subject_user_id);
+        $service->authorize($creator, $document, 'view');
+        $service->authorize($recipient, $document, 'view');
+    }
+
+    public function test_revoked_or_expired_management_grant_cannot_manage_confidential_access(): void
+    {
+        $this->database->table('organizations')->insert(['id' => 10]);
+        $document = $this->document(10, null);
+        $document->forceFill([
+            'confidentiality_level' => 'restricted',
+            'created_by_user_id' => 1,
+            'owner_user_id' => 1,
+        ])->save();
+        $creator = $this->actor(1, 10);
+        $service = $this->service(true, true, new RecordingAccessAudit);
+        $grant = $service->bootstrapCreator($document, (int) $creator->id);
+        $this->database->table('legal_document_access_grants')->where('id', (int) $grant->id)->update([
+            'revoked_at' => now(),
+            'revoked_by_user_id' => 1,
+            'revocation_reason' => 'Доступ прекращён',
+        ]);
+
+        try {
+            $service->grant($document, $creator, LegalDocumentAccessSubject::internalUser(10, 2), ['view']);
+            self::fail('A revoked management grant remained usable.');
+        } catch (AuthorizationException) {
+            self::assertTrue(true);
+        }
+
+        $this->database->table('legal_document_access_grants')->where('id', (int) $grant->id)->update([
+            'revoked_at' => null,
+            'revoked_by_user_id' => null,
+            'revocation_reason' => null,
+            'expires_at' => now()->subMinute(),
+        ]);
+        $this->expectException(AuthorizationException::class);
+        $service->grant($document, $creator, LegalDocumentAccessSubject::internalUser(10, 2), ['view']);
+    }
+
     public function test_discovery_combines_internal_scope_with_active_external_view_grants(): void
     {
         $internal = $this->document(20, null);
@@ -256,6 +368,59 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         $this->service(true, true)->scopeAccessibleQuery($query, $actor, 20, 'view');
 
         self::assertEqualsCanonicalizing([$internal->id, $external->id], $query->pluck('id')->all());
+    }
+
+    public function test_internal_null_confidentiality_is_discoverable_as_canonical_internal(): void
+    {
+        $document = $this->document(20, null);
+        $document->forceFill(['confidentiality_level' => null])->save();
+        $actor = $this->actor(7, 20);
+        $query = LegalArchiveDocument::query();
+
+        $this->service(true, true)->scopeAccessibleQuery($query, $actor, 20, 'view');
+
+        self::assertSame([(int) $document->id], $query->pluck('id')->all());
+        $refreshed = $document->refresh();
+        self::assertSame('internal', $refreshed->confidentiality_level);
+        $this->service(true, true)->authorize($actor, $refreshed, 'view');
+    }
+
+    public function test_confidential_discovery_uses_the_exact_requested_ability(): void
+    {
+        $document = $this->document(20, null);
+        $document->forceFill(['confidentiality_level' => 'restricted'])->save();
+        $actor = $this->actor(7, 20);
+        LegalDocumentAccessGrant::query()->create([
+            'organization_id' => 20,
+            'document_id' => (int) $document->id,
+            'subject_kind' => 'internal_user',
+            'subject_organization_id' => 20,
+            'subject_user_id' => 7,
+            'abilities' => ['comment'],
+            'granted_by_user_id' => 1,
+        ]);
+
+        $commentQuery = LegalArchiveDocument::query();
+        $this->service(true, true)->scopeAccessibleQuery($commentQuery, $actor, 20, 'comment');
+        $downloadQuery = LegalArchiveDocument::query();
+        $this->service(true, true)->scopeAccessibleQuery($downloadQuery, $actor, 20, 'download');
+
+        self::assertSame([(int) $document->id], $commentQuery->pluck('id')->all());
+        self::assertSame([], $downloadQuery->pluck('id')->all());
+        $this->service(true, true)->authorize($actor, $document, 'comment');
+        $this->expectException(AuthorizationException::class);
+        $this->service(true, true)->authorize($actor, $document, 'download');
+    }
+
+    public function test_internal_role_grant_rejects_unknown_or_non_assignable_role(): void
+    {
+        $this->database->table('organizations')->insert(['id' => 10]);
+        $document = $this->document(10, null);
+        $manager = $this->actor(1, 10);
+        $service = $this->service(true, true, new RecordingAccessAudit, [], static fn (string $slug, int $organizationId): bool => false);
+
+        $this->expectException(DomainException::class);
+        $service->grant($document, $manager, LegalDocumentAccessSubject::internalRole(10, 'missing_role'), ['view']);
     }
 
     public function test_external_discovery_does_not_require_internal_archive_permission(): void
@@ -284,6 +449,7 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         bool $projectAllowed,
         ?LegalDocumentAudit $audit = null,
         array $roles = [],
+        ?\Closure $roleResolver = null,
     ): LegalDocumentAccessService {
         $authorization = $this->createMock(AuthorizationService::class);
         $authorization->method('can')->willReturn($rbacAllowed);
@@ -298,6 +464,7 @@ final class LegalDocumentTenantIsolationTest extends TestCase
             $projectAccess,
             $audit,
             $this->database->getConnection(),
+            roleSubjectResolver: $roleResolver,
         );
     }
 
@@ -307,6 +474,8 @@ final class LegalDocumentTenantIsolationTest extends TestCase
             'organization_id' => $organizationId,
             'primary_project_id' => $projectId,
             'title' => 'Досье',
+            'created_by_user_id' => 1,
+            'owner_user_id' => 1,
         ]);
     }
 
@@ -342,7 +511,9 @@ final class LegalDocumentTenantIsolationTest extends TestCase
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('primary_project_id')->nullable();
             $table->string('title');
-            $table->string('confidentiality_level')->default('internal');
+            $table->string('confidentiality_level')->nullable()->default('internal');
+            $table->unsignedBigInteger('owner_user_id')->nullable();
+            $table->unsignedBigInteger('created_by_user_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });

@@ -276,6 +276,56 @@ final class LegalDocumentAccessPostgresIntegrationTest extends TestCase
         self::assertSame(1, $this->first->table('legal_document_access_grants')->count());
     }
 
+    public function test_parallel_source_commands_preserve_actor_tenant_idempotency_namespace(): void
+    {
+        $this->migration('000510_create_legal_document_access_indexes')->up();
+
+        $codes = $this->runParallel(static function (ConnectionInterface $connection, int $worker): void {
+            $connection->table('legal_archive_documents')->insert([
+                'organization_id' => 1,
+                'created_by_user_id' => 1,
+                'source_type' => 'contract',
+                'source_id' => 100 + $worker,
+                'source_idempotency_key' => 'source-command-race',
+            ]);
+        });
+
+        self::assertSame([0, 2], $codes);
+        self::assertSame(1, $this->first->table('legal_archive_documents')->count());
+
+        $this->first->table('legal_archive_documents')->insert([
+            'organization_id' => 1,
+            'created_by_user_id' => 2,
+            'source_type' => 'contract',
+            'source_id' => 200,
+            'source_idempotency_key' => 'source-command-race',
+        ]);
+        $this->first->table('legal_archive_documents')->insert([
+            'organization_id' => 2,
+            'created_by_user_id' => 1,
+            'source_type' => 'contract',
+            'source_id' => 200,
+            'source_idempotency_key' => 'source-command-race',
+        ]);
+
+        self::assertSame(3, $this->first->table('legal_archive_documents')->count());
+
+        $this->first->table('legal_archive_documents')->insert([
+            'organization_id' => 2,
+            'created_by_user_id' => null,
+            'source_type' => 'contract',
+            'source_id' => 300,
+            'source_idempotency_key' => 'system-source-command',
+        ]);
+        $this->assertUniqueViolation(fn () => $this->first->table('legal_archive_documents')->insert([
+            'organization_id' => 2,
+            'created_by_user_id' => null,
+            'source_type' => 'contract',
+            'source_id' => 301,
+            'source_idempotency_key' => 'system-source-command',
+        ]));
+    }
+
     public function test_parallel_comment_create_and_resolve_preserve_idempotency_and_transition_invariants(): void
     {
         $this->installAllInvariants();
@@ -374,7 +424,7 @@ final class LegalDocumentAccessPostgresIntegrationTest extends TestCase
                 $connection = $manager->connection('access_first');
                 $connection->statement("SET search_path TO {$this->schema}");
                 try {
-                    $operation($connection);
+                    $operation($connection, $worker);
                     $exitCode = 0;
                 } catch (Throwable) {
                     $exitCode = 2;
@@ -410,7 +460,8 @@ CREATE TABLE projects (id bigserial PRIMARY KEY, organization_id bigint NOT NULL
 CREATE TABLE organization_user (user_id bigint NOT NULL, organization_id bigint NOT NULL, UNIQUE (user_id, organization_id));
 CREATE TABLE counterparties (id bigserial PRIMARY KEY, organization_id bigint NOT NULL, name text NOT NULL);
 CREATE TABLE legal_archive_documents (
-    id bigserial PRIMARY KEY, organization_id bigint NOT NULL, source_type text NULL, source_id bigint NULL,
+    id bigserial PRIMARY KEY, organization_id bigint NOT NULL, created_by_user_id bigint NULL,
+    source_type text NULL, source_id bigint NULL, source_idempotency_key text NULL,
     UNIQUE (id, organization_id)
 );
 CREATE TABLE legal_archive_document_versions (
@@ -477,6 +528,16 @@ SQL);
             self::fail('Historical snapshot mutation must be rejected.');
         } catch (Throwable $exception) {
             self::assertSame('55000', $this->sqlState($exception));
+        }
+    }
+
+    private function assertUniqueViolation(callable $operation): void
+    {
+        try {
+            $operation();
+            self::fail('Duplicate command namespace must be rejected.');
+        } catch (Throwable $exception) {
+            self::assertSame('23505', $this->sqlState($exception));
         }
     }
 

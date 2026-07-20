@@ -513,14 +513,15 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertSame(1, $connection->table('legal_document_outbox')->count());
     }
 
-    public function test_registry_source_idempotency_includes_document_identity(): void
+    public function test_registry_source_idempotency_uses_source_command_identity(): void
     {
         $source = file_get_contents(
             __DIR__.'/../../../app/Services/LegalArchive/LegalArchiveRegistryService.php',
         );
 
         self::assertIsString($source);
-        self::assertStringContainsString('"{$action}:{$documentId}:{$key}"', $source);
+        self::assertStringContainsString('$sourceCreateIdentity?->sourceEventId()', $source);
+        self::assertStringNotContainsString("\$data['idempotency_key']", $source);
     }
 
     private function service(?\Illuminate\Database\ConnectionInterface $connection = null): LegalDocumentAuditService

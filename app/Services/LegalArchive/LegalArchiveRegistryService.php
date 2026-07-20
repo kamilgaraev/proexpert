@@ -15,6 +15,7 @@ use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
 use App\Services\LegalArchive\Files\LegalDocumentVersionPersistenceFailed;
 use App\Services\LegalArchive\Files\VersionInput;
+use App\Services\LegalArchive\Sources\LegalDocumentSourceCreateIdentity;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceResolver;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -23,6 +24,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use InvalidArgumentException;
 
 use function trans_message;
 
@@ -87,11 +89,25 @@ final class LegalArchiveRegistryService
 
     public function create(int $organizationId, ?int $userId, array $data, ?UploadedFile $file = null): LegalArchiveDocument
     {
+        $sourceCreateIdentity = $this->sourceCreateIdentity($organizationId, $userId, $data);
+        if ($sourceCreateIdentity !== null) {
+            $data = $sourceCreateIdentity->normalizeInput($data);
+        }
+
         try {
-            [$document, $documentFile] = DB::transaction(function () use ($organizationId, $userId, $data, $file): array {
+            [$document, $documentFile, $replayed] = DB::transaction(function () use (
+                $organizationId,
+                $userId,
+                $data,
+                $file,
+                $sourceCreateIdentity,
+            ): array {
                 $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
                 $this->sourceResolver->assertOwnedSource($organizationId, $data['source_type'] ?? null, $data['source_id'] ?? null);
-                $this->assertSourceIdentityAvailable($organizationId, $data['source_type'] ?? null, $data['source_id'] ?? null);
+                $replay = $this->resolveSourceCreateReplay($sourceCreateIdentity);
+                if ($replay instanceof LegalArchiveDocument) {
+                    return [$replay, null, true];
+                }
 
                 $document = LegalArchiveDocument::query()->create($this->documentPayload($organizationId, $userId, $data));
                 $this->replaceLinks($document, $data['links'] ?? []);
@@ -107,17 +123,25 @@ final class LegalArchiveRegistryService
                     : null;
                 $this->audit->recordForActorId('create', $document, $userId, [
                     'after' => $this->auditSnapshot($document),
-                    'source_event_id' => $this->sourceEventId($data, 'create', (string) $document->id),
+                    'source_event_id' => $sourceCreateIdentity?->sourceEventId(),
                 ]);
+                if ($userId !== null) {
+                    $this->access->bootstrapCreator($document, $userId);
+                }
 
-                return [$document, $documentFile];
+                return [$document, $documentFile, false];
             });
         } catch (QueryException $exception) {
-            if ($this->sourceIdentityExists($organizationId, $data['source_type'] ?? null, $data['source_id'] ?? null)) {
-                $this->sourceIdentityConflict();
+            $replay = $this->resolveSourceCreateReplay($sourceCreateIdentity);
+            if ($replay instanceof LegalArchiveDocument) {
+                return $this->findForOrganization($organizationId, (int) $replay->id) ?? $replay;
             }
 
             throw $exception;
+        }
+
+        if ($replayed) {
+            return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
         }
 
         if ($file instanceof UploadedFile && $documentFile instanceof LegalArchiveDocumentFile) {
@@ -158,7 +182,6 @@ final class LegalArchiveRegistryService
             $this->audit->recordForActorId('update', $document, $userId, [
                 'before' => $before,
                 'after' => $this->auditSnapshot($document->refresh()),
-                'source_event_id' => $this->sourceEventId($data, 'update', (string) $document->id),
             ]);
 
             return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
@@ -337,7 +360,9 @@ final class LegalArchiveRegistryService
         if (! $forUpdate) {
             $payload['organization_id'] = $organizationId;
             $payload['created_by_user_id'] = $userId;
+            $payload['owner_user_id'] = $userId;
             $payload['status'] = $payload['status'] ?? 'draft';
+            $payload['confidentiality_level'] = $payload['confidentiality_level'] ?? 'internal';
             $payload['direction'] = $payload['direction'] ?? 'internal';
             $payload['source_system'] = $payload['source_system'] ?? 'most';
             $payload['legal_significance_status'] = $payload['legal_significance_status'] ?? 'not_confirmed';
@@ -392,24 +417,58 @@ final class LegalArchiveRegistryService
         }
     }
 
-    private function assertSourceIdentityAvailable(int $organizationId, mixed $sourceType, mixed $sourceId): void
-    {
-        if ($this->sourceIdentityExists($organizationId, $sourceType, $sourceId)) {
-            $this->sourceIdentityConflict();
+    private function sourceCreateIdentity(
+        int $organizationId,
+        ?int $userId,
+        array $data,
+    ): ?LegalDocumentSourceCreateIdentity {
+        try {
+            return LegalDocumentSourceCreateIdentity::fromInput($organizationId, $userId, $data);
+        } catch (InvalidArgumentException) {
+            throw ValidationException::withMessages([
+                'source_type' => [trans_message('legal_archive.messages.source_not_available')],
+                'source_id' => [trans_message('legal_archive.messages.source_not_available')],
+                'source_idempotency_key' => [trans_message('legal_archive.messages.source_not_available')],
+            ]);
         }
     }
 
-    private function sourceIdentityExists(int $organizationId, mixed $sourceType, mixed $sourceId): bool
-    {
-        if (! is_string($sourceType) || $sourceType === '' || $sourceId === null || $sourceId === '') {
-            return false;
+    private function resolveSourceCreateReplay(
+        ?LegalDocumentSourceCreateIdentity $identity,
+    ): ?LegalArchiveDocument {
+        if ($identity === null) {
+            return null;
         }
 
-        return LegalArchiveDocument::withTrashed()
-            ->where('organization_id', $organizationId)
-            ->where('source_type', $sourceType)
-            ->where('source_id', (string) $sourceId)
-            ->exists();
+        $sourceDocument = LegalArchiveDocument::withTrashed()
+            ->where('organization_id', $identity->organizationId)
+            ->where('source_type', $identity->sourceType)
+            ->where('source_id', $identity->sourceId)
+            ->first();
+        $commandQuery = LegalArchiveDocument::withTrashed()
+            ->where('organization_id', $identity->organizationId)
+            ->where('source_idempotency_key', $identity->idempotencyKey);
+        if ($identity->actorId === null) {
+            $commandQuery->whereNull('created_by_user_id');
+        } else {
+            $commandQuery->where('created_by_user_id', $identity->actorId);
+        }
+        $commandDocument = $commandQuery->first();
+
+        if (! $sourceDocument instanceof LegalArchiveDocument && ! $commandDocument instanceof LegalArchiveDocument) {
+            return null;
+        }
+
+        if (
+            ! $sourceDocument instanceof LegalArchiveDocument
+            || ! $commandDocument instanceof LegalArchiveDocument
+            || (int) $sourceDocument->id !== (int) $commandDocument->id
+            || ! $identity->matches($sourceDocument)
+        ) {
+            $this->sourceIdentityConflict();
+        }
+
+        return $sourceDocument;
     }
 
     private function sourceIdentityConflict(): never
@@ -436,12 +495,5 @@ final class LegalArchiveRegistryService
             'lock_version',
             'archived_at',
         ]);
-    }
-
-    private function sourceEventId(array $data, string $action, string $documentId): ?string
-    {
-        $key = $data['idempotency_key'] ?? null;
-
-        return is_string($key) && $key !== '' ? "{$action}:{$documentId}:{$key}" : null;
     }
 }

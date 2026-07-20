@@ -68,6 +68,8 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
         self::assertArrayNotHasKey('retention_started_at', $payload);
         self::assertArrayNotHasKey('retention_until', $payload);
         self::assertArrayNotHasKey('legal_hold', $payload);
+        self::assertSame('internal', $payload['confidentiality_level']);
+        self::assertSame(30, $payload['owner_user_id']);
     }
 
     public function test_governance_mutations_have_dedicated_permission_boundary(): void

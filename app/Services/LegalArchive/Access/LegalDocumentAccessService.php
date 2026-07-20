@@ -6,7 +6,9 @@ namespace App\Services\LegalArchive\Access;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentAccessGrant;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Services\RoleScanner;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
@@ -30,6 +32,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
         private readonly ?LegalDocumentAudit $audit = null,
         private readonly ?ConnectionInterface $connection = null,
         private readonly ?LegalDocumentAggregateLock $aggregateLock = null,
+        private readonly ?Closure $roleSubjectResolver = null,
     ) {}
 
     public function authorize(User $user, LegalArchiveDocument $document, string $ability): void
@@ -173,17 +176,20 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
             $roleSlugs,
         ): void {
             if ($canAccessInternal && $projectIds instanceof Builder) {
-                $accessible->where(function (Builder $internal) use ($user, $organizationId, $projectIds, $roleSlugs): void {
+                $accessible->where(function (Builder $internal) use ($user, $organizationId, $normalizedAbility, $projectIds, $roleSlugs): void {
                     $internal
                         ->where('legal_archive_documents.organization_id', $organizationId)
                         ->where(function (Builder $projects) use ($projectIds): void {
                             $projects->whereNull('legal_archive_documents.primary_project_id')
                                 ->orWhereIn('legal_archive_documents.primary_project_id', $projectIds);
                         })
-                        ->where(function (Builder $confidentiality) use ($user, $organizationId, $roleSlugs): void {
+                        ->where(function (Builder $confidentiality) use ($user, $organizationId, $normalizedAbility, $roleSlugs): void {
                             $confidentiality
-                                ->whereNotIn('legal_archive_documents.confidentiality_level', ['restricted', 'secret'])
-                                ->orWhereHas('accessGrants', function (Builder $grant) use ($user, $organizationId, $roleSlugs): void {
+                                ->where(function (Builder $ordinary): void {
+                                    $ordinary->whereNull('legal_archive_documents.confidentiality_level')
+                                        ->orWhereNotIn('legal_archive_documents.confidentiality_level', ['restricted', 'secret']);
+                                })
+                                ->orWhereHas('accessGrants', function (Builder $grant) use ($user, $organizationId, $normalizedAbility, $roleSlugs): void {
                                     $grant
                                         ->whereColumn('legal_document_access_grants.organization_id', 'legal_archive_documents.organization_id')
                                         ->where('legal_document_access_grants.subject_organization_id', $organizationId)
@@ -192,7 +198,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
                                             $expiry->whereNull('legal_document_access_grants.expires_at')
                                                 ->orWhere('legal_document_access_grants.expires_at', '>', now());
                                         })
-                                        ->whereJsonContains('legal_document_access_grants.abilities', LegalDocumentAbility::VIEW->value)
+                                        ->whereJsonContains('legal_document_access_grants.abilities', $normalizedAbility->value)
                                         ->where(function (Builder $subject) use ($user, $roleSlugs): void {
                                             $subject->where(function (Builder $byUser) use ($user): void {
                                                 $byUser
@@ -254,6 +260,11 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
             ! $this->validSubject($document, $subject)
             || $abilities === []
             || array_diff($abilities, LegalDocumentAbility::values()) !== []
+            || (in_array(LegalDocumentAbility::MANAGE->value, $abilities, true)
+                && ! in_array($subject->kind, [
+                    LegalDocumentAccessSubjectKind::INTERNAL_USER,
+                    LegalDocumentAccessSubjectKind::INTERNAL_ROLE,
+                ], true))
             || ($expiresAt !== null && ! $expiresAt->isFuture())
         ) {
             throw new DomainException('legal_document_access_grant_invalid');
@@ -265,6 +276,12 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
             $subject->userId !== null
             && ! $this->connection()->table('organization_user')->where('organization_id', $subject->organizationId)
                 ->where('user_id', $subject->userId)->where('is_active', true)->exists()
+        ) {
+            throw new DomainException('legal_document_access_subject_not_found');
+        }
+        if (
+            $subject->kind === LegalDocumentAccessSubjectKind::INTERNAL_ROLE
+            && ! $this->roleSubjectExists((string) $subject->roleSlug, (int) $document->organization_id, $document)
         ) {
             throw new DomainException('legal_document_access_subject_not_found');
         }
@@ -313,6 +330,13 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
                 }
                 throw new DomainException('legal_document_access_grant_conflict');
             }
+            if (
+                $subject->kind === LegalDocumentAccessSubjectKind::INTERNAL_USER
+                && $subject->organizationId === (int) $actor->current_organization_id
+                && $subject->userId === (int) $actor->id
+            ) {
+                throw new DomainException('legal_document_access_self_grant_forbidden');
+            }
             $now = now();
             $inserted = LegalDocumentAccessGrant::query()->insertOrIgnore([
                 'organization_id' => (int) $lockedDocument->organization_id,
@@ -358,6 +382,78 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
                 'subject_role_slug' => $subject->roleSlug,
                 'abilities' => $abilities,
                 'expires_at' => $expiresAt?->toAtomString(),
+            ]);
+
+            return $grant;
+        });
+    }
+
+    public function bootstrapCreator(LegalArchiveDocument $document, int $actorId): LegalDocumentAccessGrant
+    {
+        if (
+            $actorId < 1
+            || (int) $document->created_by_user_id !== $actorId
+            || (int) $document->owner_user_id !== $actorId
+        ) {
+            throw new AuthorizationException($this->message());
+        }
+        $abilities = [
+            LegalDocumentAbility::COMMENT->value,
+            LegalDocumentAbility::DOWNLOAD->value,
+            LegalDocumentAbility::MANAGE->value,
+            LegalDocumentAbility::VIEW->value,
+        ];
+        sort($abilities, SORT_STRING);
+        $connection = $this->connection();
+
+        return $connection->transaction(function () use ($connection, $document, $actorId, $abilities): LegalDocumentAccessGrant {
+            $lockedDocument = $this->lock()->lockDocument(
+                $connection,
+                (int) $document->organization_id,
+                (int) $document->id,
+            );
+            $query = LegalDocumentAccessGrant::query()
+                ->where('organization_id', (int) $lockedDocument->organization_id)
+                ->where('document_id', (int) $lockedDocument->id)
+                ->where('subject_kind', LegalDocumentAccessSubjectKind::INTERNAL_USER->value)
+                ->where('subject_organization_id', (int) $lockedDocument->organization_id)
+                ->where('subject_user_id', $actorId)
+                ->whereNull('subject_role_slug')
+                ->whereNull('revoked_at');
+            $existing = (clone $query)->lockForUpdate()->first();
+            if ($existing instanceof LegalDocumentAccessGrant) {
+                $persisted = $existing->abilities ?? [];
+                sort($persisted, SORT_STRING);
+                if ($persisted === $abilities && $existing->expires_at === null) {
+                    return $existing;
+                }
+                throw new DomainException('legal_document_access_grant_conflict');
+            }
+            $now = now();
+            LegalDocumentAccessGrant::query()->insertOrIgnore([
+                'organization_id' => (int) $lockedDocument->organization_id,
+                'document_id' => (int) $lockedDocument->id,
+                'subject_kind' => LegalDocumentAccessSubjectKind::INTERNAL_USER->value,
+                'subject_organization_id' => (int) $lockedDocument->organization_id,
+                'subject_user_id' => $actorId,
+                'subject_role_slug' => null,
+                'abilities' => json_encode($abilities, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                'granted_by_user_id' => $actorId,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            $grant = (clone $query)->lockForUpdate()->first();
+            if (! $grant instanceof LegalDocumentAccessGrant) {
+                throw new DomainException('legal_document_access_grant_conflict');
+            }
+            $persisted = $grant->abilities ?? [];
+            sort($persisted, SORT_STRING);
+            if ($persisted !== $abilities || $grant->expires_at !== null) {
+                throw new DomainException('legal_document_access_grant_conflict');
+            }
+            $this->audit()->recordForActorId('access_bootstrapped', $lockedDocument, $actorId, [
+                'grant_id' => (int) $grant->id,
+                'abilities' => $abilities,
             ]);
 
             return $grant;
@@ -451,9 +547,37 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
                 'organization_id' => $organizationId,
                 ...($document->primary_project_id === null ? [] : ['project_id' => (int) $document->primary_project_id]),
             ])
+            || ($this->requiresExplicitInternalGrant($document)
+                && ! $this->hasMatchingGrant($user, $document, LegalDocumentAbility::MANAGE))
         ) {
             throw new AuthorizationException($this->message());
         }
+    }
+
+    private function roleSubjectExists(
+        string $roleSlug,
+        int $organizationId,
+        LegalArchiveDocument $document,
+    ): bool {
+        if ($this->roleSubjectResolver !== null) {
+            return (bool) ($this->roleSubjectResolver)($roleSlug, $organizationId);
+        }
+        $role = Container::getInstance()->make(RoleScanner::class)->getRole($roleSlug);
+        if (is_array($role)) {
+            $context = (string) ($role['context'] ?? '');
+            $interface = (string) ($role['interface'] ?? '');
+
+            return ($role['assignable'] ?? true) !== false
+                && $context === 'organization'
+                && $interface === 'admin';
+        }
+
+        return (new OrganizationCustomRole)->setConnection($document->getConnectionName())->newQuery()
+            ->where('organization_id', $organizationId)
+            ->where('slug', $roleSlug)
+            ->active()
+            ->whereJsonContains('interface_access', 'admin')
+            ->exists();
     }
 
     private function connection(): ConnectionInterface

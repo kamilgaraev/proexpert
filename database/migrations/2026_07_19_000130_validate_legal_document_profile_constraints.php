@@ -8,20 +8,41 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
+    public $withinTransaction = false;
+
     public function up(): void
     {
         if (Schema::getConnection()->getDriverName() !== 'pgsql') {
             return;
         }
 
+        $this->backfillConfidentiality();
         foreach ($this->constraintsByTable() as $table => $constraints) {
             foreach ($constraints as $constraint) {
                 DB::statement("ALTER TABLE {$table} VALIDATE CONSTRAINT {$constraint}");
             }
         }
+        DB::statement('ALTER TABLE legal_archive_documents ALTER COLUMN confidentiality_level SET NOT NULL');
     }
 
     public function down(): void {}
+
+    private function backfillConfidentiality(): void
+    {
+        do {
+            $ids = DB::table('legal_archive_documents')
+                ->whereNull('confidentiality_level')
+                ->orderBy('id')
+                ->limit(1000)
+                ->pluck('id');
+            if ($ids->isEmpty()) {
+                return;
+            }
+            DB::table('legal_archive_documents')
+                ->whereIn('id', $ids)
+                ->whereNull('confidentiality_level')->update(['confidentiality_level' => 'internal']);
+        } while (true);
+    }
 
     /** @return array<string, list<string>> */
     private function constraintsByTable(): array

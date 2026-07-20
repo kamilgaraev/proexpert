@@ -53,7 +53,7 @@ SQL,
     private function constraints(): array
     {
         $abilities = <<<'SQL'
-CHECK (jsonb_typeof(abilities) = 'array' AND jsonb_array_length(abilities) > 0 AND abilities <@ '["view","comment","approve","sign","download"]'::jsonb)
+CHECK (jsonb_typeof(abilities) = 'array' AND jsonb_array_length(abilities) > 0 AND abilities <@ '["view","comment","approve","sign","download","manage"]'::jsonb AND (NOT abilities ? 'manage' OR subject_kind IN ('internal_user','internal_role')))
 SQL;
         $anchor = <<<'SQL'
 CHECK (anchor IS NULL OR (jsonb_typeof(anchor) = 'object' AND anchor ?& ARRAY['type','x','y','width','height'] AND anchor - ARRAY['type','x','y','width','height'] = '{}'::jsonb AND anchor->>'type' = 'rect' AND jsonb_typeof(anchor->'x') = 'number' AND jsonb_typeof(anchor->'y') = 'number' AND jsonb_typeof(anchor->'width') = 'number' AND jsonb_typeof(anchor->'height') = 'number' AND (anchor->>'x')::numeric >= 0 AND (anchor->>'y')::numeric >= 0 AND (anchor->>'width')::numeric > 0 AND (anchor->>'height')::numeric > 0 AND (anchor->>'x')::numeric + (anchor->>'width')::numeric <= 1 AND (anchor->>'y')::numeric + (anchor->>'height')::numeric <= 1))

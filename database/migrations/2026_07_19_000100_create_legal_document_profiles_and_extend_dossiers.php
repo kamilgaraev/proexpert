@@ -34,7 +34,7 @@ return new class extends Migration
             $table->string('lifecycle_status', 32)->nullable();
             $table->string('approval_status', 32)->nullable();
             $table->string('signature_status', 32)->nullable();
-            $table->string('confidentiality_level', 32)->nullable();
+            $table->string('confidentiality_level', 32)->nullable()->default('internal');
             $table->unsignedBigInteger('owner_user_id')->nullable();
             $table->unsignedBigInteger('responsible_user_id')->nullable();
             $table->unsignedBigInteger('current_primary_version_id')->nullable();
@@ -98,7 +98,7 @@ return new class extends Migration
         DB::statement(
             'ALTER TABLE legal_archive_documents '.
             'ADD CONSTRAINT legal_docs_confidentiality_check '.
-            "CHECK (confidentiality_level IS NULL OR confidentiality_level IN ('public', 'internal', 'restricted', 'secret')) NOT VALID"
+            "CHECK (confidentiality_level IN ('public', 'internal', 'restricted', 'secret')) NOT VALID"
         );
         DB::statement(
             'ALTER TABLE legal_archive_documents '.

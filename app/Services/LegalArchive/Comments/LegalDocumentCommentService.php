@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
+use App\Services\LegalArchive\Workflow\LegalWorkflowAssignmentValidator;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Container\Container;
@@ -24,15 +25,19 @@ final class LegalDocumentCommentService
 
     private readonly ImmutableAuditIntegrityService $integrity;
 
+    private readonly LegalWorkflowAssignmentValidator $assignmentValidator;
+
     public function __construct(
         private readonly LegalDocumentAuthorizer $access,
         private readonly LegalDocumentAudit $audit,
         private readonly ConnectionInterface $connection,
         ?LegalDocumentAggregateLock $aggregateLock = null,
         ?ImmutableAuditIntegrityService $integrity = null,
+        ?LegalWorkflowAssignmentValidator $assignmentValidator = null,
     ) {
         $this->aggregateLock = $aggregateLock ?? new LegalDocumentAggregateLock;
         $this->integrity = $integrity ?? new ImmutableAuditIntegrityService;
+        $this->assignmentValidator = $assignmentValidator ?? new LegalWorkflowAssignmentValidator;
     }
 
     public function create(
@@ -79,6 +84,9 @@ final class LegalDocumentCommentService
                 if ($existing instanceof LegalDocumentComment) {
                     return $this->replay($existing, $requestHash);
                 }
+            }
+            if ($blocking) {
+                $this->validateBlockingCreation($lockedDocument, $actor);
             }
 
             $comment = LegalDocumentComment::query()->create([
@@ -138,12 +146,28 @@ final class LegalDocumentCommentService
                 ->whereKey((int) $comment->id)
                 ->lockForUpdate()
                 ->first();
+            $manager = false;
             if (! $locked instanceof LegalDocumentComment) {
-                throw new DomainException('legal_document_comment_not_found');
+                $candidate = $this->commentQuery($lockedDocument)
+                    ->whereKey((int) $comment->id)
+                    ->lockForUpdate()
+                    ->first();
+                $manager = $candidate instanceof LegalDocumentComment
+                    && $candidate->is_blocking
+                    && $this->canManageBlockingComments($actor, $lockedDocument);
+                if (! $manager) {
+                    throw new DomainException('legal_document_comment_not_found');
+                }
+                $locked = $candidate;
             }
             $responsible = (int) $lockedDocument->responsible_user_id === (int) $actor->id;
             $author = (int) $locked->author_user_id === (int) $actor->id;
-            if (($locked->is_blocking && ! $responsible) || (! $locked->is_blocking && ! $responsible && ! $author)) {
+            $manager = $manager || ($locked->is_blocking && ! $responsible && ! $author
+                ? $this->canManageBlockingComments($actor, $lockedDocument)
+                : false);
+            if (($locked->is_blocking && ! $responsible && ! $author && ! $manager)
+                || (! $locked->is_blocking && ! $responsible && ! $author)
+            ) {
                 throw new AuthorizationException($this->message('document_not_found'));
             }
             $this->lockVersion($lockedDocument, (int) $locked->document_version_id);
@@ -243,6 +267,31 @@ final class LegalDocumentCommentService
         }
     }
 
+    private function validateBlockingCreation(LegalArchiveDocument $document, User $actor): void
+    {
+        if ((int) $actor->current_organization_id !== (int) $document->organization_id) {
+            throw new AuthorizationException($this->message('comment_blocking_denied'));
+        }
+        $responsibleUserId = (int) $document->responsible_user_id;
+        if ($responsibleUserId < 1) {
+            throw new DomainException('legal_document_comment_responsible_required');
+        }
+        if (! $this->assignmentValidator->exists('user', (string) $responsibleUserId, $document)) {
+            throw new DomainException('legal_document_comment_responsible_inactive');
+        }
+    }
+
+    private function canManageBlockingComments(User $actor, LegalArchiveDocument $document): bool
+    {
+        try {
+            $this->access->authorizePermission($actor, $document, 'legal_archive.workflow.approve');
+
+            return true;
+        } catch (AuthorizationException) {
+            return false;
+        }
+    }
+
     private function validateIdempotencyKey(?string $key): void
     {
         if ($key !== null && (trim($key) === '' || mb_strlen($key) > 191)) {
@@ -272,8 +321,9 @@ final class LegalDocumentCommentService
         if ((int) $actor->current_organization_id !== (int) $document->organization_id) {
             return $query->where('visibility', LegalDocumentCommentVisibility::ALL_PARTIES->value);
         }
+        $canManageBlockers = $this->canManageBlockingComments($actor, $document);
 
-        return $query->where(static function (Builder $visibility) use ($actor, $document): void {
+        return $query->where(static function (Builder $visibility) use ($actor, $document, $canManageBlockers): void {
             $visibility->whereIn('visibility', [
                 LegalDocumentCommentVisibility::INTERNAL->value,
                 LegalDocumentCommentVisibility::ALL_PARTIES->value,
@@ -286,6 +336,9 @@ final class LegalDocumentCommentService
                         }
                     });
             });
+            if ($canManageBlockers) {
+                $visibility->orWhere('is_blocking', true);
+            }
         });
     }
 

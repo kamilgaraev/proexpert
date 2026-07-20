@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Comments\LegalDocumentCommentService;
+use App\Services\LegalArchive\Workflow\LegalWorkflowAssignmentValidator;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Container\Container;
@@ -27,6 +28,8 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
 
     private RecordingCommentAudit $audit;
 
+    private array $activeResponsibleUserIds = [8];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -39,13 +42,30 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
         $this->schema();
         $access = $this->createMock(LegalDocumentAuthorizer::class);
         $access->method('authorize');
+        $access->method('authorizePermission')->willReturnCallback(
+            static function (User $actor): void {
+                if ((int) $actor->id !== 9) {
+                    throw new AuthorizationException;
+                }
+            },
+        );
         $this->audit = new RecordingCommentAudit;
-        $this->service = new LegalDocumentCommentService($access, $this->audit, $this->database->getConnection());
+        $assignmentValidator = new LegalWorkflowAssignmentValidator(
+            fn (string $actorType, string $reference): bool => $actorType === 'user'
+                && in_array((int) $reference, $this->activeResponsibleUserIds, true),
+        );
+        $this->service = new LegalDocumentCommentService(
+            $access,
+            $this->audit,
+            $this->database->getConnection(),
+            assignmentValidator: $assignmentValidator,
+        );
     }
 
     public function test_comment_is_bound_to_exact_tenant_document_version_and_typed_anchor(): void
     {
         [$document, $version, $actor] = $this->fixture();
+        $document->forceFill(['responsible_user_id' => 8])->save();
 
         $comment = $this->service->create(
             $document,
@@ -148,18 +168,106 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
         );
     }
 
-    public function test_only_responsible_can_resolve_blocking_comment(): void
+    public function test_author_can_resolve_own_blocking_comment(): void
     {
         [$document, $version, $author] = $this->fixture();
         $document->forceFill(['responsible_user_id' => 8])->save();
         $blocking = $this->service->create($document, $author, (int) $version->id, 'Блокер', blocking: true);
 
+        self::assertSame('resolved', $this->service->resolve($document, $blocking, $author)->status);
+    }
+
+    public function test_responsible_and_authorized_manager_can_resolve_blocking_comments(): void
+    {
+        [$document, $version, $author] = $this->fixture();
+        $document->forceFill(['responsible_user_id' => 8])->save();
+        $responsibleBlocker = $this->service->create($document, $author, (int) $version->id, 'Ответственный', blocking: true);
+        $managerBlocker = $this->service->create(
+            $document,
+            $author,
+            (int) $version->id,
+            'Менеджер',
+            visibility: 'author_and_responsible',
+            blocking: true,
+        );
+
+        self::assertSame('resolved', $this->service->resolve($document, $responsibleBlocker, $this->actor(8, 10))->status);
+        self::assertContains(
+            (int) $managerBlocker->id,
+            $this->service->visible($document, $this->actor(9, 10))->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+        );
+        self::assertSame('resolved', $this->service->resolve($document, $managerBlocker, $this->actor(9, 10))->status);
+    }
+
+    public function test_unrelated_internal_user_cannot_resolve_blocking_comment(): void
+    {
+        [$document, $version, $author] = $this->fixture();
+        $document->forceFill(['responsible_user_id' => 8])->save();
+        $blocking = $this->service->create($document, $author, (int) $version->id, 'Блокер', blocking: true);
+
+        $this->expectException(AuthorizationException::class);
+        $this->service->resolve($document, $blocking, $this->actor(6, 10));
+    }
+
+    public function test_blocking_comment_requires_active_responsible_in_document_scope(): void
+    {
+        [$document, $version, $author] = $this->fixture();
+
         try {
-            $this->service->resolve($document, $blocking, $author);
-            self::fail('Author resolved a blocking comment without responsible authority.');
+            $this->service->create($document, $author, (int) $version->id, 'Нет ответственного', blocking: true);
+            self::fail('Blocking comment without responsible user was accepted.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_document_comment_responsible_required', $exception->getMessage());
+        }
+
+        $document->forceFill(['responsible_user_id' => 8])->save();
+        $this->activeResponsibleUserIds = [];
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('legal_document_comment_responsible_inactive');
+        $this->service->create($document, $author, (int) $version->id, 'Неактивный ответственный', blocking: true);
+    }
+
+    public function test_author_or_manager_can_resolve_after_responsible_is_deactivated(): void
+    {
+        [$document, $version, $author] = $this->fixture();
+        $document->forceFill(['responsible_user_id' => 8])->save();
+        $authorBlocker = $this->service->create($document, $author, (int) $version->id, 'Автор исправляет', blocking: true);
+        $managerBlocker = $this->service->create($document, $author, (int) $version->id, 'Менеджер исправляет', blocking: true);
+        $this->activeResponsibleUserIds = [];
+
+        self::assertSame('resolved', $this->service->resolve($document, $authorBlocker, $author)->status);
+        self::assertSame('resolved', $this->service->resolve($document, $managerBlocker, $this->actor(9, 10))->status);
+    }
+
+    public function test_external_actor_cannot_create_blocker_but_can_use_non_blocking_comment_flow(): void
+    {
+        [$document, $version] = $this->fixture();
+        $document->forceFill(['responsible_user_id' => 8])->save();
+        $external = $this->actor(20, 30);
+
+        try {
+            $this->service->create(
+                $document,
+                $external,
+                (int) $version->id,
+                'Внешний блокер',
+                visibility: 'all_parties',
+                blocking: true,
+            );
+            self::fail('External actor created a blocking comment.');
         } catch (AuthorizationException) {
         }
-        self::assertSame('resolved', $this->service->resolve($document, $blocking, $this->actor(8, 10))->status);
+
+        $comment = $this->service->create(
+            $document,
+            $external,
+            (int) $version->id,
+            'Обычное замечание',
+            visibility: 'all_parties',
+        );
+
+        self::assertSame('resolved', $this->service->resolve($document, $comment, $external)->status);
     }
 
     public function test_anchor_rejects_numeric_strings_and_non_finite_values(): void

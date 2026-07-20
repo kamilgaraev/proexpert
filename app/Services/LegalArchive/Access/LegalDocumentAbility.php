@@ -11,6 +11,7 @@ enum LegalDocumentAbility: string
     case APPROVE = 'approve';
     case SIGN = 'sign';
     case DOWNLOAD = 'download';
+    case MANAGE = 'manage';
 
     public function permission(): string
     {
@@ -20,6 +21,7 @@ enum LegalDocumentAbility: string
             self::APPROVE => 'legal_archive.workflow.approve',
             self::SIGN => 'legal_archive.signatures.sign',
             self::DOWNLOAD => 'legal_archive.files.download',
+            self::MANAGE => 'legal_archive.external_access.manage',
         };
     }
 

@@ -66,13 +66,17 @@ final class LegalDocumentProfileMigrationContractTest extends TestCase
         self::assertStringNotContainsString('$this->organization_id', $model);
     }
 
-    public function test_confidentiality_constraint_allows_legacy_null_and_whitelists_values(): void
+    public function test_confidentiality_is_backfilled_and_enforced_as_canonical_non_null_value(): void
     {
         $schema = $this->migration('2026_07_19_000100_create_legal_document_profiles_and_extend_dossiers.php');
+        $validation = $this->migration('2026_07_19_000130_validate_legal_document_profile_constraints.php');
 
         self::assertStringContainsString('legal_docs_confidentiality_check', $schema);
-        self::assertStringContainsString('confidentiality_level IS NULL OR confidentiality_level IN', $schema);
+        self::assertStringContainsString("->string('confidentiality_level', 32)->nullable()->default('internal')", $schema);
+        self::assertStringNotContainsString('confidentiality_level IS NULL OR confidentiality_level IN', $schema);
         self::assertStringContainsString("'public', 'internal', 'restricted', 'secret'", $schema);
+        self::assertStringContainsString("whereNull('confidentiality_level')->update(['confidentiality_level' => 'internal'])", $validation);
+        self::assertStringContainsString('ALTER COLUMN confidentiality_level SET NOT NULL', $validation);
     }
 
     private function migration(string $filename): string
