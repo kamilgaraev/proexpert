@@ -73,6 +73,8 @@ final class HoldingLegalArchiveController extends Controller
                 new HoldingLegalArchiveDossierResource($document),
                 trans_message('legal_archive.messages.document_loaded'),
             );
+        } catch (AuthorizationException) {
+            return $this->notFound();
         } catch (Throwable $error) {
             Log::error('[HoldingLegalArchiveController.show] Unexpected error', [
                 'contract_id' => $contractId,
