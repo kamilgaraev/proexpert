@@ -47,7 +47,7 @@ final class HoldingLegalArchiveController extends Controller
                 return $this->notFound();
             }
 
-            $document = $this->documentForContract($actor, $contract, $holdingId);
+            $document = $this->documentForContract($actor, $contract);
             if (! $document instanceof LegalArchiveDocument) {
                 return $this->notFound();
             }
@@ -105,7 +105,7 @@ final class HoldingLegalArchiveController extends Controller
             if (! $contract instanceof Contract) {
                 return $this->notFound();
             }
-            $document = $this->documentForContract($actor, $contract, $holdingId);
+            $document = $this->documentForContract($actor, $contract);
             $version = $document?->versions()->whereKey($versionId)->with('documentFile.document')->first();
             if (! $version instanceof LegalArchiveDocumentVersion) {
                 return $this->notFound();
@@ -132,7 +132,7 @@ final class HoldingLegalArchiveController extends Controller
         }
     }
 
-    private function documentForContract(User $actor, Contract $contract, int $holdingId): ?LegalArchiveDocument
+    private function documentForContract(User $actor, Contract $contract): ?LegalArchiveDocument
     {
         $documents = LegalArchiveDocument::query()
             ->where('organization_id', (int) $contract->organization_id)

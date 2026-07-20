@@ -14,6 +14,7 @@ use App\Services\LegalArchive\Workflow\LegalDocumentWorkflowService;
 use App\Services\LegalArchive\Workflow\LegalWorkflowActionResolver;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 
 final readonly class MobileLegalArchiveService
 {
@@ -48,19 +49,32 @@ final readonly class MobileLegalArchiveService
     /** @return array<string, mixed> */
     public function summary(User $actor, LegalArchiveDocument $document): array
     {
-        $summary = $this->actions->for($actor, $document)->toArray()['workflow_summary'];
-        $summary['available_action_details'] = array_values(array_filter(
-            $summary['available_action_details'],
-            static fn (array $detail): bool => in_array($detail['action'] ?? null, ['approve', 'reject', 'return'], true),
-        ));
+        return $this->summaries($actor, collect([$document]))[(int) $document->id];
+    }
 
-        return $summary;
+    /** @param Collection<int, LegalArchiveDocument> $documents
+     *  @return array<int, array<string, mixed>>
+     */
+    public function summaries(User $actor, Collection $documents): array
+    {
+        $resolved = $this->actions->forMany($actor, $documents);
+        $summaries = [];
+        foreach ($resolved as $documentId => $summary) {
+            $payload = $summary->toArray()['workflow_summary'];
+            $payload['available_action_details'] = array_values(array_filter(
+                $payload['available_action_details'],
+                static fn (array $detail): bool => in_array($detail['action'] ?? null, ['approve', 'reject', 'return'], true),
+            ));
+            $summaries[(int) $documentId] = $payload;
+        }
+
+        return $summaries;
     }
 
     public function decide(User $actor, int $organizationId, int $documentId, string $action, int $targetStepId, string $idempotencyKey, int $instanceLockVersion, int $stepLockVersion, ?string $comment, ?string $reason): LegalArchiveDocument
     {
         $document = $this->document($actor, $organizationId, $documentId);
-        $summary = $this->actions->for($actor, $document);
+        $summary = $this->actions->forMany($actor, collect([$document]))[(int) $document->id];
         $detail = $summary->action($action, $targetStepId);
         if (! $detail->enabled || $detail->targetStepId === null || $detail->expectedInstanceLockVersion !== $instanceLockVersion || $detail->expectedStepLockVersion !== $stepLockVersion) {
             throw new DomainException('legal_workflow_action_not_available');

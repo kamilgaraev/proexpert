@@ -8,9 +8,14 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\Mobile\LegalArchiveDocumentResource;
 use App\Http\Responses\MobileResponse;
 use App\Services\Mobile\MobileLegalArchiveService;
+use App\Services\LegalArchive\LegalArchiveLockConflict;
+use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Lang;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 use function trans_message;
@@ -27,7 +32,8 @@ final class LegalArchiveController extends Controller
                 return MobileResponse::error(trans_message('project.validation_failed'), 422);
             }
             $documents = $this->archive->documents($actor, (int) $actor->current_organization_id, $request->integer('project_id'));
-            $data = $documents->getCollection()->map(fn ($document): array => (new LegalArchiveDocumentResource($document, $this->archive->summary($actor, $document)))->resolve())->all();
+            $summaries = $this->archive->summaries($actor, $documents->getCollection());
+            $data = $documents->getCollection()->map(fn ($document): array => (new LegalArchiveDocumentResource($document, $summaries[(int) $document->id] ?? []))->resolve())->all();
 
             return MobileResponse::success(['data' => $data]);
         } catch (Throwable $error) {
@@ -78,8 +84,28 @@ final class LegalArchiveController extends Controller
 
     private function failure(Throwable $error, Request $request, string $operation, ?int $documentId = null): JsonResponse
     {
+        if ($error instanceof AuthorizationException) {
+            return MobileResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+        }
+        if ($error instanceof ValidationException) {
+            return MobileResponse::error(trans_message('legal_archive.messages.validation_error'), 422, $error->errors());
+        }
+        if ($error instanceof LegalArchiveLockConflict) {
+            return MobileResponse::error(trans_message('legal_archive.messages.lock_conflict'), 409, null, [
+                'current_lock_version' => $error->currentLockVersion,
+                'refresh_url' => $error->refreshUrl,
+            ]);
+        }
+        if ($error instanceof DomainException) {
+            $key = 'legal_archive.domain_errors.'.$error->getMessage();
+
+            return MobileResponse::error(
+                Lang::has($key) ? trans_message($key) : trans_message('legal_archive.messages.operation_conflict'),
+                409,
+            );
+        }
         Log::error('mobile.legal_archive.'.$operation.'.error', ['user_id' => $request->user()?->id, 'document_id' => $documentId, 'error' => $error->getMessage()]);
 
-        return MobileResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+        return MobileResponse::error(trans_message('legal_archive.messages.operation_failed'), 500);
     }
 }
