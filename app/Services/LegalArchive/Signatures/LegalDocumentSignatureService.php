@@ -295,6 +295,7 @@ final class LegalDocumentSignatureService
             (int) $request->id,
             $storedPath,
             $artifact->sha256(),
+            $detectedMimeType,
         );
         $artifactKey = $reservation['artifact_key'];
         $attemptToken = $reservation['attempt_token'];
@@ -303,16 +304,12 @@ final class LegalDocumentSignatureService
             $stored = $this->fileService->putImmutable($storedPath, $artifact->content, $detectedMimeType);
         } catch (Throwable $error) {
             try {
-                $this->abandonSignatureArtifactReservation((int) $request->organization_id, $artifactKey, $attemptToken);
+                $this->markSignatureArtifactAmbiguous((int) $request->organization_id, $artifactKey, $attemptToken, $error);
             } catch (DomainException) {
             }
             throw $error;
         }
-        $this->heartbeatSignatureArtifact((int) $request->organization_id, $artifactKey, $attemptToken);
-        $this->bindSignatureArtifact(
-            (int) $request->organization_id, $artifactKey, $attemptToken,
-            (string) $stored['version_id'], (bool) $stored['created'],
-        );
+        $this->bindStoredArtifactOrRecoverLateVersion($request, $artifactKey, $attemptToken, $storedPath, $artifact->sha256(), $stored);
         if (! hash_equals($artifact->sha256(), (string) $stored['sha256'])
             || (string) $stored['version_id'] === ''
             || (string) $stored['body'] !== $artifact->content) {
@@ -571,6 +568,7 @@ final class LegalDocumentSignatureService
             (int) $request->id,
             $storedPath,
             $result->artifact->sha256(),
+            $detectedMimeType,
         );
         $artifactKey = $reservation['artifact_key'];
         $attemptToken = $reservation['attempt_token'];
@@ -579,17 +577,13 @@ final class LegalDocumentSignatureService
             $stored = $this->fileService->putImmutable($storedPath, $result->artifact->content, $detectedMimeType);
         } catch (Throwable $error) {
             try {
-                $this->abandonSignatureArtifactReservation((int) $request->organization_id, $artifactKey, $attemptToken);
+                $this->markSignatureArtifactAmbiguous((int) $request->organization_id, $artifactKey, $attemptToken, $error);
             } catch (DomainException) {
             }
             $this->auditRejectedCallback($request, $callback, 'container_storage_failed');
             throw $error;
         }
-        $this->heartbeatSignatureArtifact((int) $request->organization_id, $artifactKey, $attemptToken);
-        $this->bindSignatureArtifact(
-            (int) $request->organization_id, $artifactKey, $attemptToken,
-            (string) $stored['version_id'], (bool) $stored['created'],
-        );
+        $this->bindStoredArtifactOrRecoverLateVersion($request, $artifactKey, $attemptToken, $storedPath, $result->artifact->sha256(), $stored);
         if (! hash_equals($result->artifact->sha256(), (string) $stored['sha256'])
             || (string) $stored['version_id'] === '' || (string) $stored['body'] !== $result->artifact->content) {
             $this->auditRejectedCallback($request, $callback, 'container_storage_mismatch');
@@ -1251,14 +1245,21 @@ final class LegalDocumentSignatureService
         int $requestId,
         string $path,
         string $contentHash,
+        string $contentType,
     ): array {
         $artifactKey = CanonicalJson::fingerprint([
             'organization_id' => $organizationId,
             'storage_path' => $path,
             'content_hash' => $contentHash,
         ]);
+        $putRequestHash = CanonicalJson::fingerprint([
+            'organization_id' => $organizationId,
+            'storage_path' => $path,
+            'content_hash' => $contentHash,
+            'content_type' => mb_strtolower($contentType),
+        ]);
         $attemptToken = Str::random(64);
-        $this->connection->transaction(function () use ($organizationId, $documentId, $documentVersionId, $requestId, $path, $contentHash, $artifactKey, $attemptToken): void {
+        $this->connection->transaction(function () use ($organizationId, $documentId, $documentVersionId, $requestId, $path, $contentHash, $putRequestHash, $artifactKey, $attemptToken): void {
             $now = now();
             $this->connection->table('legal_signature_artifacts')->insertOrIgnore([
                 'organization_id' => $organizationId,
@@ -1269,6 +1270,7 @@ final class LegalDocumentSignatureService
                 'storage_path' => $path,
                 'storage_version_id' => null,
                 'content_hash' => $contentHash,
+                'put_request_hash' => $putRequestHash,
                 'state' => 'uploading',
                 'claim_count' => 0,
                 'created_at' => $now,
@@ -1283,6 +1285,7 @@ final class LegalDocumentSignatureService
                 || (int) $artifact->signature_request_id !== $requestId
                 || ! hash_equals((string) $artifact->storage_path, $path)
                 || ! hash_equals((string) $artifact->content_hash, $contentHash)
+                || ! hash_equals((string) $artifact->put_request_hash, $putRequestHash)
                 || in_array((string) $artifact->state, ['referenced', 'deleting', 'deleted'], true)) {
                 throw new DomainException('legal_signature_artifact_claim_conflict');
             }
@@ -1294,8 +1297,11 @@ final class LegalDocumentSignatureService
             if ((int) $artifact->claim_count > 0) {
                 throw new DomainException('legal_signature_artifact_recovery_required');
             }
+            if ((string) $artifact->state === 'ambiguous') {
+                throw new DomainException('legal_signature_artifact_recovery_required');
+            }
             $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
-                'state' => (string) $artifact->state === 'abandoned' ? 'uploading' : (string) $artifact->state,
+                'state' => (string) $artifact->state === 'confirmed_absent' ? 'uploading' : (string) $artifact->state,
                 'claim_count' => 1,
                 'upload_lease_token_hash' => hash('sha256', $attemptToken),
                 'upload_lease_expires_at' => now()->addMinutes(10),
@@ -1303,6 +1309,9 @@ final class LegalDocumentSignatureService
                 'attempt_count' => ((int) $artifact->attempt_count) + 1,
                 'dead_lettered_at' => null,
                 'last_error_code' => null,
+                'first_ambiguous_at' => null,
+                'next_reconcile_at' => null,
+                'absence_check_count' => 0,
                 'updated_at' => $now,
             ]);
         }, 3);
@@ -1356,9 +1365,13 @@ final class LegalDocumentSignatureService
         }, 3);
     }
 
-    private function abandonSignatureArtifactReservation(int $organizationId, string $artifactKey, string $attemptToken): void
-    {
-        $this->connection->transaction(function () use ($organizationId, $artifactKey, $attemptToken): void {
+    private function markSignatureArtifactAmbiguous(
+        int $organizationId,
+        string $artifactKey,
+        string $attemptToken,
+        Throwable $error,
+    ): void {
+        $this->connection->transaction(function () use ($organizationId, $artifactKey, $attemptToken, $error): void {
             $artifact = $this->connection->table('legal_signature_artifacts')
                 ->where('organization_id', $organizationId)->where('artifact_key', $artifactKey)
                 ->lockForUpdate()->first();
@@ -1369,13 +1382,144 @@ final class LegalDocumentSignatureService
             }
             $remainingClaims = max(0, ((int) $artifact->claim_count) - 1);
             $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
-                'state' => $remainingClaims === 0 ? 'abandoned' : 'uploading',
+                'state' => $remainingClaims === 0 ? 'ambiguous' : 'uploading',
                 'claim_count' => $remainingClaims,
                 'upload_lease_token_hash' => $remainingClaims === 0 ? null : $artifact->upload_lease_token_hash,
                 'upload_lease_expires_at' => $remainingClaims === 0 ? null : now()->addMinutes(10),
+                'first_ambiguous_at' => $remainingClaims === 0 ? ($artifact->first_ambiguous_at ?? now()) : $artifact->first_ambiguous_at,
+                'next_reconcile_at' => $remainingClaims === 0 ? now()->addMinute() : $artifact->next_reconcile_at,
+                'last_error_code' => $error::class,
                 'updated_at' => now(),
             ]);
         }, 3);
+    }
+
+    /** @param array{version_id:string,created:bool,sha256:string,body:string,etag?:string|null} $stored */
+    private function bindStoredArtifactOrRecoverLateVersion(
+        LegalSignatureRequest $request,
+        string $artifactKey,
+        string $attemptToken,
+        string $path,
+        string $contentHash,
+        array $stored,
+    ): void {
+        try {
+            $this->heartbeatSignatureArtifact((int) $request->organization_id, $artifactKey, $attemptToken);
+            $this->bindSignatureArtifact(
+                (int) $request->organization_id,
+                $artifactKey,
+                $attemptToken,
+                (string) $stored['version_id'],
+                (bool) $stored['created'],
+            );
+        } catch (DomainException $error) {
+            if ($error->getMessage() !== 'legal_signature_artifact_attempt_stale') {
+                throw $error;
+            }
+            $this->recoverLateArtifactVersion(
+                (int) $request->organization_id,
+                (int) $request->document_id,
+                (int) $request->document_version_id,
+                $artifactKey,
+                $path,
+                (string) $stored['version_id'],
+                isset($stored['etag']) ? (string) $stored['etag'] : null,
+                $contentHash,
+            );
+
+            throw $error;
+        }
+    }
+
+    private function recoverLateArtifactVersion(
+        int $organizationId,
+        int $documentId,
+        int $documentVersionId,
+        string $artifactKey,
+        string $path,
+        string $versionId,
+        ?string $etag,
+        string $contentHash,
+    ): void {
+        if ($versionId === '') {
+            throw new RuntimeException('legal_signature_artifact_version_missing');
+        }
+        $this->connection->transaction(function () use ($organizationId, $artifactKey, $path, $versionId): void {
+            $this->lockArtifactMutex($organizationId, $path);
+            $artifact = $this->connection->table('legal_signature_artifacts')
+                ->where('organization_id', $organizationId)->where('artifact_key', $artifactKey)
+                ->lockForUpdate()->first();
+            if ($artifact === null || $artifact->referenced_signature_id !== null
+                || in_array((string) $artifact->state, ['referenced', 'deleted'], true)) {
+                return;
+            }
+            $signatureExists = $this->signatures()->where('organization_id', $organizationId)
+                ->where('signature_path', $path)->where('storage_version_id', $versionId)
+                ->lockForUpdate()->exists();
+            if ($signatureExists) {
+                return;
+            }
+            $leaseActive = $artifact->upload_lease_expires_at !== null && now()->lt($artifact->upload_lease_expires_at);
+            if ($leaseActive) {
+                $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                    'next_reconcile_at' => now(), 'updated_at' => now(),
+                ]);
+
+                return;
+            }
+            if ((string) $artifact->state === 'confirmed_absent') {
+                $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                    'state' => 'uploading', 'claim_count' => 0, 'updated_at' => now(),
+                ]);
+            }
+            if (in_array((string) $artifact->state, ['uploading', 'ambiguous', 'confirmed_absent'], true)) {
+                $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                    'state' => 'uploaded', 'storage_version_id' => $versionId,
+                    'cleanup_owned' => true, 'updated_at' => now(),
+                ]);
+            }
+            $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                'state' => 'deleting',
+                'cleanup_owned' => true,
+                'claim_count' => 0,
+                'upload_lease_token_hash' => null,
+                'upload_lease_expires_at' => null,
+                'next_reconcile_at' => null,
+                'last_error_code' => null,
+                'updated_at' => now(),
+            ]);
+        }, 3);
+        $now = now();
+        $this->connection->table('legal_archive_file_cleanup_debts')->upsert([[
+            'organization_id' => $organizationId,
+            'document_id' => $documentId,
+            'document_version_id' => $documentVersionId,
+            'storage_path' => $path,
+            'storage_version_id' => $versionId,
+            'debt_key' => LegalCleanupDebtKey::for($organizationId, $path, $versionId),
+            'storage_etag' => $etag,
+            'content_hash' => $contentHash,
+            'reason' => 'signature_registration_failed',
+            'attempts' => 0,
+            'next_attempt_at' => $now,
+            'last_error' => null,
+            'resolved_at' => null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]], ['organization_id', 'debt_key'], [
+            'document_id', 'document_version_id', 'storage_version_id', 'storage_etag', 'content_hash', 'reason',
+            'next_attempt_at', 'last_error', 'resolved_at', 'updated_at',
+        ]);
+    }
+
+    private function lockArtifactMutex(int $organizationId, string $path): void
+    {
+        if ($this->connection->getDriverName() === 'pgsql') {
+            $this->connection->select(
+                'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                ["legal-signature-artifact:{$organizationId}:{$path}"],
+            );
+        }
     }
 
     private function releaseFailedArtifactClaim(

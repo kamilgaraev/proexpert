@@ -27,6 +27,7 @@ use App\Services\LegalArchive\Signatures\SignatureVerificationContext;
 use App\Services\LegalArchive\Signatures\SignatureVerificationResult;
 use App\Services\LegalArchive\Signatures\SignerIdentity;
 use App\Services\LegalArchive\Signatures\SignerIdentitySet;
+use App\Services\Storage\Exceptions\VersionedObjectIntegrityException;
 use App\Services\Storage\FileService;
 use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
@@ -385,7 +386,8 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
             'organization_id' => 1, 'document_id' => 1, 'document_version_id' => 1,
             'signature_request_id' => $requestId, 'artifact_key' => str_repeat('8', 64),
             'storage_path' => $path, 'storage_version_id' => $versionId,
-            'content_hash' => hash('sha256', $body), 'state' => 'uploaded', 'claim_count' => 2,
+            'content_hash' => hash('sha256', $body), 'put_request_hash' => str_repeat('7', 64),
+            'state' => 'uploaded', 'claim_count' => 2,
             'cleanup_owned' => true, 'upload_lease_token_hash' => str_repeat('9', 64),
             'upload_lease_expires_at' => now()->subMinute(), 'attempt_count' => 1,
             'created_at' => now()->subMinutes(20), 'updated_at' => now()->subMinutes(20),
@@ -491,6 +493,13 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
         self::assertSame(0, $this->first->table('legal_document_signatures')->count());
         self::assertSame('deleting', $this->first->table('legal_signature_artifacts')->value('state'));
         self::assertSame(1, $this->first->table('legal_archive_file_cleanup_debts')->count());
+        $lateVersion = (string) $this->first->table('legal_signature_artifacts')->value('storage_version_id');
+        self::assertSame(1, (new LegalSignatureCleanupDebtService(
+            $this->signatureStorage($this->first), $this->first, $this->audit(), $this->metrics(),
+        ))->processDue());
+        self::assertSame('deleted', $this->first->table('legal_signature_artifacts')->value('state'));
+        self::assertSame(1, $this->first->table('signature_test_storage_deletions')
+            ->where('storage_version_id', $lateVersion)->count());
     }
 
     public function test_reconciler_and_cleanup_worker_share_lock_order_without_deadlock(): void
@@ -502,6 +511,7 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
             'organization_id' => 1, 'document_id' => 1, 'document_version_id' => 1,
             'signature_request_id' => $requestId, 'artifact_key' => str_repeat('7', 64),
             'storage_path' => $path, 'storage_version_id' => $versionId, 'content_hash' => str_repeat('a', 64),
+            'put_request_hash' => str_repeat('6', 64),
             'state' => 'deleting', 'claim_count' => 0, 'cleanup_owned' => true,
             'created_at' => now()->subMinutes(20), 'updated_at' => now()->subMinutes(20),
         ]);
@@ -803,7 +813,7 @@ SQL);
             $object = $connection->table('signature_test_storage_objects')->where('storage_path', $path)
                 ->when($versionId !== null, static fn ($query) => $query->where('storage_version_id', $versionId))->first();
             if ($object === null) {
-                throw new \RuntimeException('s3_pinned_object_unavailable');
+                throw new VersionedObjectIntegrityException('s3_pinned_object_unavailable');
             }
 
             return [
@@ -822,12 +832,12 @@ SQL);
         $storage = $this->createMock(FileService::class);
         $storage->method('putImmutable')->willReturnCallback(static function (string $path, string $body, string $contentType) use ($connection, $gate): array {
             $versionId = 'slow-version-'.hash('sha256', $path.$body);
-            $connection->table('signature_test_storage_objects')->insertOrIgnore([
-                'storage_path' => $path, 'storage_version_id' => $versionId, 'content_hash' => hash('sha256', $body),
-            ]);
             $connection->table('signature_test_put_waiters')->insert(['gate_key' => $gate]);
             $connection->select('SELECT pg_advisory_lock_shared(hashtextextended(?, 0))', [$gate]);
             $connection->select('SELECT pg_advisory_unlock_shared(hashtextextended(?, 0))', [$gate]);
+            $connection->table('signature_test_storage_objects')->insertOrIgnore([
+                'storage_path' => $path, 'storage_version_id' => $versionId, 'content_hash' => hash('sha256', $body),
+            ]);
 
             return [
                 'path' => $path, 'body' => $body, 'size' => strlen($body), 'sha256' => hash('sha256', $body),

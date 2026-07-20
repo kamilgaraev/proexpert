@@ -95,6 +95,26 @@ final readonly class LegalSignatureCleanupDebtService
                 && $artifact->referenced_signature_id === null
                 && ($artifact->deletion_lease_expires_at === null || now()->gte($artifact->deletion_lease_expires_at));
             if (! $authorized) {
+                $reconciliationPending = $artifact !== null
+                    && in_array((string) $artifact->state, ['uploading', 'uploaded', 'ambiguous'], true)
+                    && ($artifact->storage_version_id === null
+                        || (int) $artifact->claim_count > 0
+                        || ($artifact->upload_lease_expires_at !== null && now()->lt($artifact->upload_lease_expires_at)));
+                if ($reconciliationPending) {
+                    $this->connection->table('legal_archive_file_cleanup_debts')->where('id', $id)->update([
+                        'last_error' => 'legal_signature_cleanup_reconciliation_pending',
+                        'next_attempt_at' => now()->addMinute(),
+                        'lease_token_hash' => null,
+                        'lease_expires_at' => null,
+                        'updated_at' => now(),
+                    ]);
+                    $this->recordAudit('signature_storage_cleanup_reconciliation_pending', $row, (int) $row->attempts);
+                    $this->metrics->increment('legal_signature_cleanup_reconciliation_pending_total', [
+                        'organization_id' => (int) $row->organization_id,
+                    ]);
+
+                    return ['status' => 'idle'];
+                }
                 $this->connection->table('legal_archive_file_cleanup_debts')->where('id', $id)->update([
                     'last_error' => 'legal_signature_cleanup_authorization_rejected',
                     'dead_lettered_at' => now(),

@@ -86,12 +86,13 @@ return new class extends Migration
             'legal_signature_cleanup_debts_terminal_check' => ['legal_archive_file_cleanup_debts', 'CHECK (resolved_at IS NULL OR dead_lettered_at IS NULL) NOT VALID'],
             'legal_signature_artifacts_request_fk' => ['legal_signature_artifacts', 'FOREIGN KEY (signature_request_id, document_version_id, document_id, organization_id) REFERENCES legal_signature_requests (id, document_version_id, document_id, organization_id) ON DELETE RESTRICT NOT VALID'],
             'legal_signature_artifacts_signature_fk' => ['legal_signature_artifacts', 'FOREIGN KEY (referenced_signature_id, document_version_id, document_id, organization_id) REFERENCES legal_document_signatures (id, document_version_id, document_id, organization_id) ON DELETE RESTRICT NOT VALID'],
-            'legal_signature_artifacts_hash_check' => ['legal_signature_artifacts', "CHECK (artifact_key ~ '^[a-f0-9]{64}$' AND content_hash ~ '^[a-f0-9]{64}$') NOT VALID"],
-            'legal_signature_artifacts_state_check' => ['legal_signature_artifacts', "CHECK (state IN ('uploading','uploaded','referenced','deleting','deleted','abandoned')) NOT VALID"],
-            'legal_signature_artifacts_reference_check' => ['legal_signature_artifacts', "CHECK ((state IN ('uploading','abandoned') AND storage_version_id IS NULL AND referenced_signature_id IS NULL) OR (state = 'referenced' AND storage_version_id IS NOT NULL AND referenced_signature_id IS NOT NULL) OR (state IN ('uploaded','deleting','deleted') AND storage_version_id IS NOT NULL AND referenced_signature_id IS NULL)) NOT VALID"],
+            'legal_signature_artifacts_hash_check' => ['legal_signature_artifacts', "CHECK (artifact_key ~ '^[a-f0-9]{64}$' AND content_hash ~ '^[a-f0-9]{64}$' AND put_request_hash ~ '^[a-f0-9]{64}$') NOT VALID"],
+            'legal_signature_artifacts_state_check' => ['legal_signature_artifacts', "CHECK (state IN ('uploading','uploaded','ambiguous','confirmed_absent','referenced','deleting','deleted')) NOT VALID"],
+            'legal_signature_artifacts_reference_check' => ['legal_signature_artifacts', "CHECK ((state IN ('uploading','ambiguous','confirmed_absent') AND storage_version_id IS NULL AND referenced_signature_id IS NULL) OR (state = 'referenced' AND storage_version_id IS NOT NULL AND referenced_signature_id IS NOT NULL) OR (state IN ('uploaded','deleting','deleted') AND storage_version_id IS NOT NULL AND referenced_signature_id IS NULL)) NOT VALID"],
             'legal_signature_artifacts_claim_check' => ['legal_signature_artifacts', "CHECK (claim_count >= 0 AND (state NOT IN ('deleting','deleted') OR claim_count = 0)) NOT VALID"],
             'legal_signature_artifacts_cleanup_lease_check' => ['legal_signature_artifacts', "CHECK ((deletion_lease_token_hash IS NULL) = (deletion_lease_expires_at IS NULL) AND (deletion_lease_token_hash IS NULL OR (deletion_lease_token_hash ~ '^[a-f0-9]{64}$' AND state = 'deleting' AND claim_count = 0 AND cleanup_owned AND referenced_signature_id IS NULL))) NOT VALID"],
-            'legal_signature_artifacts_upload_lease_check' => ['legal_signature_artifacts', "CHECK ((upload_lease_token_hash IS NULL) = (upload_lease_expires_at IS NULL) AND (upload_lease_token_hash IS NULL OR (upload_lease_token_hash ~ '^[a-f0-9]{64}$' AND state IN ('uploading','uploaded') AND referenced_signature_id IS NULL)) AND (state <> 'deleting' OR cleanup_owned)) NOT VALID"],
+            'legal_signature_artifacts_upload_lease_check' => ['legal_signature_artifacts', "CHECK ((upload_lease_token_hash IS NULL) = (upload_lease_expires_at IS NULL) AND (upload_lease_token_hash IS NULL OR (upload_lease_token_hash ~ '^[a-f0-9]{64}$' AND state IN ('uploading','uploaded','ambiguous') AND referenced_signature_id IS NULL)) AND (state <> 'deleting' OR cleanup_owned)) NOT VALID"],
+            'legal_signature_artifacts_ambiguity_check' => ['legal_signature_artifacts', "CHECK ((state = 'ambiguous' AND first_ambiguous_at IS NOT NULL AND next_reconcile_at IS NOT NULL AND absence_check_count >= 0) OR (state = 'confirmed_absent' AND first_ambiguous_at IS NOT NULL AND next_reconcile_at IS NULL AND absence_check_count >= 3) OR state NOT IN ('ambiguous','confirmed_absent')) NOT VALID"],
         ];
     }
 
@@ -330,29 +331,31 @@ CREATE OR REPLACE FUNCTION legal_signature_artifact_guard() RETURNS trigger AS $
 BEGIN
     IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'legal_signature_artifact_delete_forbidden'; END IF;
     IF (OLD.organization_id, OLD.document_id, OLD.document_version_id, OLD.signature_request_id,
-        OLD.artifact_key, OLD.storage_path, OLD.content_hash, OLD.created_at)
+        OLD.artifact_key, OLD.storage_path, OLD.content_hash, OLD.put_request_hash, OLD.created_at)
        IS DISTINCT FROM
        (NEW.organization_id, NEW.document_id, NEW.document_version_id, NEW.signature_request_id,
-        NEW.artifact_key, NEW.storage_path, NEW.content_hash, NEW.created_at) THEN
+        NEW.artifact_key, NEW.storage_path, NEW.content_hash, NEW.put_request_hash, NEW.created_at) THEN
         RAISE EXCEPTION 'legal_signature_artifact_identity_update_forbidden';
     END IF;
     IF OLD.storage_version_id IS DISTINCT FROM NEW.storage_version_id
-       AND NOT (OLD.state = 'uploading' AND NEW.state = 'uploaded' AND OLD.storage_version_id IS NULL AND NEW.storage_version_id IS NOT NULL) THEN
+       AND NOT (OLD.state IN ('uploading','ambiguous') AND NEW.state = 'uploaded' AND OLD.storage_version_id IS NULL AND NEW.storage_version_id IS NOT NULL) THEN
         RAISE EXCEPTION 'legal_signature_artifact_version_update_forbidden';
     END IF;
     IF OLD.cleanup_owned AND NOT NEW.cleanup_owned THEN
         RAISE EXCEPTION 'legal_signature_artifact_cleanup_owner_update_forbidden';
     END IF;
-    IF NEW.state IN ('referenced','deleted','abandoned') AND (NEW.upload_lease_token_hash IS NOT NULL OR NEW.upload_lease_expires_at IS NOT NULL
+    IF NEW.state IN ('referenced','deleted','confirmed_absent') AND (NEW.upload_lease_token_hash IS NOT NULL OR NEW.upload_lease_expires_at IS NOT NULL
         OR NEW.deletion_lease_token_hash IS NOT NULL OR NEW.deletion_lease_expires_at IS NOT NULL) THEN
         RAISE EXCEPTION 'legal_signature_artifact_deleted_lease_forbidden';
     END IF;
-    IF NOT ((OLD.state = 'uploading' AND NEW.state IN ('uploading','uploaded','abandoned'))
+    IF NOT ((OLD.state = 'uploading' AND NEW.state IN ('uploading','uploaded','ambiguous'))
+        OR (OLD.state = 'ambiguous' AND NEW.state IN ('ambiguous','uploaded','referenced','confirmed_absent'))
+        OR (OLD.state = 'confirmed_absent' AND NEW.state IN ('confirmed_absent','uploading'))
         OR (OLD.state = 'uploaded' AND NEW.state IN ('uploaded','referenced','deleting'))
         OR (OLD.state = 'referenced' AND NEW.state = 'referenced')
         OR (OLD.state = 'deleting' AND NEW.state IN ('deleting','referenced','deleted'))
         OR (OLD.state = 'deleted' AND NEW.state = 'deleted')
-        OR (OLD.state = 'abandoned' AND NEW.state IN ('abandoned','uploading'))) THEN
+        ) THEN
         RAISE EXCEPTION 'legal_signature_artifact_transition_forbidden';
     END IF;
     IF OLD.state = 'deleted' AND OLD IS DISTINCT FROM NEW THEN

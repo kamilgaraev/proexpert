@@ -202,11 +202,15 @@ return new class extends Migration
                 $table->text('storage_path');
                 $table->text('storage_version_id')->nullable();
                 $table->char('content_hash', 64);
+                $table->char('put_request_hash', 64);
                 $table->string('state', 32);
                 $table->unsignedInteger('claim_count')->default(0);
                 $table->boolean('cleanup_owned')->default(false);
                 $table->char('upload_lease_token_hash', 64)->nullable();
                 $table->timestampTz('upload_lease_expires_at')->nullable();
+                $table->timestampTz('first_ambiguous_at')->nullable();
+                $table->timestampTz('next_reconcile_at')->nullable();
+                $table->unsignedInteger('absence_check_count')->default(0);
                 $table->char('deletion_lease_token_hash', 64)->nullable();
                 $table->timestampTz('deletion_lease_expires_at')->nullable();
                 $table->timestampTz('last_attempt_at')->nullable();
@@ -266,11 +270,15 @@ return new class extends Migration
             ['legal_signature_artifacts', 'artifact_key', 'bpchar', 'NO'],
             ['legal_signature_artifacts', 'storage_version_id', 'text', 'YES'],
             ['legal_signature_artifacts', 'content_hash', 'bpchar', 'NO'],
+            ['legal_signature_artifacts', 'put_request_hash', 'bpchar', 'NO'],
             ['legal_signature_artifacts', 'state', 'varchar', 'NO'],
             ['legal_signature_artifacts', 'claim_count', 'int4', 'NO'],
             ['legal_signature_artifacts', 'cleanup_owned', 'bool', 'NO'],
             ['legal_signature_artifacts', 'upload_lease_token_hash', 'bpchar', 'YES'],
             ['legal_signature_artifacts', 'upload_lease_expires_at', 'timestamptz', 'YES'],
+            ['legal_signature_artifacts', 'first_ambiguous_at', 'timestamptz', 'YES'],
+            ['legal_signature_artifacts', 'next_reconcile_at', 'timestamptz', 'YES'],
+            ['legal_signature_artifacts', 'absence_check_count', 'int4', 'NO'],
             ['legal_signature_artifacts', 'deletion_lease_token_hash', 'bpchar', 'YES'],
             ['legal_signature_artifacts', 'deletion_lease_expires_at', 'timestamptz', 'YES'],
             ['legal_signature_artifacts', 'last_attempt_at', 'timestamptz', 'YES'],
@@ -294,11 +302,12 @@ return new class extends Migration
 SELECT count(*) FILTER (WHERE a.attidentity <> '') AS identity_count,
        count(*) FILTER (WHERE a.attgenerated <> '') AS generated_count,
        string_agg(a.attname, ',' ORDER BY a.attnum) FILTER (
-           WHERE defaults.oid IS NOT NULL AND a.attname NOT IN ('id','attempt_count','claim_count','cleanup_owned')
+           WHERE defaults.oid IS NOT NULL AND a.attname NOT IN ('id','attempt_count','claim_count','cleanup_owned','absence_check_count')
        ) AS unexpected_defaults,
        max(pg_get_expr(defaults.adbin, defaults.adrelid)) FILTER (WHERE a.attname='attempt_count') AS attempt_default,
        max(pg_get_expr(defaults.adbin, defaults.adrelid)) FILTER (WHERE a.attname='claim_count') AS claim_default
        , max(pg_get_expr(defaults.adbin, defaults.adrelid)) FILTER (WHERE a.attname='cleanup_owned') AS cleanup_owned_default
+       , max(pg_get_expr(defaults.adbin, defaults.adrelid)) FILTER (WHERE a.attname='absence_check_count') AS absence_check_default
 FROM pg_attribute a
 JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
 LEFT JOIN pg_attrdef defaults ON defaults.adrelid=c.oid AND defaults.adnum=a.attnum
@@ -309,6 +318,7 @@ SQL, [$table]);
                 || ($table === 'legal_signature_provider_operations' && (string) $columnFlags->attempt_default !== '0')
                 || ($table === 'legal_signature_artifacts' && (string) $columnFlags->attempt_default !== '0')
                 || ($table === 'legal_signature_artifacts' && (string) $columnFlags->claim_default !== '0')
+                || ($table === 'legal_signature_artifacts' && (string) $columnFlags->absence_check_default !== '0')
                 || ($table === 'legal_signature_artifacts' && (string) $columnFlags->cleanup_owned_default !== 'false')) {
                 throw new RuntimeException("legal_signature_column_flags_mismatch:{$table}");
             }
@@ -373,7 +383,7 @@ SQL, [$table]);
             'legal_document_signatures' => explode(',', 'id,organization_id,document_id,document_version_id,signature_request_id,party_id,method,provider,signer_name,signers,signed_content_hash,signature_path,signature_content_hash,storage_version_id,storage_etag,detected_mime_type,certificate_metadata,provider_metadata,storage_location,signed_at,verified_at,verification_status,signature_kind,container_format,signer_snapshot_hash,signer_user_id,signer_organization_id,party_role_snapshot,certificate_fingerprint,certificate_serial,certificate_issuer,certificate_valid_from,certificate_valid_until,authority_confirmed,time_source,diagnostic_code,signing_session_id,client_ip_hash,user_agent_hash,revocation_reason,registered_by_user_id,idempotency_key,request_hash,created_at,updated_at'),
             'legal_signature_provider_operations' => explode(',', 'id,organization_id,document_id,document_version_id,signature_request_id,provider,status,correlation_id,provider_idempotency_key,request_idempotency_key,generation,supersedes_operation_id,lease_token_hash,lease_expires_at,attempt_count,provider_request_id,redirect_url,session_expires_at,session_metadata,last_error_code,started_at,completed_at,created_at,updated_at'),
             'legal_signature_verifications' => explode(',', 'id,organization_id,document_id,document_version_id,signature_id,provider,status,signed_content_hash,certificate_metadata,provider_metadata,revocation_reason,verified_by_user_id,verified_at,idempotency_key,request_hash,created_at,updated_at'),
-            'legal_signature_artifacts' => explode(',', 'id,organization_id,document_id,document_version_id,signature_request_id,artifact_key,storage_path,storage_version_id,content_hash,state,claim_count,cleanup_owned,upload_lease_token_hash,upload_lease_expires_at,deletion_lease_token_hash,deletion_lease_expires_at,last_attempt_at,attempt_count,dead_lettered_at,last_error_code,referenced_signature_id,created_at,updated_at'),
+            'legal_signature_artifacts' => explode(',', 'id,organization_id,document_id,document_version_id,signature_request_id,artifact_key,storage_path,storage_version_id,content_hash,put_request_hash,state,claim_count,cleanup_owned,upload_lease_token_hash,upload_lease_expires_at,first_ambiguous_at,next_reconcile_at,absence_check_count,deletion_lease_token_hash,deletion_lease_expires_at,last_attempt_at,attempt_count,dead_lettered_at,last_error_code,referenced_signature_id,created_at,updated_at'),
         ];
     }
 

@@ -33,6 +33,7 @@ use App\Services\LegalArchive\Signatures\SignerIdentity;
 use App\Services\LegalArchive\Signatures\SignerIdentitySet;
 use App\Services\Storage\Exceptions\VersionedObjectIntegrityException;
 use App\Services\Storage\FileService;
+use Carbon\CarbonImmutable;
 use DateTimeImmutable;
 use DomainException;
 use Illuminate\Container\Container;
@@ -405,6 +406,14 @@ final class ManualOriginalRegistrationTest extends TestCase
         $provider = new FixedElectronicSignatureProvider;
         $storage = $this->createMock(FileService::class);
         $storage->method('putImmutable')->willThrowException(new \RuntimeException('storage unavailable'));
+        $storage->method('describeVersion')->willReturnCallback(static function (string $path, ?string $versionId): array {
+            return [
+                'path' => $path,
+                'version_id' => $versionId ?? 'committed-before-timeout',
+                'sha256' => hash('sha256', pack('H*', '3082010006092a864886f70d010702a0820100308200fc')),
+                'etag' => 'timeout-etag',
+            ];
+        });
         $service = new LegalDocumentSignatureService(
             $provider, $this->access, $this->audit, $storage, $this->database->getConnection(),
         );
@@ -423,6 +432,19 @@ final class ManualOriginalRegistrationTest extends TestCase
             self::assertSame('storage unavailable', $exception->getMessage());
         }
         self::assertContains('signature_callback_rejected', $this->audit->events);
+        $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->sole();
+        self::assertSame('ambiguous', $artifact->state);
+        self::assertNull($artifact->storage_version_id);
+        $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $artifact->id)
+            ->update(['next_reconcile_at' => now()]);
+        self::assertSame(1, (new LegalSignatureArtifactReconciler(
+            $storage, $this->database->getConnection(), $this->audit, new RecordingCleanupMetrics,
+        ))->reconcile());
+        $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $artifact->id)->sole();
+        self::assertSame('deleting', $artifact->state);
+        self::assertSame('committed-before-timeout', $artifact->storage_version_id);
+        self::assertSame(1, $this->database->getConnection()->table('legal_archive_file_cleanup_debts')
+            ->where('storage_version_id', 'committed-before-timeout')->count());
     }
 
     public function test_failed_external_registration_removes_exact_storage_version(): void
@@ -563,6 +585,36 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertContains('legal_signature_cleanup_authorization_rejected_total', $metrics->metrics);
     }
 
+    public function test_signature_cleanup_defers_exact_late_version_while_artifact_reconciliation_is_pending(): void
+    {
+        [$document, $version] = $this->fixture();
+        $path = 'org-10/late-pending.p7s';
+        $this->database->getConnection()->table('legal_signature_artifacts')->insert([
+            'organization_id' => 10, 'document_id' => $document->id, 'document_version_id' => $version->id,
+            'signature_request_id' => 99, 'artifact_key' => str_repeat('d', 64),
+            'storage_path' => $path, 'storage_version_id' => null,
+            'content_hash' => str_repeat('a', 64), 'state' => 'ambiguous', 'claim_count' => 0,
+            'cleanup_owned' => false, 'first_ambiguous_at' => now(), 'next_reconcile_at' => now()->addMinute(),
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $debtId = $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->insertGetId([
+            'organization_id' => 10, 'document_id' => $document->id, 'document_version_id' => $version->id,
+            'storage_path' => $path, 'storage_version_id' => 'late-pending-version',
+            'debt_key' => str_repeat('e', 64), 'reason' => 'signature_registration_failed', 'attempts' => 0,
+            'next_attempt_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::never())->method('removeImmutable');
+
+        self::assertSame(0, (new LegalSignatureCleanupDebtService(
+            $storage, $this->database->getConnection(), $this->audit, new RecordingCleanupMetrics,
+        ))->processDue());
+        $debt = $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->where('id', $debtId)->sole();
+        self::assertNull($debt->dead_lettered_at);
+        self::assertSame('legal_signature_cleanup_reconciliation_pending', $debt->last_error);
+        self::assertTrue(now()->lt($debt->next_attempt_at));
+    }
+
     public function test_artifact_reconciler_recovers_put_before_bind_and_creates_cleanup_debt(): void
     {
         [$document, $version] = $this->fixture();
@@ -597,7 +649,7 @@ final class ManualOriginalRegistrationTest extends TestCase
             ->where('storage_path', 'org-10/interrupted.p7s')->count());
     }
 
-    public function test_artifact_reconciler_abandons_reservation_when_put_never_happened(): void
+    public function test_artifact_reconciler_confirms_absence_only_after_repeated_checks_and_grace(): void
     {
         [$document, $version] = $this->fixture();
         $artifactId = $this->database->getConnection()->table('legal_signature_artifacts')->insertGetId([
@@ -610,7 +662,7 @@ final class ManualOriginalRegistrationTest extends TestCase
             'created_at' => now()->subMinutes(20), 'updated_at' => now()->subMinutes(20),
         ]);
         $storage = $this->createMock(FileService::class);
-        $storage->expects(self::once())->method('describeVersion')
+        $storage->expects(self::exactly(3))->method('describeVersion')
             ->willThrowException(new VersionedObjectIntegrityException('s3_pinned_object_unavailable'));
         $storage->expects(self::never())->method('removeImmutable');
 
@@ -618,9 +670,82 @@ final class ManualOriginalRegistrationTest extends TestCase
             $storage, $this->database->getConnection(), $this->audit, new RecordingCleanupMetrics,
         ))->reconcile());
         $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $artifactId)->sole();
-        self::assertSame('abandoned', $artifact->state);
+        self::assertSame('ambiguous', $artifact->state);
+        self::assertSame(1, (int) $artifact->absence_check_count);
         self::assertSame(0, (int) $artifact->claim_count);
         self::assertSame(0, $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->count());
+        self::assertContains('signature_artifact_reconcile_absence_observed', $this->audit->events);
+
+        CarbonImmutable::setTestNow(now()->addMinutes(10));
+        $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $artifactId)
+            ->update(['next_reconcile_at' => now()]);
+        self::assertSame(1, (new LegalSignatureArtifactReconciler(
+            $storage, $this->database->getConnection(), $this->audit, new RecordingCleanupMetrics,
+        ))->reconcile());
+        self::assertSame('ambiguous', $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $artifactId)->value('state'));
+
+        CarbonImmutable::setTestNow(now()->addMinutes(31));
+        $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $artifactId)
+            ->update(['next_reconcile_at' => now()]);
+        self::assertSame(1, (new LegalSignatureArtifactReconciler(
+            $storage, $this->database->getConnection(), $this->audit, new RecordingCleanupMetrics,
+        ))->reconcile());
+        $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->where('id', $artifactId)->sole();
+        self::assertSame('confirmed_absent', $artifact->state);
+        self::assertSame(3, (int) $artifact->absence_check_count);
+        self::assertNull($artifact->next_reconcile_at);
+        self::assertContains('signature_artifact_reconcile_absence_confirmed', $this->audit->events);
+        CarbonImmutable::setTestNow();
+    }
+
+    public function test_late_put_after_absence_observation_creates_exact_cleanup_debt_and_is_deleted(): void
+    {
+        [$document, $version] = $this->fixture();
+        $path = 'org-10/late-commit.p7s';
+        $contentHash = str_repeat('a', 64);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('describeVersion')
+            ->with($path, null)
+            ->willThrowException(new VersionedObjectIntegrityException('s3_pinned_object_unavailable'));
+        $storage->expects(self::once())->method('removeImmutable')->with($path, 'late-version');
+        $service = new LegalDocumentSignatureService(
+            new DisabledElectronicSignatureProvider, $this->access, $this->audit, $storage, $this->database->getConnection(),
+        );
+        $reserve = new \ReflectionMethod($service, 'reserveSignatureArtifact');
+        $heartbeat = new \ReflectionMethod($service, 'heartbeatSignatureArtifact');
+        $recover = new \ReflectionMethod($service, 'recoverLateArtifactVersion');
+        $reservation = $reserve->invoke(
+            $service, 10, (int) $document->id, (int) $version->id, 99,
+            $path, $contentHash, 'application/pkcs7-signature',
+        );
+        $this->database->getConnection()->table('legal_signature_artifacts')->update([
+            'upload_lease_expires_at' => now()->subMinute(),
+            'updated_at' => now()->subMinutes(20),
+        ]);
+        self::assertSame(1, (new LegalSignatureArtifactReconciler(
+            $storage, $this->database->getConnection(), $this->audit, new RecordingCleanupMetrics,
+        ))->reconcile());
+        self::assertSame('ambiguous', $this->database->getConnection()->table('legal_signature_artifacts')->value('state'));
+        try {
+            $heartbeat->invoke($service, 10, $reservation['artifact_key'], $reservation['attempt_token']);
+            self::fail('The stale uploader heartbeat was accepted.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_signature_artifact_attempt_stale', $exception->getMessage());
+        }
+        $recover->invoke(
+            $service, 10, (int) $document->id, (int) $version->id, $reservation['artifact_key'],
+            $path, 'late-version', 'late-etag', $contentHash,
+        );
+        $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->sole();
+        self::assertSame('deleting', $artifact->state);
+        self::assertSame('late-version', $artifact->storage_version_id);
+        self::assertSame(1, $this->database->getConnection()->table('legal_archive_file_cleanup_debts')
+            ->where('storage_version_id', 'late-version')->count());
+        self::assertSame(1, (new LegalSignatureCleanupDebtService(
+            $storage, $this->database->getConnection(), $this->audit, new RecordingCleanupMetrics,
+        ))->processDue());
+        self::assertSame('deleted', $this->database->getConnection()->table('legal_signature_artifacts')->value('state'));
+        self::assertNotNull($this->database->getConnection()->table('legal_archive_file_cleanup_debts')->value('resolved_at'));
     }
 
     public function test_artifact_reconciler_repairs_deleting_state_without_cleanup_debt(): void
@@ -730,7 +855,7 @@ final class ManualOriginalRegistrationTest extends TestCase
         $release = new \ReflectionMethod($service, 'releaseFailedArtifactClaim');
         $reservation = $reserve->invoke(
             $service, 10, (int) $document->id, (int) $version->id, 77,
-            'org-10/shared.p7s', str_repeat('a', 64),
+            'org-10/shared.p7s', str_repeat('a', 64), 'application/pkcs7-signature',
         );
         $key = $reservation['artifact_key'];
         $staleToken = $reservation['attempt_token'];
@@ -1388,11 +1513,15 @@ final class ManualOriginalRegistrationTest extends TestCase
             $table->text('storage_path');
             $table->text('storage_version_id')->nullable();
             $table->string('content_hash', 64);
+            $table->string('put_request_hash', 64)->default('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
             $table->string('state');
             $table->unsignedInteger('claim_count')->default(0);
             $table->boolean('cleanup_owned')->default(false);
             $table->char('upload_lease_token_hash', 64)->nullable();
             $table->timestamp('upload_lease_expires_at')->nullable();
+            $table->timestamp('first_ambiguous_at')->nullable();
+            $table->timestamp('next_reconcile_at')->nullable();
+            $table->unsignedInteger('absence_check_count')->default(0);
             $table->char('deletion_lease_token_hash', 64)->nullable();
             $table->timestamp('deletion_lease_expires_at')->nullable();
             $table->timestamp('last_attempt_at')->nullable();

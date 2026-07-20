@@ -65,7 +65,7 @@ return new class extends Migration
             'legal_archive_cleanup_debts_key_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_archive_cleanup_debts_key_unique ON legal_archive_file_cleanup_debts USING btree (organization_id, debt_key)',
             'legal_signature_artifacts_key_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_signature_artifacts_key_unique ON legal_signature_artifacts USING btree (organization_id, artifact_key)',
             'legal_signature_artifacts_reference_idx' => "CREATE INDEX CONCURRENTLY legal_signature_artifacts_reference_idx ON legal_signature_artifacts USING btree (organization_id, state, id) WHERE state IN ('uploaded','deleting')",
-            'legal_signature_artifacts_reconcile_idx' => "CREATE INDEX CONCURRENTLY legal_signature_artifacts_reconcile_idx ON legal_signature_artifacts USING btree (upload_lease_expires_at, id) WHERE state IN ('uploading','uploaded','deleting') AND referenced_signature_id IS NULL AND dead_lettered_at IS NULL",
+            'legal_signature_artifacts_reconcile_idx' => "CREATE INDEX CONCURRENTLY legal_signature_artifacts_reconcile_idx ON legal_signature_artifacts USING btree (next_reconcile_at, upload_lease_expires_at, id) WHERE state IN ('uploading','uploaded','ambiguous','deleting') AND referenced_signature_id IS NULL AND dead_lettered_at IS NULL",
         ];
     }
 
