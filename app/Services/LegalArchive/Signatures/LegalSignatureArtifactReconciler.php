@@ -49,11 +49,15 @@ final readonly class LegalSignatureArtifactReconciler
     private function reconcileOne(int $id): bool
     {
         $snapshot = $this->connection->table('legal_signature_artifacts')->where('id', $id)->first();
+        if ($snapshot === null) {
+            return false;
+        }
         if ($snapshot !== null && (string) $snapshot->state === 'deleting') {
             return $this->repairDeletingDebt($snapshot);
         }
         $token = Str::random(64);
-        $claim = $this->connection->transaction(function () use ($id, $token): ?object {
+        $claim = $this->connection->transaction(function () use ($id, $token, $snapshot): ?object {
+            $this->lockArtifactMutex((int) $snapshot->organization_id, (string) $snapshot->storage_path);
             $artifact = $this->connection->table('legal_signature_artifacts')->where('id', $id)->lockForUpdate()->first();
             if ($artifact === null || $artifact->referenced_signature_id !== null || $artifact->dead_lettered_at !== null
                 || ! in_array((string) $artifact->state, ['uploading', 'uploaded'], true)) {
@@ -120,11 +124,12 @@ final readonly class LegalSignatureArtifactReconciler
             return false;
         }
 
-        return $this->connection->transaction(function () use ($claim, $token, $description): bool {
+        $finalized = $this->connection->transaction(function () use ($claim, $token, $description): ?object {
+            $this->lockArtifactMutex((int) $claim->organization_id, (string) $claim->storage_path);
             $artifact = $this->connection->table('legal_signature_artifacts')->where('id', $claim->id)
                 ->where('upload_lease_token_hash', hash('sha256', $token))->lockForUpdate()->first();
             if ($artifact === null || ! in_array((string) $artifact->state, ['uploading', 'uploaded'], true)) {
-                return false;
+                return null;
             }
             if ((string) $artifact->state === 'uploading') {
                 $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
@@ -140,11 +145,17 @@ final readonly class LegalSignatureArtifactReconciler
                 'last_error_code' => null, 'updated_at' => now(),
             ]);
             $artifact->storage_version_id = (string) $description['version_id'];
-            $this->ensureDebt($artifact);
-            $this->record('signature_artifact_reconcile_cleanup_scheduled', $artifact);
 
-            return true;
+            return $artifact;
         }, 3);
+        if ($finalized === null) {
+            return false;
+        }
+        $this->ensureDebt($finalized);
+        $this->activateDebtSafely($finalized);
+        $this->record('signature_artifact_reconcile_cleanup_scheduled', $finalized);
+
+        return true;
     }
 
     private function repairDeletingDebt(object $snapshot): bool
@@ -158,10 +169,13 @@ final readonly class LegalSignatureArtifactReconciler
             (string) $snapshot->storage_version_id,
         );
 
+        $this->ensureDebt($snapshot);
+
         return $this->connection->transaction(function () use ($snapshot, $debtKey): bool {
             $this->connection->table('legal_archive_file_cleanup_debts')
                 ->where('organization_id', $snapshot->organization_id)->where('debt_key', $debtKey)
                 ->lockForUpdate()->first();
+            $this->lockArtifactMutex((int) $snapshot->organization_id, (string) $snapshot->storage_path);
             $artifact = $this->connection->table('legal_signature_artifacts')->where('id', $snapshot->id)
                 ->lockForUpdate()->first();
             if ($artifact === null || (string) $artifact->state !== 'deleting'
@@ -183,7 +197,7 @@ final readonly class LegalSignatureArtifactReconciler
 
                 return false;
             }
-            $this->ensureDebt($artifact);
+            $this->activateDebtLocked($artifact);
 
             return true;
         }, 3);
@@ -192,6 +206,7 @@ final readonly class LegalSignatureArtifactReconciler
     private function markAbandoned(int $id, string $token, object $artifact): bool
     {
         return $this->connection->transaction(function () use ($id, $token, $artifact): bool {
+            $this->lockArtifactMutex((int) $artifact->organization_id, (string) $artifact->storage_path);
             $updated = $this->connection->table('legal_signature_artifacts')->where('id', $id)
                 ->where('upload_lease_token_hash', hash('sha256', $token))->where('state', 'uploading')->update([
                     'state' => 'abandoned', 'claim_count' => 0,
@@ -209,6 +224,7 @@ final readonly class LegalSignatureArtifactReconciler
     private function recordFailure(int $id, string $token, object $artifact, Throwable $error): void
     {
         $this->connection->transaction(function () use ($id, $token, $artifact, $error): void {
+            $this->lockArtifactMutex((int) $artifact->organization_id, (string) $artifact->storage_path);
             $attempts = (int) $artifact->attempt_count + 1;
             $dead = $attempts >= self::MAX_ATTEMPTS;
             $updated = $this->connection->table('legal_signature_artifacts')->where('id', $id)
@@ -229,7 +245,7 @@ final readonly class LegalSignatureArtifactReconciler
             throw new \RuntimeException('legal_signature_artifact_version_missing');
         }
         $now = now();
-        $this->connection->table('legal_archive_file_cleanup_debts')->upsert([[
+        $this->connection->table('legal_archive_file_cleanup_debts')->insertOrIgnore([
             'organization_id' => (int) $artifact->organization_id,
             'document_id' => (int) $artifact->document_id,
             'document_version_id' => (int) $artifact->document_version_id,
@@ -239,7 +255,48 @@ final readonly class LegalSignatureArtifactReconciler
             'content_hash' => (string) $artifact->content_hash,
             'reason' => 'signature_registration_failed', 'attempts' => 0, 'next_attempt_at' => $now,
             'resolved_at' => null, 'created_at' => $now, 'updated_at' => $now,
-        ]], ['organization_id', 'debt_key'], ['next_attempt_at', 'resolved_at', 'dead_lettered_at', 'updated_at']);
+        ]);
+    }
+
+    private function activateDebtSafely(object $artifact): void
+    {
+        $debtKey = LegalCleanupDebtKey::for(
+            (int) $artifact->organization_id,
+            (string) $artifact->storage_path,
+            (string) $artifact->storage_version_id,
+        );
+        $this->connection->transaction(function () use ($artifact, $debtKey): void {
+            $debt = $this->connection->table('legal_archive_file_cleanup_debts')
+                ->where('organization_id', $artifact->organization_id)->where('debt_key', $debtKey)
+                ->lockForUpdate()->first();
+            if ($debt === null) {
+                return;
+            }
+            $this->lockArtifactMutex((int) $artifact->organization_id, (string) $artifact->storage_path);
+            $current = $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)
+                ->lockForUpdate()->first();
+            if ($current !== null && (string) $current->state === 'deleting'
+                && (int) $current->claim_count === 0 && (bool) $current->cleanup_owned
+                && $current->referenced_signature_id === null) {
+                $this->activateDebtLocked($current);
+            }
+        }, 3);
+    }
+
+    private function activateDebtLocked(object $artifact): void
+    {
+        $debtKey = LegalCleanupDebtKey::for(
+            (int) $artifact->organization_id,
+            (string) $artifact->storage_path,
+            (string) $artifact->storage_version_id,
+        );
+        $this->connection->table('legal_archive_file_cleanup_debts')
+            ->where('organization_id', $artifact->organization_id)->where('debt_key', $debtKey)
+            ->update([
+                'reason' => 'signature_registration_failed', 'resolved_at' => null, 'dead_lettered_at' => null,
+                'lease_token_hash' => null, 'lease_expires_at' => null, 'next_attempt_at' => now(),
+                'last_error' => null, 'updated_at' => now(),
+            ]);
     }
 
     private function record(string $event, object $artifact): void
@@ -252,6 +309,16 @@ final readonly class LegalSignatureArtifactReconciler
                 'source_event_id' => "signature-artifact:{$artifact->id}:{$event}:{$artifact->attempt_count}",
                 'signature_artifact_id' => (int) $artifact->id,
             ]);
+        }
+    }
+
+    private function lockArtifactMutex(int $organizationId, string $path): void
+    {
+        if ($this->connection->getDriverName() === 'pgsql') {
+            $this->connection->select(
+                'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                ["legal-signature-artifact:{$organizationId}:{$path}"],
+            );
         }
     }
 }

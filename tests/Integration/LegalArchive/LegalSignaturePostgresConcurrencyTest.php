@@ -15,6 +15,7 @@ use App\Services\LegalArchive\Signatures\ElectronicSignatureProvider;
 use App\Services\LegalArchive\Signatures\ExternalOriginalData;
 use App\Services\LegalArchive\Signatures\LegalDocumentSignatureService;
 use App\Services\LegalArchive\Signatures\LegalSignatureArtifactReconciler;
+use App\Services\LegalArchive\Signatures\LegalSignatureCleanupDebtService;
 use App\Services\LegalArchive\Signatures\LegalSignatureCleanupMetrics;
 use App\Services\LegalArchive\Signatures\LegalSignatureExpiryService;
 use App\Services\LegalArchive\Signatures\LegalSignatureProjection;
@@ -429,6 +430,130 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
         self::assertSame(1, $this->first->table('legal_archive_file_cleanup_debts')->count());
     }
 
+    public function test_slow_uploader_is_fenced_after_reconciler_claims_expired_attempt(): void
+    {
+        $document = (new LegalArchiveDocument)->setConnection('signature_first')->newQuery()->findOrFail(1);
+        $version = (new LegalArchiveDocumentVersion)->setConnection('signature_first')->newQuery()->findOrFail(1);
+        $actor = (new User)->setConnection('signature_first')->forceFill(['id' => 1, 'current_organization_id' => 1]);
+        $actor->exists = true;
+        $signers = new SignerIdentitySet([new SignerIdentity('manual', 'Signer')]);
+        $request = $this->signatureService($this->first)->createRequest(
+            $document, $version, $actor, 'external_electronic', $signers,
+            'slow-uploader-fence', provider: 'race-provider',
+        );
+        $gate = 'slow-uploader-'.bin2hex(random_bytes(6));
+        $this->first->select('SELECT pg_advisory_lock(hashtextextended(?, 0))', [$gate]);
+        $pid = pcntl_fork();
+        if ($pid === 0) {
+            $manager = $this->database->getDatabaseManager();
+            $manager->disconnect('signature_first');
+            $manager->disconnect('signature_second');
+            $connection = $manager->connection('signature_second');
+            $connection->statement("SET search_path TO {$this->schema}");
+            $childActor = (new User)->setConnection('signature_second')->forceFill(['id' => 1, 'current_organization_id' => 1]);
+            $childActor->exists = true;
+            try {
+                $this->signatureService($connection, new PostgresRaceSignatureProvider, $this->slowUploadStorage($connection, $gate))
+                    ->registerExternalOriginal(
+                        $this->signatureRequest($connection, (int) $request->id),
+                        UploadedFile::fake()->createWithContent(
+                            'signature.p7s', pack('H*', '3082010006092a864886f70d010702a0820100308200fc'),
+                        ),
+                        $childActor,
+                        new ExternalOriginalData('race-provider', $this->externalEvidence($signers), 'slow-uploader-import'),
+                    );
+                $exit = 20;
+            } catch (\DomainException $error) {
+                $exit = $error->getMessage() === 'legal_signature_artifact_attempt_stale' ? 0 : 20;
+            } catch (\Throwable) {
+                $exit = 20;
+            }
+            exit($exit);
+        }
+        if ($pid < 0) {
+            throw new \RuntimeException('legal_signature_slow_uploader_fork_failed');
+        }
+        for ($attempt = 0; $attempt < 100; $attempt++) {
+            if ($this->first->table('signature_test_put_waiters')->where('gate_key', $gate)->exists()) {
+                break;
+            }
+            usleep(50_000);
+        }
+        self::assertTrue($this->first->table('signature_test_put_waiters')->where('gate_key', $gate)->exists());
+        $this->first->table('legal_signature_artifacts')->update(['upload_lease_expires_at' => now()->subSecond()]);
+        self::assertSame(1, (new LegalSignatureArtifactReconciler(
+            $this->signatureStorage($this->first), $this->first, $this->audit(), $this->metrics(),
+        ))->reconcile());
+        $this->first->select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', [$gate]);
+        pcntl_waitpid($pid, $status);
+        self::assertTrue(pcntl_wifexited($status));
+        self::assertSame(0, pcntl_wexitstatus($status));
+        self::assertSame(0, $this->first->table('legal_document_signatures')->count());
+        self::assertSame('deleting', $this->first->table('legal_signature_artifacts')->value('state'));
+        self::assertSame(1, $this->first->table('legal_archive_file_cleanup_debts')->count());
+    }
+
+    public function test_reconciler_and_cleanup_worker_share_lock_order_without_deadlock(): void
+    {
+        $requestId = $this->first->table('legal_signature_requests')->insertGetId($this->requestRow());
+        $path = 'org-1/cleanup-reconcile-race.p7s';
+        $versionId = 'cleanup-reconcile-version';
+        $this->first->table('legal_signature_artifacts')->insert([
+            'organization_id' => 1, 'document_id' => 1, 'document_version_id' => 1,
+            'signature_request_id' => $requestId, 'artifact_key' => str_repeat('7', 64),
+            'storage_path' => $path, 'storage_version_id' => $versionId, 'content_hash' => str_repeat('a', 64),
+            'state' => 'deleting', 'claim_count' => 0, 'cleanup_owned' => true,
+            'created_at' => now()->subMinutes(20), 'updated_at' => now()->subMinutes(20),
+        ]);
+        $this->first->table('legal_archive_file_cleanup_debts')->insert([
+            'organization_id' => 1, 'document_id' => 1, 'document_version_id' => 1,
+            'storage_path' => $path, 'storage_version_id' => $versionId,
+            'debt_key' => \App\Services\LegalArchive\Files\LegalCleanupDebtKey::for(1, $path, $versionId),
+            'content_hash' => str_repeat('a', 64), 'reason' => 'signature_registration_failed',
+            'attempts' => 0, 'next_attempt_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $gate = 'cleanup-reconcile-'.bin2hex(random_bytes(6));
+        $this->first->select('SELECT pg_advisory_lock(hashtextextended(?, 0))', [$gate]);
+        $children = [];
+        foreach (['cleanup', 'reconcile'] as $role) {
+            $pid = pcntl_fork();
+            if ($pid === 0) {
+                $manager = $this->database->getDatabaseManager();
+                $manager->disconnect('signature_first');
+                $manager->disconnect('signature_second');
+                $connection = $manager->connection($role === 'cleanup' ? 'signature_first' : 'signature_second');
+                $connection->statement("SET search_path TO {$this->schema}");
+                $connection->select('SELECT pg_advisory_lock_shared(hashtextextended(?, 0))', [$gate]);
+                try {
+                    if ($role === 'cleanup') {
+                        (new LegalSignatureCleanupDebtService(
+                            $this->signatureStorage($connection), $connection, $this->audit(), $this->metrics(),
+                        ))->processDue();
+                    } else {
+                        (new LegalSignatureArtifactReconciler(
+                            $this->signatureStorage($connection), $connection, $this->audit(), $this->metrics(),
+                        ))->reconcile();
+                    }
+                    $exit = 0;
+                } catch (\Throwable) {
+                    $exit = 20;
+                }
+                $connection->select('SELECT pg_advisory_unlock_shared(hashtextextended(?, 0))', [$gate]);
+                exit($exit);
+            }
+            $children[] = $pid;
+        }
+        $this->first->select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', [$gate]);
+        foreach ($children as $pid) {
+            pcntl_waitpid($pid, $status);
+            self::assertTrue(pcntl_wifexited($status));
+            self::assertSame(0, pcntl_wexitstatus($status));
+        }
+        self::assertSame('deleted', $this->first->table('legal_signature_artifacts')->value('state'));
+        self::assertNotNull($this->first->table('legal_archive_file_cleanup_debts')->value('resolved_at'));
+        self::assertSame(1, $this->first->table('signature_test_storage_deletions')->count());
+    }
+
     public function test_failed_verification_and_replacement_race_has_explicit_loser_then_corrects_signature(): void
     {
         $document = (new LegalArchiveDocument)->setConnection('signature_first')->newQuery()->findOrFail(1);
@@ -686,6 +811,27 @@ SQL);
                 'sha256' => (string) $object->content_hash,
                 'version_id' => (string) $object->storage_version_id, 'etag' => 'race-etag',
                 'content_type' => 'application/pkcs7-signature',
+            ];
+        });
+
+        return $storage;
+    }
+
+    private function slowUploadStorage(ConnectionInterface $connection, string $gate): FileService
+    {
+        $storage = $this->createMock(FileService::class);
+        $storage->method('putImmutable')->willReturnCallback(static function (string $path, string $body, string $contentType) use ($connection, $gate): array {
+            $versionId = 'slow-version-'.hash('sha256', $path.$body);
+            $connection->table('signature_test_storage_objects')->insertOrIgnore([
+                'storage_path' => $path, 'storage_version_id' => $versionId, 'content_hash' => hash('sha256', $body),
+            ]);
+            $connection->table('signature_test_put_waiters')->insert(['gate_key' => $gate]);
+            $connection->select('SELECT pg_advisory_lock_shared(hashtextextended(?, 0))', [$gate]);
+            $connection->select('SELECT pg_advisory_unlock_shared(hashtextextended(?, 0))', [$gate]);
+
+            return [
+                'path' => $path, 'body' => $body, 'size' => strlen($body), 'sha256' => hash('sha256', $body),
+                'etag' => 'slow-etag', 'version_id' => $versionId, 'content_type' => $contentType, 'created' => true,
             ];
         });
 

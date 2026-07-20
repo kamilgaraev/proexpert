@@ -57,6 +57,7 @@ final readonly class LegalSignatureCleanupDebtService
                 || ($row->lease_expires_at !== null && now()->lt($row->lease_expires_at))) {
                 return ['status' => 'idle'];
             }
+            $this->lockArtifactMutex((int) $row->organization_id, (string) $row->storage_path);
             $artifact = $this->connection->table('legal_signature_artifacts')
                 ->where('organization_id', $row->organization_id)
                 ->where('storage_path', $row->storage_path)
@@ -250,5 +251,15 @@ final readonly class LegalSignatureCleanupDebtService
             'storage_version_fingerprint' => hash('sha256', (string) $debt->storage_version_id),
             'attempts' => $attempts,
         ]);
+    }
+
+    private function lockArtifactMutex(int $organizationId, string $path): void
+    {
+        if ($this->connection->getDriverName() === 'pgsql') {
+            $this->connection->select(
+                'SELECT pg_advisory_xact_lock(hashtextextended(?, 0))',
+                ["legal-signature-artifact:{$organizationId}:{$path}"],
+            );
+        }
     }
 }

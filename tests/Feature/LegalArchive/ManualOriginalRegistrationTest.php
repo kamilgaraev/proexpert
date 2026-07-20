@@ -717,7 +717,7 @@ final class ManualOriginalRegistrationTest extends TestCase
             ->where('id', $unknownId)->value('resolved_at'));
     }
 
-    public function test_last_failed_claim_cleans_owned_object_even_when_creator_releases_first(): void
+    public function test_stale_upload_attempt_cannot_bind_or_release_after_reconciler_fence(): void
     {
         [$document, $version] = $this->fixture();
         $storage = $this->createMock(FileService::class);
@@ -728,21 +728,43 @@ final class ManualOriginalRegistrationTest extends TestCase
         $reserve = new \ReflectionMethod($service, 'reserveSignatureArtifact');
         $bind = new \ReflectionMethod($service, 'bindSignatureArtifact');
         $release = new \ReflectionMethod($service, 'releaseFailedArtifactClaim');
-        $key = $reserve->invoke($service, 10, (int) $document->id, (int) $version->id, 77, 'org-10/shared.p7s', str_repeat('a', 64));
-        self::assertSame($key, $reserve->invoke(
-            $service, 10, (int) $document->id, (int) $version->id, 77, 'org-10/shared.p7s', str_repeat('a', 64),
-        ));
-        $bind->invoke($service, 10, $key, 'shared-version', true);
-        $bind->invoke($service, 10, $key, 'shared-version', false);
-        $failure = new DomainException('registration failed');
-        $release->invoke(
-            $service, 10, (int) $document->id, (int) $version->id, 'org-10/shared.p7s', 'shared-version',
-            'etag', str_repeat('a', 64), $failure, $key,
+        $reservation = $reserve->invoke(
+            $service, 10, (int) $document->id, (int) $version->id, 77,
+            'org-10/shared.p7s', str_repeat('a', 64),
         );
-        self::assertSame('uploaded', $this->database->getConnection()->table('legal_signature_artifacts')->value('state'));
+        $key = $reservation['artifact_key'];
+        $staleToken = $reservation['attempt_token'];
+        $storedTokenHash = $this->database->getConnection()->table('legal_signature_artifacts')
+            ->value('upload_lease_token_hash');
+        self::assertSame(hash('sha256', $staleToken), $storedTokenHash);
+        self::assertNotSame($staleToken, $storedTokenHash);
+        $activeToken = 'reconciler-owned-token';
+        $this->database->getConnection()->table('legal_signature_artifacts')->update([
+            'upload_lease_token_hash' => hash('sha256', $activeToken),
+            'upload_lease_expires_at' => now()->addMinutes(5),
+        ]);
+        try {
+            $bind->invoke($service, 10, $key, $staleToken, 'shared-version', true);
+            self::fail('A stale uploader bound its storage version.');
+        } catch (\ReflectionException $exception) {
+            throw $exception;
+        } catch (DomainException $exception) {
+            self::assertSame('legal_signature_artifact_attempt_stale', $exception->getMessage());
+        }
+        $failure = new DomainException('registration failed');
+        try {
+            $release->invoke(
+                $service, 10, (int) $document->id, (int) $version->id, 'org-10/shared.p7s', 'shared-version',
+                'etag', str_repeat('a', 64), $failure, $key, $staleToken,
+            );
+            self::fail('A stale uploader released the reconciler claim.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_signature_artifact_attempt_stale', $exception->getMessage());
+        }
+        $bind->invoke($service, 10, $key, $activeToken, 'shared-version', true);
         $release->invoke(
             $service, 10, (int) $document->id, (int) $version->id, 'org-10/shared.p7s', 'shared-version',
-            'etag', str_repeat('a', 64), $failure, $key,
+            'etag', str_repeat('a', 64), $failure, $key, $activeToken,
         );
         $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->sole();
         self::assertSame('deleted', $artifact->state);
