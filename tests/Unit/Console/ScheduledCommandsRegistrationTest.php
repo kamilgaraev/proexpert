@@ -33,8 +33,12 @@ final class ScheduledCommandsRegistrationTest extends DatabaseLessTestCase
 
         $this->assertIsInt($buildingPosition);
         $block = substr($schedule, $buildingPosition, 800);
-        $this->assertStringContainsString('->hourlyAt(40)', $block);
-        $this->assertStringContainsString('->withoutOverlapping(180)', $block);
+        $this->assertStringContainsString('->hourlyAt(0)', $block);
+        $this->assertStringContainsString('->withoutOverlapping(90)', $block);
+        $this->assertStringContainsString(
+            "->createMutexNameUsing('estimate-generation:fgiscs-building-resources:v2')",
+            $block
+        );
         $this->assertStringContainsString('->runInBackground()', $block);
         $this->assertStringContainsString('->onFailure(', $block);
         $this->assertStringContainsString('schedule-building-resource-prices-sync.log', $block);
