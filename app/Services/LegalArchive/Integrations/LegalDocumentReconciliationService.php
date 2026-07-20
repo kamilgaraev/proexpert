@@ -14,6 +14,7 @@ use App\Models\ContractPerformanceAct;
 use App\Models\SupplementaryAgreement;
 use App\Services\Contract\ContractDossierDocumentCreator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use InvalidArgumentException;
 
@@ -30,7 +31,9 @@ final class LegalDocumentReconciliationService
         'executive_documentation',
     ];
 
-    public function __construct(private readonly ContractDossierDocumentCreator $documents) {}
+    public function __construct(private readonly ContractDossierDocumentCreator $documents)
+    {
+    }
 
     /** @return array{candidates:int, linked:int, problem_flags:int, skipped:int, sources:array<string, int>} */
     public function reconcile(?int $organizationId, ?string $source, int $limit, bool $dryRun): array
@@ -50,53 +53,68 @@ final class LegalDocumentReconciliationService
                 break;
             }
 
+            $sourceType = $this->sourceType($namedSource);
             $this->sourceQuery($namedSource, $organizationId)
                 ->orderBy('id')
-                ->limit($remaining)
-                ->each(function (Model $entity) use ($namedSource, $dryRun, &$summary): void {
-                    $summary['candidates']++;
-                    $summary['sources'][$namedSource]++;
-
-                    $organizationId = $this->organizationId($entity);
-                    $sourceType = $this->sourceType($namedSource);
-                    $document = LegalArchiveDocument::query()
-                        ->where('organization_id', $organizationId)
+                ->chunkById(100, function (Collection $entities) use ($namedSource, $sourceType, $dryRun, &$summary, $limit): bool {
+                    $documents = LegalArchiveDocument::query()
                         ->where('source_type', $sourceType)
-                        ->where('source_id', (string) $entity->getKey())
-                        ->first();
+                        ->whereIn('source_id', $entities->modelKeys())
+                        ->get()
+                        ->keyBy(static fn (LegalArchiveDocument $document): string => "{$document->organization_id}:{$document->source_id}");
 
-                    if ($document instanceof LegalArchiveDocument) {
-                        $this->linkContract($entity, $document, $dryRun, $summary);
+                    foreach ($entities as $entity) {
+                        $organizationId = $this->organizationId($entity);
+                        $document = $documents->get("{$organizationId}:{$entity->getKey()}");
+                        $needsLinkRepair = $entity instanceof Contract
+                            && (int) $entity->legal_archive_document_id !== (int) ($document?->id ?? 0);
+                        if (! $document instanceof LegalArchiveDocument && ! $needsLinkRepair) {
+                            $summary['candidates']++;
+                            $summary['sources'][$namedSource]++;
+                            $summary['problem_flags']++;
+                            if (! $dryRun) {
+                                $document = $this->documents->create($organizationId, null, $this->createPayload($entity, $sourceType));
+                                $summary['linked']++;
+                            }
+                        } elseif ($needsLinkRepair) {
+                            $summary['candidates']++;
+                            $summary['sources'][$namedSource]++;
+                            $this->linkContract($entity, $document, $dryRun, $summary);
+                        } else {
+                            $summary['skipped']++;
+                        }
 
-                        return;
+                        if ($summary['candidates'] >= $limit) {
+                            return false;
+                        }
                     }
 
-                    $summary['problem_flags']++;
-                    if ($dryRun) {
-                        return;
-                    }
-
-                    $this->documents->create($organizationId, null, [
-                        'primary_project_id' => $this->projectId($entity),
-                        'title' => $this->title($entity, $sourceType),
-                        'document_number' => $this->documentNumber($entity),
-                        'document_type' => $sourceType,
-                        'source_type' => $sourceType,
-                        'source_id' => (string) $entity->getKey(),
-                        'source_idempotency_key' => "reconcile-{$sourceType}-{$entity->getKey()}",
-                        'links' => [[
-                            'link_type' => $sourceType,
-                            'linked_type' => $sourceType,
-                            'linked_id' => (string) $entity->getKey(),
-                            'display_name' => $this->documentNumber($entity) ?? $this->title($entity, $sourceType),
-                        ]],
-                        'metadata' => ['problem_flags' => ['missing_original']],
-                    ]);
-                    $summary['linked']++;
+                    return true;
                 });
         }
 
         return $summary;
+    }
+
+    /** @return array<string, mixed> */
+    private function createPayload(Model $entity, string $sourceType): array
+    {
+        return [
+            'primary_project_id' => $this->projectId($entity),
+            'title' => $this->title($entity, $sourceType),
+            'document_number' => $this->documentNumber($entity),
+            'document_type' => $sourceType,
+            'source_type' => $sourceType,
+            'source_id' => (string) $entity->getKey(),
+            'source_idempotency_key' => "reconcile-{$sourceType}-{$entity->getKey()}",
+            'links' => [[
+                'link_type' => $sourceType,
+                'linked_type' => $sourceType,
+                'linked_id' => (string) $entity->getKey(),
+                'display_name' => $this->documentNumber($entity) ?? $this->title($entity, $sourceType),
+            ]],
+            'metadata' => ['problem_flags' => ['missing_original']],
+        ];
     }
 
     private function sourceQuery(string $source, ?int $organizationId): Builder
