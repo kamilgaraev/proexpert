@@ -9,6 +9,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
 use App\Models\User;
+use App\Services\LegalArchive\Comments\LegalDocumentBlockingCommentGuard;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowActionDetail;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowCurrentStep;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowSummary;
@@ -16,10 +17,15 @@ use Illuminate\Container\Container;
 
 final readonly class LegalWorkflowActionResolver
 {
+    private LegalDocumentBlockingCommentGuard $blockingComments;
+
     public function __construct(
         private LegalWorkflowAuthorization $authorization,
         private LegalWorkflowActorResolver $actors,
-    ) {}
+        ?LegalDocumentBlockingCommentGuard $blockingComments = null,
+    ) {
+        $this->blockingComments = $blockingComments ?? new LegalDocumentBlockingCommentGuard;
+    }
 
     public function for(User $actor, LegalArchiveDocument $document): WorkflowSummary
     {
@@ -100,6 +106,8 @@ final readonly class LegalWorkflowActionResolver
             || ! (bool) $version->is_current
             || $version->processing_status !== 'ready'
             || ! hash_equals((string) $instance->document_content_hash, (string) $version->content_hash);
+        $hasBlockingComments = $version instanceof LegalArchiveDocumentVersion
+            && $this->blockingComments->hasOpen($document, (int) $version->id);
         $details = [];
         foreach ($activeSteps as $step) {
             $assigned = $this->actors->canAct($actor, $step, $document);
@@ -111,6 +119,9 @@ final readonly class LegalWorkflowActionResolver
                     $assigned ? null : $this->label('blockers.actor_not_assigned'),
                     $overdue ? $this->label('blockers.step_overdue') : null,
                     $versionChanged ? $this->label('blockers.version_changed') : null,
+                    $action === 'approve' && $hasBlockingComments
+                        ? $this->label('blockers.open_blocking_comments')
+                        : null,
                     $can ? null : $this->label('blockers.permission_denied'),
                 ]));
                 $details[] = new WorkflowActionDetail(
@@ -180,9 +191,12 @@ final readonly class LegalWorkflowActionResolver
             && (bool) $version->is_current
             && $version->processing_status === 'ready'
             && preg_match('/^[a-f0-9]{64}$/D', (string) $version->content_hash) === 1;
+        $hasBlockingComments = $version instanceof LegalArchiveDocumentVersion
+            && $this->blockingComments->hasOpen($document, (int) $version->id);
         $blockers = array_values(array_filter([
             $canSubmit ? null : $this->label('blockers.permission_denied'),
             $ready ? null : $this->label('blockers.version_not_ready'),
+            $hasBlockingComments ? $this->label('blockers.open_blocking_comments') : null,
             $latest?->status === 'in_progress' ? $this->label('blockers.active_workflow_exists') : null,
             $latest instanceof LegalWorkflowInstance
                 && in_array($latest->status, ['returned', 'rejected'], true)

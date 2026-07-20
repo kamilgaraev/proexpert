@@ -15,6 +15,8 @@ use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Container\Container;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 
 final class LegalDocumentCommentService
 {
@@ -99,7 +101,10 @@ final class LegalDocumentCommentService
                 'version_id' => (int) $version->id,
                 'visibility' => $visibility,
                 'is_blocking' => $blocking,
-                'source_event_id' => $idempotencyKey === null ? null : 'comment:create:'.$idempotencyKey,
+                'source_event_id' => $idempotencyKey === null
+                    ? null
+                    : "comment:create:actor:{$actor->id}:{$idempotencyKey}",
+                'idempotency_key' => $idempotencyKey,
             ]);
 
             return $comment;
@@ -129,14 +134,16 @@ final class LegalDocumentCommentService
                 (int) $document->organization_id,
                 (int) $document->id,
             );
-            $locked = $this->commentQuery($lockedDocument)->whereKey((int) $comment->id)->lockForUpdate()->first();
+            $locked = $this->visibleQuery($lockedDocument, $actor)
+                ->whereKey((int) $comment->id)
+                ->lockForUpdate()
+                ->first();
             if (! $locked instanceof LegalDocumentComment) {
                 throw new DomainException('legal_document_comment_not_found');
             }
-            if (
-                (int) $actor->current_organization_id !== (int) $lockedDocument->organization_id
-                && (int) $locked->author_user_id !== (int) $actor->id
-            ) {
+            $responsible = (int) $lockedDocument->responsible_user_id === (int) $actor->id;
+            $author = (int) $locked->author_user_id === (int) $actor->id;
+            if (($locked->is_blocking && ! $responsible) || (! $locked->is_blocking && ! $responsible && ! $author)) {
                 throw new AuthorizationException($this->message('document_not_found'));
             }
             $this->lockVersion($lockedDocument, (int) $locked->document_version_id);
@@ -162,11 +169,36 @@ final class LegalDocumentCommentService
             $this->audit->record('comment_resolved', $lockedDocument, $actor, [
                 'comment_id' => (int) $locked->id,
                 'version_id' => (int) $locked->document_version_id,
-                'source_event_id' => $idempotencyKey === null ? null : 'comment:resolve:'.$idempotencyKey,
+                'source_event_id' => $idempotencyKey === null
+                    ? null
+                    : "comment:resolve:comment:{$locked->id}:{$idempotencyKey}",
+                'idempotency_key' => $idempotencyKey,
             ]);
 
             return $locked;
         });
+    }
+
+    public function visible(LegalArchiveDocument $document, User $actor, ?int $versionId = null): Collection
+    {
+        $this->access->authorize($actor, $document, 'comment');
+        $query = $this->visibleQuery($document, $actor);
+        if ($versionId !== null) {
+            $query->where('document_version_id', $versionId);
+        }
+
+        return $query->orderBy('id')->get();
+    }
+
+    public function findVisible(LegalArchiveDocument $document, User $actor, int $commentId): LegalDocumentComment
+    {
+        $this->access->authorize($actor, $document, 'comment');
+        $comment = $this->visibleQuery($document, $actor)->whereKey($commentId)->first();
+        if (! $comment instanceof LegalDocumentComment) {
+            throw new DomainException('legal_document_comment_not_found');
+        }
+
+        return $comment;
     }
 
     private function validateCreate(
@@ -197,10 +229,11 @@ final class LegalDocumentCommentService
             throw new DomainException('legal_document_comment_anchor_invalid');
         }
         foreach (['x', 'y', 'width', 'height'] as $key) {
-            if (! is_numeric($anchor[$key] ?? null)) {
+            $coordinate = $anchor[$key] ?? null;
+            if ((! is_int($coordinate) && ! is_float($coordinate)) || ! is_finite((float) $coordinate)) {
                 throw new DomainException('legal_document_comment_anchor_invalid');
             }
-            $value = (float) $anchor[$key];
+            $value = (float) $coordinate;
             if ($value < 0 || $value > 1 || (in_array($key, ['width', 'height'], true) && $value <= 0)) {
                 throw new DomainException('legal_document_comment_anchor_invalid');
             }
@@ -231,6 +264,29 @@ final class LegalDocumentCommentService
         return LegalDocumentComment::query()
             ->where('organization_id', (int) $document->organization_id)
             ->where('document_id', (int) $document->id);
+    }
+
+    private function visibleQuery(LegalArchiveDocument $document, User $actor): Builder
+    {
+        $query = $this->commentQuery($document);
+        if ((int) $actor->current_organization_id !== (int) $document->organization_id) {
+            return $query->where('visibility', LegalDocumentCommentVisibility::ALL_PARTIES->value);
+        }
+
+        return $query->where(static function (Builder $visibility) use ($actor, $document): void {
+            $visibility->whereIn('visibility', [
+                LegalDocumentCommentVisibility::INTERNAL->value,
+                LegalDocumentCommentVisibility::ALL_PARTIES->value,
+            ])->orWhere(static function (Builder $restricted) use ($actor, $document): void {
+                $restricted->where('visibility', LegalDocumentCommentVisibility::AUTHOR_AND_RESPONSIBLE->value)
+                    ->where(static function (Builder $participant) use ($actor, $document): void {
+                        $participant->where('author_user_id', (int) $actor->id);
+                        if ((int) $document->responsible_user_id === (int) $actor->id) {
+                            $participant->orWhereNotNull('author_user_id');
+                        }
+                    });
+            });
+        });
     }
 
     private function lockVersion(LegalArchiveDocument $document, int $versionId)

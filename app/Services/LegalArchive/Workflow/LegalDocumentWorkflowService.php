@@ -12,6 +12,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
 use App\Models\User;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use App\Services\LegalArchive\Comments\LegalDocumentBlockingCommentGuard;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowDecisionInput;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowOverride;
@@ -30,6 +31,8 @@ final class LegalDocumentWorkflowService
 
     private readonly LegalDocumentAggregateLock $aggregateLock;
 
+    private readonly LegalDocumentBlockingCommentGuard $blockingComments;
+
     public function __construct(
         private readonly LegalWorkflowTemplateService $templates,
         private readonly LegalWorkflowAuthorization $authorization,
@@ -39,8 +42,10 @@ final class LegalDocumentWorkflowService
         private readonly ImmutableAuditIntegrityService $integrity,
         private readonly ConnectionInterface $connection,
         ?LegalDocumentAggregateLock $aggregateLock = null,
+        ?LegalDocumentBlockingCommentGuard $blockingComments = null,
     ) {
         $this->aggregateLock = $aggregateLock ?? new LegalDocumentAggregateLock;
+        $this->blockingComments = $blockingComments ?? new LegalDocumentBlockingCommentGuard;
     }
 
     public function submit(
@@ -98,6 +103,7 @@ final class LegalDocumentWorkflowService
                 }
 
                 $version = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, $versionId);
+                $this->blockingComments->assertNone($lockedDocument, (int) $version->id);
                 $this->assertSubmittableVersion($lockedDocument, $version);
                 $template = $this->templates->resolveForDocument($lockedDocument, $override->templateId);
                 if ((int) $template->organization_id !== (int) $lockedDocument->organization_id) {
@@ -312,6 +318,9 @@ final class LegalDocumentWorkflowService
                 || ! hash_equals((string) $instance->document_content_hash, (string) $boundVersion->content_hash)
             ) {
                 throw new DomainException('legal_workflow_version_changed');
+            }
+            if ($input->action === 'approve') {
+                $this->blockingComments->assertNone($document, (int) $boundVersion->id);
             }
             $permission = LegalWorkflowPermissions::forAction($input->action);
             $this->authorization->assertCan($actor, $document, $permission);

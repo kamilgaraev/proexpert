@@ -855,6 +855,61 @@ final class LegalDocumentWorkflowTest extends TestCase
         self::assertSame(2, AuthorizationContext::query()->count());
     }
 
+    public function test_open_blocking_comment_blocks_submit_and_approve_until_resolved(): void
+    {
+        [$document, $version] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $this->createTemplate($actor);
+        $commentId = $this->database->getConnection()->table('legal_document_comments')->insertGetId([
+            'organization_id' => 15,
+            'document_id' => (int) $document->id,
+            'document_version_id' => (int) $version->id,
+            'author_user_id' => 8,
+            'body' => 'Исправьте существенное замечание',
+            'visibility' => 'internal',
+            'is_blocking' => true,
+            'status' => 'open',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $resolver = new LegalWorkflowActionResolver(
+            new LegalWorkflowAuthorization,
+            new LegalWorkflowActorResolver(
+                roleLookup: static fn (User $candidate, string $role): bool => in_array($role, $candidate->workflowRoles, true),
+            ),
+        );
+        $submit = $resolver->for($actor, $document->refresh())->availableActionDetails[0];
+        self::assertFalse($submit->enabled);
+        self::assertContains('legal_archive.workflow.blockers.open_blocking_comments', $submit->blockers);
+
+        try {
+            $this->service->submit($document, (int) $version->id, $actor, WorkflowOverride::none('blocked-submit'));
+            self::fail('Workflow submit accepted an open blocking comment.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_workflow_open_blocking_comments', $exception->getMessage());
+        }
+        $this->database->getConnection()->table('legal_document_comments')->where('id', $commentId)->update([
+            'status' => 'resolved',
+            'resolved_by_user_id' => 8,
+            'resolved_at' => now(),
+        ]);
+        $instance = $this->service->submit($document->refresh(), (int) $version->id, $actor, WorkflowOverride::none('allowed-submit'));
+        $step = $instance->steps()->where('status', 'active')->firstOrFail();
+        $this->database->getConnection()->table('legal_document_comments')->where('id', $commentId)->update([
+            'status' => 'open',
+            'resolved_by_user_id' => null,
+            'resolved_at' => null,
+        ]);
+        $approve = collect($resolver->for($actor, $document->refresh())->availableActionDetails)
+            ->first(static fn ($detail): bool => $detail->action === 'approve');
+        self::assertNotNull($approve);
+        self::assertFalse($approve->enabled);
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('legal_workflow_open_blocking_comments');
+        $this->service->decide($step, $actor, new WorkflowDecisionInput('approve', 'blocked-approve', 1, 0));
+    }
+
     public function test_recovery_derives_step_statuses_and_reassignment_projection_from_evidence(): void
     {
         [$document, $version] = $this->dossier();
@@ -1039,6 +1094,20 @@ final class LegalDocumentWorkflowTest extends TestCase
             $table->unsignedBigInteger('organization_id');
             $table->string('role');
             $table->unsignedBigInteger('current_version_id')->nullable();
+            $table->timestamps();
+        });
+        $schema->create('legal_document_comments', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('document_id');
+            $table->unsignedBigInteger('document_version_id');
+            $table->unsignedBigInteger('author_user_id');
+            $table->text('body');
+            $table->string('visibility');
+            $table->boolean('is_blocking');
+            $table->string('status');
+            $table->unsignedBigInteger('resolved_by_user_id')->nullable();
+            $table->timestamp('resolved_at')->nullable();
             $table->timestamps();
         });
         $schema->create('legal_workflow_templates', function (Blueprint $table): void {

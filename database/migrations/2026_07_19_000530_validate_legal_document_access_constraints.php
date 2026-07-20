@@ -15,7 +15,10 @@ return new class extends Migration
         }
         foreach ([
             'legal_documents_source_type_check' => 'legal_archive_documents',
+            'legal_document_party_snapshot_sets_version_fk' => 'legal_document_party_snapshot_sets',
+            'legal_document_party_snapshot_sets_captured_by_fk' => 'legal_document_party_snapshot_sets',
             'legal_document_parties_document_fk' => 'legal_document_parties',
+            'legal_document_parties_snapshot_set_fk' => 'legal_document_parties',
             'legal_document_parties_organization_fk' => 'legal_document_parties',
             'legal_document_parties_party_organization_fk' => 'legal_document_parties',
             'legal_document_parties_counterparty_fk' => 'legal_document_parties',
@@ -25,6 +28,7 @@ return new class extends Migration
             'legal_document_access_owner_organization_fk' => 'legal_document_access_grants',
             'legal_document_access_subject_organization_fk' => 'legal_document_access_grants',
             'legal_document_access_subject_membership_fk' => 'legal_document_access_grants',
+            'legal_document_access_subject_check' => 'legal_document_access_grants',
             'legal_document_access_granted_by_fk' => 'legal_document_access_grants',
             'legal_document_access_revoked_by_fk' => 'legal_document_access_grants',
             'legal_document_access_abilities_check' => 'legal_document_access_grants',

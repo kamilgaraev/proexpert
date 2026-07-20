@@ -14,7 +14,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 final class LegalDocumentAccessGrant extends Model
 {
     protected $fillable = [
-        'organization_id', 'document_id', 'subject_organization_id', 'subject_user_id', 'abilities',
+        'organization_id', 'document_id', 'subject_kind', 'subject_organization_id', 'subject_user_id',
+        'subject_role_slug', 'abilities',
         'granted_by_user_id', 'expires_at', 'revoked_at', 'revoked_by_user_id', 'revocation_reason',
     ];
 

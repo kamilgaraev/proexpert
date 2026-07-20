@@ -12,7 +12,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 final class LegalDocumentParty extends Model
 {
     protected $fillable = [
-        'organization_id', 'document_id', 'party_organization_id', 'counterparty_id', 'party_role',
+        'organization_id', 'document_id', 'document_version_id', 'snapshot_set_id',
+        'party_organization_id', 'counterparty_id', 'party_role',
         'legal_name', 'tax_number', 'registration_number', 'legal_address', 'bank_details',
         'representative_name', 'representative_position', 'authority_basis', 'data_source', 'snapshot',
     ];
@@ -32,6 +33,11 @@ final class LegalDocumentParty extends Model
     public function document(): BelongsTo
     {
         return $this->belongsTo(LegalArchiveDocument::class, 'document_id');
+    }
+
+    public function snapshotSet(): BelongsTo
+    {
+        return $this->belongsTo(LegalDocumentPartySnapshotSet::class, 'snapshot_set_id');
     }
 
     public function partyOrganization(): BelongsTo

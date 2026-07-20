@@ -43,7 +43,10 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
                     'legal_archive.create',
                     'legal_archive.update',
                     'legal_archive.files.upload',
+                    'legal_archive.files.download',
                     'legal_archive.versions.create',
+                    'legal_archive.external_access.manage',
+                    'legal_archive.signatures.sign',
                     'legal_archive.retention.manage',
                     'legal_archive.legal_hold.manage',
                     'legal_archive.workflow.view',
@@ -63,6 +66,9 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
         $this->assertSame('Юридический архив', $translated['module_groups']['legal-archive']);
         $this->assertSame('Просмотр юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.view']);
         $this->assertSame('Создание версий документов юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.versions.create']);
+        $this->assertSame('Скачивание файлов юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.files.download']);
+        $this->assertSame('Управление внешним доступом к юридическим документам', $translated['module_permissions']['legal-archive']['legal_archive.external_access.manage']);
+        $this->assertSame('Подписание юридических документов', $translated['module_permissions']['legal-archive']['legal_archive.signatures.sign']);
         $this->assertSame('Управление запретом удаления документов юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.legal_hold.manage']);
         $this->assertSame('Согласование юридических документов', $translated['module_permissions']['legal-archive']['legal_archive.workflow.approve']);
         $this->assertSame('Отклонение юридических документов', $translated['module_permissions']['legal-archive']['legal_archive.workflow.reject']);
@@ -70,7 +76,29 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
         $this->assertSame('Настройка маршрутов согласования юридических документов', $translated['module_permissions']['legal-archive']['legal_archive.workflow_templates.manage']);
         $this->assertStringNotContainsString('legal_archive.view', $flattenedValues);
         $this->assertStringNotContainsString('legal_archive.versions.create', $flattenedValues);
+        $this->assertStringNotContainsString('legal_archive.external_access.manage', $flattenedValues);
+        $this->assertStringNotContainsString('legal_archive.signatures.sign', $flattenedValues);
         $this->assertStringNotContainsString('legal_archive.workflow.', $flattenedValues);
+    }
+
+    public function test_legal_archive_permissions_are_assigned_to_expected_admin_roles(): void
+    {
+        $root = dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'config'.DIRECTORY_SEPARATOR.'RoleDefinitions'.DIRECTORY_SEPARATOR.'admin';
+        $webAdmin = json_decode((string) file_get_contents($root.DIRECTORY_SEPARATOR.'web_admin.json'), true, flags: JSON_THROW_ON_ERROR);
+        $financeAdmin = json_decode((string) file_get_contents($root.DIRECTORY_SEPARATOR.'finance_admin.json'), true, flags: JSON_THROW_ON_ERROR);
+        $viewer = json_decode((string) file_get_contents($root.DIRECTORY_SEPARATOR.'admin_viewer.json'), true, flags: JSON_THROW_ON_ERROR);
+
+        foreach (['legal_archive.files.download', 'legal_archive.external_access.manage', 'legal_archive.signatures.sign'] as $permission) {
+            self::assertContains($permission, $webAdmin['system_permissions']);
+            self::assertContains($permission, $webAdmin['module_permissions']['legal-archive']);
+            self::assertContains($permission, $financeAdmin['system_permissions']);
+            self::assertContains($permission, $financeAdmin['module_permissions']['legal-archive']);
+        }
+
+        self::assertContains('legal_archive.files.download', $viewer['system_permissions']);
+        self::assertContains('legal_archive.files.download', $viewer['module_permissions']['legal-archive']);
+        self::assertNotContains('legal_archive.external_access.manage', $viewer['system_permissions']);
+        self::assertNotContains('legal_archive.signatures.sign', $viewer['system_permissions']);
     }
 
     private function valuesOnly(array $value): array

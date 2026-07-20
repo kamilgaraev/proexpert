@@ -10,10 +10,21 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::create('legal_document_party_snapshot_sets', static function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('document_id');
+            $table->unsignedBigInteger('document_version_id');
+            $table->timestampTz('captured_at');
+            $table->unsignedBigInteger('captured_by_user_id')->nullable();
+            $table->timestampsTz();
+        });
         Schema::create('legal_document_parties', static function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('document_id');
+            $table->unsignedBigInteger('document_version_id');
+            $table->unsignedBigInteger('snapshot_set_id');
             $table->unsignedBigInteger('party_organization_id')->nullable();
             $table->unsignedBigInteger('counterparty_id')->nullable();
             $table->string('party_role', 64);
@@ -33,8 +44,10 @@ return new class extends Migration
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('document_id');
+            $table->string('subject_kind', 32);
             $table->unsignedBigInteger('subject_organization_id');
             $table->unsignedBigInteger('subject_user_id')->nullable();
+            $table->string('subject_role_slug', 191)->nullable();
             $table->jsonb('abilities');
             $table->unsignedBigInteger('granted_by_user_id');
             $table->timestampTz('expires_at')->nullable();

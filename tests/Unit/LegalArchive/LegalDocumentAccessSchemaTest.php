@@ -38,15 +38,49 @@ final class LegalDocumentAccessSchemaTest extends TestCase
         self::assertStringContainsString('CREATE UNIQUE INDEX CONCURRENTLY', $indexes);
         self::assertStringContainsString('legal_documents_source_identity_unique', $indexes);
         self::assertStringContainsString('legal_document_access_active_subject_unique', $indexes);
+        self::assertStringContainsString('counterparties_ownership_unique', $indexes);
+        self::assertStringContainsString('legal_document_party_snapshot_sets_version_unique', $indexes);
+        self::assertStringContainsString('legal_document_party_snapshot_sets_ownership_unique', $indexes);
         self::assertStringContainsString('NOT VALID', $constraints);
         self::assertStringContainsString('FOREIGN KEY (document_id, organization_id)', $constraints);
         self::assertStringContainsString('FOREIGN KEY (document_version_id, document_id, organization_id)', $constraints);
+        self::assertStringContainsString(
+            'FOREIGN KEY (counterparty_id, organization_id) REFERENCES counterparties (id, organization_id)',
+            $constraints,
+        );
+        self::assertStringContainsString(
+            'FOREIGN KEY (snapshot_set_id, document_version_id, document_id, organization_id)',
+            $constraints,
+        );
+        self::assertStringContainsString('legal_document_party_snapshot_set_immutable_guard', $constraints);
         self::assertStringContainsString('legal_document_comments_anchor_check', $constraints);
         self::assertStringContainsString('legal_document_party_immutable_guard', $constraints);
         self::assertStringContainsString('legal_document_access_grant_guard', $constraints);
         self::assertStringContainsString('legal_document_comment_guard', $constraints);
         self::assertStringContainsString("str_replace(['=anyarray[', ']']", $constraints);
         self::assertStringContainsString('VALIDATE CONSTRAINT', $validate);
+    }
+
+    public function test_postgres_contract_covers_version_history_descriptor_drift_invalid_recovery_and_races(): void
+    {
+        $source = file_get_contents(__DIR__.'/../../Integration/LegalArchive/LegalDocumentAccessPostgresIntegrationTest.php');
+
+        self::assertIsString($source);
+        self::assertStringContainsString("getenv('LEGAL_ARCHIVE_PG_ACCESS_CONTRACT') !== '1'", $source);
+        self::assertStringContainsString('server_version_num', $source);
+        self::assertStringContainsString('140000', $source);
+        self::assertStringContainsString('test_cross_tenant_counterparty_and_snapshot_version_references_are_rejected', $source);
+        self::assertStringContainsString('test_party_and_snapshot_set_history_is_immutable', $source);
+        self::assertStringContainsString('test_descriptor_drift_fails_closed', $source);
+        self::assertStringContainsString('test_counterparty_fk_descriptor_drift_fails_closed', $source);
+        self::assertStringContainsString('test_invalid_concurrent_index_is_recovered', $source);
+        self::assertStringContainsString('test_parallel_active_grants_preserve_unique_subject_invariant', $source);
+        self::assertStringContainsString('test_index_descriptor_drift_variants_fail_closed', $source);
+        self::assertStringContainsString('NULLS NOT DISTINCT', $source);
+        self::assertStringContainsString('text_pattern_ops', $source);
+        self::assertStringContainsString('INCLUDE (id)', $source);
+        self::assertStringContainsString('test_parallel_comment_create_and_resolve_preserve_idempotency_and_transition_invariants', $source);
+        self::assertStringContainsString('test_parallel_expired_regrant_keeps_one_active_grant_and_history', $source);
     }
 
     public function test_requests_and_registry_use_typed_source_resolver_instead_of_free_source_types(): void

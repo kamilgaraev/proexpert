@@ -221,8 +221,8 @@ final class LegalArchiveRegistryService
 
     private function baseQuery(User $actor, int $organizationId, array $filters): Builder
     {
-        $query = LegalArchiveDocument::query()->forOrganization($organizationId);
-        $this->access->scopeInternalQuery($query, $actor, $organizationId);
+        $query = LegalArchiveDocument::query();
+        $this->access->scopeAccessibleQuery($query, $actor, $organizationId);
 
         $search = LegalArchiveSearchQuery::sanitize($filters['q'] ?? $filters['search'] ?? null);
         if ($search !== null) {
@@ -282,7 +282,6 @@ final class LegalArchiveRegistryService
             'currentVersion',
             'versions',
             'links',
-            'parties',
             'project:id,name,status,organization_id',
             'createdBy:id,name,email',
         ]);

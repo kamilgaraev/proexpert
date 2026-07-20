@@ -131,6 +131,11 @@ final class LegalArchiveDocument extends Model
         return $this->hasMany(LegalDocumentParty::class, 'document_id')->orderBy('id');
     }
 
+    public function partySnapshotSets(): HasMany
+    {
+        return $this->hasMany(LegalDocumentPartySnapshotSet::class, 'document_id')->orderBy('id');
+    }
+
     public function accessGrants(): HasMany
     {
         return $this->hasMany(LegalDocumentAccessGrant::class, 'document_id')->orderByDesc('id');

@@ -11,7 +11,6 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
         ->name('dictionaries');
 
     Route::get('documents', [LegalArchiveController::class, 'index'])
-        ->middleware('authorize:legal_archive.view')
         ->name('documents.index');
 
     Route::post('documents', [LegalArchiveController::class, 'store'])
@@ -19,7 +18,6 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
         ->name('documents.store');
 
     Route::get('documents/{document}', [LegalArchiveController::class, 'show'])
-        ->middleware('authorize:legal_archive.view')
         ->name('documents.show');
 
     Route::patch('documents/{document}', [LegalArchiveController::class, 'update'])
@@ -27,10 +25,9 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
         ->name('documents.update');
 
     Route::post('documents/{document}/versions', [LegalArchiveController::class, 'storeVersion'])
-        ->middleware('authorize:legal_archive.versions.create')
+        ->middleware(['authorize:legal_archive.versions.create', 'authorize:legal_archive.files.upload'])
         ->name('documents.versions.store');
 
     Route::get('documents/{document}/current-version', [LegalArchiveController::class, 'currentVersion'])
-        ->middleware('authorize:legal_archive.view')
         ->name('documents.current-version');
 });

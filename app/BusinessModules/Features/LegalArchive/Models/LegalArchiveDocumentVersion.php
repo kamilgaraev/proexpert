@@ -11,6 +11,7 @@ use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 final class LegalArchiveDocumentVersion extends Model
 {
@@ -110,5 +111,10 @@ final class LegalArchiveDocumentVersion extends Model
     public function comments(): HasMany
     {
         return $this->hasMany(LegalDocumentComment::class, 'document_version_id')->orderBy('id');
+    }
+
+    public function partySnapshotSet(): HasOne
+    {
+        return $this->hasOne(LegalDocumentPartySnapshotSet::class, 'document_version_id');
     }
 }

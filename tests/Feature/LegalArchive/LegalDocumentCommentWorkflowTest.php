@@ -11,6 +11,7 @@ use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Comments\LegalDocumentCommentService;
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Container\Container;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Eloquent\Model;
@@ -80,7 +81,7 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
     public function test_resolution_is_idempotent_and_preserves_resolution_evidence(): void
     {
         [$document, $version, $actor] = $this->fixture();
-        $comment = $this->service->create($document, $actor, (int) $version->id, 'Блокер', null, null, 'internal', true, 'create');
+        $comment = $this->service->create($document, $actor, (int) $version->id, 'Блокер', null, null, 'internal', false, 'create');
 
         $resolved = $this->service->resolve($document, $comment, $actor, 'Исправлено', 'resolve-1');
         $replay = $this->service->resolve($document, $resolved->refresh(), $actor, 'Исправлено', 'resolve-1');
@@ -107,6 +108,80 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
         $this->service->create($document, $actor, (int) $foreign->id, 'Текст', null, null, 'internal', false, 'foreign');
     }
 
+    public function test_audit_idempotency_is_namespaced_by_actor_and_comment(): void
+    {
+        [$document, $version, $firstActor] = $this->fixture();
+        $secondActor = $this->actor(8, 10);
+        $first = $this->service->create($document, $firstActor, (int) $version->id, 'Первое', idempotencyKey: 'same');
+        $second = $this->service->create($document, $secondActor, (int) $version->id, 'Второе', idempotencyKey: 'same');
+        $this->service->resolve($document, $first, $firstActor, idempotencyKey: 'resolve');
+        $this->service->resolve($document, $second, $secondActor, idempotencyKey: 'resolve');
+
+        self::assertSame([
+            'comment:create:actor:7:same',
+            'comment:create:actor:8:same',
+            "comment:resolve:comment:{$first->id}:resolve",
+            "comment:resolve:comment:{$second->id}:resolve",
+        ], array_column($this->audit->contexts, 'source_event_id'));
+        self::assertSame(['same', 'same', 'resolve', 'resolve'], array_column($this->audit->contexts, 'idempotency_key'));
+    }
+
+    public function test_visibility_scope_prevents_internal_and_responsible_comment_leaks(): void
+    {
+        [$document, $version, $author] = $this->fixture();
+        $document->forceFill(['responsible_user_id' => 8])->save();
+        $internal = $this->service->create($document, $author, (int) $version->id, 'Внутренний', visibility: 'internal');
+        $shared = $this->service->create($document, $author, (int) $version->id, 'Общий', visibility: 'all_parties');
+        $responsible = $this->service->create($document, $author, (int) $version->id, 'Ответственному', visibility: 'author_and_responsible');
+
+        self::assertEqualsCanonicalizing(
+            [(int) $internal->id, (int) $shared->id],
+            $this->service->visible($document, $this->actor(9, 10))->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+        );
+        self::assertEqualsCanonicalizing(
+            [(int) $shared->id],
+            $this->service->visible($document, $this->actor(20, 30))->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+        );
+        self::assertEqualsCanonicalizing(
+            [(int) $internal->id, (int) $shared->id, (int) $responsible->id],
+            $this->service->visible($document, $this->actor(8, 10))->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+        );
+    }
+
+    public function test_only_responsible_can_resolve_blocking_comment(): void
+    {
+        [$document, $version, $author] = $this->fixture();
+        $document->forceFill(['responsible_user_id' => 8])->save();
+        $blocking = $this->service->create($document, $author, (int) $version->id, 'Блокер', blocking: true);
+
+        try {
+            $this->service->resolve($document, $blocking, $author);
+            self::fail('Author resolved a blocking comment without responsible authority.');
+        } catch (AuthorizationException) {
+        }
+        self::assertSame('resolved', $this->service->resolve($document, $blocking, $this->actor(8, 10))->status);
+    }
+
+    public function test_anchor_rejects_numeric_strings_and_non_finite_values(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+
+        foreach (['0.1', NAN, INF] as $invalid) {
+            try {
+                $this->service->create(
+                    $document,
+                    $actor,
+                    (int) $version->id,
+                    'Якорь',
+                    anchor: ['type' => 'rect', 'x' => $invalid, 'y' => 0.2, 'width' => 0.3, 'height' => 0.1],
+                );
+                self::fail('Invalid anchor coordinate was accepted.');
+            } catch (DomainException $exception) {
+                self::assertSame('legal_document_comment_anchor_invalid', $exception->getMessage());
+            }
+        }
+    }
+
     private function fixture(): array
     {
         $document = LegalArchiveDocument::query()->create(['organization_id' => 10, 'title' => 'Досье']);
@@ -122,6 +197,15 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
         return [$document, $version, $actor];
     }
 
+    private function actor(int $id, int $organizationId): User
+    {
+        $actor = new User;
+        $actor->forceFill(['id' => $id, 'current_organization_id' => $organizationId]);
+        $actor->exists = true;
+
+        return $actor;
+    }
+
     private function schema(): void
     {
         $schema = $this->database->schema();
@@ -129,6 +213,7 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
             $table->id();
             $table->unsignedBigInteger('organization_id');
             $table->string('title');
+            $table->unsignedBigInteger('responsible_user_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
         });
@@ -168,9 +253,12 @@ final class RecordingCommentAudit implements LegalDocumentAudit
 {
     public array $events = [];
 
+    public array $contexts = [];
+
     public function record(string $event, LegalArchiveDocument $document, User $actor, array $context = []): void
     {
         $this->events[] = $event;
+        $this->contexts[] = $context;
     }
 
     public function recordForActorId(string $event, LegalArchiveDocument $document, ?int $actorId, array $context = []): void {}

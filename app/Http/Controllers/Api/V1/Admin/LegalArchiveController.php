@@ -191,7 +191,7 @@ final class LegalArchiveController extends Controller
             if (! $actor instanceof User) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
-            $this->access->authorize($actor, $found, 'view');
+            $this->access->authorizePermission($actor, $found, 'legal_archive.update');
 
             $updated = $this->registryService->update(
                 $found,
@@ -235,7 +235,8 @@ final class LegalArchiveController extends Controller
             if (! $actor instanceof User) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
-            $this->access->authorize($actor, $found, 'view');
+            $this->access->authorizePermission($actor, $found, 'legal_archive.versions.create');
+            $this->access->authorizePermission($actor, $found, 'legal_archive.files.upload');
 
             $file = $this->uploadedFile($request);
 

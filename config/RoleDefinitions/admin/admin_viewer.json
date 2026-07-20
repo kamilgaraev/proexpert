@@ -19,7 +19,8 @@
     "profile.view",
     "erp_controls.view",
     "erp_controls.sod_conflicts.view",
-    "legal_archive.view"
+    "legal_archive.view",
+    "legal_archive.files.download"
   ],
 
   "module_permissions": {
@@ -60,7 +61,7 @@
     ],
     "contractor-portal": ["contractor_invitations.view"],
     "file-management": ["personal_files.view"],
-    "legal-archive": ["legal_archive.view"],
+    "legal-archive": ["legal_archive.view", "legal_archive.files.download"],
     "system-logs": ["logs.view"],
     "rate-management": ["rate_coefficients.view"],
     "report-templates": ["report_templates.view"],
