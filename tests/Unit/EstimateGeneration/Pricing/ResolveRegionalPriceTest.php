@@ -303,13 +303,23 @@ final class ResolveRegionalPriceTest extends TestCase
         $resource = $this->convertedResource();
         $resource['unit'] = 'm2';
         $resource['price_unit'] = 'м3';
+        $selection = $resource['normative_ref']['project_resource_selection'];
         unset($resource['project_resource_selection']);
+        unset($resource['normative_ref']['project_resource_selection']);
         $item = [
             'item_type' => 'priced_work',
             'materials' => [$resource],
             'labor' => [],
             'machinery' => [],
             'other_resources' => [],
+            'normative_match' => [
+                'project_resource_selections' => [[
+                    ...$selection,
+                    'price_id' => 42,
+                    'applied_unit_price' => '2000',
+                    'price_unit' => 'м3',
+                ]],
+            ],
         ];
 
         $priced = (new EstimatePricingService($prices, $conversions))->price([$item], $this->context())[0];
@@ -320,6 +330,10 @@ final class ResolveRegionalPriceTest extends TestCase
         self::assertSame(
             'fsnb_2022_residential_converted_child_median:v1',
             $priced['materials'][0]['project_resource_selection']['policy'],
+        );
+        self::assertSame(
+            '12.2.05.02-1001',
+            $priced['materials'][0]['normative_ref']['project_resource_selection']['selected_resource_code'],
         );
         self::assertArrayNotHasKey('unit_conversion_id', $priced['materials'][0]['normative_ref']);
     }
