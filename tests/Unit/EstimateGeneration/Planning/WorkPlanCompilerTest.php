@@ -308,6 +308,8 @@ final class WorkPlanCompilerTest extends TestCase
             ->method('resolve')
             ->with([], self::callback(static fn (array $intents): bool => ($intents[0]['specialization_scenario'] ?? null) === $scenario
                 && ($intents[0]['action'] ?? null) === 'cable_installation'
+                && ($intents[0]['code'] ?? null) === $scenario['normative_rate_code']
+                && ($intents[0]['search_text'] ?? null) === $scenario['normative_search_text']
                 && ($intents[0]['normative_sections'] ?? null) === ['08']))
             ->willReturn(['status' => 'pinned']);
         $compiler = new WorkPlanCompiler(
@@ -322,8 +324,8 @@ final class WorkPlanCompilerTest extends TestCase
                 'work_items' => [[
                     'item_type' => 'priced_work',
                     'name' => 'Прокладка линий освещения',
-                    'normative_search_text' => $scenario['normative_search_text'],
-                    'normative_rate_code' => $scenario['normative_rate_code'],
+                    'normative_search_text' => 'Ненадёжное имя работы от модели',
+                    'normative_rate_code' => null,
                     'unit' => 'm',
                     'specialization_scenario' => $scenario,
                     'metadata' => ['quantity_key' => 'lighting.lines'],

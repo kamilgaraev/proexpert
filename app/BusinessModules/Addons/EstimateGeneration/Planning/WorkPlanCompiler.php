@@ -187,9 +187,12 @@ final readonly class WorkPlanCompiler
                     $normativeSection = count($normativeSections) === 1 ? $normativeSections[0] : null;
                     $material = $this->intentString($recordedIntent, 'material') ?? $classified->material;
                     $resolvedIntent = [
-                        'search_text' => (string) ($item['normative_search_text'] ?? $item['name'] ?? ''),
+                        'search_text' => $this->intentString($scenario, 'normative_search_text')
+                            ?? (string) ($item['normative_search_text'] ?? $item['name'] ?? ''),
                         'unit' => (string) ($item['unit'] ?? ''),
-                        'code' => is_string($item['normative_rate_code'] ?? null) ? $item['normative_rate_code'] : null,
+                        'code' => $scenarioRateCode !== ''
+                            ? $scenarioRateCode
+                            : (is_string($item['normative_rate_code'] ?? null) ? $item['normative_rate_code'] : null),
                         'action' => $this->intentString($scenario, 'intent_action')
                             ?? $this->intentString($recordedIntent, 'action')
                             ?? $classified->action,

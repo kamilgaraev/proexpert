@@ -272,6 +272,9 @@ final class NormativeIntentCandidateRankerTest extends TestCase
             ['electrical.grounding', 'm', 'grounding_installation', 'engineering', '08', 'Заземлитель горизонтальный из стали круглой диаметром 12 мм'],
             ['sanitary.waterproofing', 'm2', 'waterproofing', 'finishing', '11', 'Устройство гидроизоляции обмазочной битумной мастикой в один слой толщиной 2 мм'],
             ['sanitary.tile', 'm2', 'tiling', 'finishing', '15', 'Гладкая облицовка стен керамическими плитками на клее из сухих смесей по кирпичу и бетону'],
+            ['foundation.prep', 'm3', 'concreting', 'foundation', '06', 'Устройство бетонной подготовки и фундаментов общего назначения: Устройство бетонной подготовки'],
+            ['sanitary.showers', 'pcs', 'sanitary_fixture_installation', 'engineering', '17', 'Установка кабин душевых: с пластиковыми поддонами'],
+            ['rough.floor', 'm2', 'floor_preparation', 'finishing', '11', 'Устройство стяжек: цементных толщиной 20 мм'],
         ];
 
         foreach ($cases as $index => [$workItemKey, $unit, $action, $scope, $section, $candidateName]) {
@@ -297,6 +300,31 @@ final class NormativeIntentCandidateRankerTest extends TestCase
 
             self::assertSame([9000 + $index], array_column($selected ?? [], 'id'), $workItemKey);
         }
+    }
+
+    public function test_signed_exact_scenario_rejects_a_foreign_title_with_the_same_catalog_code(): void
+    {
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('foundation.prep', 'residential');
+        self::assertIsArray($scenario);
+
+        $candidate = $this->candidate(
+            60100101,
+            (string) $scenario['normative_rate_code'],
+            'Холодильная установка с герметичным компрессором',
+            '100 m3',
+            '06-01',
+        );
+
+        self::assertNull((new NormativeIntentCandidateRanker)->select([$candidate], [[
+            'search_text' => (string) $scenario['normative_search_text'],
+            'unit' => 'm3',
+            'code' => (string) $scenario['normative_rate_code'],
+            'action' => 'concreting',
+            'scope' => 'foundation',
+            'object_type' => 'residential',
+            'normative_sections' => ['06'],
+            'specialization_scenario' => $scenario,
+        ]]));
     }
 
     private function candidate(

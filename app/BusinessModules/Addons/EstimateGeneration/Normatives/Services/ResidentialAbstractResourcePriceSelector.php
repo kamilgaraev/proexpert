@@ -72,4 +72,10 @@ final readonly class ResidentialAbstractResourcePriceSelector
     {
         return $this->conversions->supportedGroupCodes();
     }
+
+    /** @return list<array{group_code: string, from_unit: string}> */
+    public function supportedUnitPairs(): array
+    {
+        return $this->conversions->supportedUnitPairs();
+    }
 }

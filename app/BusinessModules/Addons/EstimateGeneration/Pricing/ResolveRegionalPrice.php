@@ -115,7 +115,9 @@ class ResolveRegionalPrice
             $factorMatches = BigDecimal::of((string) ($selection['conversion_factor'] ?? '0'))
                 ->isEqualTo(BigDecimal::of($conversion['factor']));
             $appliedPriceMatches = BigDecimal::of((string) ($resource['unit_price'] ?? '0'))
-                ->isEqualTo(BigDecimal::of((string) $payload['base_price'])->multipliedBy($conversion['factor']));
+                ->isEqualTo(BigDecimal::of((string) $payload['base_price'])
+                    ->multipliedBy($conversion['factor'])
+                    ->toScale(6, RoundingMode::HalfUp));
         } catch (\Throwable) {
             throw MissingRegionalPrice::forResource($this->positiveInt($resource['price_id'] ?? null) ?? 0);
         }
