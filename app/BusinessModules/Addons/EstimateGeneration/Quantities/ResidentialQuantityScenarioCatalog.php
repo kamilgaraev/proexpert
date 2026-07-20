@@ -13,9 +13,9 @@ use Brick\Math\RoundingMode;
 
 final class ResidentialQuantityScenarioCatalog
 {
-    public const VERSION = '3.1.0';
+    public const VERSION = '3.2.0';
 
-    public const SCENARIO_ID = 'residential_preliminary_scenario:v14';
+    public const SCENARIO_ID = 'residential_preliminary_scenario:v15';
 
     private const UNITS = [
         'electrical.grounding' => 'm',
@@ -189,17 +189,7 @@ final class ResidentialQuantityScenarioCatalog
                 $quantities[$key] = $this->scaled($key, $unit, $floorArea, $factor, [$assumption]);
             }
             $omissions[] = $this->omission('heating.unit', 'heating_source_type_missing');
-            $quantities['heating.radiators'] = $this->scaled(
-                'heating.radiators',
-                'pcs',
-                $floorArea,
-                '0.5555555556',
-                [
-                    'residential_heat_load_kw_per_m2:0.10',
-                    'residential_radiator_section_output_kw:0.18',
-                    ...$areaBasisAssumptions,
-                ],
-            );
+            $quantities['heating.radiators'] = $this->radiatorDeviceQuantity($floorArea, $areaBasisAssumptions);
             $quantities['electrical.panel'] = $this->countBased(
                 'electrical.panel', 'pcs', 1, '1', $model, 'residential_house_count',
                 ['one_preliminary_distribution_panel_per_house', ...$areaBasisAssumptions],
@@ -612,6 +602,40 @@ final class ResidentialQuantityScenarioCatalog
             array_map('strval', $model->evidenceIds),
             $model->modelVersion,
             $assumptions,
+        );
+    }
+
+    private function radiatorDeviceQuantity(QuantityData $floorArea, array $areaBasisAssumptions): QuantityData
+    {
+        $heatLoadPerSquareMeterKw = BigDecimal::of('0.10');
+        $sectionOutputKw = BigDecimal::of('0.18');
+        $sectionsPerEmitter = BigDecimal::of('8');
+        $emitterOutputKw = $sectionOutputKw->multipliedBy($sectionsPerEmitter);
+        $heatLoadKw = BigDecimal::of($floorArea->amount)->multipliedBy($heatLoadPerSquareMeterKw);
+        $unroundedEmitterCount = $heatLoadKw->dividedBy($emitterOutputKw, 8, RoundingMode::HalfUp);
+        $emitterCount = $unroundedEmitterCount->toScale(0, RoundingMode::Ceiling);
+
+        return $this->make(
+            'heating.radiators',
+            'pcs',
+            (string) $emitterCount->toScale(6),
+            [
+                'source_quantity' => $this->sourceReference($floorArea),
+                'heat_load_per_m2_kw' => (string) $heatLoadPerSquareMeterKw,
+                'radiator_section_output_kw' => (string) $sectionOutputKw,
+                'radiator_sections_per_emitter' => (string) $sectionsPerEmitter,
+                'radiator_output_kw' => (string) $emitterOutputKw,
+                'unrounded_emitter_count' => (string) $unroundedEmitterCount,
+            ],
+            $floorArea->evidenceIds,
+            $floorArea->modelVersion,
+            [
+                ...$floorArea->assumptions,
+                'residential_heat_load_kw_per_m2:0.10',
+                'residential_radiator_section_output_kw:0.18',
+                'residential_radiator_sections_per_emitter:8',
+                ...$areaBasisAssumptions,
+            ],
         );
     }
 

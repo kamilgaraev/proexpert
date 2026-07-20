@@ -126,7 +126,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             ['electrical', 'electrical', 'electrical.outlets', 'pcs', '24.000000', '08-03-591-09'],
             ['electrical', 'electrical', 'electrical.switches', 'pcs', '15.000000', '08-03-591-02'],
             ['lighting', 'electrical', 'lighting.fixtures', 'pcs', '18.000000', '08-03-593-06'],
-            ['heating', 'heating', 'heating.radiators', 'pcs', '107.111111', '18-03-006-02'],
+            ['heating', 'heating', 'heating.radiators', 'pcs', '14.000000', '18-03-006-02'],
             ['sewerage', 'sewerage', 'sewerage.pipe', 'm', '48.200000', '16-04-004-01'],
             ['plumbing', 'plumbing', 'sanitary.waterproofing', 'm2', '12.980000', '11-01-004-05'],
             ['plumbing', 'plumbing', 'sanitary.tile', 'm2', '39.497496', '15-01-019-05'],
