@@ -90,6 +90,11 @@ final class LegalDocumentFileService
         return $this->markReady($version);
     }
 
+    public function assertUploadAllowed(UploadedFile $upload): void
+    {
+        $this->policy->assertUploadAllowed($upload);
+    }
+
     private function assertProcessingTransitionAllowed(
         LegalArchiveDocumentVersion $version,
         string $target,

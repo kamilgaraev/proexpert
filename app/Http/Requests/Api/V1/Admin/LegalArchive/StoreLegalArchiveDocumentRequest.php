@@ -59,6 +59,7 @@ final class StoreLegalArchiveDocumentRequest extends FormRequest
             'title' => ['required', 'string', 'max:512'],
             'document_number' => ['nullable', 'string', 'max:255'],
             'document_type' => ['required', 'string', Rule::in(LegalArchiveDictionary::values('types'))],
+            'type_profile_code' => ['nullable', 'string', 'max:128'],
             'status' => ['nullable', 'string', Rule::in(LegalArchiveDictionary::values('statuses'))],
             'direction' => ['nullable', 'string', Rule::in(LegalArchiveDictionary::values('directions'))],
             'source_system' => ['nullable', 'string', 'max:64'],

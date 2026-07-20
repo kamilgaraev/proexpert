@@ -156,12 +156,21 @@ final readonly class LegalDocumentAuditService implements LegalDocumentAudit
         if (! is_string($value) || $value === '') {
             return null;
         }
-        $namespaced = "{$aggregateType}:{$aggregateId}:{$value}";
+        $rawValue = $value;
+        $legacyNamespaced = "{$aggregateType}:{$aggregateId}:{$rawValue}";
+        $value = LegalDocumentSourceEventId::canonical("{$aggregateType}:{$aggregateId}", $rawValue);
+        $lookup = [$value];
+        if (strlen($rawValue) <= LegalDocumentSourceEventId::MAX_LENGTH) {
+            $lookup[] = $rawValue;
+        }
+        if (strlen($legacyNamespaced) <= LegalDocumentSourceEventId::MAX_LENGTH) {
+            $lookup[] = $legacyNamespaced;
+        }
         $existing = $this->connection->table('immutable_audit_events')
             ->where('organization_id', $organizationId)
             ->where('domain', $domain)
             ->where('source', $source)
-            ->whereIn('source_event_id', [$value, $namespaced])
+            ->whereIn('source_event_id', array_values(array_unique($lookup)))
             ->where('subject_type', $aggregateType)
             ->where('subject_id', $aggregateId)
             ->value('source_event_id');
@@ -169,12 +178,7 @@ final readonly class LegalDocumentAuditService implements LegalDocumentAudit
             return $existing;
         }
 
-        if ($this->connection->getDriverName() !== 'pgsql') {
-            return $value;
-        }
-        $phase = $this->connection->table('immutable_audit_rollout')->where('singleton', true)->value('phase');
-
-        return $phase === 'phase_b' ? $namespaced : $value;
+        return $value;
     }
 
     private function idempotencyKey(array $context): ?string

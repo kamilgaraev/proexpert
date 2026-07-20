@@ -114,6 +114,17 @@ final class LegalDocumentAccessPostgresIntegrationTest extends TestCase
             ->where('id', $partyId)->update(['legal_name' => 'Перезаписанная сторона']));
     }
 
+    public function test_owner_principals_are_immutable_after_document_creation(): void
+    {
+        $this->installAllInvariants();
+        [$documentId] = $this->dossier(1);
+
+        $this->assertImmutableViolation(fn () => $this->first->table('legal_archive_documents')
+            ->where('id', $documentId)->update(['created_by_user_id' => 2]));
+        $this->assertImmutableViolation(fn () => $this->first->table('legal_archive_documents')
+            ->where('id', $documentId)->update(['owner_user_id' => 2]));
+    }
+
     public function test_descriptor_drift_fails_closed(): void
     {
         $this->migration('000510_create_legal_document_access_indexes')->up();
@@ -326,6 +337,33 @@ final class LegalDocumentAccessPostgresIntegrationTest extends TestCase
         ]));
     }
 
+    public function test_full_source_index_replacement_chain_allows_same_key_for_two_actors(): void
+    {
+        $this->first->statement(
+            'CREATE UNIQUE INDEX legal_docs_source_idempotency_unique ON legal_archive_documents '
+            .'(organization_id, source_type, source_idempotency_key)',
+        );
+
+        $this->migration('000150_replace_legal_document_source_indexes')->up();
+        $this->migration('000510_create_legal_document_access_indexes')->up();
+        $this->migration('000520_add_legal_document_access_constraints')->up();
+        $this->migration('000530_validate_legal_document_access_constraints')->up();
+
+        $this->first->table('legal_archive_documents')->insert([
+            'organization_id' => 1, 'created_by_user_id' => 1, 'source_type' => 'contract',
+            'source_id' => 501, 'source_idempotency_key' => 'same-command-key',
+        ]);
+        $this->first->table('legal_archive_documents')->insert([
+            'organization_id' => 1, 'created_by_user_id' => 2, 'source_type' => 'contract',
+            'source_id' => 502, 'source_idempotency_key' => 'same-command-key',
+        ]);
+
+        self::assertSame(2, $this->first->table('legal_archive_documents')->count());
+        self::assertNull($this->indexState('legal_docs_source_idempotency_unique'));
+        self::assertTrue((bool) $this->indexState('legal_documents_source_identity_unique')?->indisvalid);
+        self::assertTrue((bool) $this->indexState('legal_documents_source_command_unique')?->indisvalid);
+    }
+
     public function test_parallel_comment_create_and_resolve_preserve_idempotency_and_transition_invariants(): void
     {
         $this->installAllInvariants();
@@ -399,6 +437,44 @@ final class LegalDocumentAccessPostgresIntegrationTest extends TestCase
         self::assertSame(2, $this->first->table('legal_document_access_grants')->count());
     }
 
+    public function test_parallel_manager_revocation_preserves_one_active_manager(): void
+    {
+        $this->installAllInvariants();
+        $this->first->table('organization_user')->insert(['user_id' => 2, 'organization_id' => 1]);
+        [$documentId] = $this->dossier(1);
+        foreach ([1, 2] as $userId) {
+            $this->first->table('legal_document_access_grants')->insert([
+                'organization_id' => 1, 'document_id' => $documentId, 'subject_kind' => 'internal_user',
+                'subject_organization_id' => 1, 'subject_user_id' => $userId, 'subject_role_slug' => null,
+                'abilities' => '["view","manage"]', 'granted_by_user_id' => 1,
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+
+        $codes = $this->runParallel(static function (ConnectionInterface $connection, int $worker) use ($documentId): void {
+            $connection->transaction(static function () use ($connection, $documentId, $worker): void {
+                $connection->table('legal_archive_documents')->where('id', $documentId)->lockForUpdate()->first();
+                $activeManagers = $connection->table('legal_document_access_grants')
+                    ->where('document_id', $documentId)->whereNull('revoked_at')
+                    ->whereJsonContains('abilities', 'manage')->lockForUpdate()->get();
+                if ($activeManagers->count() <= 1) {
+                    throw new RuntimeException('legal_document_last_manager_revocation_forbidden');
+                }
+                $target = $activeManagers->firstWhere('subject_user_id', $worker + 1);
+                if ($target === null) {
+                    throw new RuntimeException('legal_document_manager_already_revoked');
+                }
+                $connection->table('legal_document_access_grants')->where('id', $target->id)->update([
+                    'revoked_at' => now(), 'revoked_by_user_id' => $worker + 1,
+                    'revocation_reason' => 'Параллельный отзыв', 'updated_at' => now(),
+                ]);
+            });
+        });
+
+        self::assertSame([0, 2], $codes);
+        self::assertSame(1, $this->first->table('legal_document_access_grants')->whereNull('revoked_at')->count());
+    }
+
     private function installAllInvariants(): void
     {
         foreach ([
@@ -460,7 +536,7 @@ CREATE TABLE projects (id bigserial PRIMARY KEY, organization_id bigint NOT NULL
 CREATE TABLE organization_user (user_id bigint NOT NULL, organization_id bigint NOT NULL, UNIQUE (user_id, organization_id));
 CREATE TABLE counterparties (id bigserial PRIMARY KEY, organization_id bigint NOT NULL, name text NOT NULL);
 CREATE TABLE legal_archive_documents (
-    id bigserial PRIMARY KEY, organization_id bigint NOT NULL, created_by_user_id bigint NULL,
+    id bigserial PRIMARY KEY, organization_id bigint NOT NULL, created_by_user_id bigint NULL, owner_user_id bigint NULL,
     source_type text NULL, source_id bigint NULL, source_idempotency_key text NULL,
     UNIQUE (id, organization_id)
 );
@@ -479,6 +555,8 @@ SQL);
     {
         $documentId = (int) $this->first->table('legal_archive_documents')->insertGetId([
             'organization_id' => $organizationId,
+            'created_by_user_id' => 1,
+            'owner_user_id' => 1,
         ]);
         $versionId = (int) $this->first->table('legal_archive_document_versions')->insertGetId([
             'document_id' => $documentId,

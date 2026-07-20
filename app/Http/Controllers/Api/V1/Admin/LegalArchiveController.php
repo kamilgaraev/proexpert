@@ -19,6 +19,7 @@ use App\Services\LegalArchive\Files\LegalDocumentFileRejected;
 use App\Services\LegalArchive\Files\LegalDocumentScanFailed;
 use App\Services\LegalArchive\LegalArchiveDictionary;
 use App\Services\LegalArchive\LegalArchiveRegistryService;
+use App\Services\LegalArchive\LegalDocumentCreateFailed;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -138,6 +139,19 @@ final class LegalArchiveController extends Controller
                 201
             );
         } catch (Throwable $e) {
+            if ($e instanceof LegalDocumentCreateFailed) {
+                return AdminResponse::success(
+                    new LegalArchiveDocumentResource($e->document->refresh()),
+                    trans_message('legal_archive.messages.document_file_processing_failed'),
+                    202,
+                    [
+                        'processing_status' => 'failed',
+                        'operation_result' => 'document_create_failed',
+                        'retry_action' => $e->repeatCreateRequired ? 'repeat_create' : 'add_version',
+                        'retry_document_id' => (int) $e->document->id,
+                    ],
+                );
+            }
             if ($e instanceof LegalDocumentScanFailed) {
                 $document = $this->registryService->findForOrganization(
                     $this->organizationId($request),
@@ -150,7 +164,7 @@ final class LegalArchiveController extends Controller
                     202,
                     [
                         'processing_status' => 'failed',
-                        'operation_result' => 'document_created',
+                        'operation_result' => 'document_create_failed',
                         'retry_action' => 'add_version',
                         'retry_document_id' => (int) $e->version->document_id,
                     ],

@@ -17,6 +17,7 @@ return new class extends Migration
         }
 
         $this->backfillConfidentiality();
+        $this->backfillOwnerPrincipal();
         foreach ($this->constraintsByTable() as $table => $constraints) {
             foreach ($constraints as $constraint) {
                 DB::statement("ALTER TABLE {$table} VALIDATE CONSTRAINT {$constraint}");
@@ -41,6 +42,25 @@ return new class extends Migration
             DB::table('legal_archive_documents')
                 ->whereIn('id', $ids)
                 ->whereNull('confidentiality_level')->update(['confidentiality_level' => 'internal']);
+        } while (true);
+    }
+
+    private function backfillOwnerPrincipal(): void
+    {
+        do {
+            $ids = DB::table('legal_archive_documents')
+                ->whereNull('owner_user_id')
+                ->whereNotNull('created_by_user_id')
+                ->orderBy('id')
+                ->limit(1000)
+                ->pluck('id');
+            if ($ids->isEmpty()) {
+                return;
+            }
+            DB::table('legal_archive_documents')
+                ->whereIn('id', $ids)
+                ->whereNull('owner_user_id')
+                ->update(['owner_user_id' => DB::raw('created_by_user_id')]);
         } while (true);
     }
 

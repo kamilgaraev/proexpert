@@ -76,6 +76,8 @@ final class LegalDocumentProfileMigrationContractTest extends TestCase
         self::assertStringNotContainsString('confidentiality_level IS NULL OR confidentiality_level IN', $schema);
         self::assertStringContainsString("'public', 'internal', 'restricted', 'secret'", $schema);
         self::assertStringContainsString("whereNull('confidentiality_level')->update(['confidentiality_level' => 'internal'])", $validation);
+        self::assertStringContainsString("whereNull('owner_user_id')", $validation);
+        self::assertStringContainsString("update(['owner_user_id' => DB::raw('created_by_user_id')])", $validation);
         self::assertStringContainsString('ALTER COLUMN confidentiality_level SET NOT NULL', $validation);
     }
 

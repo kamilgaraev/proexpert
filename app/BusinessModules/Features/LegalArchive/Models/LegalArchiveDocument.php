@@ -54,6 +54,10 @@ final class LegalArchiveDocument extends Model
         'source_type',
         'source_id',
         'source_idempotency_key',
+        'source_create_status',
+        'source_request_fingerprint',
+        'source_create_failure_fingerprint',
+        'source_create_failed_at',
         'created_by_user_id',
         'updated_by_user_id',
         'metadata',
@@ -73,6 +77,7 @@ final class LegalArchiveDocument extends Model
         'completed_at' => 'datetime',
         'terminated_at' => 'datetime',
         'metadata' => 'array',
+        'source_create_failed_at' => 'datetime',
     ];
 
     protected function confidentialityLevel(): Attribute

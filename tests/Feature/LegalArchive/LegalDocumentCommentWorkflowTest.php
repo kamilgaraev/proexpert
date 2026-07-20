@@ -9,6 +9,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use App\Services\LegalArchive\Audit\LegalDocumentSourceEventId;
 use App\Services\LegalArchive\Comments\LegalDocumentCommentService;
 use App\Services\LegalArchive\Workflow\LegalWorkflowAssignmentValidator;
 use DomainException;
@@ -30,6 +31,8 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
 
     private array $activeResponsibleUserIds = [8];
 
+    private array $approveActorUserIds = [9];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -41,7 +44,13 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
         Model::clearBootedModels();
         $this->schema();
         $access = $this->createMock(LegalDocumentAuthorizer::class);
-        $access->method('authorize');
+        $access->method('authorize')->willReturnCallback(
+            function (User $actor, LegalArchiveDocument $document, string $ability): void {
+                if ($ability === 'approve' && ! in_array((int) $actor->id, $this->approveActorUserIds, true)) {
+                    throw new AuthorizationException;
+                }
+            },
+        );
         $access->method('authorizePermission')->willReturnCallback(
             static function (User $actor): void {
                 if ((int) $actor->id !== 9) {
@@ -138,10 +147,10 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
         $this->service->resolve($document, $second, $secondActor, idempotencyKey: 'resolve');
 
         self::assertSame([
-            'comment:create:actor:7:same',
-            'comment:create:actor:8:same',
-            "comment:resolve:comment:{$first->id}:resolve",
-            "comment:resolve:comment:{$second->id}:resolve",
+            LegalDocumentSourceEventId::canonical('comment:create:actor:7', 'same'),
+            LegalDocumentSourceEventId::canonical('comment:create:actor:8', 'same'),
+            LegalDocumentSourceEventId::canonical("comment:resolve:comment:{$first->id}", 'resolve'),
+            LegalDocumentSourceEventId::canonical("comment:resolve:comment:{$second->id}", 'resolve'),
         ], array_column($this->audit->contexts, 'source_event_id'));
         self::assertSame(['same', 'same', 'resolve', 'resolve'], array_column($this->audit->contexts, 'idempotency_key'));
     }
@@ -197,6 +206,48 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
             $this->service->visible($document, $this->actor(9, 10))->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
         );
         self::assertSame('resolved', $this->service->resolve($document, $managerBlocker, $this->actor(9, 10))->status);
+    }
+
+    public function test_restricted_blocking_comment_manager_visibility_and_resolution_require_exact_approve_ability(): void
+    {
+        foreach (['restricted', 'secret'] as $confidentialityLevel) {
+            [$document, $version, $author] = $this->fixture();
+            $document->forceFill([
+                'responsible_user_id' => 8,
+                'confidentiality_level' => $confidentialityLevel,
+            ])->save();
+            $blocking = $this->service->create(
+                $document,
+                $author,
+                (int) $version->id,
+                'Закрытое замечание',
+                visibility: 'author_and_responsible',
+                blocking: true,
+            );
+
+            $this->approveActorUserIds = [11];
+            foreach ([9, 6] as $actorId) {
+                $actor = $this->actor($actorId, 10);
+
+                self::assertNotContains(
+                    (int) $blocking->id,
+                    $this->service->visible($document, $actor)->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+                );
+                try {
+                    $this->service->resolve($document, $blocking, $actor);
+                    self::fail('Manager without exact approve ability resolved a restricted blocking comment.');
+                } catch (DomainException $exception) {
+                    self::assertSame('legal_document_comment_not_found', $exception->getMessage());
+                }
+            }
+
+            $approveActor = $this->actor(11, 10);
+            self::assertContains(
+                (int) $blocking->id,
+                $this->service->visible($document, $approveActor)->pluck('id')->map(static fn ($id): int => (int) $id)->all(),
+            );
+            self::assertSame('resolved', $this->service->resolve($document, $blocking, $approveActor)->status);
+        }
     }
 
     public function test_unrelated_internal_user_cannot_resolve_blocking_comment(): void
@@ -321,6 +372,7 @@ final class LegalDocumentCommentWorkflowTest extends TestCase
             $table->id();
             $table->unsignedBigInteger('organization_id');
             $table->string('title');
+            $table->string('confidentiality_level')->default('internal');
             $table->unsignedBigInteger('responsible_user_id')->nullable();
             $table->timestamps();
             $table->softDeletes();

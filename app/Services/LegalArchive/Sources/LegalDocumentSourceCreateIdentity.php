@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\LegalArchive\Sources;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\Services\LegalArchive\Audit\LegalDocumentSourceEventId;
 use InvalidArgumentException;
 
 final readonly class LegalDocumentSourceCreateIdentity
@@ -86,7 +87,10 @@ final readonly class LegalDocumentSourceCreateIdentity
     {
         $actor = $this->actorId === null ? 'system' : (string) $this->actorId;
 
-        return "create:org-{$this->organizationId}:actor-{$actor}:{$this->sourceType}:{$this->sourceId}:{$this->idempotencyKey}";
+        return LegalDocumentSourceEventId::canonical(
+            "create:org-{$this->organizationId}:actor-{$actor}:{$this->sourceType}:{$this->sourceId}",
+            $this->idempotencyKey,
+        );
     }
 
     private static function isPresent(mixed $value): bool

@@ -43,6 +43,7 @@ SQL,
             DB::statement("ALTER TABLE {$table} ADD CONSTRAINT {$name} {$definition}");
         }
         $this->installImmutableGuards();
+        $this->assertOwnerPrincipalTriggerDescriptor();
     }
 
     public function down(): void
@@ -53,7 +54,7 @@ SQL,
     private function constraints(): array
     {
         $abilities = <<<'SQL'
-CHECK (jsonb_typeof(abilities) = 'array' AND jsonb_array_length(abilities) > 0 AND abilities <@ '["view","comment","approve","sign","download","manage"]'::jsonb AND (NOT abilities ? 'manage' OR subject_kind IN ('internal_user','internal_role')))
+CHECK (jsonb_typeof(abilities) = 'array' AND jsonb_array_length(abilities) > 0 AND abilities <@ '["view","comment","approve","sign","download","manage"]'::jsonb AND (NOT abilities ? 'manage' OR subject_kind = 'internal_user'))
 SQL;
         $anchor = <<<'SQL'
 CHECK (anchor IS NULL OR (jsonb_typeof(anchor) = 'object' AND anchor ?& ARRAY['type','x','y','width','height'] AND anchor - ARRAY['type','x','y','width','height'] = '{}'::jsonb AND anchor->>'type' = 'rect' AND jsonb_typeof(anchor->'x') = 'number' AND jsonb_typeof(anchor->'y') = 'number' AND jsonb_typeof(anchor->'width') = 'number' AND jsonb_typeof(anchor->'height') = 'number' AND (anchor->>'x')::numeric >= 0 AND (anchor->>'y')::numeric >= 0 AND (anchor->>'width')::numeric > 0 AND (anchor->>'height')::numeric > 0 AND (anchor->>'x')::numeric + (anchor->>'width')::numeric <= 1 AND (anchor->>'y')::numeric + (anchor->>'height')::numeric <= 1))
@@ -116,6 +117,20 @@ CREATE TRIGGER legal_document_party_immutable_guard
 BEFORE UPDATE OR DELETE ON legal_document_parties
 FOR EACH ROW EXECUTE FUNCTION legal_document_party_immutable_guard();
 
+CREATE OR REPLACE FUNCTION legal_document_owner_principal_guard() RETURNS trigger AS $$
+BEGIN
+    IF OLD.created_by_user_id IS DISTINCT FROM NEW.created_by_user_id
+       OR OLD.owner_user_id IS DISTINCT FROM NEW.owner_user_id THEN
+        RAISE EXCEPTION 'legal_document_owner_principal_is_immutable' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS legal_document_owner_principal_guard ON legal_archive_documents;
+CREATE TRIGGER legal_document_owner_principal_guard
+BEFORE UPDATE OF created_by_user_id, owner_user_id ON legal_archive_documents
+FOR EACH ROW EXECUTE FUNCTION legal_document_owner_principal_guard();
+
 CREATE OR REPLACE FUNCTION legal_document_access_grant_guard() RETURNS trigger AS $$
 BEGIN
     IF TG_OP = 'DELETE' THEN
@@ -173,5 +188,23 @@ SQL);
         $normalized = str_replace(['=anyarray[', ']'], ['in', ''], $normalized);
 
         return $normalized;
+    }
+
+    private function assertOwnerPrincipalTriggerDescriptor(): void
+    {
+        $definition = DB::selectOne(<<<'SQL'
+SELECT pg_get_triggerdef(trigger.oid, true) AS definition
+FROM pg_trigger AS trigger
+JOIN pg_class AS owner ON owner.oid = trigger.tgrelid
+JOIN pg_namespace AS namespace ON namespace.oid = owner.relnamespace
+WHERE namespace.nspname = current_schema()
+  AND owner.relname = 'legal_archive_documents'
+  AND trigger.tgname = 'legal_document_owner_principal_guard'
+  AND trigger.tgisinternal = false
+SQL);
+        $expected = 'CREATE TRIGGER legal_document_owner_principal_guard BEFORE UPDATE OF created_by_user_id, owner_user_id ON legal_archive_documents FOR EACH ROW EXECUTE FUNCTION legal_document_owner_principal_guard()';
+        if ($definition === null || $this->normalize($definition->definition) !== $this->normalize($expected)) {
+            throw new RuntimeException('legal_document_access_trigger_descriptor_mismatch:legal_document_owner_principal_guard');
+        }
     }
 };

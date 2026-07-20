@@ -10,6 +10,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentComment;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use App\Services\LegalArchive\Audit\LegalDocumentSourceEventId;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\LegalArchive\Workflow\LegalWorkflowAssignmentValidator;
 use DomainException;
@@ -111,7 +112,7 @@ final class LegalDocumentCommentService
                 'is_blocking' => $blocking,
                 'source_event_id' => $idempotencyKey === null
                     ? null
-                    : "comment:create:actor:{$actor->id}:{$idempotencyKey}",
+                    : LegalDocumentSourceEventId::canonical("comment:create:actor:{$actor->id}", $idempotencyKey),
                 'idempotency_key' => $idempotencyKey,
             ]);
 
@@ -195,7 +196,7 @@ final class LegalDocumentCommentService
                 'version_id' => (int) $locked->document_version_id,
                 'source_event_id' => $idempotencyKey === null
                     ? null
-                    : "comment:resolve:comment:{$locked->id}:{$idempotencyKey}",
+                    : LegalDocumentSourceEventId::canonical("comment:resolve:comment:{$locked->id}", $idempotencyKey),
                 'idempotency_key' => $idempotencyKey,
             ]);
 
@@ -284,7 +285,7 @@ final class LegalDocumentCommentService
     private function canManageBlockingComments(User $actor, LegalArchiveDocument $document): bool
     {
         try {
-            $this->access->authorizePermission($actor, $document, 'legal_archive.workflow.approve');
+            $this->access->authorize($actor, $document, 'approve');
 
             return true;
         } catch (AuthorizationException) {

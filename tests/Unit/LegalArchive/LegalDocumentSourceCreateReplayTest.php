@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Tests\Unit\LegalArchive;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\Services\LegalArchive\Audit\LegalDocumentSourceEventId;
+use App\Services\LegalArchive\LegalDocumentCreateFailed;
+use App\Services\LegalArchive\Sources\LegalDocumentCreateRequestFingerprint;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceCreateIdentity;
+use Illuminate\Http\UploadedFile;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -51,7 +55,10 @@ final class LegalDocumentSourceCreateReplayTest extends TestCase
         self::assertNotNull($first);
         self::assertNotNull($otherActor);
         self::assertNotNull($otherTenant);
-        self::assertSame('create:org-20:actor-7:contract:41:erp-command-9', $first->sourceEventId());
+        self::assertSame(
+            LegalDocumentSourceEventId::canonical('create:org-20:actor-7:contract:41', 'erp-command-9'),
+            $first->sourceEventId(),
+        );
         self::assertNotSame($first->sourceEventId(), $otherActor->sourceEventId());
         self::assertNotSame($first->sourceEventId(), $otherTenant->sourceEventId());
     }
@@ -61,7 +68,10 @@ final class LegalDocumentSourceCreateReplayTest extends TestCase
         $identity = LegalDocumentSourceCreateIdentity::fromInput(20, null, $this->sourceInput());
 
         self::assertNotNull($identity);
-        self::assertSame('create:org-20:actor-system:contract:41:erp-command-9', $identity->sourceEventId());
+        self::assertSame(
+            LegalDocumentSourceEventId::canonical('create:org-20:actor-system:contract:41', 'erp-command-9'),
+            $identity->sourceEventId(),
+        );
         self::assertTrue($identity->matches($this->document(20, null, 'contract', '41', 'erp-command-9')));
         self::assertFalse($identity->matches($this->document(20, 7, 'contract', '41', 'erp-command-9')));
     }
@@ -76,6 +86,70 @@ final class LegalDocumentSourceCreateReplayTest extends TestCase
         self::assertNotNull($retryAfterUniqueViolation);
         self::assertSame($firstAttempt->sourceEventId(), $retryAfterUniqueViolation->sourceEventId());
         self::assertTrue($retryAfterUniqueViolation->matches($winner));
+    }
+
+    public function test_request_fingerprint_covers_payload_actor_tenant_source_and_file_identity(): void
+    {
+        $file = UploadedFile::fake()->createWithContent('contract.pdf', 'same-pdf-content');
+        $data = $this->sourceInput() + [
+            'title' => 'Договор поставки',
+            'type_profile_code' => 'supply_contract',
+            'file' => $file,
+            'metadata' => ['b' => 2, 'a' => 1],
+            'links' => [['link_type' => 'source', 'display_name' => 'Поставка']],
+        ];
+
+        $first = LegalDocumentCreateRequestFingerprint::fromRequest(20, 7, $data, $file);
+        $reordered = LegalDocumentCreateRequestFingerprint::fromRequest(20, 7, [
+            ...$this->sourceInput(),
+            'links' => $data['links'],
+            'metadata' => ['a' => 1, 'b' => 2],
+            'type_profile_code' => 'supply_contract',
+            'title' => 'Договор поставки',
+        ], $file);
+
+        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/D', $first);
+        self::assertSame($first, $reordered);
+        self::assertNotSame($first, LegalDocumentCreateRequestFingerprint::fromRequest(20, 8, $data, $file));
+        self::assertNotSame($first, LegalDocumentCreateRequestFingerprint::fromRequest(20, 7, [...$data, 'title' => 'Иной'], $file));
+        self::assertNotSame(
+            $first,
+            LegalDocumentCreateRequestFingerprint::fromRequest(
+                20,
+                7,
+                $data,
+                UploadedFile::fake()->createWithContent('contract.pdf', 'different-pdf-content'),
+            ),
+        );
+    }
+
+    public function test_long_source_and_aggregate_event_ids_are_canonical_and_bounded(): void
+    {
+        $key = str_repeat('ключ', 47).'x';
+        $identity = LegalDocumentSourceCreateIdentity::fromInput(20, 7, [
+            'source_type' => 'contract', 'source_id' => 41, 'source_idempotency_key' => $key,
+        ]);
+
+        self::assertNotNull($identity);
+        self::assertLessThanOrEqual(191, strlen($identity->sourceEventId()));
+        self::assertMatchesRegularExpression('/:[a-f0-9]{64}$/D', $identity->sourceEventId());
+        $aggregate = LegalDocumentSourceEventId::canonical('legal_document:999', $identity->sourceEventId());
+        self::assertLessThanOrEqual(191, strlen($aggregate));
+        self::assertSame($aggregate, LegalDocumentSourceEventId::canonical($aggregate));
+        self::assertStringNotContainsString($key, $identity->sourceEventId());
+    }
+
+    public function test_durable_create_failure_preserves_document_and_original_error_for_recovery(): void
+    {
+        $document = new LegalArchiveDocument;
+        $document->forceFill(['id' => 17, 'source_create_status' => 'failed']);
+        $original = new \RuntimeException('s3_upload_failed');
+        $failure = new LegalDocumentCreateFailed($document, false, $original);
+
+        self::assertSame($document, $failure->document);
+        self::assertSame($original, $failure->getPrevious());
+        self::assertSame('s3_upload_failed', $failure->getMessage());
+        self::assertFalse($failure->repeatCreateRequired);
     }
 
     #[DataProvider('partialSourceProvider')]
@@ -171,6 +245,17 @@ final class LegalDocumentSourceCreateReplayTest extends TestCase
         self::assertStringContainsString("->where('source_idempotency_key', \$identity->idempotencyKey)", $registry);
         self::assertStringContainsString("'source_event_id' => \$sourceCreateIdentity?->sourceEventId()", $registry);
         self::assertStringNotContainsString("\$data['idempotency_key']", $registry);
+        self::assertStringNotContainsString('forceDelete()', $registry);
+        self::assertStringContainsString("'source_create_status' => 'pending'", $registry);
+        self::assertStringContainsString('source_request_fingerprint', $registry);
+        self::assertStringContainsString("'source_create_status' => 'failed'", $registry);
+        self::assertStringContainsString("'source_create_status' => 'completed'", $registry);
+        self::assertStringContainsString("->where('source_create_status', 'completed')", $registry);
+        self::assertStringContainsString('completeCreateAfterVersion(', $registry);
+        self::assertLessThan(
+            strpos($registry, '$sourceCreateIdentity = $this->sourceCreateIdentity'),
+            strpos($registry, '$this->documentFileService->assertUploadAllowed($file)'),
+        );
         self::assertStringContainsString('required_with:source_id,source_idempotency_key', $request);
         self::assertStringContainsString('required_with:source_type,source_idempotency_key', $request);
         self::assertStringContainsString('required_with:source_type,source_id', $request);

@@ -27,6 +27,8 @@ final class LegalArchiveDocumentResource extends JsonResource
             'document_type_label' => LegalArchiveDictionary::label('types', $this->document_type),
             'status' => $this->status,
             'status_label' => LegalArchiveDictionary::label('statuses', $this->status),
+            'source_create_status' => $this->source_create_status,
+            'source_create_failed_at' => $this->source_create_failed_at?->toISOString(),
             'direction' => $this->direction,
             'direction_label' => LegalArchiveDictionary::label('directions', $this->direction),
             'source_system' => $this->source_system,

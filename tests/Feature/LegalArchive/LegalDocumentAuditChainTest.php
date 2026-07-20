@@ -285,6 +285,30 @@ final class LegalDocumentAuditChainTest extends TestCase
         ]);
     }
 
+    public function test_long_source_and_comment_event_ids_are_canonical_before_persistence(): void
+    {
+        $service = $this->service();
+        $document = $this->document(5, 2);
+        $actor = $this->actor(9, 2);
+        $longKey = str_repeat('x', 191);
+
+        $service->record('comment_created', $document, $actor, [
+            'source_event_id' => "comment:create:actor:9:{$longKey}",
+            'idempotency_key' => $longKey,
+        ]);
+        $created = (string) ImmutableAuditEvent::query()->value('source_event_id');
+        self::assertLessThanOrEqual(191, strlen($created));
+        self::assertMatchesRegularExpression('/:[a-f0-9]{64}$/D', $created);
+
+        $service->record('comment_resolved', $document, $actor, [
+            'source_event_id' => "comment:resolve:comment:77:{$longKey}",
+            'idempotency_key' => $longKey,
+        ]);
+        $resolved = (string) ImmutableAuditEvent::query()->where('action', 'comment_resolved')->value('source_event_id');
+        self::assertLessThanOrEqual(191, strlen($resolved));
+        self::assertMatchesRegularExpression('/:[a-f0-9]{64}$/D', $resolved);
+    }
+
     public function test_dual_source_lookup_reuses_legacy_raw_and_preexisting_namespaced_event_with_stable_outbox(): void
     {
         $service = $this->service();

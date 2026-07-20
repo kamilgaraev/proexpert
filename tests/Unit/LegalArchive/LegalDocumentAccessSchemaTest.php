@@ -58,8 +58,14 @@ final class LegalDocumentAccessSchemaTest extends TestCase
         self::assertStringContainsString('legal_document_comments_anchor_check', $constraints);
         self::assertStringContainsString('legal_document_party_immutable_guard', $constraints);
         self::assertStringContainsString('legal_document_access_grant_guard', $constraints);
+        self::assertStringContainsString('legal_document_owner_principal_guard', $constraints);
+        self::assertStringContainsString('OLD.created_by_user_id IS DISTINCT FROM NEW.created_by_user_id', $constraints);
+        self::assertStringContainsString('OLD.owner_user_id IS DISTINCT FROM NEW.owner_user_id', $constraints);
+        self::assertStringContainsString('BEFORE UPDATE OF created_by_user_id, owner_user_id', $constraints);
+        self::assertStringContainsString('pg_get_triggerdef', $constraints);
+        self::assertStringContainsString('legal_document_access_trigger_descriptor_mismatch', $constraints);
         self::assertStringContainsString('"manage"', $constraints);
-        self::assertStringContainsString("subject_kind IN ('internal_user','internal_role')", $constraints);
+        self::assertStringContainsString("subject_kind = 'internal_user'", $constraints);
         self::assertStringContainsString('legal_document_comment_guard', $constraints);
         self::assertStringContainsString("str_replace(['=anyarray[', ']']", $constraints);
         self::assertStringContainsString('VALIDATE CONSTRAINT', $validate);
@@ -80,6 +86,8 @@ final class LegalDocumentAccessSchemaTest extends TestCase
         self::assertStringContainsString('test_invalid_concurrent_index_is_recovered', $source);
         self::assertStringContainsString('test_parallel_active_grants_preserve_unique_subject_invariant', $source);
         self::assertStringContainsString('test_parallel_source_commands_preserve_actor_tenant_idempotency_namespace', $source);
+        self::assertStringContainsString('test_owner_principals_are_immutable_after_document_creation', $source);
+        self::assertStringContainsString('test_parallel_manager_revocation_preserves_one_active_manager', $source);
         self::assertStringContainsString('test_index_descriptor_drift_variants_fail_closed', $source);
         self::assertStringContainsString('NULLS NOT DISTINCT', $source);
         self::assertStringContainsString('text_pattern_ops', $source);

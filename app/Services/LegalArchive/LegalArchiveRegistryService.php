@@ -15,6 +15,7 @@ use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
 use App\Services\LegalArchive\Files\LegalDocumentVersionPersistenceFailed;
 use App\Services\LegalArchive\Files\VersionInput;
+use App\Services\LegalArchive\Sources\LegalDocumentCreateRequestFingerprint;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceCreateIdentity;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceResolver;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -23,8 +24,10 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
+use Throwable;
 
 use function trans_message;
 
@@ -89,51 +92,74 @@ final class LegalArchiveRegistryService
 
     public function create(int $organizationId, ?int $userId, array $data, ?UploadedFile $file = null): LegalArchiveDocument
     {
+        if ($file instanceof UploadedFile) {
+            $this->documentFileService->assertUploadAllowed($file);
+        }
         $sourceCreateIdentity = $this->sourceCreateIdentity($organizationId, $userId, $data);
         if ($sourceCreateIdentity !== null) {
             $data = $sourceCreateIdentity->normalizeInput($data);
         }
+        $requestFingerprint = $sourceCreateIdentity === null
+            ? null
+            : LegalDocumentCreateRequestFingerprint::fromRequest($organizationId, $userId, $data, $file);
 
         try {
-            [$document, $documentFile, $replayed] = DB::transaction(function () use (
+            [$document, $documentFile, $replayed, $requiresUpload] = DB::transaction(function () use (
                 $organizationId,
                 $userId,
                 $data,
                 $file,
                 $sourceCreateIdentity,
+                $requestFingerprint,
             ): array {
                 $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
                 $this->sourceResolver->assertOwnedSource($organizationId, $data['source_type'] ?? null, $data['source_id'] ?? null);
-                $replay = $this->resolveSourceCreateReplay($sourceCreateIdentity);
+                $replay = $this->resolveSourceCreateReplay($sourceCreateIdentity, $requestFingerprint, true);
                 if ($replay instanceof LegalArchiveDocument) {
-                    return [$replay, null, true];
+                    if ((string) $replay->source_create_status === 'completed') {
+                        return [$replay, null, true, false];
+                    }
+
+                    $replay->forceFill([
+                        'source_create_status' => 'pending',
+                        'source_create_failure_fingerprint' => null,
+                        'source_create_failed_at' => null,
+                    ])->save();
+                    $documentFile = $file instanceof UploadedFile
+                        ? $this->primaryFile($replay, $organizationId)
+                        : null;
+                    $hasReadyVersion = $documentFile instanceof LegalArchiveDocumentFile
+                        && $documentFile->versions()->where('processing_status', 'ready')->exists();
+                    $this->audit->recordForActorId('create_retry_pending', $replay, $userId, [
+                        'source_event_id' => $sourceCreateIdentity?->sourceEventId().':retry',
+                        'request_fingerprint' => $requestFingerprint,
+                    ]);
+
+                    return [$replay, $documentFile, false, ! $hasReadyVersion];
                 }
 
-                $document = LegalArchiveDocument::query()->create($this->documentPayload($organizationId, $userId, $data));
+                $payload = $this->documentPayload($organizationId, $userId, $data);
+                $payload['source_create_status'] = 'pending';
+                $payload['source_request_fingerprint'] = $requestFingerprint;
+                $document = LegalArchiveDocument::query()->create($payload);
                 $this->replaceLinks($document, $data['links'] ?? []);
                 $documentFile = $file instanceof UploadedFile
-                    ? LegalArchiveDocumentFile::query()->create([
-                        'document_id' => $document->id,
-                        'organization_id' => $organizationId,
-                        'role' => 'primary',
-                        'title' => $document->title,
-                        'sort_order' => 0,
-                        'is_required' => true,
-                    ])
+                    ? $this->primaryFile($document, $organizationId)
                     : null;
-                $this->audit->recordForActorId('create', $document, $userId, [
+                $this->audit->recordForActorId('create_pending', $document, $userId, [
                     'after' => $this->auditSnapshot($document),
                     'source_event_id' => $sourceCreateIdentity?->sourceEventId(),
+                    'request_fingerprint' => $requestFingerprint,
                 ]);
                 if ($userId !== null) {
                     $this->access->bootstrapCreator($document, $userId);
                 }
 
-                return [$document, $documentFile, false];
+                return [$document, $documentFile, false, $file instanceof UploadedFile];
             });
         } catch (QueryException $exception) {
-            $replay = $this->resolveSourceCreateReplay($sourceCreateIdentity);
-            if ($replay instanceof LegalArchiveDocument) {
+            $replay = $this->resolveSourceCreateReplay($sourceCreateIdentity, $requestFingerprint, false);
+            if ($replay instanceof LegalArchiveDocument && (string) $replay->source_create_status === 'completed') {
                 return $this->findForOrganization($organizationId, (int) $replay->id) ?? $replay;
             }
 
@@ -144,7 +170,7 @@ final class LegalArchiveRegistryService
             return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
         }
 
-        if ($file instanceof UploadedFile && $documentFile instanceof LegalArchiveDocumentFile) {
+        if ($requiresUpload && $file instanceof UploadedFile && $documentFile instanceof LegalArchiveDocumentFile) {
             try {
                 $this->documentFileService->addVersion($documentFile, $file, new VersionInput(
                     versionNumber: isset($data['version_number']) ? (string) $data['version_number'] : '1.0',
@@ -152,11 +178,24 @@ final class LegalArchiveRegistryService
                     uploadedByUserId: $userId,
                     metadata: is_array($data['version_metadata'] ?? null) ? $data['version_metadata'] : null,
                 ));
-            } catch (LegalDocumentVersionPersistenceFailed $exception) {
-                DB::transaction(static fn () => $document->forceDelete());
+            } catch (Throwable $exception) {
+                $this->markSourceCreateFailedWithoutMasking($document, $userId, $exception);
 
+                if (! $exception instanceof \App\Services\LegalArchive\Files\LegalDocumentScanFailed
+                    && ! $exception instanceof \App\Services\LegalArchive\Files\LegalDocumentFileRejected
+                ) {
+                    throw new LegalDocumentCreateFailed($document, $sourceCreateIdentity !== null, $exception);
+                }
                 throw $exception;
             }
+        }
+
+        try {
+            $this->markSourceCreateCompleted($document, $userId, $sourceCreateIdentity);
+        } catch (Throwable $exception) {
+            $this->markSourceCreateFailedWithoutMasking($document, $userId, $exception);
+
+            throw new LegalDocumentCreateFailed($document, $sourceCreateIdentity !== null, $exception);
         }
 
         return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
@@ -210,13 +249,16 @@ final class LegalArchiveRegistryService
         );
 
         try {
-            return $this->documentFileService->addVersion($documentFile, $file, new VersionInput(
+            $version = $this->documentFileService->addVersion($documentFile, $file, new VersionInput(
                 versionNumber: isset($data['version_number']) ? (string) $data['version_number'] : null,
                 versionLabel: isset($data['version_label']) ? (string) $data['version_label'] : null,
                 uploadedByUserId: $userId,
                 metadata: is_array($data['metadata'] ?? null) ? $data['metadata'] : null,
                 makeCurrent: $makeCurrent,
             ));
+            $this->completeCreateAfterVersion($document, $userId);
+
+            return $version;
         } catch (LegalDocumentVersionPersistenceFailed $exception) {
             if ($documentFile->wasRecentlyCreated) {
                 $documentFile->delete();
@@ -246,6 +288,7 @@ final class LegalArchiveRegistryService
     {
         $query = LegalArchiveDocument::query();
         $this->access->scopeAccessibleQuery($query, $actor, $organizationId);
+        $query->where('source_create_status', 'completed');
 
         $search = LegalArchiveSearchQuery::sanitize($filters['q'] ?? $filters['search'] ?? null);
         if ($search !== null) {
@@ -335,6 +378,8 @@ final class LegalArchiveRegistryService
             'document_number',
             'document_type',
             'status',
+            'type_profile_code',
+            'confidentiality_level',
             'direction',
             'source_system',
             'counterparty_name',
@@ -435,16 +480,17 @@ final class LegalArchiveRegistryService
 
     private function resolveSourceCreateReplay(
         ?LegalDocumentSourceCreateIdentity $identity,
+        ?string $requestFingerprint,
+        bool $lockForUpdate,
     ): ?LegalArchiveDocument {
         if ($identity === null) {
             return null;
         }
 
-        $sourceDocument = LegalArchiveDocument::withTrashed()
+        $sourceQuery = LegalArchiveDocument::withTrashed()
             ->where('organization_id', $identity->organizationId)
             ->where('source_type', $identity->sourceType)
-            ->where('source_id', $identity->sourceId)
-            ->first();
+            ->where('source_id', $identity->sourceId);
         $commandQuery = LegalArchiveDocument::withTrashed()
             ->where('organization_id', $identity->organizationId)
             ->where('source_idempotency_key', $identity->idempotencyKey);
@@ -453,6 +499,11 @@ final class LegalArchiveRegistryService
         } else {
             $commandQuery->where('created_by_user_id', $identity->actorId);
         }
+        if ($lockForUpdate) {
+            $sourceQuery->lockForUpdate();
+            $commandQuery->lockForUpdate();
+        }
+        $sourceDocument = $sourceQuery->first();
         $commandDocument = $commandQuery->first();
 
         if (! $sourceDocument instanceof LegalArchiveDocument && ! $commandDocument instanceof LegalArchiveDocument) {
@@ -464,17 +515,130 @@ final class LegalArchiveRegistryService
             || ! $commandDocument instanceof LegalArchiveDocument
             || (int) $sourceDocument->id !== (int) $commandDocument->id
             || ! $identity->matches($sourceDocument)
+            || ! is_string($requestFingerprint)
+            || ! is_string($sourceDocument->source_request_fingerprint)
+            || ! hash_equals($sourceDocument->source_request_fingerprint, $requestFingerprint)
         ) {
+            $this->sourceIdentityConflict();
+        }
+
+        if ((string) $sourceDocument->source_create_status === 'pending') {
+            $this->sourceCreateInProgress();
+        }
+        if (! in_array((string) $sourceDocument->source_create_status, ['completed', 'failed'], true)) {
             $this->sourceIdentityConflict();
         }
 
         return $sourceDocument;
     }
 
+    private function primaryFile(LegalArchiveDocument $document, int $organizationId): LegalArchiveDocumentFile
+    {
+        return LegalArchiveDocumentFile::query()->firstOrCreate([
+            'document_id' => $document->id,
+            'organization_id' => $organizationId,
+            'role' => 'primary',
+        ], [
+            'title' => $document->title,
+            'sort_order' => 0,
+            'is_required' => true,
+        ]);
+    }
+
+    private function markSourceCreateCompleted(
+        LegalArchiveDocument $document,
+        ?int $userId,
+        ?LegalDocumentSourceCreateIdentity $identity,
+    ): void {
+        DB::transaction(function () use ($document, $userId, $identity): void {
+            $locked = LegalArchiveDocument::query()->whereKey($document->id)->lockForUpdate()->firstOrFail();
+            if ((string) $locked->source_create_status === 'completed') {
+                return;
+            }
+            if ((string) $locked->source_create_status !== 'pending') {
+                throw new InvalidArgumentException('legal_document_source_create_transition_invalid');
+            }
+            $locked->forceFill([
+                'source_create_status' => 'completed',
+                'source_create_failure_fingerprint' => null,
+                'source_create_failed_at' => null,
+            ])->save();
+            $this->audit->recordForActorId('create_completed', $locked, $userId, [
+                'after' => $this->auditSnapshot($locked),
+                'source_event_id' => $identity === null
+                    ? 'create:manual:completed'
+                    : $identity->sourceEventId().':completed',
+                'request_fingerprint' => $locked->source_request_fingerprint,
+            ]);
+        });
+    }
+
+    private function markSourceCreateFailedWithoutMasking(
+        LegalArchiveDocument $document,
+        ?int $userId,
+        Throwable $original,
+    ): void {
+        $failureFingerprint = hash('sha256', $original::class.'|'.$original->getMessage());
+        try {
+            DB::transaction(function () use ($document, $userId, $failureFingerprint): void {
+                $locked = LegalArchiveDocument::query()->whereKey($document->id)->lockForUpdate()->firstOrFail();
+                $locked->forceFill([
+                    'source_create_status' => 'failed',
+                    'source_create_failure_fingerprint' => $failureFingerprint,
+                    'source_create_failed_at' => now(),
+                ])->save();
+                $this->audit->recordForActorId('create_failed', $locked, $userId, [
+                    'source_event_id' => 'create-failed:'.$failureFingerprint,
+                    'request_fingerprint' => $locked->source_request_fingerprint,
+                    'failure_fingerprint' => $failureFingerprint,
+                ]);
+            });
+        } catch (Throwable $auditFailure) {
+            Log::error('legal_archive.source_create_failure_audit_error', [
+                'document_id' => (int) $document->id,
+                'organization_id' => (int) $document->organization_id,
+                'failure_fingerprint' => $failureFingerprint,
+                'audit_failure' => $auditFailure::class,
+            ]);
+            try {
+                LegalArchiveDocument::query()->whereKey($document->id)->update([
+                    'source_create_status' => 'failed',
+                    'source_create_failure_fingerprint' => $failureFingerprint,
+                    'source_create_failed_at' => now(),
+                ]);
+            } catch (Throwable $stateFailure) {
+                Log::critical('legal_archive.source_create_failure_state_error', [
+                    'document_id' => (int) $document->id,
+                    'failure_fingerprint' => $failureFingerprint,
+                    'state_failure' => $stateFailure::class,
+                ]);
+            }
+        }
+    }
+
+    private function completeCreateAfterVersion(
+        LegalArchiveDocument $document,
+        ?int $userId,
+    ): void {
+        $document->refresh();
+        if (! in_array((string) $document->source_create_status, ['pending', 'failed'], true)) {
+            return;
+        }
+        $document->forceFill(['source_create_status' => 'pending', 'source_create_failure_fingerprint' => null, 'source_create_failed_at' => null])->save();
+        $this->markSourceCreateCompleted($document, $userId, null);
+    }
+
     private function sourceIdentityConflict(): never
     {
         throw ValidationException::withMessages([
             'source_id' => [trans_message('legal_archive.messages.source_already_linked')],
+        ]);
+    }
+
+    private function sourceCreateInProgress(): never
+    {
+        throw ValidationException::withMessages([
+            'source_idempotency_key' => [trans_message('legal_archive.messages.source_create_in_progress')],
         ]);
     }
 
@@ -494,6 +658,8 @@ final class LegalArchiveRegistryService
             'current_primary_version_id',
             'lock_version',
             'archived_at',
+            'source_create_status',
+            'source_request_fingerprint',
         ]);
     }
 }

@@ -116,4 +116,22 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
         self::assertStringContainsString('new LegalArchiveDocumentResource(', $controller);
         self::assertStringContainsString('new LegalArchiveDocumentVersionResource($e->version)', $controller);
     }
+
+    public function test_create_failure_returns_durable_recovery_contract_instead_of_generic_error(): void
+    {
+        $controller = file_get_contents(
+            __DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchiveController.php',
+        );
+        $resource = file_get_contents(
+            __DIR__.'/../../../app/Http/Resources/Api/V1/Admin/LegalArchive/LegalArchiveDocumentResource.php',
+        );
+
+        self::assertIsString($controller);
+        self::assertIsString($resource);
+        self::assertStringContainsString('instanceof LegalDocumentCreateFailed', $controller);
+        self::assertStringContainsString("'operation_result' => 'document_create_failed'", $controller);
+        self::assertStringContainsString("? 'repeat_create' : 'add_version'", $controller);
+        self::assertStringContainsString("'retry_document_id' => (int) \$e->document->id", $controller);
+        self::assertStringContainsString("'source_create_status' => \$this->source_create_status", $resource);
+    }
 }
