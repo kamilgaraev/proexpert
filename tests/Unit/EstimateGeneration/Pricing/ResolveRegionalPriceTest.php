@@ -282,6 +282,41 @@ final class ResolveRegionalPriceTest extends TestCase
         self::assertSame('1.000000000020', $priced['labor'][0]['quantity']);
     }
 
+    #[Test]
+    public function real_pricing_flow_does_not_apply_a_second_conversion_to_a_residential_selected_resource(): void
+    {
+        $prices = new ResolveRegionalPrice(static fn (int $priceId): array => [
+            'id' => $priceId,
+            'resource_code' => '12.2.05.02-1001',
+            'unit' => 'м3',
+            'dataset_version_id' => 6,
+            'dataset_version' => '2026-05-07',
+            'dataset_status' => 'parsed',
+            'regional_price_version_id' => null,
+            'region_id' => null,
+            'price_zone_id' => null,
+            'period_id' => null,
+            'base_price' => '10000.0000',
+            'source_type' => 'fsnb_2022',
+        ]);
+        $conversions = new ResolveUnitConversion(static fn (): array => []);
+        $resource = $this->convertedResource();
+        $resource['unit'] = 'm2';
+        $item = [
+            'item_type' => 'priced_work',
+            'materials' => [$resource],
+            'labor' => [],
+            'machinery' => [],
+            'other_resources' => [],
+        ];
+
+        $priced = (new EstimatePricingService($prices, $conversions))->price([$item], $this->context())[0];
+
+        self::assertSame('4000.00', $priced['total_cost']);
+        self::assertSame('2000.0000', $priced['materials'][0]['unit_price']);
+        self::assertArrayNotHasKey('unit_conversion_id', $priced['materials'][0]['normative_ref']);
+    }
+
     #[DataProvider('invalidPositiveIdentifiers')]
     #[Test]
     public function identifiers_must_be_positive_integers_or_canonical_digit_strings(mixed $invalid): void
