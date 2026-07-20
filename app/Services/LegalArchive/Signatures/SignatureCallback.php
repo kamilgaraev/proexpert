@@ -12,5 +12,7 @@ final readonly class SignatureCallback
         public string $correlationId,
         public string $replayToken,
         public array $payload,
-    ) {}
+    ) {
+        BoundedEvidencePayload::assert($payload);
+    }
 }

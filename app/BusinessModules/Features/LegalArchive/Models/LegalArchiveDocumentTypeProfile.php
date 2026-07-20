@@ -23,6 +23,8 @@ final class LegalArchiveDocumentTypeProfile extends Model
         'required_fields',
         'required_file_roles',
         'requires_signature',
+        'allowed_signature_kinds',
+        'required_signature_kinds',
         'workflow_template_id',
         'retention_policy',
         'confidentiality_level',
@@ -35,6 +37,8 @@ final class LegalArchiveDocumentTypeProfile extends Model
         'required_fields' => 'array',
         'required_file_roles' => 'array',
         'requires_signature' => 'boolean',
+        'allowed_signature_kinds' => 'array',
+        'required_signature_kinds' => 'array',
         'is_active' => 'boolean',
         'lock_version' => 'integer',
     ];

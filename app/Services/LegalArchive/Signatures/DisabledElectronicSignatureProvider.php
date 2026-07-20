@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace App\Services\LegalArchive\Signatures;
 
-use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentSignature;
-
 final class DisabledElectronicSignatureProvider implements ElectronicSignatureProvider
 {
     public function start(SignatureContext $context): SignatureSession
@@ -18,7 +16,7 @@ final class DisabledElectronicSignatureProvider implements ElectronicSignaturePr
         throw new ElectronicSignatureUnavailable;
     }
 
-    public function verify(LegalDocumentSignature $signature): SignatureVerificationResult
+    public function verify(SignatureVerificationContext $context): SignatureVerificationResult
     {
         throw new ElectronicSignatureUnavailable;
     }

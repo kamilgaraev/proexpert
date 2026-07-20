@@ -13,5 +13,7 @@ final readonly class SignatureSession
         public string $redirectUrl,
         public ?string $expiresAt = null,
         public array $metadata = [],
-    ) {}
+    ) {
+        BoundedEvidencePayload::assert($metadata);
+    }
 }

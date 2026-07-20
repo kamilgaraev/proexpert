@@ -6,6 +6,7 @@ namespace App\Services\LegalArchive\Profiles;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentTypeProfile;
 use Closure;
+use Illuminate\Container\Container;
 use InvalidArgumentException;
 
 use function trans_message;
@@ -36,7 +37,16 @@ final class LegalDocumentProfileRegistry
                 return $profile?->toArray();
             };
 
-        $configuredProfiles = $standardProfiles ?? config('legal-document-profiles', []);
+        $configuredProfiles = $standardProfiles;
+        if ($configuredProfiles === null) {
+            $container = Container::getInstance();
+            $configuredProfiles = $container->bound('config')
+                ? config('legal-document-profiles', [])
+                : require dirname(__DIR__, 4).'/config/legal-document-profiles.php';
+            if (! is_array($configuredProfiles) || $configuredProfiles === []) {
+                $configuredProfiles = require dirname(__DIR__, 4).'/config/legal-document-profiles.php';
+            }
+        }
         $this->standardProfiles = is_array($configuredProfiles) ? $configuredProfiles : [];
     }
 
@@ -99,6 +109,12 @@ final class LegalDocumentProfileRegistry
                 ?? $baseProfile->confidentialityLevel,
             isActive: true,
             lockVersion: max(0, (int) ($custom['lock_version'] ?? 0)),
+            allowedSignatureKinds: array_key_exists('allowed_signature_kinds', $custom)
+                ? $this->signatureKinds($custom, 'allowed_signature_kinds')
+                : $baseProfile->allowedSignatureKinds,
+            requiredSignatureKinds: array_key_exists('required_signature_kinds', $custom)
+                ? $this->signatureKinds($custom, 'required_signature_kinds')
+                : $baseProfile->requiredSignatureKinds,
         );
     }
 
@@ -119,6 +135,8 @@ final class LegalDocumentProfileRegistry
             confidentialityLevel: $this->nullableString($definition['confidentiality_level'] ?? null) ?? 'internal',
             isActive: true,
             lockVersion: 0,
+            allowedSignatureKinds: $this->signatureKinds($definition, 'allowed_signature_kinds', ['paper_original', 'external_electronic', 'provider_electronic']),
+            requiredSignatureKinds: $this->signatureKinds($definition, 'required_signature_kinds'),
         );
     }
 
@@ -142,6 +160,18 @@ final class LegalDocumentProfileRegistry
         $value = $values[$key] ?? [];
 
         return is_array($value) ? $this->uniqueStrings($value) : [];
+    }
+
+    /** @param array<string, mixed> $values @param list<string> $default @return list<string> */
+    private function signatureKinds(array $values, string $key, array $default = []): array
+    {
+        $kinds = array_key_exists($key, $values) ? $this->stringList($values, $key) : $default;
+        $allowed = ['paper_original', 'external_electronic', 'provider_electronic'];
+        if (array_diff($kinds, $allowed) !== []) {
+            throw new InvalidArgumentException(trans_message('legal_archive.profiles.schema_invalid'));
+        }
+
+        return $kinds;
     }
 
     /** @param array<mixed> $values @return list<string> */

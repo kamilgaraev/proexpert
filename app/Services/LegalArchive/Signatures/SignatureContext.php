@@ -13,7 +13,9 @@ final readonly class SignatureContext
         public string $contentHash,
         public string $correlationId,
         public string $callbackUrl,
-        public array $signers,
+        public SignerIdentitySet $signers,
+        public string $providerOperationId,
+        public string $providerIdempotencyKey,
         public array $metadata = [],
     ) {}
 }

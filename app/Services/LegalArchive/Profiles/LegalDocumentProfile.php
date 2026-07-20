@@ -25,5 +25,7 @@ final readonly class LegalDocumentProfile
         public string $confidentialityLevel,
         public bool $isActive,
         public int $lockVersion,
+        public array $allowedSignatureKinds = ['paper_original', 'external_electronic', 'provider_electronic'],
+        public array $requiredSignatureKinds = [],
     ) {}
 }

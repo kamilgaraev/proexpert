@@ -44,6 +44,7 @@ return new class extends Migration
     {
         return [
             'legal_document_parties_signature_ownership_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_document_parties_signature_ownership_unique ON legal_document_parties USING btree (id, document_version_id, document_id, organization_id)',
+            'legal_document_versions_signature_hash_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_document_versions_signature_hash_unique ON legal_archive_document_versions USING btree (id, document_id, organization_id, content_hash)',
             'legal_signature_requests_ownership_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_signature_requests_ownership_unique ON legal_signature_requests USING btree (id, document_version_id, document_id, organization_id)',
             'legal_signature_requests_actor_idempotency_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_signature_requests_actor_idempotency_unique ON legal_signature_requests USING btree (organization_id, requested_by_user_id, idempotency_key)',
             'legal_signature_requests_correlation_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_signature_requests_correlation_unique ON legal_signature_requests USING btree (correlation_id)',
@@ -56,6 +57,8 @@ return new class extends Migration
             'legal_document_signatures_version_idx' => 'CREATE INDEX CONCURRENTLY legal_document_signatures_version_idx ON legal_document_signatures USING btree (organization_id, document_version_id, signed_at)',
             'legal_signature_verifications_idempotency_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_signature_verifications_idempotency_unique ON legal_signature_verifications USING btree (signature_id, idempotency_key)',
             'legal_signature_verifications_signature_idx' => 'CREATE INDEX CONCURRENTLY legal_signature_verifications_signature_idx ON legal_signature_verifications USING btree (organization_id, signature_id, verified_at)',
+            'legal_signature_provider_operations_provider_request_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_signature_provider_operations_provider_request_unique ON legal_signature_provider_operations USING btree (provider, provider_request_id) WHERE provider_request_id IS NOT NULL',
+            'legal_signature_provider_operations_lease_idx' => "CREATE INDEX CONCURRENTLY legal_signature_provider_operations_lease_idx ON legal_signature_provider_operations USING btree (status, lease_expires_at) WHERE status = 'starting'",
         ];
     }
 

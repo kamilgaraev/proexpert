@@ -7,6 +7,8 @@ namespace Tests\Unit\LegalArchive;
 use App\Services\LegalArchive\Signatures\DisabledElectronicSignatureProvider;
 use App\Services\LegalArchive\Signatures\ElectronicSignatureUnavailable;
 use App\Services\LegalArchive\Signatures\SignatureContext;
+use App\Services\LegalArchive\Signatures\SignerIdentity;
+use App\Services\LegalArchive\Signatures\SignerIdentitySet;
 use Illuminate\Container\Container;
 use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\TestCase;
@@ -54,7 +56,17 @@ final class LegalDocumentSignatureServiceTest extends TestCase
     {
         $provider = new DisabledElectronicSignatureProvider;
         try {
-            $provider->start(new SignatureContext(1, 2, 3, str_repeat('a', 64), str_repeat('b', 64), 'https://example.test/callback', [['name' => 'Иван']]));
+            $provider->start(new SignatureContext(
+                1,
+                2,
+                3,
+                str_repeat('a', 64),
+                str_repeat('b', 64),
+                'https://example.test/callback',
+                new SignerIdentitySet([new SignerIdentity('manual', 'Иван')]),
+                'operation-id',
+                str_repeat('c', 64),
+            ));
             self::fail('Disabled provider started a session.');
         } catch (ElectronicSignatureUnavailable $exception) {
             self::assertSame(503, $exception->statusCode());
@@ -76,7 +88,7 @@ final class LegalDocumentSignatureServiceTest extends TestCase
         self::assertStringContainsString('CREATE UNIQUE INDEX CONCURRENTLY', $indexes);
         self::assertStringContainsString('pg_get_indexdef', $indexes);
         self::assertStringContainsString('legal_signature_append_only_guard', $constraints);
-        self::assertStringContainsString('legal_archive_versions_immutable_guard', $constraints);
+        self::assertStringNotContainsString('CREATE OR REPLACE FUNCTION legal_archive_versions_immutable_guard', $constraints);
         self::assertStringContainsString('VALIDATE CONSTRAINT', $validate);
         self::assertStringContainsString('forward_only', $create);
     }

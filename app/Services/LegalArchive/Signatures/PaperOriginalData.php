@@ -10,10 +10,14 @@ final readonly class PaperOriginalData
 {
     public function __construct(
         public DateTimeImmutable $signedAt,
-        public array $signers,
+        public SignerIdentitySet $signers,
         public string $storageLocation,
         public string $idempotencyKey,
         public ?int $partyId = null,
-        public array $metadata = [],
+        public ?string $partyRoleSnapshot = null,
+        public bool $authorityConfirmed = false,
+        public string $timeSource = 'operator',
+        public ?string $clientIpHash = null,
+        public ?string $userAgentHash = null,
     ) {}
 }
