@@ -6,11 +6,13 @@ namespace App\Services\LegalArchive\Retention;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Notifications\LegalArchive\LegalDocumentDeadlineNotification;
+use App\Services\LegalArchive\LegalDocumentNotificationPublisher;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 
 final class LegalDocumentRetentionService
 {
+    public function __construct(private readonly LegalDocumentNotificationPublisher $notifications) {}
     /** @return Collection<int, LegalArchiveDocument> */
     public function evaluate(?Carbon $at = null): Collection
     {
@@ -24,7 +26,7 @@ final class LegalDocumentRetentionService
                 $document->forceFill(['metadata' => [...$metadata, 'retention_review_candidate_at' => $at->toISOString()]])->save();
                 foreach ($document->obligations as $obligation) {
                     if ($obligation->responsible !== null && $obligation->status === 'open' && $obligation->due_at?->isPast()) {
-                        $obligation->responsible->notify(new LegalDocumentDeadlineNotification($document, 'obligation_overdue'));
+                        $this->notifications->publish($document, $obligation->responsible, 'obligation_overdue:'.$obligation->id.':'.$obligation->due_at?->toDateString(), new LegalDocumentDeadlineNotification($document, 'obligation_overdue'));
                     }
                 }
                 return true;
