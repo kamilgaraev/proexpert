@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
 final class SessionSnapshotEtag
 {
-    private const REPRESENTATION_VERSION = 'v4';
+    private const REPRESENTATION_VERSION = 'v5';
 
     public static function forRevision(int $organizationId, int $sessionId, string $revision): string
     {
