@@ -689,7 +689,8 @@ final class LegalDocumentFileService
         Throwable $exception,
     ): void {
         $now = now();
-        $this->database()->table('legal_archive_file_cleanup_debts')->upsert([[
+        $debtKey = hash('sha256', "{$organizationId}:{$storagePath}:legacy");
+        $row = [
             'organization_id' => $organizationId,
             'storage_path' => $storagePath,
             'reason' => $reason,
@@ -699,7 +700,13 @@ final class LegalDocumentFileService
             'resolved_at' => null,
             'created_at' => $now,
             'updated_at' => $now,
-        ]], ['organization_id', 'storage_path'], [
+        ];
+        $uniqueBy = ['organization_id', 'storage_path'];
+        if ($this->database()->getSchemaBuilder()->hasColumn('legal_archive_file_cleanup_debts', 'debt_key')) {
+            $row['debt_key'] = $debtKey;
+            $uniqueBy = ['organization_id', 'debt_key'];
+        }
+        $this->database()->table('legal_archive_file_cleanup_debts')->upsert([$row], $uniqueBy, [
             'reason',
             'next_attempt_at',
             'last_error',

@@ -26,7 +26,11 @@ return new class extends Migration
             }
             DB::statement("ALTER TABLE {$table} ADD CONSTRAINT {$name} {$definition}");
         }
-        $this->installGuards();
+        $schema = (string) DB::selectOne('SELECT current_schema() AS name')->name;
+        if (preg_match('/^[a-z_][a-z0-9_]*$/D', $schema) !== 1) {
+            throw new RuntimeException('legal_signature_schema_identifier_invalid');
+        }
+        $this->installGuards($schema);
         $this->assertGuardDescriptors();
     }
 
@@ -42,10 +46,12 @@ return new class extends Migration
             'legal_signature_requests_document_fk' => ['legal_signature_requests', 'FOREIGN KEY (document_id, organization_id) REFERENCES legal_archive_documents (id, organization_id) ON DELETE RESTRICT NOT VALID'],
             'legal_signature_requests_version_fk' => ['legal_signature_requests', 'FOREIGN KEY (document_version_id, document_id, organization_id, signed_content_hash) REFERENCES legal_archive_document_versions (id, document_id, organization_id, content_hash) ON DELETE RESTRICT NOT VALID'],
             'legal_signature_requests_party_fk' => ['legal_signature_requests', 'FOREIGN KEY (party_id, document_version_id, document_id, organization_id) REFERENCES legal_document_parties (id, document_version_id, document_id, organization_id) ON DELETE RESTRICT NOT VALID'],
+            'legal_signature_requests_replaces_fk' => ['legal_signature_requests', 'FOREIGN KEY (replaces_request_id, document_version_id, document_id, organization_id) REFERENCES legal_signature_requests (id, document_version_id, document_id, organization_id) ON DELETE RESTRICT NOT VALID'],
             'legal_signature_requests_user_fk' => ['legal_signature_requests', 'FOREIGN KEY (requested_by_user_id) REFERENCES users (id) ON DELETE RESTRICT NOT VALID'],
             'legal_signature_requests_method_check' => ['legal_signature_requests', "CHECK (method IN ('paper','external_electronic','provider_electronic')) NOT VALID"],
             'legal_signature_requests_status_check' => ['legal_signature_requests', "CHECK (status IN ('pending','completed','failed','revoked','expired')) NOT VALID"],
-            'legal_signature_requests_hash_check' => ['legal_signature_requests', "CHECK (signed_content_hash ~ '^[a-f0-9]{64}$' AND signer_snapshot_hash ~ '^[a-f0-9]{64}$' AND requirement_snapshot_hash ~ '^[a-f0-9]{64}$' AND correlation_id ~ '^[a-f0-9]{64}$' AND request_hash ~ '^[a-f0-9]{64}$' AND (callback_replay_hash IS NULL OR callback_replay_hash ~ '^[a-f0-9]{64}$') AND (callback_payload_hash IS NULL OR callback_payload_hash ~ '^[a-f0-9]{64}$')) NOT VALID"],
+            'legal_signature_requests_hash_check' => ['legal_signature_requests', "CHECK (signed_content_hash ~ '^[a-f0-9]{64}$' AND signer_snapshot_hash ~ '^[a-f0-9]{64}$' AND requirement_snapshot_hash ~ '^[a-f0-9]{64}$' AND requirement_group_key ~ '^[a-f0-9]{64}$' AND correlation_id ~ '^[a-f0-9]{64}$' AND request_hash ~ '^[a-f0-9]{64}$' AND (callback_replay_hash IS NULL OR callback_replay_hash ~ '^[a-f0-9]{64}$') AND (callback_payload_hash IS NULL OR callback_payload_hash ~ '^[a-f0-9]{64}$')) NOT VALID"],
+            'legal_signature_requests_replacement_check' => ['legal_signature_requests', 'CHECK (replaces_request_id IS NULL OR replaces_request_id <> id) NOT VALID'],
             'legal_signature_requests_signers_check' => ['legal_signature_requests', "CHECK (jsonb_typeof(signers) = 'array' AND jsonb_array_length(signers) > 0) NOT VALID"],
             'legal_signature_requests_provider_check' => ['legal_signature_requests', "CHECK ((method = 'paper' AND provider IS NULL) OR (method IN ('external_electronic','provider_electronic') AND NULLIF(btrim(provider), '') IS NOT NULL)) NOT VALID"],
             'legal_signature_requests_callback_check' => ['legal_signature_requests', 'CHECK ((callback_replay_hash IS NULL) = (callback_payload_hash IS NULL) AND (status = \'pending\' OR completed_at IS NOT NULL)) NOT VALID'],
@@ -68,9 +74,16 @@ return new class extends Migration
             'legal_signature_verifications_hash_check' => ['legal_signature_verifications', "CHECK (signed_content_hash ~ '^[a-f0-9]{64}$' AND request_hash ~ '^[a-f0-9]{64}$') NOT VALID"],
             'legal_signature_verifications_revocation_check' => ['legal_signature_verifications', "CHECK ((status = 'revoked' AND NULLIF(btrim(revocation_reason), '') IS NOT NULL) OR (status <> 'revoked' AND revocation_reason IS NULL)) NOT VALID"],
             'legal_signature_provider_operations_request_fk' => ['legal_signature_provider_operations', 'FOREIGN KEY (signature_request_id, document_version_id, document_id, organization_id) REFERENCES legal_signature_requests (id, document_version_id, document_id, organization_id) ON DELETE RESTRICT NOT VALID'],
-            'legal_signature_provider_operations_status_check' => ['legal_signature_provider_operations', "CHECK (status IN ('starting','started','failed')) NOT VALID"],
+            'legal_signature_provider_operations_supersedes_fk' => ['legal_signature_provider_operations', 'FOREIGN KEY (supersedes_operation_id) REFERENCES legal_signature_provider_operations (id) ON DELETE RESTRICT NOT VALID'],
+            'legal_signature_provider_operations_status_check' => ['legal_signature_provider_operations', "CHECK (status IN ('starting','started','failed','expired')) NOT VALID"],
             'legal_signature_provider_operations_hash_check' => ['legal_signature_provider_operations', "CHECK (correlation_id ~ '^[a-f0-9]{64}$' AND request_idempotency_key ~ '^[a-f0-9]{64}$' AND provider_idempotency_key ~ '^[a-f0-9]{64}$' AND generation > 0 AND (lease_token_hash IS NULL OR lease_token_hash ~ '^[a-f0-9]{64}$')) NOT VALID"],
             'legal_signature_provider_operations_lease_check' => ['legal_signature_provider_operations', "CHECK ((status = 'starting' AND lease_token_hash IS NOT NULL AND lease_expires_at IS NOT NULL) OR (status <> 'starting' AND lease_token_hash IS NULL AND lease_expires_at IS NULL)) NOT VALID"],
+            'legal_signature_cleanup_debts_document_fk' => ['legal_archive_file_cleanup_debts', 'FOREIGN KEY (document_id, organization_id) REFERENCES legal_archive_documents (id, organization_id) ON DELETE RESTRICT NOT VALID'],
+            'legal_signature_cleanup_debts_version_fk' => ['legal_archive_file_cleanup_debts', 'FOREIGN KEY (document_version_id, document_id, organization_id) REFERENCES legal_archive_document_versions (id, document_id, organization_id) ON DELETE RESTRICT NOT VALID'],
+            'legal_signature_cleanup_debts_hash_check' => ['legal_archive_file_cleanup_debts', "CHECK (debt_key ~ '^[a-f0-9]{64}$' AND (content_hash IS NULL OR content_hash ~ '^[a-f0-9]{64}$') AND (lease_token_hash IS NULL OR lease_token_hash ~ '^[a-f0-9]{64}$')) NOT VALID"],
+            'legal_signature_cleanup_debts_binding_check' => ['legal_archive_file_cleanup_debts', 'CHECK ((document_version_id IS NULL AND document_id IS NULL) OR (document_version_id IS NOT NULL AND document_id IS NOT NULL)) NOT VALID'],
+            'legal_signature_cleanup_debts_lease_check' => ['legal_archive_file_cleanup_debts', 'CHECK ((lease_token_hash IS NULL) = (lease_expires_at IS NULL)) NOT VALID'],
+            'legal_signature_cleanup_debts_terminal_check' => ['legal_archive_file_cleanup_debts', 'CHECK (resolved_at IS NULL OR dead_lettered_at IS NULL) NOT VALID'],
         ];
     }
 
@@ -209,18 +222,16 @@ PLPGSQL;
         return (string) preg_replace('/\s+/', '', strtolower(trim($body)));
     }
 
-    private function installGuards(): void
+    private function installGuards(string $schema): void
     {
-        DB::unprepared(<<<'SQL'
+        DB::unprepared(str_replace('__SCHEMA__', $schema, <<<'SQL'
 CREATE OR REPLACE FUNCTION legal_signature_append_only_guard() RETURNS trigger AS $$
 BEGIN
     RAISE EXCEPTION 'legal_signature_evidence_immutable';
 END;
-$$ LANGUAGE plpgsql SET search_path = pg_catalog, public;
-DROP TRIGGER IF EXISTS legal_document_signatures_immutable_guard ON legal_document_signatures;
-CREATE TRIGGER legal_document_signatures_immutable_guard BEFORE UPDATE OR DELETE ON legal_document_signatures FOR EACH ROW EXECUTE FUNCTION legal_signature_append_only_guard();
-DROP TRIGGER IF EXISTS legal_signature_verifications_immutable_guard ON legal_signature_verifications;
-CREATE TRIGGER legal_signature_verifications_immutable_guard BEFORE UPDATE OR DELETE ON legal_signature_verifications FOR EACH ROW EXECUTE FUNCTION legal_signature_append_only_guard();
+$$ LANGUAGE plpgsql SET search_path = pg_catalog, "__SCHEMA__";
+CREATE OR REPLACE TRIGGER legal_document_signatures_immutable_guard BEFORE UPDATE OR DELETE ON "__SCHEMA__".legal_document_signatures FOR EACH ROW EXECUTE FUNCTION legal_signature_append_only_guard();
+CREATE OR REPLACE TRIGGER legal_signature_verifications_immutable_guard BEFORE UPDATE OR DELETE ON "__SCHEMA__".legal_signature_verifications FOR EACH ROW EXECUTE FUNCTION legal_signature_append_only_guard();
 
 CREATE OR REPLACE FUNCTION legal_signature_requests_mutation_guard() RETURNS trigger AS $$
 BEGIN
@@ -233,13 +244,13 @@ BEGIN
     IF (OLD.organization_id, OLD.document_id, OLD.document_version_id, OLD.party_id, OLD.method,
         OLD.provider, OLD.signed_content_hash, OLD.signers, OLD.signer_snapshot_hash, OLD.profile_code,
         OLD.profile_lock_version, OLD.allowed_signature_kinds, OLD.required_signature_kinds, OLD.allowed_signature_formats, OLD.requirement_snapshot_hash,
-        OLD.correlation_id, OLD.idempotency_key, OLD.request_hash,
+        OLD.requirement_group_key, OLD.replaces_request_id, OLD.correlation_id, OLD.idempotency_key, OLD.request_hash,
         OLD.requested_by_user_id, OLD.requested_at, OLD.expires_at, OLD.created_at)
        IS DISTINCT FROM
        (NEW.organization_id, NEW.document_id, NEW.document_version_id, NEW.party_id, NEW.method,
         NEW.provider, NEW.signed_content_hash, NEW.signers, NEW.signer_snapshot_hash, NEW.profile_code,
         NEW.profile_lock_version, NEW.allowed_signature_kinds, NEW.required_signature_kinds, NEW.allowed_signature_formats, NEW.requirement_snapshot_hash,
-        NEW.correlation_id, NEW.idempotency_key, NEW.request_hash,
+        NEW.requirement_group_key, NEW.replaces_request_id, NEW.correlation_id, NEW.idempotency_key, NEW.request_hash,
         NEW.requested_by_user_id, NEW.requested_at, NEW.expires_at, NEW.created_at) THEN
         RAISE EXCEPTION 'legal_signature_request_identity_update_forbidden';
     END IF;
@@ -251,14 +262,13 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SET search_path = pg_catalog, public;
-DROP TRIGGER IF EXISTS legal_signature_requests_mutation_guard ON legal_signature_requests;
-CREATE TRIGGER legal_signature_requests_mutation_guard BEFORE UPDATE OR DELETE ON legal_signature_requests FOR EACH ROW EXECUTE FUNCTION legal_signature_requests_mutation_guard();
+$$ LANGUAGE plpgsql SET search_path = pg_catalog, "__SCHEMA__";
+CREATE OR REPLACE TRIGGER legal_signature_requests_mutation_guard BEFORE UPDATE OR DELETE ON "__SCHEMA__".legal_signature_requests FOR EACH ROW EXECUTE FUNCTION legal_signature_requests_mutation_guard();
 
 CREATE OR REPLACE FUNCTION legal_signature_request_binding_guard() RETURNS trigger AS $$
-DECLARE request_row legal_signature_requests%ROWTYPE;
+DECLARE request_row record;
 BEGIN
-    SELECT * INTO request_row FROM legal_signature_requests WHERE id = NEW.signature_request_id FOR KEY SHARE;
+    SELECT * INTO request_row FROM "__SCHEMA__".legal_signature_requests WHERE id = NEW.signature_request_id FOR KEY SHARE;
     IF NOT FOUND OR
        (request_row.organization_id, request_row.document_id, request_row.document_version_id,
         request_row.party_id, request_row.method, request_row.provider, request_row.signed_content_hash,
@@ -271,48 +281,50 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SET search_path = pg_catalog, public;
-DROP TRIGGER IF EXISTS legal_signature_request_binding_guard ON legal_document_signatures;
-CREATE TRIGGER legal_signature_request_binding_guard BEFORE INSERT ON legal_document_signatures FOR EACH ROW EXECUTE FUNCTION legal_signature_request_binding_guard();
+$$ LANGUAGE plpgsql SET search_path = pg_catalog, "__SCHEMA__";
+CREATE OR REPLACE TRIGGER legal_signature_request_binding_guard BEFORE INSERT ON "__SCHEMA__".legal_document_signatures FOR EACH ROW EXECUTE FUNCTION legal_signature_request_binding_guard();
 
 CREATE OR REPLACE FUNCTION legal_signature_provider_operation_guard() RETURNS trigger AS $$
 BEGIN
     IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'legal_signature_provider_operation_delete_forbidden'; END IF;
     IF (OLD.organization_id, OLD.document_id, OLD.document_version_id, OLD.signature_request_id,
-        OLD.provider, OLD.correlation_id, OLD.request_idempotency_key, OLD.created_at)
+        OLD.provider, OLD.correlation_id, OLD.request_idempotency_key, OLD.provider_idempotency_key,
+        OLD.generation, OLD.supersedes_operation_id, OLD.created_at)
        IS DISTINCT FROM
        (NEW.organization_id, NEW.document_id, NEW.document_version_id, NEW.signature_request_id,
-        NEW.provider, NEW.correlation_id, NEW.request_idempotency_key, NEW.created_at) THEN
+        NEW.provider, NEW.correlation_id, NEW.request_idempotency_key, NEW.provider_idempotency_key,
+        NEW.generation, NEW.supersedes_operation_id, NEW.created_at) THEN
         RAISE EXCEPTION 'legal_signature_provider_operation_identity_update_forbidden';
     END IF;
-    IF OLD.provider_idempotency_key IS DISTINCT FROM NEW.provider_idempotency_key
-       OR OLD.generation IS DISTINCT FROM NEW.generation THEN
-        IF NEW.status <> 'starting' OR NEW.generation <> OLD.generation + 1
-           OR NEW.provider_idempotency_key = OLD.provider_idempotency_key
-           OR NOT (OLD.status = 'failed' OR (OLD.status = 'starting' AND OLD.lease_expires_at <= CURRENT_TIMESTAMP)
-               OR (OLD.status = 'started' AND OLD.session_expires_at <= CURRENT_TIMESTAMP)) THEN
-            RAISE EXCEPTION 'legal_signature_provider_operation_generation_invalid';
-        END IF;
-    ELSIF OLD.status = 'started' AND OLD IS DISTINCT FROM NEW THEN
-        RAISE EXCEPTION 'legal_signature_provider_operation_terminal_update_forbidden';
-    END IF;
-    IF NOT ((OLD.status IN ('starting','failed') AND NEW.status IN ('starting','started','failed'))
-        OR (OLD.status = 'started' AND OLD.session_expires_at <= CURRENT_TIMESTAMP AND NEW.status = 'starting')
+    IF NOT ((OLD.status = 'starting' AND NEW.status IN ('starting','started','failed','expired'))
+        OR (OLD.status = 'started' AND NEW.status IN ('started','expired'))
         OR OLD.status = NEW.status) THEN
         RAISE EXCEPTION 'legal_signature_provider_operation_transition_forbidden';
     END IF;
+    IF OLD.status IN ('failed','expired') AND OLD IS DISTINCT FROM NEW THEN
+        RAISE EXCEPTION 'legal_signature_provider_operation_terminal_update_forbidden';
+    END IF;
+    IF OLD.status = 'started' AND NEW.status = 'started' AND OLD IS DISTINCT FROM NEW THEN
+        RAISE EXCEPTION 'legal_signature_provider_operation_terminal_update_forbidden';
+    END IF;
+    IF OLD.status = 'started' AND NEW.status = 'expired'
+       AND (OLD.provider_request_id, OLD.redirect_url, OLD.session_expires_at, OLD.session_metadata)
+           IS DISTINCT FROM
+           (NEW.provider_request_id, NEW.redirect_url, NEW.session_expires_at, NEW.session_metadata) THEN
+        RAISE EXCEPTION 'legal_signature_provider_operation_evidence_update_forbidden';
+    END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SET search_path = pg_catalog, public;
-DROP TRIGGER IF EXISTS legal_signature_provider_operation_guard ON legal_signature_provider_operations;
-CREATE TRIGGER legal_signature_provider_operation_guard BEFORE UPDATE OR DELETE ON legal_signature_provider_operations FOR EACH ROW EXECUTE FUNCTION legal_signature_provider_operation_guard();
+$$ LANGUAGE plpgsql SET search_path = pg_catalog, "__SCHEMA__";
+CREATE OR REPLACE TRIGGER legal_signature_provider_operation_guard BEFORE UPDATE OR DELETE ON "__SCHEMA__".legal_signature_provider_operations FOR EACH ROW EXECUTE FUNCTION legal_signature_provider_operation_guard();
 
-SQL);
+SQL));
     }
 
     private function normalize(string $definition): string
     {
         $definition = strtolower($definition);
+        $definition = str_replace('not valid', '', $definition);
         $definition = (string) preg_replace('/::[a-z_ ]+(?:\[\])?/', '', $definition);
 
         return (string) preg_replace('/["()\s]+/', '', $definition);
@@ -331,6 +343,7 @@ SQL);
         foreach ($expected as $triggerName => [$table, $function, $event]) {
             $descriptor = DB::selectOne(<<<'SQL'
 SELECT table_class.relname AS table_name,
+       current_schema() AS expected_schema,
        function_proc.proname AS function_name,
        pg_get_triggerdef(trigger_row.oid, true) AS trigger_definition,
        trigger_row.tgenabled AS enabled,
@@ -344,8 +357,8 @@ JOIN pg_proc function_proc ON function_proc.oid = trigger_row.tgfoid
 WHERE namespace.nspname = current_schema() AND trigger_row.tgname = ? AND NOT trigger_row.tgisinternal
 SQL, [$triggerName]);
             $configuration = $descriptor === null ? [] : (array) ($descriptor->configuration ?? []);
-            $searchPath = implode(',', $configuration);
-            $hasSafeSearchPath = str_contains($searchPath, 'search_path=pg_catalog, public')
+            $searchPath = str_replace('"', '', implode(',', $configuration));
+            $hasSafeSearchPath = str_contains($searchPath, 'search_path=pg_catalog, '.$descriptor->expected_schema)
                 || ($function === 'legal_archive_versions_immutable_guard' && str_contains($searchPath, 'search_path=pg_catalog'));
             if ($descriptor === null || $descriptor->table_name !== $table || $descriptor->function_name !== $function
                 || ! str_contains(strtoupper((string) $descriptor->trigger_definition), $event)

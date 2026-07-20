@@ -16,6 +16,8 @@ use App\Services\LegalArchive\Signatures\ElectronicSignatureEvidence;
 use App\Services\LegalArchive\Signatures\ElectronicSignatureProvider;
 use App\Services\LegalArchive\Signatures\ExternalOriginalData;
 use App\Services\LegalArchive\Signatures\LegalDocumentSignatureService;
+use App\Services\LegalArchive\Signatures\LegalSignatureCleanupDebtService;
+use App\Services\LegalArchive\Signatures\LegalSignatureCleanupMetrics;
 use App\Services\LegalArchive\Signatures\LegalSignatureExpiryService;
 use App\Services\LegalArchive\Signatures\LegalSignatureProjection;
 use App\Services\LegalArchive\Signatures\PaperOriginalData;
@@ -269,10 +271,22 @@ final class ManualOriginalRegistrationTest extends TestCase
         $replay = $service->completeElectronic($callback);
         self::assertSame($signature->id, $replay->id);
         self::assertSame($version->content_hash, $signature->signed_content_hash);
+        try {
+            $service->completeElectronic(new SignatureCallback(
+                'fixed', $session->providerRequestId, $session->correlationId, 'provider-event-1', ['status' => 'changed'],
+            ));
+            self::fail('Changed replay payload was accepted.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_signature_callback_replay_conflict', $exception->getMessage());
+        }
 
-        $this->expectException(DomainException::class);
-        $this->expectExceptionMessage('legal_signature_request_not_found');
-        $service->completeElectronic(new SignatureCallback('fixed', $session->providerRequestId, str_repeat('0', 64), 'provider-event-2', ['status' => 'signed']));
+        try {
+            $service->completeElectronic(new SignatureCallback('fixed', $session->providerRequestId, str_repeat('0', 64), 'provider-event-2', ['status' => 'signed']));
+            self::fail('Correlation attack was accepted.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_signature_callback_invalid', $exception->getMessage());
+        }
+        self::assertContains('signature_callback_rejected', $this->audit->events);
     }
 
     public function test_provider_callback_rejects_result_and_evidence_signer_drift(): void
@@ -289,11 +303,15 @@ final class ManualOriginalRegistrationTest extends TestCase
         $session = $service->startElectronicSession($request, $actor);
         $provider->contentHash = (string) $version->content_hash;
 
-        $this->expectException(DomainException::class);
-        $this->expectExceptionMessage('legal_signature_verification_result_invalid');
-        $service->completeElectronic(new SignatureCallback(
-            'fixed', $session->providerRequestId, $session->correlationId, 'strict-event', ['status' => 'signed'],
-        ));
+        try {
+            $service->completeElectronic(new SignatureCallback(
+                'fixed', $session->providerRequestId, $session->correlationId, 'strict-event', ['status' => 'signed'],
+            ));
+            self::fail('Signer/evidence drift was accepted.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_signature_verification_result_invalid', $exception->getMessage());
+        }
+        self::assertContains('signature_callback_rejected', $this->audit->events);
     }
 
     public function test_expired_provider_session_starts_new_generation(): void
@@ -312,12 +330,18 @@ final class ManualOriginalRegistrationTest extends TestCase
             ->update(['session_expires_at' => now()->subMinute()]);
 
         $second = $service->startElectronicSession($request->refresh(), $actor);
-        $secondOperation = $this->database->getConnection()->table('legal_signature_provider_operations')->sole();
+        $operations = $this->database->getConnection()->table('legal_signature_provider_operations')->orderBy('generation')->get();
+        $preservedFirst = $operations->first();
+        $secondOperation = $operations->last();
 
         self::assertNotSame($first->providerRequestId, $second->providerRequestId);
         self::assertSame(2, $provider->startCalls);
+        self::assertCount(2, $operations);
         self::assertSame(2, (int) $secondOperation->generation);
         self::assertNotSame($firstOperation->provider_idempotency_key, $secondOperation->provider_idempotency_key);
+        self::assertSame($first->providerRequestId, $preservedFirst->provider_request_id);
+        self::assertSame($first->redirectUrl, $preservedFirst->redirect_url);
+        self::assertSame($firstOperation->id, $secondOperation->supersedes_operation_id);
     }
 
     public function test_failed_external_registration_removes_exact_storage_version(): void
@@ -348,6 +372,67 @@ final class ManualOriginalRegistrationTest extends TestCase
             $actor,
             new ExternalOriginalData('external-edo', $this->evidence($this->signerSet('Другой')), 'cleanup-import'),
         );
+    }
+
+    public function test_signature_cleanup_debt_retries_exact_version_then_resolves_idempotently(): void
+    {
+        [$document, $version] = $this->fixture();
+        $debtId = $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->insertGetId([
+            'organization_id' => 10, 'document_id' => $document->id, 'document_version_id' => $version->id,
+            'storage_path' => 'org-10/signature.p7s', 'storage_version_id' => 'version-exact',
+            'debt_key' => str_repeat('a', 64), 'reason' => 'signature_registration_failed', 'attempts' => 1,
+            'next_attempt_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $calls = 0;
+        $storage = $this->createMock(FileService::class);
+        $storage->method('removeImmutable')->willReturnCallback(static function (string $path, ?string $versionId) use (&$calls): void {
+            self::assertSame('org-10/signature.p7s', $path);
+            self::assertSame('version-exact', $versionId);
+            $calls++;
+            if ($calls === 1) {
+                throw new \RuntimeException('temporary');
+            }
+        });
+        $metrics = new RecordingCleanupMetrics;
+        $service = new LegalSignatureCleanupDebtService(
+            $storage, $this->database->getConnection(), $this->audit, $metrics,
+        );
+
+        self::assertSame(0, $service->processDue());
+        $failed = $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->where('id', $debtId)->first();
+        self::assertSame(2, (int) $failed->attempts);
+        self::assertNull($failed->resolved_at);
+        $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->where('id', $debtId)
+            ->update(['next_attempt_at' => now()]);
+        self::assertSame(1, $service->processDue());
+        self::assertNotNull($this->database->getConnection()->table('legal_archive_file_cleanup_debts')->where('id', $debtId)->value('resolved_at'));
+        self::assertSame(0, $service->processDue());
+        self::assertSame(2, $calls);
+        self::assertContains('legal_signature_cleanup_resolved_total', $metrics->metrics);
+    }
+
+    public function test_signature_cleanup_debt_dead_letters_after_bounded_attempts(): void
+    {
+        [$document, $version] = $this->fixture();
+        $debtId = $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->insertGetId([
+            'organization_id' => 10, 'document_id' => $document->id, 'document_version_id' => $version->id,
+            'storage_path' => 'org-10/dead.p7s', 'storage_version_id' => 'version-dead',
+            'debt_key' => str_repeat('b', 64), 'reason' => 'signature_registration_failed', 'attempts' => 7,
+            'next_attempt_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->method('removeImmutable')->willThrowException(new \RuntimeException('permanent'));
+        $metrics = new RecordingCleanupMetrics;
+        $service = new LegalSignatureCleanupDebtService(
+            $storage, $this->database->getConnection(), $this->audit, $metrics,
+        );
+
+        self::assertSame(0, $service->processDue());
+        $dead = $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->where('id', $debtId)->first();
+        self::assertSame(8, (int) $dead->attempts);
+        self::assertNotNull($dead->dead_lettered_at);
+        self::assertNull($dead->next_attempt_at);
+        self::assertContains('legal_signature_storage_cleanup_dead_lettered_total', $metrics->metrics);
     }
 
     public function test_projection_never_marks_document_without_requests_as_signed(): void
@@ -471,6 +556,69 @@ final class ManualOriginalRegistrationTest extends TestCase
             self::assertSame(0, $expiry->expireDue());
             self::assertSame('expired', $request->refresh()->status);
             self::assertSame('verification_failed', $document->refresh()->signature_status);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_request_expiry_closes_provider_operation_without_erasing_session_evidence(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $provider = new FixedElectronicSignatureProvider;
+        $service = new LegalDocumentSignatureService(
+            $provider, $this->access, $this->audit, $this->storage, $this->database->getConnection(),
+        );
+        $request = $service->createRequest(
+            $document, $version, $actor, 'provider_electronic', $this->signerSet('Signer'), 'expire-provider',
+            provider: 'fixed', expiresAt: new DateTimeImmutable('+1 minute'),
+        );
+        $session = $service->startElectronicSession($request, $actor);
+        Carbon::setTestNow(now()->addMinutes(2));
+        try {
+            $expiry = new LegalSignatureExpiryService(
+                $this->database->getConnection(), $this->audit, new LegalSignatureProjection($this->database->getConnection()),
+            );
+            self::assertSame(1, $expiry->expireDue());
+            $operation = $this->database->getConnection()->table('legal_signature_provider_operations')->sole();
+            self::assertSame('expired', $operation->status);
+            self::assertSame($session->providerRequestId, $operation->provider_request_id);
+            self::assertSame($session->redirectUrl, $operation->redirect_url);
+            self::assertContains('signature_provider_operation_expired', $this->audit->events);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_expired_attempt_is_explicitly_replaced_and_successful_replacement_signs_requirement(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $expired = $this->service->createRequest(
+            $document, $version, $actor, 'paper', $this->signerSet('Иван'), 'attempt-one',
+            expiresAt: new DateTimeImmutable('+1 minute'),
+        );
+        Carbon::setTestNow(now()->addMinutes(2));
+        try {
+            $expiry = new LegalSignatureExpiryService(
+                $this->database->getConnection(), $this->audit, new LegalSignatureProjection($this->database->getConnection()),
+            );
+            self::assertSame(1, $expiry->expireDue());
+            $replacement = $this->service->createRequest(
+                $document->refresh(), $version->refresh(), $actor, 'paper', $this->signerSet('Иван'), 'attempt-two',
+                replacesRequestId: (int) $expired->id,
+            );
+            $replay = $this->service->createRequest(
+                $document->refresh(), $version->refresh(), $actor, 'paper', $this->signerSet('Иван'), 'attempt-two',
+                replacesRequestId: (int) $expired->id,
+            );
+            self::assertSame($replacement->id, $replay->id);
+            self::assertSame($expired->id, $replacement->replaces_request_id);
+            self::assertSame($expired->requirement_group_key, $replacement->requirement_group_key);
+            $this->service->registerPaperOriginal($replacement, $actor, new PaperOriginalData(
+                new DateTimeImmutable('-1 day'), $this->signerSet('Иван'), 'Архив', 'replacement-paper',
+            ));
+            self::assertSame('signed', $document->refresh()->signature_status);
+            self::assertSame('signed', $version->refresh()->status);
+            self::assertContains('signature_requested', $this->audit->events);
         } finally {
             Carbon::setTestNow();
         }
@@ -628,6 +776,8 @@ final class ManualOriginalRegistrationTest extends TestCase
             $table->json('required_signature_kinds');
             $table->json('allowed_signature_formats');
             $table->string('requirement_snapshot_hash', 64);
+            $table->string('requirement_group_key', 64);
+            $table->unsignedBigInteger('replaces_request_id')->nullable();
             $table->string('correlation_id', 64);
             $table->string('provider_request_id')->nullable();
             $table->string('callback_replay_hash', 64)->nullable();
@@ -695,13 +845,14 @@ final class ManualOriginalRegistrationTest extends TestCase
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('document_id');
             $table->unsignedBigInteger('document_version_id');
-            $table->unsignedBigInteger('signature_request_id')->unique();
+            $table->unsignedBigInteger('signature_request_id');
             $table->string('provider');
             $table->string('status');
             $table->string('correlation_id', 64);
             $table->string('provider_idempotency_key', 64)->unique();
             $table->string('request_idempotency_key', 64);
             $table->unsignedInteger('generation');
+            $table->string('supersedes_operation_id')->nullable();
             $table->string('lease_token_hash', 64)->nullable();
             $table->timestamp('lease_expires_at')->nullable();
             $table->unsignedInteger('attempt_count')->default(0);
@@ -732,6 +883,28 @@ final class ManualOriginalRegistrationTest extends TestCase
             $table->string('request_hash', 64);
             $table->timestamps();
         });
+        $schema->create('legal_archive_file_cleanup_debts', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('document_id')->nullable();
+            $table->unsignedBigInteger('document_version_id')->nullable();
+            $table->text('storage_path');
+            $table->text('storage_version_id')->nullable();
+            $table->string('storage_etag')->nullable();
+            $table->string('content_hash', 64)->nullable();
+            $table->string('debt_key', 64)->nullable();
+            $table->string('reason');
+            $table->unsignedInteger('attempts')->default(0);
+            $table->timestamp('next_attempt_at')->nullable();
+            $table->timestamp('last_attempt_at')->nullable();
+            $table->string('lease_token_hash', 64)->nullable();
+            $table->timestamp('lease_expires_at')->nullable();
+            $table->text('last_error')->nullable();
+            $table->timestamp('resolved_at')->nullable();
+            $table->timestamp('dead_lettered_at')->nullable();
+            $table->timestamps();
+            $table->unique(['organization_id', 'storage_path']);
+        });
     }
 }
 
@@ -744,9 +917,22 @@ final class RecordingSignatureAudit implements LegalDocumentAudit
         $this->events[] = $event;
     }
 
-    public function recordForActorId(string $event, LegalArchiveDocument $document, ?int $actorId, array $context = []): void {}
+    public function recordForActorId(string $event, LegalArchiveDocument $document, ?int $actorId, array $context = []): void
+    {
+        $this->events[] = $event;
+    }
 
     public function recordContractForActorId(string $event, Contract $contract, ?int $actorId, array $context = []): void {}
+}
+
+final class RecordingCleanupMetrics implements LegalSignatureCleanupMetrics
+{
+    public array $metrics = [];
+
+    public function increment(string $metric, array $labels = []): void
+    {
+        $this->metrics[] = $metric;
+    }
 }
 
 final class FixedElectronicSignatureProvider implements ElectronicSignatureProvider

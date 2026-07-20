@@ -17,6 +17,10 @@ final readonly class LegalSignatureProjection
             ->where('organization_id', $document->organization_id)
             ->where('document_id', $document->id)
             ->where('document_version_id', $document->current_primary_version_id)
+            ->whereNotExists(static function ($query): void {
+                $query->selectRaw('1')->from('legal_signature_requests as successor')
+                    ->whereColumn('successor.replaces_request_id', 'legal_signature_requests.id');
+            })
             ->orderBy('id')
             ->get(['status', 'method', 'required_signature_kinds']);
         $statuses = $requests->pluck('status')->map(static fn (mixed $status): string => (string) $status)->all();

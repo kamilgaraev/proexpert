@@ -79,10 +79,12 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
                 $connection->select('SELECT pg_advisory_lock_shared(hashtextextended(?, 0))', [$gate]);
                 try {
                     $connection->table('legal_signature_requests')->insert($this->requestRow());
-                } catch (\Throwable) {
+                    $exit = 0;
+                } catch (\Throwable $error) {
+                    $exit = (string) $error->getCode() === '23505' ? 10 : 20;
                 }
                 $connection->select('SELECT pg_advisory_unlock_shared(hashtextextended(?, 0))', [$gate]);
-                exit(0);
+                exit($exit);
             }
             if ($pid < 0) {
                 throw new \RuntimeException('legal_signature_race_fork_failed');
@@ -90,11 +92,14 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
             $children[] = $pid;
         }
         $this->first->select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', [$gate]);
+        $outcomes = [];
         foreach ($children as $pid) {
             pcntl_waitpid($pid, $status);
             self::assertTrue(pcntl_wifexited($status));
-            self::assertSame(0, pcntl_wexitstatus($status));
+            $outcomes[] = pcntl_wexitstatus($status);
         }
+        sort($outcomes);
+        self::assertSame([0, 10], $outcomes);
         self::assertSame(1, $this->first->table('legal_signature_requests')->count());
     }
 
@@ -191,7 +196,8 @@ SQL);
             'allowed_signature_kinds' => json_encode(['paper_original'], JSON_THROW_ON_ERROR),
             'required_signature_kinds' => json_encode([], JSON_THROW_ON_ERROR),
             'allowed_signature_formats' => json_encode(['detached_cades'], JSON_THROW_ON_ERROR),
-            'requirement_snapshot_hash' => str_repeat('f', 64), 'correlation_id' => str_repeat('c', 64),
+            'requirement_snapshot_hash' => str_repeat('f', 64), 'requirement_group_key' => str_repeat('1', 64),
+            'replaces_request_id' => null, 'correlation_id' => str_repeat('c', 64),
             'idempotency_key' => 'same-command', 'request_hash' => str_repeat('d', 64), 'requested_by_user_id' => 1,
             'requested_at' => now(), 'created_at' => now(), 'updated_at' => now(),
         ];

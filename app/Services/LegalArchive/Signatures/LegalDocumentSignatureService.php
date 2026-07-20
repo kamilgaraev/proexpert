@@ -26,6 +26,7 @@ use Illuminate\Container\Container;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
@@ -65,6 +66,7 @@ final class LegalDocumentSignatureService
         ?int $partyId = null,
         ?string $provider = null,
         ?DateTimeImmutable $expiresAt = null,
+        ?int $replacesRequestId = null,
     ): LegalSignatureRequest {
         $this->authorizer->authorize($actor, $document, LegalDocumentAbility::REQUEST_SIGNATURE->value);
         $method = trim($method);
@@ -90,9 +92,10 @@ final class LegalDocumentSignatureService
             'signers' => $signerSnapshot,
             'signer_snapshot_hash' => $signers->hash(),
             'expires_at' => $expiresAt?->format(DATE_ATOM),
+            'replaces_request_id' => $replacesRequestId,
         ]);
 
-        return $this->connection->transaction(function () use ($document, $version, $actor, $method, $provider, $partyId, $signers, $signerSnapshot, $key, $requestHash, $expiresAt): LegalSignatureRequest {
+        return $this->connection->transaction(function () use ($document, $version, $actor, $method, $provider, $partyId, $signers, $signerSnapshot, $key, $requestHash, $expiresAt, $replacesRequestId): LegalSignatureRequest {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
             $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $version->id);
             $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::REQUEST_SIGNATURE->value);
@@ -119,6 +122,27 @@ final class LegalDocumentSignatureService
                 'client_request_hash' => $requestHash,
                 'requirements' => $requirements,
             ]);
+            $requirementGroupKey = CanonicalJson::fingerprint([
+                'organization_id' => (int) $lockedDocument->organization_id,
+                'document_id' => (int) $lockedDocument->id,
+                'document_version_id' => (int) $lockedVersion->id,
+                'party_id' => $partyId,
+                'method' => $method,
+                'provider' => $provider,
+                'signer_snapshot_hash' => $signers->hash(),
+                'requirement_snapshot_hash' => $requirementSnapshotHash,
+            ]);
+            $latestAttempt = $this->requests()->where('organization_id', $lockedDocument->organization_id)
+                ->where('document_id', $lockedDocument->id)->where('document_version_id', $lockedVersion->id)
+                ->where('requirement_group_key', $requirementGroupKey)->orderByDesc('id')->lockForUpdate()->first();
+            if ($replacesRequestId === null && $latestAttempt instanceof LegalSignatureRequest) {
+                throw new DomainException('legal_signature_replacement_required');
+            }
+            if ($replacesRequestId !== null && (! $latestAttempt instanceof LegalSignatureRequest
+                || (int) $latestAttempt->id !== $replacesRequestId
+                || ! in_array((string) $latestAttempt->status, ['failed', 'expired'], true))) {
+                throw new DomainException('legal_signature_replacement_invalid');
+            }
             $this->freezeVersion($lockedVersion);
             $this->assertParty($lockedDocument, $lockedVersion, $partyId);
             $this->assertSignerIdentities($lockedDocument, $lockedVersion, $signers);
@@ -139,6 +163,8 @@ final class LegalDocumentSignatureService
                 'required_signature_kinds' => $requirements['required_signature_kinds'],
                 'allowed_signature_formats' => $requirements['allowed_signature_formats'],
                 'requirement_snapshot_hash' => $requirementSnapshotHash,
+                'requirement_group_key' => $requirementGroupKey,
+                'replaces_request_id' => $replacesRequestId,
                 'correlation_id' => hash('sha256', Str::uuid()->toString().Str::random(64)),
                 'idempotency_key' => $key,
                 'request_hash' => $effectiveRequestHash,
@@ -158,6 +184,7 @@ final class LegalDocumentSignatureService
                 'document_version_id' => (int) $lockedVersion->id,
                 'signed_content_hash' => (string) $lockedVersion->content_hash,
                 'method' => $method,
+                'replaces_request_id' => $replacesRequestId,
             ]);
 
             return $request;
@@ -293,6 +320,8 @@ final class LegalDocumentSignatureService
             if ((bool) $stored['created']) {
                 $this->cleanupUploadedContainer(
                     (int) $request->organization_id,
+                    (int) $request->document_id,
+                    (int) $request->document_version_id,
                     $storedPath,
                     (string) $stored['version_id'],
                     is_string($stored['etag']) ? $stored['etag'] : null,
@@ -317,7 +346,8 @@ final class LegalDocumentSignatureService
             $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::SIGN->value);
             $lockedRequest = $this->lockRequest($request);
             $this->signingGuard->assertCompletionAllowed($lockedDocument, $version, $lockedRequest);
-            $operation = $this->providerOperations()->where('signature_request_id', $lockedRequest->id)->lockForUpdate()->first();
+            $operation = $this->providerOperations()->where('signature_request_id', $lockedRequest->id)
+                ->orderByDesc('generation')->lockForUpdate()->first();
             if ($operation instanceof LegalSignatureProviderOperation && $operation->status === 'started'
                 && $operation->session_expires_at !== null && $operation->session_expires_at->isFuture()) {
                 return ['session' => $this->sessionFromOperation($operation)];
@@ -328,45 +358,29 @@ final class LegalDocumentSignatureService
                 && $operation->lease_expires_at->isFuture()) {
                 throw new DomainException('legal_signature_provider_start_in_progress');
             }
-            if (! $operation instanceof LegalSignatureProviderOperation) {
-                $requestIdempotencyKey = hash('sha256', "signature-start:{$lockedRequest->organization_id}:{$lockedRequest->id}");
-                $operation = $this->newProviderOperation()->newQuery()->create([
-                    'id' => (string) Str::uuid(),
-                    'organization_id' => (int) $lockedRequest->organization_id,
-                    'document_id' => (int) $lockedRequest->document_id,
-                    'document_version_id' => (int) $lockedRequest->document_version_id,
-                    'signature_request_id' => (int) $lockedRequest->id,
-                    'provider' => (string) $lockedRequest->provider,
-                    'status' => 'starting',
-                    'correlation_id' => (string) $lockedRequest->correlation_id,
-                    'request_idempotency_key' => $requestIdempotencyKey,
-                    'generation' => 1,
-                    'provider_idempotency_key' => hash('sha256', "{$requestIdempotencyKey}:1"),
-                    'lease_token_hash' => hash('sha256', $leaseToken),
-                    'lease_expires_at' => now()->addSeconds($this->startLeaseSeconds()),
-                    'attempt_count' => 1,
-                    'started_at' => now(),
-                ]);
-            } else {
-                LegalSignatureProviderOperation::serviceMutation(function () use ($operation, $leaseToken): void {
-                    $generation = ((int) $operation->generation) + 1;
-                    $operation->forceFill([
-                        'status' => 'starting',
-                        'generation' => $generation,
-                        'provider_idempotency_key' => hash('sha256', "{$operation->request_idempotency_key}:{$generation}"),
-                        'lease_token_hash' => hash('sha256', $leaseToken),
-                        'lease_expires_at' => now()->addSeconds($this->startLeaseSeconds()),
-                        'attempt_count' => ((int) $operation->attempt_count) + 1,
-                        'last_error_code' => null,
-                        'provider_request_id' => null,
-                        'redirect_url' => null,
-                        'session_expires_at' => null,
-                        'session_metadata' => null,
-                        'completed_at' => null,
-                        'started_at' => now(),
-                    ])->save();
-                });
-            }
+            $requestIdempotencyKey = $operation instanceof LegalSignatureProviderOperation
+                ? (string) $operation->request_idempotency_key
+                : hash('sha256', "signature-start:{$lockedRequest->organization_id}:{$lockedRequest->id}");
+            $generation = $operation instanceof LegalSignatureProviderOperation ? ((int) $operation->generation) + 1 : 1;
+            $supersedesOperationId = $operation instanceof LegalSignatureProviderOperation ? (string) $operation->id : null;
+            $operation = $this->newProviderOperation()->newQuery()->create([
+                'id' => (string) Str::uuid(),
+                'organization_id' => (int) $lockedRequest->organization_id,
+                'document_id' => (int) $lockedRequest->document_id,
+                'document_version_id' => (int) $lockedRequest->document_version_id,
+                'signature_request_id' => (int) $lockedRequest->id,
+                'provider' => (string) $lockedRequest->provider,
+                'status' => 'starting',
+                'correlation_id' => (string) $lockedRequest->correlation_id,
+                'request_idempotency_key' => $requestIdempotencyKey,
+                'generation' => $generation,
+                'supersedes_operation_id' => $supersedesOperationId,
+                'provider_idempotency_key' => hash('sha256', "{$requestIdempotencyKey}:{$generation}"),
+                'lease_token_hash' => hash('sha256', $leaseToken),
+                'lease_expires_at' => now()->addSeconds($this->startLeaseSeconds()),
+                'attempt_count' => 1,
+                'started_at' => now(),
+            ]);
             $this->audit->record('signature_provider_session_reserved', $lockedDocument, $actor, [
                 'source_event_id' => "signature-provider-operation:{$operation->id}:{$operation->generation}:reserved",
                 'signature_request_id' => (int) $lockedRequest->id,
@@ -435,6 +449,10 @@ final class LegalDocumentSignatureService
                 'signature_request_id' => (int) $lockedRequest->id,
                 'operation_id' => (string) $lockedOperation->id,
                 'generation' => (int) $lockedOperation->generation,
+                'provider_request_fingerprint' => hash('sha256', $session->providerRequestId),
+                'redirect_host' => mb_strtolower((string) parse_url($session->redirectUrl, PHP_URL_HOST)),
+                'session_expires_at' => $session->expiresAt,
+                'session_metadata_hash' => CanonicalJson::fingerprint($session->metadata),
             ]);
 
             return $session;
@@ -443,16 +461,24 @@ final class LegalDocumentSignatureService
 
     public function completeElectronic(SignatureCallback $callback): LegalDocumentSignature
     {
+        $candidate = trim($callback->provider) === '' || trim($callback->providerRequestId) === ''
+            ? null
+            : $this->requests()->where('provider', $callback->provider)
+                ->where('provider_request_id', $callback->providerRequestId)->first();
         if (trim($callback->provider) === '' || trim($callback->providerRequestId) === ''
             || preg_match('/^[a-f0-9]{64}$/D', $callback->correlationId) !== 1
             || trim($callback->replayToken) === '') {
+            $this->auditRejectedCallback($candidate, $callback, 'malformed');
             throw new DomainException('legal_signature_callback_invalid');
         }
-        $request = $this->requests()->where('provider', $callback->provider)
-            ->where('provider_request_id', $callback->providerRequestId)
-            ->where('correlation_id', $callback->correlationId)->first();
+        $request = $candidate;
         if (! $request instanceof LegalSignatureRequest) {
+            $this->auditRejectedCallback(null, $callback, 'unknown_request');
             throw new DomainException('legal_signature_request_not_found');
+        }
+        if (! hash_equals((string) $request->correlation_id, $callback->correlationId)) {
+            $this->auditRejectedCallback($request, $callback, 'correlation_mismatch');
+            throw new DomainException('legal_signature_callback_invalid');
         }
         $this->assertRequestMethod($request, 'provider_electronic', false);
         $replayHash = hash('sha256', $callback->replayToken);
@@ -460,6 +486,7 @@ final class LegalDocumentSignatureService
         if ($request->callback_replay_hash !== null) {
             if (! hash_equals((string) $request->callback_replay_hash, $replayHash)
                 || ! hash_equals((string) $request->callback_payload_hash, $payloadHash)) {
+                $this->auditRejectedCallback($request, $callback, 'replay_conflict');
                 throw new DomainException('legal_signature_callback_replay_conflict');
             }
             $existing = $this->signatures()->where('signature_request_id', $request->id)->first();
@@ -469,15 +496,20 @@ final class LegalDocumentSignatureService
 
             return $existing;
         }
-        $result = $this->provider->complete($callback);
-        $this->assertProviderResult(
-            $request,
-            $result->artifact,
-            $result,
-            (string) $request->provider_request_id,
-        );
-        if (! $result->callbackAuthentic) {
-            throw new DomainException('legal_signature_callback_invalid');
+        try {
+            $result = $this->provider->complete($callback);
+            $this->assertProviderResult(
+                $request,
+                $result->artifact,
+                $result,
+                (string) $request->provider_request_id,
+            );
+            if (! $result->callbackAuthentic) {
+                throw new DomainException('legal_signature_callback_invalid');
+            }
+        } catch (Throwable $error) {
+            $this->auditRejectedCallback($request, $callback, 'provider_verification_failed');
+            throw $error;
         }
         $detectedMimeType = (new \finfo(FILEINFO_MIME_TYPE))->buffer($result->artifact->content);
         if (! is_string($detectedMimeType) || $detectedMimeType === '') {
@@ -518,6 +550,8 @@ final class LegalDocumentSignatureService
             if ((bool) $stored['created']) {
                 $this->cleanupUploadedContainer(
                     (int) $request->organization_id,
+                    (int) $request->document_id,
+                    (int) $request->document_version_id,
                     $storedPath,
                     (string) $stored['version_id'],
                     is_string($stored['etag']) ? $stored['etag'] : null,
@@ -1068,6 +1102,8 @@ final class LegalDocumentSignatureService
 
     private function cleanupUploadedContainer(
         int $organizationId,
+        int $documentId,
+        int $documentVersionId,
         string $path,
         string $versionId,
         ?string $etag,
@@ -1087,8 +1123,11 @@ final class LegalDocumentSignatureService
         $now = now();
         $this->connection->table('legal_archive_file_cleanup_debts')->upsert([[
             'organization_id' => $organizationId,
+            'document_id' => $documentId,
+            'document_version_id' => $documentVersionId,
             'storage_path' => $path,
             'storage_version_id' => $versionId,
+            'debt_key' => hash('sha256', "{$organizationId}:{$path}:{$versionId}"),
             'storage_etag' => $etag,
             'content_hash' => $contentHash,
             'reason' => 'signature_registration_failed',
@@ -1098,8 +1137,8 @@ final class LegalDocumentSignatureService
             'resolved_at' => null,
             'created_at' => $now,
             'updated_at' => $now,
-        ]], ['organization_id', 'storage_path'], [
-            'storage_version_id', 'storage_etag', 'content_hash', 'reason', 'next_attempt_at',
+        ]], ['organization_id', 'debt_key'], [
+            'document_id', 'document_version_id', 'storage_version_id', 'debt_key', 'storage_etag', 'content_hash', 'reason', 'next_attempt_at',
             'last_error', 'resolved_at', 'updated_at',
         ]);
     }
@@ -1161,6 +1200,39 @@ final class LegalDocumentSignatureService
         }
 
         return $url;
+    }
+
+    private function auditRejectedCallback(
+        ?LegalSignatureRequest $request,
+        SignatureCallback $callback,
+        string $reason,
+    ): void {
+        $fingerprint = CanonicalJson::fingerprint([
+            'provider' => $callback->provider,
+            'provider_request_id_hash' => hash('sha256', $callback->providerRequestId),
+            'correlation_id_hash' => hash('sha256', $callback->correlationId),
+            'replay_token_hash' => hash('sha256', $callback->replayToken),
+            'payload_hash' => CanonicalJson::fingerprint($callback->payload),
+            'reason' => $reason,
+        ]);
+        if (! $request instanceof LegalSignatureRequest) {
+            Log::warning('legal_signature.callback_rejected', ['reason' => $reason, 'fingerprint' => $fingerprint]);
+
+            return;
+        }
+        $document = $this->documents()->whereKey($request->document_id)
+            ->where('organization_id', $request->organization_id)->first();
+        if (! $document instanceof LegalArchiveDocument) {
+            Log::warning('legal_signature.callback_rejected', ['reason' => $reason, 'fingerprint' => $fingerprint]);
+
+            return;
+        }
+        $this->audit->recordForActorId('signature_callback_rejected', $document, null, [
+            'source_event_id' => "signature-callback-rejected:{$request->id}:{$fingerprint}",
+            'signature_request_id' => (int) $request->id,
+            'reason' => $reason,
+            'callback_fingerprint' => $fingerprint,
+        ]);
     }
 
     private function verifierForProvider(string $provider): ElectronicSignatureProvider

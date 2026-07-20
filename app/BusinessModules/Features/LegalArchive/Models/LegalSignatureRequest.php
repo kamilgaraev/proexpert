@@ -18,6 +18,7 @@ final class LegalSignatureRequest extends Model
         'organization_id', 'document_id', 'document_version_id', 'party_id', 'method', 'provider',
         'status', 'signed_content_hash', 'signers', 'signer_snapshot_hash', 'correlation_id', 'provider_request_id',
         'profile_code', 'profile_lock_version', 'allowed_signature_kinds', 'required_signature_kinds', 'allowed_signature_formats', 'requirement_snapshot_hash',
+        'requirement_group_key', 'replaces_request_id',
         'callback_replay_hash', 'callback_payload_hash', 'session_metadata', 'idempotency_key',
         'request_hash', 'requested_by_user_id', 'requested_at', 'expires_at', 'completed_at',
     ];

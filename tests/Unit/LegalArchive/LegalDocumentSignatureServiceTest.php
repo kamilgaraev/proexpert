@@ -90,6 +90,16 @@ final class LegalDocumentSignatureServiceTest extends TestCase
         self::assertStringContainsString('legal_signature_append_only_guard', $constraints);
         self::assertStringContainsString('legal_archive_version_signature_transition_forbidden', $constraints);
         self::assertStringContainsString("OLD.status = 'uploaded' AND OLD.processing_status = 'ready' AND OLD.is_current", $constraints);
+        self::assertStringNotContainsString('DROP TRIGGER', $constraints);
+        self::assertStringNotContainsString('%ROWTYPE', $constraints);
+        self::assertStringNotContainsString('search_path = pg_catalog, public', $constraints);
+        self::assertStringContainsString('CREATE OR REPLACE TRIGGER', $constraints);
+        self::assertStringContainsString('$descriptorMigration->up()', $validate);
+        $schedule = file_get_contents($root.'routes/console.php');
+        self::assertIsString($schedule);
+        self::assertStringContainsString('legal-signatures:expire --limit=200', $schedule);
+        self::assertStringContainsString('legal-signatures:cleanup-storage --limit=200', $schedule);
+        self::assertFileDoesNotExist($root.'app/Jobs/LegalArchive/ExpireLegalSignatureRequests.php');
         self::assertStringContainsString('VALIDATE CONSTRAINT', $validate);
         self::assertStringContainsString('forward_only', $create);
     }

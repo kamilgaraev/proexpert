@@ -20,6 +20,7 @@ final class LegalSignatureProviderOperation extends Model
         'id', 'organization_id', 'document_id', 'document_version_id', 'signature_request_id',
         'provider', 'status', 'correlation_id', 'provider_idempotency_key', 'lease_token_hash',
         'request_idempotency_key', 'generation',
+        'supersedes_operation_id',
         'lease_expires_at', 'attempt_count', 'provider_request_id', 'redirect_url', 'session_expires_at',
         'session_metadata', 'last_error_code', 'started_at', 'completed_at',
     ];
@@ -34,7 +35,7 @@ final class LegalSignatureProviderOperation extends Model
     protected static function booted(): void
     {
         self::updating(static function (self $operation): void {
-            $allowed = ['status', 'provider_idempotency_key', 'generation', 'lease_token_hash', 'lease_expires_at', 'attempt_count', 'provider_request_id',
+            $allowed = ['status', 'lease_token_hash', 'lease_expires_at', 'attempt_count', 'provider_request_id',
                 'redirect_url', 'session_expires_at', 'session_metadata', 'last_error_code', 'started_at', 'completed_at', 'updated_at'];
             if (self::$serviceMutationDepth < 1 || array_diff(array_keys($operation->getDirty()), $allowed) !== []) {
                 throw new ImmutableDataException(self::class, 'update');

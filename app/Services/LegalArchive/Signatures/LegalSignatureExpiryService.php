@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\LegalArchive\Signatures;
 
+use App\BusinessModules\Features\LegalArchive\Models\LegalSignatureProviderOperation;
 use App\BusinessModules\Features\LegalArchive\Models\LegalSignatureRequest;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
@@ -66,6 +67,29 @@ final readonly class LegalSignatureExpiryService
             LegalSignatureRequest::serviceMutation(static function () use ($request): void {
                 $request->forceFill(['status' => 'expired', 'completed_at' => now()])->save();
             });
+            $operations = (new LegalSignatureProviderOperation)->setConnection($this->connection->getName())
+                ->newQuery()->where('signature_request_id', $request->id)
+                ->whereIn('status', ['starting', 'started'])->orderBy('generation')->lockForUpdate()->get();
+            foreach ($operations as $operation) {
+                LegalSignatureProviderOperation::serviceMutation(static function () use ($operation): void {
+                    $operation->forceFill([
+                        'status' => 'expired',
+                        'lease_token_hash' => null,
+                        'lease_expires_at' => null,
+                        'completed_at' => now(),
+                    ])->save();
+                });
+                $this->audit->recordForActorId('signature_provider_operation_expired', $document, null, [
+                    'source_event_id' => "signature-provider-operation:{$operation->id}:expired",
+                    'signature_request_id' => (int) $request->id,
+                    'operation_id' => (string) $operation->id,
+                    'generation' => (int) $operation->generation,
+                    'provider_request_fingerprint' => $operation->provider_request_id === null
+                        ? null
+                        : hash('sha256', (string) $operation->provider_request_id),
+                    'session_expires_at' => $operation->session_expires_at?->toAtomString(),
+                ]);
+            }
             $this->projection->apply($document);
             $this->audit->recordForActorId('signature_request_expired', $document, null, [
                 'source_event_id' => "signature-request-expired:{$request->id}",

@@ -13,6 +13,8 @@ return new class extends Migration
         if (Schema::getConnection()->getDriverName() !== 'pgsql') {
             return;
         }
+        $descriptorMigration = require __DIR__.'/2026_07_19_000620_add_legal_document_signature_constraints.php';
+        $descriptorMigration->up();
         foreach ($this->manifest() as $name => $table) {
             $constraint = DB::selectOne('SELECT c.conrelid::regclass::text AS table_name, c.convalidated::integer AS validated FROM pg_constraint c JOIN pg_namespace n ON n.oid=(SELECT relnamespace FROM pg_class WHERE oid=c.conrelid) WHERE n.nspname=current_schema() AND c.conname=?', [$name]);
             if ($constraint === null || $constraint->table_name !== $table) {
@@ -35,6 +37,7 @@ return new class extends Migration
             || ! str_contains((string) $access->definition, 'verify_signature')) {
             throw new RuntimeException('legal_document_access_abilities_validation_failed');
         }
+        $descriptorMigration->up();
     }
 
     public function down(): void
@@ -44,10 +47,10 @@ return new class extends Migration
 
     private function manifest(): array
     {
-        $request = ['organization_fk', 'document_fk', 'version_fk', 'party_fk', 'user_fk', 'method_check', 'status_check', 'hash_check', 'signers_check', 'provider_check', 'callback_check', 'time_check'];
+        $request = ['organization_fk', 'document_fk', 'version_fk', 'party_fk', 'replaces_fk', 'user_fk', 'method_check', 'status_check', 'hash_check', 'replacement_check', 'signers_check', 'provider_check', 'callback_check', 'time_check'];
         $signature = ['request_fk', 'organization_fk', 'version_fk', 'party_fk', 'user_fk', 'method_check', 'hash_check', 'evidence_check', 'revocation_check', 'time_check', 'typed_evidence_check'];
         $verification = ['signature_fk', 'organization_fk', 'user_fk', 'status_check', 'hash_check', 'revocation_check'];
-        $operation = ['request_fk', 'status_check', 'hash_check', 'lease_check'];
+        $operation = ['request_fk', 'supersedes_fk', 'status_check', 'hash_check', 'lease_check'];
         $manifest = [];
         foreach ($request as $suffix) {
             $manifest["legal_signature_requests_{$suffix}"] = 'legal_signature_requests';
@@ -60,6 +63,9 @@ return new class extends Migration
         }
         foreach ($operation as $suffix) {
             $manifest["legal_signature_provider_operations_{$suffix}"] = 'legal_signature_provider_operations';
+        }
+        foreach (['document_fk', 'version_fk', 'hash_check', 'binding_check', 'lease_check', 'terminal_check'] as $suffix) {
+            $manifest["legal_signature_cleanup_debts_{$suffix}"] = 'legal_archive_file_cleanup_debts';
         }
 
         return $manifest;

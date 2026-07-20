@@ -51,13 +51,18 @@ return new class extends Migration
             'legal_signature_requests_provider_request_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_signature_requests_provider_request_unique ON legal_signature_requests USING btree (provider, provider_request_id) WHERE provider_request_id IS NOT NULL',
             'legal_signature_requests_callback_replay_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_signature_requests_callback_replay_unique ON legal_signature_requests USING btree (provider, callback_replay_hash) WHERE callback_replay_hash IS NOT NULL',
             'legal_signature_requests_pending_idx' => "CREATE INDEX CONCURRENTLY legal_signature_requests_pending_idx ON legal_signature_requests USING btree (organization_id, document_id, expires_at) WHERE status = 'pending'",
+            'legal_signature_requests_replacement_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_signature_requests_replacement_unique ON legal_signature_requests USING btree (replaces_request_id) WHERE replaces_request_id IS NOT NULL',
+            'legal_signature_requests_requirement_attempt_idx' => 'CREATE INDEX CONCURRENTLY legal_signature_requests_requirement_attempt_idx ON legal_signature_requests USING btree (organization_id, document_version_id, requirement_group_key, id)',
             'legal_document_signatures_ownership_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_document_signatures_ownership_unique ON legal_document_signatures USING btree (id, document_version_id, document_id, organization_id)',
             'legal_document_signatures_request_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_document_signatures_request_unique ON legal_document_signatures USING btree (signature_request_id)',
             'legal_document_signatures_version_idx' => 'CREATE INDEX CONCURRENTLY legal_document_signatures_version_idx ON legal_document_signatures USING btree (organization_id, document_version_id, signed_at)',
             'legal_signature_verifications_idempotency_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_signature_verifications_idempotency_unique ON legal_signature_verifications USING btree (signature_id, idempotency_key)',
             'legal_signature_verifications_signature_idx' => 'CREATE INDEX CONCURRENTLY legal_signature_verifications_signature_idx ON legal_signature_verifications USING btree (organization_id, signature_id, verified_at)',
             'legal_signature_provider_operations_provider_request_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_signature_provider_operations_provider_request_unique ON legal_signature_provider_operations USING btree (provider, provider_request_id) WHERE provider_request_id IS NOT NULL',
+            'legal_signature_provider_operations_generation_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_signature_provider_operations_generation_unique ON legal_signature_provider_operations USING btree (signature_request_id, generation)',
             'legal_signature_provider_operations_lease_idx' => "CREATE INDEX CONCURRENTLY legal_signature_provider_operations_lease_idx ON legal_signature_provider_operations USING btree (status, lease_expires_at) WHERE status = 'starting'",
+            'legal_signature_cleanup_debts_due_idx' => 'CREATE INDEX CONCURRENTLY legal_signature_cleanup_debts_due_idx ON legal_archive_file_cleanup_debts USING btree (next_attempt_at, id) WHERE resolved_at IS NULL AND dead_lettered_at IS NULL AND storage_version_id IS NOT NULL',
+            'legal_archive_cleanup_debts_key_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_archive_cleanup_debts_key_unique ON legal_archive_file_cleanup_debts USING btree (organization_id, debt_key)',
         ];
     }
 
