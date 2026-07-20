@@ -139,6 +139,12 @@ class EstimatePricingService
                     throw MissingRegionalPrice::forResource(0, 'resource_payload_invalid');
                 }
                 $fromUnit = trim((string) ($resource['unit'] ?? ''));
+                $projectSelection = $this->projectResourceSelection($resource);
+                if ($this->isResidentialConvertedSelection($projectSelection)) {
+                    $resource['project_resource_selection'] = $projectSelection;
+                    $resource['price_unit'] = $fromUnit;
+                    $workItem[$group][$index] = $resource;
+                }
                 $toUnit = trim((string) ($resource['price_unit'] ?? $resource['pricing']['unit'] ?? $fromUnit));
                 $version = (int) ($resource['unit_conversion_version'] ?? $regionalContext['unit_conversion_version'] ?? 1);
                 $conversion = $this->hasResidentialConvertedPrice($resource)
@@ -172,10 +178,22 @@ class EstimatePricingService
 
     private function hasResidentialConvertedPrice(array $resource): bool
     {
-        $selection = is_array($resource['project_resource_selection'] ?? null)
-            ? $resource['project_resource_selection']
-            : [];
+        return $this->isResidentialConvertedSelection($this->projectResourceSelection($resource));
+    }
 
+    private function projectResourceSelection(array $resource): array
+    {
+        if (is_array($resource['project_resource_selection'] ?? null)) {
+            return $resource['project_resource_selection'];
+        }
+
+        return is_array($resource['normative_ref']['project_resource_selection'] ?? null)
+            ? $resource['normative_ref']['project_resource_selection']
+            : [];
+    }
+
+    private function isResidentialConvertedSelection(array $selection): bool
+    {
         return str_contains((string) ($selection['policy'] ?? ''), '_residential_converted_');
     }
 
