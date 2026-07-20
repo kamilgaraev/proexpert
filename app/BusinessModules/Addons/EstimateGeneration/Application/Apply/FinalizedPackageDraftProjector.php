@@ -244,6 +244,8 @@ final class FinalizedPackageDraftProjector
             'materials_cost' => $this->resourceTotal($resourceProjection['materials']),
             'labor_cost' => $this->resourceTotal($resourceProjection['labor']),
             'machinery_cost' => $this->resourceTotal($resourceProjection['machinery']),
+            'labor_hours' => $this->resourceQuantityTotal($resourceProjection['labor']),
+            'machinery_hours' => $this->resourceQuantityTotal($resourceProjection['machinery']),
             'total_cost' => (string) $item->total_cost,
             'price_source' => $item->price_source,
             'price_snapshot' => $item->price_snapshot,
@@ -555,6 +557,17 @@ final class FinalizedPackageDraftProjector
         }
 
         return $this->decimal($total, 2);
+    }
+
+    /** @param list<array<string, mixed>> $resources */
+    private function resourceQuantityTotal(array $resources): string
+    {
+        $total = BigDecimal::zero();
+        foreach ($resources as $resource) {
+            $total = $total->plus($this->positiveDecimal($resource['quantity'] ?? null, 'resource quantity'));
+        }
+
+        return $this->decimal($total, 8);
     }
 
     private function positiveInt(mixed $value, string $label): int

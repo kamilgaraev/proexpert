@@ -244,6 +244,8 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
             'materials_cost' => $workItem['materials_cost'],
             'machinery_cost' => $workItem['machinery_cost'],
             'labor_cost' => $workItem['labor_cost'],
+            'labor_hours' => $workItem['labor_hours'],
+            'machinery_hours' => $workItem['machinery_hours'],
             'direct_costs' => $workItem['total_cost'],
             'total_amount' => $workItem['total_cost'],
             'current_total_amount' => $workItem['total_cost'],
@@ -277,6 +279,12 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                 'unit_price' => $resource['unit_price'],
                 'total_amount' => $resource['total_price'],
                 'current_total_amount' => $resource['total_price'],
+                'labor_hours' => $itemType === EstimatePositionItemType::LABOR->value
+                    ? $resource['quantity']
+                    : 0,
+                'machinery_hours' => $itemType === EstimatePositionItemType::MACHINERY->value
+                    ? $resource['quantity']
+                    : 0,
                 'is_manual' => true,
                 'metadata' => [
                     'confidence' => $resource['confidence'] ?? null,

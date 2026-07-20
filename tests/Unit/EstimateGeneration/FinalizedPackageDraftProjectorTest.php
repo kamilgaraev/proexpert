@@ -27,6 +27,8 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
         self::assertSame('100.00', $workItem['materials_cost']);
         self::assertSame('300.00', $workItem['labor_cost']);
         self::assertSame('0.00', $workItem['machinery_cost']);
+        self::assertSame('3.00000000', $workItem['labor_hours']);
+        self::assertSame('0.00000000', $workItem['machinery_hours']);
         self::assertSame('2.000000', $workItem['materials'][0]['quantity']);
         self::assertSame('50.000000', $workItem['materials'][0]['unit_price']);
         self::assertSame('100.00', $workItem['materials'][0]['total_price']);
@@ -57,6 +59,25 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
         foreach (['price_source', 'price_source_version', 'rounding_adjustment', 'project_resource_selection', 'project_material_selection'] as $field) {
             self::assertStringContainsString("'{$field}' => \$resource['{$field}'] ?? null", $source);
         }
+    }
+
+    #[Test]
+    public function ordinary_estimate_writer_persists_projected_hours_on_work_and_resource_rows(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 3)
+            .'/app/BusinessModules/Addons/EstimateGeneration/Application/Apply/LaravelGeneratedEstimateWriter.php');
+
+        self::assertIsString($source);
+        self::assertStringContainsString("'labor_hours' => \$workItem['labor_hours']", $source);
+        self::assertStringContainsString("'machinery_hours' => \$workItem['machinery_hours']", $source);
+        self::assertStringContainsString(
+            "'labor_hours' => \$itemType === EstimatePositionItemType::LABOR->value",
+            $source,
+        );
+        self::assertStringContainsString(
+            "'machinery_hours' => \$itemType === EstimatePositionItemType::MACHINERY->value",
+            $source,
+        );
     }
 
     #[Test]
@@ -293,6 +314,8 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
                         'materials_cost' => '0.00',
                         'labor_cost' => '0.00',
                         'machinery_cost' => '0.00',
+                        'labor_hours' => '999.00000000',
+                        'machinery_hours' => '999.00000000',
                         'total_cost' => '1.00',
                         'pricing_status' => 'calculated',
                     ]],
