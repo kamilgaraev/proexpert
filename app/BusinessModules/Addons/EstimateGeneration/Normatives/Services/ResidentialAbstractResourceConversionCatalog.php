@@ -13,7 +13,7 @@ final class ResidentialAbstractResourceConversionCatalog
             'to_unit' => 'т',
             'factor' => '1',
             'assumption' => 'monolithic_floor_reinforcement_steel_group:08.4.03.03',
-            'name_markers' => ['сталь', 'арматур', 'a500c', '12 мм'],
+            'name_markers' => ['арматур', 'a500c', '12 мм'],
         ],
         '07-01-021-01|05.1.03.09' => [
             'candidate_group_code' => '05.1.03.09',

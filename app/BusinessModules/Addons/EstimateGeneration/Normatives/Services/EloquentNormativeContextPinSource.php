@@ -889,6 +889,31 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         $result = [];
         foreach ($requirements as $requirement) {
             $resource = $this->projectMaterials->resourceFromPriceRows($requirement, $rows->all());
+            if ($resource === null) {
+                $preferredCode = trim((string) ($requirement['resource_code'] ?? ''));
+                $fallbackGroupCode = trim((string) ($requirement['fallback_group_code'] ?? ''));
+                $candidates = $rows->filter(static function (object $row) use ($preferredCode, $fallbackGroupCode): bool {
+                    $code = trim((string) ($row->resource_code ?? ''));
+
+                    return $code === $preferredCode
+                        || ($fallbackGroupCode !== '' && str_starts_with($code, $fallbackGroupCode.'-'));
+                })->take(32)->map(static fn (object $row): array => [
+                    'resource_code' => trim((string) ($row->resource_code ?? '')),
+                    'resource_name' => trim((string) ($row->resource_name ?? '')),
+                    'unit' => trim((string) ($row->unit ?? '')),
+                    'base_price' => is_numeric($row->base_price ?? null) ? (float) $row->base_price : null,
+                    'price_source' => trim((string) ($row->price_source ?? '')),
+                    'price_source_version' => trim((string) ($row->price_source_version ?? '')),
+                ])->values()->all();
+                $this->telemetry('supplementary_material_price_missing', [
+                    'work_item_key' => (string) $requirement['work_item_key'],
+                    'preferred_resource_code' => $preferredCode,
+                    'fallback_group_code' => $fallbackGroupCode,
+                    'expected_source_unit' => (string) ($requirement['source_unit'] ?? ''),
+                    'candidates_count' => count($candidates),
+                    'candidates' => $candidates,
+                ]);
+            }
             $result[] = [
                 'work_item_key' => $requirement['work_item_key'],
                 'requirement' => $requirement,
