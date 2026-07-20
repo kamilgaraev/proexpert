@@ -52,6 +52,7 @@ return [
         'document_edit_forbidden' => 'Документ нельзя редактировать в текущем статусе.',
         'schedule_only_approved' => 'Планирование доступно только для утвержденных документов.',
         'document_pay_forbidden' => 'Документ нельзя оплатить в текущем статусе.',
+        'contract_required_not_active' => 'Оплата возможна только после вступления договора поставки в силу.',
         'payment_amount_exceeds_remaining' => 'Сумма платежа превышает остаток к оплате.',
         'payment_amount_exceeds_document_remaining' => 'Сумма платежа превышает остаток по документу.',
         'document_cancel_forbidden' => 'Документ нельзя отменить в текущем статусе.',
