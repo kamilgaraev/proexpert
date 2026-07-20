@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Generation;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
@@ -31,7 +32,12 @@ final readonly class RunEstimateGenerationDraft
             return;
         }
 
-        $run = $this->pipeline->run($snapshot);
+        try {
+            $run = $this->pipeline->run($snapshot);
+        } catch (StaleEstimateGenerationState) {
+            return;
+        }
+
         if (! $run->dispatchNext) {
             return;
         }
