@@ -8,10 +8,12 @@ final class QuantityCoverageWarning
 {
     private const REASONS = [
         'electrical_design_takeoff_missing',
+        'documented_wet_rooms_missing',
         'external_gutter_not_inferred_for_flat_roof',
         'external_network_route_missing',
         'floor_count_missing',
         'foundation_build_up_missing',
+        'foundation_footprint_missing',
         'grounding_installation_type_missing',
         'heating_design_takeoff_missing',
         'heating_source_type_missing',
