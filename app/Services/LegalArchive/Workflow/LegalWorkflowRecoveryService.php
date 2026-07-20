@@ -11,6 +11,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowTemplate;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\Builder;
@@ -21,13 +22,17 @@ final readonly class LegalWorkflowRecoveryService
 {
     private LegalWorkflowTemplateService $templates;
 
+    private LegalDocumentAggregateLock $aggregateLock;
+
     public function __construct(
         private ImmutableAuditIntegrityService $integrity,
         private LegalDocumentAudit $audit,
         private ConnectionInterface $connection,
         ?LegalWorkflowTemplateService $templates = null,
+        ?LegalDocumentAggregateLock $aggregateLock = null,
     ) {
         $this->templates = $templates ?? new LegalWorkflowTemplateService($integrity, $connection);
+        $this->aggregateLock = $aggregateLock ?? new LegalDocumentAggregateLock;
     }
 
     public function markRequired(LegalWorkflowInstance $instance, string $reason): void
@@ -61,6 +66,24 @@ final readonly class LegalWorkflowRecoveryService
     {
         try {
             return $this->connection->transaction(function () use ($organizationId, $instanceId): LegalWorkflowInstance {
+                $reference = $this->instances()
+                    ->whereKey($instanceId)
+                    ->where('organization_id', $organizationId)
+                    ->whereNotNull('reconciliation_required_at')
+                    ->first();
+                if (! $reference instanceof LegalWorkflowInstance) {
+                    throw new DomainException('legal_workflow_reconciliation_candidate_not_found');
+                }
+                $document = $this->aggregateLock->lockDocument(
+                    $this->connection,
+                    $organizationId,
+                    (int) $reference->document_id,
+                );
+                $version = $this->aggregateLock->lockVersion(
+                    $this->connection,
+                    $document,
+                    (int) $reference->document_version_id,
+                );
                 $instance = $this->instances()
                     ->whereKey($instanceId)
                     ->where('organization_id', $organizationId)
@@ -70,8 +93,6 @@ final readonly class LegalWorkflowRecoveryService
                 if (! $instance instanceof LegalWorkflowInstance) {
                     throw new DomainException('legal_workflow_reconciliation_candidate_not_found');
                 }
-                $document = $this->documents()->whereKey($instance->document_id)->lockForUpdate()->first();
-                $version = $this->versions()->whereKey($instance->document_version_id)->first();
                 if (
                     ! $document instanceof LegalArchiveDocument
                     || ! $version instanceof LegalArchiveDocumentVersion
@@ -90,66 +111,44 @@ final readonly class LegalWorkflowRecoveryService
                     throw new DomainException('legal_workflow_reconciliation_integrity_failed');
                 }
                 $this->assertTemplateIdentity($instance);
-                $this->assertStepsMatchSnapshot($instance);
-
-                if ($instance->status === 'in_progress') {
-                    $activeSequences = $this->steps()
-                        ->where('instance_id', $instance->id)
-                        ->where('status', 'active')
-                        ->distinct()
-                        ->pluck('sequence');
-                    if ($activeSequences->count() > 1) {
-                        throw new DomainException('legal_workflow_reconciliation_multiple_active_sequences');
-                    }
-                    if ($activeSequences->isEmpty()) {
-                        $next = $this->steps()
-                            ->where('instance_id', $instance->id)
-                            ->where('status', 'pending')
-                            ->min('sequence');
-                        if ($next !== null) {
-                            $activatedAt = now();
-                            foreach ($this->steps()->where('instance_id', $instance->id)->where('sequence', $next)->lockForUpdate()->get() as $step) {
-                                $step->forceFill([
-                                    'status' => 'active',
-                                    'activated_at' => $activatedAt,
-                                    'due_at' => $step->deadline_at ?? ($step->due_in_hours === null ? null : $activatedAt->copy()->addHours((int) $step->due_in_hours)),
-                                    'lock_version' => ((int) $step->lock_version) + 1,
-                                ])->save();
-                            }
-                            $instance->forceFill(['due_at' => $this->steps()
-                                ->where('instance_id', $instance->id)
-                                ->where('sequence', $next)
-                                ->whereNotNull('due_at')
-                                ->min('due_at')]);
-                        } elseif ($this->steps()->where('instance_id', $instance->id)->where('status', 'approved')->count()
-                            === $this->steps()->where('instance_id', $instance->id)->count()
-                        ) {
-                            $instance->forceFill(['status' => 'approved', 'completed_at' => now(), 'due_at' => null]);
-                            $document->forceFill([
-                                'approval_status' => 'approved',
-                                'lock_version' => ((int) $document->lock_version) + 1,
-                            ])->save();
-                        } else {
-                            throw new DomainException('legal_workflow_reconciliation_state_ambiguous');
-                        }
-                    }
-                }
-
+                $steps = $this->assertStepsMatchSnapshot($instance);
+                $projection = $this->deriveProjection($instance, $steps);
+                $this->authorizeDatabaseRecovery();
+                $this->applyStepProjection($steps, $projection['steps']);
                 $instance->forceFill([
-                    'reconciliation_required_at' => null,
-                    'reconciliation_reason' => null,
-                    'reconciliation_attempts' => min(((int) $instance->reconciliation_attempts) + 1, 100),
-                    'reconciliation_last_error' => null,
-                    'lock_version' => ((int) $instance->lock_version) + 1,
+                    'status' => $projection['status'],
+                    'due_at' => $projection['due_at'],
+                    'completed_at' => $projection['completed_at'],
+                    'cancelled_at' => $projection['cancelled_at'],
+                    'expired_at' => $projection['expired_at'],
                 ])->save();
+                $documentProjection = LegalWorkflowDocumentProjection::forInstanceStatus($projection['status']);
+                if (
+                    $document->approval_status !== $documentProjection['approval_status']
+                    || $document->lifecycle_status !== $documentProjection['lifecycle_status']
+                ) {
+                    $document->forceFill([
+                        ...$documentProjection,
+                        'lock_version' => ((int) $document->lock_version) + 1,
+                    ])->save();
+                }
+                $this->verifyProjection($instance->refresh(), $document->refresh(), $projection);
+                $nextLockVersion = ((int) $instance->lock_version) + 1;
                 $this->audit->recordForActorId('workflow_reconciled', $document, null, [
-                    'source_event_id' => "workflow-reconcile:{$instance->id}:{$instance->lock_version}",
-                    'idempotency_key' => "workflow-reconcile:{$instance->id}:{$instance->lock_version}",
+                    'source_event_id' => "workflow-reconcile:{$instance->id}:{$nextLockVersion}",
+                    'idempotency_key' => "workflow-reconcile:{$instance->id}:{$nextLockVersion}",
                     'workflow_instance_id' => (int) $instance->id,
                     'document_version_id' => (int) $instance->document_version_id,
                     'document_content_hash' => (string) $instance->document_content_hash,
                     'snapshot_hash' => (string) $instance->snapshot_hash,
                 ]);
+                $instance->forceFill([
+                    'reconciliation_required_at' => null,
+                    'reconciliation_reason' => null,
+                    'reconciliation_attempts' => min(((int) $instance->reconciliation_attempts) + 1, 100),
+                    'reconciliation_last_error' => null,
+                    'lock_version' => $nextLockVersion,
+                ])->save();
 
                 return $instance->refresh()->load('steps', 'decisions');
             }, 3);
@@ -167,7 +166,8 @@ final readonly class LegalWorkflowRecoveryService
         }
     }
 
-    private function assertStepsMatchSnapshot(LegalWorkflowInstance $instance): void
+    /** @return Collection<int, LegalWorkflowStep> */
+    private function assertStepsMatchSnapshot(LegalWorkflowInstance $instance): Collection
     {
         $snapshot = collect((array) ($instance->template_snapshot['steps'] ?? []))->keyBy('key');
         $steps = $this->steps()->where('instance_id', $instance->id)->lockForUpdate()->get();
@@ -195,8 +195,9 @@ final readonly class LegalWorkflowRecoveryService
             ]) {
                 throw new DomainException('legal_workflow_reconciliation_step_mismatch');
             }
-            $this->assertAssignmentChain($instance, $step, $definition);
         }
+
+        return $steps;
     }
 
     private function assertTemplateIdentity(LegalWorkflowInstance $instance): void
@@ -230,17 +231,152 @@ final readonly class LegalWorkflowRecoveryService
         }
     }
 
-    /** @param array<string, mixed> $definition */
-    private function assertAssignmentChain(
+    /**
+     * @param  Collection<int, LegalWorkflowStep>  $steps
+     * @return array{status: string, due_at: mixed, completed_at: mixed, cancelled_at: mixed, expired_at: mixed, steps: array<int, array<string, mixed>>}
+     */
+    private function deriveProjection(LegalWorkflowInstance $instance, Collection $steps): array
+    {
+        $decisions = $instance->decisions()->orderBy('id')->get();
+        $terminalByStep = [];
+        $instanceTerminal = null;
+        foreach ($decisions as $decision) {
+            if (
+                (int) $decision->organization_id !== (int) $instance->organization_id
+                || (int) $decision->document_id !== (int) $instance->document_id
+                || (int) $decision->document_version_id !== (int) $instance->document_version_id
+                || ! hash_equals((string) $decision->document_content_hash, (string) $instance->document_content_hash)
+            ) {
+                throw new DomainException('legal_workflow_reconciliation_decision_invalid');
+            }
+            if (in_array($decision->action, ['cancel', 'expire'], true)) {
+                $expectedInstanceStatus = $decision->action === 'cancel' ? 'cancelled' : 'expired';
+                if ($decision->step_id !== null || $decision->from_status !== 'in_progress' || $decision->to_status !== $expectedInstanceStatus) {
+                    throw new DomainException('legal_workflow_reconciliation_decision_invalid');
+                }
+                if ($instanceTerminal !== null) {
+                    throw new DomainException('legal_workflow_reconciliation_decision_invalid');
+                }
+                $instanceTerminal = $decision;
+
+                continue;
+            }
+            if ($decision->step_id === null || ! $steps->contains('id', (int) $decision->step_id)) {
+                throw new DomainException('legal_workflow_reconciliation_decision_invalid');
+            }
+            if ($decision->action === 'reassign') {
+                if ($decision->from_status !== 'active' || $decision->to_status !== 'active') {
+                    throw new DomainException('legal_workflow_reconciliation_decision_invalid');
+                }
+
+                continue;
+            }
+            $expectedToStatus = match ($decision->action) {
+                'approve' => 'approved',
+                'reject' => 'rejected',
+                'return' => 'returned',
+                default => throw new DomainException('legal_workflow_reconciliation_decision_invalid'),
+            };
+            if ($decision->from_status !== 'active' || $decision->to_status !== $expectedToStatus) {
+                throw new DomainException('legal_workflow_reconciliation_decision_invalid');
+            }
+            if (isset($terminalByStep[(int) $decision->step_id])) {
+                throw new DomainException('legal_workflow_reconciliation_decision_invalid');
+            }
+            $terminalByStep[(int) $decision->step_id] = $decision;
+        }
+
+        $rejects = collect($terminalByStep)->where('action', 'reject');
+        $returns = collect($terminalByStep)->where('action', 'return');
+        if ($instanceTerminal !== null && collect($terminalByStep)->contains(static fn ($decision): bool => $decision->action !== 'approve')) {
+            throw new DomainException('legal_workflow_reconciliation_decision_invalid');
+        }
+        if ($rejects->count() > 1 || $returns->count() > 1 || ($rejects->isNotEmpty() && $returns->isNotEmpty())) {
+            throw new DomainException('legal_workflow_reconciliation_decision_invalid');
+        }
+        $status = match (true) {
+            $instanceTerminal !== null => (string) $instanceTerminal->action === 'cancel' ? 'cancelled' : 'expired',
+            $rejects->isNotEmpty() => 'rejected',
+            $returns->isNotEmpty() => 'returned',
+            count($terminalByStep) === $steps->count()
+                && collect($terminalByStep)->every(static fn ($decision): bool => $decision->action === 'approve') => 'approved',
+            default => 'in_progress',
+        };
+        if ($status === 'in_progress' && collect($terminalByStep)->contains(static fn ($decision): bool => $decision->action !== 'approve')) {
+            throw new DomainException('legal_workflow_reconciliation_decision_invalid');
+        }
+
+        $incompleteSequence = $status === 'in_progress'
+            ? $steps->reject(static fn (LegalWorkflowStep $step): bool => isset($terminalByStep[(int) $step->id]))->min('sequence')
+            : null;
+        if ($status === 'in_progress' && $incompleteSequence === null) {
+            throw new DomainException('legal_workflow_reconciliation_state_ambiguous');
+        }
+
+        $stepProjection = [];
+        foreach ($steps as $step) {
+            $definition = (array) collect((array) ($instance->template_snapshot['steps'] ?? []))
+                ->firstWhere('key', (string) $step->step_key);
+            $assignment = $this->deriveAssignment($instance, $step, $definition, $terminalByStep);
+            $terminal = $terminalByStep[(int) $step->id] ?? null;
+            $stepStatus = match (true) {
+                $terminal !== null => (string) $terminal->to_status,
+                $status === 'in_progress' && (int) $step->sequence === (int) $incompleteSequence => 'active',
+                $status === 'in_progress' => 'pending',
+                $status === 'expired' => 'expired',
+                default => 'cancelled',
+            };
+            $activatedAt = in_array($stepStatus, ['pending'], true) ? null : $assignment['activated_at'];
+            $stepProjection[(int) $step->id] = [
+                ...$assignment,
+                'status' => $stepStatus,
+                'activated_at' => $activatedAt,
+                'due_at' => $stepStatus === 'pending' ? null : $assignment['due_at'],
+                'completed_at' => in_array($stepStatus, ['active', 'pending'], true)
+                    ? null
+                    : ($terminal?->decided_at ?? $instanceTerminal?->decided_at ?? $instance->completed_at ?? now()),
+            ];
+        }
+        $activeDue = collect($stepProjection)
+            ->where('status', 'active')
+            ->pluck('due_at')
+            ->filter()
+            ->sortBy(static fn ($due): int => $due->getTimestamp())
+            ->first();
+        $completedAt = $status === 'in_progress'
+            ? null
+            : ($instanceTerminal?->decided_at
+                ?? collect($terminalByStep)->max('decided_at')
+                ?? $instance->completed_at
+                ?? now());
+
+        return [
+            'status' => $status,
+            'due_at' => $status === 'in_progress' ? $activeDue : null,
+            'completed_at' => $completedAt,
+            'cancelled_at' => $status === 'cancelled' ? $completedAt : null,
+            'expired_at' => $status === 'expired' ? $completedAt : null,
+            'steps' => $stepProjection,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $definition
+     * @param  array<int, mixed>  $terminalByStep
+     * @return array{actor_type: string, actor_reference: string, assignment_revision: int, last_reassign_decision_id: ?int, activated_at: mixed, due_at: mixed}
+     */
+    private function deriveAssignment(
         LegalWorkflowInstance $instance,
         LegalWorkflowStep $step,
         array $definition,
-    ): void {
+        array $terminalByStep,
+    ): array {
         $actorType = (string) ($definition['actor_type'] ?? '');
         $actorReference = (string) ($definition['actor_reference'] ?? '');
-        $dueAt = $step->activated_at === null
+        $activatedAt = $this->activationTime($instance, $step, $terminalByStep);
+        $dueAt = $activatedAt === null
             ? null
-            : ($step->deadline_at ?? ($step->due_in_hours === null ? null : $step->activated_at->copy()->addHours((int) $step->due_in_hours)));
+            : ($step->deadline_at ?? ($step->due_in_hours === null ? null : $activatedAt->copy()->addHours((int) $step->due_in_hours)));
         $previousDecisionId = null;
         $revision = 0;
         $decisions = $instance->decisions()
@@ -264,14 +400,76 @@ final readonly class LegalWorkflowRecoveryService
             $dueAt = $decision->to_due_at;
             $previousDecisionId = (int) $decision->id;
         }
+
+        return [
+            'actor_type' => $actorType,
+            'actor_reference' => $actorReference,
+            'assignment_revision' => $revision,
+            'last_reassign_decision_id' => $previousDecisionId,
+            'activated_at' => $activatedAt,
+            'due_at' => $dueAt,
+        ];
+    }
+
+    /** @param array<int, mixed> $terminalByStep */
+    private function activationTime(LegalWorkflowInstance $instance, LegalWorkflowStep $step, array $terminalByStep): mixed
+    {
+        $minimumSequence = collect((array) ($instance->template_snapshot['steps'] ?? []))->min('sequence');
+        if ((int) $step->sequence === (int) $minimumSequence) {
+            return $instance->submitted_at;
+        }
+        $previousSequence = collect((array) ($instance->template_snapshot['steps'] ?? []))
+            ->where('sequence', '<', (int) $step->sequence)
+            ->max('sequence');
+        $previousSteps = $this->steps()->where('instance_id', $instance->id)->where('sequence', $previousSequence)->get();
+        $approvals = $previousSteps->map(static fn (LegalWorkflowStep $previous) => $terminalByStep[(int) $previous->id] ?? null);
+        if ($approvals->contains(null) || $approvals->contains(static fn ($decision): bool => $decision->action !== 'approve')) {
+            return null;
+        }
+
+        return $approvals->max('decided_at');
+    }
+
+    /** @param Collection<int, LegalWorkflowStep> $steps @param array<int, array<string, mixed>> $projection */
+    private function applyStepProjection(Collection $steps, array $projection): void
+    {
+        foreach ($steps as $step) {
+            $expected = $projection[(int) $step->id];
+            $changed = false;
+            foreach ($expected as $field => $value) {
+                $current = $step->{$field};
+                $changed = $changed || ($current instanceof \DateTimeInterface || $value instanceof \DateTimeInterface
+                    ? ! $this->sameInstant($current, $value)
+                    : $current !== $value);
+            }
+            if ($changed) {
+                $step->applyRecoveryProjection([
+                    ...$expected,
+                    'lock_version' => ((int) $step->lock_version) + 1,
+                ]);
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $projection */
+    private function verifyProjection(LegalWorkflowInstance $instance, LegalArchiveDocument $document, array $projection): void
+    {
+        $documentProjection = LegalWorkflowDocumentProjection::forInstanceStatus((string) $projection['status']);
+        $actualDue = $this->steps()->where('instance_id', $instance->id)->where('status', 'active')->whereNotNull('due_at')->min('due_at');
         if (
-            (int) $step->assignment_revision !== $revision
-            || $step->last_reassign_decision_id !== $previousDecisionId
-            || $step->actor_type !== $actorType
-            || $step->actor_reference !== $actorReference
-            || ! $this->sameInstant($step->due_at, $dueAt)
+            $instance->status !== $projection['status']
+            || ! $this->sameInstant($instance->due_at, $actualDue === null ? null : new \DateTimeImmutable((string) $actualDue))
+            || $document->approval_status !== $documentProjection['approval_status']
+            || $document->lifecycle_status !== $documentProjection['lifecycle_status']
         ) {
-            throw new DomainException('legal_workflow_reconciliation_assignment_chain_invalid');
+            throw new DomainException('legal_workflow_reconciliation_projection_invalid');
+        }
+    }
+
+    private function authorizeDatabaseRecovery(): void
+    {
+        if ($this->connection->getDriverName() === 'pgsql') {
+            $this->connection->statement("SET LOCAL app.legal_workflow_recovery = 'service'");
         }
     }
 

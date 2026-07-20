@@ -3,13 +3,13 @@
 namespace App\Domain\Authorization\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 /**
  * Модель контекста авторизации
- * 
+ *
  * @property int $id
  * @property string $type Тип контекста: system, organization, project
  * @property int|null $resource_id ID ресурса (organization_id или project_id)
@@ -20,20 +20,22 @@ class AuthorizationContext extends Model
 {
     protected $fillable = [
         'type',
-        'resource_id', 
+        'resource_id',
         'parent_context_id',
-        'metadata'
+        'metadata',
     ];
 
     protected $casts = [
-        'metadata' => 'array'
+        'metadata' => 'array',
     ];
 
     /**
      * Типы контекстов
      */
     const TYPE_SYSTEM = 'system';
+
     const TYPE_ORGANIZATION = 'organization';
+
     const TYPE_PROJECT = 'project';
 
     /**
@@ -76,7 +78,7 @@ class AuthorizationContext extends Model
         return static::firstOrCreate([
             'type' => self::TYPE_SYSTEM,
             'resource_id' => null,
-            'parent_context_id' => null
+            'parent_context_id' => null,
         ]);
     }
 
@@ -88,7 +90,7 @@ class AuthorizationContext extends Model
         return static::firstOrCreate([
             'type' => self::TYPE_ORGANIZATION,
             'resource_id' => $organizationId,
-            'parent_context_id' => self::getSystemContext()->id
+            'parent_context_id' => self::getSystemContext()->id,
         ]);
     }
 
@@ -98,12 +100,49 @@ class AuthorizationContext extends Model
     public static function getProjectContext(int $projectId, int $organizationId): self
     {
         $orgContext = self::getOrganizationContext($organizationId);
-        
+
         return static::firstOrCreate([
             'type' => self::TYPE_PROJECT,
             'resource_id' => $projectId,
-            'parent_context_id' => $orgContext->id
+            'parent_context_id' => $orgContext->id,
         ]);
+    }
+
+    public static function findSystemContext(): ?self
+    {
+        return static::query()
+            ->where('type', self::TYPE_SYSTEM)
+            ->whereNull('resource_id')
+            ->whereNull('parent_context_id')
+            ->first();
+    }
+
+    public static function findOrganizationContext(int $organizationId): ?self
+    {
+        $systemContext = static::findSystemContext();
+        if (! $systemContext instanceof self) {
+            return null;
+        }
+
+        return static::query()
+            ->where('type', self::TYPE_ORGANIZATION)
+            ->where('resource_id', $organizationId)
+            ->where('parent_context_id', $systemContext->id)
+            ->first();
+    }
+
+    public static function findProjectContext(int $projectId, int $organizationId): ?self
+    {
+        $organizationContext = static::findOrganizationContext($organizationId);
+        if (! $organizationContext instanceof self) {
+            return null;
+        }
+
+        return static::query()
+            ->where('type', self::TYPE_PROJECT)
+            ->where('resource_id', $projectId)
+            ->where('parent_context_id', $organizationContext->id)
+            ->first();
     }
 
     /**
@@ -112,14 +151,14 @@ class AuthorizationContext extends Model
     public function isChildOf(self $context): bool
     {
         $current = $this;
-        
+
         while ($current->parent_context_id) {
             if ($current->parent_context_id === $context->id) {
                 return true;
             }
             $current = $current->parentContext;
         }
-        
+
         return false;
     }
 
@@ -130,12 +169,12 @@ class AuthorizationContext extends Model
     {
         $hierarchy = [$this];
         $current = $this;
-        
+
         while ($current->parentContext) {
             $current = $current->parentContext;
             array_unshift($hierarchy, $current);
         }
-        
+
         return $hierarchy;
     }
 
@@ -150,7 +189,7 @@ class AuthorizationContext extends Model
         }
 
         $currentOrg = \App\Models\Organization::find($this->resource_id);
-        if (!$currentOrg) {
+        if (! $currentOrg) {
             return false;
         }
 

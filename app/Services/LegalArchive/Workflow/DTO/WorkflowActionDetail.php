@@ -40,6 +40,40 @@ final readonly class WorkflowActionDetail
             'instance_id' => $this->instanceId,
             'requires_comment' => $this->requiresComment,
             'requires_reason' => $this->requiresReason,
+            'input_schema' => $this->inputSchema(),
         ];
+    }
+
+    /** @return array{required: list<string>, properties: array<string, array<string, mixed>>} */
+    private function inputSchema(): array
+    {
+        return match ($this->action) {
+            'reject', 'return' => [
+                'required' => ['comment'],
+                'properties' => [
+                    'comment' => ['type' => 'string', 'required' => true, 'min_length' => 1],
+                ],
+            ],
+            'reassign' => [
+                'required' => ['reason', 'target_actor_type', 'target_actor_id'],
+                'properties' => [
+                    'reason' => ['type' => 'string', 'required' => true, 'min_length' => 1],
+                    'target_actor_type' => [
+                        'type' => 'string',
+                        'required' => true,
+                        'enum' => ['user', 'role', 'party', 'external'],
+                    ],
+                    'target_actor_id' => ['type' => 'string', 'required' => true, 'min_length' => 1],
+                    'due_at' => ['type' => 'string', 'format' => 'date-time', 'required' => false, 'future' => true],
+                ],
+            ],
+            'cancel' => [
+                'required' => ['reason'],
+                'properties' => [
+                    'reason' => ['type' => 'string', 'required' => true, 'min_length' => 1],
+                ],
+            ],
+            default => ['required' => [], 'properties' => []],
+        };
     }
 }

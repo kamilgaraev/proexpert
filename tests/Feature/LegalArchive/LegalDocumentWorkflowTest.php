@@ -9,6 +9,8 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowDecision;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Exceptions\ImmutableDataException;
 use App\Models\User;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
@@ -83,7 +85,9 @@ final class LegalDocumentWorkflowTest extends TestCase
         self::assertSame($version->content_hash, $instance->document_content_hash);
         self::assertSame(64, strlen((string) $instance->snapshot_hash));
         self::assertSame(['active', 'active', 'pending'], $instance->steps()->orderBy('sequence')->orderBy('step_key')->pluck('status')->all());
-        self::assertSame('in_review', $document->refresh()->approval_status);
+        $document->refresh();
+        self::assertSame('pending', $document->approval_status);
+        self::assertSame('under_review', $document->lifecycle_status);
         self::assertSame(['workflow_submitted'], $this->audit->events);
     }
 
@@ -181,7 +185,10 @@ final class LegalDocumentWorkflowTest extends TestCase
                 $this->service->decide($step->refresh(), $submitter, new WorkflowDecisionInput($action, "d-{$action}", 1, 0));
                 self::fail("{$action} без причины принят");
             } catch (DomainException $exception) {
-                self::assertSame('legal_workflow_reason_required', $exception->getMessage());
+                self::assertSame(
+                    $action === 'reassign' ? 'legal_workflow_reason_required' : 'legal_workflow_comment_required',
+                    $exception->getMessage(),
+                );
             }
         }
 
@@ -207,6 +214,8 @@ final class LegalDocumentWorkflowTest extends TestCase
             comment: 'Исправьте реквизиты стороны',
         ));
         self::assertSame('returned', $instance->status);
+        self::assertSame('revision_required', $document->refresh()->approval_status);
+        self::assertSame('revision_required', $document->lifecycle_status);
         self::assertSame($version->content_hash, LegalWorkflowDecision::query()->latest('id')->value('document_content_hash'));
     }
 
@@ -323,7 +332,13 @@ final class LegalDocumentWorkflowTest extends TestCase
         self::assertTrue($after->action('approve', $targetStepId)->enabled);
         self::assertNotSame('', $after->action('approve', $targetStepId)->label);
         self::assertSame('legal_archive.workflow.approve', $after->action('approve', $targetStepId)->permission);
-        self::assertArrayHasKey('available_action_details', $after->toArray()['workflow_summary']);
+        $workflowSummary = $after->toArray()['workflow_summary'];
+        self::assertArrayHasKey('available_action_details', $workflowSummary);
+        $reject = collect($workflowSummary['available_action_details'])->firstWhere('action', 'reject');
+        $reassign = collect($workflowSummary['available_action_details'])->firstWhere('action', 'reassign');
+        self::assertSame(['comment'], $reject['input_schema']['required']);
+        self::assertSame(['reason', 'target_actor_type', 'target_actor_id'], $reassign['input_schema']['required']);
+        self::assertFalse($reassign['input_schema']['properties']['due_at']['required']);
     }
 
     public function test_parallel_action_contract_is_step_specific_and_overdue_does_not_block_sibling(): void
@@ -519,11 +534,17 @@ final class LegalDocumentWorkflowTest extends TestCase
         ));
         self::assertSame('cancelled', $cancelled->status);
         self::assertSame(['cancelled'], $cancelled->steps->pluck('status')->unique()->values()->all());
+        $document->refresh();
+        self::assertSame('cancelled', $document->approval_status);
+        self::assertSame('terminated', $document->lifecycle_status);
 
         $instance = $this->service->submit($document->refresh(), (int) $version->id, $actor, WorkflowOverride::none('expire-submit'));
         $instance->forceFill(['due_at' => now()->subMinute()])->save();
         self::assertSame(1, $this->service->expireDue(15, now()));
         self::assertSame('expired', $instance->refresh()->status);
+        $document->refresh();
+        self::assertSame('expired', $document->approval_status);
+        self::assertSame('expired', $document->lifecycle_status);
 
         $instance = $this->service->submit($document->refresh(), (int) $version->id, $actor, WorkflowOverride::none('recover-submit'));
         $recovery = new LegalWorkflowRecoveryService(
@@ -550,7 +571,9 @@ final class LegalDocumentWorkflowTest extends TestCase
         $instance = $this->service->decide($finance, $actor, new WorkflowDecisionInput('approve', 'complete-3', 3, 1));
 
         self::assertSame('approved', $instance->status);
-        self::assertSame('approved', $document->refresh()->approval_status);
+        $document->refresh();
+        self::assertSame('approved', $document->approval_status);
+        self::assertSame('approved', $document->lifecycle_status);
         self::assertSame(3, LegalWorkflowDecision::query()->where('instance_id', $instance->id)->count());
         self::assertSame([$version->content_hash], LegalWorkflowDecision::query()->where('instance_id', $instance->id)->pluck('document_content_hash')->unique()->values()->all());
     }
@@ -642,6 +665,237 @@ final class LegalDocumentWorkflowTest extends TestCase
         self::assertSame('legal_workflow_reconciliation_integrity_failed', $failed->reconciliation_last_error);
     }
 
+    public function test_reject_return_reassign_and_cancel_require_the_exact_input_field(): void
+    {
+        [$document, $version] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $this->createTemplate($actor);
+        $instance = $this->service->submit($document, (int) $version->id, $actor, WorkflowOverride::none('exact-input-submit'));
+        $step = $instance->steps()->where('step_key', 'legal_review')->firstOrFail();
+
+        foreach (['reject', 'return'] as $action) {
+            try {
+                $this->service->decide($step->refresh(), $actor, new WorkflowDecisionInput(
+                    $action,
+                    "exact-input-{$action}",
+                    1,
+                    0,
+                    reason: 'Причина не заменяет обязательный комментарий',
+                ));
+                self::fail("{$action} accepted without comment");
+            } catch (DomainException $exception) {
+                self::assertSame('legal_workflow_comment_required', $exception->getMessage());
+            }
+        }
+
+        try {
+            $this->service->decide($step->refresh(), $actor, new WorkflowDecisionInput(
+                'reassign',
+                'exact-input-reassign',
+                1,
+                0,
+                comment: 'Комментарий не заменяет обязательную причину',
+                reassignActorType: 'user',
+                reassignActorReference: '9',
+            ));
+            self::fail('Reassign accepted without reason.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_workflow_reason_required', $exception->getMessage());
+        }
+
+        try {
+            $this->service->cancel($instance->refresh(), $actor, new WorkflowDecisionInput(
+                'cancel',
+                'exact-input-cancel',
+                1,
+                0,
+                comment: 'Комментарий не заменяет обязательную причину',
+            ));
+            self::fail('Cancel accepted without reason.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_workflow_reason_required', $exception->getMessage());
+        }
+    }
+
+    public function test_instance_due_at_is_minimum_active_deadline_after_partial_approval_and_reassignment(): void
+    {
+        [$document, $version] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $this->createTemplate($actor);
+        $instance = $this->service->submit($document, (int) $version->id, $actor, WorkflowOverride::none('due-submit'));
+        $steps = $instance->steps()->where('status', 'active')->orderBy('step_key')->get();
+        $earlier = now()->addHours(2)->startOfSecond();
+        $later = now()->addHours(5)->startOfSecond();
+        $this->database->getConnection()->table('legal_workflow_steps')->where('id', $steps[0]->id)->update(['due_at' => $earlier]);
+        $this->database->getConnection()->table('legal_workflow_steps')->where('id', $steps[1]->id)->update(['due_at' => $later]);
+        $this->database->getConnection()->table('legal_workflow_instances')->where('id', $instance->id)->update(['due_at' => $earlier]);
+
+        $instance = $this->service->decide($steps[0]->refresh(), $actor, new WorkflowDecisionInput('approve', 'due-approve', 1, 0));
+        self::assertSame($later->timestamp, $instance->due_at?->timestamp);
+
+        $reassignedDue = now()->addHour()->startOfSecond();
+        $instance = $this->service->decide($steps[1]->refresh(), $actor, new WorkflowDecisionInput(
+            'reassign',
+            'due-reassign',
+            2,
+            0,
+            reason: 'Срок изменён ответственным',
+            reassignActorType: 'user',
+            reassignActorReference: '9',
+            dueAt: $reassignedDue->toAtomString(),
+        ));
+        self::assertSame($reassignedDue->timestamp, $instance->due_at?->timestamp);
+    }
+
+    public function test_recovery_repairs_only_deterministic_projection_and_verifies_before_clearing_marker(): void
+    {
+        [$document, $version] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $this->createTemplate($actor);
+        $instance = $this->service->submit($document, (int) $version->id, $actor, WorkflowOverride::none('projection-recovery'));
+        $expectedDue = $instance->steps()->where('status', 'active')->min('due_at');
+        $this->database->getConnection()->table('legal_workflow_instances')->where('id', $instance->id)->update([
+            'due_at' => now()->addDays(30),
+        ]);
+        $this->database->getConnection()->table('legal_archive_documents')->where('id', $document->id)->update([
+            'approval_status' => 'approved',
+            'lifecycle_status' => 'approved',
+        ]);
+        $recovery = new LegalWorkflowRecoveryService(new ImmutableAuditIntegrityService, $this->audit, $this->database->getConnection(), $this->templates);
+        $recovery->markRequired($instance, 'Восстановление производной проекции');
+
+        $recovered = $recovery->reconcile(15, (int) $instance->id);
+
+        self::assertSame((string) $expectedDue, (string) $recovered->due_at);
+        $document->refresh();
+        self::assertSame('pending', $document->approval_status);
+        self::assertSame('under_review', $document->lifecycle_status);
+        self::assertNull($recovered->reconciliation_required_at);
+    }
+
+    public function test_default_actor_and_action_resolution_never_create_authorization_contexts(): void
+    {
+        [$document, $version] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $this->createTemplate($actor);
+        $instance = $this->service->submit($document, (int) $version->id, $actor, WorkflowOverride::none('read-only-auth-submit'));
+        $step = $instance->steps()->where('step_key', 'legal_review')->firstOrFail();
+        Container::getInstance()->instance(AuthorizationService::class, new WorkflowAuthorizationServiceSpy);
+        $resolver = new LegalWorkflowActorResolver;
+
+        self::assertFalse($resolver->canAct($actor, $step, $document));
+        self::assertSame(0, AuthorizationContext::query()->count());
+
+        $actionResolver = new LegalWorkflowActionResolver(new LegalWorkflowAuthorization, $resolver);
+        $actionResolver->for($actor, $document->refresh());
+        self::assertSame(0, AuthorizationContext::query()->count());
+
+        $system = AuthorizationContext::query()->create([
+            'type' => AuthorizationContext::TYPE_SYSTEM,
+            'resource_id' => null,
+            'parent_context_id' => null,
+        ]);
+        $organization = AuthorizationContext::query()->create([
+            'type' => AuthorizationContext::TYPE_ORGANIZATION,
+            'resource_id' => 15,
+            'parent_context_id' => $system->id,
+        ]);
+        $spy = new WorkflowAuthorizationServiceSpy;
+        $spy->allowedContextIds = [(int) $organization->id];
+        Container::getInstance()->instance(AuthorizationService::class, $spy);
+
+        self::assertTrue((new LegalWorkflowActorResolver)->canAct($actor, $step, $document));
+        self::assertSame(2, AuthorizationContext::query()->count());
+    }
+
+    public function test_recovery_derives_step_statuses_and_reassignment_projection_from_evidence(): void
+    {
+        [$document, $version] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $this->createTemplate($actor);
+        $instance = $this->service->submit($document, (int) $version->id, $actor, WorkflowOverride::none('derive-recovery'));
+        $step = $instance->steps()->where('step_key', 'legal_review')->firstOrFail();
+        $instance = $this->service->decide($step, $actor, new WorkflowDecisionInput(
+            'reassign',
+            'derive-reassign',
+            1,
+            0,
+            reason: 'Назначен замещающий сотрудник',
+            reassignActorType: 'user',
+            reassignActorReference: '9',
+            dueAt: now()->addHours(3)->startOfSecond()->toAtomString(),
+        ));
+        $this->database->getConnection()->table('legal_workflow_steps')->where('id', $step->id)->update([
+            'actor_type' => 'role',
+            'actor_reference' => 'forged',
+            'assignment_revision' => 0,
+            'last_reassign_decision_id' => null,
+            'status' => 'pending',
+        ]);
+        $this->database->getConnection()->table('legal_workflow_steps')
+            ->where('instance_id', $instance->id)
+            ->where('sequence', 20)
+            ->update(['status' => 'active']);
+        $recovery = new LegalWorkflowRecoveryService(new ImmutableAuditIntegrityService, $this->audit, $this->database->getConnection(), $this->templates);
+        $recovery->markRequired($instance, 'Восстановление шагов');
+
+        $recovered = $recovery->reconcile(15, (int) $instance->id);
+        $reassigned = $recovered->steps()->whereKey($step->id)->firstOrFail();
+        self::assertSame('active', $reassigned->status);
+        self::assertSame('user', $reassigned->actor_type);
+        self::assertSame('9', $reassigned->actor_reference);
+        self::assertSame(1, $reassigned->assignment_revision);
+        self::assertSame(['pending'], $recovered->steps()->where('sequence', 20)->pluck('status')->unique()->all());
+    }
+
+    public function test_recovery_fails_closed_when_decision_evidence_is_inconsistent(): void
+    {
+        [$document, $version] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $this->createTemplate($actor);
+        $instance = $this->service->submit($document, (int) $version->id, $actor, WorkflowOverride::none('proof-recovery'));
+        $step = $instance->steps()->where('step_key', 'legal_review')->firstOrFail();
+        $this->service->decide($step, $actor, new WorkflowDecisionInput('approve', 'proof-approve', 1, 0));
+        $this->database->getConnection()->table('legal_workflow_decisions')->where('idempotency_key', 'proof-approve')->update([
+            'from_status' => 'pending',
+        ]);
+        $recovery = new LegalWorkflowRecoveryService(new ImmutableAuditIntegrityService, $this->audit, $this->database->getConnection(), $this->templates);
+        $recovery->markRequired($instance, 'Проверка доказательств');
+
+        try {
+            $recovery->reconcile(15, (int) $instance->id);
+            self::fail('Inconsistent decision evidence was accepted.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_workflow_reconciliation_decision_invalid', $exception->getMessage());
+        }
+        self::assertNotNull($instance->refresh()->reconciliation_required_at);
+    }
+
+    public function test_recovery_rolls_projection_and_marker_clear_back_when_audit_fails(): void
+    {
+        [$document, $version] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $this->createTemplate($actor);
+        $instance = $this->service->submit($document, (int) $version->id, $actor, WorkflowOverride::none('audit-recovery'));
+        $this->database->getConnection()->table('legal_archive_documents')->where('id', $document->id)->update([
+            'approval_status' => 'approved',
+            'lifecycle_status' => 'approved',
+        ]);
+        $recovery = new LegalWorkflowRecoveryService(new ImmutableAuditIntegrityService, $this->audit, $this->database->getConnection(), $this->templates);
+        $recovery->markRequired($instance, 'Проверка транзакции');
+        $this->audit->fail = true;
+
+        try {
+            $recovery->reconcile(15, (int) $instance->id);
+            self::fail('Audit failure did not roll reconciliation back.');
+        } catch (RuntimeException) {
+        }
+        $document->refresh();
+        self::assertSame('approved', $document->approval_status);
+        self::assertSame('approved', $document->lifecycle_status);
+        self::assertNotNull($instance->refresh()->reconciliation_required_at);
+    }
+
     private function createTemplate(WorkflowTestUser $actor): void
     {
         $this->templates->createVersion(15, 'contract', 'Согласование договора', [
@@ -695,6 +949,7 @@ final class LegalDocumentWorkflowTest extends TestCase
             $table->string('title');
             $table->string('type_profile_code')->nullable();
             $table->string('approval_status')->nullable();
+            $table->string('lifecycle_status')->nullable();
             $table->unsignedBigInteger('current_primary_version_id')->nullable();
             $table->unsignedInteger('lock_version')->default(0);
             $table->timestamps();
@@ -706,6 +961,14 @@ final class LegalDocumentWorkflowTest extends TestCase
             $table->boolean('is_active');
             $table->string('project_access_mode');
         });
+        $schema->create('authorization_contexts', function (Blueprint $table): void {
+            $table->id();
+            $table->string('type');
+            $table->unsignedBigInteger('resource_id')->nullable();
+            $table->unsignedBigInteger('parent_context_id')->nullable();
+            $table->json('metadata')->nullable();
+            $table->timestamps();
+        });
         $schema->create('project_user', function (Blueprint $table): void {
             $table->unsignedBigInteger('project_id');
             $table->unsignedBigInteger('user_id');
@@ -714,12 +977,21 @@ final class LegalDocumentWorkflowTest extends TestCase
         $schema->create('legal_archive_document_versions', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('document_id');
+            $table->unsignedBigInteger('document_file_id')->nullable();
             $table->unsignedBigInteger('organization_id');
             $table->unsignedInteger('version_number');
             $table->boolean('is_current');
             $table->string('status');
             $table->string('processing_status');
             $table->string('content_hash', 64);
+            $table->timestamps();
+        });
+        $schema->create('legal_archive_document_files', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('document_id');
+            $table->unsignedBigInteger('organization_id');
+            $table->string('role');
+            $table->unsignedBigInteger('current_version_id')->nullable();
             $table->timestamps();
         });
         $schema->create('legal_workflow_templates', function (Blueprint $table): void {
@@ -856,6 +1128,19 @@ final class WorkflowTestUser extends User
     }
 }
 
+final class WorkflowAuthorizationServiceSpy extends AuthorizationService
+{
+    /** @var list<int> */
+    public array $allowedContextIds = [];
+
+    public function __construct() {}
+
+    public function hasRole(User $user, string $roleSlug, ?int $contextId = null): bool
+    {
+        return $contextId !== null && in_array($contextId, $this->allowedContextIds, true);
+    }
+}
+
 final class RecordingWorkflowAudit implements LegalDocumentAudit
 {
     /** @var list<string> */
@@ -873,6 +1158,9 @@ final class RecordingWorkflowAudit implements LegalDocumentAudit
 
     public function recordForActorId(string $event, LegalArchiveDocument $document, ?int $actorId, array $context = []): void
     {
+        if ($this->fail) {
+            throw new RuntimeException('audit failed');
+        }
         $this->events[] = $event;
     }
 

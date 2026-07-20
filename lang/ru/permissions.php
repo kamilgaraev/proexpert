@@ -190,7 +190,6 @@ return [
         'legal_archive.workflow.return' => 'Возврат юридических документов на доработку',
         'legal_archive.workflow.reassign' => 'Переназначение шагов согласования юридических документов',
         'legal_archive.workflow.cancel' => 'Отмена согласования юридических документов',
-        'legal_archive.workflow.manage' => 'Администрирование согласования юридических документов',
         'legal_archive.workflow_templates.manage' => 'Настройка маршрутов согласования юридических документов',
         'contracts.archive' => 'Архивация договоров',
         'access_recertification.campaigns.view' => 'Просмотр кампаний пересмотра доступов',

@@ -22,8 +22,6 @@ final class LegalWorkflowPermissions
 
     public const CANCEL = 'legal_archive.workflow.cancel';
 
-    public const MANAGE = 'legal_archive.workflow.manage';
-
     public const MANAGE_TEMPLATES = 'legal_archive.workflow_templates.manage';
 
     public static function forAction(string $action): string

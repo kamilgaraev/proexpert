@@ -13,6 +13,8 @@ final class LegalWorkflowStep extends Model
 {
     private ?int $authorizedReassignmentDecisionId = null;
 
+    private bool $authorizedRecoveryProjection = false;
+
     protected $fillable = [
         'instance_id', 'organization_id', 'step_key', 'label', 'sequence', 'parallel_group',
         'required', 'policy_key', 'actor_type', 'actor_reference', 'status', 'lock_version',
@@ -44,7 +46,7 @@ final class LegalWorkflowStep extends Model
             $activationOnly = $step->getOriginal('status') === 'pending'
                 && $step->status === 'active'
                 && ! $step->isDirty(['actor_type', 'actor_reference', 'assignment_revision', 'last_reassign_decision_id']);
-            if (! $activationOnly && $step->authorizedReassignmentDecisionId === null) {
+            if (! $activationOnly && $step->authorizedReassignmentDecisionId === null && ! $step->authorizedRecoveryProjection) {
                 throw new ImmutableDataException(self::class, 'assignment_update');
             }
         });
@@ -75,6 +77,24 @@ final class LegalWorkflowStep extends Model
             ])->save();
         } finally {
             $this->authorizedReassignmentDecisionId = null;
+        }
+    }
+
+    /** @param array<string, mixed> $attributes */
+    public function applyRecoveryProjection(array $attributes): void
+    {
+        $allowed = [
+            'actor_type', 'actor_reference', 'status', 'lock_version', 'activated_at', 'due_at', 'completed_at',
+            'assignment_revision', 'last_reassign_decision_id',
+        ];
+        if (array_diff(array_keys($attributes), $allowed) !== []) {
+            throw new ImmutableDataException(self::class, 'recovery_projection_invalid');
+        }
+        $this->authorizedRecoveryProjection = true;
+        try {
+            $this->forceFill($attributes)->save();
+        } finally {
+            $this->authorizedRecoveryProjection = false;
         }
     }
 

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Services\LegalArchive\Workflow\Schema\LegalWorkflowPostgresConstraints;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -13,9 +14,17 @@ return new class extends Migration
         if (Schema::getConnection()->getDriverName() !== 'pgsql') {
             return;
         }
-        foreach ($this->constraints() as [$table, $name, $definition]) {
-            if (DB::selectOne('SELECT 1 FROM pg_constraint WHERE connamespace = current_schema()::regnamespace AND conname = ?', [$name]) === null) {
-                DB::statement("ALTER TABLE {$table} ADD CONSTRAINT {$name} {$definition} NOT VALID");
+        foreach (LegalWorkflowPostgresConstraints::definitions() as $expected) {
+            $actual = $this->constraint($expected['name']);
+            if ($actual !== null && ! LegalWorkflowPostgresConstraints::matches($actual, $expected)) {
+                throw new RuntimeException("legal_workflow_constraint_descriptor_mismatch:{$expected['name']}");
+            }
+            if ($actual === null) {
+                DB::statement("ALTER TABLE {$expected['table']} ADD CONSTRAINT {$expected['name']} {$expected['definition']} NOT VALID");
+                $actual = $this->constraint($expected['name']);
+            }
+            if ($actual === null || ! LegalWorkflowPostgresConstraints::matches($actual, $expected)) {
+                throw new RuntimeException("legal_workflow_constraint_descriptor_mismatch:{$expected['name']}");
             }
         }
         DB::unprepared(<<<'SQL'
@@ -41,6 +50,7 @@ BEGIN
     END IF;
     IF TG_TABLE_NAME = 'legal_workflow_instances'
        AND OLD.status IS DISTINCT FROM NEW.status
+       AND current_setting('app.legal_workflow_recovery', true) IS DISTINCT FROM 'service'
        AND NOT (OLD.status = 'in_progress' AND NEW.status IN ('approved', 'rejected', 'returned', 'cancelled', 'expired')) THEN
         RAISE EXCEPTION 'legal_workflow_instance_transition_forbidden';
     END IF;
@@ -54,6 +64,7 @@ BEGIN
     END IF;
     IF TG_TABLE_NAME = 'legal_workflow_steps'
        AND OLD.status IS DISTINCT FROM NEW.status
+       AND current_setting('app.legal_workflow_recovery', true) IS DISTINCT FROM 'service'
        AND NOT (
            (OLD.status = 'pending' AND NEW.status IN ('active', 'cancelled', 'expired'))
            OR (OLD.status = 'active' AND NEW.status IN ('approved', 'rejected', 'returned', 'cancelled', 'expired'))
@@ -64,7 +75,9 @@ BEGIN
        AND (OLD.actor_type, OLD.actor_reference, OLD.due_at, OLD.assignment_revision, OLD.last_reassign_decision_id)
            IS DISTINCT FROM
            (NEW.actor_type, NEW.actor_reference, NEW.due_at, NEW.assignment_revision, NEW.last_reassign_decision_id) THEN
-        IF OLD.status = 'pending' AND NEW.status = 'active'
+        IF current_setting('app.legal_workflow_recovery', true) = 'service' THEN
+            NULL;
+        ELSIF OLD.status = 'pending' AND NEW.status = 'active'
            AND (OLD.actor_type, OLD.actor_reference, OLD.assignment_revision, OLD.last_reassign_decision_id)
                IS NOT DISTINCT FROM
                (NEW.actor_type, NEW.actor_reference, NEW.assignment_revision, NEW.last_reassign_decision_id)
@@ -188,25 +201,19 @@ SQL);
         throw new RuntimeException('legal_workflow_migrations_are_forward_only');
     }
 
-    /** @return list<array{string, string, string}> */
-    private function constraints(): array
+    private function constraint(string $name): ?object
     {
-        return [
-            ['legal_workflow_template_heads', 'legal_workflow_heads_template_fk', 'FOREIGN KEY (template_id, organization_id, code) REFERENCES legal_workflow_templates (id, organization_id, code) ON DELETE RESTRICT'],
-            ['legal_workflow_template_steps', 'legal_workflow_template_steps_template_fk', 'FOREIGN KEY (template_id, organization_id) REFERENCES legal_workflow_templates (id, organization_id) ON DELETE RESTRICT'],
-            ['legal_workflow_instances', 'legal_workflow_instances_document_fk', 'FOREIGN KEY (document_id, organization_id) REFERENCES legal_archive_documents (id, organization_id) ON DELETE RESTRICT'],
-            ['legal_workflow_instances', 'legal_workflow_instances_version_fk', 'FOREIGN KEY (document_version_id, document_id, organization_id, document_content_hash) REFERENCES legal_archive_document_versions (id, document_id, organization_id, content_hash) ON DELETE RESTRICT'],
-            ['legal_workflow_instances', 'legal_workflow_instances_template_fk', 'FOREIGN KEY (template_id, organization_id, template_version, template_definition_hash) REFERENCES legal_workflow_templates (id, organization_id, version, definition_hash) ON DELETE RESTRICT'],
-            ['legal_workflow_steps', 'legal_workflow_steps_instance_fk', 'FOREIGN KEY (instance_id, organization_id) REFERENCES legal_workflow_instances (id, organization_id) ON DELETE RESTRICT'],
-            ['legal_workflow_decisions', 'legal_workflow_decisions_instance_fk', 'FOREIGN KEY (instance_id, document_id, document_version_id, organization_id, document_content_hash) REFERENCES legal_workflow_instances (id, document_id, document_version_id, organization_id, document_content_hash) ON DELETE RESTRICT'],
-            ['legal_workflow_decisions', 'legal_workflow_decisions_step_fk', 'FOREIGN KEY (step_id, instance_id, organization_id) REFERENCES legal_workflow_steps (id, instance_id, organization_id) ON DELETE RESTRICT'],
-            ['legal_workflow_steps', 'legal_workflow_steps_last_reassign_fk', 'FOREIGN KEY (last_reassign_decision_id, id, organization_id) REFERENCES legal_workflow_decisions (id, step_id, organization_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED'],
-            ['legal_workflow_decisions', 'legal_workflow_decisions_previous_reassign_fk', 'FOREIGN KEY (previous_reassign_decision_id, step_id, organization_id) REFERENCES legal_workflow_decisions (id, step_id, organization_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED'],
-            ['legal_workflow_templates', 'legal_workflow_templates_hash_check', "CHECK (definition_hash ~ '^[a-f0-9]{64}$')"],
-            ['legal_workflow_template_steps', 'legal_workflow_template_steps_actor_check', "CHECK (actor_type IN ('user', 'role', 'party', 'external') AND actor_reference <> '' AND sequence > 0 AND (due_in_hours IS NULL OR due_in_hours BETWEEN 1 AND 8760))"],
-            ['legal_workflow_instances', 'legal_workflow_instances_status_check', "CHECK (status IN ('in_progress', 'approved', 'rejected', 'returned', 'cancelled', 'expired') AND template_definition_hash ~ '^[a-f0-9]{64}$' AND snapshot_hash ~ '^[a-f0-9]{64}$' AND client_request_hash ~ '^[a-f0-9]{64}$' AND request_hash ~ '^[a-f0-9]{64}$' AND document_content_hash ~ '^[a-f0-9]{64}$' AND reconciliation_attempts <= 100 AND ((reconciliation_required_at IS NULL AND reconciliation_reason IS NULL) OR (reconciliation_required_at IS NOT NULL AND NULLIF(BTRIM(reconciliation_reason), '') IS NOT NULL)))"],
-            ['legal_workflow_steps', 'legal_workflow_steps_status_check', "CHECK (status IN ('pending', 'active', 'approved', 'rejected', 'returned', 'cancelled', 'expired') AND actor_type IN ('user', 'role', 'party', 'external') AND actor_reference <> '' AND sequence > 0 AND assignment_revision >= 0 AND ((assignment_revision = 0 AND last_reassign_decision_id IS NULL) OR (assignment_revision > 0 AND last_reassign_decision_id IS NOT NULL)) AND (due_in_hours IS NULL OR due_in_hours BETWEEN 1 AND 8760))"],
-            ['legal_workflow_decisions', 'legal_workflow_decisions_action_check', "CHECK (action IN ('approve', 'reject', 'return', 'reassign', 'cancel', 'expire') AND actor_type IN ('user', 'system') AND ((actor_type = 'user' AND actor_user_id IS NOT NULL) OR (actor_type = 'system' AND actor_user_id IS NULL)) AND request_hash ~ '^[a-f0-9]{64}$' AND document_content_hash ~ '^[a-f0-9]{64}$' AND ((action IN ('reject', 'return', 'reassign', 'cancel') AND (NULLIF(BTRIM(comment), '') IS NOT NULL OR NULLIF(BTRIM(reason), '') IS NOT NULL)) OR action IN ('approve', 'expire')) AND ((action = 'reassign' AND from_actor_type IN ('user', 'role', 'party', 'external') AND to_actor_type IN ('user', 'role', 'party', 'external') AND NULLIF(BTRIM(from_actor_reference), '') IS NOT NULL AND NULLIF(BTRIM(to_actor_reference), '') IS NOT NULL AND to_due_at IS NOT NULL AND assignment_revision > 0) OR (action <> 'reassign' AND from_actor_type IS NULL AND from_actor_reference IS NULL AND from_due_at IS NULL AND to_actor_type IS NULL AND to_actor_reference IS NULL AND to_due_at IS NULL AND assignment_revision IS NULL AND previous_reassign_decision_id IS NULL)))"],
-        ];
+        return DB::selectOne(
+            <<<'SQL'
+SELECT table_class.relname AS table_name,
+       c.contype, c.condeferrable, c.condeferred, c.convalidated,
+       pg_get_constraintdef(c.oid, true) AS definition
+FROM pg_constraint c
+JOIN pg_class table_class ON table_class.oid = c.conrelid
+JOIN pg_namespace namespace ON namespace.oid = c.connamespace
+WHERE namespace.nspname = current_schema() AND c.conname = ?
+SQL,
+            [$name],
+        );
     }
 };

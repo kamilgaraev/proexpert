@@ -10,7 +10,9 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion
 use App\Exceptions\ImmutableDataException;
 use App\Models\Organization;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\Storage\FileService;
+use DomainException;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -19,13 +21,18 @@ use Throwable;
 
 final class LegalDocumentFileService
 {
+    private readonly LegalDocumentAggregateLock $aggregateLock;
+
     public function __construct(
         private readonly FileService $fileService,
         private readonly LegalDocumentFilePolicy $policy,
         private readonly LegalDocumentScanner $scanner,
         private readonly ?ConnectionInterface $connection = null,
         private readonly ?LegalDocumentAudit $audit = null,
-    ) {}
+        ?LegalDocumentAggregateLock $aggregateLock = null,
+    ) {
+        $this->aggregateLock = $aggregateLock ?? new LegalDocumentAggregateLock;
+    }
 
     public function addVersion(
         LegalArchiveDocumentFile $file,
@@ -99,15 +106,13 @@ final class LegalDocumentFileService
     private function markReady(LegalArchiveDocumentVersion $version): LegalArchiveDocumentVersion
     {
         return $this->database()->transaction(function () use ($version): LegalArchiveDocumentVersion {
-            $file = LegalArchiveDocumentFile::query()
-                ->whereKey($version->document_file_id)
-                ->lockForUpdate()
-                ->firstOrFail();
-            $locked = LegalArchiveDocumentVersion::query()
-                ->where('document_file_id', $file->id)
-                ->whereKey($version->getKey())
-                ->lockForUpdate()
-                ->firstOrFail();
+            $document = $this->aggregateLock->lockDocument(
+                $this->database(),
+                (int) $version->organization_id,
+                (int) $version->document_id,
+            );
+            $file = $this->aggregateLock->lockFile($this->database(), $document, (int) $version->document_file_id);
+            $locked = $this->aggregateLock->lockVersion($this->database(), $document, (int) $version->getKey());
             $this->assertProcessingTransitionAllowed($locked, 'ready');
             $this->authorizeDatabaseMutation();
 
@@ -127,14 +132,22 @@ final class LegalDocumentFileService
         VersionInput $input,
     ): LegalArchiveDocumentVersion {
         $this->authorizeDatabaseMutation();
-        $lockedFile = LegalArchiveDocumentFile::query()->whereKey($file->getKey())->lockForUpdate()->firstOrFail();
+        $lockedDocument = $this->aggregateLock->lockDocument(
+            $this->database(),
+            (int) $file->organization_id,
+            (int) $file->document_id,
+        );
+        $lockedFile = $this->aggregateLock->lockFile($this->database(), $lockedDocument, (int) $file->getKey());
         $versionNumber = $input->versionNumber ?? $this->nextVersionNumber($lockedFile);
         $hasCurrent = $lockedFile->current_version_id !== null
             && LegalArchiveDocumentVersion::query()->whereKey($lockedFile->current_version_id)->exists();
         $makeCurrent = $input->makeCurrent || ! $hasCurrent;
+        if ($makeCurrent) {
+            $this->assertCurrentVersionRotationAllowed((int) $lockedDocument->id);
+        }
 
         if ($makeCurrent && $hasCurrent) {
-            $this->setVersionCurrent((int) $lockedFile->current_version_id, false);
+            $this->setVersionCurrent($lockedDocument, (int) $lockedFile->current_version_id, false);
         }
 
         $metadataHash = $input->metadata === null
@@ -162,7 +175,7 @@ final class LegalDocumentFileService
         ]);
 
         if ($makeCurrent) {
-            $this->setCurrentPointers($lockedFile, $version->id);
+            $this->setCurrentPointers($lockedDocument, $lockedFile, $version->id);
         }
 
         if ($this->audit !== null) {
@@ -184,15 +197,13 @@ final class LegalDocumentFileService
         LegalArchiveDocumentVersion $version,
     ): LegalArchiveDocumentVersion {
         return $this->database()->transaction(function () use ($version): LegalArchiveDocumentVersion {
-            $file = LegalArchiveDocumentFile::query()
-                ->whereKey($version->document_file_id)
-                ->lockForUpdate()
-                ->firstOrFail();
-            $failed = LegalArchiveDocumentVersion::query()
-                ->where('document_file_id', $file->id)
-                ->whereKey($version->getKey())
-                ->lockForUpdate()
-                ->firstOrFail();
+            $document = $this->aggregateLock->lockDocument(
+                $this->database(),
+                (int) $version->organization_id,
+                (int) $version->document_id,
+            );
+            $file = $this->aggregateLock->lockFile($this->database(), $document, (int) $version->document_file_id);
+            $failed = $this->aggregateLock->lockVersion($this->database(), $document, (int) $version->getKey());
             $this->assertProcessingTransitionAllowed($failed, 'failed');
             $this->authorizeDatabaseMutation();
             $wasCurrent = (int) $file->current_version_id === (int) $failed->id;
@@ -214,9 +225,9 @@ final class LegalDocumentFileService
             });
             if ($wasCurrent) {
                 if ($fallback instanceof LegalArchiveDocumentVersion) {
-                    $this->setVersionCurrent((int) $fallback->id, true);
+                    $this->setVersionCurrent($document, (int) $fallback->id, true);
                 }
-                $this->setCurrentPointers($file, $fallback?->id);
+                $this->setCurrentPointers($document, $file, $fallback?->id);
             }
 
             return $failed->refresh();
@@ -242,21 +253,23 @@ final class LegalDocumentFileService
         ]);
     }
 
-    private function setVersionCurrent(int $versionId, bool $current): void
+    private function setVersionCurrent(LegalArchiveDocument $document, int $versionId, bool $current): void
     {
-        $version = LegalArchiveDocumentVersion::query()->whereKey($versionId)->lockForUpdate()->firstOrFail();
+        $version = $this->aggregateLock->lockVersion($this->database(), $document, $versionId);
         LegalArchiveDocumentVersion::technicalMutation(function () use ($version, $current): void {
             $version->is_current = $current;
             $version->save();
         });
     }
 
-    private function setCurrentPointers(LegalArchiveDocumentFile $file, ?int $versionId): void
-    {
+    private function setCurrentPointers(
+        LegalArchiveDocument $document,
+        LegalArchiveDocumentFile $file,
+        ?int $versionId,
+    ): void {
         $file->forceFill(['current_version_id' => $versionId])->save();
         if ($file->role === 'primary') {
-            LegalArchiveDocument::query()->whereKey($file->document_id)->lockForUpdate()->firstOrFail()
-                ->forceFill(['current_primary_version_id' => $versionId])->save();
+            $document->forceFill(['current_primary_version_id' => $versionId])->save();
         }
     }
 
@@ -271,6 +284,20 @@ final class LegalDocumentFileService
             );
 
         return (string) ($maximum + 1);
+    }
+
+    private function assertCurrentVersionRotationAllowed(int $documentId): void
+    {
+        if (! $this->database()->getSchemaBuilder()->hasTable('legal_workflow_instances')) {
+            return;
+        }
+        if ($this->database()->table('legal_workflow_instances')
+            ->where('document_id', $documentId)
+            ->where('status', 'in_progress')
+            ->exists()
+        ) {
+            throw new DomainException('legal_document_active_workflow_exists');
+        }
     }
 
     private function authorizeDatabaseMutation(): void

@@ -98,6 +98,11 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             $table->timestamp('resolved_at')->nullable();
             $table->timestamps();
         });
+        $this->database->schema()->create('legal_workflow_instances', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('document_id');
+            $table->string('status');
+        });
 
         $this->configuration = [
             'max_size_bytes' => 1024 * 1024,
@@ -168,6 +173,39 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             self::fail('Persistence failure was expected.');
         } catch (RuntimeException $exception) {
             self::assertStringContainsString('persistence failed', $exception->getMessage());
+        }
+
+        self::assertSame(0, $file->versions()->count());
+    }
+
+    public function test_current_version_rotation_is_rejected_while_workflow_is_active(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Contract']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10,
+            'organization_id' => 20,
+            'role' => 'primary',
+            'title' => 'Contract',
+        ]);
+        $this->connection()->table('legal_workflow_instances')->insert([
+            'document_id' => 10,
+            'status' => 'in_progress',
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->method('upload')->willReturn('org-20/legal-archive/files/1/blocked.pdf');
+        $storage->expects(self::once())->method('delete');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::never())->method('assertClean');
+
+        try {
+            $this->service($storage, $scanner)->addVersion(
+                $file,
+                $this->pdf('blocked.pdf'),
+                new VersionInput(uploadedByUserId: 30),
+            );
+            self::fail('Current version rotation was allowed during an active workflow.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('legal_document_active_workflow_exists', $exception->getMessage());
         }
 
         self::assertSame(0, $file->versions()->count());

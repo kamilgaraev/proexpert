@@ -29,17 +29,24 @@ final class LegalWorkflowActorResolver
         $this->roleLookup = $roleLookup === null
             ? static function (User $actor, string $role, int $organizationId, LegalArchiveDocument $document): bool {
                 $authorization = app(AuthorizationService::class);
-                $organizationContext = AuthorizationContext::getOrganizationContext($organizationId);
+                $organizationContext = AuthorizationContext::findOrganizationContext($organizationId);
+                if (! $organizationContext instanceof AuthorizationContext) {
+                    return false;
+                }
                 if ($authorization->hasRole($actor, $role, (int) $organizationContext->id)) {
                     return true;
                 }
                 if ($document->primary_project_id === null) {
                     return false;
                 }
-                $projectContext = AuthorizationContext::getProjectContext(
+                $projectContext = AuthorizationContext::findProjectContext(
                     (int) $document->primary_project_id,
                     $organizationId,
                 );
+
+                if (! $projectContext instanceof AuthorizationContext) {
+                    return false;
+                }
 
                 return $authorization->hasRole($actor, $role, (int) $projectContext->id);
             }

@@ -53,7 +53,6 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
                     'legal_archive.workflow.return',
                     'legal_archive.workflow.reassign',
                     'legal_archive.workflow.cancel',
-                    'legal_archive.workflow.manage',
                     'legal_archive.workflow_templates.manage',
                 ],
             ],
