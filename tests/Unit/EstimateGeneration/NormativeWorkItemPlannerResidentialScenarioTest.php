@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
@@ -49,7 +50,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             'lighting.lines' => 'm', 'lighting.fixtures' => 'pcs', 'plumbing.pipe' => 'm',
             'sanitary.showers' => 'pcs', 'sanitary.toilets' => 'pcs', 'sanitary.washbasins' => 'pcs',
             'sanitary.waterproofing' => 'm2', 'sanitary.tile' => 'm2', 'sanitary.floor_tile' => 'm2', 'sewerage.pipe' => 'm',
-            'sewerage.outlets' => 'pcs', 'sewerage.risers' => 'pcs', 'sewerage.revisions' => 'pcs',
+            'sewerage.outlet_route' => 'm', 'sewerage.risers' => 'pcs', 'sewerage.revisions' => 'pcs',
             'heating.unit' => 'pcs', 'heating.pipe' => 'm', 'heating.radiators' => 'pcs',
             'ventilation.air_exchange' => 'm2', 'ventilation.distribution_devices' => 'pcs',
             'rough.floor' => 'm2', 'rough.walls' => 'm2',
@@ -62,6 +63,13 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
         );
         $analysis = [
             'object' => ['object_type' => 'house', 'roof_type' => 'pitched'],
+            'residential_scope_decisions' => [[
+                'key' => 'heating_source',
+                'option' => 'electric_boiler',
+                'status' => 'preliminary',
+                'evidence_ids' => [],
+                'confidence' => 0.6,
+            ]],
             'document_context' => ['canonical_building_quantities' => $quantities],
         ];
         $scopeByPackage = [
@@ -129,6 +137,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             ['lighting', 'electrical', 'lighting.fixtures', 'pcs', '18.000000', '08-03-593-06'],
             ['heating', 'heating', 'heating.radiators', 'pcs', '14.000000', '18-03-006-02'],
             ['sewerage', 'sewerage', 'sewerage.pipe', 'm', '48.200000', '16-04-004-01'],
+            ['sewerage', 'sewerage', 'sewerage.outlet_route', 'm', '5.000000', '16-04-004-02'],
             ['plumbing', 'plumbing', 'sanitary.waterproofing', 'm2', '12.980000', '11-01-004-05'],
             ['plumbing', 'plumbing', 'sanitary.tile', 'm2', '39.497496', '15-01-019-05'],
         ] as [$package, $scope, $quantityKey, $unit, $amount, $normCode]) {
@@ -150,6 +159,76 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
                 self::assertSame('Установка алюминиевых или биметаллических секционных радиаторов', $item['name']);
             }
         }
+    }
+
+    #[Test]
+    public function sewer_outlet_route_uses_signed_pp110_norm_and_scales_five_meters_to_norm_unit(): void
+    {
+        $analysis = [
+            'object' => ['object_type' => 'house'],
+            'document_context' => ['canonical_building_quantities' => [
+                $this->currentScenarioQuantity('sewerage.outlet_route', 'm', '5.000000')->toArray(),
+            ]],
+        ];
+        $estimate = $this->estimate('sewerage', 'sewerage');
+
+        $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+        $item = array_column($items, null, 'quantity_formula')['sewerage.outlet_route'] ?? null;
+
+        self::assertIsArray($item);
+        self::assertSame('m', $item['unit']);
+        self::assertSame(5.0, (float) $item['quantity']);
+        self::assertSame('16-04-004-02', $item['normative_rate_code']);
+        self::assertSame(0.05, $item['quantity'] * NormativeUnitNormalizer::quantityFactor('m', '100 m'));
+        self::assertSame(
+            'residential_sewer_outlet_pp_110mm',
+            $item['metadata']['specialization_scenario']['assumption_code'],
+        );
+    }
+
+    #[Test]
+    public function electric_boiler_decision_uses_only_explicit_mass_based_analog(): void
+    {
+        $analysis = [
+            'object' => ['object_type' => 'house'],
+            'residential_scope_decisions' => [[
+                'key' => 'heating_source',
+                'option' => 'electric_boiler',
+                'status' => 'preliminary',
+                'evidence_ids' => [],
+                'confidence' => 0.6,
+            ]],
+            'document_context' => ['canonical_building_quantities' => [
+                $this->currentScenarioQuantity('heating.unit', 'pcs', '1.000000')->toArray(),
+            ]],
+        ];
+        $estimate = $this->estimate('heating', 'heating');
+
+        $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+        $item = array_column($items, null, 'quantity_formula')['heating.unit'] ?? null;
+
+        self::assertIsArray($item);
+        self::assertSame('37-01-002-01', $item['normative_rate_code']);
+        self::assertSame('analog', $item['metadata']['norm_basis']);
+        self::assertSame('up_to_0_03_t', $item['metadata']['equipment_mass_band']);
+        self::assertStringNotContainsString('18-', $item['normative_rate_code']);
+        self::assertStringNotContainsString('20-', $item['normative_rate_code']);
+    }
+
+    #[Test]
+    public function heating_unit_is_not_planned_without_validated_electric_boiler_decision(): void
+    {
+        $analysis = [
+            'object' => ['object_type' => 'house'],
+            'document_context' => ['canonical_building_quantities' => [
+                $this->currentScenarioQuantity('heating.unit', 'pcs', '1.000000')->toArray(),
+            ]],
+        ];
+        $estimate = $this->estimate('heating', 'heating');
+
+        $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+
+        self::assertNotContains('heating.unit', array_column($items, 'quantity_formula'));
     }
 
     #[Test]

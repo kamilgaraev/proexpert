@@ -253,6 +253,26 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
         }
     }
 
+    #[Test]
+    public function residential_project_material_v5_adds_bounded_lighting_and_electric_boiler_rules(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000400_extend_residential_project_material_catalog.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            'residential_project_material:v5',
+            "'work_item_key' => 'lighting.fixtures'",
+            "'semantic_name_markers' => ['светиль', 'светодиод']",
+            "'work_item_key' => 'heating.unit'",
+            '89.1.63.01-0079',
+            'residential_electric_boiler_installation_analog_30kg',
+            'residential_wall_mounted_single_circuit_electric_boiler_18kw',
+            'residential_project_material_catalog_rollback_blocked',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
     private function source(): string
     {
         return (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001200_harden_estimate_generation_pricing_boundary.php');

@@ -41,7 +41,7 @@ final class AttemptAwareWorkCompositionLlmClientTest extends TestCase
                 $this->options = $options;
 
                 return [
-                    'content' => '{"schema_version":"residential-work-composition-advice:v2"}',
+                    'content' => '{"schema_version":"residential-work-composition-advice:v3"}',
                     'model' => $model,
                     'usage_available' => true,
                     'input_tokens' => 10,
@@ -109,7 +109,7 @@ final class AttemptAwareWorkCompositionLlmClientTest extends TestCase
                 }
 
                 return [
-                    'content' => '{"schema_version":"residential-work-composition-advice:v2"}',
+                    'content' => '{"schema_version":"residential-work-composition-advice:v3"}',
                     'model' => $model,
                     'usage_available' => false,
                 ];

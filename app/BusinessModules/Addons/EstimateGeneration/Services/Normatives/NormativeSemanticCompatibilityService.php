@@ -174,6 +174,7 @@ final class NormativeSemanticCompatibilityService
             'lighting_fixture_installation' => ['светильн', 'люстр'],
             'pipe_layout' => ['труб', 'трубопровод'],
             'heating_equipment' => ['отопл', 'отопит', 'радиатор', 'котел', 'котл', 'конвектор', 'теплов'],
+            'electric_boiler_installation_analog' => ['оборуд', 'монтаж', 'установк'],
             'heating_emitter_installation' => ['радиатор', 'конвектор', 'отопительн прибор'],
             'ventilation_installation' => ['вентиляц', 'воздуховод'],
             'window_installation' => ['окон', 'окн', 'двер', 'ворот'],
@@ -187,6 +188,12 @@ final class NormativeSemanticCompatibilityService
 
     private function actionCompatible(string $action, string $system, string $candidateTitle, string $workText): bool
     {
+        if ($action === 'electric_boiler_installation_analog') {
+            return $this->containsAny($workText, ['электрическ котел', 'электрического котла'])
+                && $this->containsAny($candidateTitle, ['оборуд', 'монтаж', 'установк'])
+                && ! $this->containsAny($candidateTitle, ['водонагревател', 'твердотопливн', 'воздушно-теплов']);
+        }
+
         if ($action === 'heating_emitter_installation') {
             return $this->containsAny($candidateTitle, ['радиатор', 'конвектор', 'отопительн прибор'])
                 && ! $this->containsAny($candidateTitle, ['котел', 'котл', 'тепловой узел', 'завес']);

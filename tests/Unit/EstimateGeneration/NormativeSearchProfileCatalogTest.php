@@ -40,6 +40,21 @@ final class NormativeSearchProfileCatalogTest extends TestCase
         $this->assertContains('оборуд', $profile->requiredTerms);
     }
 
+    public function test_electric_boiler_analog_profile_is_isolated_to_equipment_installation_collection(): void
+    {
+        $profile = (new NormativeSearchProfileCatalog)->forIntent(
+            'engineering',
+            'electric_boiler_installation_analog',
+            'heating',
+        );
+
+        self::assertSame(['37'], $profile->allowedSectionPrefixes);
+        self::assertContains('18', $profile->forbiddenSectionPrefixes);
+        self::assertContains('20', $profile->forbiddenSectionPrefixes);
+        self::assertContains('водонагревател', $profile->forbiddenDomainTerms);
+        self::assertSame(['electric_boiler_installation_analog'], $profile->allowedAnalogActions);
+    }
+
     public function test_heating_emitter_profile_excludes_boilers(): void
     {
         $profile = (new NormativeSearchProfileCatalog)->forIntent(

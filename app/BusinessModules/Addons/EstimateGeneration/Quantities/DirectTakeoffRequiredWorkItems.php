@@ -41,7 +41,7 @@ final class DirectTakeoffRequiredWorkItems
         'sanitary.waterproofing',
         'sanitary.points',
         'sewerage.pipe',
-        'sewerage.outlets',
+        'sewerage.outlet_route',
         'sewerage.risers',
         'sewerage.revisions',
         'ventilation.air_exchange',

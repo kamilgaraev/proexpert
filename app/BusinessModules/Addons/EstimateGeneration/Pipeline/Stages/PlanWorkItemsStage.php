@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceMaterializer;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
@@ -14,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Planning\AiResidentialWorkComp
 use App\BusinessModules\Addons\EstimateGeneration\Planning\ResidentialWorkPlanReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialScopeDecisionQuantityMaterializer;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityResolver;
 use Illuminate\Support\Facades\Log;
 
@@ -28,6 +30,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private AiResidentialWorkCompositionAdvisor $compositionAdvisor,
         private WorkItemQuantityResolver $quantityResolver = new WorkItemQuantityResolver,
         private ResidentialWorkPlanReconciler $compositionReconciler = new ResidentialWorkPlanReconciler,
+        private ResidentialScopeDecisionQuantityMaterializer $scopeDecisionQuantities = new ResidentialScopeDecisionQuantityMaterializer,
     ) {}
 
     public function stage(): ProcessingStage
@@ -62,6 +65,18 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
         $payload = $this->compiler->compile($analysis, null, true);
         $advice = $this->compositionAdvisor->advise($analysis, $payload, $context);
+        [$analysis, $quantities] = $this->materializeScopeDecisionQuantities(
+            $analysis,
+            $quantities,
+            $advice->scopeDecisions,
+        );
+        if ($advice->scopeDecisions !== []) {
+            $analysis['residential_scope_decisions'] = $advice->scopeDecisions;
+        }
+        if ($quantities !== []) {
+            $analysis['document_context']['canonical_building_quantities'] = array_values($quantities);
+        }
+        $payload = $this->compiler->compile($analysis, null, true);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
@@ -100,6 +115,47 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         return $this->results->make($context, $this->stage(), $payload, [
             'local_estimates_count' => count($payload['local_estimates']),
         ]);
+    }
+
+    /**
+     * @param  array<string, QuantityData>  $quantities
+     * @param  array<string, array<string, mixed>>  $scopeDecisions
+     * @return array{array<string, mixed>, array<string, QuantityData>}
+     */
+    private function materializeScopeDecisionQuantities(
+        array $analysis,
+        array $quantities,
+        array $scopeDecisions,
+    ): array {
+        $normalized = $analysis['normalized_building_model'] ?? null;
+        if ($scopeDecisions === [] || ! is_array($normalized)) {
+            return [$analysis, $quantities];
+        }
+
+        $materialized = $this->scopeDecisionQuantities->materialize(
+            $scopeDecisions,
+            $quantities['floor_area'] ?? null,
+            NormalizedBuildingModelData::fromArray($normalized),
+            $quantities,
+        );
+        if ($materialized === []) {
+            return [$analysis, $quantities];
+        }
+
+        foreach ($materialized as $key => $quantity) {
+            $quantities[$key] = $quantity;
+        }
+        $resolvedKeys = array_fill_keys(array_keys($materialized), true);
+        $warnings = is_array($analysis['document_context']['quantity_coverage_warnings'] ?? null)
+            ? $analysis['document_context']['quantity_coverage_warnings']
+            : [];
+        $analysis['document_context']['quantity_coverage_warnings'] = array_values(array_filter(
+            $warnings,
+            static fn (mixed $warning): bool => ! is_array($warning)
+                || ! isset($resolvedKeys[(string) ($warning['quantity_key'] ?? '')]),
+        ));
+
+        return [$analysis, $quantities];
     }
 
     private function attachCanonicalQuantity(

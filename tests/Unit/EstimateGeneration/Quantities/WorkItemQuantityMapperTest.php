@@ -174,7 +174,7 @@ final class WorkItemQuantityMapperTest extends TestCase
 
         foreach ([
             'site.setup', 'site.geodesy', 'foundation.prep', 'sanitary.tile', 'sanitary.waterproofing',
-            'heating.radiators', 'heating.unit', 'sewerage.outlets', 'sewerage.risers',
+            'heating.radiators', 'heating.unit', 'sewerage.outlet_route', 'sewerage.risers',
             'sewerage.revisions', 'ventilation.air_exchange', 'walls.lintels',
             'earth.export', 'electrical.grounding', 'rough.floor', 'stairs.flights',
             'stairs.landings',

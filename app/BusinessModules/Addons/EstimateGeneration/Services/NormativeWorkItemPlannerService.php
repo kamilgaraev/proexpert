@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Quantities\DirectTakeoffRequir
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialScopeDecisionQuantityMaterializer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\BuildingModelMaterialEvidenceExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
@@ -492,6 +493,8 @@ final class NormativeWorkItemPlannerService
             'wet_zone_ceramic_wall_tile' => 'Предварительно принята облицовка стен мокрых зон керамической плиткой на клее. Материал и высоту облицовки нужно уточнить по ведомости отделки.',
             'wet_zone_ceramic_floor_tile' => 'Предварительно принято покрытие пола мокрых зон одноцветной керамической плиткой на цементном растворе. Материал нужно уточнить по ведомости отделки.',
             'residential_internal_sewer_pp_50mm' => 'Предварительно принята внутренняя канализация из полипропиленовых труб диаметром 50 мм. Расценка включает прокладку горизонтальных участков и стояков с установкой фасонных частей и ревизий; диаметры и трассировку нужно уточнить по проекту.',
+            'residential_sewer_outlet_pp_110mm' => 'Предварительно принят канализационный выпуск из полипропиленовой трубы диаметром 110 мм. Материал, диаметр и трассировку нужно уточнить по проекту канализации.',
+            'residential_electric_boiler_installation_analog_30kg' => 'Предварительно принят электрический котёл отопления массой до 30 кг. Монтаж рассчитан по аналогу установки оборудования в помещении; модель, массу и подключения нужно уточнить по проекту отопления.',
             default => $assumptionCode,
         };
 
@@ -580,7 +583,7 @@ final class NormativeWorkItemPlannerService
     {
         $packageKey = (string) ($localEstimate['key'] ?? '');
         $scopeType = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
-        $packageDefinitions = $this->packageDefinitions($packageKey, $scopeType, $quantityModel);
+        $packageDefinitions = $this->packageDefinitions($packageKey, $scopeType, $quantityModel, $analysis);
         $sourceBackedQuantityKeys = $this->sourceBackedPackageQuantityKeys($packageDefinitions, $quantityModel);
         $definitions = [
             ...$packageDefinitions,
@@ -877,8 +880,12 @@ final class NormativeWorkItemPlannerService
      * @param  array<string, mixed>  $quantityModel
      * @return array<int, array<string, mixed>>
      */
-    private function packageDefinitions(string $packageKey, string $scopeType, array $quantityModel): array
-    {
+    private function packageDefinitions(
+        string $packageKey,
+        string $scopeType,
+        array $quantityModel,
+        array $analysis,
+    ): array {
         $roofType = $quantityModel['features']['roof_type'] ?? null;
         $definitionKey = $this->packageDefinitionKey($packageKey, $scopeType);
 
@@ -1049,12 +1056,17 @@ final class NormativeWorkItemPlannerService
                     'Установка фасонных частей и ревизий',
                     'Соединение внутренней канализационной сети',
                 ]),
-                $this->definition('Монтаж канализационных выпусков', 'sewerage', 'монтаж выпусков внутренней канализации', 'sewerage.outlets'),
+                $this->definition(
+                    'Прокладка канализационного выпуска из полипропиленовых труб 110 мм',
+                    'sewerage',
+                    'прокладка внутренних трубопроводов канализации из полипропиленовых труб диаметром 110 мм',
+                    'sewerage.outlet_route',
+                ),
                 $this->definition('Монтаж канализационных стояков', 'sewerage', 'монтаж стояков внутренней канализации', 'sewerage.risers'),
                 $this->definition('Монтаж ревизий канализации', 'sewerage', 'монтаж ревизий и прочисток канализации', 'sewerage.revisions'),
             ],
             'heating' => [
-                $this->definition('Тепловой узел', 'heating', 'монтаж теплового узла', 'heating.unit'),
+                ...$this->electricBoilerDefinitions($analysis),
                 $this->definition('Прокладка труб отопления', 'heating', 'прокладка трубопроводов отопления', 'heating.pipe'),
                 $this->definition('Монтаж радиаторов', 'heating', 'монтаж отопительных приборов', 'heating.radiators'),
                 $this->definition('Воздушно-тепловые завесы', 'heating', 'монтаж воздушно-тепловых завес', 'heating.air_curtains'),
@@ -1095,6 +1107,57 @@ final class NormativeWorkItemPlannerService
             ],
             default => [],
         };
+    }
+
+    /** @param array<string, mixed> $analysis @return list<array<string, mixed>> */
+    private function electricBoilerDefinitions(array $analysis): array
+    {
+        $decision = $this->residentialScopeDecision($analysis, 'heating_source');
+
+        if (($decision['option'] ?? null) !== 'electric_boiler'
+            || ! in_array($decision['status'] ?? null, ['preliminary', 'documented', 'user_declared'], true)) {
+            return [];
+        }
+
+        return [$this->definition(
+            'Монтаж электрического котла отопления до 30 кг',
+            'heating',
+            'монтаж оборудования в помещении массой до 0,03 т электрический котел отопления',
+            'heating.unit',
+            metadata: [
+                'norm_basis' => 'analog',
+                'analog_reason' => 'electric_boiler_installation_by_equipment_mass',
+                'equipment_mass_band' => 'up_to_0_03_t',
+                'scope_decision' => $decision,
+            ],
+        )];
+    }
+
+    /** @param array<string, mixed> $analysis @return array<string, mixed> */
+    private function residentialScopeDecision(array $analysis, string $key): array
+    {
+        $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
+        $decisions = $analysis['residential_scope_decisions']
+            ?? $documentContext['residential_scope_decisions']
+            ?? [];
+
+        if (! is_array($decisions)) {
+            return [];
+        }
+        if (isset($decisions[$key]) && is_array($decisions[$key])) {
+            $decision = $decisions[$key];
+            $decision['key'] ??= $key;
+
+            return $decision;
+        }
+
+        foreach ($decisions as $decision) {
+            if (is_array($decision) && ($decision['key'] ?? null) === $key) {
+                return $decision;
+            }
+        }
+
+        return [];
     }
 
     private function packageDefinitionKey(string $packageKey, string $scopeType): string
@@ -1354,7 +1417,8 @@ final class NormativeWorkItemPlannerService
                 continue;
             }
 
-            $isResidentialScenario = ResidentialQuantityScenarioCatalog::owns($quantity);
+            $isResidentialScenario = ResidentialQuantityScenarioCatalog::owns($quantity)
+                || ResidentialScopeDecisionQuantityMaterializer::owns($quantity);
             if ($quantity->source === QuantitySource::Estimated
                 && $quantity->reviewBlockers === []
                 && ! $isResidentialScenario) {

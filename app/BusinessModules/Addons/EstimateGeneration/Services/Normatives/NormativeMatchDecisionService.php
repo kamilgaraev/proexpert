@@ -300,6 +300,10 @@ class NormativeMatchDecisionService
                 return ['20'];
             }
 
+            if ($action === 'electric_boiler_installation_analog') {
+                return ['37'];
+            }
+
             if ($system === 'heating' && in_array($action, ['heating_equipment', 'heating_emitter_installation'], true)) {
                 return ['18', '20'];
             }

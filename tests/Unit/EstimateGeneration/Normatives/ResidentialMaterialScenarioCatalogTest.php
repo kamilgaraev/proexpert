@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v18', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v19', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -99,7 +99,8 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         self::assertSame('socket_installation', $catalog->issue('electrical.outlets', 'residential')['intent_action'] ?? null);
         self::assertSame('socket_installation', $catalog->issue('electrical.switches', 'residential')['intent_action'] ?? null);
         self::assertSame('lighting_fixture_installation', $catalog->issue('lighting.fixtures', 'residential')['intent_action'] ?? null);
-        self::assertNull($catalog->issue('heating.unit', 'residential'));
+        self::assertSame('electric_boiler_installation_analog', $catalog->issue('heating.unit', 'residential')['intent_action'] ?? null);
+        self::assertSame('pipeline_installation', $catalog->issue('sewerage.outlet_route', 'residential')['intent_action'] ?? null);
         self::assertSame('heating_emitter_installation', $catalog->issue('heating.radiators', 'residential')['intent_action'] ?? null);
         self::assertSame('concreting', $catalog->issue('foundation.prep', 'residential')['intent_action'] ?? null);
         self::assertSame('sanitary_fixture_installation', $catalog->issue('sanitary.showers', 'residential')['intent_action'] ?? null);
@@ -255,6 +256,16 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'heating.radiators',
             'установка алюминиевых и биметаллических секционных радиаторов',
             '18-03-006-02',
+        ];
+        yield 'residential sewer outlet pp 110 mm' => [
+            'sewerage.outlet_route',
+            'прокладка внутренних трубопроводов канализации из полипропиленовых труб диаметром 110 мм',
+            '16-04-004-02',
+        ];
+        yield 'electric boiler installation analog up to 30 kg' => [
+            'heating.unit',
+            'монтаж оборудования в помещении массой до 0,03 т электрический котел отопления',
+            '37-01-002-01',
         ];
         yield 'wet zone waterproofing' => [
             'sanitary.waterproofing',
