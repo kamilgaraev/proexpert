@@ -98,6 +98,20 @@ class FgiscsBuildingResourcePriceUpdateService
         );
 
         if (! $force && (bool) ($regionalVersion->metadata['building_resources_imported'] ?? false)) {
+            $lifecycle = null;
+
+            if (in_array($regionalVersion->status, [
+                RegionalPriceStatus::PARSED,
+                RegionalPriceStatus::CHECKED,
+            ], true) && (bool) ($regionalVersion->metadata['worker_salary_imported'] ?? false)) {
+                $lifecycle = $this->lifecycleService->finalize(
+                    $regionalVersion,
+                    (bool) ($regionalVersion->metadata['activation_requested'] ?? false),
+                    true,
+                );
+                $regionalVersion->refresh();
+            }
+
             return [
                 'skipped' => true,
                 'reason' => 'building_resources_already_imported',
@@ -107,6 +121,7 @@ class FgiscsBuildingResourcePriceUpdateService
                 'version_id' => $regionalVersion->id,
                 'version_key' => $versionKey,
                 'status' => $regionalVersion->status->value,
+                'activation_id' => $lifecycle['activation_id'] ?? null,
             ];
         }
 

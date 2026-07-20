@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceSynchronizationException;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceSynchronizationService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -42,11 +43,14 @@ class SyncFgiscsBuildingResourcePricesCommand extends Command
 
             return self::SUCCESS;
         } catch (Throwable $exception) {
-            Log::error('[EstimateGeneration] FGIS CS building resource price sync failed.', [
+            $context = [
                 'exception_class' => $exception::class,
                 'exception_code' => $exception->getCode(),
-                'exception_message' => $exception->getMessage(),
-            ]);
+            ];
+            if ($exception instanceof FgiscsRegionalPriceSynchronizationException) {
+                $context = array_merge($context, $exception->safeContext());
+            }
+            Log::error('[EstimateGeneration] FGIS CS building resource price sync failed.', $context);
             $this->error(trans_message('estimate_generation.operation_error'));
 
             return self::FAILURE;

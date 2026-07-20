@@ -42,11 +42,14 @@ class FgiscsBuildingResourcePricePriorityTest extends TestCase
         self::assertStringContainsString('EstimateResourcePrice::query()->upsert(', $source);
         self::assertStringContainsString("'building_resources_imported' => false", $source);
         self::assertStringContainsString("'building_resources_imported',\n            \$force,", $source);
+        self::assertStringContainsString("'building_resources_already_imported'", $source);
+        self::assertStringContainsString("\$this->lifecycleService->finalize(\n                    \$regionalVersion", $source);
+        self::assertStringContainsString('$regionalVersion->refresh();', $source);
         self::assertStringContainsString("'project_material_conjuncture_checked' => true", $source);
         self::assertStringContainsString("'project_material_conjuncture_complete' => \$conjunctureStats['missing'] === 0", $source);
         self::assertStringContainsString('$this->conjuncturePrices->import(', $source);
         self::assertLessThan(
-            strpos($source, '$this->lifecycleService->finalize('),
+            strrpos($source, '$this->lifecycleService->finalize('),
             strpos($source, '$this->conjuncturePrices->import('),
         );
         self::assertStringNotContainsString('Residential project material conjuncture analysis is incomplete.', $source);

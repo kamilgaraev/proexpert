@@ -220,7 +220,7 @@ Schedule::command('estimates:regional-prices:sync-fgiscs --region=RU-TA --latest
     ->appendOutputTo(storage_path('logs/schedule-regional-prices-sync.log'));
 
 Schedule::command('estimates:regional-prices:sync-fgiscs-building-resources')
-    ->hourlyAt(0)
+    ->hourlyAt(15)
     ->withoutOverlapping(90)
     ->createMutexNameUsing('estimate-generation:fgiscs-building-resources:v2')
     ->runInBackground()

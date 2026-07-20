@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Enums\RegionalPriceStatus;
-use RuntimeException;
 
 class FgiscsRegionalPriceSynchronizationService
 {
@@ -31,7 +30,7 @@ class FgiscsRegionalPriceSynchronizationService
             force: $force,
             progress: $progress,
         );
-        $this->assertComponentSucceeded($workerSalary, 'worker_salary');
+        $this->assertComponentSucceeded($workerSalary, 'worker_salary', $workerSalary);
         $buildingResources = $this->buildingResourceService->syncTatarstan(
             bucket: $bucket,
             periodId: $periodId,
@@ -39,7 +38,7 @@ class FgiscsRegionalPriceSynchronizationService
             withSplitForm: $withSplitForm,
             progress: $progress,
         );
-        $this->assertComponentSucceeded($buildingResources, 'building_resources');
+        $this->assertComponentSucceeded($buildingResources, 'building_resources', $workerSalary, $buildingResources);
         $final = $buildingResources;
 
         if (($buildingResources['status'] ?? null) !== RegionalPriceStatus::ACTIVE->value
@@ -51,14 +50,16 @@ class FgiscsRegionalPriceSynchronizationService
                 force: false,
                 progress: $progress,
             );
-            $this->assertComponentSucceeded($final, 'worker_salary');
+            $this->assertComponentSucceeded($final, 'worker_salary', $final, $buildingResources, $final);
         }
 
         if (($final['status'] ?? null) !== RegionalPriceStatus::ACTIVE->value) {
-            throw new RuntimeException(sprintf(
-                'Regional price synchronization did not activate a complete version: %s.',
-                $this->resultSummary($final),
-            ));
+            throw $this->failure(
+                FgiscsRegionalPriceSynchronizationException::FINAL_VERSION_NOT_ACTIVE,
+                $workerSalary,
+                $buildingResources,
+                $final,
+            );
         }
 
         return array_merge($final, [
@@ -68,38 +69,65 @@ class FgiscsRegionalPriceSynchronizationService
     }
 
     /** @param array<string, mixed> $result */
-    private function assertComponentSucceeded(array $result, string $component): void
-    {
+    private function assertComponentSucceeded(
+        array $result,
+        string $component,
+        ?array $workerSalary = null,
+        ?array $buildingResources = null,
+        ?array $final = null,
+    ): void {
         if (in_array($result['status'] ?? null, [
             RegionalPriceStatus::FAILED->value,
             RegionalPriceStatus::UNAVAILABLE->value,
         ], true)) {
-            throw new RuntimeException(sprintf(
-                'Regional price component synchronization failed: %s (%s).',
-                $component,
-                $this->resultSummary($result),
-            ));
+            throw $this->failure(
+                $component === 'worker_salary'
+                    ? FgiscsRegionalPriceSynchronizationException::WORKER_COMPONENT_FAILED
+                    : FgiscsRegionalPriceSynchronizationException::BUILDING_COMPONENT_FAILED,
+                $workerSalary,
+                $buildingResources,
+                $final,
+            );
         }
     }
 
-    /** @param array<string, mixed> $result */
-    private function resultSummary(array $result): string
+    /**
+     * @param  array<string, mixed>|null  $workerSalary
+     * @param  array<string, mixed>|null  $buildingResources
+     * @param  array<string, mixed>|null  $final
+     */
+    private function failure(
+        string $failureCode,
+        ?array $workerSalary,
+        ?array $buildingResources,
+        ?array $final,
+    ): FgiscsRegionalPriceSynchronizationException {
+        return new FgiscsRegionalPriceSynchronizationException(
+            failureCode: $failureCode,
+            workerStatus: $this->status($workerSalary),
+            workerVersionId: $this->versionId($workerSalary),
+            buildingStatus: $this->status($buildingResources),
+            buildingVersionId: $this->versionId($buildingResources),
+            finalStatus: $this->status($final),
+            finalVersionId: $this->versionId($final),
+        );
+    }
+
+    /** @param array<string, mixed>|null $result */
+    private function status(?array $result): ?string
     {
-        $metadata = is_array($result['metadata'] ?? null) ? $result['metadata'] : [];
-        $parts = [
-            'status='.(string) ($result['status'] ?? 'unknown'),
-        ];
+        $status = $result['status'] ?? null;
 
-        foreach (['version_id', 'version_key', 'failure_code', 'reason'] as $key) {
-            if (isset($result[$key]) && $result[$key] !== '') {
-                $parts[] = $key.'='.(string) $result[$key];
-            }
-        }
+        return is_string($status) && in_array($status, array_column(RegionalPriceStatus::cases(), 'value'), true)
+            ? $status
+            : null;
+    }
 
-        if (isset($metadata['building_resources_failure_code'])) {
-            $parts[] = 'failure_code='.(string) $metadata['building_resources_failure_code'];
-        }
+    /** @param array<string, mixed>|null $result */
+    private function versionId(?array $result): ?int
+    {
+        $versionId = $result['version_id'] ?? null;
 
-        return implode(', ', $parts);
+        return is_int($versionId) && $versionId > 0 ? $versionId : null;
     }
 }
