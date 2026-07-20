@@ -84,12 +84,62 @@ class RegionalPriceVersionResolverTest extends TestCase
         self::assertSame('2026-q2-ru-ta-r1', $key);
     }
 
+    public function test_failed_version_is_never_resumed_even_when_component_has_no_rows(): void
+    {
+        $failed = $this->version(11, '2026-q2-ru-ta-r1', RegionalPriceStatus::FAILED, [
+            'worker_salary_imported' => true,
+            'building_resources_imported' => false,
+        ]);
+
+        $key = (new RegionalPriceVersionResolver)->resolveFromVersions(
+            [$failed],
+            '2026-q2-ru-ta',
+            'building_resources_imported',
+            false,
+        );
+
+        self::assertSame('2026-q2-ru-ta-r2', $key);
+    }
+
+    public function test_writable_version_with_existing_component_rows_rolls_out_new_revision(): void
+    {
+        $interrupted = $this->version(11, '2026-q2-ru-ta-r1', RegionalPriceStatus::DOWNLOADED, [
+            'building_resources_imported' => false,
+        ], 47031);
+
+        $key = (new RegionalPriceVersionResolver)->resolveFromVersions(
+            [$interrupted],
+            '2026-q2-ru-ta',
+            'building_resources_imported',
+            false,
+        );
+
+        self::assertSame('2026-q2-ru-ta-r2', $key);
+    }
+
+    public function test_truly_empty_interrupted_version_is_resumed(): void
+    {
+        $interrupted = $this->version(11, '2026-q2-ru-ta-r1', RegionalPriceStatus::DOWNLOADED, [
+            'building_resources_imported' => false,
+        ]);
+
+        $key = (new RegionalPriceVersionResolver)->resolveFromVersions(
+            [$interrupted],
+            '2026-q2-ru-ta',
+            'building_resources_imported',
+            false,
+        );
+
+        self::assertSame('2026-q2-ru-ta-r1', $key);
+    }
+
     /** @param array<string, mixed> $metadata */
     private function version(
         int $id,
         string $key,
         RegionalPriceStatus $status,
         array $metadata,
+        int $componentRowsCount = 0,
     ): EstimateRegionalPriceVersion {
         $version = new EstimateRegionalPriceVersion;
         $version->setRawAttributes([
@@ -97,6 +147,7 @@ class RegionalPriceVersionResolverTest extends TestCase
             'version_key' => $key,
             'status' => $status->value,
             'metadata' => json_encode($metadata, JSON_THROW_ON_ERROR),
+            'component_rows_count' => $componentRowsCount,
         ], true);
 
         return $version;

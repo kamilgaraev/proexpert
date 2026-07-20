@@ -19,6 +19,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Conjunctur
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FgiscsBuildingResourcePriceSpreadsheetParser;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
 
@@ -304,21 +305,12 @@ class FgiscsBuildingResourcePriceUpdateService
                 ->count();
         } catch (Throwable $exception) {
             $errorsCount++;
-            $regionalVersion->update([
-                'status' => RegionalPriceStatus::FAILED->value,
-                'errors_count' => max(1, (int) $regionalVersion->errors_count + 1),
-                'metadata' => array_merge($regionalVersion->metadata ?? [], [
-                    'building_resources_imported' => false,
-                    'building_resources_failure_code' => 'building_resource_import_failed',
-                ]),
-            ]);
-            $datasetVersion->update([
-                'status' => EstimateImportStatus::FAILED->value,
-                'rows_read' => $rowsRead,
-                'rows_imported' => 0,
-                'errors_count' => $errorsCount,
-                'finished_at' => now(),
-            ]);
+            $this->recordImportFailure(
+                $regionalVersion,
+                $datasetVersion,
+                $rowsRead,
+                $errorsCount,
+            );
 
             throw $exception;
         } finally {
@@ -340,6 +332,45 @@ class FgiscsBuildingResourcePriceUpdateService
             'rows_imported' => $rowsImported,
             'errors_count' => $errorsCount,
         ];
+    }
+
+    private function recordImportFailure(
+        EstimateRegionalPriceVersion $regionalVersion,
+        EstimateDatasetVersion $datasetVersion,
+        int $rowsRead,
+        int $errorsCount,
+    ): void {
+        $this->attemptFailureStatusUpdate('regional_version', static fn (): bool => $regionalVersion->update([
+            'status' => RegionalPriceStatus::FAILED->value,
+            'errors_count' => max(1, (int) $regionalVersion->errors_count + 1),
+            'metadata' => array_merge($regionalVersion->metadata ?? [], [
+                'building_resources_imported' => false,
+                'building_resources_failure_code' => 'building_resource_import_failed',
+            ]),
+        ]));
+        $this->attemptFailureStatusUpdate('dataset_version', static fn (): bool => $datasetVersion->update([
+            'status' => EstimateImportStatus::FAILED->value,
+            'rows_read' => $rowsRead,
+            'rows_imported' => 0,
+            'errors_count' => $errorsCount,
+            'finished_at' => now(),
+        ]));
+    }
+
+    private function attemptFailureStatusUpdate(string $target, callable $update): void
+    {
+        try {
+            $update();
+        } catch (Throwable $statusException) {
+            try {
+                Log::warning('[EstimateGeneration] Failed to record building resource import failure status.', [
+                    'target' => $target,
+                    'exception_class' => $statusException::class,
+                    'exception_code' => $statusException->getCode(),
+                ]);
+            } catch (Throwable) {
+            }
+        }
     }
 
     private function upsertSpool(
