@@ -65,6 +65,38 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         ));
     }
 
+    public function test_residential_electrical_actions_reject_industrial_and_outdoor_subtypes(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        foreach ([
+            ['Щит распределительный или шкаф ввода на один трансформатор мощностью 225 кВ·А', 'Монтаж квартирного распределительного щита', 'electrical_panel_installation'],
+            ['Регуляторы электрические: щит распределительный', 'Монтаж квартирного распределительного щита', 'electrical_panel_installation'],
+            ['Колонка распределительная со штепсельными розетками на ток 25 А', 'Установка штепсельных розеток скрытой проводки', 'socket_installation'],
+            ['Тахогенераторы и центробежные выключатели: установка центробежных выключателей', 'Установка выключателей освещения скрытой проводки', 'socket_installation'],
+            ['Установка комплекта уличного светильника с автономным питанием и солнечной панелью', 'Установка потолочных светильников внутри жилого дома', 'lighting_fixture_installation'],
+        ] as [$candidate, $work, $action]) {
+            self::assertFalse($service->isCompatible(
+                $candidate,
+                $work,
+                ['scope' => 'engineering', 'system' => 'electrical', 'action' => $action, 'object_type' => 'residential'],
+            ), $candidate);
+        }
+
+        foreach ([
+            ['Щиток осветительный, устанавливаемый в нише распорными дюбелями', 'Монтаж квартирного распределительного щита', 'electrical_panel_installation'],
+            ['Розетка штепсельная утопленного типа при скрытой проводке', 'Установка штепсельных розеток скрытой проводки', 'socket_installation'],
+            ['Выключатель одноклавишный утопленного типа при скрытой проводке', 'Установка выключателей освещения скрытой проводки', 'socket_installation'],
+            ['Светильник потолочный для помещений с нормальными условиями среды', 'Установка потолочных светильников внутри жилого дома', 'lighting_fixture_installation'],
+        ] as [$candidate, $work, $action]) {
+            self::assertTrue($service->isCompatible(
+                $candidate,
+                $work,
+                ['scope' => 'engineering', 'system' => 'electrical', 'action' => $action, 'object_type' => 'residential'],
+            ), $candidate);
+        }
+    }
+
     public function test_reinforced_concrete_context_does_not_turn_formwork_into_concreting(): void
     {
         $service = new NormativeSemanticCompatibilityService;

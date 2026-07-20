@@ -192,6 +192,58 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
     }
 
     #[Test]
+    public function residential_document_context_enables_catalog_when_object_profile_is_generic(): void
+    {
+        $result = (new ResidentialQuantityScenarioCatalog)->build([
+            'floor_area' => $this->quantity('floor_area', '180.000000', ['drawing:1']),
+            'first_floor_internal_area' => $this->quantity('first_floor_internal_area', '90.000000', ['drawing:1']),
+        ], $this->model(), [
+            'object' => ['object_type' => 'custom'],
+            'document_context' => ['context_text' => 'Индивидуальный жилой дом площадью 180 м2'],
+        ]);
+
+        self::assertArrayHasKey('electrical.panel', $result->quantities);
+        self::assertArrayHasKey('stairs.flights', $result->quantities);
+        self::assertArrayNotHasKey('ventilation.office_points', $result->quantities);
+        self::assertArrayNotHasKey('ventilation.warehouse_points', $result->quantities);
+    }
+
+    #[Test]
+    public function confirmed_model_turns_preliminary_total_area_into_traceable_residential_scenario(): void
+    {
+        $floorArea = new QuantityData(
+            key: 'floor_area',
+            unit: 'm2',
+            amount: '180.000000',
+            formulaKey: 'document.facts.total_floor_area',
+            formulaVersion: '1.0.0',
+            formulaInputs: ['items' => []],
+            source: QuantitySource::Estimated,
+            evidenceIds: [],
+            modelVersion: 'building-model:v1',
+            assumptions: ['document_area_preliminary_takeoff'],
+            reviewBlockers: ['estimated_quantity_requires_review'],
+        );
+
+        $result = (new ResidentialQuantityScenarioCatalog)->build([
+            'floor_area' => $floorArea,
+        ], $this->model(), [
+            'object' => ['object_type' => 'custom', 'floors' => 2, 'roof_type' => 'pitched'],
+            'document_context' => ['context_text' => 'Проект двухэтажного жилого дома'],
+        ]);
+
+        foreach (['foundation.prep', 'roof.area', 'rough.ceiling', 'finish.ceiling', 'electrical.panel', 'lighting.fixtures'] as $key) {
+            self::assertArrayHasKey($key, $result->quantities, $key);
+            self::assertSame(['1', '2', '3', '4', '5'], $result->quantities[$key]->evidenceIds, $key);
+            self::assertSame([], $result->quantities[$key]->reviewBlockers, $key);
+            self::assertContains('preliminary_total_area_with_confirmed_geometry', $result->quantities[$key]->assumptions, $key);
+        }
+        self::assertSame('90.000000', $result->quantities['foundation.prep']->amount);
+        self::assertSame('180.000000', $result->quantities['rough.ceiling']->amount);
+        self::assertSame('floor_area', $result->quantities['rough.ceiling']->formulaInputs['source_quantity']['key']);
+    }
+
+    #[Test]
     public function missing_documentary_operand_is_reported_and_never_replaced_by_total_area(): void
     {
         $result = (new ResidentialQuantityScenarioCatalog)->build([

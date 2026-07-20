@@ -39,7 +39,8 @@ final class NormativeSemanticCompatibilityService
             || ! $this->specializationCompatible($candidateTitle, $workText, $intent)
             || ! $this->separateWorkCompatible($candidateText, $workText, $intent)
             || ! $this->objectTypeCompatible($candidateTitle, $workText, $intent)
-            || ! $this->residentialEngineeringCompatible($candidateTitle, $workText, $intent)) {
+            || ! $this->residentialEngineeringCompatible($candidateTitle, $workText, $intent)
+            || ! $this->residentialElectricalSubtypeCompatible($candidateTitle, $workText, $intent)) {
             return false;
         }
 
@@ -416,6 +417,44 @@ final class NormativeSemanticCompatibilityService
                 && ! $this->containsAny($candidateTitle, ['основан', 'площад', 'дно котлован', 'дно транше'])) {
                 return false;
             }
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function residentialElectricalSubtypeCompatible(string $candidateTitle, string $workText, array $intent): bool
+    {
+        $action = trim((string) ($intent['action'] ?? ''));
+        if ($action === 'socket_installation') {
+            if ($this->containsAny($workText, ['розет'])) {
+                return $this->containsAny($candidateTitle, ['розет'])
+                    && ! $this->containsAny($candidateTitle, [
+                        'колонка распределительн', 'модульн коробк', 'магистрал из провод',
+                    ]);
+            }
+            if ($this->containsAny($workText, ['выключател'])) {
+                return $this->containsAny($candidateTitle, ['выключател'])
+                    && ! $this->containsAny($candidateTitle, [
+                        'центробеж', 'тахогенератор', 'пакетн', 'автоматическ', 'рубильник',
+                    ]);
+            }
+        }
+
+        if ($action === 'electrical_panel_installation'
+            && $this->containsAny($workText, ['квартирн', 'жилого дом', 'жилом дом'])) {
+            return $this->containsAny($candidateTitle, ['щит', 'щиток'])
+                && $this->containsAny($candidateTitle, ['осветительн', 'квартирн'])
+                && ! $this->containsAny($candidateTitle, [
+                    'трансформатор', 'регулятор', 'сценическ', 'шкаф ввода',
+                ]);
+        }
+
+        if ($action === 'lighting_fixture_installation'
+            && ! $this->containsAny($workText, ['уличн', 'наружн', 'вне здан'])) {
+            return ! $this->containsAny($candidateTitle, [
+                'уличн', 'вне здан', 'солнечн панел', 'автономн питан', 'антивандальн',
+            ]);
         }
 
         return true;
