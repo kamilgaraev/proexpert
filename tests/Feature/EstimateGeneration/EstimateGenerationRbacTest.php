@@ -148,7 +148,7 @@ class EstimateGenerationRbacTest extends TestCase
             'estimate_generation.apply',
         ];
 
-        $this->assertSame(['*'], $organizationOwner['module_permissions']['estimate-generation']);
+        $this->assertSame(['*', ...$expected], $organizationOwner['module_permissions']['estimate-generation']);
         $this->assertSame($expected, $organizationAdmin['module_permissions']['estimate-generation']);
         $this->assertSame($expected, $projectAdmin['module_permissions']['estimate-generation']);
 
