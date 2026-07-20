@@ -28,14 +28,18 @@ final readonly class SignerIdentity
         }
         $valid = match ($kind) {
             'user' => $userId !== null && $userId > 0 && $organizationId !== null && $organizationId > 0
-                && $partyId === null && $roleSlug === null,
+                && $partyId === null && $roleSlug === null && $taxNumber === null && $position === null
+                && $partyRole === null && $registrationNumber === null && $authorityBasis === null,
             'organization' => $organizationId !== null && $organizationId > 0 && $userId === null
-                && $partyId === null && $roleSlug === null && self::bounded($taxNumber, 32, true),
+                && $partyId === null && $roleSlug === null && self::bounded($taxNumber, 32, true)
+                && $position === null && $partyRole === null && $authorityBasis === null,
             'party' => $partyId !== null && $partyId > 0 && $userId === null && $roleSlug === null
                 && self::bounded($partyRole, 64, true),
             'role' => $userId !== null && $userId > 0 && $organizationId !== null && $organizationId > 0
-                && self::bounded($roleSlug, 191, true) && $partyId === null,
-            'manual' => $userId === null && $organizationId === null && $partyId === null && $roleSlug === null,
+                && self::bounded($roleSlug, 191, true) && $partyId === null && $taxNumber === null
+                && $position === null && $partyRole === null && $registrationNumber === null && $authorityBasis === null,
+            'manual' => $userId === null && $organizationId === null && $partyId === null && $roleSlug === null
+                && $taxNumber === null && $partyRole === null && $registrationNumber === null,
         };
         if (! $valid || ! self::bounded($taxNumber, 32) || ! self::bounded($position, 255)
             || ! self::bounded($partyRole, 64) || ! self::bounded($registrationNumber, 64)
@@ -46,19 +50,27 @@ final readonly class SignerIdentity
 
     public function canonical(): array
     {
-        return [
+        $base = [
             'kind' => $this->kind,
             'name' => trim($this->name),
-            'user_id' => $this->userId,
-            'organization_id' => $this->organizationId,
-            'party_id' => $this->partyId,
-            'role_slug' => $this->roleSlug === null ? null : trim($this->roleSlug),
-            'tax_number' => $this->taxNumber === null ? null : trim($this->taxNumber),
-            'position' => $this->position === null ? null : trim($this->position),
-            'party_role' => $this->partyRole === null ? null : trim($this->partyRole),
-            'registration_number' => $this->registrationNumber === null ? null : trim($this->registrationNumber),
-            'authority_basis' => $this->authorityBasis === null ? null : trim($this->authorityBasis),
         ];
+
+        return match ($this->kind) {
+            'user' => [...$base, 'user_id' => $this->userId, 'organization_id' => $this->organizationId],
+            'organization' => [...$base, 'organization_id' => $this->organizationId,
+                'tax_number' => trim((string) $this->taxNumber),
+                'registration_number' => $this->registrationNumber === null ? null : trim($this->registrationNumber)],
+            'party' => [...$base, 'organization_id' => $this->organizationId, 'party_id' => $this->partyId,
+                'tax_number' => $this->taxNumber === null ? null : trim($this->taxNumber),
+                'position' => $this->position === null ? null : trim($this->position),
+                'party_role' => trim((string) $this->partyRole),
+                'registration_number' => $this->registrationNumber === null ? null : trim($this->registrationNumber),
+                'authority_basis' => $this->authorityBasis === null ? null : trim($this->authorityBasis)],
+            'role' => [...$base, 'user_id' => $this->userId, 'organization_id' => $this->organizationId,
+                'role_slug' => trim((string) $this->roleSlug)],
+            'manual' => [...$base, 'position' => $this->position === null ? null : trim($this->position),
+                'authority_basis' => $this->authorityBasis === null ? null : trim($this->authorityBasis)],
+        };
     }
 
     public static function fromArray(array $value): self

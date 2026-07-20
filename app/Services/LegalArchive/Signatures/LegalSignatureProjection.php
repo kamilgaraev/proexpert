@@ -28,6 +28,7 @@ final readonly class LegalSignatureProjection
             ->selectRaw('MAX(id)')
             ->groupBy('signature_id');
         $electronicEvidenceStatuses = $this->connection->table('legal_document_signatures as signature')
+            ->join('legal_signature_requests as evidence_request', 'evidence_request.id', '=', 'signature.signature_request_id')
             ->leftJoin('legal_signature_verifications as verification', static function ($join) use ($latestVerificationIds): void {
                 $join->on('verification.signature_id', '=', 'signature.id')
                     ->whereIn('verification.id', $latestVerificationIds);
@@ -36,6 +37,10 @@ final readonly class LegalSignatureProjection
             ->where('signature.document_id', $document->id)
             ->where('signature.document_version_id', $document->current_primary_version_id)
             ->where('signature.method', '<>', 'paper')
+            ->whereNotExists(static function ($query): void {
+                $query->selectRaw('1')->from('legal_signature_requests as evidence_successor')
+                    ->whereColumn('evidence_successor.replaces_request_id', 'evidence_request.id');
+            })
             ->selectRaw('COALESCE(verification.status, signature.verification_status) AS effective_status')
             ->pluck('effective_status')
             ->map(static fn (mixed $status): string => (string) $status)

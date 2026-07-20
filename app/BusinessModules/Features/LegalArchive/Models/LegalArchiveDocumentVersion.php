@@ -71,10 +71,10 @@ final class LegalArchiveDocumentVersion extends Model
             }
             if ($version->isDirty('status')) {
                 $to = (string) $version->status;
-                if (! in_array($to, ['frozen', 'signed'], true)) {
-                    throw new ImmutableDataException(self::class, 'transition');
-                }
-                if ($originalStatus === 'frozen' && $to !== 'signed') {
+                $allowedStatusTransition = ($originalStatus === 'uploaded' && $to === 'frozen'
+                        && (string) $version->processing_status === 'ready' && (bool) $version->is_current)
+                    || ($originalStatus === 'frozen' && $to === 'signed');
+                if (! $allowedStatusTransition) {
                     throw new ImmutableDataException(self::class, 'transition');
                 }
             }

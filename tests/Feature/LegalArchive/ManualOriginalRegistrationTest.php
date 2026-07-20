@@ -342,6 +342,42 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertSame($first->providerRequestId, $preservedFirst->provider_request_id);
         self::assertSame($first->redirectUrl, $preservedFirst->redirect_url);
         self::assertSame($firstOperation->id, $secondOperation->supersedes_operation_id);
+        $provider->contentHash = (string) $version->content_hash;
+        try {
+            $service->completeElectronic(new SignatureCallback(
+                'fixed', $first->providerRequestId, $first->correlationId, 'stale-event', ['status' => 'signed'],
+            ));
+            self::fail('A callback from a stale provider generation was accepted.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_signature_callback_stale_generation', $exception->getMessage());
+        }
+        self::assertContains('signature_callback_rejected', $this->audit->events);
+    }
+
+    public function test_post_provider_storage_rejection_is_durably_audited(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $provider = new FixedElectronicSignatureProvider;
+        $storage = $this->createMock(FileService::class);
+        $storage->method('putImmutable')->willThrowException(new \RuntimeException('storage unavailable'));
+        $service = new LegalDocumentSignatureService(
+            $provider, $this->access, $this->audit, $storage, $this->database->getConnection(),
+        );
+        $request = $service->createRequest(
+            $document, $version, $actor, 'provider_electronic', $this->signerSet('Signer'), 'storage-audit', provider: 'fixed',
+        );
+        $session = $service->startElectronicSession($request, $actor);
+        $provider->contentHash = (string) $version->content_hash;
+
+        try {
+            $service->completeElectronic(new SignatureCallback(
+                'fixed', $session->providerRequestId, $session->correlationId, 'storage-event', ['status' => 'signed'],
+            ));
+            self::fail('Storage failure was hidden.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('storage unavailable', $exception->getMessage());
+        }
+        self::assertContains('signature_callback_rejected', $this->audit->events);
     }
 
     public function test_failed_external_registration_removes_exact_storage_version(): void
@@ -409,6 +445,11 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertSame(0, $service->processDue());
         self::assertSame(2, $calls);
         self::assertContains('legal_signature_cleanup_resolved_total', $metrics->metrics);
+        $cleanupSources = array_values(array_filter(array_map(
+            static fn (array $context): mixed => $context['source_event_id'] ?? null,
+            $this->audit->contexts,
+        ), static fn (mixed $source): bool => is_string($source) && str_starts_with($source, 'signature-cleanup-debt:')));
+        self::assertCount(2, array_unique($cleanupSources));
     }
 
     public function test_signature_cleanup_debt_dead_letters_after_bounded_attempts(): void
@@ -433,6 +474,42 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertNotNull($dead->dead_lettered_at);
         self::assertNull($dead->next_attempt_at);
         self::assertContains('legal_signature_storage_cleanup_dead_lettered_total', $metrics->metrics);
+    }
+
+    public function test_cleanup_never_deletes_an_artifact_referenced_by_a_winning_registration(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $request = $this->service->createRequest(
+            $document, $version, $actor, 'external_electronic', $this->signerSet('Signer'), 'artifact-race', provider: 'external-edo',
+        );
+        $signature = $this->service->registerExternalOriginal(
+            $request,
+            UploadedFile::fake()->createWithContent('signature.p7s', pack('H*', '3082010006092a864886f70d010702a0820100308200fc')),
+            $actor,
+            new ExternalOriginalData('external-edo', $this->evidence($this->signerSet('Signer')), 'artifact-race-import'),
+        );
+        $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->insert([
+            'organization_id' => 10,
+            'document_id' => $document->id,
+            'document_version_id' => $version->id,
+            'storage_path' => $signature->signature_path,
+            'storage_version_id' => $signature->storage_version_id,
+            'debt_key' => str_repeat('e', 64),
+            'reason' => 'signature_registration_failed',
+            'attempts' => 1,
+            'next_attempt_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::never())->method('removeImmutable');
+        $metrics = new RecordingCleanupMetrics;
+
+        self::assertSame(1, (new LegalSignatureCleanupDebtService(
+            $storage, $this->database->getConnection(), $this->audit, $metrics,
+        ))->processDue());
+        self::assertSame('referenced', $this->database->getConnection()->table('legal_signature_artifacts')->value('state'));
+        self::assertContains('signature_storage_cleanup_reference_preserved', $this->audit->events);
     }
 
     public function test_projection_never_marks_document_without_requests_as_signed(): void
@@ -474,6 +551,16 @@ final class ManualOriginalRegistrationTest extends TestCase
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage('legal_signature_version_not_freezable');
         $this->service->createRequest($document, $version, $actor, 'paper', $this->signerSet('Иван'), 'invalid-freeze');
+    }
+
+    public function test_general_mutation_scope_cannot_skip_the_exact_signature_transition(): void
+    {
+        [, $version] = $this->fixture();
+
+        $this->expectException(\App\Exceptions\ImmutableDataException::class);
+        LegalArchiveDocumentVersion::technicalMutation(static function () use ($version): void {
+            $version->forceFill(['status' => 'signed'])->save();
+        });
     }
 
     public function test_approval_and_no_active_workflow_are_required(): void
@@ -531,6 +618,27 @@ final class ManualOriginalRegistrationTest extends TestCase
         ]), 'identity-valid');
 
         self::assertSame('pending', $request->status);
+    }
+
+    public function test_signer_identity_rejects_fields_outside_its_kind_and_hashes_only_allowed_fields(): void
+    {
+        foreach ([
+            static fn (): SignerIdentity => new SignerIdentity('user', 'User', userId: 1, organizationId: 2, taxNumber: '123'),
+            static fn (): SignerIdentity => new SignerIdentity('organization', 'Org', organizationId: 2, taxNumber: '123', position: 'CEO'),
+            static fn (): SignerIdentity => new SignerIdentity('role', 'Role user', userId: 1, organizationId: 2, roleSlug: 'director', authorityBasis: 'Charter'),
+            static fn (): SignerIdentity => new SignerIdentity('manual', 'Manual', taxNumber: '123'),
+        ] as $factory) {
+            try {
+                $factory();
+                self::fail('Signer accepted a field outside the kind schema.');
+            } catch (DomainException $exception) {
+                self::assertSame('legal_signature_signer_identity_invalid', $exception->getMessage());
+            }
+        }
+        self::assertSame(
+            ['kind' => 'user', 'name' => 'User', 'user_id' => 1, 'organization_id' => 2],
+            (new SignerIdentity('user', 'User', userId: 1, organizationId: 2))->canonical(),
+        );
     }
 
     public function test_expiry_is_locked_idempotent_and_reprojects_document(): void
@@ -622,6 +730,34 @@ final class ManualOriginalRegistrationTest extends TestCase
         } finally {
             Carbon::setTestNow();
         }
+    }
+
+    public function test_failed_verification_attempt_is_replaced_and_old_evidence_is_excluded(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $signers = $this->signerSet('Signer');
+        $first = $this->service->createRequest(
+            $document, $version, $actor, 'external_electronic', $signers, 'failed-attempt', provider: 'external-edo',
+        );
+        $container = pack('H*', '3082010006092a864886f70d010702a0820100308200fc');
+        $firstSignature = $this->service->registerExternalOriginal(
+            $first, UploadedFile::fake()->createWithContent('signature.p7s', $container), $actor,
+            new ExternalOriginalData('external-edo', $this->evidence($signers), 'failed-import'),
+        );
+        TrustedExternalSignatureProvider::$status = 'failed';
+        self::assertSame('failed', $this->service->verify($firstSignature, $actor, 'failed-verification')->status);
+        $replacement = $this->service->createRequest(
+            $document->refresh(), $version->refresh(), $actor, 'external_electronic', $signers, 'corrected-attempt',
+            provider: 'external-edo', replacesRequestId: (int) $first->id,
+        );
+        TrustedExternalSignatureProvider::$status = 'verified';
+        $correctedSignature = $this->service->registerExternalOriginal(
+            $replacement, UploadedFile::fake()->createWithContent('signature.p7s', $container), $actor,
+            new ExternalOriginalData('external-edo', $this->evidence($signers), 'corrected-import'),
+        );
+        self::assertSame('verified', $this->service->verify($correctedSignature, $actor, 'corrected-verification')->status);
+        self::assertSame('signed', $document->refresh()->signature_status);
+        self::assertSame('signed', $version->refresh()->status);
     }
 
     private function signerSet(string $name, ?string $position = null): SignerIdentitySet
@@ -883,6 +1019,22 @@ final class ManualOriginalRegistrationTest extends TestCase
             $table->string('request_hash', 64);
             $table->timestamps();
         });
+        $schema->create('legal_signature_artifacts', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('document_id');
+            $table->unsignedBigInteger('document_version_id');
+            $table->unsignedBigInteger('signature_request_id');
+            $table->string('artifact_key', 64);
+            $table->text('storage_path');
+            $table->text('storage_version_id')->nullable();
+            $table->string('content_hash', 64);
+            $table->string('state');
+            $table->unsignedInteger('claim_count')->default(0);
+            $table->unsignedBigInteger('referenced_signature_id')->nullable();
+            $table->timestamps();
+            $table->unique(['organization_id', 'artifact_key']);
+        });
         $schema->create('legal_archive_file_cleanup_debts', static function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('organization_id');
@@ -904,6 +1056,7 @@ final class ManualOriginalRegistrationTest extends TestCase
             $table->timestamp('dead_lettered_at')->nullable();
             $table->timestamps();
             $table->unique(['organization_id', 'storage_path']);
+            $table->unique(['organization_id', 'debt_key']);
         });
     }
 }
@@ -912,14 +1065,18 @@ final class RecordingSignatureAudit implements LegalDocumentAudit
 {
     public array $events = [];
 
+    public array $contexts = [];
+
     public function record(string $event, LegalArchiveDocument $document, User $actor, array $context = []): void
     {
         $this->events[] = $event;
+        $this->contexts[] = $context;
     }
 
     public function recordForActorId(string $event, LegalArchiveDocument $document, ?int $actorId, array $context = []): void
     {
         $this->events[] = $event;
+        $this->contexts[] = $context;
     }
 
     public function recordContractForActorId(string $event, Contract $contract, ?int $actorId, array $context = []): void {}

@@ -689,7 +689,7 @@ final class LegalDocumentFileService
         Throwable $exception,
     ): void {
         $now = now();
-        $debtKey = hash('sha256', "{$organizationId}:{$storagePath}:legacy");
+        $debtKey = LegalCleanupDebtKey::for($organizationId, $storagePath, null);
         $row = [
             'organization_id' => $organizationId,
             'storage_path' => $storagePath,

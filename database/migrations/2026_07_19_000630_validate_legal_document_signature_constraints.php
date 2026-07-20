@@ -67,6 +67,9 @@ return new class extends Migration
         foreach (['document_fk', 'version_fk', 'hash_check', 'binding_check', 'lease_check', 'terminal_check'] as $suffix) {
             $manifest["legal_signature_cleanup_debts_{$suffix}"] = 'legal_archive_file_cleanup_debts';
         }
+        foreach (['request_fk', 'signature_fk', 'hash_check', 'state_check', 'reference_check', 'claim_check'] as $suffix) {
+            $manifest["legal_signature_artifacts_{$suffix}"] = 'legal_signature_artifacts';
+        }
 
         return $manifest;
     }

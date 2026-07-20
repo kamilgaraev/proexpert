@@ -84,6 +84,12 @@ return new class extends Migration
             'legal_signature_cleanup_debts_binding_check' => ['legal_archive_file_cleanup_debts', 'CHECK ((document_version_id IS NULL AND document_id IS NULL) OR (document_version_id IS NOT NULL AND document_id IS NOT NULL)) NOT VALID'],
             'legal_signature_cleanup_debts_lease_check' => ['legal_archive_file_cleanup_debts', 'CHECK ((lease_token_hash IS NULL) = (lease_expires_at IS NULL)) NOT VALID'],
             'legal_signature_cleanup_debts_terminal_check' => ['legal_archive_file_cleanup_debts', 'CHECK (resolved_at IS NULL OR dead_lettered_at IS NULL) NOT VALID'],
+            'legal_signature_artifacts_request_fk' => ['legal_signature_artifacts', 'FOREIGN KEY (signature_request_id, document_version_id, document_id, organization_id) REFERENCES legal_signature_requests (id, document_version_id, document_id, organization_id) ON DELETE RESTRICT NOT VALID'],
+            'legal_signature_artifacts_signature_fk' => ['legal_signature_artifacts', 'FOREIGN KEY (referenced_signature_id, document_version_id, document_id, organization_id) REFERENCES legal_document_signatures (id, document_version_id, document_id, organization_id) ON DELETE RESTRICT NOT VALID'],
+            'legal_signature_artifacts_hash_check' => ['legal_signature_artifacts', "CHECK (artifact_key ~ '^[a-f0-9]{64}$' AND content_hash ~ '^[a-f0-9]{64}$') NOT VALID"],
+            'legal_signature_artifacts_state_check' => ['legal_signature_artifacts', "CHECK (state IN ('uploading','uploaded','referenced','deleting','deleted','abandoned')) NOT VALID"],
+            'legal_signature_artifacts_reference_check' => ['legal_signature_artifacts', "CHECK ((state IN ('uploading','abandoned') AND storage_version_id IS NULL AND referenced_signature_id IS NULL) OR (state = 'referenced' AND storage_version_id IS NOT NULL AND referenced_signature_id IS NOT NULL) OR (state IN ('uploaded','deleting','deleted') AND storage_version_id IS NOT NULL AND referenced_signature_id IS NULL)) NOT VALID"],
+            'legal_signature_artifacts_claim_check' => ['legal_signature_artifacts', "CHECK (claim_count >= 0 AND (state NOT IN ('deleting','deleted') OR claim_count = 0)) NOT VALID"],
         ];
     }
 
@@ -224,7 +230,7 @@ PLPGSQL;
 
     private function installGuards(string $schema): void
     {
-        DB::unprepared(str_replace('__SCHEMA__', $schema, <<<'SQL'
+        $sql = str_replace('__SCHEMA__', $schema, <<<'SQL'
 CREATE OR REPLACE FUNCTION legal_signature_append_only_guard() RETURNS trigger AS $$
 BEGIN
     RAISE EXCEPTION 'legal_signature_evidence_immutable';
@@ -318,7 +324,71 @@ END;
 $$ LANGUAGE plpgsql SET search_path = pg_catalog, "__SCHEMA__";
 CREATE OR REPLACE TRIGGER legal_signature_provider_operation_guard BEFORE UPDATE OR DELETE ON "__SCHEMA__".legal_signature_provider_operations FOR EACH ROW EXECUTE FUNCTION legal_signature_provider_operation_guard();
 
-SQL));
+CREATE OR REPLACE FUNCTION legal_signature_artifact_guard() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'legal_signature_artifact_delete_forbidden'; END IF;
+    IF (OLD.organization_id, OLD.document_id, OLD.document_version_id, OLD.signature_request_id,
+        OLD.artifact_key, OLD.storage_path, OLD.content_hash, OLD.created_at)
+       IS DISTINCT FROM
+       (NEW.organization_id, NEW.document_id, NEW.document_version_id, NEW.signature_request_id,
+        NEW.artifact_key, NEW.storage_path, NEW.content_hash, NEW.created_at) THEN
+        RAISE EXCEPTION 'legal_signature_artifact_identity_update_forbidden';
+    END IF;
+    IF OLD.storage_version_id IS DISTINCT FROM NEW.storage_version_id
+       AND NOT (OLD.state = 'uploading' AND NEW.state = 'uploaded' AND OLD.storage_version_id IS NULL AND NEW.storage_version_id IS NOT NULL) THEN
+        RAISE EXCEPTION 'legal_signature_artifact_version_update_forbidden';
+    END IF;
+    IF NOT ((OLD.state = 'uploading' AND NEW.state IN ('uploading','uploaded','abandoned'))
+        OR (OLD.state = 'uploaded' AND NEW.state IN ('uploaded','referenced','deleting'))
+        OR (OLD.state = 'referenced' AND NEW.state = 'referenced')
+        OR (OLD.state = 'deleting' AND NEW.state IN ('deleting','referenced','deleted'))
+        OR (OLD.state = 'deleted' AND NEW.state = 'deleted')
+        OR (OLD.state = 'abandoned' AND NEW.state IN ('abandoned','uploading'))) THEN
+        RAISE EXCEPTION 'legal_signature_artifact_transition_forbidden';
+    END IF;
+    IF OLD.state = 'deleted' AND OLD IS DISTINCT FROM NEW THEN
+        RAISE EXCEPTION 'legal_signature_artifact_terminal_update_forbidden';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SET search_path = pg_catalog, "__SCHEMA__";
+CREATE OR REPLACE TRIGGER legal_signature_artifact_guard BEFORE UPDATE OR DELETE ON "__SCHEMA__".legal_signature_artifacts FOR EACH ROW EXECUTE FUNCTION legal_signature_artifact_guard();
+
+SQL);
+        $this->assertFunctionPredecessors($sql, $schema);
+        DB::unprepared($sql);
+    }
+
+    private function assertFunctionPredecessors(string $sql, string $schema): void
+    {
+        preg_match_all(
+            '/CREATE OR REPLACE FUNCTION ([a-z_]+)\(\) RETURNS trigger AS \$\$(.*?)\$\$ LANGUAGE plpgsql SET search_path = pg_catalog, "[a-z0-9_]+";/s',
+            $sql,
+            $matches,
+            PREG_SET_ORDER,
+        );
+        if (count($matches) !== 5) {
+            throw new RuntimeException('legal_signature_guard_manifest_parse_failed');
+        }
+        foreach ($matches as $match) {
+            $descriptor = DB::selectOne(<<<'SQL'
+SELECT p.prosrc AS body, p.provolatile AS volatility, p.prosecdef::integer AS security_definer,
+       p.proconfig AS configuration, pg_get_function_result(p.oid) AS result,
+       pg_get_function_identity_arguments(p.oid) AS arguments, l.lanname AS language
+FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_language l ON l.oid=p.prolang
+WHERE n.nspname=current_schema() AND p.proname=? AND pg_get_function_identity_arguments(p.oid)=''
+SQL, [$match[1]]);
+            if ($descriptor === null) {
+                continue;
+            }
+            $configuration = str_replace('"', '', implode(',', (array) $descriptor->configuration));
+            if ($this->normalizeBody((string) $descriptor->body) !== $this->normalizeBody((string) $match[2])
+                || $descriptor->volatility !== 'v' || (bool) $descriptor->security_definer
+                || $descriptor->result !== 'trigger' || $descriptor->arguments !== '' || $descriptor->language !== 'plpgsql'
+                || ! str_contains($configuration, "search_path=pg_catalog, {$schema}")) {
+                throw new RuntimeException("legal_signature_guard_function_predecessor_mismatch:{$match[1]}");
+            }
+        }
     }
 
     private function normalize(string $definition): string
@@ -333,11 +403,12 @@ SQL));
     private function assertGuardDescriptors(): void
     {
         $expected = [
-            'legal_document_signatures_immutable_guard' => ['legal_document_signatures', 'legal_signature_append_only_guard', 'BEFORE UPDATE OR DELETE'],
-            'legal_signature_verifications_immutable_guard' => ['legal_signature_verifications', 'legal_signature_append_only_guard', 'BEFORE UPDATE OR DELETE'],
-            'legal_signature_requests_mutation_guard' => ['legal_signature_requests', 'legal_signature_requests_mutation_guard', 'BEFORE UPDATE OR DELETE'],
-            'legal_signature_request_binding_guard' => ['legal_document_signatures', 'legal_signature_request_binding_guard', 'BEFORE INSERT'],
-            'legal_signature_provider_operation_guard' => ['legal_signature_provider_operations', 'legal_signature_provider_operation_guard', 'BEFORE UPDATE OR DELETE'],
+            'legal_document_signatures_immutable_guard' => ['legal_document_signatures', 'legal_signature_append_only_guard', 27],
+            'legal_signature_verifications_immutable_guard' => ['legal_signature_verifications', 'legal_signature_append_only_guard', 27],
+            'legal_signature_requests_mutation_guard' => ['legal_signature_requests', 'legal_signature_requests_mutation_guard', 27],
+            'legal_signature_request_binding_guard' => ['legal_document_signatures', 'legal_signature_request_binding_guard', 7],
+            'legal_signature_provider_operation_guard' => ['legal_signature_provider_operations', 'legal_signature_provider_operation_guard', 27],
+            'legal_signature_artifact_guard' => ['legal_signature_artifacts', 'legal_signature_artifact_guard', 27],
             'legal_archive_versions_immutable_guard' => ['legal_archive_document_versions', 'legal_archive_versions_immutable_guard', 'BEFORE UPDATE OR DELETE'],
         ];
         foreach ($expected as $triggerName => [$table, $function, $event]) {
@@ -347,6 +418,7 @@ SELECT table_class.relname AS table_name,
        function_proc.proname AS function_name,
        pg_get_triggerdef(trigger_row.oid, true) AS trigger_definition,
        trigger_row.tgenabled AS enabled,
+       trigger_row.tgtype AS trigger_type,
        function_proc.prosecdef::integer AS security_definer,
        function_proc.provolatile AS volatility,
        function_proc.proconfig AS configuration
@@ -361,7 +433,7 @@ SQL, [$triggerName]);
             $hasSafeSearchPath = str_contains($searchPath, 'search_path=pg_catalog, '.$descriptor->expected_schema)
                 || ($function === 'legal_archive_versions_immutable_guard' && str_contains($searchPath, 'search_path=pg_catalog'));
             if ($descriptor === null || $descriptor->table_name !== $table || $descriptor->function_name !== $function
-                || ! str_contains(strtoupper((string) $descriptor->trigger_definition), $event)
+                || (int) $descriptor->trigger_type !== $event
                 || $descriptor->enabled !== 'O' || (bool) $descriptor->security_definer
                 || $descriptor->volatility !== 'v' || ! $hasSafeSearchPath) {
                 throw new RuntimeException("legal_signature_guard_descriptor_mismatch:{$triggerName}");

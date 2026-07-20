@@ -87,6 +87,10 @@ final class LegalDocumentSignatureServiceTest extends TestCase
         self::assertIsString($validate);
         self::assertStringContainsString('CREATE UNIQUE INDEX CONCURRENTLY', $indexes);
         self::assertStringContainsString('pg_get_indexdef', $indexes);
+        self::assertStringContainsString('FOR UPDATE SKIP LOCKED', $create);
+        self::assertStringContainsString('legal_signature_cleanup_debt_key_fill', $create);
+        self::assertStringNotContainsString('DROP CONSTRAINT legal_archive_cleanup_debts_object_unique', $create);
+        self::assertStringContainsString('legal_signature_artifacts', $create);
         self::assertStringContainsString('legal_signature_append_only_guard', $constraints);
         self::assertStringContainsString('legal_archive_version_signature_transition_forbidden', $constraints);
         self::assertStringContainsString("OLD.status = 'uploaded' AND OLD.processing_status = 'ready' AND OLD.is_current", $constraints);
@@ -127,6 +131,11 @@ final class LegalDocumentSignatureServiceTest extends TestCase
         self::assertStringContainsString("getenv('LEGAL_ARCHIVE_PG_SIGNATURE_CONCURRENCY') !== '1'", $source);
         self::assertStringContainsString("getenv('LEGAL_DOCUMENT_PG_TEST_ALLOW_DDL') !== '1'", $source);
         self::assertStringContainsString('pcntl_fork', $source);
+        self::assertStringContainsString('LegalDocumentSignatureService', $source);
+        self::assertStringContainsString('->createRequest(', $source);
+        self::assertStringContainsString('test_callback_and_expiry_race_has_one_explicit_terminal_winner', $source);
+        self::assertStringContainsString('test_parallel_s3_compensation_never_deletes_the_winning_reference', $source);
+        self::assertStringContainsString('test_failed_verification_and_replacement_race_has_explicit_loser', $source);
         self::assertStringContainsString("preg_match('/(?:_test|_testing)$/D'", $source);
         self::assertStringContainsString('legal_signature_index_descriptor_mismatch', $source);
     }
