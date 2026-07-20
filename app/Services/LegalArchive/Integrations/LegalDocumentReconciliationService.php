@@ -16,6 +16,7 @@ use App\Services\Contract\ContractDossierDocumentCreator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use InvalidArgumentException;
 
 final class LegalDocumentReconciliationService
@@ -54,7 +55,7 @@ final class LegalDocumentReconciliationService
             }
 
             $sourceType = $this->sourceType($namedSource);
-            $this->sourceQuery($namedSource, $organizationId)
+            $this->unreconciled($this->sourceQuery($namedSource, $organizationId), $namedSource, $sourceType)
                 ->orderBy('id')
                 ->chunkById(100, function (Collection $entities) use ($namedSource, $sourceType, $dryRun, &$summary, $limit): bool {
                     $documents = LegalArchiveDocument::query()
@@ -140,6 +141,26 @@ final class LegalDocumentReconciliationService
                 ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId)),
             default => throw new InvalidArgumentException('Unknown reconciliation source.'),
         };
+    }
+
+    private function unreconciled(Builder $query, string $source, string $sourceType): Builder
+    {
+        $table = $query->getModel()->getTable();
+
+        return $query->whereNotExists(function (QueryBuilder $documents) use ($source, $sourceType, $table): void {
+            $documents->selectRaw('1')
+                ->from('legal_archive_documents as dossier')
+                ->where('dossier.source_type', $sourceType)
+                ->whereRaw("dossier.source_id = CAST({$table}.id AS text)");
+
+            if (in_array($source, ['supplementary_agreements', 'acts'], true)) {
+                $documents->whereRaw("dossier.organization_id = (SELECT organization_id FROM contracts WHERE contracts.id = {$table}.contract_id)");
+
+                return;
+            }
+
+            $documents->whereColumn('dossier.organization_id', "{$table}.organization_id");
+        });
     }
 
     private function sourceType(string $source): string
