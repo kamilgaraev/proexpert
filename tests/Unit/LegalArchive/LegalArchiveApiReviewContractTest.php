@@ -63,6 +63,8 @@ final class LegalArchiveApiReviewContractTest extends TestCase
         }
         self::assertStringContainsString('paginate($perPage)', $settings);
         self::assertStringContainsString("boolean('all_versions')", $settings);
+        self::assertStringContainsString("->whereIn('template_id', \$items->getCollection()->pluck('id')", $settings);
+        self::assertStringNotContainsString("->where('organization_id', \$this->organizationId(\$request))\n                ->pluck('template_id')", $settings);
         self::assertStringContainsString('->limit($remaining)', $settings);
     }
 

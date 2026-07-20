@@ -156,6 +156,7 @@ final class LegalArchiveSettingsController extends LegalArchiveApiController
             $items = $query->orderBy('code')->orderByDesc('version')->paginate($perPage);
             $currentTemplateIds = DB::table('legal_workflow_template_heads')
                 ->where('organization_id', $this->organizationId($request))
+                ->whereIn('template_id', $items->getCollection()->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all())
                 ->pluck('template_id')
                 ->map(static fn (mixed $id): int => (int) $id)
                 ->flip();

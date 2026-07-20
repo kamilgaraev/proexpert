@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Services\LegalArchive\Workflow;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Domain\Authorization\Services\PermissionResolver;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use DomainException;
@@ -66,6 +69,11 @@ final class LegalWorkflowAuthorization
      */
     public function forMany(User $actor, Collection $documents, array $permissions): array
     {
+        $batched = $this->batchedForMany($actor, $documents, $permissions);
+        if ($batched !== null) {
+            return $batched;
+        }
+
         $byContext = [];
         $resolvedContexts = [];
         $result = [];
@@ -89,6 +97,103 @@ final class LegalWorkflowAuthorization
                 }
             }
             $result[$documentId] = $byContext[$contextKey];
+        }
+
+        return $result;
+    }
+
+    private function batchedForMany(User $actor, Collection $documents, array $permissions): ?array
+    {
+        if ($documents->isEmpty() || $actor::class !== User::class || ! app()->bound(PermissionResolver::class)) {
+            return null;
+        }
+
+        $eligible = $documents->filter(static fn (LegalArchiveDocument $document): bool => (int) $document->organization_id > 0
+            && (int) $document->organization_id === (int) $actor->current_organization_id);
+        $organizationIds = $eligible->pluck('organization_id')->map(static fn (mixed $id): int => (int) $id)->unique()->values()->all();
+        if ($organizationIds === []) {
+            return $this->deniedMany($documents, $permissions);
+        }
+
+        $system = AuthorizationContext::findSystemContext();
+        if (! $system instanceof AuthorizationContext) {
+            return $this->deniedMany($documents, $permissions);
+        }
+        $organizations = AuthorizationContext::query()
+            ->where('type', AuthorizationContext::TYPE_ORGANIZATION)
+            ->where('parent_context_id', (int) $system->id)
+            ->whereIn('resource_id', $organizationIds)
+            ->get(['id', 'resource_id']);
+        $organizationContextIds = $organizations->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
+        if ($organizationContextIds === []) {
+            return $this->deniedMany($documents, $permissions);
+        }
+        $projectContexts = AuthorizationContext::query()
+            ->where('type', AuthorizationContext::TYPE_PROJECT)
+            ->whereIn('parent_context_id', $organizationContextIds)
+            ->get(['id', 'parent_context_id']);
+        $organizationByContextId = $organizations->mapWithKeys(
+            static fn (AuthorizationContext $context): array => [(int) $context->id => (int) $context->resource_id],
+        )->all();
+        foreach ($projectContexts as $projectContext) {
+            $organizationByContextId[(int) $projectContext->id] = $organizationByContextId[(int) $projectContext->parent_context_id] ?? 0;
+        }
+        $contextIds = array_values(array_unique([
+            (int) $system->id,
+            ...$organizationContextIds,
+            ...$projectContexts->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all(),
+        ]));
+        $assignments = UserRoleAssignment::query()
+            ->where('user_id', (int) $actor->id)
+            ->active()
+            ->whereIn('context_id', $contextIds)
+            ->with(['conditions' => static fn ($query) => $query->active()])
+            ->get();
+        $resolver = app(PermissionResolver::class);
+        $permissionMaps = [];
+        foreach ($organizations as $organization) {
+            $organizationId = (int) $organization->resource_id;
+            $permissionMaps[$organizationId] = array_fill_keys($permissions, false);
+            foreach ($assignments as $assignment) {
+                $belongsToOrganization = (int) $assignment->context_id === (int) $system->id
+                    || ($organizationByContextId[(int) $assignment->context_id] ?? 0) === $organizationId;
+                if (! $belongsToOrganization || ! $this->conditionsAllow($assignment, ['organization_id' => $organizationId])) {
+                    continue;
+                }
+                $assignment->setRelation('user', $actor);
+                foreach ($permissions as $permission) {
+                    if (! $permissionMaps[$organizationId][$permission]
+                        && $resolver->hasPermission($assignment, $permission, ['organization_id' => $organizationId])) {
+                        $permissionMaps[$organizationId][$permission] = true;
+                    }
+                }
+            }
+        }
+
+        $result = $this->deniedMany($documents, $permissions);
+        foreach ($eligible as $document) {
+            $result[(int) $document->id] = $permissionMaps[(int) $document->organization_id] ?? array_fill_keys($permissions, false);
+        }
+
+        return $result;
+    }
+
+    private function conditionsAllow(UserRoleAssignment $assignment, array $context): bool
+    {
+        foreach ($assignment->conditions as $condition) {
+            if (! $condition->evaluate($context)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function deniedMany(Collection $documents, array $permissions): array
+    {
+        $result = [];
+        foreach ($documents as $document) {
+            $result[(int) $document->id] = array_fill_keys($permissions, false);
         }
 
         return $result;

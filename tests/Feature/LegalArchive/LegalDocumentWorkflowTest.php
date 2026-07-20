@@ -10,7 +10,9 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowDecision;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
 use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Services\PermissionResolver;
 use App\Exceptions\ImmutableDataException;
 use App\Models\User;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
@@ -412,6 +414,71 @@ final class LegalDocumentWorkflowTest extends TestCase
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage('legal_workflow_access_denied');
         $resolver->for($actor, $documents->first());
+    }
+
+    public function test_real_user_bulk_workflow_resolution_preloads_one_hundred_project_contexts_and_role_assignments(): void
+    {
+        $actor = new User;
+        $actor->forceFill(['id' => 8, 'current_organization_id' => 15, 'name' => 'Reviewer']);
+        Container::getInstance()->instance(PermissionResolver::class, new BatchWorkflowPermissionResolver);
+        $system = AuthorizationContext::query()->create(['type' => AuthorizationContext::TYPE_SYSTEM]);
+        $organization = AuthorizationContext::query()->create([
+            'type' => AuthorizationContext::TYPE_ORGANIZATION,
+            'resource_id' => 15,
+            'parent_context_id' => $system->id,
+        ]);
+        $documents = collect();
+        foreach (range(1, 100) as $id) {
+            $project = AuthorizationContext::query()->create([
+                'type' => AuthorizationContext::TYPE_PROJECT,
+                'resource_id' => $id,
+                'parent_context_id' => $organization->id,
+            ]);
+            UserRoleAssignment::query()->create([
+                'user_id' => 8,
+                'role_slug' => 'legal_reviewer',
+                'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+                'context_id' => $project->id,
+                'is_active' => true,
+            ]);
+            $step = new \App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
+            $step->forceFill([
+                'id' => $id,
+                'organization_id' => 15,
+                'actor_type' => 'role',
+                'actor_reference' => 'legal_reviewer',
+                'status' => 'active',
+            ]);
+            $instance = new LegalWorkflowInstance;
+            $instance->setRelation('steps', collect([$step]));
+            $document = new LegalArchiveDocument;
+            $document->forceFill([
+                'id' => $id,
+                'organization_id' => 15,
+                'primary_project_id' => $id,
+                'status' => 'draft',
+                'approval_status' => 'not_submitted',
+                'open_blocking_comments_count' => 0,
+            ]);
+            $document->setRelation('latestWorkflowInstance', $instance);
+            $document->setRelation('currentVersion', null);
+            $documents->push($document);
+        }
+
+        $this->database->getConnection()->flushQueryLog();
+        $this->database->getConnection()->enableQueryLog();
+        $permissions = (new LegalWorkflowAuthorization)->forMany($actor, $documents, [LegalWorkflowPermissions::VIEW]);
+        $assignments = (new LegalWorkflowActorResolver)->forMany($actor, $documents);
+        $queryCount = count($this->database->getConnection()->getQueryLog());
+        $this->database->getConnection()->disableQueryLog();
+
+        self::assertSame(9, $queryCount);
+        self::assertCount(100, $permissions);
+        self::assertCount(100, $assignments);
+        self::assertTrue($permissions[1][LegalWorkflowPermissions::VIEW]);
+        self::assertTrue($permissions[100][LegalWorkflowPermissions::VIEW]);
+        self::assertTrue($assignments[1]);
+        self::assertTrue($assignments[100]);
     }
 
     public function test_parallel_action_contract_is_step_specific_and_overdue_does_not_block_sibling(): void
@@ -1155,6 +1222,25 @@ final class LegalDocumentWorkflowTest extends TestCase
             $table->json('metadata')->nullable();
             $table->timestamps();
         });
+        $schema->create('user_role_assignments', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->string('role_slug');
+            $table->string('role_type');
+            $table->unsignedBigInteger('context_id');
+            $table->unsignedBigInteger('assigned_by')->nullable();
+            $table->timestamp('expires_at')->nullable();
+            $table->boolean('is_active');
+            $table->timestamps();
+        });
+        $schema->create('role_conditions', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('assignment_id');
+            $table->string('condition_type');
+            $table->json('condition_data')->nullable();
+            $table->boolean('is_active');
+            $table->timestamps();
+        });
         $schema->create('project_user', function (Blueprint $table): void {
             $table->unsignedBigInteger('project_id');
             $table->unsignedBigInteger('user_id');
@@ -1342,6 +1428,16 @@ final class WorkflowAuthorizationServiceSpy extends AuthorizationService
     public function hasRole(User $user, string $roleSlug, ?int $contextId = null): bool
     {
         return $contextId !== null && in_array($contextId, $this->allowedContextIds, true);
+    }
+}
+
+final class BatchWorkflowPermissionResolver extends PermissionResolver
+{
+    public function __construct() {}
+
+    public function hasPermission(UserRoleAssignment $assignment, string $permission, ?array $context = null): bool
+    {
+        return $permission === LegalWorkflowPermissions::VIEW;
     }
 }
 
