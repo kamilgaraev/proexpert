@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityCoverageWar
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -222,6 +223,68 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'floor_area' => $this->quantity('floor_area', '192.800000', ['room:1']),
             'first_floor_internal_area' => $this->quantity('first_floor_internal_area', '113.300000', ['room:1']),
         ], $this->model(), ['object' => ['object_type' => 'mixed_warehouse_office']]);
+
+        self::assertSame([], $result->quantities);
+        self::assertSame([], $result->omissions);
+    }
+
+    #[Test]
+    #[DataProvider('nonResidentialObjectTypes')]
+    public function structured_non_residential_type_overrides_residential_free_text(string $objectType): void
+    {
+        $result = (new ResidentialQuantityScenarioCatalog)->build([
+            'floor_area' => $this->quantity('floor_area', '180.000000', ['drawing:1']),
+            'first_floor_internal_area' => $this->quantity('first_floor_internal_area', '90.000000', ['drawing:1']),
+        ], $this->model(), [
+            'object' => [
+                'object_type' => $objectType,
+                'description' => 'Реконструкция под жилой дом площадью 180 м2',
+            ],
+            'document_context' => [
+                'context_text' => 'Чертежи индивидуального жилого дома',
+            ],
+        ]);
+
+        self::assertSame([], $result->quantities);
+        self::assertSame([], $result->omissions);
+    }
+
+    public static function nonResidentialObjectTypes(): iterable
+    {
+        yield 'office' => ['office'];
+        yield 'warehouse' => ['warehouse'];
+    }
+
+    #[Test]
+    public function structured_residential_type_overrides_non_residential_free_text(): void
+    {
+        $result = (new ResidentialQuantityScenarioCatalog)->build([
+            'floor_area' => $this->quantity('floor_area', '180.000000', ['drawing:1']),
+            'first_floor_internal_area' => $this->quantity('first_floor_internal_area', '90.000000', ['drawing:1']),
+        ], $this->model(), [
+            'object' => ['object_type' => 'house'],
+            'document_context' => ['context_text' => 'Архивный шаблон офиса и склада'],
+        ]);
+
+        self::assertArrayHasKey('electrical.panel', $result->quantities);
+        self::assertArrayHasKey('heating.radiators', $result->quantities);
+        self::assertArrayNotHasKey('ventilation.office_points', $result->quantities);
+        self::assertArrayNotHasKey('ventilation.warehouse_points', $result->quantities);
+    }
+
+    #[Test]
+    public function structured_document_fact_overrides_residential_free_text_for_generic_object(): void
+    {
+        $result = (new ResidentialQuantityScenarioCatalog)->build([
+            'floor_area' => $this->quantity('floor_area', '180.000000', ['drawing:1']),
+            'first_floor_internal_area' => $this->quantity('first_floor_internal_area', '90.000000', ['drawing:1']),
+        ], $this->model(), [
+            'object' => ['object_type' => 'custom'],
+            'document_context' => [
+                'facts_summary' => ['object_type' => 'warehouse'],
+                'context_text' => 'Чертежи индивидуального жилого дома',
+            ],
+        ]);
 
         self::assertSame([], $result->quantities);
         self::assertSame([], $result->omissions);

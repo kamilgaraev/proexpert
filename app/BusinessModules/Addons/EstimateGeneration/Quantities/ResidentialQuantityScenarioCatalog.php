@@ -457,14 +457,26 @@ final class ResidentialQuantityScenarioCatalog
         $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
         $factsSummary = is_array($documentContext['facts_summary'] ?? null) ? $documentContext['facts_summary'] : [];
 
-        foreach ([
+        $objectTypeDecision = $this->structuredResidentialDecision([
             $object['object_type'] ?? null,
             $object['building_type'] ?? null,
-            $object['description'] ?? null,
-            $object['manual_description'] ?? null,
+        ]);
+        if ($objectTypeDecision !== null) {
+            return $objectTypeDecision;
+        }
+
+        $documentTypeDecision = $this->structuredResidentialDecision([
             $factsSummary['object_type'] ?? null,
             $factsSummary['building_type'] ?? null,
+        ]);
+        if ($documentTypeDecision !== null) {
+            return $documentTypeDecision;
+        }
+
+        foreach ([
             $factsSummary['description'] ?? null,
+            $object['description'] ?? null,
+            $object['manual_description'] ?? null,
             $documentContext['context_text'] ?? null,
         ] as $value) {
             if (is_string($value) && ObjectTypeSignalClassifier::isResidential($value)) {
@@ -473,6 +485,34 @@ final class ResidentialQuantityScenarioCatalog
         }
 
         return false;
+    }
+
+    /**
+     * @param  array<int, mixed>  $values
+     */
+    private function structuredResidentialDecision(array $values): ?bool
+    {
+        foreach ($values as $value) {
+            if (! is_string($value)) {
+                continue;
+            }
+
+            $normalized = mb_strtolower(trim($value));
+            if ($normalized === '' || in_array($normalized, [
+                'building',
+                'custom',
+                'floor_plan_geometry',
+                'generic',
+                'object',
+                'unknown',
+            ], true)) {
+                continue;
+            }
+
+            return ObjectTypeSignalClassifier::isResidential($value);
+        }
+
+        return null;
     }
 
     private function scenarioBasis(?QuantityData $quantity, NormalizedBuildingModelData $model): ?QuantityData
