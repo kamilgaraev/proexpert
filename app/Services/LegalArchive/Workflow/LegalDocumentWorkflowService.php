@@ -287,7 +287,7 @@ final class LegalDocumentWorkflowService
         $idempotencyKey = $this->validKey($input->idempotencyKey);
         $requestHash = hash('sha256', $this->integrity->canonicalJson($input->canonicalPayload()));
 
-        return $this->connection->transaction(function () use (
+        $updated = $this->connection->transaction(function () use (
             $step,
             $actor,
             $input,
@@ -474,6 +474,16 @@ final class LegalDocumentWorkflowService
 
             return $instance->refresh()->load('steps', 'decisions');
         }, 3);
+        $document = LegalArchiveDocument::query()->find($updated->document_id);
+        if ($document instanceof LegalArchiveDocument) {
+            foreach ($updated->steps->where('status', 'active') as $activeStep) {
+                if ((string) $activeStep->actor_type === 'user' && ctype_digit((string) $activeStep->actor_reference)
+                    && ($recipient = User::query()->find((int) $activeStep->actor_reference)) instanceof User) {
+                    ($this->notifications ?? new LegalDocumentNotificationPublisher)->publish($document, $recipient, 'workflow-step:'.$activeStep->id.':'.$recipient->id, new LegalDocumentApprovalRequiredNotification($document));
+                }
+            }
+        }
+        return $updated;
     }
 
     /** @param array<string, mixed> $context @param array<string, mixed> $reassignment */

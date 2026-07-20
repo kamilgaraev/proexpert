@@ -23,12 +23,12 @@ final class LegalDocumentRetentionService
                 if (($metadata['retention_review_candidate_at'] ?? null) !== null) {
                     return false;
                 }
-                $document->forceFill(['metadata' => [...$metadata, 'retention_review_candidate_at' => $at->toISOString()]])->save();
                 foreach ($document->obligations as $obligation) {
                     if ($obligation->responsible !== null && $obligation->status === 'open' && $obligation->due_at?->isPast()) {
                         $this->notifications->publish($document, $obligation->responsible, 'obligation_overdue:'.$obligation->id.':'.$obligation->due_at?->toDateString(), new LegalDocumentDeadlineNotification($document, 'obligation_overdue'));
                     }
                 }
+                $document->forceFill(['metadata' => [...$metadata, 'retention_review_candidate_at' => $at->toISOString()]])->save();
                 return true;
             })->values();
     }
