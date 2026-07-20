@@ -10,6 +10,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion
 use App\Exceptions\ImmutableDataException;
 use App\Models\Organization;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use App\Services\LegalArchive\CanonicalJson;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\Storage\FileService;
 use DomainException;
@@ -101,8 +102,8 @@ final class LegalDocumentFileService
         VersionInput $input,
         LegalDocumentVersionAttempt $attempt,
     ): LegalArchiveDocumentVersion {
-        $fingerprint = $this->requestFingerprint($upload, $input);
-        $reservation = $this->reserveOperation($file, $input, $attempt, $fingerprint);
+        $descriptor = UploadedFileDescriptor::fromUpload($upload);
+        $reservation = $this->reserveOperation($file, $input, $descriptor, $attempt);
         if ($reservation->document_version_id !== null) {
             $existing = LegalArchiveDocumentVersion::query()->findOrFail((int) $reservation->document_version_id);
             if ((string) $reservation->status === 'completed') {
@@ -178,10 +179,10 @@ final class LegalDocumentFileService
     private function reserveOperation(
         LegalArchiveDocumentFile $file,
         VersionInput $input,
+        UploadedFileDescriptor $descriptor,
         LegalDocumentVersionAttempt $attempt,
-        string $fingerprint,
     ): object {
-        return $this->database()->transaction(function () use ($file, $input, $attempt, $fingerprint): object {
+        return $this->database()->transaction(function () use ($file, $input, $descriptor, $attempt): object {
             $document = $this->aggregateLock->lockDocument(
                 $this->database(),
                 (int) $file->organization_id,
@@ -196,7 +197,10 @@ final class LegalDocumentFileService
                 ->lockForUpdate()
                 ->first();
             if ($operation !== null) {
-                if (! hash_equals((string) $operation->request_fingerprint, $fingerprint)) {
+                if (! hash_equals((string) $operation->request_fingerprint, $input->semanticFingerprint())) {
+                    throw new DomainException('legal_document_version_operation_conflict');
+                }
+                if (! $this->operationHasContent($operation, $descriptor)) {
                     if ((string) $operation->status !== 'failed') {
                         throw new DomainException('legal_document_version_operation_conflict');
                     }
@@ -205,8 +209,8 @@ final class LegalDocumentFileService
                         $document,
                         $lockedFile,
                         $input,
+                        $descriptor,
                         $attempt,
-                        $fingerprint,
                         ((int) $operation->operation_generation) + 1,
                         (string) $operation->reserved_version_number,
                     );
@@ -229,7 +233,7 @@ final class LegalDocumentFileService
                 return $this->database()->table('legal_archive_document_version_operations')->find($operation->id);
             }
 
-            return $this->createOperationReservation($document, $lockedFile, $input, $attempt, $fingerprint, 1, null);
+            return $this->createOperationReservation($document, $lockedFile, $input, $descriptor, $attempt, 1, null);
         }, 3);
     }
 
@@ -237,8 +241,8 @@ final class LegalDocumentFileService
         LegalArchiveDocument $document,
         LegalArchiveDocumentFile $file,
         VersionInput $input,
+        UploadedFileDescriptor $descriptor,
         LegalDocumentVersionAttempt $attempt,
-        string $fingerprint,
         int $generation,
         ?string $previousVersionNumber,
     ): object {
@@ -255,8 +259,17 @@ final class LegalDocumentFileService
             'document_file_id' => $file->id,
             'operation_id' => $attempt->operationId,
             'operation_generation' => $generation,
-            'request_fingerprint' => $fingerprint,
+            'request_fingerprint' => $input->semanticFingerprint(),
             'reserved_version_number' => $versionNumber,
+            'requested_version_number' => $input->versionNumber,
+            'version_label' => $input->versionLabel,
+            'uploaded_by_user_id' => $input->uploadedByUserId,
+            'version_metadata' => $input->metadata === null ? null : CanonicalJson::encode($input->metadata),
+            'file_original_name' => $descriptor->originalName,
+            'file_size_bytes' => $descriptor->sizeBytes,
+            'file_content_hash' => $descriptor->contentHash,
+            'file_client_mime_type' => $descriptor->clientMimeType,
+            'file_detected_mime_type' => $descriptor->detectedMimeType,
             'make_current' => $input->makeCurrent,
             'attempt_token' => $attempt->attemptToken,
             'attempt_count' => 1,
@@ -619,20 +632,41 @@ final class LegalDocumentFileService
         return $operation !== null && (bool) $operation->make_current;
     }
 
-    private function requestFingerprint(UploadedFile $upload, VersionInput $input): string
-    {
-        $realPath = $upload->getRealPath();
+    public function lockVersionInputForRecovery(
+        LegalArchiveDocumentFile $file,
+        string $operationId,
+    ): ?VersionInput {
+        $operation = $this->database()->table('legal_archive_document_version_operations')
+            ->where('organization_id', $file->organization_id)
+            ->where('document_id', $file->document_id)
+            ->where('document_file_id', $file->id)
+            ->where('operation_id', $operationId)
+            ->orderByDesc('operation_generation')
+            ->lockForUpdate()
+            ->first();
 
-        return hash('sha256', json_encode([
-            'version_number' => $input->versionNumber,
-            'version_label' => $input->versionLabel,
-            'uploaded_by_user_id' => $input->uploadedByUserId,
-            'metadata' => $input->metadata,
-            'make_current' => $input->makeCurrent,
-            'name' => $upload->getClientOriginalName(),
-            'size' => (int) ($upload->getSize() ?: 0),
-            'content_hash' => is_string($realPath) ? hash_file('sha256', $realPath) : null,
-        ], JSON_THROW_ON_ERROR));
+        if ($operation === null) {
+            return null;
+        }
+        $input = VersionInput::fromOperation($operation);
+        if (! hash_equals((string) $operation->request_fingerprint, $input->semanticFingerprint())) {
+            throw new DomainException('legal_document_version_operation_input_corrupted');
+        }
+
+        return $input;
+    }
+
+    private function operationHasContent(object $operation, UploadedFileDescriptor $descriptor): bool
+    {
+        $persisted = new UploadedFileDescriptor(
+            (string) $operation->file_original_name,
+            (int) $operation->file_size_bytes,
+            (string) $operation->file_content_hash,
+            isset($operation->file_client_mime_type) ? (string) $operation->file_client_mime_type : null,
+            isset($operation->file_detected_mime_type) ? (string) $operation->file_detected_mime_type : null,
+        );
+
+        return hash_equals($persisted->contentIdentity(), $descriptor->contentIdentity());
     }
 
     private function cleanupUploadedObject(

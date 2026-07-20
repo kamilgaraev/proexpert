@@ -351,6 +351,135 @@ SQL, [$step->id]);
         self::assertFalse((bool) $probe->convalidated);
     }
 
+    public function test_version_operation_migrations_resume_partial_rollout_and_reject_descriptor_drift(): void
+    {
+        $create = require dirname(__DIR__, 3).'/database/migrations/2026_07_19_000250_create_legal_document_version_operations.php';
+        $this->first->statement('ALTER TABLE legal_archive_document_version_operations DROP COLUMN file_detected_mime_type');
+        $create->up();
+        self::assertSame(
+            'character varying(255)',
+            $this->first->selectOne(
+                "SELECT format_type(a.atttypid, a.atttypmod) AS type FROM pg_attribute a WHERE a.attrelid = 'legal_archive_document_version_operations'::regclass AND a.attname = 'file_detected_mime_type'",
+            )->type,
+        );
+
+        $this->first->statement('ALTER TABLE legal_archive_document_version_operations ALTER COLUMN operation_id TYPE varchar(190)');
+        try {
+            $create->up();
+            self::fail('A version operation column with a wrong descriptor was accepted.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame(
+                'legal_archive_version_operation_column_descriptor_mismatch:operation_id',
+                $exception->getMessage(),
+            );
+        } finally {
+            $this->first->statement('ALTER TABLE legal_archive_document_version_operations ALTER COLUMN operation_id TYPE varchar(191)');
+            $create->up();
+        }
+
+        $this->first->statement('ALTER TABLE legal_archive_document_version_operations ADD COLUMN unexpected_column text');
+        try {
+            $create->up();
+            self::fail('An unexpected version operation column was accepted.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('legal_archive_version_operation_column_set_mismatch', $exception->getMessage());
+        } finally {
+            $this->first->statement('ALTER TABLE legal_archive_document_version_operations DROP COLUMN unexpected_column');
+        }
+
+        $this->first->statement('CREATE INDEX legal_archive_version_operation_unexpected_idx ON legal_archive_document_version_operations (attempt_token)');
+        try {
+            $create->up();
+            self::fail('An unexpected version operation index was accepted.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('legal_archive_version_operation_index_set_mismatch', $exception->getMessage());
+        } finally {
+            $this->first->statement('DROP INDEX legal_archive_version_operation_unexpected_idx');
+            $create->up();
+        }
+
+        $this->first->statement('ALTER SEQUENCE legal_archive_document_version_operations_id_seq INCREMENT BY 2');
+        try {
+            $create->up();
+            self::fail('A version operation sequence with a wrong descriptor was accepted.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('legal_archive_version_operation_sequence_descriptor_mismatch', $exception->getMessage());
+        } finally {
+            $this->first->statement('ALTER SEQUENCE legal_archive_document_version_operations_id_seq INCREMENT BY 1');
+            $create->up();
+        }
+
+        $constraints = require dirname(__DIR__, 3).'/database/migrations/2026_07_19_000260_add_legal_document_version_operation_constraints.php';
+        $this->first->statement('ALTER TABLE legal_archive_document_version_operations DROP CONSTRAINT legal_archive_version_operations_status_check');
+        $this->first->statement("ALTER TABLE legal_archive_document_version_operations ADD CONSTRAINT legal_archive_version_operations_status_check CHECK (status <> '') NOT VALID");
+        try {
+            $constraints->up();
+            self::fail('A version operation constraint with a wrong descriptor was accepted.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame(
+                'legal_archive_version_operation_constraint_descriptor_mismatch:legal_archive_version_operations_status_check',
+                $exception->getMessage(),
+            );
+        } finally {
+            $this->first->statement('ALTER TABLE legal_archive_document_version_operations DROP CONSTRAINT legal_archive_version_operations_status_check');
+            $constraints->up();
+        }
+
+        $validation = require dirname(__DIR__, 3).'/database/migrations/2026_07_19_000270_validate_legal_document_version_operation_constraints.php';
+        $this->first->statement('CREATE TABLE legal_archive_version_operation_unrelated_probe (value integer)');
+        $this->first->statement('ALTER TABLE legal_archive_version_operation_unrelated_probe ADD CONSTRAINT legal_archive_version_operation_unrelated_probe_check CHECK (value > 0) NOT VALID');
+        $validation->up();
+        self::assertFalse((bool) $this->first->selectOne(
+            "SELECT convalidated FROM pg_constraint WHERE conname = 'legal_archive_version_operation_unrelated_probe_check'",
+        )->convalidated);
+
+        $this->first->statement('ALTER TABLE legal_archive_document_version_operations DROP CONSTRAINT legal_archive_version_operations_status_check');
+        $this->first->statement("ALTER TABLE legal_archive_document_version_operations ADD CONSTRAINT legal_archive_version_operations_status_check CHECK (status <> '') NOT VALID");
+        try {
+            $validation->up();
+            self::fail('Validation accepted a version operation constraint with a wrong descriptor.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame(
+                'legal_archive_version_operation_constraint_descriptor_mismatch:legal_archive_version_operations_status_check',
+                $exception->getMessage(),
+            );
+        } finally {
+            $this->first->statement('ALTER TABLE legal_archive_document_version_operations DROP CONSTRAINT legal_archive_version_operations_status_check');
+            $constraints->up();
+            $validation->up();
+        }
+
+        $rescan = require dirname(__DIR__, 3).'/database/migrations/2026_07_19_000280_allow_fenced_legal_document_version_rescan.php';
+        $this->first->statement('ALTER FUNCTION legal_archive_versions_immutable_guard() STABLE');
+        try {
+            $rescan->up();
+            self::fail('A version guard function with a wrong descriptor was accepted.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('legal_archive_version_operation_function_descriptor_mismatch', $exception->getMessage());
+        } finally {
+            $this->first->statement('ALTER FUNCTION legal_archive_versions_immutable_guard() VOLATILE');
+            $rescan->up();
+        }
+
+        $this->first->statement('ALTER TABLE legal_archive_document_versions DISABLE TRIGGER legal_archive_versions_immutable_guard');
+        try {
+            $rescan->up();
+            self::fail('A disabled version guard trigger was accepted.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('legal_archive_version_operation_trigger_descriptor_mismatch', $exception->getMessage());
+        } finally {
+            $this->first->statement('ALTER TABLE legal_archive_document_versions ENABLE TRIGGER legal_archive_versions_immutable_guard');
+            $rescan->up();
+        }
+
+        $this->first->statement('DROP TRIGGER legal_archive_versions_immutable_guard ON legal_archive_document_versions');
+        $this->first->statement('DROP FUNCTION legal_archive_versions_immutable_guard()');
+        $rescan->up();
+        self::assertNotNull($this->first->selectOne(
+            "SELECT 1 FROM pg_trigger WHERE tgrelid = 'legal_archive_document_versions'::regclass AND tgname = 'legal_archive_versions_immutable_guard'",
+        ));
+    }
+
     /** @return array<string, mixed> */
     private function connectionConfig(string $dsn): array
     {

@@ -42,6 +42,12 @@ final class LegalDocumentRecoveryApiContractTest extends TestCase
         self::assertStringContainsString("->where('source_create_lease_expires_at', '>', \$now)", $registry);
         self::assertStringContainsString('! $lockedDocument->source_create_lease_expires_at->isFuture()', $registry);
         $recovery = substr($registry, (int) strpos($registry, 'public function recoverCreate('));
+        self::assertStringContainsString('lockVersionInputForRecovery(', $recovery);
+        self::assertStringNotContainsString('new VersionInput(uploadedByUserId:', $recovery);
+        self::assertLessThan(
+            strpos($recovery, '$this->claimCreateAttempt('),
+            strpos($recovery, '$this->documentFileService->lockVersionInputForRecovery('),
+        );
         $inputValidation = strpos($recovery, '$this->assertCreateRecoveryInput(');
         $claim = strpos($recovery, '$this->claimCreateAttempt(');
         self::assertIsInt($inputValidation);
