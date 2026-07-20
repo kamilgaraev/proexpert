@@ -15,6 +15,14 @@ class FgiscsBuildingResourcePriceSpreadsheetParser
 {
     private const CHUNK_SIZE = 1000;
 
+    private const RESOURCE_CODE_KIND_MATERIAL = 'material';
+
+    private const RESOURCE_CODE_KIND_MACHINE = 'machine';
+
+    private const RESOURCE_CODE_KIND_FREIGHT = 'freight';
+
+    private const RESOURCE_CODE_KIND_UNKNOWN = 'unknown';
+
     public const HEADER_SCAN_ROWS = 100;
 
     public function parse(string $filePath): iterable
@@ -68,6 +76,8 @@ class FgiscsBuildingResourcePriceSpreadsheetParser
                 $sheetIndex = $sheetNumber - 1;
                 $layout = null;
                 $buffer = [];
+                $materialSectionStarted = false;
+                $materialSectionCompleted = false;
 
                 foreach ($sheet->getRowIterator() as $rowNumber => $row) {
                     $values = $row->toArray();
@@ -85,6 +95,12 @@ class FgiscsBuildingResourcePriceSpreadsheetParser
                                 continue;
                             }
 
+                            if ($this->materialSectionBoundaryReached($bufferedValues, $layout, $materialSectionStarted)) {
+                                $materialSectionCompleted = true;
+
+                                break;
+                            }
+
                             $price = $this->mapMappedValues(
                                 $bufferedValues,
                                 $sheetIndex,
@@ -99,13 +115,27 @@ class FgiscsBuildingResourcePriceSpreadsheetParser
 
                         $buffer = [];
 
+                        if ($materialSectionCompleted) {
+                            break;
+                        }
+
                         continue;
                     }
 
                     if ($layout !== null) {
+                        if ($this->materialSectionBoundaryReached($values, $layout, $materialSectionStarted)) {
+                            break;
+                        }
+
                         $price = $this->mapMappedValues($values, $sheetIndex, $rowNumber, $layout);
                     } else {
                         foreach ($buffer as $bufferedRowNumber => $bufferedValues) {
+                            if ($this->materialSectionBoundaryReached($bufferedValues, null, $materialSectionStarted)) {
+                                $materialSectionCompleted = true;
+
+                                break;
+                            }
+
                             $price = $this->mapLegacySplitValues($bufferedValues, $sheetIndex, $bufferedRowNumber);
 
                             if ($price !== null) {
@@ -114,6 +144,12 @@ class FgiscsBuildingResourcePriceSpreadsheetParser
                         }
 
                         $buffer = [];
+
+                        if ($materialSectionCompleted
+                            || $this->materialSectionBoundaryReached($values, null, $materialSectionStarted)) {
+                            break;
+                        }
+
                         $price = $this->mapLegacySplitValues($values, $sheetIndex, $rowNumber);
                     }
 
@@ -124,6 +160,10 @@ class FgiscsBuildingResourcePriceSpreadsheetParser
 
                 if ($layout === null) {
                     foreach ($buffer as $rowNumber => $values) {
+                        if ($this->materialSectionBoundaryReached($values, null, $materialSectionStarted)) {
+                            break;
+                        }
+
                         $price = $this->mapLegacySplitValues($values, $sheetIndex, $rowNumber);
 
                         if ($price !== null) {
@@ -358,6 +398,40 @@ class FgiscsBuildingResourcePriceSpreadsheetParser
     private function isMaterialCode(string $code): bool
     {
         return preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}-\d{4}$/', $code) === 1;
+    }
+
+    /**
+     * @param  array<int, mixed>  $values
+     * @param  array{format:'direct'|'split',header_row:int,columns:array<string,int>}|null  $layout
+     */
+    private function materialSectionBoundaryReached(array $values, ?array $layout, bool &$materialSectionStarted): bool
+    {
+        $code = $layout !== null
+            ? $this->textAt($values, $layout['columns'], 'resource_code')
+            : $this->clean((string) ($values[0] ?? ''));
+        $kind = $this->resourceCodeKind($code);
+
+        if ($kind === self::RESOURCE_CODE_KIND_MATERIAL) {
+            $materialSectionStarted = true;
+
+            return false;
+        }
+
+        return $materialSectionStarted && in_array($kind, [
+            self::RESOURCE_CODE_KIND_MACHINE,
+            self::RESOURCE_CODE_KIND_FREIGHT,
+        ], true);
+    }
+
+    private function resourceCodeKind(string $code): string
+    {
+        return match (true) {
+            $this->isMaterialCode($code) => self::RESOURCE_CODE_KIND_MATERIAL,
+            preg_match('/^\d{2}\.\d{2}\.\d{2}-\d{3,4}$/', $code) === 1 => self::RESOURCE_CODE_KIND_MACHINE,
+            preg_match('/^\d{2}-\d{2}-\d-\d{2}-\d{4}$/', $code) === 1,
+            preg_match('/^\d{6}-\d{2}-\d{4}-\d{4}$/', $code) === 1 => self::RESOURCE_CODE_KIND_FREIGHT,
+            default => self::RESOURCE_CODE_KIND_UNKNOWN,
+        };
     }
 
     private function normalizeHeader(string $value): ?string
