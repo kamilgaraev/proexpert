@@ -48,6 +48,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Facade;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 
@@ -55,16 +56,23 @@ final class ContractSourceIntegrationTest extends TestCase
 {
     private Capsule $database;
 
+    private Container $container;
+
     private array $documentPayloads = [];
 
     protected function setUp(): void
     {
         parent::setUp();
+        $this->container = new Container;
         $this->database = new Capsule;
         $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
         $this->database->setAsGlobal();
-        $this->database->setEventDispatcher(new Dispatcher(new Container));
+        $this->database->setEventDispatcher(new Dispatcher($this->container));
         $this->database->bootEloquent();
+        $this->container->instance('db', $this->database->getDatabaseManager());
+        $this->container->instance('events', new Dispatcher($this->container));
+        Container::setInstance($this->container);
+        Facade::setFacadeApplication($this->container);
         Model::clearBootedModels();
         $schema = $this->database->schema();
         $schema->create('contracts', static function (Blueprint $table): void {
@@ -123,6 +131,9 @@ final class ContractSourceIntegrationTest extends TestCase
     protected function tearDown(): void
     {
         Mockery::close();
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
+        Container::setInstance(null);
         parent::tearDown();
     }
 
@@ -160,22 +171,14 @@ final class ContractSourceIntegrationTest extends TestCase
             $this->withoutConstructor(ContractLifecycleService::class),
             $this->service(200, 'manual', 'manual-contract-1'),
         );
-        $previousContainer = Container::getInstance();
-        $container = new Container;
-        $container->instance('response', new class {
+        $this->container->instance('response', new class {
             public function json(mixed $data, int $status): JsonResponse
             {
                 return new JsonResponse($data, $status);
             }
         });
-        Container::setInstance($container);
-
-        try {
-            $first = $controller->store($request);
-            $second = $controller->store($request);
-        } finally {
-            Container::setInstance($previousContainer);
-        }
+        $first = $controller->store($request);
+        $second = $controller->store($request);
 
         self::assertSame(201, $first->getStatusCode());
         self::assertSame(200, $second->getStatusCode());
