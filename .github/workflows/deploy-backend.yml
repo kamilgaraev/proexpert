@@ -161,9 +161,9 @@ jobs:
             }
 
             systemd_unit_exists() {
-              local unit_load_state
-              unit_load_state="$(systemctl show --property=LoadState --value "$1" 2>/dev/null || true)"
-              [ "${unit_load_state}" != 'not-found' ] && [ -n "${unit_load_state}" ]
+              local unit_fragment_path
+              unit_fragment_path="$(systemctl show --property=FragmentPath --value "$1" 2>/dev/null || true)"
+              [ -n "${unit_fragment_path}" ] && [ "${unit_fragment_path}" != 'n/a' ]
             }
 
             assert_legacy_runtime_stopped() {
