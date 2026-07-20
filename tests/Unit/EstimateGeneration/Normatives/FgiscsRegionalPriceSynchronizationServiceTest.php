@@ -69,7 +69,7 @@ class FgiscsRegionalPriceSynchronizationServiceTest extends TestCase
         $buildingResources->shouldNotReceive('syncTatarstan');
 
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('worker_salary');
+        $this->expectExceptionMessage('worker_salary (status=failed, version_id=12)');
 
         (new FgiscsRegionalPriceSynchronizationService($workerSalary, $buildingResources))
             ->syncTatarstan('prices', 77);
