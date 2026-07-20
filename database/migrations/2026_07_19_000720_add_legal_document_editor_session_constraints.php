@@ -176,9 +176,12 @@ BEGIN
  IF OLD.saved_version_id IS NOT NULL AND OLD.saved_version_id IS DISTINCT FROM NEW.saved_version_id THEN
    RAISE EXCEPTION 'legal_document_editor_save_result_immutable';
  END IF;
- IF NOT ((OLD.state='reserved' AND NEW.state IN ('reserved','processing','failed'))
+ IF NOT ((OLD.state='reserved' AND NEW.state IN ('reserved','processing','completed','failed'))
    OR (OLD.state='processing' AND NEW.state IN ('processing','reserved','completed','failed'))
    OR (OLD.state='failed' AND NEW.state IN ('failed','processing')) OR NEW.state=OLD.state) THEN
+   RAISE EXCEPTION 'legal_document_editor_save_transition_forbidden';
+ END IF;
+ IF OLD.state='reserved' AND NEW.state='completed' AND NEW.callback_status<>4 THEN
    RAISE EXCEPTION 'legal_document_editor_save_transition_forbidden';
  END IF;
  IF NEW.state IN ('processing','completed') AND OLD.state IS DISTINCT FROM NEW.state THEN

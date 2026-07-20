@@ -43,12 +43,13 @@ final class LegalDocumentEditorSave extends Model
             $from = (string) $save->getOriginal('state');
             $to = (string) $save->state;
             $transitions = [
-                'reserved' => ['reserved', 'processing', 'failed'],
+                'reserved' => ['reserved', 'processing', 'completed', 'failed'],
                 'processing' => ['processing', 'reserved', 'completed', 'failed'],
                 'failed' => ['failed', 'processing'],
                 'completed' => ['completed'],
             ];
             if (! in_array($to, $transitions[$from] ?? [], true)
+                || ($from === 'reserved' && $to === 'completed' && (int) $save->callback_status !== 4)
                 || ($from === 'completed' && array_diff(array_keys($save->getDirty()), ['updated_at']) !== [])) {
                 throw new ImmutableDataException(self::class, 'transition');
             }
