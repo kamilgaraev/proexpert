@@ -31,7 +31,7 @@ class ResolveRegionalPrice
         $versionId = $this->positiveInt($regionalContext['estimate_regional_price_version_id'] ?? $regionalContext['version_id'] ?? null);
 
         if ($priceId === null || $regionId === null || $zoneId === null || $periodId === null || $versionId === null) {
-            throw MissingRegionalPrice::forResource($priceId ?? 0);
+            throw MissingRegionalPrice::forResource($priceId ?? 0, 'pricing_context_incomplete');
         }
 
         $price = $this->lookup !== null ? ($this->lookup)($priceId) : $this->find($priceId);
@@ -39,7 +39,7 @@ class ResolveRegionalPrice
         $regionalPrice = $payload !== null && $this->matchesRegionalContext($payload, $regionId, $zoneId, $periodId, $versionId);
         $baseCatalogPrice = $payload !== null && $this->isApprovedBaseCatalogPrice($payload);
         if ($payload === null || (! $regionalPrice && ! $baseCatalogPrice) || ! $this->hasPositivePrice($payload)) {
-            throw MissingRegionalPrice::forResource($priceId);
+            throw MissingRegionalPrice::forResource($priceId, 'price_payload_unusable');
         }
 
         $baseAmount = BigDecimal::of((string) $payload['base_price']);
@@ -95,13 +95,19 @@ class ResolveRegionalPrice
             || ($selection['group_code'] ?? null) !== ($referenceSelection['group_code'] ?? null)
             || ($selection['selected_resource_code'] ?? null) !== ($referenceSelection['selected_resource_code'] ?? null)
             || ($selection['policy'] ?? null) !== ($referenceSelection['policy'] ?? null)) {
-            throw MissingRegionalPrice::forResource($this->positiveInt($resource['price_id'] ?? null) ?? 0);
+            throw MissingRegionalPrice::forResource(
+                $this->positiveInt($resource['price_id'] ?? $reference['price_id'] ?? null) ?? 0,
+                'residential_selection_identity_mismatch',
+            );
         }
         $normCode = trim((string) ($reference['norm_code'] ?? ''));
         $groupCode = trim((string) ($reference['resource_code'] ?? ''));
         $conversion = $this->residentialConversions->find($normCode, $groupCode);
         if ($conversion === null) {
-            throw MissingRegionalPrice::forResource($this->positiveInt($resource['price_id'] ?? null) ?? 0);
+            throw MissingRegionalPrice::forResource(
+                $this->positiveInt($resource['price_id'] ?? $reference['price_id'] ?? null) ?? 0,
+                'residential_conversion_not_supported',
+            );
         }
         $sourceType = (string) ($payload['source_type'] ?? '');
         $expectedPolicy = $sourceType.'_residential_converted_child_median:v1';
@@ -122,7 +128,10 @@ class ResolveRegionalPrice
                     ->multipliedBy($conversion['factor'])
                     ->toScale(6, RoundingMode::HalfUp));
         } catch (\Throwable) {
-            throw MissingRegionalPrice::forResource($this->positiveInt($resource['price_id'] ?? null) ?? 0);
+            throw MissingRegionalPrice::forResource(
+                $this->positiveInt($resource['price_id'] ?? $reference['price_id'] ?? null) ?? 0,
+                'residential_conversion_decimal_invalid',
+            );
         }
         if (($selection['group_code'] ?? null) !== $groupCode
             || ($selection['policy'] ?? null) !== $expectedPolicy
@@ -135,7 +144,10 @@ class ResolveRegionalPrice
             || trim((string) ($resource['price_unit'] ?? '')) !== $conversion['to_unit']
             || trim((string) ($selection['conversion_assumption'] ?? '')) !== $conversion['assumption']
             || ! $sourcePriceMatches || ! $factorMatches || ! $appliedPriceMatches) {
-            throw MissingRegionalPrice::forResource($this->positiveInt($resource['price_id'] ?? null) ?? 0);
+            throw MissingRegionalPrice::forResource(
+                $this->positiveInt($resource['price_id'] ?? $reference['price_id'] ?? null) ?? 0,
+                'residential_conversion_provenance_mismatch',
+            );
         }
 
         return [
@@ -153,7 +165,7 @@ class ResolveRegionalPrice
         $baseAmount = BigDecimal::of((string) ($embeddedPrice['base_amount'] ?? '0'));
 
         if ($sourceType !== 'normative_rate_base' || $rateId === null || $baseAmount->isLessThanOrEqualTo(0)) {
-            throw MissingRegionalPrice::forResource(0);
+            throw MissingRegionalPrice::forResource(0, 'embedded_price_invalid');
         }
 
         $quantity = BigDecimal::of((string) ($resource['quantity'] ?? '0'));

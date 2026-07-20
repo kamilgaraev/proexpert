@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveUnitConversion;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
+use Illuminate\Support\Facades\Log;
 
 class EstimatePricingService
 {
@@ -85,7 +86,18 @@ class EstimatePricingService
                 if ($context !== null) {
                     $workItem['pricing_finalized_at'] = $workItem['price_snapshot']['captured_at'];
                 }
-            } catch (MissingRegionalPrice|\Brick\Math\Exception\MathException) {
+            } catch (MissingRegionalPrice $exception) {
+                Log::warning('estimate_generation.price_snapshot_rejected', [
+                    'work_key' => $workItem['key'] ?? null,
+                    'work_name' => $workItem['name'] ?? null,
+                    'norm_code' => $workItem['normative_match']['code'] ?? null,
+                    'price_id' => $exception->priceId,
+                    'reason' => $exception->reason,
+                ]);
+                $this->blockMissingSnapshot($workItem);
+
+                continue;
+            } catch (\Brick\Math\Exception\MathException) {
                 $this->blockMissingSnapshot($workItem);
 
                 continue;
@@ -123,7 +135,7 @@ class EstimatePricingService
             $costs[$group] = BigDecimal::zero();
             foreach ($workItem[$group] ?? [] as $index => $resource) {
                 if (! is_array($resource)) {
-                    throw MissingRegionalPrice::forResource(0);
+                    throw MissingRegionalPrice::forResource(0, 'resource_payload_invalid');
                 }
                 $fromUnit = trim((string) ($resource['unit'] ?? ''));
                 $toUnit = trim((string) ($resource['price_unit'] ?? $resource['pricing']['unit'] ?? $fromUnit));
@@ -149,7 +161,7 @@ class EstimatePricingService
             }
         }
         if ($resourceSnapshots === []) {
-            throw MissingRegionalPrice::forResource(0);
+            throw MissingRegionalPrice::forResource(0, 'resource_snapshots_empty');
         }
 
         return [$workItem, $resourceSnapshots, $costs];
@@ -165,7 +177,7 @@ class EstimatePricingService
                 || $snapshot['period_id'] !== $first['period_id']
                 || $snapshot['version_id'] !== $first['version_id']
                 || $snapshot['currency'] !== $first['currency']) {
-                throw MissingRegionalPrice::forResource(0);
+                throw MissingRegionalPrice::forResource(0, 'resource_snapshot_context_mismatch');
             }
         }
 

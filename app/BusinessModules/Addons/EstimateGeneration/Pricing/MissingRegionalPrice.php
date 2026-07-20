@@ -8,8 +8,15 @@ use RuntimeException;
 
 final class MissingRegionalPrice extends RuntimeException
 {
-    public static function forResource(int $priceId): self
+    private function __construct(
+        public readonly int $priceId,
+        public readonly string $reason,
+    ) {
+        parent::__construct("Exact regional price is missing for resource price {$priceId} ({$reason}).");
+    }
+
+    public static function forResource(int $priceId, string $reason = 'missing_regional_price'): self
     {
-        return new self("Exact regional price is missing for resource price {$priceId}.");
+        return new self($priceId, $reason);
     }
 }
