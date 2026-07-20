@@ -45,7 +45,10 @@ final class DraftResidentialCompositionInspectorTest extends TestCase
                     ? ['material_scenario_work_key' => $key]
                     : [],
             ],
-        ], ['roof.rafters', 'roof.insulation', 'roof.covering', 'roof.gutter']);
+        ], [
+            'roof.rafters', 'roof.vapor_barrier', 'roof.insulation',
+            'roof.membrane', 'roof.battens', 'roof.covering', 'roof.gutter',
+        ]);
 
         self::assertSame([], (new DraftResidentialCompositionInspector)->missingRequirements([
             'object_profile' => [

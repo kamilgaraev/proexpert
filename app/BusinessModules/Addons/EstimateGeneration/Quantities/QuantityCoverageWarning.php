@@ -22,6 +22,8 @@ final class QuantityCoverageWarning
         'plumbing_design_takeoff_missing',
         'radiator_schedule_missing',
         'room_annotations_missing',
+        'site_geodetic_inputs_missing',
+        'site_preparation_scope_missing',
         'roof_drainage_takeoff_missing',
         'roof_geometry_takeoff_missing',
         'roof_structure_geometry_missing',

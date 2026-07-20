@@ -29,7 +29,7 @@ final readonly class AttemptAwareWorkCompositionLlmClient implements WorkComposi
             return $this->client->chat($messages, [
                 'profile' => 'json',
                 'temperature' => 0,
-                'max_tokens' => 900,
+                'max_tokens' => 4096,
                 'timeout' => 60,
             ], [
                 'organization_id' => $context->organizationId,

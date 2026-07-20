@@ -6,11 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v14';
+    private const CATALOG_VERSION = 'residential_material_scenario:v15';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v14';
+    private const SCENARIO_ID = 'residential_preliminary_common:v15';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v14';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v15';
 
     /**
      * @var array<string, array{
@@ -74,11 +74,31 @@ final class ResidentialMaterialScenarioCatalog
             'normative_search_text' => 'установка деревянных стропил',
             'normative_rate_code' => '10-01-002-01',
         ],
+        'roof.vapor_barrier' => [
+            'material_markers' => ['пароизоляционн', 'пленк', 'один слой'],
+            'assumption_code' => 'pitched_roof_single_layer_vapor_barrier',
+            'intent_action' => 'waterproofing',
+            'normative_search_text' => 'устройство пароизоляции кровли прокладочной в один слой',
+            'normative_rate_code' => '12-01-015-03',
+        ],
         'roof.covering' => [
             'material_markers' => ['металлочереп'],
             'assumption_code' => 'pitched_roof_metal_tile',
             'normative_search_text' => 'устройство простой кровли из металлочерепицы по готовым прогонам',
             'normative_rate_code' => '12-01-023-01',
+        ],
+        'roof.membrane' => [
+            'material_markers' => ['гидроветрозащитн', 'диффузионн', 'мембран'],
+            'assumption_code' => 'pitched_roof_diffusion_membrane',
+            'intent_action' => 'waterproofing',
+            'normative_search_text' => 'устройство подкровельной гидроизоляционной диффузионной мембраны',
+        ],
+        'roof.battens' => [
+            'material_markers' => ['деревянн', 'обрешетк', 'бруск'],
+            'assumption_code' => 'pitched_roof_timber_battens',
+            'intent_action' => 'installation',
+            'normative_search_text' => 'устройство деревянной обрешетки с прозорами из брусков',
+            'normative_rate_code' => '12-01-034-02',
         ],
         'finish.floor' => [
             'material_markers' => ['ламинат', 'ламинированн'],

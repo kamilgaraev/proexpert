@@ -103,6 +103,7 @@ final readonly class AttemptAwareNormativeLlmClient
                 $response['content'] = $content;
                 $decoded = json_decode($content, true);
                 $malformedReason = match (true) {
+                    $content === '' && ($response['finish_reason'] ?? null) === 'length' => 'output_budget_exhausted',
                     $content === '' => 'empty_content',
                     ! is_array($decoded) => 'invalid_json',
                     is_string($reportedModel) && $reportedModel !== $model => 'reported_model_mismatch',
@@ -284,6 +285,8 @@ final readonly class AttemptAwareNormativeLlmClient
                 'content_bytes' => $contentBytes,
                 'usage_available' => ($response['usage_available'] ?? false) === true,
                 'output_tokens' => isset($response['output_tokens']) ? max(0, (int) $response['output_tokens']) : null,
+                'finish_reason' => is_string($response['finish_reason'] ?? null)
+                    ? $response['finish_reason'] : null,
             ], static fn (mixed $value): bool => $value !== null));
         } catch (Throwable) {
         }

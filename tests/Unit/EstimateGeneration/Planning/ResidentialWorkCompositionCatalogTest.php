@@ -24,17 +24,21 @@ final class ResidentialWorkCompositionCatalogTest extends TestCase
         self::assertContains('foundation.prep', $requirements['foundation']);
         self::assertContains('walls.lintels', $requirements['walls']);
         self::assertSame(
-            ['stairs.flights', 'stairs.railings'],
+            ['stairs.flights', 'stairs.landings', 'stairs.railings'],
             $requirements['stairs'],
         );
         self::assertSame(
-            ['roof.rafters', 'roof.insulation', 'roof.covering', 'roof.gutter'],
+            [
+                'roof.rafters', 'roof.vapor_barrier', 'roof.insulation',
+                'roof.membrane', 'roof.battens', 'roof.covering', 'roof.gutter',
+            ],
             $requirements['roof'],
         );
         self::assertContains('sanitary.showers', $requirements['plumbing']);
         self::assertContains('sanitary.toilets', $requirements['plumbing']);
         self::assertContains('sanitary.washbasins', $requirements['plumbing']);
-        self::assertNotContains('sewerage.risers', $requirements['sewerage']);
+        self::assertContains('sewerage.risers', $requirements['sewerage']);
+        self::assertContains('sewerage.revisions', $requirements['sewerage']);
         self::assertNotContains('sewerage.outlets', $requirements['sewerage']);
         self::assertNotContains('heating.unit', $requirements['heating']);
         self::assertContains('heating.radiators', $requirements['heating']);

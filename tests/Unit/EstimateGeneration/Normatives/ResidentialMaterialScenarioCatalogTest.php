@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v14', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v15', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -175,6 +175,16 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'утепление покрытий плитами из минеральной ваты насухо',
             '12-01-013-07',
         ];
+        yield 'single layer pitched roof vapor barrier' => [
+            'roof.vapor_barrier',
+            'устройство пароизоляции кровли прокладочной в один слой',
+            '12-01-015-03',
+        ];
+        yield 'timber battens with gaps' => [
+            'roof.battens',
+            'устройство деревянной обрешетки с прозорами из брусков',
+            '12-01-034-02',
+        ];
         yield 'metal tile roof covering' => [
             'roof.covering',
             'устройство простой кровли из металлочерепицы по готовым прогонам',
@@ -255,5 +265,18 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'гладкая облицовка стен керамическими плитками на клее по кирпичу и бетону',
             '15-01-019-05',
         ];
+    }
+
+    public function test_issues_bounded_membrane_intent_without_inventing_a_rate_code(): void
+    {
+        $issued = (new ResidentialMaterialScenarioCatalog)->issue('roof.membrane', 'residential');
+
+        self::assertIsArray($issued);
+        self::assertSame('waterproofing', $issued['intent_action']);
+        self::assertSame(
+            'устройство подкровельной гидроизоляционной диффузионной мембраны',
+            $issued['normative_search_text'],
+        );
+        self::assertArrayNotHasKey('normative_rate_code', $issued);
     }
 }
