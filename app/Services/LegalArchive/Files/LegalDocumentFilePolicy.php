@@ -52,7 +52,6 @@ final class LegalDocumentFilePolicy
             ! in_array($purpose, ['preview', 'download'], true)
             || $version->processing_status !== 'ready'
             || $organizationId < 1
-            || (int) $actor->current_organization_id !== $organizationId
             || ! $documentFile instanceof \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile
             || (int) $documentFile->organization_id !== $organizationId
             || ! $document instanceof \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument

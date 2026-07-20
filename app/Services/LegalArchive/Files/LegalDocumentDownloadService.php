@@ -6,9 +6,9 @@ namespace App\Services\LegalArchive\Files;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
-use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\Storage\FileService;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -21,7 +21,7 @@ final class LegalDocumentDownloadService
 {
     public function __construct(
         private readonly FileService $fileService,
-        private readonly AuthorizationService $authorization,
+        private readonly LegalDocumentAuthorizer $access,
         private readonly LegalDocumentFilePolicy $policy,
         private readonly LoggerInterface $logger,
         private readonly LegalDocumentAudit $audit,
@@ -33,10 +33,11 @@ final class LegalDocumentDownloadService
 
         try {
             $this->policy->assertDownloadAllowed($version, $actor, $purpose);
-
-            if (! $this->authorization->can($actor, 'legal_archive.view', ['organization_id' => $organizationId])) {
+            $document = $version->documentFile?->document;
+            if (! $document instanceof LegalArchiveDocument) {
                 throw new AuthorizationException($this->message('file_access_denied'));
             }
+            $this->access->authorize($actor, $document, $purpose === 'download' ? 'download' : 'view');
         } catch (AuthorizationException $exception) {
             $this->logger->warning('legal_archive.file_access_denied', [
                 'actor_id' => $actor->id,

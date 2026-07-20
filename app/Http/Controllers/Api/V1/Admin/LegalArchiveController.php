@@ -14,10 +14,12 @@ use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentResource;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentVersionResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\User;
+use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Files\LegalDocumentFileRejected;
 use App\Services\LegalArchive\Files\LegalDocumentScanFailed;
 use App\Services\LegalArchive\LegalArchiveDictionary;
 use App\Services\LegalArchive\LegalArchiveRegistryService;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -31,6 +33,7 @@ final class LegalArchiveController extends Controller
 {
     public function __construct(
         private readonly LegalArchiveRegistryService $registryService,
+        private readonly LegalDocumentAuthorizer $access,
     ) {}
 
     public function dictionaries(): JsonResponse
@@ -57,7 +60,11 @@ final class LegalArchiveController extends Controller
     {
         try {
             $filters = $request->validated();
-            $documents = $this->registryService->paginate($this->organizationId($request), $filters);
+            $actor = $request->user();
+            if (! $actor instanceof User) {
+                return AdminResponse::error(trans_message('legal_archive.messages.documents_load_error'), 403);
+            }
+            $documents = $this->registryService->paginate($actor, $this->organizationId($request), $filters);
 
             return AdminResponse::paginated(
                 LegalArchiveDocumentResource::collection($documents->getCollection()),
@@ -69,7 +76,7 @@ final class LegalArchiveController extends Controller
                 ],
                 trans_message('legal_archive.messages.documents_loaded'),
                 200,
-                $this->registryService->summary($this->organizationId($request), $filters)
+                $this->registryService->summary($actor, $this->organizationId($request), $filters)
             );
         } catch (Throwable $e) {
             Log::error('legal_archive.documents.index_error', [
@@ -85,17 +92,25 @@ final class LegalArchiveController extends Controller
     public function show(Request $request, string $document): JsonResponse
     {
         try {
-            $found = $this->registryService->findForOrganization($this->organizationId($request), (int) $document);
+            $found = $this->registryService->findForAuthorization((int) $document);
 
             if ($found === null) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
+            $actor = $request->user();
+            if (! $actor instanceof User) {
+                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
+            $this->access->authorize($actor, $found, 'view');
 
             return AdminResponse::success(
                 new LegalArchiveDocumentResource($found),
                 trans_message('legal_archive.messages.document_loaded')
             );
         } catch (Throwable $e) {
+            if ($e instanceof AuthorizationException) {
+                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
             Log::error('legal_archive.documents.show_error', [
                 'user_id' => $request->user()?->id,
                 'organization_id' => $this->organizationId($request),
@@ -172,6 +187,11 @@ final class LegalArchiveController extends Controller
             if ($found === null) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
+            $actor = $request->user();
+            if (! $actor instanceof User) {
+                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
+            $this->access->authorize($actor, $found, 'view');
 
             $updated = $this->registryService->update(
                 $found,
@@ -185,6 +205,9 @@ final class LegalArchiveController extends Controller
                 trans_message('legal_archive.messages.document_updated')
             );
         } catch (Throwable $e) {
+            if ($e instanceof AuthorizationException) {
+                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
             if ($e instanceof ValidationException) {
                 return $this->validationError($e);
             }
@@ -208,6 +231,11 @@ final class LegalArchiveController extends Controller
             if ($found === null) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
+            $actor = $request->user();
+            if (! $actor instanceof User) {
+                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
+            $this->access->authorize($actor, $found, 'view');
 
             $file = $this->uploadedFile($request);
 
@@ -232,6 +260,9 @@ final class LegalArchiveController extends Controller
                 201
             );
         } catch (Throwable $e) {
+            if ($e instanceof AuthorizationException) {
+                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
             if ($e instanceof LegalDocumentScanFailed) {
                 return AdminResponse::success(
                     new LegalArchiveDocumentVersionResource($e->version),
@@ -272,7 +303,7 @@ final class LegalArchiveController extends Controller
     public function currentVersion(Request $request, string $document): JsonResponse
     {
         try {
-            $found = $this->registryService->findForOrganization($this->organizationId($request), (int) $document);
+            $found = $this->registryService->findForAuthorization((int) $document);
 
             if ($found === null) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
@@ -294,6 +325,9 @@ final class LegalArchiveController extends Controller
                 trans_message('legal_archive.messages.current_version_loaded')
             );
         } catch (Throwable $e) {
+            if ($e instanceof AuthorizationException) {
+                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
             Log::error('legal_archive.documents.current_version_error', [
                 'user_id' => $request->user()?->id,
                 'organization_id' => $this->organizationId($request),

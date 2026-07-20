@@ -7,6 +7,7 @@ namespace App\Http\Requests\Api\V1\Admin\LegalArchive;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use App\Services\LegalArchive\LegalArchiveDictionary;
+use App\Services\LegalArchive\Sources\LegalDocumentSourceType;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -61,6 +62,9 @@ final class StoreLegalArchiveDocumentRequest extends FormRequest
             'status' => ['nullable', 'string', Rule::in(LegalArchiveDictionary::values('statuses'))],
             'direction' => ['nullable', 'string', Rule::in(LegalArchiveDictionary::values('directions'))],
             'source_system' => ['nullable', 'string', 'max:64'],
+            'source_type' => ['nullable', 'required_with:source_id', 'string', Rule::in(LegalDocumentSourceType::values())],
+            'source_id' => ['nullable', 'required_with:source_type', 'integer', 'min:1'],
+            'source_idempotency_key' => ['nullable', 'required_with:source_type', 'string', 'max:191'],
             'counterparty_name' => ['nullable', 'string', 'max:255'],
             'document_date' => ['nullable', 'date'],
             'effective_from' => ['nullable', 'date'],
@@ -72,8 +76,8 @@ final class StoreLegalArchiveDocumentRequest extends FormRequest
             'metadata' => ['nullable', 'array'],
             'links' => ['nullable', 'array', 'max:20'],
             'links.*.link_type' => ['required_with:links', 'string', Rule::in(LegalArchiveDictionary::values('link_types'))],
-            'links.*.linked_type' => ['nullable', 'string', 'max:255'],
-            'links.*.linked_id' => ['nullable', 'string', 'max:255'],
+            'links.*.linked_type' => ['nullable', 'required_with:links.*.linked_id', 'string', Rule::in(LegalDocumentSourceType::values())],
+            'links.*.linked_id' => ['nullable', 'required_with:links.*.linked_type', 'integer', 'min:1'],
             'links.*.external_key' => ['nullable', 'string', 'max:255'],
             'links.*.display_name' => ['required_with:links', 'string', 'max:255'],
             'links.*.url' => ['nullable', 'url', 'max:2000'],

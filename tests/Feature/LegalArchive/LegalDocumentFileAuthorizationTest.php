@@ -7,9 +7,9 @@ namespace Tests\Feature\LegalArchive;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
-use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Files\LegalDocumentFilePolicy;
@@ -84,8 +84,8 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
     public function test_returns_short_lived_url_for_ready_version_owned_by_actor_tenant(): void
     {
         [$version, $actor] = $this->versionAndActor(10, 10, 'ready');
-        $authorization = $this->createMock(AuthorizationService::class);
-        $authorization->method('can')->willReturn(true);
+        $authorization = $this->createMock(LegalDocumentAuthorizer::class);
+        $authorization->method('authorize');
         $urlCreated = false;
         $storage = $this->createMock(FileService::class);
         $storage->expects(self::once())->method('temporaryUrl')
@@ -116,8 +116,8 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
     public function test_generated_url_is_not_returned_when_issuance_audit_fails(): void
     {
         [$version, $actor] = $this->versionAndActor(10, 10, 'ready');
-        $authorization = $this->createMock(AuthorizationService::class);
-        $authorization->method('can')->willReturn(true);
+        $authorization = $this->createMock(LegalDocumentAuthorizer::class);
+        $authorization->method('authorize');
         $storage = $this->createMock(FileService::class);
         $storage->expects(self::once())->method('temporaryUrl')->willReturn('https://signed.example/version.pdf');
         $audit = $this->createMock(LegalDocumentAudit::class);
@@ -143,8 +143,14 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
         string $purpose,
     ): void {
         [$version, $actor] = $this->versionAndActor($versionOrganizationId, $actorOrganizationId, $processingStatus);
-        $authorization = $this->createMock(AuthorizationService::class);
-        $authorization->method('can')->willReturn(true);
+        $authorization = $this->createMock(LegalDocumentAuthorizer::class);
+        $authorization->method('authorize')->willReturnCallback(
+            static function () use ($versionOrganizationId, $actorOrganizationId): void {
+                if ($versionOrganizationId !== $actorOrganizationId) {
+                    throw new AuthorizationException;
+                }
+            }
+        );
         $storage = $this->createMock(FileService::class);
         $storage->expects(self::never())->method('temporaryUrl');
 
@@ -171,8 +177,8 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
     public function test_denies_actor_without_view_permission(): void
     {
         [$version, $actor] = $this->versionAndActor(10, 10, 'ready');
-        $authorization = $this->createMock(AuthorizationService::class);
-        $authorization->method('can')->willReturn(false);
+        $authorization = $this->createMock(LegalDocumentAuthorizer::class);
+        $authorization->method('authorize')->willThrowException(new AuthorizationException);
         $storage = $this->createMock(FileService::class);
 
         $this->expectException(AuthorizationException::class);

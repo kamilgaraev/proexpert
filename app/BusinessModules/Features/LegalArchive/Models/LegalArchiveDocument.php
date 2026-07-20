@@ -126,6 +126,21 @@ final class LegalArchiveDocument extends Model
         return $this->hasMany(LegalWorkflowInstance::class, 'document_id')->orderByDesc('id');
     }
 
+    public function parties(): HasMany
+    {
+        return $this->hasMany(LegalDocumentParty::class, 'document_id')->orderBy('id');
+    }
+
+    public function accessGrants(): HasMany
+    {
+        return $this->hasMany(LegalDocumentAccessGrant::class, 'document_id')->orderByDesc('id');
+    }
+
+    public function comments(): HasMany
+    {
+        return $this->hasMany(LegalDocumentComment::class, 'document_id')->orderBy('id');
+    }
+
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');

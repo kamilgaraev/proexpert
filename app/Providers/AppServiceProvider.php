@@ -98,6 +98,10 @@ class AppServiceProvider extends ServiceProvider
                 ? \App\Services\LegalArchive\Files\TestingLegalDocumentScanner::class
                 : \App\Services\LegalArchive\Files\FailClosedLegalDocumentScanner::class,
         );
+        $this->app->bind(
+            \App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class,
+            \App\Services\LegalArchive\Access\LegalDocumentAccessService::class,
+        );
 
         // Регистрируем FileService как singleton
         $this->app->singleton(FileService::class, function ($app) {

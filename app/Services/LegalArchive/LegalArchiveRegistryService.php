@@ -9,13 +9,16 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\LegalArchive\Access\LegalDocumentAccessService;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
 use App\Services\LegalArchive\Files\LegalDocumentVersionPersistenceFailed;
 use App\Services\LegalArchive\Files\VersionInput;
+use App\Services\LegalArchive\Sources\LegalDocumentSourceResolver;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -29,22 +32,24 @@ final class LegalArchiveRegistryService
         private readonly LegalDocumentFileService $documentFileService,
         private readonly LegalDocumentDownloadService $downloadService,
         private readonly LegalDocumentAudit $audit,
+        private readonly LegalDocumentSourceResolver $sourceResolver,
+        private readonly LegalDocumentAccessService $access,
     ) {}
 
-    public function paginate(int $organizationId, array $filters): LengthAwarePaginator
+    public function paginate(User $actor, int $organizationId, array $filters): LengthAwarePaginator
     {
         $perPage = max(10, min((int) ($filters['per_page'] ?? 20), 100));
 
-        return $this->baseQuery($organizationId, $filters)
+        return $this->baseQuery($actor, $organizationId, $filters)
             ->with(['currentVersion', 'links', 'project:id,name,status,organization_id'])
             ->orderByDesc('document_date')
             ->orderByDesc('id')
             ->paginate($perPage);
     }
 
-    public function summary(int $organizationId, array $filters): array
+    public function summary(User $actor, int $organizationId, array $filters): array
     {
-        $query = $this->baseQuery($organizationId, $filters);
+        $query = $this->baseQuery($actor, $organizationId, $filters);
 
         return [
             'total' => (clone $query)->count(),
@@ -70,42 +75,50 @@ final class LegalArchiveRegistryService
 
     public function findForOrganization(int $organizationId, int $documentId): ?LegalArchiveDocument
     {
-        return LegalArchiveDocument::query()
+        return $this->detailQuery()
             ->forOrganization($organizationId)
-            ->with([
-                'currentVersion',
-                'versions',
-                'links',
-                'project:id,name,status,organization_id',
-                'createdBy:id,name,email',
-            ])
             ->find($documentId);
+    }
+
+    public function findForAuthorization(int $documentId): ?LegalArchiveDocument
+    {
+        return $this->detailQuery()->find($documentId);
     }
 
     public function create(int $organizationId, ?int $userId, array $data, ?UploadedFile $file = null): LegalArchiveDocument
     {
-        [$document, $documentFile] = DB::transaction(function () use ($organizationId, $userId, $data, $file): array {
-            $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
+        try {
+            [$document, $documentFile] = DB::transaction(function () use ($organizationId, $userId, $data, $file): array {
+                $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
+                $this->sourceResolver->assertOwnedSource($organizationId, $data['source_type'] ?? null, $data['source_id'] ?? null);
+                $this->assertSourceIdentityAvailable($organizationId, $data['source_type'] ?? null, $data['source_id'] ?? null);
 
-            $document = LegalArchiveDocument::query()->create($this->documentPayload($organizationId, $userId, $data));
-            $this->replaceLinks($document, $data['links'] ?? []);
-            $documentFile = $file instanceof UploadedFile
-                ? LegalArchiveDocumentFile::query()->create([
-                    'document_id' => $document->id,
-                    'organization_id' => $organizationId,
-                    'role' => 'primary',
-                    'title' => $document->title,
-                    'sort_order' => 0,
-                    'is_required' => true,
-                ])
-                : null;
-            $this->audit->recordForActorId('create', $document, $userId, [
-                'after' => $this->auditSnapshot($document),
-                'source_event_id' => $this->sourceEventId($data, 'create', (string) $document->id),
-            ]);
+                $document = LegalArchiveDocument::query()->create($this->documentPayload($organizationId, $userId, $data));
+                $this->replaceLinks($document, $data['links'] ?? []);
+                $documentFile = $file instanceof UploadedFile
+                    ? LegalArchiveDocumentFile::query()->create([
+                        'document_id' => $document->id,
+                        'organization_id' => $organizationId,
+                        'role' => 'primary',
+                        'title' => $document->title,
+                        'sort_order' => 0,
+                        'is_required' => true,
+                    ])
+                    : null;
+                $this->audit->recordForActorId('create', $document, $userId, [
+                    'after' => $this->auditSnapshot($document),
+                    'source_event_id' => $this->sourceEventId($data, 'create', (string) $document->id),
+                ]);
 
-            return [$document, $documentFile];
-        });
+                return [$document, $documentFile];
+            });
+        } catch (QueryException $exception) {
+            if ($this->sourceIdentityExists($organizationId, $data['source_type'] ?? null, $data['source_id'] ?? null)) {
+                $this->sourceIdentityConflict();
+            }
+
+            throw $exception;
+        }
 
         if ($file instanceof UploadedFile && $documentFile instanceof LegalArchiveDocumentFile) {
             try {
@@ -129,6 +142,11 @@ final class LegalArchiveRegistryService
     {
         return DB::transaction(function () use ($document, $organizationId, $userId, $data): LegalArchiveDocument {
             $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
+            $this->sourceResolver->assertOwnedSource(
+                $organizationId,
+                $data['source_type'] ?? $document->source_type,
+                $data['source_id'] ?? $document->source_id,
+            );
             $before = $this->auditSnapshot($document);
 
             $document->update($this->documentPayload($organizationId, $userId, $data, true));
@@ -201,9 +219,10 @@ final class LegalArchiveRegistryService
         return $version;
     }
 
-    private function baseQuery(int $organizationId, array $filters): Builder
+    private function baseQuery(User $actor, int $organizationId, array $filters): Builder
     {
         $query = LegalArchiveDocument::query()->forOrganization($organizationId);
+        $this->access->scopeInternalQuery($query, $actor, $organizationId);
 
         $search = LegalArchiveSearchQuery::sanitize($filters['q'] ?? $filters['search'] ?? null);
         if ($search !== null) {
@@ -257,6 +276,18 @@ final class LegalArchiveRegistryService
         return $query;
     }
 
+    private function detailQuery(): Builder
+    {
+        return LegalArchiveDocument::query()->with([
+            'currentVersion',
+            'versions',
+            'links',
+            'parties',
+            'project:id,name,status,organization_id',
+            'createdBy:id,name,email',
+        ]);
+    }
+
     private function applySearch(Builder $query, string $search): void
     {
         if (DB::connection()->getDriverName() === 'pgsql') {
@@ -292,10 +323,16 @@ final class LegalArchiveRegistryService
             'legal_significance_status',
             'edo_status',
             'one_c_status',
+            'source_type',
+            'source_id',
+            'source_idempotency_key',
             'metadata',
         ];
 
         $payload = Arr::only($data, $allowed);
+        if ($forUpdate) {
+            unset($payload['source_type'], $payload['source_id'], $payload['source_idempotency_key']);
+        }
         $payload['updated_by_user_id'] = $userId;
 
         if (! $forUpdate) {
@@ -318,6 +355,12 @@ final class LegalArchiveRegistryService
             if (! is_array($link)) {
                 continue;
             }
+
+            $this->sourceResolver->assertOwnedSource(
+                (int) $document->organization_id,
+                $link['linked_type'] ?? null,
+                $link['linked_id'] ?? null,
+            );
 
             $document->links()->create([
                 'organization_id' => $document->organization_id,
@@ -348,6 +391,33 @@ final class LegalArchiveRegistryService
                 'primary_project_id' => [trans_message('legal_archive.messages.project_not_available')],
             ]);
         }
+    }
+
+    private function assertSourceIdentityAvailable(int $organizationId, mixed $sourceType, mixed $sourceId): void
+    {
+        if ($this->sourceIdentityExists($organizationId, $sourceType, $sourceId)) {
+            $this->sourceIdentityConflict();
+        }
+    }
+
+    private function sourceIdentityExists(int $organizationId, mixed $sourceType, mixed $sourceId): bool
+    {
+        if (! is_string($sourceType) || $sourceType === '' || $sourceId === null || $sourceId === '') {
+            return false;
+        }
+
+        return LegalArchiveDocument::withTrashed()
+            ->where('organization_id', $organizationId)
+            ->where('source_type', $sourceType)
+            ->where('source_id', (string) $sourceId)
+            ->exists();
+    }
+
+    private function sourceIdentityConflict(): never
+    {
+        throw ValidationException::withMessages([
+            'source_id' => [trans_message('legal_archive.messages.source_already_linked')],
+        ]);
     }
 
     private function auditSnapshot(LegalArchiveDocument $document): array

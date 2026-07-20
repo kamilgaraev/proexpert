@@ -106,4 +106,9 @@ final class LegalArchiveDocumentVersion extends Model
     {
         return $this->hasMany(LegalWorkflowInstance::class, 'document_version_id');
     }
+
+    public function comments(): HasMany
+    {
+        return $this->hasMany(LegalDocumentComment::class, 'document_version_id')->orderBy('id');
+    }
 }
