@@ -36,6 +36,19 @@ class RegionalPriceVersionResolver
             ->latest('id')
             ->get();
 
+        return $this->resolveFromVersions($versions, $baseVersionKey, $componentMetadataKey, $force);
+    }
+
+    /**
+     * @param  iterable<int, EstimateRegionalPriceVersion>  $versions
+     */
+    public function resolveFromVersions(
+        iterable $versions,
+        string $baseVersionKey,
+        string $componentMetadataKey,
+        bool $force,
+    ): string {
+        $versions = collect($versions)->values();
         $writable = $versions->first(
             static fn (EstimateRegionalPriceVersion $version): bool => ! in_array($version->status, self::IMMUTABLE_STATUSES, true)
         );
