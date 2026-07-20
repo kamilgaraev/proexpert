@@ -91,7 +91,12 @@ final class LegalDocumentFileAuthorizationTest extends TestCase
         $urlCreated = false;
         $storage = $this->createMock(FileService::class);
         $storage->expects(self::once())->method('temporaryUrl')
-            ->with('org-10/legal-archive/files/7/version.pdf', 5, self::isInstanceOf(Organization::class))
+            ->with(
+                'org-10/legal-archive/files/7/version.pdf',
+                5,
+                self::isInstanceOf(Organization::class),
+                self::callback(static fn (array $parameters): bool => $parameters['ResponseContentDisposition'] === 'inline; filename="document"'),
+            )
             ->willReturnCallback(function () use (&$urlCreated): string {
                 $urlCreated = true;
 

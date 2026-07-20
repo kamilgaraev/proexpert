@@ -13,6 +13,7 @@ enum LegalDocumentAbility: string
     case SIGN = 'sign';
     case VERIFY_SIGNATURE = 'verify_signature';
     case DOWNLOAD = 'download';
+    case EDIT = 'edit';
     case MANAGE = 'manage';
 
     public function permission(): string
@@ -25,6 +26,7 @@ enum LegalDocumentAbility: string
             self::SIGN => 'legal_archive.signatures.sign',
             self::VERIFY_SIGNATURE => 'legal_archive.signatures.verify',
             self::DOWNLOAD => 'legal_archive.files.download',
+            self::EDIT => 'legal_archive.editor.edit',
             self::MANAGE => 'legal_archive.external_access.manage',
         };
     }

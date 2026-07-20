@@ -148,4 +148,9 @@ final class LegalArchiveDocumentVersion extends Model
     {
         return $this->hasMany(LegalDocumentSignature::class, 'document_version_id')->orderBy('id');
     }
+
+    public function editorSessions(): HasMany
+    {
+        return $this->hasMany(LegalDocumentEditorSession::class, 'source_version_id')->orderByDesc('created_at');
+    }
 }

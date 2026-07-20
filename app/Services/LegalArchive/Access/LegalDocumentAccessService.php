@@ -434,6 +434,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
         $abilities = [
             LegalDocumentAbility::COMMENT->value,
             LegalDocumentAbility::DOWNLOAD->value,
+            LegalDocumentAbility::EDIT->value,
             LegalDocumentAbility::MANAGE->value,
             LegalDocumentAbility::VIEW->value,
         ];
@@ -613,6 +614,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
             $abilities = [
                 LegalDocumentAbility::COMMENT->value,
                 LegalDocumentAbility::DOWNLOAD->value,
+                LegalDocumentAbility::EDIT->value,
                 LegalDocumentAbility::MANAGE->value,
                 LegalDocumentAbility::VIEW->value,
             ];
@@ -760,6 +762,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
         $abilities = [
             LegalDocumentAbility::COMMENT->value,
             LegalDocumentAbility::DOWNLOAD->value,
+            LegalDocumentAbility::EDIT->value,
             LegalDocumentAbility::MANAGE->value,
             LegalDocumentAbility::VIEW->value,
         ];

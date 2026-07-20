@@ -72,6 +72,11 @@ final class LegalDocumentDownloadService
             (string) $version->file_path,
             $this->temporaryUrlMinutes(),
             $organization,
+            [
+                'ResponseContentType' => (string) ($version->mime_type ?: 'application/octet-stream'),
+                'ResponseContentDisposition' => ($purpose === 'download' ? 'attachment' : 'inline')
+                    .'; filename="'.$this->safeFilename((string) $version->original_filename).'"',
+            ],
         );
 
         if (! is_string($url) || $url === '') {
@@ -104,6 +109,13 @@ final class LegalDocumentDownloadService
         }
 
         return 5;
+    }
+
+    private function safeFilename(string $filename): string
+    {
+        $filename = (string) preg_replace('/[^A-Za-z0-9._-]+/', '_', basename($filename));
+
+        return $filename !== '' ? substr($filename, 0, 180) : 'document';
     }
 
     private function message(string $key): string

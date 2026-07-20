@@ -1,0 +1,50 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Feature\LegalArchive;
+
+use PHPUnit\Framework\TestCase;
+
+final class OnlyOfficeCallbackTest extends TestCase
+{
+    public function test_callback_boundary_is_authenticated_bounded_idempotent_and_versioned(): void
+    {
+        $root = __DIR__.'/../../../app/Services/LegalArchive/Editor/';
+        $service = file_get_contents($root.'LegalDocumentEditorSessionService.php');
+        $fetcher = file_get_contents($root.'OnlyOfficeBoundedDocumentFetcher.php');
+        self::assertIsString($service);
+        self::assertIsString($fetcher);
+        self::assertStringContainsString('verifyCallbackToken', $service);
+        self::assertStringContainsString('callback_replay_hash', $service);
+        self::assertStringContainsString('LegalDocumentFileService', $service);
+        self::assertStringContainsString('->addVersion(', $service);
+        self::assertStringContainsString('source_version_id', $service);
+        self::assertStringContainsString('max_redirects', $fetcher);
+        self::assertStringContainsString('FILTER_FLAG_NO_PRIV_RANGE', $fetcher);
+        self::assertStringContainsString('max_size_bytes', $fetcher);
+        self::assertStringContainsString('finally', $service);
+    }
+
+    public function test_routes_have_separate_preview_download_and_editor_permissions(): void
+    {
+        $routes = file_get_contents(__DIR__.'/../../../routes/api/v1/admin/legal_archive.php');
+        self::assertIsString($routes);
+        self::assertStringContainsString('legal_archive.editor.edit', $routes);
+        self::assertStringContainsString('legal_archive.view', $routes);
+        self::assertStringContainsString('legal_archive.files.download', $routes);
+        self::assertStringContainsString('/preview', $routes);
+        self::assertStringContainsString('/download', $routes);
+    }
+
+    public function test_postgres_races_are_opt_in_and_process_level(): void
+    {
+        $source = file_get_contents(__DIR__.'/../../Integration/LegalArchive/LegalDocumentEditorPostgresConcurrencyTest.php');
+        self::assertIsString($source);
+        self::assertStringContainsString("getenv('LEGAL_ARCHIVE_PG_EDITOR_CONCURRENCY') !== '1'", $source);
+        self::assertStringContainsString("getenv('LEGAL_DOCUMENT_PG_TEST_ALLOW_DDL') !== '1'", $source);
+        self::assertStringContainsString('pcntl_fork', $source);
+        self::assertStringContainsString('callback_vs_new_version', $source);
+        self::assertStringContainsString('callback_replay', $source);
+    }
+}

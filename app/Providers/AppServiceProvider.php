@@ -102,6 +102,29 @@ class AppServiceProvider extends ServiceProvider
             \App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class,
             \App\Services\LegalArchive\Access\LegalDocumentAccessService::class,
         );
+        $this->app->bind(
+            \App\Services\LegalArchive\Editor\EditorDocumentFetcher::class,
+            \App\Services\LegalArchive\Editor\OnlyOfficeBoundedDocumentFetcher::class,
+        );
+        $this->app->bind(\App\Services\LegalArchive\Editor\LegalDocumentEditor::class, function ($app) {
+            if (! (bool) config('legal-document-editor.enabled', false)
+                || (string) config('legal-document-editor.driver', 'onlyoffice') !== 'onlyoffice') {
+                return new \App\Services\LegalArchive\Editor\DisabledLegalDocumentEditor;
+            }
+
+            return new \App\Services\LegalArchive\Editor\OnlyOfficeDocumentEditor;
+        });
+        $this->app->bind(\App\Services\LegalArchive\Editor\LegalDocumentEditorSessionService::class, function ($app) {
+            return new \App\Services\LegalArchive\Editor\LegalDocumentEditorSessionService(
+                $app->make(\App\Services\LegalArchive\Editor\LegalDocumentEditor::class),
+                $app->make(\App\Services\LegalArchive\Editor\EditorDocumentFetcher::class),
+                $app->make(\App\Services\LegalArchive\Files\LegalDocumentFileService::class),
+                $app->make(\App\Services\LegalArchive\Files\LegalDocumentDownloadService::class),
+                $app->make(\App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class),
+                $app->make(\App\Services\LegalArchive\Audit\LegalDocumentAudit::class),
+                $app->make('db')->connection(),
+            );
+        });
         $this->app->bind(\App\Services\LegalArchive\Signatures\ElectronicSignatureProvider::class, function ($app) {
             $driver = (string) config('legal-document-signatures.driver', 'disabled');
             $provider = config("legal-document-signatures.drivers.{$driver}");
