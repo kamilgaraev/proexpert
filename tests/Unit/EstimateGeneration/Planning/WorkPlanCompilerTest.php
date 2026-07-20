@@ -336,6 +336,42 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertSame(['status' => 'pinned'], $pin);
     }
 
+    public function test_normative_pin_restores_catalog_scenario_after_ai_reconciliation(): void
+    {
+        $catalog = new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
+        $scenario = $catalog->issue('slabs.rebar', 'residential');
+        self::assertIsArray($scenario);
+        $pins = $this->createMock(NormativeContextPinResolver::class);
+        $pins->expects(self::once())
+            ->method('resolve')
+            ->with([], self::callback(static fn (array $intents): bool => ($intents[0]['specialization_scenario'] ?? null) === $scenario
+                && ($intents[0]['code'] ?? null) === '06-23-003-05'
+                && ($intents[0]['object_type'] ?? null) === 'house'))
+            ->willReturn(['status' => 'pinned']);
+        $compiler = new WorkPlanCompiler(
+            new PackagePlannerService,
+            new EstimateDecompositionService,
+            new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService),
+            $pins,
+        );
+
+        $pin = $compiler->resolveNormativeContextPin([], [[
+            'sections' => [[
+                'work_items' => [[
+                    'item_type' => 'priced_work',
+                    'name' => 'Армирование монолитного перекрытия',
+                    'normative_search_text' => 'Армирование монолитного перекрытия',
+                    'normative_rate_code' => null,
+                    'unit' => 'kg',
+                    'quantity_formula' => 'slabs.rebar',
+                    'metadata' => ['quantity_key' => 'slabs.rebar'],
+                ]],
+            ]],
+        ]], 'house');
+
+        self::assertSame(['status' => 'pinned'], $pin);
+    }
+
     private function compiler(): WorkPlanCompiler
     {
         return new WorkPlanCompiler(

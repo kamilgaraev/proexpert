@@ -84,6 +84,39 @@ final class AssembleMatchedResourcesTest extends TestCase
         self::assertContains('project_material_price_missing', $item['validation_flags']);
     }
 
+    public function test_appends_semantic_group_fallback_with_its_actual_catalog_identity(): void
+    {
+        $catalog = new ResidentialProjectMaterialCatalog;
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('electrical.panel', 'residential');
+        self::assertIsArray($scenario);
+        $requirement = $catalog->requirementForIntent(['specialization_scenario' => $scenario]);
+        self::assertIsArray($requirement);
+        $resource = $catalog->resourceFromPriceRows($requirement, [(object) [
+            'price_id' => 51,
+            'construction_resource_id' => 19,
+            'resource_code' => '20.4.04.02-0101',
+            'resource_name' => 'Щиток осветительный встраиваемый на 24 модуля',
+            'unit' => 'шт',
+            'base_price' => '3200',
+            'price_source' => 'fsnb_base',
+            'price_source_version' => 'fsnb-2022',
+        ]]);
+        self::assertIsArray($resource);
+
+        $result = (new AssembleMatchedResources($catalog))->handle($this->data($scenario, [[
+            'work_item_key' => 'electrical.panel',
+            'requirement' => $requirement,
+            'status' => 'priced',
+            'resource' => $resource,
+        ]]))['data'];
+        $item = $result['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertSame('20.4.04.02-0101', $item['materials'][0]['code'] ?? null);
+        self::assertSame(3200.0, $item['materials'][0]['unit_price'] ?? null);
+        self::assertSame('semantic_group_median', $item['materials'][0]['project_material_selection']['selection_policy'] ?? null);
+        self::assertSame('calculated', $item['pricing_status']);
+    }
+
     public function test_tampered_pinned_project_material_price_is_rejected(): void
     {
         $catalog = new ResidentialProjectMaterialCatalog;

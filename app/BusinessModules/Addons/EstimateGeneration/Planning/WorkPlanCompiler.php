@@ -208,8 +208,8 @@ final readonly class WorkPlanCompiler
                     if (is_string($objectType) && trim($objectType) !== '') {
                         $resolvedIntent['object_type'] = trim($objectType);
                     }
-                    if (is_array($item['specialization_scenario'] ?? null)) {
-                        $resolvedIntent['specialization_scenario'] = $item['specialization_scenario'];
+                    if (is_array($scenario)) {
+                        $resolvedIntent['specialization_scenario'] = $scenario;
                     }
                     if (is_array($item['specialization_evidence'] ?? null)) {
                         $resolvedIntent['specialization_evidence'] = $item['specialization_evidence'];
@@ -240,7 +240,12 @@ final readonly class WorkPlanCompiler
 
         $catalog = $this->materialScenarioCatalog ?? new ResidentialMaterialScenarioCatalog;
 
-        return $catalog->resolve($scenario, $quantityKey, $canonicalObjectType);
+        $resolved = $catalog->resolve($scenario, $quantityKey, $canonicalObjectType);
+        if ($resolved !== null || $scenario !== null) {
+            return $resolved;
+        }
+
+        return $catalog->issue($quantityKey, $canonicalObjectType);
     }
 
     /** @param array<string, mixed>|null $intent */
