@@ -8,7 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClass
 
 final class ResidentialWorkCompositionCatalog
 {
-    public const VERSION = 'residential_work_composition:v3';
+    public const VERSION = 'residential_work_composition:v4';
 
     /** @return array<string, list<string>> */
     public function requirements(array $draft): array
@@ -33,13 +33,16 @@ final class ResidentialWorkCompositionCatalog
             'slabs' => $floors !== null && $floors < 2 ? [] : ['slabs.formwork', 'slabs.concrete', 'slabs.rebar'],
             'stairs' => $floors !== null && $floors < 2
                 ? []
-                : ['stairs.flights', 'stairs.railings'],
+                : ['stairs.flights', 'stairs.landings', 'stairs.railings'],
             'roof' => match ($roofType) {
                 'flat' => [
                     'roof.flat.base', 'roof.flat.vapor_barrier',
                     'roof.flat.insulation', 'roof.flat.waterproofing',
                 ],
-                'pitched' => ['roof.rafters', 'roof.insulation', 'roof.covering', 'roof.gutter'],
+                'pitched' => [
+                    'roof.rafters', 'roof.vapor_barrier', 'roof.insulation',
+                    'roof.membrane', 'roof.battens', 'roof.covering', 'roof.gutter',
+                ],
                 default => ['roof.area'],
             },
             'openings' => ['openings.windows', 'openings.doors'],
@@ -54,7 +57,7 @@ final class ResidentialWorkCompositionCatalog
                 'plumbing.pipe', 'sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins',
                 'sanitary.waterproofing', 'sanitary.tile',
             ],
-            'sewerage' => ['sewerage.pipe'],
+            'sewerage' => ['sewerage.pipe', 'sewerage.risers', 'sewerage.revisions'],
             'heating' => ['heating.pipe', 'heating.radiators'],
             'ventilation' => ['ventilation.air_exchange'],
             'rough_finishing' => ['rough.floor', 'rough.walls', 'rough.ceiling'],

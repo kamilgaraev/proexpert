@@ -11,6 +11,10 @@ use Throwable;
 
 final class TimewebRerankWireClient implements RerankWireClient
 {
+    public function __construct(
+        private readonly TimewebChatCompletionPayloadFactory $payloadFactory,
+    ) {}
+
     public function provider(): string
     {
         return 'timeweb';
@@ -27,12 +31,9 @@ final class TimewebRerankWireClient implements RerankWireClient
             ->withBaseUri((string) config('ai-assistant.llm.timeweb.base_uri', 'https://api.timeweb.ai/v1'))
             ->withHttpClient(new GuzzleClient(['timeout' => $timeout, 'connect_timeout' => min(5, $timeout)]))->make();
         try {
-            $response = $client->chat()->create([
-                'model' => $model,
-                'messages' => $messages,
-                'max_tokens' => (int) ($options['max_tokens'] ?? 240),
-                'temperature' => (float) ($options['temperature'] ?? 0),
-            ]);
+            $response = $client->chat()->create(
+                $this->payloadFactory->make($model, $messages, $options),
+            );
         } catch (Throwable $exception) {
             $code = (int) $exception->getCode();
             throw new RerankWireException(
@@ -40,7 +41,8 @@ final class TimewebRerankWireClient implements RerankWireClient
                 $code >= 100 && $code <= 599 ? $code : null,
             );
         }
-        $message = $response->choices[0]->message ?? null;
+        $choice = $response->choices[0] ?? null;
+        $message = $choice?->message;
         if (! is_object($message)) {
             throw new RerankWireException('malformed_response');
         }
@@ -52,6 +54,7 @@ final class TimewebRerankWireClient implements RerankWireClient
             'input_tokens' => is_object($usage) ? max(0, (int) ($usage->promptTokens ?? 0)) : 0,
             'output_tokens' => is_object($usage) ? max(0, (int) ($usage->completionTokens ?? 0)) : 0,
             'usage_available' => is_object($usage),
+            'finish_reason' => is_string($choice?->finishReason) ? $choice->finishReason : null,
         ];
     }
 }

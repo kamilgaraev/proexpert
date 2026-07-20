@@ -289,6 +289,44 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
     }
 
     #[Test]
+    public function empty_response_stopped_by_length_reports_output_budget_exhaustion(): void
+    {
+        $wire = new class implements RerankWireClient
+        {
+            public function provider(): string
+            {
+                return 'timeweb';
+            }
+
+            public function call(string $model, array $messages, array $options): array
+            {
+                return [
+                    'content' => '',
+                    'model' => $model,
+                    'usage_available' => true,
+                    'input_tokens' => 100,
+                    'output_tokens' => 4096,
+                    'finish_reason' => 'length',
+                ];
+            }
+        };
+        $store = new class implements AiUsageStore
+        {
+            public function record(AiUsageData $data): void {}
+        };
+
+        $this->expectException(RerankWireException::class);
+        try {
+            (new AttemptAwareNormativeLlmClient($wire, $store, ['openai/gpt-5-mini'], []))
+                ->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
+        } finally {
+            self::assertSame('output_budget_exhausted', $this->logger->warnings[0]['context']['reason']);
+            self::assertSame('length', $this->logger->warnings[0]['context']['finish_reason']);
+            self::assertArrayNotHasKey('content', $this->logger->warnings[0]['context']);
+        }
+    }
+
+    #[Test]
     public function json_profile_accepts_one_fenced_json_object_and_returns_canonical_content(): void
     {
         $wire = new class implements RerankWireClient

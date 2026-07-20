@@ -34,9 +34,13 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'foundation.prep',
             'walls.lintels',
             'stairs.flights',
+            'stairs.landings',
             'stairs.railings',
             'roof.rafters',
             'roof.area',
+            'roof.vapor_barrier',
+            'roof.membrane',
+            'roof.battens',
             'roof.gutter',
             'openings.windows',
             'openings.doors',
@@ -49,6 +53,8 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'lighting.fixtures',
             'plumbing.pipe',
             'sewerage.pipe',
+            'sewerage.risers',
+            'sewerage.revisions',
             'heating.pipe',
             'heating.radiators',
             'ventilation.air_exchange',
@@ -91,7 +97,14 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertSame('23.136000', $result->quantities['openings.windows']->amount);
         self::assertSame('9.000000', $result->quantities['openings.doors']->amount);
         self::assertSame('8.000000', $result->quantities['stairs.flights']->amount);
+        self::assertSame('4.000000', $result->quantities['stairs.landings']->amount);
         self::assertSame('8.000000', $result->quantities['stairs.railings']->amount);
+        self::assertSame('2.000000', $result->quantities['sewerage.risers']->amount);
+        self::assertSame('2.000000', $result->quantities['sewerage.revisions']->amount);
+        foreach (['roof.vapor_barrier', 'roof.membrane', 'roof.battens'] as $roofLayer) {
+            self::assertSame('152.955000', $result->quantities[$roofLayer]->amount, $roofLayer);
+            self::assertSame('roof.area', $result->quantities[$roofLayer]->formulaInputs['source_quantity']['key'], $roofLayer);
+        }
         self::assertSame('77.120000', $result->quantities['electrical.main_cable']->amount);
         self::assertSame('1.000000', $result->quantities['electrical.panel']->amount);
         self::assertGreaterThan(0, (float) $result->quantities['electrical.outlets']->amount);
@@ -142,10 +155,16 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         ))[0] ?? null;
         self::assertSame('heating_source_type_missing', $heatingUnitOmission['reason'] ?? null);
         self::assertNotContains('stairs.flights', array_column($result->omissions, 'quantity_key'));
+        self::assertNotContains('stairs.landings', array_column($result->omissions, 'quantity_key'));
+        self::assertNotContains('sewerage.risers', array_column($result->omissions, 'quantity_key'));
+        self::assertNotContains('sewerage.revisions', array_column($result->omissions, 'quantity_key'));
         self::assertNotContains('stairs.railings', array_column($result->omissions, 'quantity_key'));
         self::assertNotContains('openings.windows', array_column($result->omissions, 'quantity_key'));
         self::assertNotContains('heating.radiators', array_column($result->omissions, 'quantity_key'));
         self::assertNotContains('ventilation.air_exchange', array_column($result->omissions, 'quantity_key'));
+        foreach (['site.setup', 'site.geodesy', 'earth.export', 'heating.unit', 'networks.external'] as $decisionKey) {
+            self::assertContains($decisionKey, array_column($result->omissions, 'quantity_key'), $decisionKey);
+        }
     }
 
     #[Test]

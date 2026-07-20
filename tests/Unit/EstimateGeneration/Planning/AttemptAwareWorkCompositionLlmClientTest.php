@@ -82,7 +82,7 @@ final class AttemptAwareWorkCompositionLlmClientTest extends TestCase
 
         $client->chat([], $this->context(), 'sha256:candidates');
 
-        self::assertSame(900, $wire->options['max_tokens']);
+        self::assertSame(4096, $wire->options['max_tokens']);
         self::assertSame(0, $wire->options['temperature']);
         self::assertSame('json', $wire->options['profile']);
         self::assertSame(60, $wire->options['timeout']);

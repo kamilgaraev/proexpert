@@ -39,8 +39,9 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             'foundation.concrete' => 'm3', 'foundation.waterproofing' => 'm2',
             'walls.external_volume' => 'm3', 'walls.internal' => 'm2', 'walls.lintels' => 'pcs',
             'slabs.formwork' => 'm2', 'slabs.concrete' => 'm3', 'slabs.rebar' => 't',
-            'stairs.flights' => 'm2', 'stairs.railings' => 'm',
+            'stairs.flights' => 'm2', 'stairs.landings' => 'm2', 'stairs.railings' => 'm',
             'roof.rafters' => 'm3', 'roof.area' => 'm2', 'roof.insulation' => 'm2',
+            'roof.vapor_barrier' => 'm2', 'roof.membrane' => 'm2', 'roof.battens' => 'm2',
             'roof.covering' => 'm2', 'roof.gutter' => 'm',
             'openings.windows' => 'm2', 'openings.doors' => 'm2', 'facade.area' => 'm2',
             'electrical.main_cable' => 'm', 'electrical.power_lines' => 'm', 'electrical.panel' => 'pcs',
@@ -472,6 +473,9 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             'document_context' => ['canonical_building_quantities' => [
                 $this->currentScenarioQuantity('roof.rafters', 'm3', '6.118200')->toArray(),
                 $this->currentScenarioQuantity('roof.area', 'm2', '152.955000')->toArray(),
+                $this->currentScenarioQuantity('roof.vapor_barrier', 'm2', '152.955000')->toArray(),
+                $this->currentScenarioQuantity('roof.membrane', 'm2', '152.955000')->toArray(),
+                $this->currentScenarioQuantity('roof.battens', 'm2', '152.955000')->toArray(),
                 $this->currentScenarioQuantity('roof.gutter', 'm', '46.834688')->toArray(),
             ]],
         ];
@@ -480,11 +484,17 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
         $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
 
         self::assertSame(
-            ['roof.rafters', 'roof.area', 'roof.area', 'roof.gutter'],
+            [
+                'roof.rafters', 'roof.vapor_barrier', 'roof.area',
+                'roof.membrane', 'roof.battens', 'roof.area', 'roof.gutter',
+            ],
             array_column($items, 'quantity_formula'),
         );
         self::assertSame(
-            ['roof.rafters', 'roof.insulation', 'roof.covering', 'roof.gutter'],
+            [
+                'roof.rafters', 'roof.vapor_barrier', 'roof.insulation',
+                'roof.membrane', 'roof.battens', 'roof.covering', 'roof.gutter',
+            ],
             array_map(
                 static fn (array $item): string => (string) (
                     $item['metadata']['material_scenario_work_key']
@@ -493,7 +503,13 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
                 $items,
             ),
         );
-        self::assertSame(['10-01-002-01', '12-01-013-07', '12-01-023-01', null], array_column($items, 'normative_rate_code'));
+        self::assertSame(
+            [
+                '10-01-002-01', '12-01-015-03', '12-01-013-07',
+                null, '12-01-034-02', '12-01-023-01', null,
+            ],
+            array_column($items, 'normative_rate_code'),
+        );
     }
 
     #[Test]
