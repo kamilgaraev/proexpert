@@ -21,18 +21,33 @@ final class OnlyOfficeBoundedDocumentFetcherTest extends TestCase
         $client = $clientProperty->getValue($fetcher);
         self::assertInstanceOf(CurlHttpClient::class, $client);
 
-        $server = OnlyOfficeControlledHttpServer::start();
-        try {
-            $response = $client->request('GET', $server->url(), [
-                'timeout' => 2.0,
-                'max_duration' => 3.0,
-            ]);
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            $server = OnlyOfficeControlledHttpServer::start();
+            try {
+                $response = $client->request('GET', $server->url(), [
+                    'timeout' => 2.0,
+                    'max_duration' => 3.0,
+                ]);
 
-            self::assertSame(200, $response->getStatusCode());
-            self::assertSame('most-curl-runtime', $response->getContent());
-        } finally {
-            $server->stop();
+                self::assertSame(200, $response->getStatusCode());
+                self::assertSame('most-curl-runtime', $response->getContent());
+            } finally {
+                $server->stop();
+            }
         }
+    }
+
+    public function test_controlled_server_self_binds_and_uses_authenticated_readiness(): void
+    {
+        $test = (string) file_get_contents(__FILE__);
+        $helper = (string) file_get_contents(__DIR__.'/../../Support/onlyoffice_http_server.php');
+
+        self::assertStringContainsString("stream_socket_server('tcp://127.0.0.1:0'", $helper);
+        self::assertStringContainsString("'protocol' => READINESS_PROTOCOL", $helper);
+        self::assertStringContainsString("'token' => \$token", $helper);
+        self::assertStringContainsString("'pid' => getmypid()", $helper);
+        self::assertStringNotContainsString('f'.'sockopen', $test.$helper);
+        self::assertStringNotContainsString('-'.'S', $test);
     }
 
     public function test_transport_has_separate_connect_idle_and_total_duration_limits(): void
@@ -147,27 +162,26 @@ final class OnlyOfficeBoundedDocumentFetcherTest extends TestCase
 
 final class OnlyOfficeControlledHttpServer
 {
-    /** @param resource $process */
+    private const READINESS_PROTOCOL = 'most-onlyoffice-http/1';
+
+    /**
+     * @param  resource  $process
+     * @param  resource  $stdout
+     * @param  resource  $stderr
+     */
     private function __construct(
         private readonly mixed $process,
+        private readonly mixed $stdout,
+        private readonly mixed $stderr,
         private readonly int $port,
     ) {}
 
     public static function start(): self
     {
-        $socket = stream_socket_server('tcp://127.0.0.1:0', $errorCode, $errorMessage);
-        if ($socket === false) {
-            self::failToStart($errorCode, $errorMessage);
-        }
-        $address = stream_socket_get_name($socket, false);
-        fclose($socket);
-        if (! is_string($address) || preg_match('/:(\d+)$/', $address, $matches) !== 1) {
-            throw new \RuntimeException('Unable to reserve a local HTTP port.');
-        }
-        $port = (int) $matches[1];
+        $token = bin2hex(random_bytes(16));
         $router = __DIR__.'/../../Support/onlyoffice_http_server.php';
         $process = proc_open(
-            [PHP_BINARY, '-S', '127.0.0.1:'.$port, $router],
+            [PHP_BINARY, $router, $token],
             [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']],
             $pipes,
             dirname($router),
@@ -175,23 +189,30 @@ final class OnlyOfficeControlledHttpServer
         if (! is_resource($process)) {
             throw new \RuntimeException('Unable to start the controlled local HTTP server.');
         }
-        foreach ($pipes as $pipe) {
-            fclose($pipe);
-        }
+        fclose($pipes[0]);
+        $status = proc_get_status($process);
+        $expectedPid = (int) ($status['pid'] ?? 0);
 
-        $server = new self($process, $port);
-        for ($attempt = 0; $attempt < 50; $attempt++) {
-            $probe = @fsockopen('127.0.0.1', $port, $errorCode, $errorMessage, 0.05);
-            if (is_resource($probe)) {
-                fclose($probe);
-
-                return $server;
+        try {
+            $line = self::readReadiness($process, $pipes[1], $pipes[2]);
+            $ready = json_decode($line, true, flags: JSON_THROW_ON_ERROR);
+            if (! is_array($ready)
+                || array_keys($ready) !== ['protocol', 'token', 'pid', 'port']
+                || ($ready['protocol'] ?? null) !== self::READINESS_PROTOCOL
+                || ($ready['token'] ?? null) !== $token
+                || ($ready['pid'] ?? null) !== $expectedPid
+                || ! is_int($ready['port'] ?? null)
+                || $ready['port'] < 1
+                || $ready['port'] > 65535) {
+                throw new \RuntimeException('Controlled local HTTP server returned invalid readiness data.');
             }
-            usleep(20_000);
-        }
-        $server->stop();
 
-        throw new \RuntimeException('Controlled local HTTP server did not become ready.');
+            return new self($process, $pipes[1], $pipes[2], $ready['port']);
+        } catch (\Throwable $error) {
+            self::terminate($process, $pipes[1], $pipes[2]);
+
+            throw $error;
+        }
     }
 
     public function url(): string
@@ -201,12 +222,73 @@ final class OnlyOfficeControlledHttpServer
 
     public function stop(): void
     {
-        proc_terminate($this->process);
-        proc_close($this->process);
+        $deadline = microtime(true) + 3.0;
+        $status = proc_get_status($this->process);
+        while (($status['running'] ?? false) === true && microtime(true) < $deadline) {
+            usleep(10_000);
+            $status = proc_get_status($this->process);
+        }
+        if (($status['running'] ?? false) === true) {
+            proc_terminate($this->process);
+            usleep(50_000);
+            $status = proc_get_status($this->process);
+        }
+        stream_set_blocking($this->stdout, true);
+        stream_set_blocking($this->stderr, true);
+        $unexpectedOutput = stream_get_contents($this->stdout);
+        $errors = stream_get_contents($this->stderr);
+        fclose($this->stdout);
+        fclose($this->stderr);
+        $closeCode = proc_close($this->process);
+        $exitCode = (int) ($status['exitcode'] ?? $closeCode);
+        if ($exitCode < 0) {
+            $exitCode = $closeCode;
+        }
+        if ($exitCode !== 0 || $unexpectedOutput !== '' || $errors !== '') {
+            throw new \RuntimeException(sprintf(
+                'Controlled local HTTP server failed: exit=%d stdout=%s stderr=%s',
+                $exitCode,
+                trim((string) $unexpectedOutput),
+                trim((string) $errors),
+            ));
+        }
     }
 
-    private static function failToStart(int $errorCode, string $errorMessage): never
+    /**
+     * @param  resource  $process
+     * @param  resource  $stdout
+     * @param  resource  $stderr
+     */
+    private static function readReadiness(mixed $process, mixed $stdout, mixed $stderr): string
     {
-        throw new \RuntimeException(sprintf('Unable to reserve a local HTTP port: %d %s', $errorCode, $errorMessage));
+        $line = fgets($stdout, 514);
+        if (! is_string($line) || ! str_ends_with($line, "\n") || substr_count($line, "\n") !== 1) {
+            $status = proc_get_status($process);
+            if (($status['running'] ?? false) === true) {
+                proc_terminate($process);
+            }
+            stream_set_blocking($stderr, true);
+            $errors = stream_get_contents($stderr);
+
+            throw new \RuntimeException('Controlled local HTTP server readiness failed: '.trim((string) $errors));
+        }
+
+        return substr($line, 0, -1);
+    }
+
+    /**
+     * @param  resource  $process
+     * @param  resource  $stdout
+     * @param  resource  $stderr
+     */
+    private static function terminate(mixed $process, mixed $stdout, mixed $stderr): void
+    {
+        $status = proc_get_status($process);
+        if (($status['running'] ?? false) === true) {
+            proc_terminate($process);
+        }
+        fclose($stdout);
+        fclose($stderr);
+        proc_close($process);
     }
 }
