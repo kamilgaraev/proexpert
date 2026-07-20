@@ -34,6 +34,11 @@ Schedule::job(new RecoverLegalDocumentOutboxMessages)
     ->withoutOverlapping(5)
     ->onOneServer();
 
+Schedule::command('legal-archive:recover-notification-deliveries --limit=100')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onOneServer();
+
 Schedule::job(new MonitorLegalDocumentOutboxDeadLetters)
     ->everyFiveMinutes()
     ->withoutOverlapping(10)
