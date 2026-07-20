@@ -6,6 +6,12 @@ namespace App\Services\LegalArchive\Integrations;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Models\Contract;
+use App\Models\SupplementaryAgreement;
+use App\Models\ContractPerformanceAct;
+use App\BusinessModules\Features\CommercialProposals\Models\CommercialProposal;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\Services\Contract\ContractDossierDocumentCreator;
 use Illuminate\Database\Eloquent\Builder;
 
@@ -55,17 +61,16 @@ final class LegalDocumentReconciliationService
             });
         }
 
+        $definitions = ['supplementary_agreements' => [SupplementaryAgreement::class, 'supplementary_agreement'], 'acts' => [ContractPerformanceAct::class, 'act'], 'commercial_proposals' => [CommercialProposal::class, 'commercial_proposal'], 'procurement' => [PurchaseOrder::class, 'procurement'], 'payments' => [PaymentDocument::class, 'payment'], 'executive_documentation' => [ExecutiveDocument::class, 'executive_documentation']];
         foreach (array_diff($sources, ['contracts']) as $namedSource) {
-            $sourceType = [
-                'supplementary_agreements' => 'supplementary_agreement', 'acts' => 'act',
-                'commercial_proposals' => 'commercial_proposal', 'procurement' => 'procurement',
-                'payments' => 'payment', 'executive_documentation' => 'executive_documentation',
-            ][$namedSource];
-            $count = LegalArchiveDocument::query()->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId))
-                ->where('source_type', $sourceType)->limit($limit)->count();
-            $summary['candidates'] += $count;
-            $summary['sources'][$namedSource] += $count;
-            $summary['skipped'] += $count;
+            [$model, $sourceType] = $definitions[$namedSource];
+            $model::query()->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId))->orderBy('id')->limit(max(0, $limit - $summary['candidates']))->each(function ($entity) use (&$summary, $namedSource, $sourceType, $dryRun): void {
+                $summary['candidates']++; $summary['sources'][$namedSource]++;
+                $document = LegalArchiveDocument::query()->where('organization_id', $entity->organization_id)->where('source_type', $sourceType)->where('source_id', (string) $entity->id)->first();
+                if ($document instanceof LegalArchiveDocument) { $summary['skipped']++; return; }
+                $summary['problem_flags']++;
+                if (!$dryRun) { $this->documents->create((int) $entity->organization_id, null, ['title' => (string) ($entity->title ?? $entity->name ?? $entity->number ?? ('Документ '.$entity->id)), 'document_number' => $entity->number ?? null, 'document_type' => $sourceType, 'source_type' => $sourceType, 'source_id' => (string) $entity->id, 'source_idempotency_key' => 'reconcile-'.$sourceType.'-'.$entity->id, 'metadata' => ['problem_flags' => ['missing_original']]]); $summary['linked']++; }
+            });
         }
 
         return $summary;
