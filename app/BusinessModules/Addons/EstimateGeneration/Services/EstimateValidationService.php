@@ -458,7 +458,11 @@ class EstimateValidationService
         $normativeIdentity = $this->normalizeSignaturePart((string) (
             $workItem['normative_rate_code']
             ?? $workItem['normative_search_key']
-            ?? $workItem['quantity_formula']
+            ?? ''
+        ));
+        $technologicalIdentity = $this->normalizeSignaturePart((string) (
+            $workItem['quantity_formula']
+            ?? data_get($workItem, 'metadata.quantity_key')
             ?? ''
         ));
 
@@ -467,6 +471,7 @@ class EstimateValidationService
             $unit,
             (string) $quantity,
             $normativeIdentity,
+            $technologicalIdentity,
         ]));
     }
 
