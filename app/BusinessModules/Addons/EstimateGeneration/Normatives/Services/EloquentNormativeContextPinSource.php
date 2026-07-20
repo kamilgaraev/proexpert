@@ -19,11 +19,10 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         private NormativeResourceCoverage $resourceCoverage = new NormativeResourceCoverage,
         private NormativeSemanticCompatibilityService $semanticCompatibility = new NormativeSemanticCompatibilityService,
         private NormativeCandidatePriceCoverageAnalyzer $priceCoverageAnalyzer = new NormativeCandidatePriceCoverageAnalyzer,
-        private AbstractNormativeResourcePriceSelector $abstractResourcePriceSelector = new AbstractNormativeResourcePriceSelector,
+        private AbstractResourceProjectPriceSelector $abstractResourceProjectPriceSelector = new AbstractResourceProjectPriceSelector,
         private AbstractResourceCoverageDiagnostics $abstractResourceCoverageDiagnostics = new AbstractResourceCoverageDiagnostics,
         private AbstractResourceSemanticPriceSelector $abstractResourceSemanticPriceSelector = new AbstractResourceSemanticPriceSelector,
         private ResidentialAbstractResourcePriceSelector $residentialAbstractResourcePriceSelector = new ResidentialAbstractResourcePriceSelector,
-        private ResidentialResourceConversionEligibility $residentialResourceConversionEligibility = new ResidentialResourceConversionEligibility,
     ) {}
 
     public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
@@ -443,25 +442,16 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 continue;
             }
             $norm = $normsById->get((int) $representative->estimate_norm_id);
-            $selection = $this->abstractResourcePriceSelector->select(
+            $selection = $this->abstractResourceProjectPriceSelector->select(
+                $intents,
+                is_object($norm) ? trim((string) $norm->code) : '',
+                is_object($norm) ? (string) $norm->name : '',
                 trim((string) $representative->resource_code),
+                trim((string) ($representative->resource_name ?? '')),
                 $requested->regionalPriceVersionId,
                 $candidateRowList,
                 $basePriceDatasetIds,
-                is_object($norm) ? (string) $norm->name : '',
-                trim((string) ($representative->resource_name ?? '')),
             );
-            if ($selection === null && $this->residentialResourceConversionEligibility->allows(
-                $intents,
-                is_object($norm) ? trim((string) $norm->code) : '',
-            )) {
-                $selection = $this->residentialAbstractResourcePriceSelector->select(
-                    is_object($norm) ? trim((string) $norm->code) : '',
-                    trim((string) $representative->resource_code),
-                    $candidateRowList,
-                    $basePriceDatasetIds,
-                );
-            }
             if ($selection === null) {
                 $this->telemetry('abstract_resource_candidates_rejected', [
                     'norm_code' => is_object($norm) ? trim((string) $norm->code) : '',
