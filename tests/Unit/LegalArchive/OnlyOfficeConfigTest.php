@@ -57,8 +57,9 @@ final class OnlyOfficeConfigTest extends TestCase
     {
         $source = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/OnlyOfficeBoundedDocumentFetcher.php');
         self::assertIsString($source);
-        self::assertStringContainsString("'proxy' => ''", $source);
         self::assertStringContainsString("'no_proxy' => '*'", $source);
+        self::assertStringNotContainsString("'proxy' => ''", $source);
+        self::assertStringContainsString('new CurlHttpClient', $source);
         self::assertStringContainsString("'primary_ip'", $source);
     }
 

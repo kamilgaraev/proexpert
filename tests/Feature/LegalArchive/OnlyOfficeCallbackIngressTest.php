@@ -78,6 +78,15 @@ final class OnlyOfficeCallbackIngressTest extends TestCase
         self::assertStringContainsString('OnlyOfficeCallbackBodyLimit::class', $routes);
     }
 
+    public function test_callback_body_limit_has_one_ingress_enforcement_point(): void
+    {
+        $controller = (string) file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalDocumentEditorController.php');
+        $middleware = (string) file_get_contents(__DIR__.'/../../../app/Http/Middleware/OnlyOfficeCallbackBodyLimit.php');
+
+        self::assertStringNotContainsString('getContent()', $controller);
+        self::assertStringContainsString("config('legal-document-editor.callback.max_body_bytes'", $middleware);
+    }
+
     public function test_bounded_json_body_remains_readable_downstream(): void
     {
         config()->set('legal-document-editor.callback.max_body_bytes', 1024);

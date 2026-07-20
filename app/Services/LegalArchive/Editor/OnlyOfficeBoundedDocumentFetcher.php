@@ -6,7 +6,7 @@ namespace App\Services\LegalArchive\Editor;
 
 use Closure;
 use DomainException;
-use Symfony\Component\HttpClient\HttpClient;
+use Symfony\Component\HttpClient\CurlHttpClient;
 use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Throwable;
@@ -30,7 +30,7 @@ final class OnlyOfficeBoundedDocumentFetcher implements EditorDocumentFetcher
         ?HttpClientInterface $client = null,
         ?callable $resolver = null,
     ) {
-        $this->client = $client ?? HttpClient::create(['proxy' => '', 'no_proxy' => '*']);
+        $this->client = $client ?? new CurlHttpClient(['no_proxy' => '*']);
         $this->resolver = $resolver === null ? null : Closure::fromCallable($resolver);
     }
 
@@ -55,7 +55,6 @@ final class OnlyOfficeBoundedDocumentFetcher implements EditorDocumentFetcher
                     'max_duration' => $maxDuration,
                     'headers' => ['Accept' => 'application/octet-stream'],
                     'resolve' => $resolved,
-                    'proxy' => '',
                     'no_proxy' => '*',
                     'on_progress' => function (int $downloaded, int $downloadSize, array $info) use ($pinnedIp, $maxSize, &$connectedIpValidated): void {
                         if ($downloadSize > $maxSize || $downloaded > $maxSize) {

@@ -59,9 +59,6 @@ final class LegalDocumentEditorController extends Controller
     public function callback(Request $request, string $session): JsonResponse
     {
         try {
-            if (strlen($request->getContent()) > 65536) {
-                throw new DomainException('legal_document_editor_callback_too_large');
-            }
             $data = $request->validate([
                 'key' => ['required', 'string', 'max:191'], 'status' => ['required', 'integer', 'between:1,7'],
                 'url' => ['nullable', 'url:https', 'max:4096'], 'token' => ['nullable', 'string', 'max:16384'],
