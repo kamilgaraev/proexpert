@@ -160,6 +160,24 @@ jobs:
               done
             }
 
+            stop_legacy_writer_processes() {
+              local process_directory process_id command_line working_directory cgroup
+              for process_directory in /proc/[0-9]*; do
+                process_id="${process_directory##*/}"
+                [ "${process_id}" = "$$" ] && continue
+                command_line="$(tr '\0' ' ' < "${process_directory}/cmdline" 2>/dev/null || true)"
+                [ -z "${command_line}" ] && continue
+                working_directory="$(readlink -f "${process_directory}/cwd" 2>/dev/null || true)"
+                cgroup="$(tr '\n' ' ' < "${process_directory}/cgroup" 2>/dev/null || true)"
+                if [[ "${working_directory}" == /var/www/prohelper* || "${command_line}" == *'/var/www/prohelper/'* || "${command_line}" == *'prohelper@'* || "${cgroup}" == *'most-'* || "${cgroup}" == *'prohelper'* ]]; then
+                  if [[ "${command_line}" =~ (^|[[:space:]/])(php([0-9.]+)?|rr|roadrunner)([[:space:]]|$) ]] \
+                    && [[ "${command_line}" =~ (artisan([[:space:]]|$)|queue:work|horizon|schedule:work|octane:start|reverb:start|rr[[:space:]]+serve|roadrunner) ]]; then
+                    kill -TERM "${process_id}" 2>/dev/null || true
+                  fi
+                fi
+              done
+            }
+
             systemd_unit_exists() {
               local unit_fragment_path
               unit_fragment_path="$(systemctl show --property=FragmentPath --value "$1" 2>/dev/null || true)"
@@ -218,6 +236,7 @@ jobs:
               docker compose stop --timeout 30 ${BACKEND_SERVICES}
               stop_legacy_supervisor_processes
               stop_legacy_systemd_processes
+              stop_legacy_writer_processes
               exit "${exit_code}"
             }
 
@@ -253,6 +272,7 @@ jobs:
             systemctl stop nginx
             stop_legacy_supervisor_processes
             stop_legacy_systemd_processes
+            stop_legacy_writer_processes
             docker compose stop --timeout 30 ${BACKEND_SERVICES}
             assert_legacy_runtime_stopped
 
