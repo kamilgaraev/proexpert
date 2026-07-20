@@ -165,7 +165,6 @@ final class LegalWorkflowAuthorization
             ->whereIn('context_id', $contextIds)
             ->with([
                 'conditions' => static fn ($query) => $query->active(),
-                'user:id',
             ])
             ->get();
         $activeProjectCounts = $this->activeProjectCounts($assignments);

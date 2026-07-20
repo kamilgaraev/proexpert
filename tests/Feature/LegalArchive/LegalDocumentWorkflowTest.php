@@ -472,7 +472,7 @@ final class LegalDocumentWorkflowTest extends TestCase
         $queryCount = count($this->database->getConnection()->getQueryLog());
         $this->database->getConnection()->disableQueryLog();
 
-        self::assertSame(10, $queryCount);
+        self::assertSame(9, $queryCount);
         self::assertCount(100, $permissions);
         self::assertCount(100, $assignments);
         self::assertTrue($permissions[1][LegalWorkflowPermissions::VIEW]);
@@ -552,7 +552,7 @@ final class LegalDocumentWorkflowTest extends TestCase
         $queries = $connection->getQueryLog();
         $connection->disableQueryLog();
 
-        self::assertSame(7, count($queries));
+        self::assertSame(6, count($queries));
         self::assertTrue($permissions[1][LegalWorkflowPermissions::VIEW]);
         self::assertTrue($permissions[99][LegalWorkflowPermissions::VIEW]);
         self::assertFalse($permissions[100][LegalWorkflowPermissions::VIEW]);
