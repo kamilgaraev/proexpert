@@ -188,22 +188,23 @@ class EstimatePricingService
 
     private function projectResourceSelection(array $resource, array $workItem = []): array
     {
-        if (is_array($resource['project_resource_selection'] ?? null)) {
-            return $resource['project_resource_selection'];
-        }
-
-        if (is_array($resource['normative_ref']['project_resource_selection'] ?? null)) {
-            return $resource['normative_ref']['project_resource_selection'];
+        $resourceSelection = is_array($resource['project_resource_selection'] ?? null)
+            ? $resource['project_resource_selection']
+            : (is_array($resource['normative_ref']['project_resource_selection'] ?? null)
+                ? $resource['normative_ref']['project_resource_selection']
+                : []);
+        if ($this->isResidentialConvertedSelection($resourceSelection)) {
+            return $resourceSelection;
         }
 
         $groupCode = trim((string) ($resource['normative_ref']['resource_code'] ?? ''));
         $priceId = (int) ($resource['normative_ref']['price_id'] ?? $resource['price_id'] ?? 0);
         $unitPrice = (string) ($resource['unit_price'] ?? '0');
         $resourceUnit = trim((string) ($resource['unit'] ?? ''));
-        $currentPriceUnit = trim((string) ($resource['price_unit'] ?? ''));
         $selections = is_array($workItem['normative_match']['project_resource_selections'] ?? null)
             ? $workItem['normative_match']['project_resource_selections']
             : [];
+        $matchedDecisionSelection = [];
         foreach ($selections as $selection) {
             if (! is_array($selection)
                 || trim((string) ($selection['group_code'] ?? '')) !== $groupCode
@@ -216,31 +217,13 @@ class EstimatePricingService
                 continue;
             }
 
-            return $selection;
+            $matchedDecisionSelection = $selection;
+            if ($this->isResidentialConvertedSelection($selection)) {
+                return $selection;
+            }
         }
 
-        if (trim((string) ($workItem['key'] ?? '')) !== ''
-            && ! NormativeUnitNormalizer::compatible($resourceUnit, $currentPriceUnit)) {
-            Log::info('estimate_generation.project_resource_selection_recovery_miss', [
-                'work_key' => $workItem['key'] ?? null,
-                'norm_code' => $workItem['normative_match']['code'] ?? null,
-                'group_code' => $groupCode,
-                'price_id' => $priceId,
-                'unit_price' => $unitPrice,
-                'resource_unit' => $resourceUnit,
-                'current_price_unit' => $currentPriceUnit,
-                'selection_candidates' => array_map(static fn (mixed $selection): array => is_array($selection) ? [
-                    'group_code' => $selection['group_code'] ?? null,
-                    'selected_resource_code' => $selection['selected_resource_code'] ?? null,
-                    'price_id' => $selection['price_id'] ?? null,
-                    'applied_unit_price' => $selection['applied_unit_price'] ?? null,
-                    'price_unit' => $selection['price_unit'] ?? null,
-                    'policy' => $selection['policy'] ?? null,
-                ] : [], $selections),
-            ]);
-        }
-
-        return [];
+        return $resourceSelection !== [] ? $resourceSelection : $matchedDecisionSelection;
     }
 
     private function isResidentialConvertedSelection(array $selection): bool
