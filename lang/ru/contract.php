@@ -31,6 +31,8 @@ return [
     'estimate_linked' => 'Смета связана с договором.',
     'estimate_unlinked' => 'Связь сметы с договором удалена.',
     'estimate_items_load_error' => 'Не удалось загрузить позиции сметы.',
+    'estimate_context_invalid' => 'Смета не относится к выбранному объекту.',
+    'estimate_items_invalid' => 'Выбранные позиции сметы недоступны для создания договора.',
     'estimate_project_mismatch' => 'Смета должна принадлежать той же организации и проекту.',
     'estimate_items_attached' => 'Позиции успешно привязаны к договору.',
     'estimate_items_attach_error' => 'Не удалось привязать позиции.',

@@ -64,7 +64,7 @@ final class ContractFromEstimateController
                 $result->replayed ? 200 : 201,
             );
         } catch (\DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
+            return AdminResponse::error($this->domainMessage($exception), 422);
         } catch (\Throwable $exception) {
             Log::error('contracts.create_from_estimate_failed', [
                 'project_id' => $project->id,
@@ -75,5 +75,14 @@ final class ContractFromEstimateController
 
             return AdminResponse::error(trans_message('contract.create_error'), 500);
         }
+    }
+
+    private function domainMessage(\DomainException $exception): string
+    {
+        return match ($exception->getMessage()) {
+            'contract_estimate_context_invalid' => trans_message('contract.estimate_context_invalid'),
+            'contract_estimate_items_invalid' => trans_message('contract.estimate_items_invalid'),
+            default => trans_message('contract.create_error'),
+        };
     }
 }
