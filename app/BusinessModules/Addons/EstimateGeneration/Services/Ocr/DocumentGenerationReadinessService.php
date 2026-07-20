@@ -54,7 +54,7 @@ class DocumentGenerationReadinessService
             EstimateGenerationStatus::EstimateReviewRequired,
             EstimateGenerationStatus::ReadyToApply,
             EstimateGenerationStatus::Applied,
-        ], true);
+        ], true) || $this->cancelledAfterGeneration($session);
         $canGenerate = $summary['can_generate'] || (
             $reviewAcknowledged
             && $summary['ready_count'] > 0
@@ -216,6 +216,12 @@ class DocumentGenerationReadinessService
             : [];
 
         return trim((string) ($understanding['role_for_estimation'] ?? '')) === '';
+    }
+
+    private function cancelledAfterGeneration(EstimateGenerationSession $session): bool
+    {
+        return $session->status === EstimateGenerationStatus::Cancelled
+            && trim((string) ($session->input_payload['generation_attempt_id'] ?? '')) !== '';
     }
 
     /**
