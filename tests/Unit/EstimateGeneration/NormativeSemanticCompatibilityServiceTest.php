@@ -1469,6 +1469,33 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         ));
     }
 
+    public function test_electric_boiler_analog_accepts_only_generic_equipment_installation_target(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $intent = [
+            'action' => 'electric_boiler_installation_analog',
+            'scope' => 'engineering',
+            'system' => 'heating',
+            'object_type' => 'residential',
+        ];
+
+        self::assertTrue($service->isCompatible(
+            'Монтаж оборудования в помещении массой до 0,03 т',
+            'Монтаж электрического котла отопления до 30 кг',
+            $intent,
+        ));
+        self::assertFalse($service->isCompatible(
+            'Установка водонагревателей электрических',
+            'Монтаж электрического котла отопления до 30 кг',
+            $intent,
+        ));
+        self::assertFalse($service->isCompatible(
+            'Установка котлов отопительных твердотопливных',
+            'Монтаж электрического котла отопления до 30 кг',
+            $intent,
+        ));
+    }
+
     public function test_sewer_outlet_rejects_industrial_product_output_norm(): void
     {
         $service = new NormativeSemanticCompatibilityService;

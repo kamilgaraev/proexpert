@@ -6,11 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v18';
+    private const CATALOG_VERSION = 'residential_material_scenario:v19';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v18';
+    private const SCENARIO_ID = 'residential_preliminary_common:v19';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v18';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v19';
 
     /**
      * @var array<string, array{
@@ -133,6 +133,22 @@ final class ResidentialMaterialScenarioCatalog
             'work_item_name' => 'Прокладка внутренней канализации со стояками и ревизиями',
             'normative_search_text' => 'прокладка внутренних трубопроводов канализации из полипропиленовых труб диаметром 50 мм',
             'normative_rate_code' => '16-04-004-01',
+        ],
+        'sewerage.outlet_route' => [
+            'material_markers' => ['полипропилен', 'канализационн', 'диаметр 110 мм'],
+            'assumption_code' => 'residential_sewer_outlet_pp_110mm',
+            'intent_action' => 'pipeline_installation',
+            'work_item_name' => 'Прокладка канализационного выпуска из полипропиленовых труб 110 мм',
+            'normative_search_text' => 'прокладка внутренних трубопроводов канализации из полипропиленовых труб диаметром 110 мм',
+            'normative_rate_code' => '16-04-004-02',
+        ],
+        'heating.unit' => [
+            'material_markers' => ['электрический котел', 'отопление', 'масса до 0,03 т'],
+            'assumption_code' => 'residential_electric_boiler_installation_analog_30kg',
+            'intent_action' => 'electric_boiler_installation_analog',
+            'work_item_name' => 'Монтаж электрического котла отопления до 30 кг',
+            'normative_search_text' => 'монтаж оборудования в помещении массой до 0,03 т электрический котел отопления',
+            'normative_rate_code' => '37-01-002-01',
         ],
         'stairs.flights' => [
             'material_markers' => ['внутриквартирн', 'лестниц', 'без подшив'],

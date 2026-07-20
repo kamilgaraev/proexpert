@@ -170,10 +170,10 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                         'normalized_payload' => ['review_required' => false],
                     ],
                     [
-                        'quantity_key' => 'sewerage.outlets',
-                        'name' => 'Выпуски канализации по спецификации',
-                        'unit' => 'шт',
-                        'quantity' => 4,
+                        'quantity_key' => 'sewerage.outlet_route',
+                        'name' => 'Трасса канализационного выпуска по спецификации',
+                        'unit' => 'м',
+                        'quantity' => 5,
                         'source_refs' => [['type' => 'drawing', 'filename' => 'ВК.pdf', 'page_number' => 2]],
                         'normalized_payload' => ['review_required' => false],
                     ],
@@ -182,8 +182,8 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         ]));
         $names = array_column($pricedItems, 'name');
 
-        self::assertContains('Прокладка труб канализации', $names);
-        self::assertContains('Монтаж канализационных выпусков', $names);
+        self::assertContains('Прокладка внутренней канализации со стояками и ревизиями', $names);
+        self::assertContains('Прокладка канализационного выпуска из полипропиленовых труб 110 мм', $names);
         self::assertNotContains('Комплекс строительных работ', $names);
         self::assertNotContains('Прокладка магистральных кабелей', $names);
         self::assertNotContains('site.setup', array_column($pricedItems, 'quantity_formula'));
@@ -591,7 +591,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         );
         $names = array_column($items, 'name');
 
-        self::assertContains('Приточно-вытяжная вентиляция', $names);
+        self::assertContains('Монтаж вытяжных воздуховодов жилого дома', $names);
         self::assertNotContains('Воздухораспределители офиса', $names);
         self::assertNotContains('Воздухораспределители склада', $names);
     }
@@ -1413,7 +1413,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         ))[0] ?? null;
 
         self::assertIsArray($floor);
-        self::assertSame('residential_preliminary_common:v13', $floor['specialization_scenario']['scenario_id'] ?? null);
+        self::assertSame('residential_preliminary_common:v19', $floor['specialization_scenario']['scenario_id'] ?? null);
         self::assertSame(['ламинат', 'ламинированн'], $floor['specialization_scenario']['material_markers'] ?? null);
         self::assertSame('warning', $floor['metadata']['material_assumption']['severity'] ?? null);
         self::assertTrue($floor['metadata']['material_assumption']['requires_confirmation'] ?? false);

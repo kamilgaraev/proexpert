@@ -51,7 +51,7 @@ final class ResidentialQuantityScenarioCatalog
         'sanitary.tile' => 'm2',
         'sanitary.waterproofing' => 'm2',
         'sewerage.pipe' => 'm',
-        'sewerage.outlets' => 'pcs',
+        'sewerage.outlet_route' => 'm',
         'stairs.flights' => 'm2',
         'stairs.landings' => 'm2',
         'stairs.railings' => 'm',
@@ -363,7 +363,7 @@ final class ResidentialQuantityScenarioCatalog
                 $omissions[] = $this->omission($fixtureKey, 'documented_wet_rooms_missing');
             }
         }
-        $omissions[] = $this->omission('sewerage.outlets', 'sewer_outlet_route_missing');
+        $omissions[] = $this->omission('sewerage.outlet_route', 'sewer_outlet_route_missing');
 
         $finishedWetRoomAreas = array_values(array_filter(
             array_map(fn (RoomData $room): ?array => $this->roomArea($room), $finishedWetRooms),

@@ -57,7 +57,7 @@ final class ResidentialWorkCompositionCatalog
                 'plumbing.pipe', 'sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins',
                 'sanitary.waterproofing', 'sanitary.tile', 'sanitary.floor_tile',
             ],
-            'sewerage' => ['sewerage.pipe', 'sewerage.outlets'],
+            'sewerage' => ['sewerage.pipe', 'sewerage.outlet_route'],
             'heating' => ['heating.unit', 'heating.pipe', 'heating.radiators'],
             'ventilation' => ['ventilation.air_exchange', 'ventilation.distribution_devices'],
             'rough_finishing' => ['rough.floor', 'rough.walls', 'rough.ceiling'],

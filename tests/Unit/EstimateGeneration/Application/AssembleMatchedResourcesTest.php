@@ -84,6 +84,45 @@ final class AssembleMatchedResourcesTest extends TestCase
         self::assertContains('project_material_price_missing', $item['validation_flags']);
     }
 
+    public function test_electric_boiler_equipment_is_added_as_priced_material_or_blocks_the_work(): void
+    {
+        $catalog = new ResidentialProjectMaterialCatalog;
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('heating.unit', 'residential');
+        self::assertIsArray($scenario);
+        $requirement = $catalog->requirementForIntent(['specialization_scenario' => $scenario]);
+        self::assertIsArray($requirement);
+        $resource = $catalog->resourceFromPriceRow($requirement, (object) [
+            'price_id' => 801,
+            'construction_resource_id' => 9001,
+            'resource_code' => '89.1.63.01-0079',
+            'resource_name' => 'Котлы настенные электрические, количество контуров 1, мощность 18 кВт',
+            'unit' => 'шт',
+            'base_price' => '68450.00',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => 'region-16-q2-2026',
+        ]);
+        self::assertIsArray($resource);
+
+        $pricedInput = $this->data($scenario, [[
+            'work_item_key' => 'heating.unit',
+            'requirement' => $requirement,
+            'status' => 'priced',
+            'resource' => $resource,
+        ]]);
+        $pricedInput['local_estimates'][0]['sections'][0]['work_items'][0]['quantity'] = 1;
+        $missingInput = $this->data($scenario, []);
+        $missingInput['local_estimates'][0]['sections'][0]['work_items'][0]['quantity'] = 1;
+
+        $priced = (new AssembleMatchedResources($catalog))->handle($pricedInput)['data']['local_estimates'][0]['sections'][0]['work_items'][0];
+        $missing = (new AssembleMatchedResources($catalog))->handle($missingInput)['data']['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertSame('89.1.63.01-0079', $priced['materials'][0]['code'] ?? null);
+        self::assertSame(1.0, $priced['materials'][0]['quantity'] ?? null);
+        self::assertSame(68450.0, $priced['materials'][0]['total_price'] ?? null);
+        self::assertSame('regional_catalog', $priced['materials'][0]['price_source'] ?? null);
+        self::assertSame('project_material_price_missing', $missing['pricing_blocker'] ?? null);
+    }
+
     public function test_appends_semantic_group_fallback_with_its_actual_catalog_identity(): void
     {
         $catalog = new ResidentialProjectMaterialCatalog;

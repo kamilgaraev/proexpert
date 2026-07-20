@@ -127,7 +127,7 @@ final class WorkPlanCompilerTest extends TestCase
     {
         $analysis = $this->analysis();
         $analysis['document_context']['quantity_coverage_warnings'] = [
-            ['quantity_key' => 'sewerage.outlets', 'reason' => 'sewerage_design_takeoff_missing', 'package_key' => 'foundation'],
+            ['quantity_key' => 'sewerage.outlet_route', 'reason' => 'sewerage_design_takeoff_missing', 'package_key' => 'foundation'],
             ['quantity_key' => 'sewerage.risers', 'reason' => 'sewerage_design_takeoff_missing', 'package_key' => 'foundation'],
             ['quantity_key' => 'sewerage.revisions', 'reason' => 'sewerage_design_takeoff_missing', 'package_key' => 'foundation'],
         ];

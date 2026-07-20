@@ -40,10 +40,13 @@ final readonly class AttemptAwareWorkCompositionLlmClient implements WorkComposi
                 'input_version' => $context->inputVersion,
                 'logical_attempt' => (int) $context->stageAttempt,
                 'candidate_set_hash' => $candidateSetHash,
-                'prompt_version' => 'residential-work-composition:v2',
+                'prompt_version' => AiResidentialWorkCompositionAdvisor::PROMPT_VERSION,
                 'schema_version' => AiResidentialWorkCompositionAdvisor::SCHEMA_VERSION,
                 'model_version' => 'estimate-generation-effective-settings',
-                'dataset_versions' => [ResidentialWorkCompositionCatalog::VERSION],
+                'dataset_versions' => [
+                    ResidentialWorkCompositionCatalog::VERSION,
+                    ResidentialScopeDecisionCatalog::VERSION,
+                ],
                 'model_strategy' => AttemptAwareNormativeLlmClient::MODEL_STRATEGY_CONFIGURED_FALLBACKS,
             ]);
         } catch (Throwable $exception) {

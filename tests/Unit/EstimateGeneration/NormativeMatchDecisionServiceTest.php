@@ -207,6 +207,36 @@ class NormativeMatchDecisionServiceTest extends TestCase
         $this->assertContains('scope_mismatch', $decision->warnings);
     }
 
+    public function test_electric_boiler_analog_accepts_section_37_and_rejects_heating_sections(): void
+    {
+        $service = new NormativeMatchDecisionService;
+        $workItem = [
+            'unit' => 'шт',
+            'work_intent' => [
+                'scope' => 'engineering',
+                'system' => 'heating',
+                'action' => 'electric_boiler_installation_analog',
+            ],
+        ];
+        $candidate = [
+            'confidence' => 0.91,
+            'unit' => 'шт',
+            'name' => 'Монтаж оборудования в помещении массой до 0,03 т',
+            'resources' => [
+                'materials' => [['price_source' => 'fsbc_base', 'total_price' => 1000]],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ];
+
+        $accepted = $service->decide([...$candidate, 'section' => ['code' => '37-01']], $workItem);
+        $rejected = $service->decide([...$candidate, 'section' => ['code' => '18-01']], $workItem);
+
+        self::assertNotContains('scope_mismatch', $accepted->warnings);
+        self::assertContains('scope_mismatch', $rejected->warnings);
+    }
+
     public function test_semantically_wrong_norm_is_not_used_even_with_matching_unit_section_and_confidence(): void
     {
         $decision = (new NormativeMatchDecisionService)->decide([

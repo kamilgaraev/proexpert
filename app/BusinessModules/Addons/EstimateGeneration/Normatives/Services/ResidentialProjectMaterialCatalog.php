@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final readonly class ResidentialProjectMaterialCatalog
 {
-    public const VERSION = 'residential_project_material:v3';
+    public const VERSION = 'residential_project_material:v5';
 
     public const CANDIDATE_POOL_VERSION = 'project_material_candidate_pool:v2';
 
@@ -67,12 +67,13 @@ final readonly class ResidentialProjectMaterialCatalog
             'resource_code' => '59.1.20.03-0798',
             'fallback_group_code' => '59.1.20.03',
             'fallback_name_markers' => ['светиль'],
-            'semantic_fallback_name_markers' => ['светиль', 'светодиод', 'потолоч'],
+            'semantic_fallback_name_markers' => ['светиль', 'светодиод'],
             'semantic_eligibility_policy' => [
-                'version' => 'residential_ceiling_luminaire_attributes:v1',
+                'version' => 'residential_ceiling_luminaire_attributes:v2',
                 'allowed_power_watts' => [18],
                 'allowed_ip_ratings' => ['ip20'],
                 'allow_missing_ip_rating' => true,
+                'required_any_name_markers' => ['потолоч', 'накладн', 'встраив'],
                 'forbidden_name_markers' => [
                     'общественн', 'офис', 'промышленн', 'склад',
                     '595х595', '595x595', '600х600', '600x600',
@@ -83,6 +84,14 @@ final readonly class ResidentialProjectMaterialCatalog
             'price_factor' => 1.0,
             'quantity_per_work_unit' => 1.0,
             'assumption_code' => 'residential_led_ceiling_luminaire_18w',
+        ],
+        'heating.unit' => [
+            'resource_code' => '89.1.63.01-0079',
+            'unit' => 'pcs',
+            'source_unit' => 'шт',
+            'price_factor' => 1.0,
+            'quantity_per_work_unit' => 1.0,
+            'assumption_code' => 'residential_wall_mounted_single_circuit_electric_boiler_18kw',
         ],
     ];
 
@@ -173,6 +182,7 @@ final readonly class ResidentialProjectMaterialCatalog
             return preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', trim((string) ($row->resource_code ?? ''))) === 1
                 && trim((string) ($row->unit ?? '')) === ($requirement['source_unit'] ?? null)
                 && array_filter($markers, static fn (string $marker): bool => ! str_contains($name, mb_strtolower($marker))) === []
+                && $this->semanticCandidateEligible($requirement, $row)
                 && $this->validPriceRow($row);
         }));
         if ($eligible === []) {
@@ -250,6 +260,17 @@ final readonly class ResidentialProjectMaterialCatalog
             if (is_string($marker) && $marker !== '' && str_contains($name, mb_strtolower($marker))) {
                 return false;
             }
+        }
+
+        $requiredAnyMarkers = array_values(array_filter(
+            array_map('strval', (array) ($policy['required_any_name_markers'] ?? [])),
+            static fn (string $marker): bool => $marker !== '',
+        ));
+        if ($requiredAnyMarkers !== [] && array_filter(
+            $requiredAnyMarkers,
+            static fn (string $marker): bool => str_contains($name, mb_strtolower($marker)),
+        ) === []) {
+            return false;
         }
 
         $allowedPowers = array_values(array_filter(

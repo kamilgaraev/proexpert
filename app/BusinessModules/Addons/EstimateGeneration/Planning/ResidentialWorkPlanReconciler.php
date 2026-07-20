@@ -55,6 +55,8 @@ final readonly class ResidentialWorkPlanReconciler
             'catalog_version' => ResidentialWorkCompositionCatalog::VERSION,
             'decision_count' => count($advice->decisions),
             'model' => $advice->model,
+            'scope_decision_catalog_version' => ResidentialScopeDecisionCatalog::VERSION,
+            'scope_decisions' => $advice->scopeDecisions,
         ];
 
         return $plan;

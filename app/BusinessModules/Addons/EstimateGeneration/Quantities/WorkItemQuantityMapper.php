@@ -245,7 +245,7 @@ final class WorkItemQuantityMapper
             'warehouse.lighting' => $engineeringCount('electrical', '0.08'),
             'office.network_points', 'warehouse.fire' => $engineeringCount('electrical', '0.06'),
             'sanitary.points' => $engineeringCount('water', '0.04'),
-            'sewerage.outlets' => $engineeringCount('sewer', '0.04'),
+            'sewerage.outlet_route' => $engineeringLength('sewer', '0.04'),
             'sewerage.revisions', 'sewerage.risers' => $engineeringCount('sewer', '0.015'),
             'heating.radiators' => $engineeringCount('heating', '0.06'),
             'heating.air_curtains' => $engineeringCount('heating', '0.01'),

@@ -151,10 +151,10 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertNotContains('roof.rafters', array_column($result->omissions, 'quantity_key'));
         self::assertContains('networks.external', array_column($result->omissions, 'quantity_key'));
         self::assertContains('electrical.trays', array_column($result->omissions, 'quantity_key'));
-        self::assertContains('sewerage.outlets', array_column($result->omissions, 'quantity_key'));
+        self::assertContains('sewerage.outlet_route', array_column($result->omissions, 'quantity_key'));
         $sewerOutletOmission = array_values(array_filter(
             $result->omissions,
-            static fn (array $omission): bool => $omission['quantity_key'] === 'sewerage.outlets',
+            static fn (array $omission): bool => $omission['quantity_key'] === 'sewerage.outlet_route',
         ))[0] ?? null;
         self::assertSame('sewer_outlet_route_missing', $sewerOutletOmission['reason'] ?? null);
         self::assertContains('heating.unit', array_column($result->omissions, 'quantity_key'));

@@ -36,6 +36,41 @@ final class ResidentialProjectMaterialCatalogTest extends TestCase
     }
 
     #[Test]
+    public function electric_boiler_scenario_requires_exact_current_ksr_equipment_price(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $requirement = $catalog->requirementForIntent([
+            'specialization_scenario' => $scenarios->issue('heating.unit', 'residential'),
+        ]);
+
+        self::assertIsArray($requirement);
+        self::assertSame('89.1.63.01-0079', $requirement['resource_code']);
+        self::assertSame('шт', $requirement['source_unit']);
+        self::assertSame(1.0, $requirement['quantity_per_work_unit']);
+
+        $resource = $catalog->resourceFromPriceRow($requirement, (object) [
+            'price_id' => 801,
+            'construction_resource_id' => 9001,
+            'resource_code' => '89.1.63.01-0079',
+            'resource_name' => 'Котлы настенные электрические, количество контуров 1, мощность 18 кВт',
+            'unit' => 'шт',
+            'base_price' => '68450.00',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => 'region-16-q2-2026',
+        ]);
+
+        self::assertIsArray($resource);
+        self::assertSame('89.1.63.01-0079', $resource['code']);
+        self::assertSame('68450', $resource['unit_price']);
+        self::assertSame('regional_catalog', $resource['price_source']);
+        self::assertSame(
+            'residential_wall_mounted_single_circuit_electric_boiler_18kw',
+            $resource['project_material_requirement']['assumption_code'],
+        );
+    }
+
+    #[Test]
     public function work_scenario_and_material_selection_keep_their_respective_assumption_identities(): void
     {
         $scenarios = new ResidentialMaterialScenarioCatalog;
@@ -183,7 +218,7 @@ final class ResidentialProjectMaterialCatalogTest extends TestCase
         self::assertSame('1850', $resource['unit_price']);
         self::assertSame('semantic_catalog_attributes_median', $resource['project_material_requirement']['selection_policy']);
         self::assertSame(
-            'residential_ceiling_luminaire_attributes:v1',
+            'residential_ceiling_luminaire_attributes:v2',
             $resource['project_material_requirement']['semantic_eligibility_policy'],
         );
         self::assertSame([52], $resource['project_material_requirement']['candidate_resource_price_ids']);
@@ -208,6 +243,63 @@ final class ResidentialProjectMaterialCatalogTest extends TestCase
             'price_source' => 'regional_catalog',
             'price_source_version' => 'region-2026-q2',
         ]]));
+    }
+
+    #[Test]
+    public function unsafe_luminaire_inside_preferred_group_is_rejected_before_median(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $requirement = $catalog->requirementForIntent([
+            'specialization_scenario' => $scenarios->issue('lighting.fixtures', 'residential'),
+        ]);
+
+        self::assertIsArray($requirement);
+        self::assertNull($catalog->resourceFromPriceRows($requirement, [(object) [
+            'price_id' => 531,
+            'resource_code' => '59.1.20.03-1001',
+            'resource_name' => 'Светильник потолочный светодиодный для офиса 600x600, IP20, 18 Вт',
+            'unit' => 'шт',
+            'base_price' => '2925.00',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => 'region-2026-q2',
+        ]]));
+    }
+
+    #[Test]
+    public function residential_luminaire_accepts_safe_eighteen_watt_mounted_model_without_ceiling_word(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $requirement = $catalog->requirementForIntent([
+            'specialization_scenario' => $scenarios->issue('lighting.fixtures', 'residential'),
+        ]);
+
+        self::assertIsArray($requirement);
+        $resource = $catalog->resourceFromPriceRows($requirement, [
+            (object) [
+                'price_id' => 532,
+                'resource_code' => '20.3.02.03-0103',
+                'resource_name' => 'Светильник светодиодный накладной IP20, 18 Вт',
+                'unit' => 'шт',
+                'base_price' => '1250.00',
+                'price_source' => 'fsnb_base',
+                'price_source_version' => 'fsnb-2022',
+            ],
+            (object) [
+                'price_id' => 533,
+                'resource_code' => '20.3.02.03-0104',
+                'resource_name' => 'Светильник потолочный светодиодный накладной IP20, 24 Вт',
+                'unit' => 'шт',
+                'base_price' => '2100.00',
+                'price_source' => 'fsnb_base',
+                'price_source_version' => 'fsnb-2022',
+            ],
+        ]);
+
+        self::assertIsArray($resource);
+        self::assertSame('20.3.02.03-0103', $resource['code']);
+        self::assertSame([532], $resource['project_material_requirement']['candidate_resource_price_ids']);
     }
 
     #[Test]
