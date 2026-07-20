@@ -24,7 +24,7 @@ final class BuildSessionSnapshot
         'ready_to_apply' => [EstimateGenerationAction::Apply, EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Cancel],
         'failed' => [EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel, EstimateGenerationAction::Archive],
         'applied' => [EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Archive],
-        'cancelled' => [EstimateGenerationAction::Archive],
+        'cancelled' => [EstimateGenerationAction::Generate, EstimateGenerationAction::Archive],
     ];
 
     /** @var array<string, string> */
@@ -187,7 +187,7 @@ final class BuildSessionSnapshot
         if ($status === EstimateGenerationStatus::ProcessingDocuments) {
             return 'wait_documents';
         }
-        if (in_array($status, [EstimateGenerationStatus::Cancelled, EstimateGenerationStatus::Archived], true)) {
+        if ($status === EstimateGenerationStatus::Archived) {
             return null;
         }
         if ($status === EstimateGenerationStatus::Applied) {

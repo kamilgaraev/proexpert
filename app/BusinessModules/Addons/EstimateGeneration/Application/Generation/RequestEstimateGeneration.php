@@ -51,6 +51,7 @@ final class RequestEstimateGeneration
                     EstimateGenerationStatus::ReadyToGenerate,
                     EstimateGenerationStatus::EstimateReviewRequired,
                     EstimateGenerationStatus::ReadyToApply,
+                    EstimateGenerationStatus::Cancelled,
                 ], ['input_payload' => [...($session->input_payload ?? []), 'generation_mode' => $generationMode]]);
             }
         }

@@ -87,7 +87,7 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
-    public function terminal_service_action_is_not_recommended_as_navigation(): void
+    public function cancelled_session_recommends_regeneration_instead_of_archive(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
             session: $this->makeSession(EstimateGenerationStatus::Cancelled),
@@ -95,8 +95,8 @@ final class BuildSessionSnapshotTest extends TestCase
             readinessSummary: ['blockers' => [], 'warnings' => []],
         );
 
-        self::assertSame(['archive'], array_column($snapshot->availableActions, 'action'));
-        self::assertNull($snapshot->nextAction);
+        self::assertSame(['generate', 'archive'], array_column($snapshot->availableActions, 'action'));
+        self::assertSame('generate', $snapshot->nextAction);
     }
 
     #[Test]
@@ -201,7 +201,7 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
-    public function cancelled_session_exposes_only_archive(): void
+    public function cancelled_session_can_be_regenerated_or_archived(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
             session: $this->makeSession(EstimateGenerationStatus::Cancelled),
@@ -209,7 +209,7 @@ final class BuildSessionSnapshotTest extends TestCase
             readinessSummary: ['blockers' => [], 'warnings' => []],
         );
 
-        self::assertSame(['archive'], array_column($snapshot->availableActions, 'action'));
+        self::assertSame(['generate', 'archive'], array_column($snapshot->availableActions, 'action'));
     }
 
     #[Test]
