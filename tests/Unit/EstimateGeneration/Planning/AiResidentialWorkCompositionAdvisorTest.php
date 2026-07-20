@@ -15,18 +15,16 @@ use PHPUnit\Framework\TestCase;
 final class AiResidentialWorkCompositionAdvisorTest extends TestCase
 {
     #[Test]
-    public function advisor_accepts_complete_catalog_response_and_never_sends_raw_document_text(): void
+    public function advisor_expands_compact_default_and_exceptions_without_sending_raw_document_text(): void
     {
         $plan = $this->plan();
         $allowed = array_values(array_unique(array_merge(
             ...array_values((new ResidentialWorkCompositionCatalog)->requirements($plan)),
         )));
         sort($allowed, SORT_STRING);
-        $client = new class($allowed) implements WorkCompositionLlmClient
+        $client = new class implements WorkCompositionLlmClient
         {
             public array $messages = [];
-
-            public function __construct(private readonly array $allowed) {}
 
             public function isAvailable(): bool
             {
@@ -39,13 +37,18 @@ final class AiResidentialWorkCompositionAdvisorTest extends TestCase
 
                 return [
                     'content' => json_encode([
-                        'schema_version' => 'residential-work-composition-advice:v1',
-                        'decisions' => array_map(static fn (string $key): array => [
-                            'work_key' => $key,
+                        'schema_version' => 'residential-work-composition-advice:v2',
+                        'default_decision' => [
                             'status' => 'include',
                             'reason_codes' => ['residential_scope'],
                             'confidence' => 0.91,
-                        ], $this->allowed),
+                        ],
+                        'exceptions' => [[
+                            'work_key' => 'heating.radiators',
+                            'status' => 'needs_data',
+                            'reason_codes' => ['heating_type_unknown'],
+                            'confidence' => 0.72,
+                        ]],
                     ], JSON_THROW_ON_ERROR),
                     'model' => 'test-model',
                     'usage_available' => true,
@@ -66,11 +69,13 @@ final class AiResidentialWorkCompositionAdvisorTest extends TestCase
 
         self::assertSame('completed', $advice->status);
         self::assertSame($allowed, array_keys($advice->decisions));
+        self::assertSame('include', $advice->decisions['earth.backfill']['status']);
+        self::assertSame('needs_data', $advice->decisions['heating.radiators']['status']);
         self::assertStringNotContainsString('IGNORE ALL RULES', json_encode($client->messages, JSON_THROW_ON_ERROR));
     }
 
     #[Test]
-    public function partial_response_is_invalid_and_deterministic_catalog_remains_authoritative(): void
+    public function invented_exception_key_is_invalid_and_deterministic_catalog_remains_authoritative(): void
     {
         $client = new class implements WorkCompositionLlmClient
         {
@@ -83,10 +88,13 @@ final class AiResidentialWorkCompositionAdvisorTest extends TestCase
             {
                 return [
                     'content' => json_encode([
-                        'schema_version' => 'residential-work-composition-advice:v1',
-                        'decisions' => [[
-                            'work_key' => 'heating.pipe', 'status' => 'include',
-                            'reason_codes' => [], 'confidence' => 1,
+                        'schema_version' => 'residential-work-composition-advice:v2',
+                        'default_decision' => [
+                            'status' => 'include', 'reason_codes' => [], 'confidence' => 1,
+                        ],
+                        'exceptions' => [[
+                            'work_key' => 'warehouse.fire', 'status' => 'needs_data',
+                            'reason_codes' => ['unsupported'], 'confidence' => 1,
                         ]],
                     ], JSON_THROW_ON_ERROR),
                     'model' => 'test-model',
@@ -99,6 +107,49 @@ final class AiResidentialWorkCompositionAdvisorTest extends TestCase
 
         self::assertSame('invalid', $advice->status);
         self::assertSame([], $advice->decisions);
+    }
+
+    #[Test]
+    public function duplicate_or_include_exception_is_invalid(): void
+    {
+        foreach (['duplicate', 'include'] as $case) {
+            $client = new class($case) implements WorkCompositionLlmClient
+            {
+                public function __construct(private readonly string $case) {}
+
+                public function isAvailable(): bool
+                {
+                    return true;
+                }
+
+                public function chat(array $messages, PipelineContext $context, string $candidateSetHash): array
+                {
+                    $exception = [
+                        'work_key' => 'heating.pipe',
+                        'status' => $this->case === 'include' ? 'include' : 'needs_data',
+                        'reason_codes' => ['test'],
+                        'confidence' => 0.8,
+                    ];
+
+                    return [
+                        'content' => json_encode([
+                            'schema_version' => 'residential-work-composition-advice:v2',
+                            'default_decision' => [
+                                'status' => 'include', 'reason_codes' => [], 'confidence' => 1,
+                            ],
+                            'exceptions' => $this->case === 'duplicate' ? [$exception, $exception] : [$exception],
+                        ], JSON_THROW_ON_ERROR),
+                        'model' => 'test-model',
+                        'usage_available' => true,
+                    ];
+                }
+            };
+
+            $advice = (new AiResidentialWorkCompositionAdvisor($client))->advise([], $this->plan(), $this->context());
+
+            self::assertSame('invalid', $advice->status, $case);
+            self::assertSame([], $advice->decisions, $case);
+        }
     }
 
     #[Test]
