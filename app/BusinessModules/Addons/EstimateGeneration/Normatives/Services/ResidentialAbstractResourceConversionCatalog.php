@@ -39,6 +39,14 @@ final class ResidentialAbstractResourceConversionCatalog
             'assumption' => 'interior_ceramic_wall_tile_group:06.2.01.02',
             'name_markers' => ['плит', 'керамич', 'внутренн', 'стен'],
         ],
+        '17-01-003-01|18.2.06.08' => [
+            'candidate_group_code' => '18.2.06.08',
+            'from_unit' => '10 шт',
+            'to_unit' => 'шт',
+            'factor' => '0.1',
+            'assumption' => 'toilet_flexible_water_connector_per_piece:0.1',
+            'name_markers' => ['подводк', 'гибк', 'армирован', 'резинов'],
+        ],
         '17-01-001-14|18.2.02.08' => [
             'candidate_group_code' => '18.2.02.08',
             'from_unit' => 'шт',

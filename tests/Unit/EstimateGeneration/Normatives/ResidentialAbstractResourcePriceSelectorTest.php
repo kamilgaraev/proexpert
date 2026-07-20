@@ -159,6 +159,44 @@ final class ResidentialAbstractResourcePriceSelectorTest extends TestCase
     }
 
     #[Test]
+    public function toilet_norm_selects_a_water_connector_and_rejects_a_gas_connector(): void
+    {
+        $waterConnector = (object) [
+            'price_resource_code' => '18.2.06.08-0013',
+            'price_resource_name' => 'Подводки гибкие армированные резиновые, диаметр 15 мм, длина 500 мм',
+            'price_unit' => '10 шт',
+            'base_price' => 1_800,
+            'price_id' => 24,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+        $gasConnector = (object) [
+            'price_resource_code' => '18.2.06.08-0025',
+            'price_resource_name' => 'Подводка гибкая к газовым приборам, сильфонная, диаметр 15 мм, длина 1200 мм',
+            'price_unit' => 'шт',
+            'base_price' => 312,
+            'price_id' => 25,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+
+        $selection = (new ResidentialAbstractResourcePriceSelector)->select(
+            '17-01-003-01',
+            '18.2.06.08',
+            [$gasConnector, $waterConnector],
+            [4],
+        );
+
+        self::assertNotNull($selection);
+        self::assertSame('18.2.06.08-0013', $selection['row']->price_resource_code);
+        self::assertSame(180.0, $selection['row']->unit_price);
+        self::assertSame('шт', $selection['row']->price_unit);
+        self::assertSame('toilet_flexible_water_connector_per_piece:0.1', $selection['assumption']);
+    }
+
+    #[Test]
     public function supports_only_verified_residential_resource_conversions(): void
     {
         $selector = new ResidentialAbstractResourcePriceSelector;

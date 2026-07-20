@@ -35,6 +35,8 @@ final class ResidentialWorkCompositionCatalogTest extends TestCase
         self::assertContains('sanitary.toilets', $requirements['plumbing']);
         self::assertContains('sanitary.washbasins', $requirements['plumbing']);
         self::assertNotContains('sewerage.risers', $requirements['sewerage']);
+        self::assertNotContains('sewerage.outlets', $requirements['sewerage']);
+        self::assertNotContains('heating.unit', $requirements['heating']);
         self::assertContains('heating.radiators', $requirements['heating']);
 
         $all = array_merge(...array_values($requirements));

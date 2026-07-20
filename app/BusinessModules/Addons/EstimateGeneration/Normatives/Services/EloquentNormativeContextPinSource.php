@@ -23,6 +23,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         private AbstractResourceCoverageDiagnostics $abstractResourceCoverageDiagnostics = new AbstractResourceCoverageDiagnostics,
         private AbstractResourceSemanticPriceSelector $abstractResourceSemanticPriceSelector = new AbstractResourceSemanticPriceSelector,
         private ResidentialAbstractResourcePriceSelector $residentialAbstractResourcePriceSelector = new ResidentialAbstractResourcePriceSelector,
+        private ResidentialProjectMaterialCatalog $projectMaterials = new ResidentialProjectMaterialCatalog,
     ) {}
 
     public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
@@ -813,15 +814,93 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
 
             return null;
         }
-        $this->telemetry('approved', ['intents_count' => count($intents), 'selected_count' => $norms->count(), 'resource_rows_count' => $resourceRows->count(), 'candidates_count' => count($candidates)]);
-        $canonical = json_encode($candidates, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION);
+        $supplementaryMaterials = $this->supplementaryMaterials($requested, $basePriceDatasetIds, $intents);
+        $this->telemetry('approved', ['intents_count' => count($intents), 'selected_count' => $norms->count(), 'resource_rows_count' => $resourceRows->count(), 'candidates_count' => count($candidates), 'supplementary_materials_count' => count($supplementaryMaterials)]);
+        $canonical = json_encode(
+            ['catalog_candidates' => $candidates, 'supplementary_materials' => $supplementaryMaterials],
+            JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION,
+        );
 
         return new NormativeContextPinData(
             $requested->datasetId, $requested->datasetVersion, $requested->applicabilityDate,
             $requested->regionId, $requested->priceZoneId, $requested->periodId,
             $requested->regionalPriceVersionId, $requested->priceVersion,
-            $candidates, hash('sha256', $canonical),
+            $candidates, hash('sha256', $canonical), $supplementaryMaterials,
         );
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function supplementaryMaterials(NormativeContextPinData $requested, array $basePriceDatasetIds, array $intents): array
+    {
+        $requirements = [];
+        foreach ($intents as $intent) {
+            $requirement = $this->projectMaterials->requirementForIntent($intent);
+            if ($requirement !== null) {
+                $requirements[(string) $requirement['work_item_key']] = $requirement;
+            }
+        }
+        if ($requirements === []) {
+            return [];
+        }
+
+        $rows = $this->database->table('estimate_resource_prices as project_prices')
+            ->leftJoin('estimate_dataset_versions as project_datasets', 'project_datasets.id', '=', 'project_prices.dataset_version_id')
+            ->leftJoin('estimate_regional_price_versions as project_regional_versions', 'project_regional_versions.id', '=', 'project_prices.regional_price_version_id')
+            ->whereIn('project_prices.resource_code', array_values(array_unique(array_column($requirements, 'resource_code'))))
+            ->where('project_prices.base_price', '>', 0)
+            ->where(function ($context) use ($requested, $basePriceDatasetIds): void {
+                $context->where(function ($regional) use ($requested): void {
+                    $regional->where('project_prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                        ->where('project_prices.region_id', $requested->regionId)
+                        ->where('project_prices.price_zone_id', $requested->priceZoneId)
+                        ->where('project_prices.period_id', $requested->periodId);
+                })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                    $base->whereIn('project_prices.dataset_version_id', $basePriceDatasetIds)
+                        ->whereIn('project_datasets.source_type', ['fsbc', 'fsnb_2022'])
+                        ->whereNull('project_prices.regional_price_version_id');
+                });
+            })
+            ->orderByRaw('CASE WHEN project_prices.regional_price_version_id = ? THEN 0 ELSE 1 END', [$requested->regionalPriceVersionId])
+            ->orderByRaw("CASE project_datasets.source_type WHEN 'fsbc' THEN 0 WHEN 'fsnb_2022' THEN 1 ELSE 2 END")
+            ->orderByDesc('project_prices.id')
+            ->get([
+                'project_prices.id as price_id', 'project_prices.construction_resource_id',
+                'project_prices.resource_code', 'project_prices.resource_name', 'project_prices.unit',
+                'project_prices.base_price', 'project_prices.regional_price_version_id',
+                'project_datasets.source_type as dataset_source_type',
+                'project_datasets.version_key as dataset_version',
+                'project_regional_versions.version_key as regional_version',
+            ]);
+
+        $result = [];
+        foreach ($requirements as $requirement) {
+            $selected = null;
+            foreach ($rows as $row) {
+                if ((string) $row->resource_code === $requirement['resource_code']
+                    && trim((string) $row->unit) === $requirement['source_unit']) {
+                    $selected = $row;
+                    break;
+                }
+            }
+            $resource = null;
+            if ($selected !== null) {
+                $selected->price_source = (int) ($selected->regional_price_version_id ?? 0) === $requested->regionalPriceVersionId
+                    ? 'regional_catalog'
+                    : ((string) ($selected->dataset_source_type ?? '') === 'fsbc' ? 'fsbc_base' : 'fsnb_base');
+                $selected->price_source_version = $selected->price_source === 'regional_catalog'
+                    ? (string) $selected->regional_version
+                    : (string) $selected->dataset_version;
+                $resource = $this->projectMaterials->resourceFromPriceRow($requirement, $selected);
+            }
+            $result[] = [
+                'work_item_key' => $requirement['work_item_key'],
+                'requirement' => $requirement,
+                'status' => $resource === null ? 'price_missing' : 'priced',
+                'resource' => $resource,
+            ];
+        }
+
+        return $result;
     }
 
     private function telemetryPrePriceCandidates(

@@ -6,11 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v12';
+    private const CATALOG_VERSION = 'residential_material_scenario:v13';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v12';
+    private const SCENARIO_ID = 'residential_preliminary_common:v13';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v12';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v13';
 
     /**
      * @var array<string, array{
@@ -170,13 +170,13 @@ final class ResidentialMaterialScenarioCatalog
             'normative_search_text' => 'светильник потолочный с креплением винтами для помещений с нормальными условиями среды одноламповый',
             'normative_rate_code' => '08-03-593-06',
         ],
-        'heating.unit' => [
-            'material_markers' => ['котел', 'котл', 'отопительн'],
-            'assumption_code' => 'residential_assembled_heating_boiler',
-            'intent_action' => 'heating_equipment',
-            'work_item_name' => 'Установка отопительного котла',
-            'normative_search_text' => 'установка отопительного котла поставляемого в сборе',
-            'normative_rate_code' => '18-01-001-01',
+        'heating.radiators' => [
+            'material_markers' => ['радиатор', 'стальн', 'отопительн'],
+            'assumption_code' => 'residential_steel_radiators',
+            'intent_action' => 'heating_emitter_installation',
+            'work_item_name' => 'Установка стальных радиаторов',
+            'normative_search_text' => 'установка стальных радиаторов с присоединением к трубопроводам',
+            'normative_rate_code' => '18-03-001-02',
         ],
         'sanitary.waterproofing' => [
             'material_markers' => ['гидроизоляц', 'обмазочн', 'мастик'],

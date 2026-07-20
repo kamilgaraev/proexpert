@@ -13,9 +13,9 @@ use Brick\Math\RoundingMode;
 
 final class ResidentialQuantityScenarioCatalog
 {
-    public const VERSION = '2.7.0';
+    public const VERSION = '2.8.0';
 
-    public const SCENARIO_ID = 'residential_preliminary_scenario:v10';
+    public const SCENARIO_ID = 'residential_preliminary_scenario:v11';
 
     private const UNITS = [
         'electrical.grounding' => 'm',
@@ -26,8 +26,7 @@ final class ResidentialQuantityScenarioCatalog
         'electrical.switches' => 'pcs',
         'foundation.prep' => 'm3',
         'heating.pipe' => 'm',
-        'heating.radiators' => 'pcs',
-        'heating.unit' => 'pcs',
+        'heating.radiators' => 'kw',
         'lighting.lines' => 'm',
         'lighting.fixtures' => 'pcs',
         'openings.doors' => 'm2',
@@ -44,7 +43,6 @@ final class ResidentialQuantityScenarioCatalog
         'sanitary.washbasins' => 'pcs',
         'sanitary.tile' => 'm2',
         'sanitary.waterproofing' => 'm2',
-        'sewerage.outlets' => 'pcs',
         'sewerage.pipe' => 'm',
         'stairs.flights' => 'm2',
         'stairs.railings' => 'm',
@@ -170,26 +168,13 @@ final class ResidentialQuantityScenarioCatalog
             ] as $key => [$unit, $factor, $assumption]) {
                 $quantities[$key] = $this->scaled($key, $unit, $floorArea, $factor, [$assumption]);
             }
-            $quantities['heating.unit'] = $this->countBased(
-                'heating.unit',
-                'pcs',
-                1,
-                '1',
-                $model,
-                $serviceRooms !== [] ? 'service_room_count' : 'residential_heat_source_count',
-                [
-                    $serviceRooms !== [] ? 'one_heat_source_for_documented_service_rooms' : 'one_heat_source_per_house',
-                    ...$areaBasisAssumptions,
-                ],
-            );
-            $quantities['heating.radiators'] = $this->countBased(
+            $omissions[] = $this->omission('heating.unit', 'heating_source_type_missing');
+            $quantities['heating.radiators'] = $this->scaled(
                 'heating.radiators',
-                'pcs',
-                max(1, (int) ceil((float) $floorArea->amount / 15)),
-                '1',
-                $model,
-                'heated_area_per_radiator_m2:15',
-                ['preliminary_radiator_count_by_heated_area', ...$areaBasisAssumptions],
+                'kw',
+                $floorArea,
+                '0.10',
+                ['residential_heat_load_kw_per_m2:0.10', ...$areaBasisAssumptions],
             );
             $quantities['electrical.panel'] = $this->countBased(
                 'electrical.panel', 'pcs', 1, '1', $model, 'residential_house_count',
@@ -322,10 +307,7 @@ final class ResidentialQuantityScenarioCatalog
                 $omissions[] = $this->omission($fixtureKey, 'documented_wet_rooms_missing');
             }
         }
-        $quantities['sewerage.outlets'] = $this->countBased(
-            'sewerage.outlets', 'pcs', 1, '1', $model, 'residential_house_count',
-            ['one_preliminary_sewer_outlet_per_house'],
-        );
+        $omissions[] = $this->omission('sewerage.outlets', 'sewer_outlet_route_missing');
 
         $finishedWetRoomAreas = array_values(array_filter(array_map(
             fn (RoomData $room): ?array => $this->roomArea($room),

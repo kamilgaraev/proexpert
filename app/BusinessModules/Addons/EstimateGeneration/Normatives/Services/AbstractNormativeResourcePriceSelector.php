@@ -105,8 +105,15 @@ final readonly class AbstractNormativeResourcePriceSelector
     {
         return array_values(array_filter($candidates, function (object $candidate) use ($target): bool {
             $candidateAttributes = $this->hardAttributes((string) ($candidate->price_resource_name ?? ''));
-            if ($candidateAttributes['diameter_conflict']
-                || ($target['diameter'] !== null && $candidateAttributes['diameter'] !== $target['diameter'])) {
+            if ($candidateAttributes['diameter_conflict']) {
+                return false;
+            }
+            if ($target['diameter'] !== null
+                && $candidateAttributes['diameter'] !== $target['diameter']
+                && ! $this->diameterRangeContains(
+                    (string) ($candidate->price_resource_name ?? ''),
+                    $target['diameter'],
+                )) {
                 return false;
             }
             if ($target['diameter_max'] !== null) {
@@ -138,7 +145,27 @@ final readonly class AbstractNormativeResourcePriceSelector
         $normalizedGroup = mb_strtolower(str_replace('ё', 'е', trim($groupName)));
         $isPipeGroup = preg_match('/\bтруб(?:а|ы|опровод)/u', $normalizedGroup) === 1
             && preg_match('/хомут|креплен/u', $normalizedGroup) !== 1;
+        $isClampGroup = preg_match('/хомут|креплен/u', $normalizedGroup) === 1;
         $normalizedNorm = mb_strtolower(str_replace('ё', 'е', trim($normName)));
+        if ($isClampGroup) {
+            $normAttributes = $this->hardAttributes($normName);
+            $diameters = array_values(array_unique(array_filter([
+                $groupAttributes['diameter'],
+                $normAttributes['diameter'],
+            ], static fn (?float $value): bool => $value !== null), SORT_REGULAR));
+
+            return [
+                ...$groupAttributes,
+                'diameter' => count($diameters) === 1 ? $diameters[0] : null,
+                'diameter_conflict' => $groupAttributes['diameter_conflict']
+                    || $normAttributes['diameter_conflict']
+                    || count($diameters) > 1,
+                'purposes' => array_values(array_unique([
+                    ...$groupAttributes['purposes'],
+                    ...$normAttributes['purposes'],
+                ])),
+            ];
+        }
         $inheritsNormAttributes = $isPipeGroup
             || preg_match('/оконн\w*\s+блок|блок\w*\s+окон/u', $normalizedGroup.' '.$normalizedNorm) === 1
             || str_contains($normalizedGroup.' '.$normalizedNorm, 'воздуховод');
@@ -273,5 +300,22 @@ final readonly class AbstractNormativeResourcePriceSelector
             || $attributes['material'] !== null
             || $attributes['polarity'] !== null
             || $attributes['purposes'] !== [];
+    }
+
+    private function diameterRangeContains(string $source, float $diameter): bool
+    {
+        $text = mb_strtolower(str_replace('ё', 'е', trim($source)));
+        if (preg_match(
+            '/диаметр\w*\s*(?:от\s*)?(\d{1,4}(?:[.,]\d+)?)\s*(?:-|–|—|до)\s*(\d{1,4}(?:[.,]\d+)?)/u',
+            $text,
+            $matches,
+        ) !== 1) {
+            return false;
+        }
+
+        $minimum = (float) str_replace(',', '.', $matches[1]);
+        $maximum = (float) str_replace(',', '.', $matches[2]);
+
+        return $minimum <= $diameter && $diameter <= $maximum;
     }
 }

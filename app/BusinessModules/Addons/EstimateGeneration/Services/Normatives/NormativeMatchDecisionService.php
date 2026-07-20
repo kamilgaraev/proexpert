@@ -300,7 +300,7 @@ class NormativeMatchDecisionService
                 return ['20'];
             }
 
-            if ($system === 'heating' && $action === 'heating_equipment') {
+            if ($system === 'heating' && in_array($action, ['heating_equipment', 'heating_emitter_installation'], true)) {
                 return ['18', '20'];
             }
 

@@ -192,7 +192,7 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         $intent = $factory->intent($item, $context, 'fsnb-2026.1');
 
         self::assertSame(['ламинат', 'ламинированн'], $intent->specializationScenario['material_markers'] ?? null);
-        self::assertSame('residential_preliminary_common:v12', $intent->specializationScenario['scenario_id'] ?? null);
+        self::assertSame('residential_preliminary_common:v13', $intent->specializationScenario['scenario_id'] ?? null);
     }
 
     public function test_signed_engineering_scenario_overrides_ambiguous_classifier_action_and_section(): void

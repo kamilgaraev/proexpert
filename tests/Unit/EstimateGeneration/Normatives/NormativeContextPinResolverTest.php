@@ -416,25 +416,55 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
-    public function abstract_clamp_group_does_not_inherit_pipe_material_and_diameter_from_norm_title(): void
+    public function abstract_clamp_group_uses_the_pipe_diameter_without_inheriting_its_material(): void
     {
         $selection = (new AbstractNormativeResourcePriceSelector)->select(
             '24.1.02.01',
             11,
-            [(object) [
-                'price_id' => 1,
-                'price_resource_code' => '24.1.02.01-0001',
-                'price_resource_name' => 'Хомут стальной для крепления труб',
-                'base_price' => '320',
-                'regional_price_version_id' => 11,
-            ]],
+            [
+                (object) [
+                    'price_id' => 1,
+                    'price_resource_code' => '24.1.02.01-0001',
+                    'price_resource_name' => 'Хомут металлический оцинкованный для крепления труб, диаметр от 20 до 24 мм',
+                    'base_price' => '80',
+                    'regional_price_version_id' => 11,
+                ],
+                (object) [
+                    'price_id' => 2,
+                    'price_resource_code' => '24.1.02.01-0020',
+                    'price_resource_name' => 'Хомут металлический оцинкованный для крепления труб, диаметр от 68 до 73 мм',
+                    'base_price' => '120',
+                    'regional_price_version_id' => 11,
+                ],
+            ],
             [],
             'Прокладка трубопроводов из полипропиленовых труб наружным диаметром 20 мм',
             'Хомуты для крепления труб',
         );
 
         self::assertSame(1, $selection['row']->price_id ?? null);
-        self::assertSame('regional_child_median:v1', $selection['policy'] ?? null);
+        self::assertSame('regional_child_hard_attributes_median:v2', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function abstract_clamp_group_fails_closed_when_no_candidate_fits_the_pipe_diameter(): void
+    {
+        $selection = (new AbstractNormativeResourcePriceSelector)->select(
+            '24.1.02.01',
+            11,
+            [(object) [
+                'price_id' => 2,
+                'price_resource_code' => '24.1.02.01-0020',
+                'price_resource_name' => 'Хомут металлический для крепления труб, диаметр от 68 до 73 мм',
+                'base_price' => '120',
+                'regional_price_version_id' => 11,
+            ]],
+            [],
+            'Прокладка трубопроводов наружным диаметром 20 мм',
+            'Хомуты для крепления труб',
+        );
+
+        self::assertNull($selection);
     }
 
     #[Test]
@@ -565,6 +595,7 @@ final class NormativeContextPinResolverTest extends TestCase
                         $requested->regionId, $requested->priceZoneId, $requested->periodId,
                         $requested->regionalPriceVersionId, $requested->priceVersion,
                         [['candidate_id' => '101']], str_repeat('a', 64),
+                        [['work_item_key' => 'electrical.power_lines', 'status' => 'price_missing', 'resource' => null]],
                     )
                     : null;
             }
@@ -593,6 +624,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertSame(77, $pin['dataset_id']);
         self::assertSame(11, $pin['regional_price_version_id']);
         self::assertSame([['candidate_id' => '101']], $pin['catalog_candidates']);
+        self::assertSame('electrical.power_lines', $pin['supplementary_materials'][0]['work_item_key']);
         self::assertSame('2026-07-01', $pin['applicability_date']);
         self::assertSame($pin, $resolver->resolve($context, $intents));
         self::assertSame(2, $source->calls);

@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v12', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v13', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -98,7 +98,8 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         self::assertSame('socket_installation', $catalog->issue('electrical.outlets', 'residential')['intent_action'] ?? null);
         self::assertSame('socket_installation', $catalog->issue('electrical.switches', 'residential')['intent_action'] ?? null);
         self::assertSame('lighting_fixture_installation', $catalog->issue('lighting.fixtures', 'residential')['intent_action'] ?? null);
-        self::assertSame('heating_equipment', $catalog->issue('heating.unit', 'residential')['intent_action'] ?? null);
+        self::assertNull($catalog->issue('heating.unit', 'residential'));
+        self::assertSame('heating_emitter_installation', $catalog->issue('heating.radiators', 'residential')['intent_action'] ?? null);
         self::assertSame('concreting', $catalog->issue('foundation.prep', 'residential')['intent_action'] ?? null);
         self::assertSame('sanitary_fixture_installation', $catalog->issue('sanitary.showers', 'residential')['intent_action'] ?? null);
         self::assertSame('sanitary_fixture_installation', $catalog->issue('sanitary.toilets', 'residential')['intent_action'] ?? null);
@@ -239,10 +240,10 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'светильник потолочный с креплением винтами для помещений с нормальными условиями среды одноламповый',
             '08-03-593-06',
         ];
-        yield 'assembled residential heating boiler' => [
-            'heating.unit',
-            'установка отопительного котла поставляемого в сборе',
-            '18-01-001-01',
+        yield 'residential steel radiators by heat output' => [
+            'heating.radiators',
+            'установка стальных радиаторов с присоединением к трубопроводам',
+            '18-03-001-02',
         ];
         yield 'wet zone waterproofing' => [
             'sanitary.waterproofing',

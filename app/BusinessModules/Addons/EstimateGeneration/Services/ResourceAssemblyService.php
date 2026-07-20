@@ -616,6 +616,8 @@ class ResourceAssemblyService
                     'quantity_basis' => 'normative_resource',
                     'unit_price' => $unitPrice,
                     'total_price' => round($quantity * $unitPrice, 2),
+                    'price_source' => $resource['price_source'],
+                    'price_source_version' => $resource['price_source_version'] ?? $version['version_key'],
                     'source' => 'fsnb_2022:'.$version['version_key'],
                     'confidence' => $selected['confidence'],
                     ...($projectResourceSelection !== null ? ['project_resource_selection' => $projectResourceSelection] : []),

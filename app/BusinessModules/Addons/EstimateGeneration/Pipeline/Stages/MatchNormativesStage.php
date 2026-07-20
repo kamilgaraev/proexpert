@@ -200,6 +200,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
 
         return $this->results->make($context, $this->stage(), [
             'regional_context' => $regionalContext,
+            'supplementary_materials' => is_array($pin['supplementary_materials'] ?? null) ? $pin['supplementary_materials'] : [],
             'local_estimates' => $data['local_estimates'],
         ]);
     }

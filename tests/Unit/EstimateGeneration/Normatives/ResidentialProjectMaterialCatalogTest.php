@@ -1,0 +1,103 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\EstimateGeneration\Normatives;
+
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialProjectMaterialCatalog;
+use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\TestCase;
+
+final class ResidentialProjectMaterialCatalogTest extends TestCase
+{
+    #[Test]
+    public function every_residential_electrical_scenario_has_an_exact_project_material(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $expected = [
+            'electrical.main_cable' => '21.1.06.09-0154',
+            'electrical.power_lines' => '21.1.06.09-0152',
+            'lighting.lines' => '21.1.06.09-0151',
+            'electrical.panel' => '20.4.04.02-0003',
+            'electrical.outlets' => '20.4.03.06-1036',
+            'electrical.switches' => '20.4.01.02-1023',
+            'lighting.fixtures' => '59.1.20.03-0798',
+        ];
+
+        foreach ($expected as $workItemKey => $resourceCode) {
+            $requirement = $catalog->requirementForIntent([
+                'specialization_scenario' => $scenarios->issue($workItemKey, 'residential'),
+            ]);
+
+            self::assertSame($resourceCode, $requirement['resource_code'] ?? null, $workItemKey);
+        }
+    }
+
+    #[Test]
+    public function only_a_signed_residential_scenario_can_request_a_project_material(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $scenario = $scenarios->issue('electrical.power_lines', 'residential');
+
+        self::assertIsArray($scenario);
+        self::assertSame('21.1.06.09-0152', $catalog->requirementForIntent([
+            'specialization_scenario' => $scenario,
+        ])['resource_code'] ?? null);
+        self::assertNull($catalog->requirementForIntent([
+            'specialization_scenario' => [...$scenario, 'signature' => 'tampered'],
+        ]));
+    }
+
+    #[Test]
+    public function cable_price_is_converted_from_catalog_thousand_metres_and_keeps_provenance(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $requirement = $catalog->requirementForIntent([
+            'specialization_scenario' => $scenarios->issue('lighting.lines', 'residential'),
+        ]);
+
+        self::assertIsArray($requirement);
+        $resource = $catalog->resourceFromPriceRow($requirement, (object) [
+            'price_id' => 31,
+            'resource_code' => '21.1.06.09-0151',
+            'resource_name' => 'Кабель силовой с медными жилами ВВГнг(A)-LS 3х1,5ок(N, PE)-660',
+            'unit' => '1000 м',
+            'base_price' => '72500.00',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => 'region-2026-q2',
+            'construction_resource_id' => 91,
+        ]);
+
+        self::assertIsArray($resource);
+        self::assertSame('72500', $resource['unit_price']);
+        self::assertSame(0.00105, $resource['quantity']);
+        self::assertSame('regional_catalog', $resource['price_source']);
+        self::assertSame('1000 м', $resource['project_material_requirement']['source_price_unit']);
+        self::assertSame('1', $resource['project_material_requirement']['price_conversion_factor']);
+    }
+
+    #[Test]
+    public function mismatched_price_identity_fails_closed(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $requirement = $catalog->requirementForIntent([
+            'specialization_scenario' => $scenarios->issue('electrical.outlets', 'residential'),
+        ]);
+
+        self::assertIsArray($requirement);
+        self::assertNull($catalog->resourceFromPriceRow($requirement, (object) [
+            'price_id' => 32,
+            'resource_code' => '20.4.03.05-0004',
+            'resource_name' => 'Розетка открытой проводки',
+            'unit' => 'шт',
+            'base_price' => '100',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => 'region-2026-q2',
+        ]));
+    }
+}
