@@ -76,6 +76,16 @@ final class OnlyOfficeCallbackTest extends TestCase
         self::assertStringContainsString('$input->status === 6', $service);
     }
 
+    public function test_failed_terminal_callback_requires_an_explicit_new_generation_replacement(): void
+    {
+        $service = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/LegalDocumentEditorSessionService.php');
+        self::assertIsString($service);
+        self::assertStringContainsString('supersedes_save_id', $service);
+        self::assertStringContainsString('legal_document_editor_callback_failed_replay', $service);
+        self::assertStringContainsString("where('terminal', true)", $service);
+        self::assertStringContainsString("where('state', 'failed')", $service);
+    }
+
     public function test_mode_and_permission_are_bound_to_persisted_session(): void
     {
         $service = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/LegalDocumentEditorSessionService.php');
@@ -96,6 +106,20 @@ final class OnlyOfficeCallbackTest extends TestCase
         self::assertLessThan(strpos($claim, 'reauthorizeSessionActor'), strpos($claim, "state === 'completed'"));
         $complete = substr($service, (int) strpos($service, 'private function completeSave'), 5000);
         self::assertStringContainsString('reauthorizeSessionActor', $complete);
+    }
+
+    public function test_editor_session_has_one_actor_and_save_is_attributed_to_that_actor(): void
+    {
+        $service = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/LegalDocumentEditorSessionService.php');
+        self::assertIsString($service);
+        self::assertStringContainsString('(int) $existing->opened_by_user_id !== (int) $actor->id', $service);
+        self::assertStringContainsString("throw new DomainException('legal_document_editor_actor_conflict')", $service);
+        self::assertStringContainsString("where('editor_session_id', \$session->id)->get()", $service);
+        self::assertStringContainsString('$participants->count() !== 1', $service);
+        self::assertStringContainsString('uploadedByUserId: (int) $session->opened_by_user_id', $service);
+        self::assertStringContainsString("'editor_actor_user_id' => (int) \$session->opened_by_user_id", $service);
+        self::assertStringContainsString("recordForActorId('editor_version_saved', \$document, (int) \$session->opened_by_user_id", $service);
+        self::assertStringNotContainsString('editor_participant_user_ids', $service);
     }
 
     public function test_editor_version_label_is_translated_and_utf8_clean(): void

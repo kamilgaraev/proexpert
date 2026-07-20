@@ -114,6 +114,23 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
         self::assertStringNotContainsString("lockForUpdate()->max('generation')", $source);
     }
 
+    public function test_database_rejects_second_participant_for_the_same_session(): void
+    {
+        $this->openSession();
+        $session = $this->first->table('legal_document_editor_sessions')->sole();
+        try {
+            $this->first->table('legal_document_editor_participants')->insert([
+                'id' => (string) Str::uuid(), 'organization_id' => 1, 'editor_session_id' => $session->id,
+                'actor_key' => hash('sha256', 'second-actor'), 'user_id' => 1, 'provider_user_id' => 'second',
+                'required_ability' => 'edit', 'joined_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            self::fail('A persistent editor session must have exactly one participant identity.');
+        } catch (\Throwable $exception) {
+            self::assertStringContainsString('legal_editor_participants_session_unique', $exception->getMessage());
+        }
+        self::assertSame(1, $this->first->table('legal_document_editor_participants')->count());
+    }
+
     public function test_callback_replay_creates_one_completed_save(): void
     {
         $payload = $this->openSession();
@@ -192,6 +209,51 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
         self::assertSame([6, 6, 2], $this->first->table('legal_document_editor_saves')
             ->orderBy('save_generation')->pluck('callback_status')->map(static fn (mixed $value): int => (int) $value)->all());
         self::assertSame(3, $this->first->table('legal_document_editor_saves')->count());
+    }
+
+    public function test_failed_terminal_save_is_replaced_by_new_signed_callback_generation(): void
+    {
+        $payload = $this->openSession();
+        $session = $this->first->table('legal_document_editor_sessions')->sole();
+        $failed = new EditorCallbackInput((string) $session->id, $payload->documentKey, 2,
+            'https://office.example.test/expired.docx', 'terminal-failed', 'token');
+        try {
+            $this->service($this->first, new class implements EditorDocumentFetcher
+            {
+                public function fetch(string $url, string $expectedExtension): DownloadedEditorDocument
+                {
+                    throw new RuntimeException('expired_editor_url');
+                }
+            })->handleCallback($failed);
+            self::fail('The first callback must preserve a failed ledger record.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('expired_editor_url', $exception->getMessage());
+        }
+        $firstSave = $this->first->table('legal_document_editor_saves')->sole();
+        self::assertSame('failed', $firstSave->state);
+        self::assertTrue((bool) $firstSave->terminal);
+
+        try {
+            $this->service($this->first)->handleCallback($failed);
+            self::fail('An exact failed replay must not create another save generation.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_document_editor_callback_failed_replay', $exception->getMessage());
+        }
+        self::assertSame(1, $this->first->table('legal_document_editor_saves')->count());
+
+        $saved = $this->service($this->first, $this->successfulFetcher('replacement'))->handleCallback(
+            new EditorCallbackInput((string) $session->id, $payload->documentKey, 2,
+                'https://office.example.test/fresh.docx', 'terminal-replacement', 'token'),
+        );
+
+        self::assertSame(2, (int) $saved->id);
+        $ledger = $this->first->table('legal_document_editor_saves')->orderBy('save_generation')->get();
+        self::assertCount(2, $ledger);
+        self::assertSame('failed', $ledger[0]->state);
+        self::assertSame('completed', $ledger[1]->state);
+        self::assertSame($ledger[0]->id, $ledger[1]->supersedes_save_id);
+        self::assertSame(2, (int) $this->first->table('legal_document_editor_sessions')->value('final_generation'));
+        self::assertNull($this->first->table('legal_document_editor_sessions')->value('failure_code'));
     }
 
     public function test_callback_vs_new_version_has_one_service_winner(): void

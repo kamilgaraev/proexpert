@@ -63,6 +63,7 @@ SQL, [$table, $name]);
             ],
             'legal_document_editor_saves' => [
                 'legal_editor_saves_session_fk' => 'FOREIGN KEY (editor_session_id, organization_id, document_id, source_version_id, document_file_id) REFERENCES legal_document_editor_sessions(id, organization_id, document_id, source_version_id, document_file_id) ON DELETE RESTRICT NOT VALID',
+                'legal_editor_saves_supersedes_fk' => 'FOREIGN KEY (supersedes_save_id) REFERENCES legal_document_editor_saves(id) ON DELETE RESTRICT NOT VALID',
                 'legal_editor_saves_source_version_fk' => 'FOREIGN KEY (source_version_id, document_file_id, document_id, organization_id) REFERENCES legal_archive_document_versions(id, document_file_id, document_id, organization_id) ON DELETE RESTRICT NOT VALID',
                 'legal_editor_saves_saved_version_fk' => 'FOREIGN KEY (saved_version_id, document_file_id, document_id, organization_id) REFERENCES legal_archive_document_versions(id, document_file_id, document_id, organization_id) ON DELETE RESTRICT NOT VALID',
                 'legal_editor_saves_generation_check' => 'CHECK (save_generation > 0) NOT VALID',
@@ -160,16 +161,30 @@ BEGIN
      RAISE EXCEPTION 'legal_document_editor_save_generation_stale';
    END IF;
    IF EXISTS (SELECT 1 FROM legal_document_editor_saves s
-      WHERE s.editor_session_id=NEW.editor_session_id AND s.terminal) THEN
+      WHERE s.editor_session_id=NEW.editor_session_id AND s.terminal
+        AND s.state IN ('reserved','processing','completed')) THEN
      RAISE EXCEPTION 'legal_document_editor_save_after_terminal';
+   END IF;
+   IF NEW.supersedes_save_id IS NULL AND EXISTS (SELECT 1 FROM legal_document_editor_saves s
+      WHERE s.editor_session_id=NEW.editor_session_id AND s.terminal AND s.state='failed') THEN
+     RAISE EXCEPTION 'legal_document_editor_save_supersession_invalid';
+   END IF;
+   IF NEW.supersedes_save_id IS NOT NULL AND (NOT NEW.terminal OR NOT EXISTS (
+      SELECT 1 FROM legal_document_editor_saves s
+       WHERE s.id=NEW.supersedes_save_id AND s.editor_session_id=NEW.editor_session_id
+         AND s.terminal AND s.state='failed' AND s.save_generation<NEW.save_generation
+         AND s.save_generation=(SELECT max(t.save_generation) FROM legal_document_editor_saves t
+           WHERE t.editor_session_id=NEW.editor_session_id AND t.terminal AND t.state='failed')
+   )) THEN
+     RAISE EXCEPTION 'legal_document_editor_save_supersession_invalid';
    END IF;
    RETURN NEW;
  END IF;
  IF (OLD.organization_id,OLD.document_id,OLD.editor_session_id,OLD.source_version_id,OLD.document_file_id,
-     OLD.save_generation,OLD.callback_status,OLD.replay_hash,OLD.operation_id,OLD.terminal,OLD.created_at)
+     OLD.save_generation,OLD.callback_status,OLD.replay_hash,OLD.supersedes_save_id,OLD.operation_id,OLD.terminal,OLD.created_at)
     IS DISTINCT FROM
     (NEW.organization_id,NEW.document_id,NEW.editor_session_id,NEW.source_version_id,NEW.document_file_id,
-     NEW.save_generation,NEW.callback_status,NEW.replay_hash,NEW.operation_id,NEW.terminal,NEW.created_at) THEN
+     NEW.save_generation,NEW.callback_status,NEW.replay_hash,NEW.supersedes_save_id,NEW.operation_id,NEW.terminal,NEW.created_at) THEN
    RAISE EXCEPTION 'legal_document_editor_save_identity_immutable';
  END IF;
  IF OLD.state='completed' AND OLD IS DISTINCT FROM NEW THEN RAISE EXCEPTION 'legal_document_editor_save_terminal_immutable'; END IF;
@@ -178,7 +193,7 @@ BEGIN
  END IF;
  IF NOT ((OLD.state='reserved' AND NEW.state IN ('reserved','processing','completed','failed'))
    OR (OLD.state='processing' AND NEW.state IN ('processing','reserved','completed','failed'))
-   OR (OLD.state='failed' AND NEW.state IN ('failed','processing')) OR NEW.state=OLD.state) THEN
+   OR (OLD.state='failed' AND NEW.state='failed') OR NEW.state=OLD.state) THEN
    RAISE EXCEPTION 'legal_document_editor_save_transition_forbidden';
  END IF;
  IF OLD.state='reserved' AND NEW.state='completed' AND NEW.callback_status<>4 THEN
@@ -213,6 +228,7 @@ BEGIN
           saved_version_id=COALESCE(NEW.saved_version_id,saved_version_id),
           status=CASE WHEN NEW.callback_status=2 THEN 'completed' WHEN NEW.callback_status=4 THEN 'closed' ELSE status END,
           completed_at=CASE WHEN NEW.terminal THEN NEW.completed_at ELSE NULL END,
+          failure_code=NULL,
           updated_at=NEW.updated_at
     WHERE id=NEW.editor_session_id;
    UPDATE legal_document_editor_saves

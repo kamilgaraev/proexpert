@@ -43,8 +43,7 @@ final class LegalDocumentEditorSessionService
         User $actor,
         string $mode = 'edit',
         bool $upgradeMode = false,
-    ): EditorSessionPayload
-    {
+    ): EditorSessionPayload {
         if (! in_array($mode, ['view', 'review', 'edit'], true)) {
             throw new DomainException('legal_document_editor_mode_invalid');
         }
@@ -98,6 +97,9 @@ final class LegalDocumentEditorSessionService
                         'document_version_id' => (int) $lockedVersion->id,
                     ]);
                 } else {
+                    if ((int) $existing->opened_by_user_id !== (int) $actor->id) {
+                        throw new DomainException('legal_document_editor_actor_conflict');
+                    }
                     if ((string) $existing->mode === $mode) {
                         $this->recordParticipant($existing, $actor, $this->abilityForMode($mode));
                         $this->audit->record('editor_session_accessed', $lockedDocument, $actor, [
@@ -205,12 +207,12 @@ final class LegalDocumentEditorSessionService
             $file = $source->documentFile()->firstOrFail();
             $saved = $this->files->addVersion($file, $upload, new VersionInput(
                 versionLabel: trans_message('legal_archive.messages.editor_version_label'),
-                uploadedByUserId: null,
+                uploadedByUserId: (int) $session->opened_by_user_id,
                 metadata: [
                     'editor_session_id' => (string) $session->id,
                     'editor_source_version_id' => (int) $source->id,
                     'editor_save_generation' => (int) $save->save_generation,
-                    'editor_participant_user_ids' => $this->participantUserIds($session),
+                    'editor_actor_user_id' => (int) $session->opened_by_user_id,
                 ],
                 makeCurrent: true,
             ), $attempt);
@@ -246,6 +248,9 @@ final class LegalDocumentEditorSessionService
 
                 return ['session' => $session, 'save' => $save, 'completed' => $completed];
             }
+            if ($save instanceof LegalDocumentEditorSave && $save->state === 'failed') {
+                throw new DomainException('legal_document_editor_callback_failed_replay');
+            }
             $this->reauthorizeSessionActor($session, $document);
             if ($session->expires_at?->isPast()) {
                 $this->failInFlightSaves($session);
@@ -271,6 +276,19 @@ final class LegalDocumentEditorSessionService
                 throw new DomainException('legal_document_editor_callback_in_progress');
             }
             if (! $save instanceof LegalDocumentEditorSave) {
+                $terminal = in_array($input->status, [2, 4], true);
+                $activeTerminal = $this->saves()->where('editor_session_id', $session->id)
+                    ->where('terminal', true)->whereIn('state', ['reserved', 'processing', 'completed'])
+                    ->lockForUpdate()->first();
+                if ($activeTerminal instanceof LegalDocumentEditorSave) {
+                    throw new DomainException('legal_document_editor_callback_conflict');
+                }
+                $superseded = $this->saves()->where('editor_session_id', $session->id)
+                    ->where('terminal', true)->where('state', 'failed')
+                    ->orderByDesc('save_generation')->lockForUpdate()->first();
+                if ($superseded instanceof LegalDocumentEditorSave && ! $terminal) {
+                    throw new DomainException('legal_document_editor_callback_conflict');
+                }
                 $generation = (int) $session->next_save_generation;
                 $save = $this->saves()->create([
                     'id' => (string) Str::uuid(),
@@ -282,9 +300,10 @@ final class LegalDocumentEditorSessionService
                     'save_generation' => $generation,
                     'callback_status' => $input->status,
                     'replay_hash' => $replayHash,
+                    'supersedes_save_id' => $superseded?->id,
                     'operation_id' => (string) Str::uuid(),
                     'state' => 'reserved',
-                    'terminal' => in_array($input->status, [2, 4], true),
+                    'terminal' => $terminal,
                 ]);
                 LegalDocumentEditorSession::serviceMutation(fn () => $session->forceFill([
                     'next_save_generation' => $generation + 1,
@@ -397,13 +416,14 @@ final class LegalDocumentEditorSessionService
                 'completed_at' => now(),
             ])->save());
             $session->refresh();
-            $this->audit->recordForActorId('editor_version_saved', $document, null, [
+            $this->audit->recordForActorId('editor_version_saved', $document, (int) $session->opened_by_user_id, [
                 'source_event_id' => 'editor-session:'.$session->id.':save:'.$save->save_generation,
                 'session_id' => $session->id,
                 'source_version_id' => (int) $session->source_version_id, 'saved_version_id' => (int) $lockedSaved->id,
                 'save_generation' => (int) $save->save_generation,
                 'callback_status' => (int) $save->callback_status,
-                'participant_user_ids' => $this->participantUserIds($session),
+                'supersedes_save_id' => $save->supersedes_save_id,
+                'actor_user_id' => (int) $session->opened_by_user_id,
                 'content_hash' => (string) $lockedSaved->content_hash,
             ]);
         };
@@ -522,10 +542,12 @@ final class LegalDocumentEditorSessionService
             throw new DomainException('legal_document_editor_actor_inactive');
         }
         $actor->forceFill(['current_organization_id' => (int) $session->organization_id]);
-        $participant = $this->participants()->where('editor_session_id', $session->id)
-            ->where('user_id', $actor->id)->first();
+        $participants = $this->participants()->where('editor_session_id', $session->id)->get();
+        $participant = $participants->first();
         $requiredAbility = $this->abilityForMode((string) $session->mode);
-        if (! $participant instanceof LegalDocumentEditorParticipant
+        if ($participants->count() !== 1
+            || ! $participant instanceof LegalDocumentEditorParticipant
+            || (int) $participant->user_id !== (int) $session->opened_by_user_id
             || ! hash_equals($requiredAbility, (string) $participant->required_ability)) {
             throw new DomainException('legal_document_editor_participant_invalid');
         }
@@ -561,13 +583,6 @@ final class LegalDocumentEditorSessionService
             'edit' => LegalDocumentAbility::EDIT->value,
             default => throw new DomainException('legal_document_editor_mode_invalid'),
         };
-    }
-
-    private function participantUserIds(LegalDocumentEditorSession $session): array
-    {
-        return $this->participants()->where('editor_session_id', $session->id)
-            ->whereNotNull('user_id')->orderBy('joined_at')->pluck('user_id')
-            ->map(static fn (mixed $id): int => (int) $id)->all();
     }
 
     private function failInFlightSaves(LegalDocumentEditorSession $session): void

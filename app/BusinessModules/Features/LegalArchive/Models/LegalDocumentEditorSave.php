@@ -7,6 +7,8 @@ namespace App\BusinessModules\Features\LegalArchive\Models;
 use App\Exceptions\ImmutableDataException;
 use Closure;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 final class LegalDocumentEditorSave extends Model
 {
@@ -18,7 +20,7 @@ final class LegalDocumentEditorSave extends Model
 
     protected $fillable = [
         'id', 'organization_id', 'document_id', 'editor_session_id', 'source_version_id',
-        'document_file_id', 'save_generation', 'callback_status', 'replay_hash', 'operation_id',
+        'document_file_id', 'save_generation', 'callback_status', 'replay_hash', 'supersedes_save_id', 'operation_id',
         'state', 'lease_owner_hash', 'lease_expires_at', 'saved_version_id', 'content_hash',
         'terminal', 'completed_at', 'failed_at',
     ];
@@ -45,7 +47,7 @@ final class LegalDocumentEditorSave extends Model
             $transitions = [
                 'reserved' => ['reserved', 'processing', 'completed', 'failed'],
                 'processing' => ['processing', 'reserved', 'completed', 'failed'],
-                'failed' => ['failed', 'processing'],
+                'failed' => ['failed'],
                 'completed' => ['completed'],
             ];
             if (! in_array($to, $transitions[$from] ?? [], true)
@@ -70,5 +72,15 @@ final class LegalDocumentEditorSave extends Model
         } finally {
             self::$serviceMutationDepth--;
         }
+    }
+
+    public function supersededSave(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'supersedes_save_id');
+    }
+
+    public function replacementSave(): HasOne
+    {
+        return $this->hasOne(self::class, 'supersedes_save_id');
     }
 }

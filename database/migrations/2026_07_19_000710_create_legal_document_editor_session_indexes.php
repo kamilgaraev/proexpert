@@ -54,10 +54,11 @@ return new class extends Migration
                 'legal_editor_sessions_generation_unique', 'legal_editor_sessions_tenant_unique', 'legal_editor_sessions_binding_unique',
                 'legal_editor_sessions_saved_version_unique', 'legal_editor_sessions_active_version_unique', 'legal_editor_sessions_expiry_idx'],
             'legal_document_editor_participants' => ['legal_document_editor_participants_pkey',
-                'legal_editor_participants_actor_unique', 'legal_editor_participants_user_idx'],
+                'legal_editor_participants_session_unique', 'legal_editor_participants_user_idx'],
             'legal_document_editor_saves' => ['legal_document_editor_saves_pkey', 'legal_editor_saves_generation_unique',
                 'legal_editor_saves_replay_unique', 'legal_editor_saves_operation_unique',
-                'legal_editor_saves_saved_version_unique', 'legal_editor_saves_lease_idx'],
+                'legal_editor_saves_saved_version_unique', 'legal_editor_saves_supersedes_unique',
+                'legal_editor_saves_lease_idx'],
         ];
         foreach ($expected as $table => $names) {
             $actual = array_map(static fn (object $row): string => (string) $row->name, DB::select(<<<'SQL'
@@ -83,10 +84,11 @@ SQL, [$table]));
             'legal_editor_sessions_saved_version_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_sessions_saved_version_unique ON legal_document_editor_sessions USING btree (saved_version_id) WHERE saved_version_id IS NOT NULL',
             'legal_editor_sessions_active_version_unique' => "CREATE UNIQUE INDEX CONCURRENTLY legal_editor_sessions_active_version_unique ON legal_document_editor_sessions USING btree (organization_id, document_id, source_version_id) WHERE status IN ('active','processing')",
             'legal_editor_sessions_expiry_idx' => "CREATE INDEX CONCURRENTLY legal_editor_sessions_expiry_idx ON legal_document_editor_sessions USING btree (expires_at, id) WHERE status IN ('active','processing')",
-            'legal_editor_participants_actor_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_participants_actor_unique ON legal_document_editor_participants USING btree (editor_session_id, actor_key)',
+            'legal_editor_participants_session_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_participants_session_unique ON legal_document_editor_participants USING btree (editor_session_id)',
             'legal_editor_participants_user_idx' => 'CREATE INDEX CONCURRENTLY legal_editor_participants_user_idx ON legal_document_editor_participants USING btree (organization_id, user_id, joined_at) WHERE user_id IS NOT NULL',
             'legal_editor_saves_generation_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_saves_generation_unique ON legal_document_editor_saves USING btree (editor_session_id, save_generation)',
             'legal_editor_saves_replay_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_saves_replay_unique ON legal_document_editor_saves USING btree (editor_session_id, replay_hash)',
+            'legal_editor_saves_supersedes_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_saves_supersedes_unique ON legal_document_editor_saves USING btree (supersedes_save_id) WHERE supersedes_save_id IS NOT NULL',
             'legal_editor_saves_operation_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_saves_operation_unique ON legal_document_editor_saves USING btree (operation_id) WHERE operation_id IS NOT NULL',
             'legal_editor_saves_saved_version_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_saves_saved_version_unique ON legal_document_editor_saves USING btree (saved_version_id) WHERE saved_version_id IS NOT NULL',
             'legal_editor_saves_lease_idx' => "CREATE INDEX CONCURRENTLY legal_editor_saves_lease_idx ON legal_document_editor_saves USING btree (lease_expires_at, id) WHERE state = 'processing'",

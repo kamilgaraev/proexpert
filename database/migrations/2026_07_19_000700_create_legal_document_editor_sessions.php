@@ -61,6 +61,7 @@ return new class extends Migration
                 $table->unsignedInteger('save_generation');
                 $table->unsignedSmallInteger('callback_status');
                 $table->char('replay_hash', 64);
+                $table->uuid('supersedes_save_id')->nullable();
                 $table->uuid('operation_id')->nullable();
                 $table->string('state', 16);
                 $table->char('lease_owner_hash', 64)->nullable();
@@ -114,7 +115,8 @@ return new class extends Migration
                 ['document_id', 'int8', null, 'NO', null], ['editor_session_id', 'uuid', null, 'NO', null],
                 ['source_version_id', 'int8', null, 'NO', null], ['document_file_id', 'int8', null, 'NO', null],
                 ['save_generation', 'int4', null, 'NO', null], ['callback_status', 'int2', null, 'NO', null],
-                ['replay_hash', 'bpchar', 64, 'NO', null], ['operation_id', 'uuid', null, 'YES', null],
+                ['replay_hash', 'bpchar', 64, 'NO', null], ['supersedes_save_id', 'uuid', null, 'YES', null],
+                ['operation_id', 'uuid', null, 'YES', null],
                 ['state', 'varchar', 16, 'NO', null], ['lease_owner_hash', 'bpchar', 64, 'YES', null],
                 ['lease_expires_at', 'timestamptz', null, 'YES', null], ['saved_version_id', 'int8', null, 'YES', null],
                 ['content_hash', 'bpchar', 64, 'YES', null], ['terminal', 'bool', null, 'NO', 'false'],
