@@ -21,6 +21,8 @@ class EstimateGenerationPackagePersistenceService
 
     private const PROJECT_MATERIAL_PRICING_FORMULA_VERSION = 'supplementary_project_material:v4';
 
+    private const PRICING_CALCULATION_IDENTITY = 'authoritative_package_pricing:v1';
+
     public function __construct(
         private readonly ?AuthoritativePackagePricingGuard $pricingGuard = null,
         private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
@@ -379,7 +381,7 @@ class EstimateGenerationPackagePersistenceService
             ->orderByDesc('revision')->orderByDesc('id')->lockForUpdate()->first();
         $revision = max(1, (int) ($latest?->revision ?? 0) + 1);
         $pricing = $this->authoritativePricing($package, $workItem, $logicalKey);
-        if ($latest !== null && $pricing !== null && $this->samePricingIdentity($latest, $pricing)) {
+        if ($latest !== null && $pricing !== null && $this->samePricingIdentity($package, $latest, $pricing)) {
             return;
         }
         $payload = $this->itemPayload($package, $workItem, $index);
@@ -466,8 +468,18 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /** @param array{item: array<string, mixed>, inputs: list<array<string, int|null>>, project_material_inputs: list<array<string, mixed>>, formula_version: string} $pricing */
-    private function samePricingIdentity(EstimateGenerationPackageItem $latest, array $pricing): bool
-    {
+    private function samePricingIdentity(
+        EstimateGenerationPackage $package,
+        EstimateGenerationPackageItem $latest,
+        array $pricing,
+    ): bool {
+        $metadata = is_array($latest->metadata) ? $latest->metadata : [];
+        if (! is_string($package->input_version)
+            || ! is_string($metadata['source_input_version'] ?? null)
+            || ! hash_equals($package->input_version, $metadata['source_input_version'])
+            || ($metadata['pricing_calculation_identity'] ?? null) !== self::PRICING_CALCULATION_IDENTITY) {
+            return false;
+        }
         if (data_get($latest->price_snapshot, 'coefficients.pricing_formula_version') !== $pricing['formula_version']) {
             return false;
         }
@@ -875,6 +887,8 @@ class EstimateGenerationPackagePersistenceService
                 'applied_price' => $this->itemMetadata->appliedPrice($workItem),
                 'work_composition' => $workComposition,
                 'composition_items_count' => count($workComposition),
+                'source_input_version' => $package->input_version,
+                'pricing_calculation_identity' => self::PRICING_CALCULATION_IDENTITY,
             ],
             'sort_order' => ($index + 1) * 100,
         ];
