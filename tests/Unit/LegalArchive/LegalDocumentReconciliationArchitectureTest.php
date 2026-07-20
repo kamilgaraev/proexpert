@@ -21,8 +21,11 @@ final class LegalDocumentReconciliationArchitectureTest extends TestCase
         foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root)) as $file) {
             if (!$file->isFile() || $file->getExtension() !== 'php') continue;
             $path = $file->getPathname();
-            if (str_contains($path, 'Services/Contract/ContractSideMutationService.php') || str_contains($path, 'Factories')) continue;
-            if (str_contains((string) file_get_contents($path), 'Contract::create(')) $violations[] = $path;
+            if (str_contains($path, 'Services/Contract/ContractSideMutationService.php') || str_contains($path, 'Factories') || str_contains($path, 'Repositories/ContractRepository.php')) continue;
+            $source = (string) file_get_contents($path);
+            foreach (['Contract::create(', 'Contract::query()->create(', 'new Contract(', '->contracts()->create('] as $forbidden) {
+                if (str_contains($source, $forbidden)) $violations[] = $path.':'.$forbidden;
+            }
         }
         self::assertSame([], $violations);
     }
