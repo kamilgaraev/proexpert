@@ -10,6 +10,7 @@ use Illuminate\Console\Command;
 final class RecoverLegalDocumentNotifications extends Command
 {
     protected $signature = 'legal-archive:recover-notification-deliveries {--limit=100}';
+
     protected $description = 'Возвращает зависшие доставки уведомлений юридического архива в повторяемое состояние';
 
     public function handle(LegalDocumentNotificationRecoveryService $recovery): int

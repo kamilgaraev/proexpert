@@ -8,7 +8,6 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentNotificationDe
 use App\Notifications\LegalArchive\LegalDocumentApprovalRequiredNotification;
 use App\Notifications\LegalArchive\LegalDocumentDeadlineNotification;
 use App\Notifications\LegalArchive\LegalDocumentSignatureRequiredNotification;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 final class LegalDocumentNotificationRecoveryService
