@@ -16,7 +16,8 @@ final class LegalDocumentEditorSchemaManifestTest extends TestCase
             self::assertStringContainsString("Schema::hasTable('{$table}')", $migration);
             self::assertStringContainsString("'{$table}' => [", $migration);
         }
-        foreach (['next_save_generation', 'actor_key', 'save_generation', 'callback_status', 'replay_hash',
+        foreach (['next_save_generation', 'last_applied_generation', 'final_generation', 'actor_key',
+            'required_ability', 'save_generation', 'callback_status', 'replay_hash',
             'operation_id', 'lease_owner_hash', 'saved_version_id', 'content_hash', 'terminal'] as $column) {
             self::assertStringContainsString("'{$column}'", $migration);
         }
@@ -54,8 +55,15 @@ final class LegalDocumentEditorSchemaManifestTest extends TestCase
         self::assertStringContainsString('terminal = (callback_status IN (2,4))', $migration);
         self::assertStringContainsString("state='completed' AND callback_status=4", $migration);
         self::assertStringContainsString('legal_document_editor_save_terminal_immutable', $migration);
+        self::assertStringContainsString('legal_document_editor_save_generation_stale', $migration);
+        self::assertStringContainsString('legal_document_editor_save_after_terminal', $migration);
+        self::assertStringContainsString('last_applied_generation', $migration);
+        self::assertStringContainsString('final_generation', $migration);
+        self::assertStringContainsString("required_ability IN ('view','comment','edit')", $migration);
         self::assertStringContainsString('assertFunctionPredecessor', $migration);
         self::assertStringContainsString('legal_document_editor_constraint_set_mismatch', $migration);
+        self::assertStringNotContainsString('$indexMigration->up()', $migration);
+        self::assertStringNotContainsString('CONCURRENTLY', $migration);
     }
 
     public function test_validation_phase_only_verifies_and_validates_existing_objects(): void

@@ -24,7 +24,9 @@ final class LegalDocumentEditorSession extends Model
     ];
 
     protected $casts = [
-        'generation' => 'integer', 'next_save_generation' => 'integer', 'expires_at' => 'immutable_datetime',
+        'generation' => 'integer', 'next_save_generation' => 'integer',
+        'last_applied_generation' => 'integer', 'final_generation' => 'integer',
+        'expires_at' => 'immutable_datetime',
         'completed_at' => 'immutable_datetime',
     ];
 
@@ -55,6 +57,9 @@ final class LegalDocumentEditorSession extends Model
             if ($session->isDirty('next_save_generation')
                 && (int) $session->next_save_generation !== ((int) $session->getOriginal('next_save_generation')) + 1) {
                 throw new ImmutableDataException(self::class, 'generation');
+            }
+            if ($session->isDirty('last_applied_generation') || $session->isDirty('final_generation')) {
+                throw new ImmutableDataException(self::class, 'database_generation_fence');
             }
         });
         self::deleting(static function (): never {

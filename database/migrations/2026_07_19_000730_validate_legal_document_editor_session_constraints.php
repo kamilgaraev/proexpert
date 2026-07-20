@@ -69,7 +69,8 @@ SQL, [$table, $name]);
             ],
             'legal_document_editor_participants' => [
                 'legal_editor_participants_session_fk', 'legal_editor_participants_user_fk',
-                'legal_editor_participants_actor_key_check', 'legal_editor_participants_time_check',
+                'legal_editor_participants_actor_key_check', 'legal_editor_participants_ability_check',
+                'legal_editor_participants_time_check',
             ],
             'legal_document_editor_saves' => [
                 'legal_editor_saves_session_fk', 'legal_editor_saves_source_version_fk',

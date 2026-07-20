@@ -15,7 +15,7 @@ final class LegalDocumentEditorParticipant extends Model
 
     protected $fillable = [
         'id', 'organization_id', 'editor_session_id', 'actor_key', 'user_id',
-        'provider_user_id', 'joined_at',
+        'provider_user_id', 'required_ability', 'joined_at',
     ];
 
     protected $casts = [

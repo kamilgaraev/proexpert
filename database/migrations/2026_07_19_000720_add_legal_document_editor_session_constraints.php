@@ -14,7 +14,7 @@ return new class extends Migration
             return;
         }
         $indexMigration = require __DIR__.'/2026_07_19_000710_create_legal_document_editor_session_indexes.php';
-        $indexMigration->up();
+        $indexMigration->assertIndexManifest();
         foreach ($this->constraints() as $table => $constraints) {
             foreach ($constraints as $name => $definition) {
                 $actual = DB::selectOne(<<<'SQL'
@@ -45,9 +45,9 @@ SQL, [$table, $name]);
             'legal_document_editor_sessions' => [
                 'legal_editor_sessions_status_check' => "CHECK (status IN ('active','processing','completed','expired','failed','closed')) NOT VALID",
                 'legal_editor_sessions_mode_check' => "CHECK (mode IN ('edit','review')) NOT VALID",
-                'legal_editor_sessions_generation_check' => 'CHECK (generation > 0 AND next_save_generation > 0) NOT VALID',
+                'legal_editor_sessions_generation_check' => 'CHECK (generation > 0 AND next_save_generation > last_applied_generation AND last_applied_generation >= 0 AND (final_generation IS NULL OR (final_generation = last_applied_generation AND final_generation > 0))) NOT VALID',
                 'legal_editor_sessions_hash_check' => "CHECK (source_content_hash ~ '^[a-f0-9]{64}$') NOT VALID",
-                'legal_editor_sessions_state_check' => "CHECK ((status IN ('active','processing') AND saved_version_id IS NULL AND completed_at IS NULL) OR (status='completed' AND saved_version_id IS NOT NULL AND completed_at IS NOT NULL) OR (status IN ('expired','failed','closed') AND saved_version_id IS NULL AND completed_at IS NOT NULL)) NOT VALID",
+                'legal_editor_sessions_state_check' => "CHECK ((status IN ('active','processing') AND completed_at IS NULL AND final_generation IS NULL) OR (status='completed' AND saved_version_id IS NOT NULL AND completed_at IS NOT NULL AND final_generation IS NOT NULL) OR (status='closed' AND completed_at IS NOT NULL) OR (status IN ('expired','failed') AND completed_at IS NOT NULL AND final_generation IS NULL)) NOT VALID",
                 'legal_editor_sessions_time_check' => 'CHECK (expires_at > created_at AND (completed_at IS NULL OR completed_at >= created_at)) NOT VALID',
                 'legal_editor_sessions_document_fk' => 'FOREIGN KEY (document_id, organization_id) REFERENCES legal_archive_documents(id, organization_id) ON DELETE RESTRICT NOT VALID',
                 'legal_editor_sessions_source_version_fk' => 'FOREIGN KEY (source_version_id, document_file_id, document_id, organization_id) REFERENCES legal_archive_document_versions(id, document_file_id, document_id, organization_id) ON DELETE RESTRICT NOT VALID',
@@ -58,6 +58,7 @@ SQL, [$table, $name]);
                 'legal_editor_participants_session_fk' => 'FOREIGN KEY (editor_session_id, organization_id) REFERENCES legal_document_editor_sessions(id, organization_id) ON DELETE RESTRICT NOT VALID',
                 'legal_editor_participants_user_fk' => 'FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT NOT VALID',
                 'legal_editor_participants_actor_key_check' => "CHECK (actor_key ~ '^[a-f0-9]{64}$') NOT VALID",
+                'legal_editor_participants_ability_check' => "CHECK (required_ability IN ('view','comment','edit')) NOT VALID",
                 'legal_editor_participants_time_check' => 'CHECK (joined_at <= created_at AND created_at <= updated_at) NOT VALID',
             ],
             'legal_document_editor_saves' => [
@@ -96,6 +97,9 @@ FOR EACH ROW EXECUTE FUNCTION legal_document_editor_participant_guard();
 CREATE OR REPLACE TRIGGER legal_document_editor_save_immutable
 BEFORE INSERT OR UPDATE OR DELETE ON "{$schema}".legal_document_editor_saves
 FOR EACH ROW EXECUTE FUNCTION legal_document_editor_save_guard();
+CREATE OR REPLACE TRIGGER legal_document_editor_save_apply_generation
+AFTER UPDATE ON "{$schema}".legal_document_editor_saves
+FOR EACH ROW EXECUTE FUNCTION legal_document_editor_save_apply_guard();
 SQL);
     }
 
@@ -113,13 +117,23 @@ BEGIN
      NEW.provider,NEW.mode,NEW.generation,NEW.document_key,NEW.source_content_hash,NEW.expires_at,NEW.created_at) THEN
    RAISE EXCEPTION 'legal_document_editor_session_identity_immutable';
  END IF;
- IF NEW.next_save_generation < OLD.next_save_generation OR NEW.next_save_generation > OLD.next_save_generation+1 THEN
+ IF NEW.next_save_generation < OLD.next_save_generation OR NEW.next_save_generation > OLD.next_save_generation+1
+    OR NEW.next_save_generation <= NEW.last_applied_generation THEN
    RAISE EXCEPTION 'legal_document_editor_session_generation_invalid';
+ END IF;
+ IF NEW.last_applied_generation < OLD.last_applied_generation
+    OR (OLD.final_generation IS NOT NULL AND NEW.final_generation IS DISTINCT FROM OLD.final_generation) THEN
+   RAISE EXCEPTION 'legal_document_editor_session_generation_invalid';
+ END IF;
+ IF NEW.last_applied_generation IS DISTINCT FROM OLD.last_applied_generation
+    AND NOT EXISTS (SELECT 1 FROM legal_document_editor_saves s
+      WHERE s.editor_session_id=NEW.id AND s.save_generation=NEW.last_applied_generation AND s.state='completed') THEN
+   RAISE EXCEPTION 'legal_document_editor_session_generation_unbacked';
  END IF;
  IF OLD.status IN ('completed','expired','failed','closed') AND OLD IS DISTINCT FROM NEW THEN
    RAISE EXCEPTION 'legal_document_editor_session_terminal_immutable';
  END IF;
- IF NOT ((OLD.status='active' AND NEW.status IN ('active','processing','expired','closed'))
+ IF NOT ((OLD.status='active' AND NEW.status IN ('active','processing','completed','expired','closed'))
    OR (OLD.status='processing' AND NEW.status IN ('active','processing','completed','failed','expired','closed'))
    OR NEW.status=OLD.status) THEN RAISE EXCEPTION 'legal_document_editor_session_transition_forbidden'; END IF;
  RETURN NEW;
@@ -134,7 +148,23 @@ PLPGSQL,
             'legal_document_editor_save_guard' => <<<'PLPGSQL'
 BEGIN
  IF TG_OP='DELETE' THEN RAISE EXCEPTION 'legal_document_editor_save_delete_forbidden'; END IF;
- IF TG_OP='INSERT' THEN RETURN NEW; END IF;
+ IF TG_OP='INSERT' THEN
+   PERFORM 1 FROM legal_document_editor_sessions s WHERE s.id=NEW.editor_session_id FOR UPDATE;
+   IF NOT FOUND THEN RAISE EXCEPTION 'legal_document_editor_session_not_found'; END IF;
+   IF EXISTS (SELECT 1 FROM legal_document_editor_sessions s
+      WHERE s.id=NEW.editor_session_id AND s.final_generation IS NOT NULL) THEN
+     RAISE EXCEPTION 'legal_document_editor_save_after_terminal';
+   END IF;
+   IF EXISTS (SELECT 1 FROM legal_document_editor_sessions s
+      WHERE s.id=NEW.editor_session_id AND NEW.save_generation <= s.last_applied_generation) THEN
+     RAISE EXCEPTION 'legal_document_editor_save_generation_stale';
+   END IF;
+   IF EXISTS (SELECT 1 FROM legal_document_editor_saves s
+      WHERE s.editor_session_id=NEW.editor_session_id AND s.terminal) THEN
+     RAISE EXCEPTION 'legal_document_editor_save_after_terminal';
+   END IF;
+   RETURN NEW;
+ END IF;
  IF (OLD.organization_id,OLD.document_id,OLD.editor_session_id,OLD.source_version_id,OLD.document_file_id,
      OLD.save_generation,OLD.callback_status,OLD.replay_hash,OLD.operation_id,OLD.terminal,OLD.created_at)
     IS DISTINCT FROM
@@ -151,7 +181,43 @@ BEGIN
    OR (OLD.state='failed' AND NEW.state IN ('failed','processing')) OR NEW.state=OLD.state) THEN
    RAISE EXCEPTION 'legal_document_editor_save_transition_forbidden';
  END IF;
+ IF NEW.state IN ('processing','completed') AND OLD.state IS DISTINCT FROM NEW.state THEN
+   PERFORM 1 FROM legal_document_editor_sessions s WHERE s.id=NEW.editor_session_id FOR UPDATE;
+   IF NOT FOUND THEN RAISE EXCEPTION 'legal_document_editor_session_not_found'; END IF;
+   IF EXISTS (SELECT 1 FROM legal_document_editor_sessions s
+      WHERE s.id=NEW.editor_session_id AND s.final_generation IS NOT NULL) THEN
+     RAISE EXCEPTION 'legal_document_editor_save_after_terminal';
+   END IF;
+   IF EXISTS (SELECT 1 FROM legal_document_editor_sessions s
+      WHERE s.id=NEW.editor_session_id AND NEW.save_generation <= s.last_applied_generation) THEN
+     RAISE EXCEPTION 'legal_document_editor_save_generation_stale';
+   END IF;
+   IF EXISTS (SELECT 1 FROM legal_document_editor_saves s
+      WHERE s.editor_session_id=NEW.editor_session_id AND s.id<>NEW.id AND s.terminal
+        AND s.save_generation < NEW.save_generation) THEN
+     RAISE EXCEPTION 'legal_document_editor_save_after_terminal';
+   END IF;
+ END IF;
  RETURN NEW;
+END
+PLPGSQL,
+            'legal_document_editor_save_apply_guard' => <<<'PLPGSQL'
+BEGIN
+ IF OLD.state IS DISTINCT FROM 'completed' AND NEW.state='completed' THEN
+   UPDATE legal_document_editor_sessions
+      SET last_applied_generation=NEW.save_generation,
+          final_generation=CASE WHEN NEW.terminal THEN NEW.save_generation ELSE NULL END,
+          saved_version_id=COALESCE(NEW.saved_version_id,saved_version_id),
+          status=CASE WHEN NEW.callback_status=2 THEN 'completed' WHEN NEW.callback_status=4 THEN 'closed' ELSE status END,
+          completed_at=CASE WHEN NEW.terminal THEN NEW.completed_at ELSE NULL END,
+          updated_at=NEW.updated_at
+    WHERE id=NEW.editor_session_id;
+   UPDATE legal_document_editor_saves
+      SET state='failed',lease_owner_hash=NULL,lease_expires_at=NULL,failed_at=NEW.completed_at,updated_at=NEW.updated_at
+    WHERE editor_session_id=NEW.editor_session_id AND id<>NEW.id AND state IN ('reserved','processing')
+      AND (NEW.terminal OR save_generation < NEW.save_generation);
+ END IF;
+ RETURN NULL;
 END
 PLPGSQL,
         ];
@@ -210,6 +276,7 @@ SQL, [$table, $name]);
             'legal_document_editor_session_immutable' => ['legal_document_editor_sessions', 'legal_document_editor_session_guard', 31],
             'legal_document_editor_participant_immutable' => ['legal_document_editor_participants', 'legal_document_editor_participant_guard', 31],
             'legal_document_editor_save_immutable' => ['legal_document_editor_saves', 'legal_document_editor_save_guard', 31],
+            'legal_document_editor_save_apply_generation' => ['legal_document_editor_saves', 'legal_document_editor_save_apply_guard', 17],
         ];
         foreach ($expected as $name => [$table, $function, $type]) {
             $actual = DB::selectOne(<<<'SQL'

@@ -24,6 +24,8 @@ return new class extends Migration
                 $table->string('status', 24);
                 $table->unsignedInteger('generation');
                 $table->unsignedInteger('next_save_generation')->default(1);
+                $table->unsignedInteger('last_applied_generation')->default(0);
+                $table->unsignedInteger('final_generation')->nullable();
                 $table->string('document_key', 191);
                 $table->char('source_content_hash', 64);
                 $table->unsignedBigInteger('saved_version_id')->nullable();
@@ -42,6 +44,7 @@ return new class extends Migration
                 $table->char('actor_key', 64);
                 $table->unsignedBigInteger('user_id')->nullable();
                 $table->string('provider_user_id', 191)->nullable();
+                $table->string('required_ability', 16);
                 $table->timestampTz('joined_at');
                 $table->timestampTz('created_at');
                 $table->timestampTz('updated_at');
@@ -91,7 +94,8 @@ return new class extends Migration
                 ['document_file_id', 'int8', null, 'NO', null], ['opened_by_user_id', 'int8', null, 'NO', null],
                 ['provider', 'varchar', 40, 'NO', null], ['mode', 'varchar', 16, 'NO', null],
                 ['status', 'varchar', 24, 'NO', null], ['generation', 'int4', null, 'NO', null],
-                ['next_save_generation', 'int4', null, 'NO', '1'], ['document_key', 'varchar', 191, 'NO', null],
+                ['next_save_generation', 'int4', null, 'NO', '1'], ['last_applied_generation', 'int4', null, 'NO', '0'],
+                ['final_generation', 'int4', null, 'YES', null], ['document_key', 'varchar', 191, 'NO', null],
                 ['source_content_hash', 'bpchar', 64, 'NO', null], ['saved_version_id', 'int8', null, 'YES', null],
                 ['expires_at', 'timestamptz', null, 'NO', null], ['completed_at', 'timestamptz', null, 'YES', null],
                 ['failure_code', 'varchar', 120, 'YES', null], ['created_at', 'timestamptz', null, 'NO', null],
@@ -101,6 +105,7 @@ return new class extends Migration
                 ['id', 'uuid', null, 'NO', null], ['organization_id', 'int8', null, 'NO', null],
                 ['editor_session_id', 'uuid', null, 'NO', null], ['actor_key', 'bpchar', 64, 'NO', null],
                 ['user_id', 'int8', null, 'YES', null], ['provider_user_id', 'varchar', 191, 'YES', null],
+                ['required_ability', 'varchar', 16, 'NO', null],
                 ['joined_at', 'timestamptz', null, 'NO', null], ['created_at', 'timestamptz', null, 'NO', null],
                 ['updated_at', 'timestamptz', null, 'NO', null],
             ],

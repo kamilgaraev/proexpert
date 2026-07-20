@@ -31,6 +31,7 @@ use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Facade;
+use Illuminate\Support\Str;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
 use RuntimeException;
@@ -333,12 +334,147 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
         self::assertSame('approved', $this->first->table('legal_workflow_instances')->value('status'));
     }
 
+    public function test_slow_generation_one_cannot_apply_after_fast_generation_two(): void
+    {
+        [$sessionId, $firstSaveId, $secondSaveId] = $this->directLedger(6);
+
+        $outcomes = $this->forkWorkers(function (ConnectionInterface $connection, int $worker) use ($firstSaveId, $secondSaveId): void {
+            if ($worker === 0) {
+                usleep(300_000);
+                $this->completeDirectSave($connection, $firstSaveId, 2);
+
+                return;
+            }
+            $this->completeDirectSave($connection, $secondSaveId, 3);
+        }, false);
+
+        self::assertSame([0, 21], $outcomes);
+        $session = $this->first->table('legal_document_editor_sessions')->where('id', $sessionId)->sole();
+        self::assertSame(2, (int) $session->last_applied_generation);
+        self::assertNull($session->final_generation);
+        self::assertSame(3, (int) $session->saved_version_id);
+        self::assertSame('failed', $this->first->table('legal_document_editor_saves')->where('id', $firstSaveId)->value('state'));
+        self::assertSame('completed', $this->first->table('legal_document_editor_saves')->where('id', $secondSaveId)->value('state'));
+    }
+
+    public function test_terminal_status_two_fences_slow_force_save_and_leaves_no_processing_save(): void
+    {
+        $this->assertTerminalFencesSlowForceSave(2);
+    }
+
+    public function test_terminal_status_four_fences_slow_force_save_and_leaves_no_processing_save(): void
+    {
+        $this->assertTerminalFencesSlowForceSave(4);
+    }
+
     private function openSession(): EditorSessionPayload
     {
         $version = (new LegalArchiveDocumentVersion)->setConnection('editor_first')->newQuery()->findOrFail(1);
         $actor = (new User)->setConnection('editor_first')->newQuery()->findOrFail(1);
 
         return $this->service($this->first)->open($version, $actor);
+    }
+
+    private function assertTerminalFencesSlowForceSave(int $terminalStatus): void
+    {
+        [$sessionId, $forceSaveId, $terminalSaveId] = $this->directLedger($terminalStatus);
+        try {
+            $this->insertDirectSave($this->first, $sessionId, 3, 6, false);
+            self::fail('A save must not be reserved after a terminal callback was reserved.');
+        } catch (\Throwable $exception) {
+            self::assertStringContainsString('legal_document_editor_save_after_terminal', $exception->getMessage());
+        }
+        $outcomes = $this->forkWorkers(function (ConnectionInterface $connection, int $worker) use (
+            $forceSaveId,
+            $terminalSaveId,
+            $terminalStatus,
+        ): void {
+            if ($worker === 0) {
+                usleep(300_000);
+                $this->completeDirectSave($connection, $forceSaveId, 2);
+
+                return;
+            }
+            $this->completeDirectSave($connection, $terminalSaveId, $terminalStatus === 2 ? 3 : null);
+        }, false);
+
+        self::assertSame([0, 21], $outcomes);
+        $session = $this->first->table('legal_document_editor_sessions')->where('id', $sessionId)->sole();
+        self::assertSame(2, (int) $session->last_applied_generation);
+        self::assertSame(2, (int) $session->final_generation);
+        self::assertSame($terminalStatus === 2 ? 'completed' : 'closed', $session->status);
+        self::assertSame(0, $this->first->table('legal_document_editor_saves')->where('editor_session_id', $sessionId)
+            ->whereIn('state', ['reserved', 'processing'])->count());
+        self::assertSame('failed', $this->first->table('legal_document_editor_saves')->where('id', $forceSaveId)->value('state'));
+
+        try {
+            $this->insertDirectSave($this->first, $sessionId, 3, 6, false);
+            self::fail('A save must not be reserved after a terminal callback.');
+        } catch (\Throwable $exception) {
+            self::assertStringContainsString('legal_document_editor_save_after_terminal', $exception->getMessage());
+        }
+    }
+
+    private function directLedger(int $secondStatus): array
+    {
+        $sessionId = (string) Str::uuid();
+        $now = now();
+        foreach ([2, 3] as $versionId) {
+            $this->first->table('legal_archive_document_versions')->insert([
+                'id' => $versionId, 'document_id' => 1, 'document_file_id' => 1, 'organization_id' => 1,
+                'version_number' => (string) $versionId, 'is_current' => false, 'status' => 'uploaded',
+                'processing_status' => 'ready', 'file_path' => "org-1/legal-archive/{$versionId}.docx",
+                'original_filename' => "{$versionId}.docx", 'mime_type' => 'application/octet-stream',
+                'size_bytes' => 10, 'content_hash' => str_repeat((string) $versionId, 64),
+                'uploaded_at' => $now, 'created_at' => $now, 'updated_at' => $now,
+            ]);
+        }
+        $this->first->table('legal_document_editor_sessions')->insert([
+            'id' => $sessionId, 'organization_id' => 1, 'document_id' => 1, 'source_version_id' => 1,
+            'document_file_id' => 1, 'opened_by_user_id' => 1, 'provider' => 'test', 'mode' => 'edit',
+            'status' => 'active', 'generation' => 1, 'next_save_generation' => 3,
+            'document_key' => 'direct-'.$sessionId, 'source_content_hash' => str_repeat('a', 64),
+            'expires_at' => $now->copy()->addHour(), 'created_at' => $now, 'updated_at' => $now,
+        ]);
+        $firstSaveId = $this->insertDirectSave($this->first, $sessionId, 1, 6, false);
+        $secondSaveId = $this->insertDirectSave($this->first, $sessionId, 2, $secondStatus, in_array($secondStatus, [2, 4], true));
+
+        return [$sessionId, $firstSaveId, $secondSaveId];
+    }
+
+    private function insertDirectSave(
+        ConnectionInterface $connection,
+        string $sessionId,
+        int $generation,
+        int $callbackStatus,
+        bool $terminal,
+    ): string {
+        $id = (string) Str::uuid();
+        $connection->table('legal_document_editor_saves')->insert([
+            'id' => $id, 'organization_id' => 1, 'document_id' => 1, 'editor_session_id' => $sessionId,
+            'source_version_id' => 1, 'document_file_id' => 1, 'save_generation' => $generation,
+            'callback_status' => $callbackStatus, 'replay_hash' => hash('sha256', $id),
+            'operation_id' => (string) Str::uuid(), 'state' => 'processing',
+            'lease_owner_hash' => hash('sha256', 'lease-'.$id), 'lease_expires_at' => now()->addMinutes(5),
+            'terminal' => $terminal, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        return $id;
+    }
+
+    private function completeDirectSave(ConnectionInterface $connection, string $saveId, ?int $savedVersionId): void
+    {
+        $values = [
+            'state' => 'completed', 'lease_owner_hash' => null, 'lease_expires_at' => null,
+            'completed_at' => now(), 'updated_at' => now(),
+        ];
+        if ($savedVersionId !== null) {
+            $values['saved_version_id'] = $savedVersionId;
+            $values['content_hash'] = str_repeat((string) $savedVersionId, 64);
+        }
+        $connection->transaction(static function () use ($connection, $saveId, $values): void {
+            $connection->table('legal_document_editor_saves')->where('id', $saveId)->update($values);
+        });
     }
 
     private function forkWorkers(callable $work, bool $requireSuccess = true, ?callable $afterFork = null): array
