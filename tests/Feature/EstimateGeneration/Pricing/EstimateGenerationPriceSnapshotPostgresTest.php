@@ -501,9 +501,9 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
                 'region_id' => null,
                 'price_zone_id' => null,
                 'period_id' => null,
-                'resource_code' => '59.1.20.03-0798',
+                'resource_code' => ' 59.1.20.03-0798 ',
                 'resource_name' => 'Светильник светодиодный потолочный',
-                'unit' => 'шт',
+                'unit' => ' шт ',
                 'base_price' => '100.0000',
                 'price_type' => 'material',
                 'raw_payload' => '{}',
@@ -552,6 +552,7 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
             self::assertSame('250.00', $snapshot['coefficients']['project_material_amount']);
             self::assertSame($priceId, $snapshot['coefficients']['project_material_evidence'][0]['resource_price_id']);
             self::assertSame('59.1.20.03-0798', $snapshot['coefficients']['project_material_evidence'][0]['resource_code']);
+            self::assertSame('шт', $snapshot['coefficients']['project_material_evidence'][0]['price_unit']);
         } finally {
             DB::rollBack();
         }

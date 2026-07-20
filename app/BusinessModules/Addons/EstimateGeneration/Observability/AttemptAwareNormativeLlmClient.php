@@ -14,6 +14,10 @@ use Throwable;
 
 final readonly class AttemptAwareNormativeLlmClient
 {
+    public const MODEL_STRATEGY_CONFIGURED_FALLBACKS = 'configured_fallbacks';
+
+    private const MODEL_STRATEGY_EFFECTIVE_RETRIES = 'effective_retries';
+
     public function __construct(
         private RerankWireClient $wire,
         private AiUsageStore $usageStore,
@@ -33,6 +37,8 @@ final readonly class AttemptAwareNormativeLlmClient
     public function chat(array $messages, array $options, array $domainContext): array
     {
         $operation = RerankOperationContext::fromArray($domainContext);
+        $modelStrategy = $this->modelStrategy($domainContext);
+        $callerTimeout = $this->callerTimeout($options['timeout'] ?? null);
         $heartbeat = is_callable($domainContext['heartbeat_callback'] ?? null)
             ? Closure::fromCallable($domainContext['heartbeat_callback'])
             : null;
@@ -47,11 +53,18 @@ final readonly class AttemptAwareNormativeLlmClient
             'model_version' => (string) ($domainContext['model_version'] ?? ''),
             'dataset_versions' => is_array($domainContext['dataset_versions'] ?? null)
                 ? array_values(array_map('strval', $domainContext['dataset_versions'])) : [],
+            'model_strategy' => $modelStrategy,
+            'timeout_cap_seconds' => $callerTimeout,
         ], JSON_THROW_ON_ERROR);
         $correlationId = AiOperationContext::deterministicId('rerank|'.$seed);
         $effective = $this->settingsResolver?->forOperation($correlationId, $organizationId, $sessionId);
-        $models = $this->models($effective);
-        $options['timeout'] = $effective?->timeoutSeconds('normative_matching') ?? ($options['timeout'] ?? null);
+        $models = $this->models($effective, $modelStrategy);
+        $timeout = $this->timeout($callerTimeout, $effective);
+        if ($timeout !== null) {
+            $options['timeout'] = $timeout;
+        } else {
+            unset($options['timeout']);
+        }
         $last = null;
 
         foreach ($models as $index => $model) {
@@ -164,15 +177,22 @@ final readonly class AttemptAwareNormativeLlmClient
     }
 
     /** @return array<int, string> */
-    private function models(?EffectiveEstimateGenerationSettings $effective = null): array
+    private function models(?EffectiveEstimateGenerationSettings $effective, string $strategy): array
     {
-        if ($effective !== null) {
+        if ($effective !== null && $strategy === self::MODEL_STRATEGY_EFFECTIVE_RETRIES) {
             return array_fill(
                 0,
                 $effective->retryAttempts('normative_matching') + 1,
                 $effective->model('normative_matching'),
             );
         }
+
+        return $this->configuredModels();
+    }
+
+    /** @return array<int, string> */
+    private function configuredModels(): array
+    {
         if ($this->configuredModels === null) {
             return ($this->modelSet ?? new NormativeRerankerModelSet)->models;
         }
@@ -180,6 +200,38 @@ final readonly class AttemptAwareNormativeLlmClient
         $models = is_string($models) ? explode(',', $models) : $models;
 
         return array_values(array_filter(array_map(static fn (mixed $model): string => trim((string) $model), is_array($models) ? $models : [])));
+    }
+
+    /** @param array<string, mixed> $domainContext */
+    private function modelStrategy(array $domainContext): string
+    {
+        if (! array_key_exists('model_strategy', $domainContext)) {
+            return self::MODEL_STRATEGY_EFFECTIVE_RETRIES;
+        }
+        if ($domainContext['model_strategy'] !== self::MODEL_STRATEGY_CONFIGURED_FALLBACKS) {
+            throw new InvalidArgumentException('Unsupported reranker model strategy.');
+        }
+
+        return self::MODEL_STRATEGY_CONFIGURED_FALLBACKS;
+    }
+
+    private function callerTimeout(mixed $timeout): ?int
+    {
+        return is_int($timeout) && $timeout >= 1 && $timeout <= 3600
+            ? $timeout
+            : null;
+    }
+
+    private function timeout(?int $callerTimeout, ?EffectiveEstimateGenerationSettings $effective): ?int
+    {
+        $effectiveTimeout = $effective?->timeoutSeconds('normative_matching');
+        if ($effectiveTimeout === null) {
+            return $callerTimeout;
+        }
+
+        return $callerTimeout === null
+            ? $effectiveTimeout
+            : min($effectiveTimeout, $callerTimeout);
     }
 
     /** @return array<string, mixed> */

@@ -204,6 +204,31 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
         }
     }
 
+    #[Test]
+    public function supplementary_project_material_price_fields_are_canonicalized_at_the_database_boundary(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000200_canonicalize_supplementary_project_material_price_fields.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            'trim(rp.unit)=trim(x.source_unit)',
+            'trim(rp.resource_code)=trim(x.preferred_resource_code)',
+            'trim(rp.resource_code)=trim(r.preferred_resource_code)',
+            'lower(trim(rp.resource_name))',
+            'trim(dv.source_type)',
+            'trim(rv.version_key)',
+            'trim(dv.version_key)',
+            "'price_unit',trim(rp.unit)",
+            'project_material_canonicalization_rollback_blocked',
+            'SECURITY DEFINER',
+            'REVOKE ALL ON FUNCTION public.eg_expected_project_material_price_id_v4(bigint) FROM PUBLIC',
+            'REVOKE ALL ON FUNCTION public.eg_expected_package_item_price_v4(bigint) FROM PUBLIC',
+            'REVOKE ALL ON FUNCTION public.eg_expected_package_item_price_closed_v4(bigint) FROM PUBLIC',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
     private function source(): string
     {
         return (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001200_harden_estimate_generation_pricing_boundary.php');
