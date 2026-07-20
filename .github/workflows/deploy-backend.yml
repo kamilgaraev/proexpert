@@ -152,7 +152,7 @@ jobs:
                   continue
                 fi
                 unit_state="$(systemctl is-enabled "${unit}" 2>/dev/null || true)"
-                if [[ "${unit_state}" =~ ^masked(-runtime)?$ ]]; then
+                if [[ "${unit_state}" =~ ^(masked(-runtime)?|disabled)$ ]]; then
                   continue
                 fi
                 systemctl mask --runtime --now "${unit}"
@@ -179,7 +179,7 @@ jobs:
                   continue
                 fi
                 unit_state="$(systemctl is-enabled "${unit}" 2>/dev/null || true)"
-                if [[ ! "${unit_state}" =~ ^masked(-runtime)?$ ]]; then
+                if [[ ! "${unit_state}" =~ ^(masked(-runtime)?|disabled)$ ]]; then
                   echo "MOST backend writer unit is not runtime-masked (${unit}); refusing deployment"
                   return 1
                 fi
