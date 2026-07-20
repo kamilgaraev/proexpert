@@ -6,11 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v13';
+    private const CATALOG_VERSION = 'residential_material_scenario:v14';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v13';
+    private const SCENARIO_ID = 'residential_preliminary_common:v14';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v13';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v14';
 
     /**
      * @var array<string, array{
@@ -171,12 +171,12 @@ final class ResidentialMaterialScenarioCatalog
             'normative_rate_code' => '08-03-593-06',
         ],
         'heating.radiators' => [
-            'material_markers' => ['радиатор', 'стальн', 'отопительн'],
-            'assumption_code' => 'residential_steel_radiators',
+            'material_markers' => ['радиатор', 'алюминиев', 'биметаллическ', 'секционн'],
+            'assumption_code' => 'residential_aluminium_or_bimetallic_radiator_sections',
             'intent_action' => 'heating_emitter_installation',
-            'work_item_name' => 'Установка стальных радиаторов',
-            'normative_search_text' => 'установка стальных радиаторов с присоединением к трубопроводам',
-            'normative_rate_code' => '18-03-001-02',
+            'work_item_name' => 'Установка алюминиевых или биметаллических секционных радиаторов',
+            'normative_search_text' => 'установка алюминиевых и биметаллических секционных радиаторов',
+            'normative_rate_code' => '18-03-006-02',
         ],
         'sanitary.waterproofing' => [
             'material_markers' => ['гидроизоляц', 'обмазочн', 'мастик'],

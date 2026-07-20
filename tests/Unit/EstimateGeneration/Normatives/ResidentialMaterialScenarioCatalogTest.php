@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v13', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v14', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -240,10 +240,10 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'светильник потолочный с креплением винтами для помещений с нормальными условиями среды одноламповый',
             '08-03-593-06',
         ];
-        yield 'residential steel radiators by heat output' => [
+        yield 'residential aluminium or bimetallic radiator sections' => [
             'heating.radiators',
-            'установка стальных радиаторов с присоединением к трубопроводам',
-            '18-03-001-02',
+            'установка алюминиевых и биметаллических секционных радиаторов',
+            '18-03-006-02',
         ];
         yield 'wet zone waterproofing' => [
             'sanitary.waterproofing',
