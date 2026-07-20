@@ -31,7 +31,16 @@ final readonly class ResidentialSignedNormCompatibility
             static fn (string $token): bool => isset($candidateTokens[$token]),
         );
 
-        return count($matches) >= 2;
+        if (count($matches) >= 2) {
+            return true;
+        }
+
+        return ($resolved['intent_action'] ?? null) === 'electric_boiler_installation_analog'
+            && count($matches) >= 1
+            && $this->containsAny($candidateTitle, ['монтаж', 'установк'])
+            && $this->containsAny($candidateTitle, ['сосуд', 'аппарат', 'оборуд'])
+            && $this->containsAny($candidateTitle, ['0,03 т', '0.03 т', '30 кг'])
+            && ! $this->containsAny($candidateTitle, ['бетон', 'смес']);
     }
 
     /** @return list<string> */
@@ -45,5 +54,18 @@ final readonly class ResidentialSignedNormCompatibility
         }
 
         return array_keys($tokens);
+    }
+
+    /** @param list<string> $markers */
+    private function containsAny(string $text, array $markers): bool
+    {
+        $text = mb_strtolower($text);
+        foreach ($markers as $marker) {
+            if (str_contains($text, $marker)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

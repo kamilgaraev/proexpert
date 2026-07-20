@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeH
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeIntentCandidateRanker;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeResourceRowData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PinnedNormativeCandidateFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use DateTimeImmutable;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
@@ -1211,6 +1212,82 @@ final class NormativeContextPinResolverTest extends TestCase
         ]);
 
         self::assertSame([], $candidates);
+    }
+
+    #[Test]
+    public function pinned_candidate_factory_selects_the_piece_heating_norm_from_a_duplicate_code_collision(): void
+    {
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('heating.unit', 'residential');
+        self::assertIsArray($scenario);
+        $catalogCandidate = static fn (
+            string $candidateId,
+            int $normativeId,
+            string $name,
+            string $unit,
+        ): array => [
+            'candidate_id' => $candidateId,
+            'normative_id' => $normativeId,
+            'dataset_id' => 77,
+            'dataset_version' => 'fsnb-2022-prod',
+            'dataset_status' => 'parsed',
+            'code' => '37-01-002-01',
+            'name' => $name,
+            'unit' => $unit,
+            'section' => ['code' => '37-01-002', 'name' => 'Сосуды и аппараты'],
+            'retrieval_metadata' => ['unit_dimension' => $unit === 'шт' ? 'piece' : 'volume'],
+            'work_composition' => [],
+        ];
+        $intent = new WorkIntentData(
+            75,
+            89,
+            58,
+            'heating.unit',
+            (string) $scenario['normative_search_text'],
+            'pcs',
+            'piece',
+            'электрический котел',
+            'electric_boiler_installation_analog',
+            'engineering',
+            '37',
+            'residential',
+            'fsnb-2022-prod',
+            'parsed',
+            'RU-TA',
+            new DateTimeImmutable('2026-07-20'),
+            ['scenario:heating.unit'],
+            ['37'],
+            '37-01-002-01',
+            'heating',
+            'electric_boiler',
+            [],
+            $scenario,
+        );
+
+        $candidates = (new PinnedNormativeCandidateFactory)->forWorkItem([
+            $catalogCandidate(
+                'concrete-collision',
+                370100299,
+                'Укладка бетонной смеси кранами башенными грузоподъемностью 25 т в железобетонные блоки высотой до 5 м',
+                '100 м3',
+            ),
+            $catalogCandidate(
+                'equipment-installation',
+                370100201,
+                'Монтаж сосудов и аппаратов без механизмов в помещении, масса сосудов и аппаратов: 0,03 т',
+                'шт',
+            ),
+        ], [
+            'name' => 'Монтаж электрического котла отопления до 30 кг',
+            'normative_search_text' => (string) $scenario['normative_search_text'],
+            'normative_rate_code' => '37-01-002-01',
+            'unit' => 'pcs',
+            'specialization_scenario' => $scenario,
+        ], ['37'], $intent);
+
+        self::assertCount(1, $candidates);
+        self::assertSame(370100201, $candidates[0]->normativeId);
+        self::assertSame('шт', $candidates[0]->canonicalUnit);
+        self::assertStringContainsString('Монтаж сосудов и аппаратов', $candidates[0]->name);
     }
 
     #[Test]

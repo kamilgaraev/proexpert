@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeIntentCandidateRanker;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialSignedNormCompatibility;
 use PHPUnit\Framework\TestCase;
 
 final class NormativeIntentCandidateRankerTest extends TestCase
@@ -326,6 +327,58 @@ final class NormativeIntentCandidateRankerTest extends TestCase
             'normative_sections' => ['06'],
             'specialization_scenario' => $scenario,
         ]]));
+    }
+
+    public function test_exact_heating_equipment_code_selects_piece_installation_and_rejects_concrete_collision(): void
+    {
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('heating.unit', 'residential');
+        self::assertIsArray($scenario);
+
+        $validInstallation = $this->candidate(
+            370100201,
+            '37-01-002-01',
+            'Монтаж сосудов и аппаратов без механизмов в помещении, масса сосудов и аппаратов: 0,03 т',
+            'шт',
+            '37-01-002',
+        );
+        $concreteCollision = $this->candidate(
+            370100299,
+            '37-01-002-01',
+            'Укладка бетонной смеси кранами башенными грузоподъемностью 25 т в железобетонные блоки высотой до 5 м',
+            '100 м3',
+            '37-01-002',
+        );
+
+        $signedCompatibility = new ResidentialSignedNormCompatibility;
+        self::assertTrue($signedCompatibility->matches(
+            $scenario,
+            'residential',
+            (string) $validInstallation->code,
+            (string) $validInstallation->name,
+        ));
+        self::assertFalse($signedCompatibility->matches(
+            $scenario,
+            'residential',
+            (string) $concreteCollision->code,
+            (string) $concreteCollision->name,
+        ));
+
+        $selected = (new NormativeIntentCandidateRanker)->select([
+            $concreteCollision,
+            $validInstallation,
+        ], [[
+            'search_text' => (string) $scenario['normative_search_text'],
+            'unit' => 'pcs',
+            'code' => '37-01-002-01',
+            'action' => 'electric_boiler_installation_analog',
+            'scope' => 'engineering',
+            'system' => 'heating',
+            'object_type' => 'residential',
+            'normative_sections' => ['37'],
+            'specialization_scenario' => $scenario,
+        ]]);
+
+        self::assertSame([370100201], array_column($selected ?? [], 'id'));
     }
 
     private function candidate(
