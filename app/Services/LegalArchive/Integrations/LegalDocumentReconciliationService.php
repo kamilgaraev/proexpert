@@ -77,14 +77,8 @@ final class LegalDocumentReconciliationService
                         $organizationId = $this->organizationId($entity);
                         $document = $documents->get("{$organizationId}:{$entity->getKey()}");
                         if ($document instanceof LegalArchiveDocument && $document->trashed()) {
-                            $summary['candidates']++;
-                            $summary['sources'][$namedSource]++;
                             $summary['problem_flags']++;
                             $summary['skipped']++;
-
-                            if ($summary['candidates'] >= $limit) {
-                                return false;
-                            }
 
                             continue;
                         }
