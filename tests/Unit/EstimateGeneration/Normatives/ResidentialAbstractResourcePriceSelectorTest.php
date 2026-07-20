@@ -123,6 +123,7 @@ final class ResidentialAbstractResourcePriceSelectorTest extends TestCase
         self::assertSame('шт', $lintelSelection['row']->price_unit ?? null);
         self::assertSame(2_000.0, $tileSelection['row']->unit_price ?? null);
         self::assertSame('м2', $tileSelection['row']->price_unit ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v4', $tileSelection['policy'] ?? null);
         self::assertSame('interior_ceramic_wall_tile_group:06.2.01.02', $tileSelection['assumption'] ?? null);
         self::assertContains([
             'group_code' => '06.2.05.04',
