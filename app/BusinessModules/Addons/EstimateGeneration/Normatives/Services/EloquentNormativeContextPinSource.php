@@ -566,6 +566,12 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
 
                             return;
                         }
+                        if (($hint['family'] ?? null) === 'tile') {
+                            $target->where('semantic_project_prices.resource_name', 'ilike', '%плит%')
+                                ->where('semantic_project_prices.resource_name', 'ilike', '%керамич%');
+
+                            return;
+                        }
                         if (in_array(($hint['family'] ?? 'pipe'), ['gutter_pipe', 'gutter_fitting'], true)) {
                             $target->where('semantic_project_prices.resource_name', 'ilike', '%водосточ%')
                                 ->where(function ($metal): void {

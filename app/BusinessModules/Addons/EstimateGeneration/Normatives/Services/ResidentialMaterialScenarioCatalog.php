@@ -6,11 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v9';
+    private const CATALOG_VERSION = 'residential_material_scenario:v10';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v9';
+    private const SCENARIO_ID = 'residential_preliminary_common:v10';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v9';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v10';
 
     /**
      * @var array<string, array{
@@ -48,6 +48,12 @@ final class ResidentialMaterialScenarioCatalog
             'assumption_code' => 'internal_partitions_aerated_concrete',
             'normative_search_text' => 'кладка перегородок из газобетонных блоков на клее',
             'normative_rate_code' => '08-04-003-01',
+        ],
+        'walls.lintels' => [
+            'material_markers' => ['перемыч', 'железобетон'],
+            'assumption_code' => 'residential_precast_concrete_lintels',
+            'normative_search_text' => 'укладка железобетонных перемычек массой до 0,7 т',
+            'normative_rate_code' => '07-01-021-01',
         ],
         'roof.insulation' => [
             'material_markers' => ['минераловат', 'минеральн'],
