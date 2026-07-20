@@ -179,7 +179,14 @@ final class ResidentialScopeDecisionQuantityMaterializer
                 'status' => 'preliminary',
                 'evidence_ids' => $this->decisionEvidenceIds($decision),
             ],
-            'floor_area' => $floorArea?->toArray(),
+            'floor_area' => $floorArea === null ? null : [
+                'key' => $floorArea->key,
+                'unit' => $floorArea->unit,
+                'amount' => $floorArea->amount,
+                'formula_key' => $floorArea->formulaKey,
+                'formula_version' => $floorArea->formulaVersion,
+                'model_version' => $floorArea->modelVersion,
+            ],
             'building_model_version' => $model->modelVersion,
         ];
     }
