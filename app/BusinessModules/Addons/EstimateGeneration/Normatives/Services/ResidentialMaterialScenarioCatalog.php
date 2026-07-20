@@ -6,11 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v8';
+    private const CATALOG_VERSION = 'residential_material_scenario:v9';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v8';
+    private const SCENARIO_ID = 'residential_preliminary_common:v9';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v8';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v9';
 
     /**
      * @var array<string, array{
@@ -26,6 +26,7 @@ final class ResidentialMaterialScenarioCatalog
         'foundation.prep' => [
             'material_markers' => ['бетонная подготовка', '100 мм'],
             'assumption_code' => 'foundation_concrete_preparation_100mm',
+            'intent_action' => 'concreting',
             'work_item_name' => 'Устройство бетонной подготовки под фундаменты',
             'normative_search_text' => 'устройство бетонной подготовки фундаментов общего назначения',
             'normative_rate_code' => '06-01-001-01',
@@ -179,6 +180,7 @@ final class ResidentialMaterialScenarioCatalog
         'sanitary.showers' => [
             'material_markers' => ['кабина душевая', 'пластиковый поддон'],
             'assumption_code' => 'residential_shower_cabin_plastic_tray',
+            'intent_action' => 'sanitary_fixture_installation',
             'work_item_name' => 'Установка душевых кабин с пластиковым поддоном',
             'normative_search_text' => 'установка душевых кабин с пластиковым поддоном',
             'normative_rate_code' => '17-01-001-21',
@@ -186,18 +188,21 @@ final class ResidentialMaterialScenarioCatalog
         'sanitary.toilets' => [
             'material_markers' => ['унитаз', 'бачок непосредственно присоединенный'],
             'assumption_code' => 'residential_close_coupled_toilet',
+            'intent_action' => 'sanitary_fixture_installation',
             'normative_search_text' => 'установка унитазов с бачком непосредственно присоединенным',
             'normative_rate_code' => '17-01-003-01',
         ],
         'sanitary.washbasins' => [
             'material_markers' => ['умывальник', 'холодная и горячая вода'],
             'assumption_code' => 'residential_hot_cold_washbasin',
+            'intent_action' => 'sanitary_fixture_installation',
             'normative_search_text' => 'установка умывальников одиночных с подводкой холодной и горячей воды',
             'normative_rate_code' => '17-01-001-14',
         ],
         'rough.floor' => [
             'material_markers' => ['стяжка', 'цементная', '20 мм'],
             'assumption_code' => 'residential_cement_floor_screed_20mm',
+            'intent_action' => 'floor_preparation',
             'normative_search_text' => 'устройство стяжек цементных толщиной 20 мм',
             'normative_rate_code' => '11-01-011-01',
         ],
