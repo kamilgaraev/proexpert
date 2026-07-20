@@ -279,6 +279,10 @@ class UserPermissionsController extends Controller
     protected function getModulePermissions(string $moduleSlug): array
     {
         try {
+            $moduleSlug = match ($moduleSlug) {
+                'estimate-generation' => 'ai-estimates',
+                default => $moduleSlug,
+            };
             $module = \App\Models\Module::where('slug', $moduleSlug)->first();
             if ($module && $module->permissions) {
                 return $this->normalizePermissions($module->permissions);
