@@ -182,7 +182,100 @@ final class ResidentialProjectMaterialCatalogTest extends TestCase
         self::assertSame('20.3.02.03-0102', $resource['code']);
         self::assertSame('1850', $resource['unit_price']);
         self::assertSame('semantic_catalog_attributes_median', $resource['project_material_requirement']['selection_policy']);
+        self::assertSame(
+            'residential_ceiling_luminaire_attributes:v1',
+            $resource['project_material_requirement']['semantic_eligibility_policy'],
+        );
         self::assertSame([52], $resource['project_material_requirement']['candidate_resource_price_ids']);
+    }
+
+    #[Test]
+    public function public_building_luminaire_is_not_a_safe_residential_fallback(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $requirement = $catalog->requirementForIntent([
+            'specialization_scenario' => $scenarios->issue('lighting.fixtures', 'residential'),
+        ]);
+
+        self::assertIsArray($requirement);
+        self::assertNull($catalog->resourceFromPriceRows($requirement, [(object) [
+            'price_id' => 53,
+            'resource_code' => '20.3.03.07-0094',
+            'resource_name' => 'Светильник светодиодный потолочный накладной для общественных зданий, IP54, 595х595 мм, 35 Вт',
+            'unit' => 'шт',
+            'base_price' => '2925.00',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => 'region-2026-q2',
+        ]]));
+    }
+
+    #[Test]
+    public function semantic_median_uses_only_safe_residential_luminaires(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $requirement = $catalog->requirementForIntent([
+            'specialization_scenario' => $scenarios->issue('lighting.fixtures', 'residential'),
+        ]);
+
+        self::assertIsArray($requirement);
+        $resource = $catalog->resourceFromPriceRows($requirement, [
+            (object) [
+                'price_id' => 54,
+                'resource_code' => '20.3.03.07-0094',
+                'resource_name' => 'Светильник светодиодный потолочный для общественных зданий, IP54, 595х595 мм, 35 Вт',
+                'unit' => 'шт',
+                'base_price' => '1000.00',
+                'price_source' => 'regional_catalog',
+                'price_source_version' => 'region-2026-q2',
+            ],
+            (object) [
+                'price_id' => 55,
+                'resource_code' => '20.3.02.03-0102',
+                'resource_name' => 'Светильник потолочный светодиодный накладной IP20, 18 Вт',
+                'unit' => 'шт',
+                'base_price' => '1850.00',
+                'price_source' => 'regional_catalog',
+                'price_source_version' => 'region-2026-q2',
+            ],
+        ]);
+
+        self::assertIsArray($resource);
+        self::assertSame('20.3.02.03-0102', $resource['code']);
+        self::assertSame([55], $resource['project_material_requirement']['candidate_resource_price_ids']);
+    }
+
+    #[Test]
+    public function all_unsafe_semantic_luminaires_fail_closed(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $requirement = $catalog->requirementForIntent([
+            'specialization_scenario' => $scenarios->issue('lighting.fixtures', 'residential'),
+        ]);
+
+        self::assertIsArray($requirement);
+        self::assertNull($catalog->resourceFromPriceRows($requirement, [
+            (object) [
+                'price_id' => 56,
+                'resource_code' => '20.3.03.07-0094',
+                'resource_name' => 'Светильник светодиодный потолочный для общественных зданий, IP54, 595х595 мм, 35 Вт',
+                'unit' => 'шт',
+                'base_price' => '1000.00',
+                'price_source' => 'regional_catalog',
+                'price_source_version' => 'region-2026-q2',
+            ],
+            (object) [
+                'price_id' => 57,
+                'resource_code' => '20.3.02.03-0102',
+                'resource_name' => 'Светильник промышленный потолочный светодиодный IP65, 18 Вт',
+                'unit' => 'шт',
+                'base_price' => '1850.00',
+                'price_source' => 'regional_catalog',
+                'price_source_version' => 'region-2026-q2',
+            ],
+        ]));
     }
 
     #[Test]

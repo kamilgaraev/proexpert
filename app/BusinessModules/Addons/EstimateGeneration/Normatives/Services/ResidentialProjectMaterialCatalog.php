@@ -68,6 +68,16 @@ final readonly class ResidentialProjectMaterialCatalog
             'fallback_group_code' => '59.1.20.03',
             'fallback_name_markers' => ['светиль'],
             'semantic_fallback_name_markers' => ['светиль', 'светодиод', 'потолоч'],
+            'semantic_eligibility_policy' => [
+                'version' => 'residential_ceiling_luminaire_attributes:v1',
+                'allowed_power_watts' => [18],
+                'allowed_ip_ratings' => ['ip20'],
+                'allow_missing_ip_rating' => true,
+                'forbidden_name_markers' => [
+                    'общественн', 'офис', 'промышленн', 'склад',
+                    '595х595', '595x595', '600х600', '600x600',
+                ],
+            ],
             'unit' => 'pcs',
             'source_unit' => 'шт',
             'price_factor' => 1.0,
@@ -176,6 +186,7 @@ final readonly class ResidentialProjectMaterialCatalog
                     && preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}-\d{4}$/D', trim((string) ($row->resource_code ?? ''))) === 1
                     && trim((string) ($row->unit ?? '')) === ($requirement['source_unit'] ?? null)
                     && array_filter($semanticMarkers, static fn (string $marker): bool => ! str_contains($name, mb_strtolower($marker))) === []
+                    && $this->semanticCandidateEligible($requirement, $row)
                     && $this->validPriceRow($row);
             }));
             if ($eligible === []) {
@@ -227,6 +238,53 @@ final readonly class ResidentialProjectMaterialCatalog
     }
 
     /** @param array<string, mixed> $requirement */
+    private function semanticCandidateEligible(array $requirement, object $row): bool
+    {
+        $policy = $requirement['semantic_eligibility_policy'] ?? null;
+        if (! is_array($policy)) {
+            return true;
+        }
+
+        $name = mb_strtolower(str_replace('ё', 'е', trim((string) ($row->resource_name ?? ''))));
+        foreach ((array) ($policy['forbidden_name_markers'] ?? []) as $marker) {
+            if (is_string($marker) && $marker !== '' && str_contains($name, mb_strtolower($marker))) {
+                return false;
+            }
+        }
+
+        $allowedPowers = array_values(array_filter(
+            array_map(static fn (mixed $power): float => is_numeric($power) ? (float) $power : 0.0, (array) ($policy['allowed_power_watts'] ?? [])),
+            static fn (float $power): bool => $power > 0,
+        ));
+        if ($allowedPowers !== []) {
+            preg_match_all('/(\d+(?:[.,]\d+)?)\s*(?:вт|w)(?![a-zа-я0-9])/ui', $name, $matches);
+            $powers = array_map(
+                static fn (string $power): float => (float) str_replace(',', '.', $power),
+                $matches[1] ?? [],
+            );
+            if ($powers === [] || array_filter(
+                $powers,
+                static fn (float $power): bool => ! in_array($power, $allowedPowers, true),
+            ) !== []) {
+                return false;
+            }
+        }
+
+        preg_match_all('/\bip\s*([0-9]{2})\b/ui', $name, $matches);
+        $ratings = array_map(static fn (string $rating): string => 'ip'.$rating, $matches[1] ?? []);
+        if ($ratings === []) {
+            return ($policy['allow_missing_ip_rating'] ?? false) === true;
+        }
+
+        $allowedRatings = array_map('strval', (array) ($policy['allowed_ip_ratings'] ?? []));
+
+        return $allowedRatings !== [] && array_filter(
+            $ratings,
+            static fn (string $rating): bool => ! in_array($rating, $allowedRatings, true),
+        ) === [];
+    }
+
+    /** @param array<string, mixed> $requirement */
     private function mapPriceRow(array $requirement, object $row, string $selectionPolicy): array
     {
         $resourceCode = trim((string) $row->resource_code);
@@ -261,6 +319,9 @@ final readonly class ResidentialProjectMaterialCatalog
                 'price_conversion_factor' => (string) $priceFactor,
                 'preferred_resource_code' => (string) $requirement['resource_code'],
                 'selection_policy' => $selectionPolicy,
+                ...isset($requirement['semantic_eligibility_policy']['version'])
+                    ? ['semantic_eligibility_policy' => (string) $requirement['semantic_eligibility_policy']['version']]
+                    : [],
             ],
         ];
     }
