@@ -49,7 +49,7 @@ final class LegalDocumentSignatureService
         ?string $provider = null,
         ?DateTimeImmutable $expiresAt = null,
     ): LegalSignatureRequest {
-        $this->authorizer->authorize($actor, $document, LegalDocumentAbility::SIGN->value);
+        $this->authorizer->authorize($actor, $document, LegalDocumentAbility::REQUEST_SIGNATURE->value);
         $method = trim($method);
         if (! in_array($method, ['paper', 'external_electronic', 'provider_electronic'], true)) {
             throw new DomainException('legal_signature_method_invalid');
@@ -77,7 +77,7 @@ final class LegalDocumentSignatureService
         return $this->connection->transaction(function () use ($document, $version, $actor, $method, $provider, $partyId, $signers, $key, $requestHash, $expiresAt): LegalSignatureRequest {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
             $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $version->id);
-            $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::SIGN->value);
+            $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::REQUEST_SIGNATURE->value);
             $existing = $this->requests()->where('organization_id', $lockedDocument->organization_id)
                 ->where('requested_by_user_id', $actor->id)->where('idempotency_key', $key)->lockForUpdate()->first();
             if ($existing instanceof LegalSignatureRequest) {
@@ -333,7 +333,7 @@ final class LegalDocumentSignatureService
         if (! $document instanceof LegalArchiveDocument) {
             throw new DomainException('legal_signature_not_found');
         }
-        $this->authorizer->authorize($actor, $document, LegalDocumentAbility::SIGN->value);
+        $this->authorizer->authorize($actor, $document, LegalDocumentAbility::VERIFY_SIGNATURE->value);
         $result = $signature->method === 'external_electronic'
             ? new SignatureVerificationResult(
                 status: (string) $signature->verification_status,
@@ -362,7 +362,7 @@ final class LegalDocumentSignatureService
 
         return $this->connection->transaction(function () use ($signature, $actor, $document, $result, $key, $requestHash): LegalSignatureVerification {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
-            $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::SIGN->value);
+            $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::VERIFY_SIGNATURE->value);
             $existing = $this->verifications()->where('signature_id', $signature->id)->where('idempotency_key', $key)->lockForUpdate()->first();
             if ($existing instanceof LegalSignatureVerification) {
                 $this->assertSameRequest($existing->request_hash, $requestHash);
