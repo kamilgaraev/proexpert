@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final readonly class ResidentialProjectMaterialCatalog
 {
-    public const VERSION = 'residential_project_material:v1';
+    public const VERSION = 'residential_project_material:v2';
 
     private const REQUIREMENTS = [
         'electrical.main_cable' => [
@@ -35,6 +35,8 @@ final readonly class ResidentialProjectMaterialCatalog
         ],
         'electrical.panel' => [
             'resource_code' => '20.4.04.02-0003',
+            'fallback_group_code' => '20.4.04.02',
+            'fallback_name_markers' => ['щит'],
             'unit' => 'pcs',
             'source_unit' => 'шт',
             'price_factor' => 1.0,
@@ -59,6 +61,8 @@ final readonly class ResidentialProjectMaterialCatalog
         ],
         'lighting.fixtures' => [
             'resource_code' => '59.1.20.03-0798',
+            'fallback_group_code' => '59.1.20.03',
+            'fallback_name_markers' => ['светиль'],
             'unit' => 'pcs',
             'source_unit' => 'шт',
             'price_factor' => 1.0,
@@ -97,23 +101,88 @@ final readonly class ResidentialProjectMaterialCatalog
         return array_values(array_unique(array_column(self::REQUIREMENTS, 'resource_code')));
     }
 
+    /** @return list<string> */
+    public function fallbackGroupCodes(): array
+    {
+        return array_values(array_unique(array_filter(array_column(self::REQUIREMENTS, 'fallback_group_code'))));
+    }
+
+    /** @param array<string, mixed> $requirement @param list<object> $rows */
+    public function resourceFromPriceRows(array $requirement, array $rows): ?array
+    {
+        foreach ($rows as $row) {
+            $resource = $this->resourceFromPriceRow($requirement, $row);
+            if ($resource !== null) {
+                return $resource;
+            }
+        }
+
+        $groupCode = trim((string) ($requirement['fallback_group_code'] ?? ''));
+        $markers = is_array($requirement['fallback_name_markers'] ?? null)
+            ? array_values(array_filter(array_map('strval', $requirement['fallback_name_markers'])))
+            : [];
+        if ($groupCode === '' || $markers === []) {
+            return null;
+        }
+
+        $eligible = array_values(array_filter($rows, function (object $row) use ($requirement, $groupCode, $markers): bool {
+            $name = mb_strtolower(trim((string) ($row->resource_name ?? '')));
+
+            return preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', trim((string) ($row->resource_code ?? ''))) === 1
+                && trim((string) ($row->unit ?? '')) === ($requirement['source_unit'] ?? null)
+                && array_filter($markers, static fn (string $marker): bool => ! str_contains($name, mb_strtolower($marker))) === []
+                && $this->validPriceRow($row);
+        }));
+        if ($eligible === []) {
+            return null;
+        }
+
+        $regional = array_values(array_filter(
+            $eligible,
+            static fn (object $row): bool => ($row->price_source ?? null) === 'regional_catalog',
+        ));
+        if ($regional !== []) {
+            $eligible = $regional;
+        }
+        usort($eligible, static function (object $left, object $right): int {
+            $byPrice = (float) $left->base_price <=> (float) $right->base_price;
+
+            return $byPrice !== 0 ? $byPrice : strcmp((string) $left->resource_code, (string) $right->resource_code);
+        });
+        $selected = $eligible[intdiv(count($eligible) - 1, 2)];
+
+        return $this->mapPriceRow($requirement, $selected, 'semantic_group_median');
+    }
+
     /** @param array<string, mixed> $requirement */
     public function resourceFromPriceRow(array $requirement, object $row): ?array
     {
         $resourceCode = trim((string) ($row->resource_code ?? ''));
-        $sourceUnit = trim((string) ($row->unit ?? ''));
-        $sourcePrice = $row->base_price ?? null;
-        $priceId = $row->price_id ?? null;
-        $priceSource = trim((string) ($row->price_source ?? ''));
-        $priceSourceVersion = trim((string) ($row->price_source_version ?? ''));
-        if ($resourceCode !== ($requirement['resource_code'] ?? null)
-            || $sourceUnit !== ($requirement['source_unit'] ?? null)
-            || ! is_numeric($sourcePrice) || (float) $sourcePrice <= 0
-            || ! is_int($priceId) || $priceId <= 0
-            || ! in_array($priceSource, ['regional_catalog', 'fsbc_base', 'fsnb_base'], true)
-            || $priceSourceVersion === '') {
+        if ($resourceCode !== ($requirement['resource_code'] ?? null) || ! $this->validPriceRow($row)
+            || trim((string) ($row->unit ?? '')) !== ($requirement['source_unit'] ?? null)) {
             return null;
         }
+
+        return $this->mapPriceRow($requirement, $row, 'exact_code');
+    }
+
+    private function validPriceRow(object $row): bool
+    {
+        return is_numeric($row->base_price ?? null) && (float) $row->base_price > 0
+            && is_int($row->price_id ?? null) && $row->price_id > 0
+            && in_array(trim((string) ($row->price_source ?? '')), ['regional_catalog', 'fsbc_base', 'fsnb_base'], true)
+            && trim((string) ($row->price_source_version ?? '')) !== '';
+    }
+
+    /** @param array<string, mixed> $requirement */
+    private function mapPriceRow(array $requirement, object $row, string $selectionPolicy): array
+    {
+        $resourceCode = trim((string) $row->resource_code);
+        $sourceUnit = trim((string) $row->unit);
+        $sourcePrice = $row->base_price;
+        $priceId = $row->price_id;
+        $priceSource = trim((string) $row->price_source);
+        $priceSourceVersion = trim((string) $row->price_source_version);
 
         $priceFactor = (float) $requirement['price_factor'];
 
@@ -138,6 +207,8 @@ final readonly class ResidentialProjectMaterialCatalog
                 'source_unit_price' => (string) $sourcePrice,
                 'source_price_unit' => $sourceUnit,
                 'price_conversion_factor' => (string) $priceFactor,
+                'preferred_resource_code' => (string) $requirement['resource_code'],
+                'selection_policy' => $selectionPolicy,
             ],
         ];
     }
