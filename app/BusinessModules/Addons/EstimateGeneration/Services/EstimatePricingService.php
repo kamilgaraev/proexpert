@@ -151,21 +151,6 @@ class EstimatePricingService
                     $workItem[$group][$index] = $resource;
                 }
                 $toUnit = trim((string) ($resource['price_unit'] ?? $resource['pricing']['unit'] ?? $fromUnit));
-                if ($fromUnit !== $toUnit
-                    && trim((string) ($workItem['key'] ?? '')) !== ''
-                    && ! $this->isResidentialConvertedSelection($projectSelection)) {
-                    Log::info('estimate_generation.unit_conversion_selection_context', [
-                        'work_key' => $workItem['key'],
-                        'norm_code' => $workItem['normative_match']['code'] ?? null,
-                        'group_code' => $resource['normative_ref']['resource_code'] ?? null,
-                        'price_id' => $resource['normative_ref']['price_id'] ?? $resource['price_id'] ?? null,
-                        'unit_price' => $resource['unit_price'] ?? null,
-                        'from_unit' => $fromUnit,
-                        'to_unit' => $toUnit,
-                        'selected_resource_context' => $projectSelection,
-                        'decision_resource_contexts' => $workItem['normative_match']['project_resource_selections'] ?? [],
-                    ]);
-                }
                 $version = (int) ($resource['unit_conversion_version'] ?? $regionalContext['unit_conversion_version'] ?? 1);
                 $conversion = $this->hasResidentialConvertedPrice($resource)
                     ? null
