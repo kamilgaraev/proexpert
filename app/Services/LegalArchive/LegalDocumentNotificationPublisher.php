@@ -107,9 +107,11 @@ final class LegalDocumentNotificationPublisher
                 return false;
             }
 
-            DatabaseNotification::query()->firstOrCreate(
-                ['id' => $locked->notification_id],
-                [
+            $notification = DatabaseNotification::query()->find($locked->notification_id);
+            if (! $notification instanceof DatabaseNotification) {
+                $notification = new DatabaseNotification();
+                $notification->forceFill([
+                    'id' => $locked->notification_id,
                     'type' => $locked->notification_type,
                     'notifiable_type' => User::class,
                     'notifiable_id' => $recipient->id,
@@ -120,8 +122,9 @@ final class LegalDocumentNotificationPublisher
                     'delivery_status' => ['in_app' => 'sent'],
                     'data' => $locked->notification_payload,
                     'metadata' => ['legal_document_delivery_id' => $locked->id],
-                ],
-            );
+                ]);
+                $notification->save();
+            }
 
             $locked->forceFill([
                 'status' => 'delivered',

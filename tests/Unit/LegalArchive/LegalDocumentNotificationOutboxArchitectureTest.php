@@ -15,9 +15,17 @@ final class LegalDocumentNotificationOutboxArchitectureTest extends TestCase
         );
 
         self::assertStringContainsString('\'notification_id\' => $delivery?->notification_id ?? (string) Str::uuid()', $source);
-        self::assertStringContainsString('DatabaseNotification::query()->firstOrCreate', $source);
-        self::assertStringContainsString('[\'id\' => $locked->notification_id]', $source);
+        self::assertStringContainsString('DatabaseNotification::query()->find($locked->notification_id)', $source);
+        self::assertStringContainsString("'id' => \$locked->notification_id", $source);
         self::assertStringNotContainsString('->notify(', $source);
+    }
+
+    public function test_notification_model_retains_a_delivery_supplied_uuid_before_persistence(): void
+    {
+        $notification = new \App\BusinessModules\Features\Notifications\Models\Notification();
+        $notification->forceFill(['id' => '155f1318-15db-4b8d-a4fe-5f9f9754da97']);
+
+        self::assertSame('155f1318-15db-4b8d-a4fe-5f9f9754da97', $notification->getAttribute('id'));
     }
 
     public function test_recovery_claims_the_same_notification_id_before_persisting_it(): void
