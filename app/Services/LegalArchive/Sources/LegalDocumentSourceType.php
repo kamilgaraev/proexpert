@@ -15,6 +15,7 @@ enum LegalDocumentSourceType: string
     case COMMERCIAL_PROPOSAL = 'commercial_proposal';
     case CRM_DEAL = 'crm_deal';
     case ESTIMATE = 'estimate';
+    case EXECUTIVE_DOCUMENT = 'executive_document';
 
     public static function values(): array
     {

@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\CommercialProposals\Models\CommercialProposal;
 use App\BusinessModules\Features\Crm\Models\CrmDeal;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\Estimate;
@@ -57,6 +58,8 @@ final class LegalDocumentSourceResolver
             LegalDocumentSourceType::CRM_DEAL => CrmDeal::query()
                 ->whereKey($id)->where('organization_id', $organizationId)->first(),
             LegalDocumentSourceType::ESTIMATE => Estimate::query()
+                ->whereKey($id)->where('organization_id', $organizationId)->first(),
+            LegalDocumentSourceType::EXECUTIVE_DOCUMENT => ExecutiveDocument::query()
                 ->whereKey($id)->where('organization_id', $organizationId)->first(),
         };
         if (! $source instanceof Model) {
