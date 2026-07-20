@@ -61,7 +61,7 @@ final class LegalDocumentReconciliationService
             });
         }
 
-        $definitions = ['supplementary_agreements' => [SupplementaryAgreement::class, 'supplementary_agreement'], 'acts' => [ContractPerformanceAct::class, 'act'], 'commercial_proposals' => [CommercialProposal::class, 'commercial_proposal'], 'procurement' => [PurchaseOrder::class, 'procurement'], 'payments' => [PaymentDocument::class, 'payment'], 'executive_documentation' => [ExecutiveDocument::class, 'executive_documentation']];
+        $definitions = ['supplementary_agreements' => [SupplementaryAgreement::class, 'supplementary_agreement'], 'acts' => [ContractPerformanceAct::class, 'performance_act'], 'commercial_proposals' => [CommercialProposal::class, 'commercial_proposal'], 'procurement' => [PurchaseOrder::class, 'purchase_order'], 'payments' => [PaymentDocument::class, 'payment_document'], 'executive_documentation' => [ExecutiveDocument::class, 'executive_document']];
         foreach (array_diff($sources, ['contracts']) as $namedSource) {
             if ($summary['candidates'] >= $limit) {
                 break;
