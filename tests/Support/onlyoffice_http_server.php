@@ -14,8 +14,12 @@ $connection = null;
 
 try {
     $token = $argv[1] ?? '';
+    $mode = $argv[2] ?? 'serve';
     if (preg_match('/^[a-f0-9]{32}$/D', $token) !== 1) {
         throw new RuntimeException('Invalid readiness token.');
+    }
+    if (! in_array($mode, ['serve', 'never-ready', 'stall'], true)) {
+        throw new RuntimeException('Invalid server mode.');
     }
     $server = stream_socket_server('tcp://127.0.0.1:0', $errorCode, $errorMessage);
     if ($server === false) {
@@ -26,13 +30,29 @@ try {
         throw new RuntimeException('Unable to determine bound HTTP port.');
     }
     $port = (int) $matches[1];
-    fwrite(STDOUT, json_encode([
+    if ($mode === 'never-ready') {
+        sleep(10);
+        exit(0);
+    }
+    $readiness = json_encode([
         'protocol' => READINESS_PROTOCOL,
         'token' => $token,
         'pid' => getmypid(),
         'port' => $port,
-    ], JSON_THROW_ON_ERROR)."\n");
-    fflush(STDOUT);
+    ], JSON_THROW_ON_ERROR);
+    if (fwrite(STDOUT, $readiness."\n") !== strlen($readiness) + 1 || ! fflush(STDOUT)) {
+        throw new RuntimeException('Unable to publish readiness data.');
+    }
+
+    if ($mode === 'stall') {
+        if (function_exists('pcntl_async_signals') && function_exists('pcntl_signal') && defined('SIGTERM')) {
+            pcntl_async_signals(true);
+            pcntl_signal(SIGTERM, SIG_IGN);
+        }
+        while (true) {
+            usleep(100_000);
+        }
+    }
 
     $connection = stream_socket_accept($server, 5);
     if ($connection === false) {

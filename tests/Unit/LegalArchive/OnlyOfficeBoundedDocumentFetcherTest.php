@@ -11,6 +11,7 @@ use ReflectionProperty;
 use Symfony\Component\HttpClient\CurlHttpClient;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
+use Symfony\Component\Process\Process;
 
 final class OnlyOfficeBoundedDocumentFetcherTest extends TestCase
 {
@@ -21,19 +22,17 @@ final class OnlyOfficeBoundedDocumentFetcherTest extends TestCase
         $client = $clientProperty->getValue($fetcher);
         self::assertInstanceOf(CurlHttpClient::class, $client);
 
-        for ($attempt = 0; $attempt < 3; $attempt++) {
-            $server = OnlyOfficeControlledHttpServer::start();
-            try {
-                $response = $client->request('GET', $server->url(), [
-                    'timeout' => 2.0,
-                    'max_duration' => 3.0,
-                ]);
+        $server = OnlyOfficeControlledHttpServer::start();
+        try {
+            $response = $client->request('GET', $server->url(), [
+                'timeout' => 2.0,
+                'max_duration' => 3.0,
+            ]);
 
-                self::assertSame(200, $response->getStatusCode());
-                self::assertSame('most-curl-runtime', $response->getContent());
-            } finally {
-                $server->stop();
-            }
+            self::assertSame(200, $response->getStatusCode());
+            self::assertSame('most-curl-runtime', $response->getContent());
+        } finally {
+            $server->stop();
         }
     }
 
@@ -46,8 +45,34 @@ final class OnlyOfficeBoundedDocumentFetcherTest extends TestCase
         self::assertStringContainsString("'protocol' => READINESS_PROTOCOL", $helper);
         self::assertStringContainsString("'token' => \$token", $helper);
         self::assertStringContainsString("'pid' => getmypid()", $helper);
+        self::assertStringContainsString('new Process(', $test);
         self::assertStringNotContainsString('f'.'sockopen', $test.$helper);
+        self::assertStringNotContainsString('proc'.'_open', $test);
+        self::assertStringNotContainsString('stream_set_'.'blocking', $test);
         self::assertStringNotContainsString('-'.'S', $test);
+    }
+
+    public function test_controlled_server_times_out_and_reaps_child_that_never_reports_readiness(): void
+    {
+        $startedAt = microtime(true);
+        try {
+            OnlyOfficeControlledHttpServer::start('never-ready', 0.25);
+            self::fail('A child without readiness must be rejected.');
+        } catch (\RuntimeException $error) {
+            self::assertStringContainsString('readiness timeout', $error->getMessage());
+        }
+
+        self::assertLessThan(2.0, microtime(true) - $startedAt);
+    }
+
+    public function test_controlled_server_force_reaps_stalled_child_with_bounded_cleanup(): void
+    {
+        $server = OnlyOfficeControlledHttpServer::start('stall', 2.0);
+        $startedAt = microtime(true);
+        $server->stop();
+
+        self::assertLessThan(2.0, microtime(true) - $startedAt);
+        self::assertTrue($server->wasReaped());
     }
 
     public function test_transport_has_separate_connect_idle_and_total_duration_limits(): void
@@ -164,52 +189,55 @@ final class OnlyOfficeControlledHttpServer
 {
     private const READINESS_PROTOCOL = 'most-onlyoffice-http/1';
 
-    /**
-     * @param  resource  $process
-     * @param  resource  $stdout
-     * @param  resource  $stderr
-     */
+    private const MAX_OUTPUT_BYTES = 8192;
+
     private function __construct(
-        private readonly mixed $process,
-        private readonly mixed $stdout,
-        private readonly mixed $stderr,
+        private readonly Process $process,
         private readonly int $port,
+        private readonly bool $allowForcedStop,
+        private bool $reaped = false,
     ) {}
 
-    public static function start(): self
+    public static function start(string $mode = 'serve', float $readinessTimeout = 3.0): self
     {
-        $token = bin2hex(random_bytes(16));
-        $router = __DIR__.'/../../Support/onlyoffice_http_server.php';
-        $process = proc_open(
-            [PHP_BINARY, $router, $token],
-            [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']],
-            $pipes,
-            dirname($router),
-        );
-        if (! is_resource($process)) {
-            throw new \RuntimeException('Unable to start the controlled local HTTP server.');
+        if (! in_array($mode, ['serve', 'never-ready', 'stall'], true)
+            || $readinessTimeout < 0.05 || $readinessTimeout > 5.0) {
+            throw new \InvalidArgumentException('Invalid controlled server options.');
         }
-        fclose($pipes[0]);
-        $status = proc_get_status($process);
-        $expectedPid = (int) ($status['pid'] ?? 0);
+        $token = bin2hex(random_bytes(16));
+        $helper = __DIR__.'/../../Support/onlyoffice_http_server.php';
+        $process = new Process([PHP_BINARY, $helper, $token, $mode], dirname($helper), timeout: 15.0);
+        $process->start();
+        $expectedPid = $process->getPid();
 
         try {
-            $line = self::readReadiness($process, $pipes[1], $pipes[2]);
-            $ready = json_decode($line, true, flags: JSON_THROW_ON_ERROR);
+            $ready = self::readReadiness($process, $readinessTimeout);
             if (! is_array($ready)
                 || array_keys($ready) !== ['protocol', 'token', 'pid', 'port']
                 || ($ready['protocol'] ?? null) !== self::READINESS_PROTOCOL
                 || ($ready['token'] ?? null) !== $token
-                || ($ready['pid'] ?? null) !== $expectedPid
+                || ! is_int($ready['pid'] ?? null)
+                || $ready['pid'] < 1
+                || (DIRECTORY_SEPARATOR !== '\\' && $ready['pid'] !== $expectedPid)
                 || ! is_int($ready['port'] ?? null)
                 || $ready['port'] < 1
                 || $ready['port'] > 65535) {
-                throw new \RuntimeException('Controlled local HTTP server returned invalid readiness data.');
+                throw new \RuntimeException('Controlled local HTTP server returned invalid readiness data: '.json_encode([
+                    'expected_pid' => $expectedPid,
+                    'ready' => $ready,
+                ], JSON_THROW_ON_ERROR));
             }
 
-            return new self($process, $pipes[1], $pipes[2], $ready['port']);
+            return new self($process, $ready['port'], $mode === 'stall');
         } catch (\Throwable $error) {
-            self::terminate($process, $pipes[1], $pipes[2]);
+            $result = self::shutdown($process);
+            $details = trim($result['stderr']);
+            if (! $result['reaped']) {
+                throw new \RuntimeException('Controlled local HTTP server could not be reaped.', previous: $error);
+            }
+            if ($error instanceof ReadinessTimeoutException) {
+                throw new \RuntimeException('Controlled local HTTP server readiness timeout'.($details === '' ? '' : ': '.$details), previous: $error);
+            }
 
             throw $error;
         }
@@ -222,73 +250,92 @@ final class OnlyOfficeControlledHttpServer
 
     public function stop(): void
     {
-        $deadline = microtime(true) + 3.0;
-        $status = proc_get_status($this->process);
-        while (($status['running'] ?? false) === true && microtime(true) < $deadline) {
-            usleep(10_000);
-            $status = proc_get_status($this->process);
+        if ($this->reaped) {
+            return;
         }
-        if (($status['running'] ?? false) === true) {
-            proc_terminate($this->process);
-            usleep(50_000);
-            $status = proc_get_status($this->process);
-        }
-        stream_set_blocking($this->stdout, true);
-        stream_set_blocking($this->stderr, true);
-        $unexpectedOutput = stream_get_contents($this->stdout);
-        $errors = stream_get_contents($this->stderr);
-        fclose($this->stdout);
-        fclose($this->stderr);
-        $closeCode = proc_close($this->process);
-        $exitCode = (int) ($status['exitcode'] ?? $closeCode);
-        if ($exitCode < 0) {
-            $exitCode = $closeCode;
-        }
-        if ($exitCode !== 0 || $unexpectedOutput !== '' || $errors !== '') {
+        $result = self::shutdown($this->process);
+        $this->reaped = $result['reaped'];
+        if (! $result['reaped']
+            || (! $this->allowForcedStop && ($result['forced'] || $result['exit_code'] !== 0))
+            || $result['stdout'] !== '' || $result['stderr'] !== '') {
             throw new \RuntimeException(sprintf(
-                'Controlled local HTTP server failed: exit=%d stdout=%s stderr=%s',
-                $exitCode,
-                trim((string) $unexpectedOutput),
-                trim((string) $errors),
+                'Controlled local HTTP server failed: exit=%d forced=%d stdout=%s stderr=%s',
+                $result['exit_code'],
+                $result['forced'] ? 1 : 0,
+                trim($result['stdout']),
+                trim($result['stderr']),
             ));
         }
     }
 
-    /**
-     * @param  resource  $process
-     * @param  resource  $stdout
-     * @param  resource  $stderr
-     */
-    private static function readReadiness(mixed $process, mixed $stdout, mixed $stderr): string
+    public function wasReaped(): bool
     {
-        $line = fgets($stdout, 514);
-        if (! is_string($line) || ! str_ends_with($line, "\n") || substr_count($line, "\n") !== 1) {
-            $status = proc_get_status($process);
-            if (($status['running'] ?? false) === true) {
-                proc_terminate($process);
-            }
-            stream_set_blocking($stderr, true);
-            $errors = stream_get_contents($stderr);
-
-            throw new \RuntimeException('Controlled local HTTP server readiness failed: '.trim((string) $errors));
-        }
-
-        return substr($line, 0, -1);
+        return $this->reaped;
     }
 
-    /**
-     * @param  resource  $process
-     * @param  resource  $stdout
-     * @param  resource  $stderr
-     */
-    private static function terminate(mixed $process, mixed $stdout, mixed $stderr): void
+    /** @return array<string, mixed> */
+    private static function readReadiness(Process $process, float $timeout): array
     {
-        $status = proc_get_status($process);
-        if (($status['running'] ?? false) === true) {
-            proc_terminate($process);
+        $output = '';
+        $errors = '';
+        $deadline = microtime(true) + $timeout;
+        do {
+            self::appendBounded($output, $process->getIncrementalOutput(), 512, 'readiness');
+            self::appendBounded($errors, $process->getIncrementalErrorOutput(), self::MAX_OUTPUT_BYTES, 'error');
+            if ($errors !== '') {
+                throw new \RuntimeException('Controlled local HTTP server readiness failed: '.trim($errors));
+            }
+            if (str_contains($output, "\n")) {
+                if (! str_ends_with($output, "\n") || substr_count($output, "\n") !== 1) {
+                    throw new \RuntimeException('Controlled local HTTP server returned invalid readiness frame.');
+                }
+
+                return json_decode(substr($output, 0, -1), true, flags: JSON_THROW_ON_ERROR);
+            }
+            if (! $process->isRunning()) {
+                throw new \RuntimeException('Controlled local HTTP server exited before readiness.');
+            }
+            usleep(5_000);
+        } while (microtime(true) < $deadline);
+
+        throw new ReadinessTimeoutException;
+    }
+
+    /** @return array{reaped: bool, forced: bool, exit_code: int, stdout: string, stderr: string} */
+    private static function shutdown(Process $process): array
+    {
+        $standardOutput = '';
+        $standardError = '';
+        $forced = false;
+        $naturalExitDeadline = microtime(true) + 0.5;
+        while ($process->isRunning() && microtime(true) < $naturalExitDeadline) {
+            self::appendBounded($standardOutput, $process->getIncrementalOutput(), self::MAX_OUTPUT_BYTES, 'output');
+            self::appendBounded($standardError, $process->getIncrementalErrorOutput(), self::MAX_OUTPUT_BYTES, 'error');
+            usleep(5_000);
         }
-        fclose($stdout);
-        fclose($stderr);
-        proc_close($process);
+        if ($process->isRunning()) {
+            $forced = $process->stop(0.15, 9) !== 0;
+        }
+        self::appendBounded($standardOutput, $process->getIncrementalOutput(), self::MAX_OUTPUT_BYTES, 'output');
+        self::appendBounded($standardError, $process->getIncrementalErrorOutput(), self::MAX_OUTPUT_BYTES, 'error');
+        $reaped = ! $process->isRunning() && $process->isTerminated();
+
+        return [
+            'reaped' => $reaped,
+            'forced' => $forced,
+            'exit_code' => $process->getExitCode() ?? -1,
+            'stdout' => $standardOutput,
+            'stderr' => $standardError,
+        ];
+    }
+
+    private static function appendBounded(string &$buffer, string $chunk, int $maximum, string $stream): void
+    {
+        if (strlen($buffer) + strlen($chunk) > $maximum) {
+            throw new \RuntimeException("Controlled local HTTP server {$stream} exceeded limit.");
+        }
+        $buffer .= $chunk;
     }
 }
+
+final class ReadinessTimeoutException extends \RuntimeException {}
