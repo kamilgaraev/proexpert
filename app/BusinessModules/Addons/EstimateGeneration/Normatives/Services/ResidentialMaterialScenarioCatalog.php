@@ -6,11 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v7';
+    private const CATALOG_VERSION = 'residential_material_scenario:v8';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v7';
+    private const SCENARIO_ID = 'residential_preliminary_common:v8';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v7';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v8';
 
     /**
      * @var array<string, array{
@@ -23,6 +23,13 @@ final class ResidentialMaterialScenarioCatalog
      * }>
      */
     private const WORK_ITEMS = [
+        'foundation.prep' => [
+            'material_markers' => ['бетонная подготовка', '100 мм'],
+            'assumption_code' => 'foundation_concrete_preparation_100mm',
+            'work_item_name' => 'Устройство бетонной подготовки под фундаменты',
+            'normative_search_text' => 'устройство бетонной подготовки фундаментов общего назначения',
+            'normative_rate_code' => '06-01-001-01',
+        ],
         'foundation.waterproofing' => [
             'material_markers' => ['обмазочн', 'мастич', 'мастик'],
             'assumption_code' => 'foundation_coating_waterproofing',
@@ -46,6 +53,12 @@ final class ResidentialMaterialScenarioCatalog
             'assumption_code' => 'pitched_roof_mineral_wool',
             'normative_search_text' => 'утепление покрытий плитами из минеральной ваты насухо',
             'normative_rate_code' => '12-01-013-07',
+        ],
+        'roof.rafters' => [
+            'material_markers' => ['стропил', 'деревян'],
+            'assumption_code' => 'pitched_roof_wooden_rafters',
+            'normative_search_text' => 'установка деревянных стропил',
+            'normative_rate_code' => '10-01-002-01',
         ],
         'roof.covering' => [
             'material_markers' => ['металлочереп'],
@@ -162,6 +175,31 @@ final class ResidentialMaterialScenarioCatalog
             'assumption_code' => 'wet_zone_ceramic_wall_tile',
             'normative_search_text' => 'гладкая облицовка стен керамическими плитками на клее по кирпичу и бетону',
             'normative_rate_code' => '15-01-019-05',
+        ],
+        'sanitary.showers' => [
+            'material_markers' => ['кабина душевая', 'пластиковый поддон'],
+            'assumption_code' => 'residential_shower_cabin_plastic_tray',
+            'work_item_name' => 'Установка душевых кабин с пластиковым поддоном',
+            'normative_search_text' => 'установка душевых кабин с пластиковым поддоном',
+            'normative_rate_code' => '17-01-001-21',
+        ],
+        'sanitary.toilets' => [
+            'material_markers' => ['унитаз', 'бачок непосредственно присоединенный'],
+            'assumption_code' => 'residential_close_coupled_toilet',
+            'normative_search_text' => 'установка унитазов с бачком непосредственно присоединенным',
+            'normative_rate_code' => '17-01-003-01',
+        ],
+        'sanitary.washbasins' => [
+            'material_markers' => ['умывальник', 'холодная и горячая вода'],
+            'assumption_code' => 'residential_hot_cold_washbasin',
+            'normative_search_text' => 'установка умывальников одиночных с подводкой холодной и горячей воды',
+            'normative_rate_code' => '17-01-001-14',
+        ],
+        'rough.floor' => [
+            'material_markers' => ['стяжка', 'цементная', '20 мм'],
+            'assumption_code' => 'residential_cement_floor_screed_20mm',
+            'normative_search_text' => 'устройство стяжек цементных толщиной 20 мм',
+            'normative_rate_code' => '11-01-011-01',
         ],
     ];
 

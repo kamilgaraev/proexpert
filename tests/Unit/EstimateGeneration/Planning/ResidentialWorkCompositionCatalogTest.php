@@ -31,8 +31,10 @@ final class ResidentialWorkCompositionCatalogTest extends TestCase
             ['roof.rafters', 'roof.insulation', 'roof.covering', 'roof.gutter'],
             $requirements['roof'],
         );
-        self::assertContains('sanitary.points', $requirements['plumbing']);
-        self::assertContains('sewerage.risers', $requirements['sewerage']);
+        self::assertContains('sanitary.showers', $requirements['plumbing']);
+        self::assertContains('sanitary.toilets', $requirements['plumbing']);
+        self::assertContains('sanitary.washbasins', $requirements['plumbing']);
+        self::assertNotContains('sewerage.risers', $requirements['sewerage']);
         self::assertContains('heating.radiators', $requirements['heating']);
 
         $all = array_merge(...array_values($requirements));

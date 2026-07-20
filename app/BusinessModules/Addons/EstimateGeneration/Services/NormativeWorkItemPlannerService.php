@@ -597,7 +597,12 @@ final class NormativeWorkItemPlannerService
     private function definitionHasSanitaryFixtureEvidence(array $definition, array $analysis): bool
     {
         $quantityKey = (string) ($definition['quantity_key'] ?? '');
-        if ($quantityKey !== 'sanitary.points') {
+        if (! in_array($quantityKey, [
+            'sanitary.points',
+            'sanitary.showers',
+            'sanitary.toilets',
+            'sanitary.washbasins',
+        ], true)) {
             return true;
         }
 
@@ -979,6 +984,9 @@ final class NormativeWorkItemPlannerService
             'plumbing', 'water_supply', 'sanitary_rooms' => [
                 $this->definition('Прокладка труб водоснабжения', 'plumbing', 'прокладка трубопроводов водоснабжения', 'plumbing.pipe'),
                 $this->definition('Сантехнические точки', 'plumbing', 'подключение сантехнических приборов', 'sanitary.points'),
+                $this->definition('Установка душевых кабин', 'plumbing', 'установка душевых кабин с пластиковым поддоном', 'sanitary.showers'),
+                $this->definition('Установка унитазов', 'plumbing', 'установка унитазов с бачком непосредственно присоединенным', 'sanitary.toilets'),
+                $this->definition('Установка умывальников', 'plumbing', 'установка одиночных умывальников с подводкой холодной и горячей воды', 'sanitary.washbasins'),
                 $this->definition('Гидроизоляция мокрых зон', 'finishing', 'устройство гидроизоляции мокрых зон', 'sanitary.waterproofing', [
                     'Подготовка основания',
                     'Нанесение гидроизоляции',
@@ -993,6 +1001,9 @@ final class NormativeWorkItemPlannerService
             'water_sewerage' => [
                 $this->definition('Прокладка труб водоснабжения', 'plumbing', 'прокладка трубопроводов водоснабжения', 'plumbing.pipe'),
                 $this->definition('Сантехнические точки', 'plumbing', 'подключение сантехнических приборов', 'sanitary.points'),
+                $this->definition('Установка душевых кабин', 'plumbing', 'установка душевых кабин с пластиковым поддоном', 'sanitary.showers'),
+                $this->definition('Установка унитазов', 'plumbing', 'установка унитазов с бачком непосредственно присоединенным', 'sanitary.toilets'),
+                $this->definition('Установка умывальников', 'plumbing', 'установка одиночных умывальников с подводкой холодной и горячей воды', 'sanitary.washbasins'),
                 $this->definition('Прокладка труб канализации', 'sewerage', 'прокладка трубопроводов канализации', 'sewerage.pipe'),
                 $this->definition('Гидроизоляция мокрых зон', 'finishing', 'устройство гидроизоляции мокрых зон', 'sanitary.waterproofing', [
                     'Подготовка основания',

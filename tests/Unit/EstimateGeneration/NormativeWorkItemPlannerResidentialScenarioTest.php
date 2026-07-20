@@ -35,17 +35,18 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
         $requirements = (new ResidentialWorkCompositionCatalog)->requirements($plan);
         $units = [
             'earth.trench' => 'm3', 'earth.backfill' => 'm3', 'earth.export' => 'm3', 'earth.plan' => 'm2',
-            'foundation.prep' => 'm2', 'foundation.formwork' => 'm2', 'foundation.rebar' => 't',
+            'foundation.prep' => 'm3', 'foundation.formwork' => 'm2', 'foundation.rebar' => 't',
             'foundation.concrete' => 'm3', 'foundation.waterproofing' => 'm2',
             'walls.external_volume' => 'm3', 'walls.internal' => 'm2', 'walls.lintels' => 'pcs',
             'slabs.formwork' => 'm2', 'slabs.concrete' => 'm3', 'slabs.rebar' => 't',
             'stairs.flights' => 'm2', 'stairs.railings' => 'm',
-            'roof.rafters' => 'm2', 'roof.area' => 'm2', 'roof.insulation' => 'm2',
+            'roof.rafters' => 'm3', 'roof.area' => 'm2', 'roof.insulation' => 'm2',
             'roof.covering' => 'm2', 'roof.gutter' => 'm',
             'openings.windows' => 'm2', 'openings.doors' => 'm2', 'facade.area' => 'm2',
             'electrical.main_cable' => 'm', 'electrical.power_lines' => 'm', 'electrical.panel' => 'pcs',
             'electrical.outlets' => 'pcs', 'electrical.switches' => 'pcs', 'electrical.grounding' => 'm',
-            'lighting.lines' => 'm', 'lighting.fixtures' => 'pcs', 'plumbing.pipe' => 'm', 'sanitary.points' => 'pcs',
+            'lighting.lines' => 'm', 'lighting.fixtures' => 'pcs', 'plumbing.pipe' => 'm',
+            'sanitary.showers' => 'pcs', 'sanitary.toilets' => 'pcs', 'sanitary.washbasins' => 'pcs',
             'sanitary.waterproofing' => 'm2', 'sanitary.tile' => 'm2', 'sewerage.pipe' => 'm',
             'sewerage.outlets' => 'pcs', 'sewerage.risers' => 'pcs', 'sewerage.revisions' => 'pcs',
             'heating.unit' => 'pcs', 'heating.pipe' => 'm', 'heating.radiators' => 'pcs',
@@ -469,7 +470,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
         $analysis = [
             'object' => ['object_type' => 'house', 'roof_type' => 'pitched'],
             'document_context' => ['canonical_building_quantities' => [
-                $this->currentScenarioQuantity('roof.rafters', 'm2', '152.955000')->toArray(),
+                $this->currentScenarioQuantity('roof.rafters', 'm3', '6.118200')->toArray(),
                 $this->currentScenarioQuantity('roof.area', 'm2', '152.955000')->toArray(),
                 $this->currentScenarioQuantity('roof.gutter', 'm', '46.834688')->toArray(),
             ]],
@@ -492,7 +493,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
                 $items,
             ),
         );
-        self::assertSame([null, '12-01-013-07', '12-01-023-01', null], array_column($items, 'normative_rate_code'));
+        self::assertSame(['10-01-002-01', '12-01-013-07', '12-01-023-01', null], array_column($items, 'normative_rate_code'));
     }
 
     #[Test]

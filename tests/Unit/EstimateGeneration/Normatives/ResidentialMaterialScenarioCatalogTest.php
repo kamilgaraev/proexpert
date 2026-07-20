@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v7', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v8', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -119,6 +119,36 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
 
     public static function verifiedNormativeSpecializations(): iterable
     {
+        yield 'foundation concrete preparation' => [
+            'foundation.prep',
+            'устройство бетонной подготовки фундаментов общего назначения',
+            '06-01-001-01',
+        ];
+        yield 'wooden roof rafters' => [
+            'roof.rafters',
+            'установка деревянных стропил',
+            '10-01-002-01',
+        ];
+        yield 'residential shower cabin with plastic tray' => [
+            'sanitary.showers',
+            'установка душевых кабин с пластиковым поддоном',
+            '17-01-001-21',
+        ];
+        yield 'residential toilet' => [
+            'sanitary.toilets',
+            'установка унитазов с бачком непосредственно присоединенным',
+            '17-01-003-01',
+        ];
+        yield 'residential washbasin' => [
+            'sanitary.washbasins',
+            'установка умывальников одиночных с подводкой холодной и горячей воды',
+            '17-01-001-14',
+        ];
+        yield 'cement floor screed' => [
+            'rough.floor',
+            'устройство стяжек цементных толщиной 20 мм',
+            '11-01-011-01',
+        ];
         yield 'foundation coating waterproofing' => [
             'foundation.waterproofing',
             'боковая обмазочная битумная гидроизоляция',

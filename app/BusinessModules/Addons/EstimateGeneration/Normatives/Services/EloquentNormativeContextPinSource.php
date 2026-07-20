@@ -22,6 +22,8 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         private AbstractNormativeResourcePriceSelector $abstractResourcePriceSelector = new AbstractNormativeResourcePriceSelector,
         private AbstractResourceCoverageDiagnostics $abstractResourceCoverageDiagnostics = new AbstractResourceCoverageDiagnostics,
         private AbstractResourceSemanticPriceSelector $abstractResourceSemanticPriceSelector = new AbstractResourceSemanticPriceSelector,
+        private ResidentialAbstractResourcePriceSelector $residentialAbstractResourcePriceSelector = new ResidentialAbstractResourcePriceSelector,
+        private ResidentialResourceConversionEligibility $residentialResourceConversionEligibility = new ResidentialResourceConversionEligibility,
     ) {}
 
     public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
@@ -395,6 +397,11 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                             ->where('abstract_conversions.version', 1)
                             ->where('abstract_conversions.is_active', true)
                             ->where('abstract_conversions.factor', '>', 0);
+                    })
+                    ->orWhere(function ($residentialConversion): void {
+                        $residentialConversion
+                            ->whereIn('resources.resource_code', ['05.1.03.09', '12.2.05.02', '06.2.05.04'])
+                            ->whereRaw("(resources.resource_code, prices.unit) IN (('05.1.03.09', 'м3'), ('12.2.05.02', 'м3'), ('06.2.05.04', 'т'))");
                     });
             })
             ->orderBy('resources.estimate_norm_id')
@@ -440,6 +447,17 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 is_object($norm) ? (string) $norm->name : '',
                 trim((string) ($representative->resource_name ?? '')),
             );
+            if ($selection === null && $this->residentialResourceConversionEligibility->allows(
+                $intents,
+                is_object($norm) ? trim((string) $norm->code) : '',
+            )) {
+                $selection = $this->residentialAbstractResourcePriceSelector->select(
+                    is_object($norm) ? trim((string) $norm->code) : '',
+                    trim((string) $representative->resource_code),
+                    $candidateRowList,
+                    $basePriceDatasetIds,
+                );
+            }
             if ($selection === null) {
                 $this->telemetry('abstract_resource_candidates_rejected', [
                     'norm_code' => is_object($norm) ? trim((string) $norm->code) : '',
@@ -464,6 +482,9 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             }
             $selection['row']->project_resource_candidates_count = $selection['candidates_count'];
             $selection['row']->project_resource_price_policy = $selection['policy'];
+            if (isset($selection['assumption'])) {
+                $selection['row']->project_resource_conversion_assumption = $selection['assumption'];
+            }
             $selectedAbstractRows->push($selection['row']);
         }
         $abstractDefinitions = $this->database->table('estimate_norm_resources')
