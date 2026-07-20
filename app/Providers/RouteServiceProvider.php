@@ -214,13 +214,12 @@ class RouteServiceProvider extends ServiceProvider
         });
 
         RateLimiter::for('legal-editor-callback', function (Request $request) {
-            $session = (string) $request->route('session');
-            $key = (string) $request->input('key', '');
+            $key = (string) $request->attributes->get('legal_editor_callback_rate_key', 'missing');
             $response = static fn () => new \Illuminate\Http\JsonResponse(['error' => 1], 429);
 
             return [
                 Limit::perMinute(600)->by('legal-editor-callback:global')->response($response),
-                Limit::perMinute(30)->by('legal-editor-callback:'.hash('sha256', $session.'|'.$key))->response($response),
+                Limit::perMinute(30)->by('legal-editor-callback:'.$key)->response($response),
             ];
         });
 

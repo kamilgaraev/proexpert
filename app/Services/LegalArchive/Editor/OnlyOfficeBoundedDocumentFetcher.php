@@ -4,53 +4,78 @@ declare(strict_types=1);
 
 namespace App\Services\LegalArchive\Editor;
 
+use Closure;
 use DomainException;
 use Symfony\Component\HttpClient\HttpClient;
+use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 use Throwable;
 
 final class OnlyOfficeBoundedDocumentFetcher implements EditorDocumentFetcher
 {
+    private const ABSOLUTE_MAX_SIZE_BYTES = 104857600;
+
+    private const ABSOLUTE_MAX_CONNECT_SECONDS = 30.0;
+
+    private const ABSOLUTE_MAX_IDLE_SECONDS = 60.0;
+
+    private const ABSOLUTE_MAX_DURATION_SECONDS = 1800.0;
+
     private HttpClientInterface $client;
 
-    public function __construct(private readonly ?array $configuration = null, ?HttpClientInterface $client = null)
-    {
-        $this->client = $client ?? HttpClient::create();
+    private ?Closure $resolver;
+
+    public function __construct(
+        private readonly ?array $configuration = null,
+        ?HttpClientInterface $client = null,
+        ?callable $resolver = null,
+    ) {
+        $this->client = $client ?? HttpClient::create(['proxy' => '', 'no_proxy' => '*']);
+        $this->resolver = $resolver === null ? null : Closure::fromCallable($resolver);
     }
 
     public function fetch(string $url, string $expectedExtension): DownloadedEditorDocument
     {
         $config = $this->configuration ?? (array) config('legal-document-editor.download', []);
-        $maxSize = max(1, (int) ($config['max_size_bytes'] ?? 104857600));
+        $maxSize = min(self::ABSOLUTE_MAX_SIZE_BYTES, max(1, (int) ($config['max_size_bytes'] ?? self::ABSOLUTE_MAX_SIZE_BYTES)));
         $maxRedirects = min(3, max(0, (int) ($config['max_redirects'] ?? 1)));
-        $timeout = min(30.0, max(1.0, (float) ($config['timeout_seconds'] ?? 10)));
+        $connectTimeout = min(self::ABSOLUTE_MAX_CONNECT_SECONDS, max(1.0, (float) ($config['connect_timeout_seconds'] ?? 10)));
+        $idleTimeout = min(self::ABSOLUTE_MAX_IDLE_SECONDS, max(1.0, (float) ($config['idle_timeout_seconds'] ?? 30)));
+        $maxDuration = min(self::ABSOLUTE_MAX_DURATION_SECONDS, max($idleTimeout, (float) ($config['max_duration_seconds'] ?? 900)));
         $current = $url;
 
         for ($redirect = 0; $redirect <= $maxRedirects; $redirect++) {
             $resolved = $this->safeResolution($current, (array) ($config['allowed_hosts'] ?? []));
             $pinnedIp = (string) reset($resolved);
             $connectedIpValidated = false;
-            $response = $this->client->request('GET', $current, [
-                'max_redirects' => 0,
-                'timeout' => $timeout,
-                'max_duration' => $timeout,
-                'headers' => ['Accept' => 'application/octet-stream'],
-                'resolve' => $resolved,
-                'proxy' => '',
-                'no_proxy' => '*',
-                'on_progress' => function (int $downloaded, int $downloadSize, array $info) use ($pinnedIp, &$connectedIpValidated): void {
-                    if (! isset($info['primary_ip'])) {
-                        return;
-                    }
-                    $primaryIp = trim((string) $info['primary_ip'], '[]');
-                    if (filter_var($primaryIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false
-                        || ! hash_equals(strtolower($pinnedIp), strtolower($primaryIp))) {
-                        throw new DomainException('legal_document_editor_download_url_denied');
-                    }
-                    $connectedIpValidated = true;
-                },
-            ]);
-            $status = $response->getStatusCode();
+            try {
+                $response = $this->client->request('GET', $current, [
+                    'max_redirects' => 0,
+                    'timeout' => $connectTimeout,
+                    'max_duration' => $maxDuration,
+                    'headers' => ['Accept' => 'application/octet-stream'],
+                    'resolve' => $resolved,
+                    'proxy' => '',
+                    'no_proxy' => '*',
+                    'on_progress' => function (int $downloaded, int $downloadSize, array $info) use ($pinnedIp, $maxSize, &$connectedIpValidated): void {
+                        if ($downloadSize > $maxSize || $downloaded > $maxSize) {
+                            throw new DomainException('legal_document_editor_download_too_large');
+                        }
+                        if (! isset($info['primary_ip'])) {
+                            return;
+                        }
+                        $primaryIp = trim((string) $info['primary_ip'], '[]');
+                        if (filter_var($primaryIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false
+                            || ! hash_equals($this->normalizedIp($pinnedIp), $this->normalizedIp($primaryIp))) {
+                            throw new DomainException('legal_document_editor_download_url_denied');
+                        }
+                        $connectedIpValidated = true;
+                    },
+                ]);
+                $status = $response->getStatusCode();
+            } catch (TransportExceptionInterface $error) {
+                throw $this->normalizedTransportError($error);
+            }
             if (! $connectedIpValidated) {
                 throw new DomainException('legal_document_editor_download_url_denied');
             }
@@ -67,7 +92,11 @@ final class OnlyOfficeBoundedDocumentFetcher implements EditorDocumentFetcher
                 throw new DomainException('legal_document_editor_download_failed');
             }
             $headers = $response->getHeaders(false);
-            $declared = isset($headers['content-length'][0]) ? (int) $headers['content-length'][0] : null;
+            $lengthHeaders = $headers['content-length'] ?? [];
+            if (count($lengthHeaders) > 1 || (isset($lengthHeaders[0]) && preg_match('/^[0-9]+$/D', $lengthHeaders[0]) !== 1)) {
+                throw new DomainException('legal_document_editor_download_failed');
+            }
+            $declared = isset($lengthHeaders[0]) ? (int) $lengthHeaders[0] : null;
             if ($declared !== null && ($declared < 1 || $declared > $maxSize)) {
                 throw new DomainException('legal_document_editor_download_too_large');
             }
@@ -83,7 +112,7 @@ final class OnlyOfficeBoundedDocumentFetcher implements EditorDocumentFetcher
             $size = 0;
             $hash = hash_init('sha256');
             try {
-                foreach ($this->client->stream($response) as $chunk) {
+                foreach ($this->client->stream($response, $idleTimeout) as $chunk) {
                     if ($chunk->isTimeout()) {
                         throw new DomainException('legal_document_editor_download_timeout');
                     }
@@ -116,6 +145,9 @@ final class OnlyOfficeBoundedDocumentFetcher implements EditorDocumentFetcher
                     fclose($handle);
                 }
                 @unlink($path);
+                if ($error instanceof TransportExceptionInterface) {
+                    throw $this->normalizedTransportError($error);
+                }
                 throw $error;
             }
         }
@@ -133,20 +165,59 @@ final class OnlyOfficeBoundedDocumentFetcher implements EditorDocumentFetcher
             || ! in_array($host, array_map('strtolower', $allowedHosts), true)) {
             throw new DomainException('legal_document_editor_download_url_denied');
         }
-        $records = dns_get_record($host, DNS_A | DNS_AAAA);
-        if (! is_array($records) || $records === []) {
+        $addresses = $this->resolver === null
+            ? $this->resolveWithDns($host)
+            : ($this->resolver)($host);
+        if (! is_array($addresses) || $addresses === []) {
             throw new DomainException('legal_document_editor_download_url_denied');
         }
-        $addresses = [];
-        foreach ($records as $record) {
-            $ip = $record['ip'] ?? $record['ipv6'] ?? null;
+        foreach ($addresses as $ip) {
             if (! is_string($ip) || filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
                 throw new DomainException('legal_document_editor_download_url_denied');
             }
-            $addresses[] = $ip;
         }
 
         return [$host => $addresses[0]];
+    }
+
+    /** @return list<string> */
+    private function resolveWithDns(string $host): array
+    {
+        $records = dns_get_record($host, DNS_A | DNS_AAAA);
+        if (! is_array($records)) {
+            return [];
+        }
+
+        $addresses = [];
+        foreach ($records as $record) {
+            $ip = $record['ip'] ?? $record['ipv6'] ?? null;
+            if (is_string($ip)) {
+                $addresses[] = $ip;
+            }
+        }
+
+        return $addresses;
+    }
+
+    private function normalizedIp(string $ip): string
+    {
+        $packed = inet_pton($ip);
+        if ($packed === false) {
+            throw new DomainException('legal_document_editor_download_url_denied');
+        }
+
+        return bin2hex($packed);
+    }
+
+    private function normalizedTransportError(TransportExceptionInterface $error): DomainException
+    {
+        foreach (['legal_document_editor_download_too_large', 'legal_document_editor_download_url_denied'] as $message) {
+            if (str_contains($error->getMessage(), $message)) {
+                return new DomainException($message, previous: $error);
+            }
+        }
+
+        return new DomainException('legal_document_editor_download_timeout', previous: $error);
     }
 
     private function absoluteRedirect(string $source, string $location): string
@@ -164,7 +235,8 @@ final class OnlyOfficeBoundedDocumentFetcher implements EditorDocumentFetcher
 
     private function mimeAllowed(string $extension, string $mime): bool
     {
-        $allowed = (array) config('file-uploads.legal_archive.allowed_mime_types.'.strtolower($extension), []);
+        $allowed = (array) (($this->configuration['allowed_mime_types'][strtolower($extension)] ?? null)
+            ?? config('file-uploads.legal_archive.allowed_mime_types.'.strtolower($extension), []));
 
         return in_array($mime, $allowed, true);
     }

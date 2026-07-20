@@ -183,7 +183,7 @@ Route::prefix('v1/mobile')->name('api.v1.mobile.')->group(function () {
 
 // --- Admin Panel API ---
 Route::post('v1/legal-document-editor/callback/{session}', [LegalDocumentEditorController::class, 'callback'])
-    ->middleware('throttle:legal-editor-callback')
+    ->middleware([\App\Http\Middleware\OnlyOfficeCallbackBodyLimit::class, 'throttle:legal-editor-callback'])
     ->withoutMiddleware(['throttle:api', \App\Http\Middleware\SetOrganizationContext::class])
     ->whereUuid('session')
     ->name('api.v1.legal-document-editor.callback');

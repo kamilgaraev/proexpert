@@ -9,9 +9,7 @@ use Tests\TestCase;
 
 final class OnlyOfficeRouteStackTest extends TestCase
 {
-    public function refreshDatabase(): void
-    {
-    }
+    public function refreshDatabase(): void {}
 
     public function test_callback_has_only_provider_rate_limit_and_no_admin_wrapper(): void
     {
@@ -19,7 +17,12 @@ final class OnlyOfficeRouteStackTest extends TestCase
         self::assertNotNull($route);
         self::assertSame('api/v1/legal-document-editor/callback/{session}', $route->uri());
         $middleware = $route->gatherMiddleware();
+        self::assertContains(\App\Http\Middleware\OnlyOfficeCallbackBodyLimit::class, $middleware);
         self::assertContains('throttle:legal-editor-callback', $middleware);
+        self::assertLessThan(
+            array_search('throttle:legal-editor-callback', $middleware, true),
+            array_search(\App\Http\Middleware\OnlyOfficeCallbackBodyLimit::class, $middleware, true),
+        );
         self::assertNotContains('throttle:api', $middleware);
         self::assertNotContains('admin.response', $middleware);
         self::assertNotContains('auth:api_admin', $middleware);
