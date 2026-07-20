@@ -158,6 +158,7 @@ final class LegalDocumentReconciliationService
             ->join('legal_archive_documents as dossier', function ($join): void {
                 $join->on('dossier.organization_id', '=', 'contracts.organization_id')
                     ->where('dossier.source_type', '=', 'contract')
+                    ->whereNull('dossier.deleted_at')
                     ->whereRaw('dossier.source_id = CAST(contracts.id AS text)');
             })
             ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('contracts.organization_id', $organizationId))
@@ -188,6 +189,7 @@ final class LegalDocumentReconciliationService
             $documents->selectRaw('1')
                 ->from('legal_archive_documents as dossier')
                 ->where('dossier.source_type', $sourceType)
+                ->whereNull('dossier.deleted_at')
                 ->whereRaw("dossier.source_id = CAST({$table}.id AS text)");
 
             if (in_array($source, ['supplementary_agreements', 'acts'], true)) {
