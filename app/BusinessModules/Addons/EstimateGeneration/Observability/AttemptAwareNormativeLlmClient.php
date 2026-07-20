@@ -96,11 +96,19 @@ final readonly class AttemptAwareNormativeLlmClient
                 $wireClaimed = true;
                 $response = $this->wire->call($model, $messages, $options);
                 $reportedModel = $response['model'] ?? null;
-                $content = trim((string) ($response['content'] ?? ''));
+                $content = $this->normalizedContent(
+                    (string) ($response['content'] ?? ''),
+                    ($options['profile'] ?? null) === 'json',
+                );
+                $response['content'] = $content;
                 $decoded = json_decode($content, true);
-                $status = $content === '' || ! is_array($decoded)
-                    || (is_string($reportedModel) && $reportedModel !== $model)
-                    ? 'malformed_response' : 'succeeded';
+                $malformedReason = match (true) {
+                    $content === '' => 'empty_content',
+                    ! is_array($decoded) => 'invalid_json',
+                    is_string($reportedModel) && $reportedModel !== $model => 'reported_model_mismatch',
+                    default => null,
+                };
+                $status = $malformedReason === null ? 'succeeded' : 'malformed_response';
                 if ($status === 'succeeded') {
                     if ($effective !== null) {
                         $response['effective_settings'] = $effective;
@@ -108,6 +116,14 @@ final readonly class AttemptAwareNormativeLlmClient
 
                     return $response;
                 }
+                $this->recordMalformedDiagnostic(
+                    $operation,
+                    $model,
+                    is_string($reportedModel) ? $reportedModel : null,
+                    $malformedReason,
+                    strlen($content),
+                    $response,
+                );
                 $last = new RerankWireException('malformed_response');
             } catch (RerankWireException $exception) {
                 $status = $exception->attemptStatus;
@@ -232,6 +248,45 @@ final readonly class AttemptAwareNormativeLlmClient
         return $callerTimeout === null
             ? $effectiveTimeout
             : min($effectiveTimeout, $callerTimeout);
+    }
+
+    private function normalizedContent(string $content, bool $jsonProfile): string
+    {
+        $content = trim($content);
+        if (! $jsonProfile || json_decode($content, true) !== null) {
+            return $content;
+        }
+        if (preg_match('/\A```(?:json)?[ \t]*\R(?<json>[\s\S]+)\R```[ \t]*\z/i', $content, $matches) !== 1) {
+            return $content;
+        }
+        $json = trim((string) ($matches['json'] ?? ''));
+
+        return is_array(json_decode($json, true)) ? $json : $content;
+    }
+
+    /** @param array<string, mixed> $response */
+    private function recordMalformedDiagnostic(
+        RerankOperationContext $operation,
+        string $requestedModel,
+        ?string $reportedModel,
+        string $reason,
+        int $contentBytes,
+        array $response,
+    ): void {
+        try {
+            Log::warning('[EstimateGeneration] Reranker response rejected', array_filter([
+                'organization_id' => $operation->organizationId,
+                'project_id' => $operation->projectId,
+                'session_id' => $operation->sessionId,
+                'requested_model' => $requestedModel,
+                'reported_model' => $reportedModel,
+                'reason' => $reason,
+                'content_bytes' => $contentBytes,
+                'usage_available' => ($response['usage_available'] ?? false) === true,
+                'output_tokens' => isset($response['output_tokens']) ? max(0, (int) $response['output_tokens']) : null,
+            ], static fn (mixed $value): bool => $value !== null));
+        } catch (Throwable) {
+        }
     }
 
     /** @return array<string, mixed> */

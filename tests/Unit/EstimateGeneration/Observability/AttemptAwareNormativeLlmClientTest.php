@@ -41,9 +41,17 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
             /** @var list<string> */
             public array $errors = [];
 
+            /** @var list<array{message: string, context: array<string, mixed>}> */
+            public array $warnings = [];
+
             public function error(string $message, array $context = []): void
             {
                 $this->errors[] = $message;
+            }
+
+            public function warning(string $message, array $context = []): void
+            {
+                $this->warnings[] = ['message' => $message, 'context' => $context];
             }
         };
         $app->instance('log', $this->logger);
@@ -275,7 +283,48 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
         } finally {
             self::assertCount(1, $store->rows);
             self::assertSame('malformed_response', $store->rows[0]->status);
+            self::assertSame('invalid_json', $this->logger->warnings[0]['context']['reason']);
+            self::assertArrayNotHasKey('content', $this->logger->warnings[0]['context']);
         }
+    }
+
+    #[Test]
+    public function json_profile_accepts_one_fenced_json_object_and_returns_canonical_content(): void
+    {
+        $wire = new class implements RerankWireClient
+        {
+            public function provider(): string
+            {
+                return 'timeweb';
+            }
+
+            public function call(string $model, array $messages, array $options): array
+            {
+                return [
+                    'content' => "```json\n{\"schema_version\":\"residential-work-composition-advice:v2\"}\n```",
+                    'model' => $model,
+                    'usage_available' => true,
+                    'input_tokens' => 20,
+                    'output_tokens' => 30,
+                ];
+            }
+        };
+        $store = new class implements AiUsageStore
+        {
+            /** @var list<AiUsageData> */
+            public array $rows = [];
+
+            public function record(AiUsageData $data): void
+            {
+                $this->rows[] = $data;
+            }
+        };
+
+        $response = (new AttemptAwareNormativeLlmClient($wire, $store, ['provider/model'], []))
+            ->chat([], ['profile' => 'json'], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
+
+        self::assertSame('{"schema_version":"residential-work-composition-advice:v2"}', $response['content']);
+        self::assertSame('succeeded', $store->rows[0]->status);
     }
 
     #[Test]

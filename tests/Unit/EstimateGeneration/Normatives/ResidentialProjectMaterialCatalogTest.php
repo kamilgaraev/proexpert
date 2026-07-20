@@ -36,6 +36,31 @@ final class ResidentialProjectMaterialCatalogTest extends TestCase
     }
 
     #[Test]
+    public function work_scenario_and_material_selection_keep_their_respective_assumption_identities(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $expected = [
+            'electrical.main_cable' => ['residential_feeder_cable_clips', 'residential_main_cable_vvgng_ls_3x6_with_waste_5_percent'],
+            'electrical.power_lines' => ['residential_power_wiring_channels', 'residential_power_cable_vvgng_ls_3x2_5_with_waste_5_percent'],
+            'lighting.lines' => ['residential_lighting_wiring_chases', 'residential_lighting_cable_vvgng_ls_3x1_5_with_waste_5_percent'],
+            'electrical.panel' => ['residential_recessed_lighting_panel', 'residential_recessed_distribution_panel_24_modules'],
+            'electrical.outlets' => ['residential_recessed_socket', 'residential_recessed_grounded_socket_with_shutter'],
+            'electrical.switches' => ['residential_recessed_single_switch', 'residential_recessed_single_switch'],
+            'lighting.fixtures' => ['residential_ceiling_luminaire', 'residential_led_ceiling_luminaire_18w'],
+        ];
+
+        foreach ($expected as $workItemKey => [$scenarioAssumption, $materialAssumption]) {
+            $scenario = $scenarios->issue($workItemKey, 'residential');
+            self::assertIsArray($scenario);
+            $requirement = $catalog->requirementForIntent(['specialization_scenario' => $scenario]);
+
+            self::assertSame($scenarioAssumption, $scenario['assumption_code'], $workItemKey);
+            self::assertSame($materialAssumption, $requirement['assumption_code'] ?? null, $workItemKey);
+        }
+    }
+
+    #[Test]
     public function only_a_signed_residential_scenario_can_request_a_project_material(): void
     {
         $scenarios = new ResidentialMaterialScenarioCatalog;
