@@ -626,7 +626,11 @@ final class LegalDocumentSignatureService
                     $artifactKey,
                 );
             } finally {
-                $this->auditRejectedCallback($request, $callback, 'registration_rejected');
+                $reason = $exception instanceof DomainException
+                    && $exception->getMessage() === 'legal_signature_callback_stale_generation'
+                    ? 'stale_provider_generation'
+                    : 'registration_rejected';
+                $this->auditRejectedCallback($request, $callback, $reason);
             }
             throw $exception;
         }
@@ -811,6 +815,10 @@ final class LegalDocumentSignatureService
                     if ($artifact !== null && (int) $artifact->claim_count > 0) {
                         $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                             'claim_count' => ((int) $artifact->claim_count) - 1,
+                            'upload_lease_token_hash' => (string) $artifact->state === 'referenced'
+                                || (int) $artifact->claim_count === 1 ? null : $artifact->upload_lease_token_hash,
+                            'upload_lease_expires_at' => (string) $artifact->state === 'referenced'
+                                || (int) $artifact->claim_count === 1 ? null : now()->addMinutes(10),
                             'updated_at' => now(),
                         ]);
                     }
@@ -927,6 +935,8 @@ final class LegalDocumentSignatureService
                     'state' => 'referenced',
                     'referenced_signature_id' => (int) $signature->id,
                     'claim_count' => max(0, ((int) $artifact->claim_count) - 1),
+                    'upload_lease_token_hash' => null,
+                    'upload_lease_expires_at' => null,
                     'updated_at' => now(),
                 ]);
             }
@@ -1243,6 +1253,12 @@ final class LegalDocumentSignatureService
             $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                 'state' => (string) $artifact->state === 'abandoned' ? 'uploading' : (string) $artifact->state,
                 'claim_count' => (string) $artifact->state === 'abandoned' ? 1 : ((int) $artifact->claim_count) + 1,
+                'upload_lease_token_hash' => (string) $artifact->state === 'referenced' ? null : hash('sha256', Str::random(64)),
+                'upload_lease_expires_at' => (string) $artifact->state === 'referenced' ? null : now()->addMinutes(10),
+                'last_attempt_at' => now(),
+                'attempt_count' => ((int) $artifact->attempt_count) + 1,
+                'dead_lettered_at' => null,
+                'last_error_code' => null,
                 'updated_at' => $now,
             ]);
         }, 3);
@@ -1264,6 +1280,9 @@ final class LegalDocumentSignatureService
                 'storage_version_id' => $versionId,
                 'state' => (string) $artifact->state === 'uploading' ? 'uploaded' : (string) $artifact->state,
                 'cleanup_owned' => (bool) $artifact->cleanup_owned || $created,
+                'upload_lease_expires_at' => in_array((string) $artifact->state, ['uploading', 'uploaded'], true)
+                    ? now()->addMinutes(10) : null,
+                'last_attempt_at' => now(),
                 'updated_at' => now(),
             ]);
         }, 3);
@@ -1282,6 +1301,8 @@ final class LegalDocumentSignatureService
             $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                 'state' => $remainingClaims === 0 ? 'abandoned' : 'uploading',
                 'claim_count' => $remainingClaims,
+                'upload_lease_token_hash' => $remainingClaims === 0 ? null : $artifact->upload_lease_token_hash,
+                'upload_lease_expires_at' => $remainingClaims === 0 ? null : now()->addMinutes(10),
                 'updated_at' => now(),
             ]);
         }, 3);
@@ -1314,20 +1335,29 @@ final class LegalDocumentSignatureService
                     'state' => 'referenced',
                     'referenced_signature_id' => $referencedSignatureId ?? $artifact->referenced_signature_id,
                     'claim_count' => $remainingClaims,
+                    'upload_lease_token_hash' => null,
+                    'upload_lease_expires_at' => null,
                     'updated_at' => now(),
                 ]);
 
                 return false;
             }
-            if (! (bool) $artifact->cleanup_owned || $remainingClaims > 0 || in_array((string) $artifact->state, ['deleting', 'deleted'], true)) {
+            if (in_array((string) $artifact->state, ['deleting', 'deleted'], true)) {
+                return false;
+            }
+            if (! (bool) $artifact->cleanup_owned || $remainingClaims > 0) {
                 $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                     'claim_count' => $remainingClaims, 'updated_at' => now(),
+                    'upload_lease_token_hash' => $artifact->upload_lease_token_hash ?? hash('sha256', Str::random(64)),
+                    'upload_lease_expires_at' => now()->addMinutes(10),
                 ]);
 
                 return false;
             }
             $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
-                'state' => 'deleting', 'claim_count' => 0, 'updated_at' => now(),
+                'state' => 'deleting', 'claim_count' => 0,
+                'upload_lease_token_hash' => null, 'upload_lease_expires_at' => null,
+                'updated_at' => now(),
             ]);
 
             return true;
@@ -1339,7 +1369,12 @@ final class LegalDocumentSignatureService
             $this->fileService->removeImmutable($path, $versionId);
             $this->connection->table('legal_signature_artifacts')
                 ->where('organization_id', $organizationId)->where('artifact_key', $artifactKey)
-                ->where('state', 'deleting')->update(['state' => 'deleted', 'updated_at' => now()]);
+                ->where('state', 'deleting')->update([
+                    'state' => 'deleted',
+                    'upload_lease_token_hash' => null, 'upload_lease_expires_at' => null,
+                    'deletion_lease_token_hash' => null, 'deletion_lease_expires_at' => null,
+                    'updated_at' => now(),
+                ]);
 
             return;
         } catch (Throwable $cleanupException) {

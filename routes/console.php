@@ -255,6 +255,13 @@ Schedule::command('legal-signatures:cleanup-storage --limit=200')
         Log::error('legal_signature.cleanup_storage_schedule_failed');
     });
 
+Schedule::command('legal-signatures:reconcile-artifacts --limit=200')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onFailure(function (): void {
+        Log::error('legal_signature.reconcile_artifacts_schedule_failed');
+    });
+
 Schedule::command('legal-documents:cleanup-file-storage --limit=200')
     ->everyFiveMinutes()
     ->withoutOverlapping(10)

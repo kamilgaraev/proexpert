@@ -14,6 +14,8 @@ use App\Services\LegalArchive\Signatures\ElectronicSignatureEvidence;
 use App\Services\LegalArchive\Signatures\ElectronicSignatureProvider;
 use App\Services\LegalArchive\Signatures\ExternalOriginalData;
 use App\Services\LegalArchive\Signatures\LegalDocumentSignatureService;
+use App\Services\LegalArchive\Signatures\LegalSignatureArtifactReconciler;
+use App\Services\LegalArchive\Signatures\LegalSignatureCleanupMetrics;
 use App\Services\LegalArchive\Signatures\LegalSignatureExpiryService;
 use App\Services\LegalArchive\Signatures\LegalSignatureProjection;
 use App\Services\LegalArchive\Signatures\SignatureArtifact;
@@ -369,6 +371,64 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
         self::assertSame(0, (int) $artifact->claim_count);
     }
 
+    public function test_parallel_reconcilers_recover_one_stale_artifact_idempotently(): void
+    {
+        $requestId = $this->first->table('legal_signature_requests')->insertGetId($this->requestRow());
+        $body = pack('H*', '3082010006092a864886f70d010702a0820100308200fc');
+        $path = 'org-1/reconcile-race.p7s';
+        $versionId = 'reconcile-race-version';
+        $this->first->table('signature_test_storage_objects')->insert([
+            'storage_path' => $path, 'storage_version_id' => $versionId, 'content_hash' => hash('sha256', $body),
+        ]);
+        $this->first->table('legal_signature_artifacts')->insert([
+            'organization_id' => 1, 'document_id' => 1, 'document_version_id' => 1,
+            'signature_request_id' => $requestId, 'artifact_key' => str_repeat('8', 64),
+            'storage_path' => $path, 'storage_version_id' => $versionId,
+            'content_hash' => hash('sha256', $body), 'state' => 'uploaded', 'claim_count' => 2,
+            'cleanup_owned' => true, 'upload_lease_token_hash' => str_repeat('9', 64),
+            'upload_lease_expires_at' => now()->subMinute(), 'attempt_count' => 1,
+            'created_at' => now()->subMinutes(20), 'updated_at' => now()->subMinutes(20),
+        ]);
+        $gate = 'artifact-reconcile-'.bin2hex(random_bytes(6));
+        $this->first->select('SELECT pg_advisory_lock(hashtextextended(?, 0))', [$gate]);
+        $children = [];
+        foreach (['signature_first', 'signature_second'] as $connectionName) {
+            $pid = pcntl_fork();
+            if ($pid === 0) {
+                $manager = $this->database->getDatabaseManager();
+                $manager->disconnect('signature_first');
+                $manager->disconnect('signature_second');
+                $connection = $manager->connection($connectionName);
+                $connection->statement("SET search_path TO {$this->schema}");
+                $connection->select('SELECT pg_advisory_lock_shared(hashtextextended(?, 0))', [$gate]);
+                try {
+                    (new LegalSignatureArtifactReconciler(
+                        $this->signatureStorage($connection), $connection, $this->audit(), $this->metrics(),
+                    ))->reconcile();
+                    $exit = 0;
+                } catch (\Throwable) {
+                    $exit = 20;
+                }
+                $connection->select('SELECT pg_advisory_unlock_shared(hashtextextended(?, 0))', [$gate]);
+                exit($exit);
+            }
+            if ($pid < 0) {
+                throw new \RuntimeException('legal_signature_reconcile_fork_failed');
+            }
+            $children[] = $pid;
+        }
+        $this->first->select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', [$gate]);
+        foreach ($children as $pid) {
+            pcntl_waitpid($pid, $status);
+            self::assertTrue(pcntl_wifexited($status));
+            self::assertSame(0, pcntl_wexitstatus($status));
+        }
+        $artifact = $this->first->table('legal_signature_artifacts')->sole();
+        self::assertSame('deleting', $artifact->state);
+        self::assertSame(0, (int) $artifact->claim_count);
+        self::assertSame(1, $this->first->table('legal_archive_file_cleanup_debts')->count());
+    }
+
     public function test_failed_verification_and_replacement_race_has_explicit_loser_then_corrects_signature(): void
     {
         $document = (new LegalArchiveDocument)->setConnection('signature_first')->newQuery()->findOrFail(1);
@@ -581,6 +641,14 @@ SQL);
         };
     }
 
+    private function metrics(): LegalSignatureCleanupMetrics
+    {
+        return new class implements LegalSignatureCleanupMetrics
+        {
+            public function increment(string $metric, array $labels = []): void {}
+        };
+    }
+
     private function signatureStorage(ConnectionInterface $connection, ?string $putGate = null): FileService
     {
         $storage = $this->createMock(FileService::class);
@@ -605,11 +673,18 @@ SQL);
                 'storage_path' => $path, 'storage_version_id' => $versionId,
             ]);
         });
-        $storage->method('describeVersion')->willReturnCallback(static function (string $path, string $versionId): array {
+        $storage->method('describeVersion')->willReturnCallback(static function (string $path, ?string $versionId) use ($connection): array {
             $body = pack('H*', '3082010006092a864886f70d010702a0820100308200fc');
+            $object = $connection->table('signature_test_storage_objects')->where('storage_path', $path)
+                ->when($versionId !== null, static fn ($query) => $query->where('storage_version_id', $versionId))->first();
+            if ($object === null) {
+                throw new \RuntimeException('s3_pinned_object_unavailable');
+            }
 
             return [
-                'body' => $body, 'version_id' => $versionId, 'etag' => 'race-etag',
+                'path' => $path, 'body' => $body, 'size' => strlen($body),
+                'sha256' => (string) $object->content_hash,
+                'version_id' => (string) $object->storage_version_id, 'etag' => 'race-etag',
                 'content_type' => 'application/pkcs7-signature',
             ];
         });

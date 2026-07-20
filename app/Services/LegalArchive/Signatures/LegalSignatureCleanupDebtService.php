@@ -49,28 +49,89 @@ final readonly class LegalSignatureCleanupDebtService
     private function processOne(int $id): bool
     {
         $lease = Str::random(64);
-        $debt = $this->connection->transaction(function () use ($id, $lease): ?object {
+        $authorization = $this->connection->transaction(function () use ($id, $lease): array {
             $row = $this->connection->table('legal_archive_file_cleanup_debts')->where('id', $id)->lockForUpdate()->first();
             if ($row === null || $row->resolved_at !== null || $row->dead_lettered_at !== null
                 || $row->reason !== 'signature_registration_failed' || $row->storage_version_id === null
                 || ($row->next_attempt_at !== null && now()->lt($row->next_attempt_at))
                 || ($row->lease_expires_at !== null && now()->lt($row->lease_expires_at))) {
-                return null;
+                return ['status' => 'idle'];
             }
+            $artifact = $this->connection->table('legal_signature_artifacts')
+                ->where('organization_id', $row->organization_id)
+                ->where('storage_path', $row->storage_path)
+                ->lockForUpdate()->first();
+            $referencedSignatureId = $this->connection->table('legal_document_signatures')
+                ->where('organization_id', $row->organization_id)
+                ->where('signature_path', $row->storage_path)
+                ->where('storage_version_id', $row->storage_version_id)
+                ->lockForUpdate()->value('id');
+            if ($referencedSignatureId !== null || ($artifact !== null && (string) $artifact->state === 'referenced')) {
+                if ($artifact !== null) {
+                    $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                        'state' => 'referenced',
+                        'referenced_signature_id' => $referencedSignatureId ?? $artifact->referenced_signature_id,
+                        'upload_lease_token_hash' => null,
+                        'upload_lease_expires_at' => null,
+                        'deletion_lease_token_hash' => null,
+                        'deletion_lease_expires_at' => null,
+                        'updated_at' => now(),
+                    ]);
+                }
+                $this->resolveDebt($id, null);
+                $this->recordAudit('signature_storage_cleanup_reference_preserved', $row, (int) $row->attempts);
+                $this->metrics->increment('legal_signature_cleanup_reference_preserved_total', [
+                    'organization_id' => (int) $row->organization_id,
+                ]);
+
+                return ['status' => 'resolved'];
+            }
+            $authorized = $artifact !== null
+                && hash_equals((string) $artifact->storage_version_id, (string) $row->storage_version_id)
+                && (string) $artifact->state === 'deleting'
+                && (int) $artifact->claim_count === 0
+                && (bool) $artifact->cleanup_owned
+                && $artifact->referenced_signature_id === null
+                && ($artifact->deletion_lease_expires_at === null || now()->gte($artifact->deletion_lease_expires_at));
+            if (! $authorized) {
+                $this->connection->table('legal_archive_file_cleanup_debts')->where('id', $id)->update([
+                    'last_error' => 'legal_signature_cleanup_authorization_rejected',
+                    'dead_lettered_at' => now(),
+                    'next_attempt_at' => null,
+                    'lease_token_hash' => null,
+                    'lease_expires_at' => null,
+                    'updated_at' => now(),
+                ]);
+                $this->recordAudit('signature_storage_cleanup_authorization_rejected', $row, (int) $row->attempts);
+                $this->metrics->increment('legal_signature_cleanup_authorization_rejected_total', [
+                    'organization_id' => (int) $row->organization_id,
+                ]);
+
+                return ['status' => 'idle'];
+            }
+            $tokenHash = hash('sha256', $lease);
             $this->connection->table('legal_archive_file_cleanup_debts')->where('id', $id)->update([
-                'lease_token_hash' => hash('sha256', $lease),
+                'lease_token_hash' => $tokenHash,
                 'lease_expires_at' => now()->addMinutes(5),
                 'last_attempt_at' => now(),
                 'updated_at' => now(),
             ]);
+            $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                'deletion_lease_token_hash' => $tokenHash,
+                'deletion_lease_expires_at' => now()->addMinutes(5),
+                'last_attempt_at' => now(),
+                'attempt_count' => ((int) $artifact->attempt_count) + 1,
+                'updated_at' => now(),
+            ]);
 
-            return $row;
+            return ['status' => 'authorized', 'debt' => $row];
         }, 3);
-        if ($debt === null) {
-            return false;
+        if ($authorization['status'] !== 'authorized') {
+            return $authorization['status'] === 'resolved';
         }
-        if ($this->resolveReferencedArtifact($id, $lease, $debt)) {
-            return true;
+        $debt = $authorization['debt'];
+        if (! is_object($debt)) {
+            return false;
         }
         try {
             $this->files->removeImmutable((string) $debt->storage_path, (string) $debt->storage_version_id);
@@ -83,73 +144,31 @@ final readonly class LegalSignatureCleanupDebtService
         return $this->recordSuccess($id, $lease, $debt);
     }
 
-    private function resolveReferencedArtifact(int $id, string $lease, object $debt): bool
-    {
-        if ($debt->storage_version_id === null
-            || ! $this->connection->getSchemaBuilder()->hasTable('legal_signature_artifacts')) {
-            return false;
-        }
-
-        return $this->connection->transaction(function () use ($id, $lease, $debt): bool {
-            $artifact = $this->connection->table('legal_signature_artifacts')
-                ->where('organization_id', $debt->organization_id)
-                ->where('storage_path', $debt->storage_path)
-                ->where('storage_version_id', $debt->storage_version_id)
-                ->lockForUpdate()->first();
-            $referencedSignatureId = $this->connection->table('legal_document_signatures')
-                ->where('organization_id', $debt->organization_id)
-                ->where('signature_path', $debt->storage_path)
-                ->where('storage_version_id', $debt->storage_version_id)
-                ->lockForUpdate()->value('id');
-            if ($referencedSignatureId === null && ($artifact === null || (string) $artifact->state !== 'referenced')) {
-                return false;
-            }
-            if ($artifact !== null) {
-                $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
-                    'state' => 'referenced',
-                    'referenced_signature_id' => $referencedSignatureId ?? $artifact->referenced_signature_id,
-                    'updated_at' => now(),
-                ]);
-            }
-            $updated = $this->connection->table('legal_archive_file_cleanup_debts')
-                ->where('id', $id)->where('lease_token_hash', hash('sha256', $lease))->whereNull('resolved_at')
-                ->update([
-                    'resolved_at' => now(), 'lease_token_hash' => null, 'lease_expires_at' => null,
-                    'next_attempt_at' => null, 'last_error' => null, 'updated_at' => now(),
-                ]);
-            if ($updated !== 1) {
-                return false;
-            }
-            $this->recordAudit('signature_storage_cleanup_reference_preserved', $debt, (int) $debt->attempts);
-            $this->metrics->increment('legal_signature_cleanup_reference_preserved_total', [
-                'organization_id' => (int) $debt->organization_id,
-            ]);
-
-            return true;
-        }, 3);
-    }
-
     private function recordSuccess(int $id, string $lease, object $debt): bool
     {
         return $this->connection->transaction(function () use ($id, $lease, $debt): bool {
+            $tokenHash = hash('sha256', $lease);
+            $lockedDebt = $this->connection->table('legal_archive_file_cleanup_debts')
+                ->where('id', $id)->where('lease_token_hash', $tokenHash)->lockForUpdate()->first();
             $artifact = $this->connection->table('legal_signature_artifacts')
                 ->where('organization_id', $debt->organization_id)
                 ->where('storage_path', $debt->storage_path)
                 ->where('storage_version_id', $debt->storage_version_id)
+                ->where('deletion_lease_token_hash', $tokenHash)
                 ->lockForUpdate()->first();
-            if ($artifact !== null) {
-                if ((string) $artifact->state !== 'deleted'
-                    && ((string) $artifact->state !== 'deleting' || (int) $artifact->claim_count !== 0)) {
-                    throw new \RuntimeException('legal_signature_cleanup_artifact_state_conflict');
-                }
-                if ((string) $artifact->state === 'deleting') {
-                    $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
-                        'state' => 'deleted', 'claim_count' => 0, 'updated_at' => now(),
-                    ]);
-                }
+            if ($lockedDebt === null || $artifact === null || (string) $artifact->state !== 'deleting'
+                || (int) $artifact->claim_count !== 0 || ! (bool) $artifact->cleanup_owned
+                || $artifact->referenced_signature_id !== null) {
+                throw new \RuntimeException('legal_signature_cleanup_artifact_state_conflict');
             }
+            $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                'state' => 'deleted', 'claim_count' => 0,
+                'upload_lease_token_hash' => null, 'upload_lease_expires_at' => null,
+                'deletion_lease_token_hash' => null, 'deletion_lease_expires_at' => null,
+                'last_error_code' => null, 'updated_at' => now(),
+            ]);
             $updated = $this->connection->table('legal_archive_file_cleanup_debts')
-                ->where('id', $id)->where('lease_token_hash', hash('sha256', $lease))->whereNull('resolved_at')
+                ->where('id', $id)->where('lease_token_hash', $tokenHash)->whereNull('resolved_at')
                 ->update([
                     'resolved_at' => now(), 'lease_token_hash' => null, 'lease_expires_at' => null,
                     'next_attempt_at' => null, 'last_error' => null, 'updated_at' => now(),
@@ -183,10 +202,35 @@ final readonly class LegalSignatureCleanupDebtService
             if ($updated !== 1) {
                 return;
             }
+            $this->connection->table('legal_signature_artifacts')
+                ->where('organization_id', $debt->organization_id)
+                ->where('storage_path', $debt->storage_path)
+                ->where('storage_version_id', $debt->storage_version_id)
+                ->where('deletion_lease_token_hash', hash('sha256', $lease))
+                ->update([
+                    'deletion_lease_token_hash' => null,
+                    'deletion_lease_expires_at' => null,
+                    'last_error_code' => $error::class,
+                    'dead_lettered_at' => $dead ? now() : null,
+                    'updated_at' => now(),
+                ]);
             $event = $dead ? 'signature_storage_cleanup_dead_lettered' : 'signature_storage_cleanup_retry_scheduled';
             $this->recordAudit($event, $debt, $attempts);
             $this->metrics->increment("legal_{$event}_total", ['organization_id' => (int) $debt->organization_id]);
         }, 3);
+    }
+
+    private function resolveDebt(int $id, ?string $lease): void
+    {
+        $query = $this->connection->table('legal_archive_file_cleanup_debts')
+            ->where('id', $id)->whereNull('resolved_at');
+        if ($lease !== null) {
+            $query->where('lease_token_hash', hash('sha256', $lease));
+        }
+        $query->update([
+            'resolved_at' => now(), 'lease_token_hash' => null, 'lease_expires_at' => null,
+            'next_attempt_at' => null, 'last_error' => null, 'updated_at' => now(),
+        ]);
     }
 
     private function recordAudit(string $event, object $debt, int $attempts): void

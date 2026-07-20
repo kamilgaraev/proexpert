@@ -90,6 +90,8 @@ return new class extends Migration
             'legal_signature_artifacts_state_check' => ['legal_signature_artifacts', "CHECK (state IN ('uploading','uploaded','referenced','deleting','deleted','abandoned')) NOT VALID"],
             'legal_signature_artifacts_reference_check' => ['legal_signature_artifacts', "CHECK ((state IN ('uploading','abandoned') AND storage_version_id IS NULL AND referenced_signature_id IS NULL) OR (state = 'referenced' AND storage_version_id IS NOT NULL AND referenced_signature_id IS NOT NULL) OR (state IN ('uploaded','deleting','deleted') AND storage_version_id IS NOT NULL AND referenced_signature_id IS NULL)) NOT VALID"],
             'legal_signature_artifacts_claim_check' => ['legal_signature_artifacts', "CHECK (claim_count >= 0 AND (state NOT IN ('deleting','deleted') OR claim_count = 0)) NOT VALID"],
+            'legal_signature_artifacts_cleanup_lease_check' => ['legal_signature_artifacts', "CHECK ((deletion_lease_token_hash IS NULL) = (deletion_lease_expires_at IS NULL) AND (deletion_lease_token_hash IS NULL OR (deletion_lease_token_hash ~ '^[a-f0-9]{64}$' AND state = 'deleting' AND claim_count = 0 AND cleanup_owned AND referenced_signature_id IS NULL))) NOT VALID"],
+            'legal_signature_artifacts_upload_lease_check' => ['legal_signature_artifacts', "CHECK ((upload_lease_token_hash IS NULL) = (upload_lease_expires_at IS NULL) AND (upload_lease_token_hash IS NULL OR (upload_lease_token_hash ~ '^[a-f0-9]{64}$' AND state IN ('uploading','uploaded') AND referenced_signature_id IS NULL)) AND (state <> 'deleting' OR cleanup_owned)) NOT VALID"],
         ];
     }
 
@@ -340,6 +342,10 @@ BEGIN
     END IF;
     IF OLD.cleanup_owned AND NOT NEW.cleanup_owned THEN
         RAISE EXCEPTION 'legal_signature_artifact_cleanup_owner_update_forbidden';
+    END IF;
+    IF NEW.state IN ('referenced','deleted','abandoned') AND (NEW.upload_lease_token_hash IS NOT NULL OR NEW.upload_lease_expires_at IS NOT NULL
+        OR NEW.deletion_lease_token_hash IS NOT NULL OR NEW.deletion_lease_expires_at IS NOT NULL) THEN
+        RAISE EXCEPTION 'legal_signature_artifact_deleted_lease_forbidden';
     END IF;
     IF NOT ((OLD.state = 'uploading' AND NEW.state IN ('uploading','uploaded','abandoned'))
         OR (OLD.state = 'uploaded' AND NEW.state IN ('uploaded','referenced','deleting'))
