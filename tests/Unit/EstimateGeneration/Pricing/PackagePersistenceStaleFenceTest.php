@@ -263,7 +263,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         $workItem = $this->acceptedWorkItem($session, $current);
         $workItem['specialization_scenario'] = [
             'work_item_key' => 'lighting.fixtures',
-            'assumption_code' => 'residential_led_ceiling_luminaire_18w',
+            'assumption_code' => 'residential_ceiling_luminaire',
         ];
         $selection = [
             'version' => 'residential_project_material:v3',

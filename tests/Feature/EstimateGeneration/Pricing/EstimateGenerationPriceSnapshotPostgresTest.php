@@ -513,7 +513,7 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
             DB::table('estimate_generation_package_items')->where('id', $fixture['item_id'])->update([
                 'metadata' => json_encode(['specialization_scenario' => [
                     'work_item_key' => 'lighting.fixtures',
-                    'assumption_code' => 'residential_led_ceiling_luminaire_18w',
+                    'assumption_code' => 'residential_ceiling_luminaire',
                 ]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
             ]);
             DB::table('estimate_generation_package_item_project_price_inputs')->insert([
@@ -541,6 +541,27 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
+
+            DB::table('estimate_generation_package_items')->where('id', $fixture['item_id'])->update([
+                'metadata' => json_encode(['specialization_scenario' => [
+                    'work_item_key' => 'lighting.fixtures',
+                    'assumption_code' => 'residential_led_ceiling_luminaire_18w',
+                ]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+            ]);
+            self::assertSame(
+                'scenario_assumption_code',
+                DB::scalar('SELECT eg_project_material_price_mismatch_code_v4(?)', [$fixture['item_id']]),
+            );
+            DB::table('estimate_generation_package_items')->where('id', $fixture['item_id'])->update([
+                'metadata' => json_encode(['specialization_scenario' => [
+                    'work_item_key' => 'lighting.fixtures',
+                    'assumption_code' => 'residential_ceiling_luminaire',
+                ]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+            ]);
+            self::assertNull(DB::scalar(
+                'SELECT eg_project_material_price_mismatch_code_v4(?)',
+                [$fixture['item_id']],
+            ));
 
             DB::select('SELECT eg_finalize_package_item_price(?)', [$fixture['item_id']]);
             DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
@@ -599,7 +620,7 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
                 DB::table('estimate_generation_package_items')->where('id', $itemId)->update([
                     'metadata' => json_encode(['specialization_scenario' => [
                         'work_item_key' => 'lighting.fixtures',
-                        'assumption_code' => 'residential_led_ceiling_luminaire_18w',
+                        'assumption_code' => 'residential_ceiling_luminaire',
                     ]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
                 ]);
                 DB::table('estimate_generation_package_item_price_inputs')->insert([

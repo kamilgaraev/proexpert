@@ -229,6 +229,30 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
         }
     }
 
+    #[Test]
+    public function work_scenario_and_selected_project_material_have_separate_assumption_contracts(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000300_separate_work_scenario_from_project_material_assumption.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            'scenario_assumption_code',
+            "WHEN 'electrical.main_cable' THEN 'residential_feeder_cable_clips'",
+            "WHEN 'lighting.fixtures' THEN 'residential_ceiling_luminaire'",
+            "selection->>'assumption_code' IS DISTINCT FROM r.assumption_code",
+            "specialization_scenario'->>'assumption_code' IS DISTINCT FROM r.scenario_assumption_code",
+            'eg_project_material_price_mismatch_code_v4',
+            'selection_material_assumption_code',
+            'scenario_assumption_code',
+            'project_material_price_input_mismatch:%',
+            'project_material_scenario_boundary_rollback_blocked',
+            'SECURITY DEFINER',
+            'REVOKE ALL ON FUNCTION public.eg_project_material_price_mismatch_code_v4(bigint) FROM PUBLIC',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
     private function source(): string
     {
         return (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001200_harden_estimate_generation_pricing_boundary.php');
