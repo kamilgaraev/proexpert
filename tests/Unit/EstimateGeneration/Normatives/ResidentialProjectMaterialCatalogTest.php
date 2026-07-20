@@ -78,6 +78,8 @@ final class ResidentialProjectMaterialCatalogTest extends TestCase
         self::assertSame('regional_catalog', $resource['price_source']);
         self::assertSame('1000 м', $resource['project_material_requirement']['source_price_unit']);
         self::assertSame('1', $resource['project_material_requirement']['price_conversion_factor']);
+        self::assertSame('project_material_candidate_pool:v2', $resource['project_material_requirement']['candidate_pool_version']);
+        self::assertSame([31], $resource['project_material_requirement']['candidate_resource_price_ids']);
     }
 
     #[Test]
@@ -117,6 +119,7 @@ final class ResidentialProjectMaterialCatalogTest extends TestCase
         self::assertSame('regional_catalog', $resource['price_source']);
         self::assertSame('20.4.04.02-0003', $resource['project_material_requirement']['preferred_resource_code']);
         self::assertSame('semantic_group_median', $resource['project_material_requirement']['selection_policy']);
+        self::assertSame([41], $resource['project_material_requirement']['candidate_resource_price_ids']);
     }
 
     #[Test]
@@ -154,6 +157,7 @@ final class ResidentialProjectMaterialCatalogTest extends TestCase
         self::assertSame('20.3.02.03-0102', $resource['code']);
         self::assertSame('1850', $resource['unit_price']);
         self::assertSame('semantic_catalog_attributes_median', $resource['project_material_requirement']['selection_policy']);
+        self::assertSame([52], $resource['project_material_requirement']['candidate_resource_price_ids']);
     }
 
     #[Test]

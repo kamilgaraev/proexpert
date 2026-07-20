@@ -8,6 +8,10 @@ final readonly class ResidentialProjectMaterialCatalog
 {
     public const VERSION = 'residential_project_material:v3';
 
+    public const CANDIDATE_POOL_VERSION = 'project_material_candidate_pool:v2';
+
+    public const MAX_CANDIDATE_PRICE_IDS = 2048;
+
     private const REQUIREMENTS = [
         'electrical.main_cable' => [
             'resource_code' => '21.1.06.09-0154',
@@ -125,11 +129,24 @@ final readonly class ResidentialProjectMaterialCatalog
     /** @param array<string, mixed> $requirement @param list<object> $rows */
     public function resourceFromPriceRows(array $requirement, array $rows): ?array
     {
+        $exact = [];
         foreach ($rows as $row) {
             $resource = $this->resourceFromPriceRow($requirement, $row);
             if ($resource !== null) {
-                return $resource;
+                $exact[] = ['resource' => $resource, 'row' => $row];
             }
+        }
+        if ($exact !== []) {
+            $regional = array_values(array_filter(
+                $exact,
+                static fn (array $candidate): bool => ($candidate['row']->price_source ?? null) === 'regional_catalog',
+            ));
+            $pool = $regional !== [] ? $regional : $exact;
+
+            return $this->withCandidatePriceIds(
+                $pool[0]['resource'],
+                array_column($pool, 'row'),
+            );
         }
 
         $groupCode = trim((string) ($requirement['fallback_group_code'] ?? ''));
@@ -183,7 +200,10 @@ final readonly class ResidentialProjectMaterialCatalog
         });
         $selected = $eligible[intdiv(count($eligible) - 1, 2)];
 
-        return $this->mapPriceRow($requirement, $selected, $selectionPolicy);
+        return $this->withCandidatePriceIds(
+            $this->mapPriceRow($requirement, $selected, $selectionPolicy),
+            $eligible,
+        );
     }
 
     /** @param array<string, mixed> $requirement */
@@ -195,7 +215,7 @@ final readonly class ResidentialProjectMaterialCatalog
             return null;
         }
 
-        return $this->mapPriceRow($requirement, $row, 'exact_code');
+        return $this->withCandidatePriceIds($this->mapPriceRow($requirement, $row, 'exact_code'), [$row]);
     }
 
     private function validPriceRow(object $row): bool
@@ -243,5 +263,25 @@ final readonly class ResidentialProjectMaterialCatalog
                 'selection_policy' => $selectionPolicy,
             ],
         ];
+    }
+
+    /** @param array<string, mixed> $resource @param list<object> $rows */
+    private function withCandidatePriceIds(array $resource, array $rows): ?array
+    {
+        $ids = array_values(array_unique(array_filter(array_map(
+            static fn (object $row): int => is_int($row->price_id ?? null) ? $row->price_id : 0,
+            $rows,
+        ), static fn (int $id): bool => $id > 0)));
+        sort($ids, SORT_NUMERIC);
+        if ($ids === [] || count($ids) > self::MAX_CANDIDATE_PRICE_IDS) {
+            return null;
+        }
+        $resource['project_material_requirement'] = [
+            ...$resource['project_material_requirement'],
+            'candidate_pool_version' => self::CANDIDATE_POOL_VERSION,
+            'candidate_resource_price_ids' => $ids,
+        ];
+
+        return $resource;
     }
 }

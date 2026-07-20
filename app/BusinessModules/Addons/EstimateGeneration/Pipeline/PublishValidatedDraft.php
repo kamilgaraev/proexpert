@@ -58,6 +58,7 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
             throw new \DomainException('Validated draft readiness is stale.');
         }
         $this->packages->syncFromDraft($session, $draft, $claim->context->baseInputVersion);
+        $this->packages->assertCalculatedPricesFinalized($session, $draft);
         $this->audit->recordNormativeDecisionSummary($session, $draft);
         $this->advance->generationCompleted($session, $requiresReview, [
             'processing_stage' => ProcessingStage::ValidateDraft->value,
