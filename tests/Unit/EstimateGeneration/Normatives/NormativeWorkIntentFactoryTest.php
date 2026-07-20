@@ -269,6 +269,39 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         }
     }
 
+    public function test_signed_residential_norm_code_pins_section_without_action_override(): void
+    {
+        $catalog = new ResidentialMaterialScenarioCatalog;
+        $factory = new NormativeWorkIntentFactory(
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
+            null,
+            $catalog,
+        );
+        $scenario = $catalog->issue('walls.lintels', 'residential');
+        self::assertIsArray($scenario);
+        self::assertArrayNotHasKey('intent_action', $scenario);
+
+        $intent = $factory->intent([
+            'key' => 'walls-lintels',
+            'name' => 'Устройство перемычек',
+            'normative_search_text' => $scenario['normative_search_text'],
+            'normative_rate_code' => $scenario['normative_rate_code'],
+            'unit' => 'pcs',
+            'metadata' => ['material_scenario_work_key' => 'walls.lintels'],
+            'specialization_scenario' => $scenario,
+        ], [
+            'organization_id' => 1,
+            'project_id' => 89,
+            'session_id' => 58,
+            'scope_type' => 'walls',
+            'object_type' => 'house',
+            'applicability_date' => '2026-07-20',
+            'source_refs' => ['doc:1'],
+        ], 'fsnb-2026.1');
+
+        self::assertSame(['07'], $intent->normativeSections);
+    }
+
     public function test_trusted_specialization_evidence_suppresses_preliminary_scenario(): void
     {
         $catalog = new ResidentialMaterialScenarioCatalog;
