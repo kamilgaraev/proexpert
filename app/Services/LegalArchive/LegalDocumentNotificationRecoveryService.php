@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Services\LegalArchive;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentNotificationDelivery;
+use App\Notifications\LegalArchive\LegalDocumentApprovalRequiredNotification;
+use App\Notifications\LegalArchive\LegalDocumentDeadlineNotification;
+use App\Notifications\LegalArchive\LegalDocumentSignatureRequiredNotification;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -31,16 +34,19 @@ final class LegalDocumentNotificationRecoveryService
                 continue;
             }
             try {
-                DB::table('notifications')->insert([
-                    'id' => (string) Str::uuid(),
-                    'type' => (string) $delivery->notification_type,
-                    'notifiable_type' => 'App\\Models\\User',
-                    'notifiable_id' => (int) $delivery->recipient_user_id,
-                    'data' => json_encode($delivery->notification_payload, JSON_THROW_ON_ERROR),
-                    'read_at' => null,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
+                $delivery->loadMissing(['document', 'recipient']);
+                $notification = match ($delivery->notification_type) {
+                    LegalDocumentApprovalRequiredNotification::class => new LegalDocumentApprovalRequiredNotification($delivery->document),
+                    LegalDocumentSignatureRequiredNotification::class => new LegalDocumentSignatureRequiredNotification($delivery->document),
+                    LegalDocumentDeadlineNotification::class => new LegalDocumentDeadlineNotification(
+                        $delivery->document,
+                        str_starts_with((string) data_get($delivery->notification_payload, 'type'), 'legal_document_')
+                            ? substr((string) data_get($delivery->notification_payload, 'type'), strlen('legal_document_'))
+                            : 'obligation_due',
+                    ),
+                    default => throw new \LogicException('Unsupported legal notification delivery type.'),
+                };
+                $delivery->recipient->notify($notification);
                 LegalDocumentNotificationDelivery::query()->whereKey($delivery->id)->where('lease_token', hash('sha256', $token))->update(['status' => 'delivered', 'delivered_at' => now(), 'lease_token' => null, 'lease_expires_at' => null]);
                 $recovered++;
             } catch (\Throwable) {
