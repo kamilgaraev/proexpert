@@ -22,6 +22,7 @@ final class DraftReadinessInspector
     public function __construct(
         private readonly DraftPackageCoverageInspector $packageCoverage = new DraftPackageCoverageInspector,
         private readonly DraftResidentialCompositionInspector $residentialComposition = new DraftResidentialCompositionInspector,
+        private readonly DraftQuantityCoverageInspector $quantityCoverage = new DraftQuantityCoverageInspector,
     ) {}
 
     public function inspect(array $draft): DraftReadinessInspection
@@ -91,7 +92,8 @@ final class DraftReadinessInspector
         $missingPackages = $this->packageCoverage->missingPackages($draft);
         $missingComposition = $this->residentialComposition->missingRequirements($draft);
         $unresolvedScope = $this->mergeMissingScope($missingPackages, $missingComposition);
-        if ($unresolvedScope !== []) {
+        $quantityCoverage = $this->quantityCoverage->inspect($draft);
+        if ($unresolvedScope !== [] || $quantityCoverage['blocking'] !== []) {
             $codes[] = 'required_scope_unresolved';
         }
 
@@ -100,6 +102,7 @@ final class DraftReadinessInspector
         $warningCodes = array_values(array_unique([
             ...array_map('strval', (array) ($draft['quality_summary']['warning_codes'] ?? [])),
             ...$this->compositionAdviceWarningCodes($draft),
+            ...($quantityCoverage['advisory'] !== [] ? ['quantity_scope_omission'] : []),
         ]));
         sort($warningCodes, SORT_STRING);
 
@@ -107,11 +110,24 @@ final class DraftReadinessInspector
             array_map(
                 fn (string $code): array => $this->issue(
                     $code,
-                    $code === 'required_scope_unresolved' ? ['packages' => $unresolvedScope] : [],
+                    $code === 'required_scope_unresolved'
+                        ? array_filter([
+                            'packages' => $unresolvedScope,
+                            'quantity_coverage' => $quantityCoverage['blocking'],
+                        ])
+                        : [],
                 ),
                 $codes,
             ),
-            array_map($this->issue(...), $warningCodes),
+            array_map(
+                fn (string $code): array => $this->issue(
+                    $code,
+                    $code === 'quantity_scope_omission'
+                        ? ['quantity_coverage' => $quantityCoverage['advisory']]
+                        : [],
+                ),
+                $warningCodes,
+            ),
             array_merge(
                 array_fill_keys(array_map(static fn (string $code): string => 'gate_'.$code, self::BLOCKING_CODES), 0),
                 array_fill_keys(array_map(static fn (string $code): string => 'warning_'.$code, $warningCodes), 1),

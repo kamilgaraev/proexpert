@@ -120,6 +120,7 @@ return [
     'readiness_price_snapshot_missing' => 'Для части позиций не сохранены использованные цены ресурсов.',
     'readiness_price_snapshot_unfinalized' => 'Расчёт цен ресурсов ещё не завершён.',
     'readiness_required_scope_unresolved' => 'В обязательных разделах сметы не найдены подтвержденные позиции. Добавьте исходные данные или явно решите, учитывать ли эти разделы.',
+    'readiness_quantity_scope_omission' => 'Часть работ не включена в расчёт. Причины и границы сметы указаны в предупреждениях по разделам.',
     'readiness_warning_no_quantity_takeoffs' => 'В документах не найдены проверяемые объемы работ.',
     'readiness_warning_low_document_understanding' => 'В документах найдено мало проверяемых данных для расчета.',
     'document_requirement_architectural_plans' => 'Архитектурные планы этажей с размерами, помещениями и материалами стен.',
