@@ -11,6 +11,7 @@ use App\Models\Contract;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use App\Services\LegalArchive\Files\LegalDocumentFileCleanupDebtService;
 use App\Services\LegalArchive\Signatures\DisabledElectronicSignatureProvider;
 use App\Services\LegalArchive\Signatures\ElectronicSignatureEvidence;
 use App\Services\LegalArchive\Signatures\ElectronicSignatureProvider;
@@ -314,6 +315,47 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertContains('signature_callback_rejected', $this->audit->events);
     }
 
+    public function test_callback_rechecks_provider_generation_inside_registration_transaction(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $provider = new FixedElectronicSignatureProvider;
+        $service = new LegalDocumentSignatureService(
+            $provider, $this->access, $this->audit, $this->storage, $this->database->getConnection(),
+        );
+        $request = $service->createRequest(
+            $document, $version, $actor, 'provider_electronic', $this->signerSet('Signer'),
+            'transaction-fence', provider: 'fixed',
+        );
+        $session = $service->startElectronicSession($request, $actor);
+        $provider->contentHash = (string) $version->content_hash;
+        $provider->onComplete = function () use ($request): void {
+            $first = $this->database->getConnection()->table('legal_signature_provider_operations')
+                ->where('signature_request_id', $request->id)->sole();
+            $this->database->getConnection()->table('legal_signature_provider_operations')->insert([
+                'id' => 'superseding-operation', 'organization_id' => 10, 'document_id' => $request->document_id,
+                'document_version_id' => $request->document_version_id, 'signature_request_id' => $request->id,
+                'provider' => 'fixed', 'status' => 'started', 'correlation_id' => $request->correlation_id,
+                'provider_idempotency_key' => str_repeat('9', 64),
+                'request_idempotency_key' => $first->request_idempotency_key, 'generation' => 2,
+                'supersedes_operation_id' => $first->id, 'attempt_count' => 1,
+                'provider_request_id' => 'provider-request-2', 'redirect_url' => 'https://fixed.test/session-2',
+                'session_expires_at' => now()->addMinutes(5), 'started_at' => now(), 'completed_at' => now(),
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+        };
+
+        try {
+            $service->completeElectronic(new SignatureCallback(
+                'fixed', $session->providerRequestId, $session->correlationId, 'transaction-fence-event', ['status' => 'signed'],
+            ));
+            self::fail('A superseded operation committed a signature.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_signature_callback_stale_generation', $exception->getMessage());
+        }
+        self::assertSame(0, $this->database->getConnection()->table('legal_document_signatures')->count());
+        self::assertContains('signature_callback_rejected', $this->audit->events);
+    }
+
     public function test_expired_provider_session_starts_new_generation(): void
     {
         [$document, $version, $actor] = $this->fixture();
@@ -474,6 +516,95 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertNotNull($dead->dead_lettered_at);
         self::assertNull($dead->next_attempt_at);
         self::assertContains('legal_signature_storage_cleanup_dead_lettered_total', $metrics->metrics);
+    }
+
+    public function test_general_and_signature_cleanup_workers_consume_only_their_own_debts(): void
+    {
+        $debtId = $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->insertGetId([
+            'organization_id' => 10, 'storage_path' => 'org-10/general-file.pdf', 'storage_version_id' => null,
+            'debt_key' => str_repeat('c', 64), 'reason' => 'version_fence_lost_or_persistence_failed',
+            'attempts' => 1, 'next_attempt_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::never())->method('removeImmutable');
+
+        self::assertSame(0, (new LegalSignatureCleanupDebtService(
+            $storage, $this->database->getConnection(), $this->audit,
+        ))->processDue());
+        self::assertNull($this->database->getConnection()->table('legal_archive_file_cleanup_debts')
+            ->where('id', $debtId)->value('resolved_at'));
+
+        $storage->expects(self::once())->method('delete')->with(
+            'org-10/general-file.pdf',
+            self::callback(static fn ($organization): bool => (int) $organization->id === 10),
+        )->willReturn(true);
+        self::assertSame(1, (new LegalDocumentFileCleanupDebtService(
+            $storage, $this->database->getConnection(),
+        ))->processDue());
+        self::assertNotNull($this->database->getConnection()->table('legal_archive_file_cleanup_debts')
+            ->where('id', $debtId)->value('resolved_at'));
+    }
+
+    public function test_last_failed_claim_cleans_owned_object_even_when_creator_releases_first(): void
+    {
+        [$document, $version] = $this->fixture();
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('removeImmutable')->with('org-10/shared.p7s', 'shared-version');
+        $service = new LegalDocumentSignatureService(
+            new DisabledElectronicSignatureProvider, $this->access, $this->audit, $storage, $this->database->getConnection(),
+        );
+        $reserve = new \ReflectionMethod($service, 'reserveSignatureArtifact');
+        $bind = new \ReflectionMethod($service, 'bindSignatureArtifact');
+        $release = new \ReflectionMethod($service, 'releaseFailedArtifactClaim');
+        $key = $reserve->invoke($service, 10, (int) $document->id, (int) $version->id, 77, 'org-10/shared.p7s', str_repeat('a', 64));
+        self::assertSame($key, $reserve->invoke(
+            $service, 10, (int) $document->id, (int) $version->id, 77, 'org-10/shared.p7s', str_repeat('a', 64),
+        ));
+        $bind->invoke($service, 10, $key, 'shared-version', true);
+        $bind->invoke($service, 10, $key, 'shared-version', false);
+        $failure = new DomainException('registration failed');
+        $release->invoke(
+            $service, 10, (int) $document->id, (int) $version->id, 'org-10/shared.p7s', 'shared-version',
+            'etag', str_repeat('a', 64), $failure, $key,
+        );
+        self::assertSame('uploaded', $this->database->getConnection()->table('legal_signature_artifacts')->value('state'));
+        $release->invoke(
+            $service, 10, (int) $document->id, (int) $version->id, 'org-10/shared.p7s', 'shared-version',
+            'etag', str_repeat('a', 64), $failure, $key,
+        );
+        $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->sole();
+        self::assertSame('deleted', $artifact->state);
+        self::assertSame(0, (int) $artifact->claim_count);
+    }
+
+    public function test_cleanup_backlog_atomically_marks_artifact_deleted_and_replay_is_idle(): void
+    {
+        [$document, $version] = $this->fixture();
+        $this->database->getConnection()->table('legal_signature_artifacts')->insert([
+            'organization_id' => 10, 'document_id' => $document->id, 'document_version_id' => $version->id,
+            'signature_request_id' => 99, 'artifact_key' => str_repeat('f', 64),
+            'storage_path' => 'org-10/backlog.p7s', 'storage_version_id' => 'backlog-version',
+            'content_hash' => str_repeat('a', 64), 'state' => 'deleting', 'claim_count' => 0,
+            'cleanup_owned' => true, 'created_at' => now(), 'updated_at' => now()->subMinute(),
+        ]);
+        $debtId = $this->database->getConnection()->table('legal_archive_file_cleanup_debts')->insertGetId([
+            'organization_id' => 10, 'document_id' => $document->id, 'document_version_id' => $version->id,
+            'storage_path' => 'org-10/backlog.p7s', 'storage_version_id' => 'backlog-version',
+            'debt_key' => str_repeat('d', 64), 'reason' => 'signature_registration_failed', 'attempts' => 1,
+            'next_attempt_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('removeImmutable')->with('org-10/backlog.p7s', 'backlog-version');
+        $metrics = new RecordingCleanupMetrics;
+        $worker = new LegalSignatureCleanupDebtService(
+            $storage, $this->database->getConnection(), $this->audit, $metrics,
+        );
+
+        self::assertSame(1, $worker->processDue());
+        self::assertSame('deleted', $this->database->getConnection()->table('legal_signature_artifacts')->value('state'));
+        self::assertNotNull($this->database->getConnection()->table('legal_archive_file_cleanup_debts')
+            ->where('id', $debtId)->value('resolved_at'));
+        self::assertSame(0, $worker->processDue());
     }
 
     public function test_cleanup_never_deletes_an_artifact_referenced_by_a_winning_registration(): void
@@ -760,6 +891,40 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertSame('signed', $version->refresh()->status);
     }
 
+    public function test_signed_version_stays_immutable_while_revoked_attempt_is_replaced(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $signers = $this->signerSet('Signer');
+        $first = $this->service->createRequest(
+            $document, $version, $actor, 'external_electronic', $signers, 'signed-revoked-first', provider: 'external-edo',
+        );
+        $container = pack('H*', '3082010006092a864886f70d010702a0820100308200fc');
+        $firstSignature = $this->service->registerExternalOriginal(
+            $first, UploadedFile::fake()->createWithContent('signature.p7s', $container), $actor,
+            new ExternalOriginalData('external-edo', $this->evidence($signers), 'signed-revoked-import'),
+        );
+        self::assertSame('verified', $this->service->verify($firstSignature, $actor, 'signed-first-verification')->status);
+        self::assertSame('signed', $version->refresh()->status);
+        TrustedExternalSignatureProvider::$status = 'revoked';
+        self::assertSame('revoked', $this->service->verify($firstSignature, $actor, 'signed-revocation')->status);
+        self::assertSame('revoked', $document->refresh()->signature_status);
+        self::assertSame('signature_failed', $document->lifecycle_status);
+        self::assertSame('signed', $version->refresh()->status);
+        $replacement = $this->service->createRequest(
+            $document, $version, $actor, 'external_electronic', $signers, 'signed-revoked-replacement',
+            provider: 'external-edo', replacesRequestId: (int) $first->id,
+        );
+        self::assertSame('signed', $version->refresh()->status);
+        TrustedExternalSignatureProvider::$status = 'verified';
+        $corrected = $this->service->registerExternalOriginal(
+            $replacement, UploadedFile::fake()->createWithContent('signature.p7s', $container), $actor,
+            new ExternalOriginalData('external-edo', $this->evidence($signers), 'signed-revoked-corrected'),
+        );
+        self::assertSame('verified', $this->service->verify($corrected, $actor, 'signed-revoked-corrected-result')->status);
+        self::assertSame('signed', $document->refresh()->signature_status);
+        self::assertSame('signed', $version->refresh()->status);
+    }
+
     private function signerSet(string $name, ?string $position = null): SignerIdentitySet
     {
         return new SignerIdentitySet([new SignerIdentity('manual', $name, position: $position)]);
@@ -1031,6 +1196,7 @@ final class ManualOriginalRegistrationTest extends TestCase
             $table->string('content_hash', 64);
             $table->string('state');
             $table->unsignedInteger('claim_count')->default(0);
+            $table->boolean('cleanup_owned')->default(false);
             $table->unsignedBigInteger('referenced_signature_id')->nullable();
             $table->timestamps();
             $table->unique(['organization_id', 'artifact_key']);
@@ -1100,6 +1266,8 @@ final class FixedElectronicSignatureProvider implements ElectronicSignatureProvi
 
     public bool $evidenceSignerMismatch = false;
 
+    public ?\Closure $onComplete = null;
+
     private ?SignerIdentitySet $expectedSigners = null;
 
     private function signers(): SignerIdentitySet
@@ -1134,6 +1302,8 @@ final class FixedElectronicSignatureProvider implements ElectronicSignatureProvi
 
     public function complete(SignatureCallback $callback): SignatureVerificationResult
     {
+        ($this->onComplete ?? static fn (): null => null)();
+
         return new SignatureVerificationResult(
             'verified', 'fixed', $callback->providerRequestId, $callback->correlationId,
             $this->contentHash, $this->signers(), $this->evidence(),
@@ -1195,6 +1365,7 @@ final class TrustedExternalSignatureProvider implements ElectronicSignatureProvi
             $signers,
             $evidence,
             $context->artifact,
+            revocationReason: self::$status === 'revoked' ? 'certificate_revoked' : null,
             providerMetadata: ['trust_service' => 'test'],
         );
     }

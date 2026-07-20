@@ -255,6 +255,13 @@ Schedule::command('legal-signatures:cleanup-storage --limit=200')
         Log::error('legal_signature.cleanup_storage_schedule_failed');
     });
 
+Schedule::command('legal-documents:cleanup-file-storage --limit=200')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onFailure(function (): void {
+        Log::error('legal_document.file_cleanup_storage_schedule_failed');
+    });
+
 Schedule::command('immutable-audit:rollout-status')
     ->everyFiveMinutes()
     ->withoutOverlapping(5)

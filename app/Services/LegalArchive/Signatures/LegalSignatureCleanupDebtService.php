@@ -25,6 +25,8 @@ final readonly class LegalSignatureCleanupDebtService
     public function processDue(int $limit = 100): int
     {
         $ids = $this->connection->table('legal_archive_file_cleanup_debts')
+            ->where('reason', 'signature_registration_failed')
+            ->whereNotNull('storage_version_id')
             ->whereNull('resolved_at')
             ->whereNull('dead_lettered_at')
             ->where(static function ($query): void {
@@ -50,6 +52,7 @@ final readonly class LegalSignatureCleanupDebtService
         $debt = $this->connection->transaction(function () use ($id, $lease): ?object {
             $row = $this->connection->table('legal_archive_file_cleanup_debts')->where('id', $id)->lockForUpdate()->first();
             if ($row === null || $row->resolved_at !== null || $row->dead_lettered_at !== null
+                || $row->reason !== 'signature_registration_failed' || $row->storage_version_id === null
                 || ($row->next_attempt_at !== null && now()->lt($row->next_attempt_at))
                 || ($row->lease_expires_at !== null && now()->lt($row->lease_expires_at))) {
                 return null;
@@ -70,10 +73,7 @@ final readonly class LegalSignatureCleanupDebtService
             return true;
         }
         try {
-            $this->files->removeImmutable(
-                (string) $debt->storage_path,
-                $debt->storage_version_id === null ? null : (string) $debt->storage_version_id,
-            );
+            $this->files->removeImmutable((string) $debt->storage_path, (string) $debt->storage_version_id);
         } catch (Throwable $error) {
             $this->recordFailure($id, $lease, $debt, $error);
 
@@ -132,6 +132,22 @@ final readonly class LegalSignatureCleanupDebtService
     private function recordSuccess(int $id, string $lease, object $debt): bool
     {
         return $this->connection->transaction(function () use ($id, $lease, $debt): bool {
+            $artifact = $this->connection->table('legal_signature_artifacts')
+                ->where('organization_id', $debt->organization_id)
+                ->where('storage_path', $debt->storage_path)
+                ->where('storage_version_id', $debt->storage_version_id)
+                ->lockForUpdate()->first();
+            if ($artifact !== null) {
+                if ((string) $artifact->state !== 'deleted'
+                    && ((string) $artifact->state !== 'deleting' || (int) $artifact->claim_count !== 0)) {
+                    throw new \RuntimeException('legal_signature_cleanup_artifact_state_conflict');
+                }
+                if ((string) $artifact->state === 'deleting') {
+                    $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                        'state' => 'deleted', 'claim_count' => 0, 'updated_at' => now(),
+                    ]);
+                }
+            }
             $updated = $this->connection->table('legal_archive_file_cleanup_debts')
                 ->where('id', $id)->where('lease_token_hash', hash('sha256', $lease))->whereNull('resolved_at')
                 ->update([

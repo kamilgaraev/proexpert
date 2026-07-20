@@ -248,6 +248,57 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
         self::assertSame($terminal === 'completed' ? 1 : 0, $this->first->table('legal_document_signatures')->count());
     }
 
+    public function test_callback_cannot_commit_after_a_new_provider_generation_starts(): void
+    {
+        $document = (new LegalArchiveDocument)->setConnection('signature_first')->newQuery()->findOrFail(1);
+        $version = (new LegalArchiveDocumentVersion)->setConnection('signature_first')->newQuery()->findOrFail(1);
+        $actor = (new User)->setConnection('signature_first')->forceFill(['id' => 1, 'current_organization_id' => 1]);
+        $actor->exists = true;
+        $provider = new PostgresRaceSignatureProvider(onComplete: function (): void {
+            $first = $this->first->table('legal_signature_provider_operations')->sole();
+            $this->first->table('legal_signature_provider_operations')->insert([
+                'id' => (string) \Illuminate\Support\Str::uuid(),
+                'organization_id' => $first->organization_id,
+                'document_id' => $first->document_id,
+                'document_version_id' => $first->document_version_id,
+                'signature_request_id' => $first->signature_request_id,
+                'provider' => $first->provider,
+                'status' => 'started',
+                'correlation_id' => $first->correlation_id,
+                'provider_idempotency_key' => hash('sha256', 'provider-generation-2'),
+                'request_idempotency_key' => $first->request_idempotency_key,
+                'generation' => 2,
+                'supersedes_operation_id' => $first->id,
+                'attempt_count' => 1,
+                'provider_request_id' => 'race-provider-request-2',
+                'redirect_url' => 'https://race-provider.test/session-2',
+                'session_expires_at' => now()->addMinutes(5),
+                'started_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        });
+        $service = $this->signatureService($this->first, $provider, $this->signatureStorage($this->first));
+        $request = $service->createRequest(
+            $document, $version, $actor, 'provider_electronic',
+            new SignerIdentitySet([new SignerIdentity('manual', 'Signer')]),
+            'provider-generation-fence', provider: 'race-provider',
+        );
+        $session = $service->startElectronicSession($request, $actor);
+
+        try {
+            $service->completeElectronic(new SignatureCallback(
+                'race-provider', $session->providerRequestId, $session->correlationId,
+                'provider-generation-fence-event', ['status' => 'signed'],
+            ));
+            self::fail('A callback from the superseded provider generation was accepted.');
+        } catch (\DomainException $exception) {
+            self::assertSame('legal_signature_callback_stale_generation', $exception->getMessage());
+        }
+        self::assertSame(0, $this->first->table('legal_document_signatures')->count());
+        self::assertSame(2, $this->first->table('legal_signature_provider_operations')->count());
+    }
+
     public function test_parallel_s3_compensation_never_deletes_the_winning_reference(): void
     {
         $document = (new LegalArchiveDocument)->setConnection('signature_first')->newQuery()->findOrFail(1);
@@ -603,7 +654,10 @@ SQL);
 
 final class PostgresRaceSignatureProvider implements ElectronicSignatureProvider
 {
-    public function __construct(private readonly string $status = 'verified') {}
+    public function __construct(
+        private readonly string $status = 'verified',
+        private readonly ?\Closure $onComplete = null,
+    ) {}
 
     private function signers(): SignerIdentitySet
     {
@@ -633,6 +687,7 @@ final class PostgresRaceSignatureProvider implements ElectronicSignatureProvider
 
     public function complete(SignatureCallback $callback): SignatureVerificationResult
     {
+        ($this->onComplete ?? static fn (): null => null)();
         $artifact = new SignatureArtifact(
             pack('H*', '3082010006092a864886f70d010702a0820100308200fc'),
             'signature.p7s', 'application/pkcs7-signature',

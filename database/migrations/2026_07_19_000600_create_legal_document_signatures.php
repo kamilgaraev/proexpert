@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    public bool $withinTransaction = false;
+    public $withinTransaction = false;
 
     public function up(): void
     {
@@ -204,6 +204,7 @@ return new class extends Migration
                 $table->char('content_hash', 64);
                 $table->string('state', 32);
                 $table->unsignedInteger('claim_count')->default(0);
+                $table->boolean('cleanup_owned')->default(false);
                 $table->unsignedBigInteger('referenced_signature_id')->nullable();
                 $table->timestampsTz();
             });
@@ -259,6 +260,7 @@ return new class extends Migration
             ['legal_signature_artifacts', 'content_hash', 'bpchar', 'NO'],
             ['legal_signature_artifacts', 'state', 'varchar', 'NO'],
             ['legal_signature_artifacts', 'claim_count', 'int4', 'NO'],
+            ['legal_signature_artifacts', 'cleanup_owned', 'bool', 'NO'],
             ['legal_signature_artifacts', 'referenced_signature_id', 'int8', 'YES'],
         ];
         foreach ($manifest as [$table, $column, $type, $nullable]) {
@@ -276,10 +278,11 @@ return new class extends Migration
 SELECT count(*) FILTER (WHERE a.attidentity <> '') AS identity_count,
        count(*) FILTER (WHERE a.attgenerated <> '') AS generated_count,
        string_agg(a.attname, ',' ORDER BY a.attnum) FILTER (
-           WHERE defaults.oid IS NOT NULL AND a.attname NOT IN ('id','attempt_count','claim_count')
+           WHERE defaults.oid IS NOT NULL AND a.attname NOT IN ('id','attempt_count','claim_count','cleanup_owned')
        ) AS unexpected_defaults,
        max(pg_get_expr(defaults.adbin, defaults.adrelid)) FILTER (WHERE a.attname='attempt_count') AS attempt_default,
        max(pg_get_expr(defaults.adbin, defaults.adrelid)) FILTER (WHERE a.attname='claim_count') AS claim_default
+       , max(pg_get_expr(defaults.adbin, defaults.adrelid)) FILTER (WHERE a.attname='cleanup_owned') AS cleanup_owned_default
 FROM pg_attribute a
 JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
 LEFT JOIN pg_attrdef defaults ON defaults.adrelid=c.oid AND defaults.adnum=a.attnum
@@ -288,7 +291,8 @@ SQL, [$table]);
             if ($columnFlags === null || (int) $columnFlags->identity_count !== 0
                 || (int) $columnFlags->generated_count !== 0 || $columnFlags->unexpected_defaults !== null
                 || ($table === 'legal_signature_provider_operations' && (string) $columnFlags->attempt_default !== '0')
-                || ($table === 'legal_signature_artifacts' && (string) $columnFlags->claim_default !== '0')) {
+                || ($table === 'legal_signature_artifacts' && (string) $columnFlags->claim_default !== '0')
+                || ($table === 'legal_signature_artifacts' && (string) $columnFlags->cleanup_owned_default !== 'false')) {
                 throw new RuntimeException("legal_signature_column_flags_mismatch:{$table}");
             }
             $primary = DB::selectOne("SELECT pg_get_constraintdef(c.oid, true) AS definition FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=current_schema() AND t.relname=? AND c.contype='p'", [$table]);
@@ -351,7 +355,7 @@ SQL, [$table]);
             'legal_document_signatures' => explode(',', 'id,organization_id,document_id,document_version_id,signature_request_id,party_id,method,provider,signer_name,signers,signed_content_hash,signature_path,signature_content_hash,storage_version_id,storage_etag,detected_mime_type,certificate_metadata,provider_metadata,storage_location,signed_at,verified_at,verification_status,signature_kind,container_format,signer_snapshot_hash,signer_user_id,signer_organization_id,party_role_snapshot,certificate_fingerprint,certificate_serial,certificate_issuer,certificate_valid_from,certificate_valid_until,authority_confirmed,time_source,diagnostic_code,signing_session_id,client_ip_hash,user_agent_hash,revocation_reason,registered_by_user_id,idempotency_key,request_hash,created_at,updated_at'),
             'legal_signature_provider_operations' => explode(',', 'id,organization_id,document_id,document_version_id,signature_request_id,provider,status,correlation_id,provider_idempotency_key,request_idempotency_key,generation,supersedes_operation_id,lease_token_hash,lease_expires_at,attempt_count,provider_request_id,redirect_url,session_expires_at,session_metadata,last_error_code,started_at,completed_at,created_at,updated_at'),
             'legal_signature_verifications' => explode(',', 'id,organization_id,document_id,document_version_id,signature_id,provider,status,signed_content_hash,certificate_metadata,provider_metadata,revocation_reason,verified_by_user_id,verified_at,idempotency_key,request_hash,created_at,updated_at'),
-            'legal_signature_artifacts' => explode(',', 'id,organization_id,document_id,document_version_id,signature_request_id,artifact_key,storage_path,storage_version_id,content_hash,state,claim_count,referenced_signature_id,created_at,updated_at'),
+            'legal_signature_artifacts' => explode(',', 'id,organization_id,document_id,document_version_id,signature_request_id,artifact_key,storage_path,storage_version_id,content_hash,state,claim_count,cleanup_owned,referenced_signature_id,created_at,updated_at'),
         ];
     }
 

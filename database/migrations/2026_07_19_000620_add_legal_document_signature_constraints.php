@@ -338,6 +338,9 @@ BEGIN
        AND NOT (OLD.state = 'uploading' AND NEW.state = 'uploaded' AND OLD.storage_version_id IS NULL AND NEW.storage_version_id IS NOT NULL) THEN
         RAISE EXCEPTION 'legal_signature_artifact_version_update_forbidden';
     END IF;
+    IF OLD.cleanup_owned AND NOT NEW.cleanup_owned THEN
+        RAISE EXCEPTION 'legal_signature_artifact_cleanup_owner_update_forbidden';
+    END IF;
     IF NOT ((OLD.state = 'uploading' AND NEW.state IN ('uploading','uploaded','abandoned'))
         OR (OLD.state = 'uploaded' AND NEW.state IN ('uploaded','referenced','deleting'))
         OR (OLD.state = 'referenced' AND NEW.state = 'referenced')
