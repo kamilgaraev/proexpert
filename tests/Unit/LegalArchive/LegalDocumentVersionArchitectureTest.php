@@ -112,7 +112,7 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
         self::assertStringContainsString('legal_archive.messages.document_file_processing_failed', $controller);
         self::assertStringContainsString('legal_archive.messages.version_file_processing_failed', $controller);
         self::assertGreaterThanOrEqual(2, substr_count($controller, '202'));
-        self::assertGreaterThanOrEqual(2, substr_count($controller, "'retry_action' => 'add_version'"));
+        self::assertGreaterThanOrEqual(2, substr_count($controller, "'retry_action' => 'retry_upload'"));
         self::assertStringContainsString('new LegalArchiveDocumentResource(', $controller);
         self::assertStringContainsString('new LegalArchiveDocumentVersionResource($e->version)', $controller);
     }
@@ -130,7 +130,7 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
         self::assertIsString($resource);
         self::assertStringContainsString('instanceof LegalDocumentCreateFailed', $controller);
         self::assertStringContainsString("'operation_result' => 'document_create_failed'", $controller);
-        self::assertStringContainsString("? 'repeat_create' : 'add_version'", $controller);
+        self::assertStringContainsString("'retry_action' => \$e->retryAction()", $controller);
         self::assertStringContainsString("'retry_document_id' => (int) \$e->document->id", $controller);
         self::assertStringContainsString("'source_create_status' => \$this->source_create_status", $resource);
     }

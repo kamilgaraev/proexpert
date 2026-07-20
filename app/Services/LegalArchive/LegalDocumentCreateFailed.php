@@ -12,9 +12,18 @@ final class LegalDocumentCreateFailed extends RuntimeException
 {
     public function __construct(
         public readonly LegalArchiveDocument $document,
-        public readonly bool $repeatCreateRequired,
         Throwable $previous,
     ) {
         parent::__construct($previous->getMessage(), 0, $previous);
+    }
+
+    public function operationId(): ?string
+    {
+        return is_string($this->document->create_operation_id) ? $this->document->create_operation_id : null;
+    }
+
+    public function retryAction(): string
+    {
+        return (string) ($this->document->source_create_retry_action ?: 'retry_finalize');
     }
 }

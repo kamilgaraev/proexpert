@@ -46,6 +46,7 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
                     'legal_archive.files.download',
                     'legal_archive.versions.create',
                     'legal_archive.external_access.manage',
+                    'legal_archive.security_recovery.manage',
                     'legal_archive.signatures.sign',
                     'legal_archive.retention.manage',
                     'legal_archive.legal_hold.manage',
@@ -68,6 +69,7 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
         $this->assertSame('Создание версий документов юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.versions.create']);
         $this->assertSame('Скачивание файлов юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.files.download']);
         $this->assertSame('Управление внешним доступом к юридическим документам', $translated['module_permissions']['legal-archive']['legal_archive.external_access.manage']);
+        $this->assertSame('Аварийное восстановление управления юридическими документами', $translated['module_permissions']['legal-archive']['legal_archive.security_recovery.manage']);
         $this->assertSame('Подписание юридических документов', $translated['module_permissions']['legal-archive']['legal_archive.signatures.sign']);
         $this->assertSame('Управление запретом удаления документов юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.legal_hold.manage']);
         $this->assertSame('Согласование юридических документов', $translated['module_permissions']['legal-archive']['legal_archive.workflow.approve']);
@@ -77,6 +79,7 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
         $this->assertStringNotContainsString('legal_archive.view', $flattenedValues);
         $this->assertStringNotContainsString('legal_archive.versions.create', $flattenedValues);
         $this->assertStringNotContainsString('legal_archive.external_access.manage', $flattenedValues);
+        $this->assertStringNotContainsString('legal_archive.security_recovery.manage', $flattenedValues);
         $this->assertStringNotContainsString('legal_archive.signatures.sign', $flattenedValues);
         $this->assertStringNotContainsString('legal_archive.workflow.', $flattenedValues);
     }
@@ -99,6 +102,10 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
         self::assertContains('legal_archive.files.download', $viewer['module_permissions']['legal-archive']);
         self::assertNotContains('legal_archive.external_access.manage', $viewer['system_permissions']);
         self::assertNotContains('legal_archive.signatures.sign', $viewer['system_permissions']);
+        self::assertContains('legal_archive.security_recovery.manage', $webAdmin['system_permissions']);
+        self::assertContains('legal_archive.security_recovery.manage', $webAdmin['module_permissions']['legal-archive']);
+        self::assertNotContains('legal_archive.security_recovery.manage', $financeAdmin['system_permissions']);
+        self::assertNotContains('legal_archive.security_recovery.manage', $viewer['system_permissions']);
     }
 
     private function valuesOnly(array $value): array

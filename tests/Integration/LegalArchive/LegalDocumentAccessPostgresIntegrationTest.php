@@ -125,6 +125,44 @@ final class LegalDocumentAccessPostgresIntegrationTest extends TestCase
             ->where('id', $documentId)->update(['owner_user_id' => 2]));
     }
 
+    public function test_owner_principal_foreign_keys_are_restrictive_and_descriptor_checked(): void
+    {
+        $migration = $this->migration('000170_harden_legal_document_owner_principal_foreign_keys');
+        $migration->up();
+        $this->dossier(1);
+
+        $this->assertForeignKeyViolation(fn () => $this->first->table('users')->where('id', 1)->delete());
+        $this->first->statement(
+            'ALTER TABLE legal_archive_documents DROP CONSTRAINT legal_docs_owner_user_restrict_fk',
+        );
+        $this->first->statement(
+            'ALTER TABLE legal_archive_documents ADD CONSTRAINT legal_docs_owner_user_restrict_fk '.
+            'FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE',
+        );
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage(
+            'legal_document_owner_fk_descriptor_mismatch:legal_docs_owner_user_restrict_fk',
+        );
+        $migration->up();
+    }
+
+    public function test_owner_principal_foreign_key_rollout_resumes_from_unvalidated_constraint(): void
+    {
+        $this->first->statement(
+            'ALTER TABLE legal_archive_documents ADD CONSTRAINT legal_docs_created_by_user_restrict_fk '.
+            'FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE RESTRICT NOT VALID',
+        );
+
+        $this->migration('000170_harden_legal_document_owner_principal_foreign_keys')->up();
+
+        $constraint = $this->first->selectOne(
+            'SELECT convalidated::integer AS validated FROM pg_constraint '.
+            "WHERE conname = 'legal_docs_created_by_user_restrict_fk'",
+        );
+        self::assertSame(1, (int) $constraint->validated);
+    }
+
     public function test_descriptor_drift_fails_closed(): void
     {
         $this->migration('000510_create_legal_document_access_indexes')->up();

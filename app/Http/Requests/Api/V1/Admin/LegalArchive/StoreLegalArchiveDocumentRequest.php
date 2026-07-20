@@ -66,6 +66,7 @@ final class StoreLegalArchiveDocumentRequest extends FormRequest
             'source_type' => ['nullable', 'required_with:source_id,source_idempotency_key', 'string', Rule::in(LegalDocumentSourceType::values())],
             'source_id' => ['nullable', 'required_with:source_type,source_idempotency_key', 'integer', 'min:1'],
             'source_idempotency_key' => ['nullable', 'required_with:source_type,source_id', 'string', 'max:191'],
+            'create_operation_key' => ['bail', 'required_without:source_type', 'string', 'max:191', 'regex:/\\S/u'],
             'counterparty_name' => ['nullable', 'string', 'max:255'],
             'document_date' => ['nullable', 'date'],
             'effective_from' => ['nullable', 'date'],

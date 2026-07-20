@@ -183,6 +183,7 @@ return [
         'legal_archive.files.download' => 'Скачивание файлов юридического архива',
         'legal_archive.versions.create' => 'Создание версий документов юридического архива',
         'legal_archive.external_access.manage' => 'Управление внешним доступом к юридическим документам',
+        'legal_archive.security_recovery.manage' => 'Аварийное восстановление управления юридическими документами',
         'legal_archive.signatures.sign' => 'Подписание юридических документов',
         'legal_archive.retention.manage' => 'Управление сроками хранения юридического архива',
         'legal_archive.legal_hold.manage' => 'Управление запретом удаления документов юридического архива',

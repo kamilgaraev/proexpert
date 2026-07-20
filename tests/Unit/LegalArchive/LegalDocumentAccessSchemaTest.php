@@ -87,6 +87,8 @@ final class LegalDocumentAccessSchemaTest extends TestCase
         self::assertStringContainsString('test_parallel_active_grants_preserve_unique_subject_invariant', $source);
         self::assertStringContainsString('test_parallel_source_commands_preserve_actor_tenant_idempotency_namespace', $source);
         self::assertStringContainsString('test_owner_principals_are_immutable_after_document_creation', $source);
+        self::assertStringContainsString('test_owner_principal_foreign_keys_are_restrictive_and_descriptor_checked', $source);
+        self::assertStringContainsString('test_owner_principal_foreign_key_rollout_resumes_from_unvalidated_constraint', $source);
         self::assertStringContainsString('test_parallel_manager_revocation_preserves_one_active_manager', $source);
         self::assertStringContainsString('test_index_descriptor_drift_variants_fail_closed', $source);
         self::assertStringContainsString('NULLS NOT DISTINCT', $source);
@@ -110,6 +112,40 @@ final class LegalDocumentAccessSchemaTest extends TestCase
         self::assertIsString($registry);
         self::assertStringContainsString('LegalDocumentSourceResolver', $registry);
         self::assertStringContainsString('assertOwnedSource', $registry);
+    }
+
+    public function test_management_recovery_uses_document_first_lock_order_and_post_lock_authorization(): void
+    {
+        $source = file_get_contents(
+            __DIR__.'/../../../app/Services/LegalArchive/Access/LegalDocumentAccessService.php',
+        );
+
+        self::assertIsString($source);
+        $recoveryStart = strpos($source, 'public function recoverOwnerManagement(');
+        $securityStart = strpos($source, 'public function recoverManagementAsSecurityAdministrator(');
+        $boundaryStart = strpos($source, 'private function belongsToOrganization(');
+        self::assertIsInt($recoveryStart);
+        self::assertIsInt($securityStart);
+        self::assertIsInt($boundaryStart);
+        $ownerRecovery = substr($source, $recoveryStart, $securityStart - $recoveryStart);
+        $securityRecovery = substr($source, $securityStart, $boundaryStart - $securityStart);
+
+        self::assertLessThan(
+            strpos($ownerRecovery, '$lockedActor = $this->reloadActiveUser('),
+            strpos($ownerRecovery, '$this->lock()->lockDocument('),
+        );
+        self::assertLessThan(
+            strpos($ownerRecovery, '$this->authorizeManagementBoundary($lockedActor, $lockedDocument)'),
+            strpos($ownerRecovery, '$lockedActor = $this->reloadActiveUser('),
+        );
+        self::assertLessThan(
+            strpos($securityRecovery, '$lockedActor = $this->reloadActiveUser('),
+            strpos($securityRecovery, '$this->lock()->lockDocument('),
+        );
+        self::assertLessThan(
+            strpos($securityRecovery, '$this->authorizeSecurityRecovery($lockedActor, $lockedDocument)'),
+            strpos($securityRecovery, '$lockedActor = $this->reloadActiveUser('),
+        );
     }
 
     public function test_read_endpoints_load_the_owner_document_before_object_authorization(): void

@@ -160,10 +160,10 @@ final readonly class LegalDocumentAuditService implements LegalDocumentAudit
         $legacyNamespaced = "{$aggregateType}:{$aggregateId}:{$rawValue}";
         $value = LegalDocumentSourceEventId::canonical("{$aggregateType}:{$aggregateId}", $rawValue);
         $lookup = [$value];
-        if (strlen($rawValue) <= LegalDocumentSourceEventId::MAX_LENGTH) {
+        if (mb_strlen($rawValue) <= LegalDocumentSourceEventId::MAX_LENGTH) {
             $lookup[] = $rawValue;
         }
-        if (strlen($legacyNamespaced) <= LegalDocumentSourceEventId::MAX_LENGTH) {
+        if (mb_strlen($legacyNamespaced) <= LegalDocumentSourceEventId::MAX_LENGTH) {
             $lookup[] = $legacyNamespaced;
         }
         $existing = $this->connection->table('immutable_audit_events')

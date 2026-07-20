@@ -81,6 +81,25 @@ final class LegalDocumentProfileMigrationContractTest extends TestCase
         self::assertStringContainsString('ALTER COLUMN confidentiality_level SET NOT NULL', $validation);
     }
 
+    public function test_owner_principals_use_exact_restrict_foreign_keys(): void
+    {
+        $migration = $this->migration('2026_07_19_000170_harden_legal_document_owner_principal_foreign_keys.php');
+
+        self::assertStringContainsString('public $withinTransaction = false;', $migration);
+        self::assertStringContainsString('legal_docs_created_by_user_restrict_fk', $migration);
+        self::assertStringContainsString('legal_docs_owner_user_restrict_fk', $migration);
+        self::assertSame(2, substr_count($migration, 'REFERENCES users(id) ON DELETE RESTRICT'));
+        self::assertStringContainsString('NOT VALID', $migration);
+        self::assertStringContainsString('VALIDATE CONSTRAINT', $migration);
+        self::assertStringContainsString('pg_get_constraintdef', $migration);
+        self::assertStringContainsString('convalidated', $migration);
+        self::assertStringContainsString('condeferrable', $migration);
+        self::assertStringContainsString('condeferred', $migration);
+        self::assertStringContainsString("str_replace('not valid', ''", $migration);
+        self::assertStringContainsString('legal_document_owner_fk_descriptor_mismatch', $migration);
+        self::assertStringContainsString('legal_document_access_migrations_are_forward_only', $migration);
+    }
+
     private function migration(string $filename): string
     {
         $source = file_get_contents(self::MIGRATION_DIRECTORY.'/'.$filename);

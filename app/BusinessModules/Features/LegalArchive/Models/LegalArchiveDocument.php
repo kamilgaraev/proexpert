@@ -58,6 +58,14 @@ final class LegalArchiveDocument extends Model
         'source_request_fingerprint',
         'source_create_failure_fingerprint',
         'source_create_failed_at',
+        'create_operation_id',
+        'create_operation_key',
+        'source_create_attempt_token',
+        'source_create_attempt_count',
+        'source_create_started_at',
+        'source_create_heartbeat_at',
+        'source_create_lease_expires_at',
+        'source_create_retry_action',
         'created_by_user_id',
         'updated_by_user_id',
         'metadata',
@@ -78,6 +86,10 @@ final class LegalArchiveDocument extends Model
         'terminated_at' => 'datetime',
         'metadata' => 'array',
         'source_create_failed_at' => 'datetime',
+        'source_create_attempt_count' => 'integer',
+        'source_create_started_at' => 'datetime',
+        'source_create_heartbeat_at' => 'datetime',
+        'source_create_lease_expires_at' => 'datetime',
     ];
 
     protected function confidentialityLevel(): Attribute

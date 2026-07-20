@@ -331,6 +331,50 @@ final class LegalDocumentAuditChainTest extends TestCase
         self::assertSame($outboxId, (string) LegalDocumentOutboxMessage::query()->value('id'));
     }
 
+    public function test_legacy_source_lookup_uses_database_character_length_semantics(): void
+    {
+        $service = $this->service();
+        $document = $this->document(5, 2);
+        $actor = $this->actor(9, 2);
+        $legacy191Characters = str_repeat('я', 191);
+        $context = ['source_event_id' => $legacy191Characters, 'after' => ['status' => 'draft']];
+
+        $service->record('create', $document, $actor, $context);
+        $eventId = (string) ImmutableAuditEvent::query()->value('id');
+        $outboxId = (string) LegalDocumentOutboxMessage::query()->value('id');
+        $this->database->table('immutable_audit_events')->where('id', $eventId)->update([
+            'source_event_id' => $legacy191Characters,
+        ]);
+
+        $service->record('create', $document, $actor, $context);
+
+        self::assertSame(191, mb_strlen($legacy191Characters));
+        self::assertGreaterThan(191, strlen($legacy191Characters));
+        self::assertSame(1, ImmutableAuditEvent::query()->count());
+        self::assertSame($eventId, (string) ImmutableAuditEvent::query()->value('id'));
+        self::assertSame($outboxId, (string) LegalDocumentOutboxMessage::query()->value('id'));
+    }
+
+    public function test_legacy_source_lookup_does_not_include_values_over_database_character_limit(): void
+    {
+        $service = $this->service();
+        $document = $this->document(5, 2);
+        $actor = $this->actor(9, 2);
+        $legacy192Characters = str_repeat('я', 192);
+        $context = ['source_event_id' => $legacy192Characters, 'after' => ['status' => 'draft']];
+
+        $service->record('create', $document, $actor, $context);
+        $eventId = (string) ImmutableAuditEvent::query()->value('id');
+        $this->database->table('immutable_audit_events')->where('id', $eventId)->update([
+            'source_event_id' => $legacy192Characters,
+        ]);
+
+        $service->record('create', $document, $actor, $context);
+
+        self::assertSame(192, mb_strlen($legacy192Characters));
+        self::assertSame(2, ImmutableAuditEvent::query()->count());
+    }
+
     public function test_duplicate_comparison_rejects_changed_project_and_evidence_fields(): void
     {
         $recorder = new ImmutableAuditRecorder(

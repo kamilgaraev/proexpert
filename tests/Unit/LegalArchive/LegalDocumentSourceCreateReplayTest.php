@@ -144,12 +144,11 @@ final class LegalDocumentSourceCreateReplayTest extends TestCase
         $document = new LegalArchiveDocument;
         $document->forceFill(['id' => 17, 'source_create_status' => 'failed']);
         $original = new \RuntimeException('s3_upload_failed');
-        $failure = new LegalDocumentCreateFailed($document, false, $original);
+        $failure = new LegalDocumentCreateFailed($document, $original);
 
         self::assertSame($document, $failure->document);
         self::assertSame($original, $failure->getPrevious());
         self::assertSame('s3_upload_failed', $failure->getMessage());
-        self::assertFalse($failure->repeatCreateRequired);
     }
 
     #[DataProvider('partialSourceProvider')]
@@ -243,15 +242,19 @@ final class LegalDocumentSourceCreateReplayTest extends TestCase
         self::assertStringContainsString('resolveSourceCreateReplay(', $registry);
         self::assertStringContainsString('normalizeInput($data)', $registry);
         self::assertStringContainsString("->where('source_idempotency_key', \$identity->idempotencyKey)", $registry);
-        self::assertStringContainsString("'source_event_id' => \$sourceCreateIdentity?->sourceEventId()", $registry);
+        self::assertStringContainsString("'source_event_id' => 'create-retry:'.\$replay->create_operation_id.':attempt-'.\$replay->source_create_attempt_count", $registry);
         self::assertStringNotContainsString("\$data['idempotency_key']", $registry);
         self::assertStringNotContainsString('forceDelete()', $registry);
+        self::assertStringContainsString('mb_strlen(trim($rawOperationKey)) > 191', $registry);
+        self::assertSame(191, mb_strlen(str_repeat('я', 191)));
+        self::assertSame(192, mb_strlen(str_repeat('я', 192)));
         self::assertStringContainsString("'source_create_status' => 'pending'", $registry);
         self::assertStringContainsString('source_request_fingerprint', $registry);
         self::assertStringContainsString("'source_create_status' => 'failed'", $registry);
         self::assertStringContainsString("'source_create_status' => 'completed'", $registry);
         self::assertStringContainsString("->where('source_create_status', 'completed')", $registry);
-        self::assertStringContainsString('completeCreateAfterVersion(', $registry);
+        self::assertStringNotContainsString('completeCreateAfterVersion(', $registry);
+        self::assertStringContainsString("source_create_status !== 'completed'", $registry);
         self::assertLessThan(
             strpos($registry, '$sourceCreateIdentity = $this->sourceCreateIdentity'),
             strpos($registry, '$this->documentFileService->assertUploadAllowed($file)'),

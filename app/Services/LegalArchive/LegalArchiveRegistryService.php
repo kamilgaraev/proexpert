@@ -15,6 +15,7 @@ use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
 use App\Services\LegalArchive\Files\LegalDocumentVersionPersistenceFailed;
 use App\Services\LegalArchive\Files\VersionInput;
+use App\Services\LegalArchive\Sources\LegalDocumentCreateLeaseDecision;
 use App\Services\LegalArchive\Sources\LegalDocumentCreateRequestFingerprint;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceCreateIdentity;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceResolver;
@@ -25,6 +26,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 use Throwable;
@@ -33,6 +35,8 @@ use function trans_message;
 
 final class LegalArchiveRegistryService
 {
+    private const CREATE_LEASE_SECONDS = 1800;
+
     public function __construct(
         private readonly LegalDocumentFileService $documentFileService,
         private readonly LegalDocumentDownloadService $downloadService,
@@ -90,8 +94,29 @@ final class LegalArchiveRegistryService
         return $this->detailQuery()->find($documentId);
     }
 
+    public function paginateRecoveries(User $actor, int $organizationId, int $perPage = 20): LengthAwarePaginator
+    {
+        $query = LegalArchiveDocument::query();
+        $this->access->scopeAccessibleQuery($query, $actor, $organizationId);
+
+        return $query
+            ->where('created_by_user_id', $actor->id)
+            ->where('source_create_status', '!=', 'completed')
+            ->with(['currentVersion', 'links'])
+            ->orderByDesc('source_create_failed_at')
+            ->orderByDesc('id')
+            ->paginate(max(10, min($perPage, 100)));
+    }
+
     public function create(int $organizationId, ?int $userId, array $data, ?UploadedFile $file = null): LegalArchiveDocument
     {
+        $hasSourceIdentity = isset($data['source_type']) || isset($data['source_id']) || isset($data['source_idempotency_key']);
+        $rawOperationKey = $data['create_operation_key'] ?? null;
+        if (! $hasSourceIdentity && (! is_string($rawOperationKey) || trim($rawOperationKey) === '' || mb_strlen(trim($rawOperationKey)) > 191)) {
+            throw ValidationException::withMessages([
+                'create_operation_key' => [trans_message('legal_archive.messages.create_operation_key_required')],
+            ]);
+        }
         if ($file instanceof UploadedFile) {
             $this->documentFileService->assertUploadAllowed($file);
         }
@@ -99,48 +124,62 @@ final class LegalArchiveRegistryService
         if ($sourceCreateIdentity !== null) {
             $data = $sourceCreateIdentity->normalizeInput($data);
         }
-        $requestFingerprint = $sourceCreateIdentity === null
-            ? null
-            : LegalDocumentCreateRequestFingerprint::fromRequest($organizationId, $userId, $data, $file);
+        $requestFingerprint = LegalDocumentCreateRequestFingerprint::fromRequest($organizationId, $userId, $data, $file);
+        $operationKey = isset($data['create_operation_key']) ? trim((string) $data['create_operation_key']) : null;
+        $attemptToken = (string) Str::uuid();
 
         try {
-            [$document, $documentFile, $replayed, $requiresUpload] = DB::transaction(function () use (
+            [$document, $documentFile, $replayed, $retryAction, $attemptToken] = DB::transaction(function () use (
                 $organizationId,
                 $userId,
                 $data,
                 $file,
                 $sourceCreateIdentity,
                 $requestFingerprint,
+                $operationKey,
+                $attemptToken,
             ): array {
                 $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
                 $this->sourceResolver->assertOwnedSource($organizationId, $data['source_type'] ?? null, $data['source_id'] ?? null);
-                $replay = $this->resolveSourceCreateReplay($sourceCreateIdentity, $requestFingerprint, true);
+                $replay = $this->resolveSourceCreateReplay(
+                    $sourceCreateIdentity,
+                    $organizationId,
+                    $userId,
+                    $operationKey,
+                    $requestFingerprint,
+                    true,
+                );
                 if ($replay instanceof LegalArchiveDocument) {
                     if ((string) $replay->source_create_status === 'completed') {
-                        return [$replay, null, true, false];
+                        return [$replay, null, true, null, null];
                     }
 
-                    $replay->forceFill([
-                        'source_create_status' => 'pending',
-                        'source_create_failure_fingerprint' => null,
-                        'source_create_failed_at' => null,
-                    ])->save();
-                    $documentFile = $file instanceof UploadedFile
-                        ? $this->primaryFile($replay, $organizationId)
-                        : null;
+                    $documentFile = $replay->files()->where('role', 'primary')->first();
                     $hasReadyVersion = $documentFile instanceof LegalArchiveDocumentFile
                         && $documentFile->versions()->where('processing_status', 'ready')->exists();
+                    $retryAction = $this->claimCreateAttempt($replay, $attemptToken, $hasReadyVersion);
+                    if ($retryAction === 'retry_upload' && ! $documentFile instanceof LegalArchiveDocumentFile) {
+                        $documentFile = $this->primaryFile($replay, $organizationId);
+                    }
                     $this->audit->recordForActorId('create_retry_pending', $replay, $userId, [
-                        'source_event_id' => $sourceCreateIdentity?->sourceEventId().':retry',
+                        'source_event_id' => 'create-retry:'.$replay->create_operation_id.':attempt-'.$replay->source_create_attempt_count,
                         'request_fingerprint' => $requestFingerprint,
+                        'retry_action' => $retryAction,
+                        'attempt_count' => (int) $replay->source_create_attempt_count,
+                        'lease_expires_at' => $replay->source_create_lease_expires_at?->toISOString(),
                     ]);
 
-                    return [$replay, $documentFile, false, ! $hasReadyVersion];
+                    return [$replay, $documentFile, false, $retryAction, $attemptToken];
                 }
 
                 $payload = $this->documentPayload($organizationId, $userId, $data);
-                $payload['source_create_status'] = 'pending';
+                $payload = [...$payload, ...$this->newAttemptPayload(
+                    $attemptToken,
+                    $file instanceof UploadedFile ? 'retry_upload' : 'retry_finalize',
+                )];
                 $payload['source_request_fingerprint'] = $requestFingerprint;
+                $payload['create_operation_id'] = (string) Str::uuid();
+                $payload['create_operation_key'] = $operationKey;
                 $document = LegalArchiveDocument::query()->create($payload);
                 $this->replaceLinks($document, $data['links'] ?? []);
                 $documentFile = $file instanceof UploadedFile
@@ -155,10 +194,17 @@ final class LegalArchiveRegistryService
                     $this->access->bootstrapCreator($document, $userId);
                 }
 
-                return [$document, $documentFile, false, $file instanceof UploadedFile];
+                return [$document, $documentFile, false, $file instanceof UploadedFile ? 'retry_upload' : 'retry_finalize', $attemptToken];
             });
         } catch (QueryException $exception) {
-            $replay = $this->resolveSourceCreateReplay($sourceCreateIdentity, $requestFingerprint, false);
+            $replay = $this->resolveSourceCreateReplay(
+                $sourceCreateIdentity,
+                $organizationId,
+                $userId,
+                $operationKey,
+                $requestFingerprint,
+                false,
+            );
             if ($replay instanceof LegalArchiveDocument && (string) $replay->source_create_status === 'completed') {
                 return $this->findForOrganization($organizationId, (int) $replay->id) ?? $replay;
             }
@@ -170,7 +216,15 @@ final class LegalArchiveRegistryService
             return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
         }
 
-        if ($requiresUpload && $file instanceof UploadedFile && $documentFile instanceof LegalArchiveDocumentFile) {
+        if ($retryAction === 'retry_upload' && ! $file instanceof UploadedFile) {
+            $exception = ValidationException::withMessages([
+                'file' => [trans_message('legal_archive.messages.file_required_for_recovery')],
+            ]);
+            $this->markSourceCreateFailedWithoutMasking($document, $userId, $exception, $attemptToken, 'retry_upload');
+            throw new LegalDocumentCreateFailed($document->refresh(), $exception);
+        }
+
+        if ($retryAction === 'retry_upload' && $file instanceof UploadedFile && $documentFile instanceof LegalArchiveDocumentFile) {
             try {
                 $this->documentFileService->addVersion($documentFile, $file, new VersionInput(
                     versionNumber: isset($data['version_number']) ? (string) $data['version_number'] : '1.0',
@@ -178,24 +232,25 @@ final class LegalArchiveRegistryService
                     uploadedByUserId: $userId,
                     metadata: is_array($data['version_metadata'] ?? null) ? $data['version_metadata'] : null,
                 ));
+                $this->heartbeatCreateAttempt($document, $attemptToken, 'retry_finalize');
             } catch (Throwable $exception) {
-                $this->markSourceCreateFailedWithoutMasking($document, $userId, $exception);
+                $this->markSourceCreateFailedWithoutMasking($document, $userId, $exception, $attemptToken, 'retry_upload');
 
                 if (! $exception instanceof \App\Services\LegalArchive\Files\LegalDocumentScanFailed
                     && ! $exception instanceof \App\Services\LegalArchive\Files\LegalDocumentFileRejected
                 ) {
-                    throw new LegalDocumentCreateFailed($document, $sourceCreateIdentity !== null, $exception);
+                    throw new LegalDocumentCreateFailed($document->refresh(), $exception);
                 }
                 throw $exception;
             }
         }
 
         try {
-            $this->markSourceCreateCompleted($document, $userId, $sourceCreateIdentity);
+            $this->markSourceCreateCompleted($document, $userId, $sourceCreateIdentity, $attemptToken);
         } catch (Throwable $exception) {
-            $this->markSourceCreateFailedWithoutMasking($document, $userId, $exception);
+            $this->markSourceCreateFailedWithoutMasking($document, $userId, $exception, $attemptToken, 'retry_finalize');
 
-            throw new LegalDocumentCreateFailed($document, $sourceCreateIdentity !== null, $exception);
+            throw new LegalDocumentCreateFailed($document->refresh(), $exception);
         }
 
         return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
@@ -235,6 +290,11 @@ final class LegalArchiveRegistryService
         UploadedFile $file,
         bool $makeCurrent = true
     ): LegalArchiveDocumentVersion {
+        if ((string) $document->source_create_status !== 'completed') {
+            throw ValidationException::withMessages([
+                'create_operation_id' => [trans_message('legal_archive.messages.create_recovery_required')],
+            ]);
+        }
         $documentFile = LegalArchiveDocumentFile::query()->firstOrCreate(
             [
                 'document_id' => $document->id,
@@ -256,7 +316,6 @@ final class LegalArchiveRegistryService
                 metadata: is_array($data['metadata'] ?? null) ? $data['metadata'] : null,
                 makeCurrent: $makeCurrent,
             ));
-            $this->completeCreateAfterVersion($document, $userId);
 
             return $version;
         } catch (LegalDocumentVersionPersistenceFailed $exception) {
@@ -266,6 +325,99 @@ final class LegalArchiveRegistryService
 
             throw $exception;
         }
+    }
+
+    public function recoverCreate(
+        User $actor,
+        int $organizationId,
+        string $operationId,
+        ?UploadedFile $file,
+    ): LegalArchiveDocument {
+        if ($file instanceof UploadedFile) {
+            $this->documentFileService->assertUploadAllowed($file);
+        }
+        $attemptToken = (string) Str::uuid();
+        [$document, $documentFile, $retryAction] = DB::transaction(function () use (
+            $actor,
+            $organizationId,
+            $operationId,
+            $attemptToken,
+        ): array {
+            $query = LegalArchiveDocument::query();
+            $this->access->scopeAccessibleQuery($query, $actor, $organizationId);
+            $document = $query
+                ->where('created_by_user_id', $actor->id)
+                ->where('create_operation_id', $operationId)
+                ->lockForUpdate()
+                ->firstOrFail();
+            if ((string) $document->source_create_status === 'completed') {
+                return [$document, null, null];
+            }
+            $documentFile = $document->files()->where('role', 'primary')->first();
+            $hasReadyVersion = $documentFile instanceof LegalArchiveDocumentFile
+                && $documentFile->versions()->where('processing_status', 'ready')->exists();
+            $retryAction = $this->claimCreateAttempt($document, $attemptToken, $hasReadyVersion);
+            if ($retryAction === 'retry_upload' && ! $documentFile instanceof LegalArchiveDocumentFile) {
+                $documentFile = $this->primaryFile($document, $organizationId);
+            }
+
+            return [$document, $documentFile, $retryAction];
+        });
+
+        if ($retryAction === null) {
+            return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
+        }
+        if ($retryAction === 'retry_upload' && ! $file instanceof UploadedFile) {
+            $exception = ValidationException::withMessages([
+                'file' => [trans_message('legal_archive.messages.file_required_for_recovery')],
+            ]);
+            $this->markSourceCreateFailedWithoutMasking(
+                $document,
+                (int) $actor->id,
+                $exception,
+                $attemptToken,
+                'retry_upload',
+            );
+            throw $exception;
+        }
+
+        if ($retryAction === 'retry_upload' && $file instanceof UploadedFile && $documentFile instanceof LegalArchiveDocumentFile) {
+            try {
+                $this->documentFileService->addVersion($documentFile, $file, new VersionInput(
+                    uploadedByUserId: (int) $actor->id,
+                ));
+                $this->heartbeatCreateAttempt($document, $attemptToken, 'retry_finalize');
+            } catch (Throwable $exception) {
+                $this->markSourceCreateFailedWithoutMasking(
+                    $document,
+                    (int) $actor->id,
+                    $exception,
+                    $attemptToken,
+                    'retry_upload',
+                );
+                if (! $exception instanceof \App\Services\LegalArchive\Files\LegalDocumentScanFailed
+                    && ! $exception instanceof \App\Services\LegalArchive\Files\LegalDocumentFileRejected
+                ) {
+                    throw new LegalDocumentCreateFailed($document->refresh(), $exception);
+                }
+                throw $exception;
+            }
+        }
+
+        try {
+            $this->markSourceCreateCompleted($document, (int) $actor->id, null, $attemptToken);
+        } catch (Throwable $exception) {
+            $this->markSourceCreateFailedWithoutMasking(
+                $document,
+                (int) $actor->id,
+                $exception,
+                $attemptToken,
+                'retry_finalize',
+            );
+            throw new LegalDocumentCreateFailed($document->refresh(), $exception);
+        }
+
+        return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
     }
 
     public function currentVersionWithUrl(LegalArchiveDocument $document, User $actor): ?LegalArchiveDocumentVersion
@@ -480,11 +632,38 @@ final class LegalArchiveRegistryService
 
     private function resolveSourceCreateReplay(
         ?LegalDocumentSourceCreateIdentity $identity,
-        ?string $requestFingerprint,
+        int $organizationId,
+        ?int $userId,
+        ?string $operationKey,
+        string $requestFingerprint,
         bool $lockForUpdate,
     ): ?LegalArchiveDocument {
         if ($identity === null) {
-            return null;
+            if ($operationKey === null || $operationKey === '') {
+                return null;
+            }
+
+            $manualQuery = LegalArchiveDocument::withTrashed()
+                ->where('organization_id', $organizationId)
+                ->where('created_by_user_id', $userId)
+                ->whereNull('source_type')
+                ->where('create_operation_key', $operationKey);
+            if ($lockForUpdate) {
+                $manualQuery->lockForUpdate();
+            }
+            $manual = $manualQuery->first();
+            if (! $manual instanceof LegalArchiveDocument) {
+                return null;
+            }
+            if (
+                $manual->trashed()
+                || ! is_string($manual->source_request_fingerprint)
+                || ! hash_equals($manual->source_request_fingerprint, $requestFingerprint)
+            ) {
+                $this->sourceIdentityConflict();
+            }
+
+            return $this->assertReplayState($manual);
         }
 
         $sourceQuery = LegalArchiveDocument::withTrashed()
@@ -515,21 +694,95 @@ final class LegalArchiveRegistryService
             || ! $commandDocument instanceof LegalArchiveDocument
             || (int) $sourceDocument->id !== (int) $commandDocument->id
             || ! $identity->matches($sourceDocument)
-            || ! is_string($requestFingerprint)
             || ! is_string($sourceDocument->source_request_fingerprint)
             || ! hash_equals($sourceDocument->source_request_fingerprint, $requestFingerprint)
         ) {
             $this->sourceIdentityConflict();
         }
 
-        if ((string) $sourceDocument->source_create_status === 'pending') {
-            $this->sourceCreateInProgress();
-        }
-        if (! in_array((string) $sourceDocument->source_create_status, ['completed', 'failed'], true)) {
-            $this->sourceIdentityConflict();
+        return $this->assertReplayState($sourceDocument);
+    }
+
+    private function assertReplayState(LegalArchiveDocument $document): LegalArchiveDocument
+    {
+        $primaryFile = $document->files()->where('role', 'primary')->first();
+        $hasReadyVersion = $primaryFile instanceof LegalArchiveDocumentFile
+            && $primaryFile->versions()->where('processing_status', 'ready')->exists();
+        $decision = LegalDocumentCreateLeaseDecision::decide(
+            (string) $document->source_create_status,
+            $document->source_create_lease_expires_at?->toDateTimeImmutable(),
+            now()->toDateTimeImmutable(),
+            $hasReadyVersion,
+            is_string($document->source_create_retry_action) ? $document->source_create_retry_action : null,
+        );
+        if ($decision->decision === 'in_progress') {
+            throw new LegalDocumentCreateInProgress($document);
         }
 
-        return $sourceDocument;
+        return $document;
+    }
+
+    private function newAttemptPayload(string $attemptToken, string $retryAction): array
+    {
+        $now = now();
+
+        return [
+            'source_create_status' => 'pending',
+            'source_create_failure_fingerprint' => null,
+            'source_create_failed_at' => null,
+            'source_create_attempt_token' => $attemptToken,
+            'source_create_attempt_count' => 1,
+            'source_create_started_at' => $now,
+            'source_create_heartbeat_at' => $now,
+            'source_create_lease_expires_at' => $now->copy()->addSeconds(self::CREATE_LEASE_SECONDS),
+            'source_create_retry_action' => $retryAction,
+        ];
+    }
+
+    private function claimCreateAttempt(
+        LegalArchiveDocument $document,
+        string $attemptToken,
+        bool $hasReadyVersion,
+    ): string {
+        $decision = LegalDocumentCreateLeaseDecision::decide(
+            (string) $document->source_create_status,
+            $document->source_create_lease_expires_at?->toDateTimeImmutable(),
+            now()->toDateTimeImmutable(),
+            $hasReadyVersion,
+            is_string($document->source_create_retry_action) ? $document->source_create_retry_action : null,
+        );
+        if ($decision->decision === 'in_progress') {
+            throw new LegalDocumentCreateInProgress($document);
+        }
+        if ($decision->decision !== 'claim' || $decision->retryAction === null) {
+            throw new InvalidArgumentException('legal_document_source_create_claim_invalid');
+        }
+        $payload = $this->newAttemptPayload($attemptToken, $decision->retryAction);
+        $payload['source_create_attempt_count'] = ((int) $document->source_create_attempt_count) + 1;
+        $document->forceFill($payload)->save();
+
+        return $decision->retryAction;
+    }
+
+    private function heartbeatCreateAttempt(
+        LegalArchiveDocument $document,
+        string $attemptToken,
+        string $retryAction,
+    ): void {
+        $now = now();
+        $updated = LegalArchiveDocument::query()
+            ->whereKey($document->id)
+            ->where('source_create_status', 'pending')
+            ->where('source_create_attempt_token', $attemptToken)
+            ->update([
+                'source_create_heartbeat_at' => $now,
+                'source_create_lease_expires_at' => $now->copy()->addSeconds(self::CREATE_LEASE_SECONDS),
+                'source_create_retry_action' => $retryAction,
+                'updated_at' => $now,
+            ]);
+        if ($updated !== 1) {
+            throw new InvalidArgumentException('legal_document_source_create_lease_lost');
+        }
     }
 
     private function primaryFile(LegalArchiveDocument $document, int $organizationId): LegalArchiveDocumentFile
@@ -549,19 +802,26 @@ final class LegalArchiveRegistryService
         LegalArchiveDocument $document,
         ?int $userId,
         ?LegalDocumentSourceCreateIdentity $identity,
+        string $attemptToken,
     ): void {
-        DB::transaction(function () use ($document, $userId, $identity): void {
+        DB::transaction(function () use ($document, $userId, $identity, $attemptToken): void {
             $locked = LegalArchiveDocument::query()->whereKey($document->id)->lockForUpdate()->firstOrFail();
             if ((string) $locked->source_create_status === 'completed') {
                 return;
             }
-            if ((string) $locked->source_create_status !== 'pending') {
+            if (
+                (string) $locked->source_create_status !== 'pending'
+                || ! LegalDocumentCreateLeaseDecision::ownsAttempt($locked->source_create_attempt_token, $attemptToken)
+            ) {
                 throw new InvalidArgumentException('legal_document_source_create_transition_invalid');
             }
             $locked->forceFill([
                 'source_create_status' => 'completed',
                 'source_create_failure_fingerprint' => null,
                 'source_create_failed_at' => null,
+                'source_create_attempt_token' => null,
+                'source_create_lease_expires_at' => null,
+                'source_create_retry_action' => null,
             ])->save();
             $this->audit->recordForActorId('create_completed', $locked, $userId, [
                 'after' => $this->auditSnapshot($locked),
@@ -577,15 +837,26 @@ final class LegalArchiveRegistryService
         LegalArchiveDocument $document,
         ?int $userId,
         Throwable $original,
+        string $attemptToken,
+        string $retryAction,
     ): void {
         $failureFingerprint = hash('sha256', $original::class.'|'.$original->getMessage());
         try {
-            DB::transaction(function () use ($document, $userId, $failureFingerprint): void {
+            DB::transaction(function () use ($document, $userId, $failureFingerprint, $attemptToken, $retryAction): void {
                 $locked = LegalArchiveDocument::query()->whereKey($document->id)->lockForUpdate()->firstOrFail();
+                if (
+                    (string) $locked->source_create_status !== 'pending'
+                    || ! LegalDocumentCreateLeaseDecision::ownsAttempt($locked->source_create_attempt_token, $attemptToken)
+                ) {
+                    return;
+                }
                 $locked->forceFill([
                     'source_create_status' => 'failed',
                     'source_create_failure_fingerprint' => $failureFingerprint,
                     'source_create_failed_at' => now(),
+                    'source_create_attempt_token' => null,
+                    'source_create_lease_expires_at' => null,
+                    'source_create_retry_action' => $retryAction,
                 ])->save();
                 $this->audit->recordForActorId('create_failed', $locked, $userId, [
                     'source_event_id' => 'create-failed:'.$failureFingerprint,
@@ -601,11 +872,18 @@ final class LegalArchiveRegistryService
                 'audit_failure' => $auditFailure::class,
             ]);
             try {
-                LegalArchiveDocument::query()->whereKey($document->id)->update([
-                    'source_create_status' => 'failed',
-                    'source_create_failure_fingerprint' => $failureFingerprint,
-                    'source_create_failed_at' => now(),
-                ]);
+                LegalArchiveDocument::query()
+                    ->whereKey($document->id)
+                    ->where('source_create_status', 'pending')
+                    ->where('source_create_attempt_token', $attemptToken)
+                    ->update([
+                        'source_create_status' => 'failed',
+                        'source_create_failure_fingerprint' => $failureFingerprint,
+                        'source_create_failed_at' => now(),
+                        'source_create_attempt_token' => null,
+                        'source_create_lease_expires_at' => null,
+                        'source_create_retry_action' => $retryAction,
+                    ]);
             } catch (Throwable $stateFailure) {
                 Log::critical('legal_archive.source_create_failure_state_error', [
                     'document_id' => (int) $document->id,
@@ -616,29 +894,10 @@ final class LegalArchiveRegistryService
         }
     }
 
-    private function completeCreateAfterVersion(
-        LegalArchiveDocument $document,
-        ?int $userId,
-    ): void {
-        $document->refresh();
-        if (! in_array((string) $document->source_create_status, ['pending', 'failed'], true)) {
-            return;
-        }
-        $document->forceFill(['source_create_status' => 'pending', 'source_create_failure_fingerprint' => null, 'source_create_failed_at' => null])->save();
-        $this->markSourceCreateCompleted($document, $userId, null);
-    }
-
     private function sourceIdentityConflict(): never
     {
         throw ValidationException::withMessages([
             'source_id' => [trans_message('legal_archive.messages.source_already_linked')],
-        ]);
-    }
-
-    private function sourceCreateInProgress(): never
-    {
-        throw ValidationException::withMessages([
-            'source_idempotency_key' => [trans_message('legal_archive.messages.source_create_in_progress')],
         ]);
     }
 

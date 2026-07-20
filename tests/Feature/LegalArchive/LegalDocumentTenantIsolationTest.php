@@ -326,6 +326,7 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         $creator = $this->actor(1, 10);
         $service = $this->service(true, true, new RecordingAccessAudit);
         $creatorGrant = $service->bootstrapCreator($document, (int) $creator->id);
+        $this->actor(7, 10);
         $successorGrant = $service->grant(
             $document,
             $creator,
@@ -545,6 +546,170 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         $service->revoke($document, $grant, $manager, 'Передача полномочий');
     }
 
+    public function test_ineligible_successor_does_not_satisfy_last_manager_invariant(): void
+    {
+        $this->database->table('organizations')->insert(['id' => 10]);
+        $this->database->table('organization_user')->insert([
+            ['organization_id' => 10, 'user_id' => 1, 'is_active' => true],
+            ['organization_id' => 10, 'user_id' => 7, 'is_active' => true],
+        ]);
+        $document = $this->document(10, null);
+        $document->forceFill(['confidentiality_level' => 'restricted'])->save();
+        $owner = $this->actor(1, 10);
+        $this->actor(7, 10);
+        $successorEligible = true;
+        $service = $this->service(
+            true,
+            true,
+            new RecordingAccessAudit,
+            managerEligibilityResolver: static function (User $user) use (&$successorEligible): bool {
+                return (int) $user->id !== 7 || $successorEligible;
+            },
+        );
+        $ownerGrant = $service->bootstrapCreator($document, 1);
+        $service->grant(
+            $document,
+            $owner,
+            LegalDocumentAccessSubject::internalUser(10, 7),
+            ['manage', 'view'],
+        );
+        $successorEligible = false;
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('legal_document_access_last_manager');
+        $service->revoke($document, $ownerGrant, $owner, 'management transfer');
+    }
+
+    public function test_successor_eligibility_resolution_failure_preserves_last_manager(): void
+    {
+        $this->database->table('organizations')->insert(['id' => 10]);
+        $this->database->table('organization_user')->insert([
+            ['organization_id' => 10, 'user_id' => 1, 'is_active' => true],
+            ['organization_id' => 10, 'user_id' => 7, 'is_active' => true],
+        ]);
+        $document = $this->document(10, null);
+        $document->forceFill(['confidentiality_level' => 'secret'])->save();
+        $owner = $this->actor(1, 10);
+        $this->actor(7, 10);
+        $resolverAvailable = true;
+        $service = $this->service(
+            true,
+            true,
+            new RecordingAccessAudit,
+            managerEligibilityResolver: static function (User $user) use (&$resolverAvailable): bool {
+                if ((int) $user->id === 7 && ! $resolverAvailable) {
+                    throw new \RuntimeException('authorization backend unavailable');
+                }
+
+                return true;
+            },
+        );
+        $ownerGrant = $service->bootstrapCreator($document, 1);
+        $service->grant(
+            $document,
+            $owner,
+            LegalDocumentAccessSubject::internalUser(10, 7),
+            ['manage'],
+        );
+        $resolverAvailable = false;
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('legal_document_access_last_manager');
+        $service->revoke($document, $ownerGrant, $owner, 'management transfer');
+    }
+
+    public function test_last_manager_requires_active_user_membership_project_access_and_rbac(): void
+    {
+        $this->database->table('organizations')->insert(['id' => 10]);
+        foreach ([1, 7, 8, 9, 10] as $userId) {
+            $this->actor($userId, 10);
+            $this->database->table('organization_user')->insert([
+                'organization_id' => 10,
+                'user_id' => $userId,
+                'is_active' => true,
+            ]);
+        }
+        $document = $this->document(10, 50);
+        $document->forceFill(['confidentiality_level' => 'restricted'])->save();
+        $owner = $this->actor(1, 10);
+        $enforceEligibility = false;
+        $service = $this->service(
+            true,
+            true,
+            new RecordingAccessAudit,
+            authorizationResolver: static function (User $user) use (&$enforceEligibility): bool {
+                return ! $enforceEligibility || (int) $user->id !== 10;
+            },
+            membershipResolver: fn (User $user, int $organizationId): bool => $this->database
+                ->table('organization_user')
+                ->where('organization_id', $organizationId)
+                ->where('user_id', (int) $user->id)
+                ->where('is_active', true)
+                ->exists(),
+            projectResolver: static function (User $user) use (&$enforceEligibility): bool {
+                return ! $enforceEligibility || (int) $user->id !== 9;
+            },
+        );
+        $ownerGrant = $service->bootstrapCreator($document, 1);
+        foreach ([7, 8, 9, 10] as $successorUserId) {
+            $service->grant(
+                $document,
+                $owner,
+                LegalDocumentAccessSubject::internalUser(10, $successorUserId),
+                ['manage'],
+            );
+        }
+        $this->database->table('users')->where('id', 7)->update(['is_active' => false]);
+        $this->database->table('organization_user')
+            ->where('organization_id', 10)
+            ->where('user_id', 8)
+            ->update(['is_active' => false]);
+        $enforceEligibility = true;
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('legal_document_access_last_manager');
+        $service->revoke($document, $ownerGrant, $owner, 'management transfer');
+    }
+
+    public function test_new_management_grant_revalidates_successor_user_project_and_rbac_inside_lock(): void
+    {
+        $this->database->table('organizations')->insert(['id' => 10]);
+        $this->database->table('organization_user')->insert([
+            ['organization_id' => 10, 'user_id' => 1, 'is_active' => true],
+            ['organization_id' => 10, 'user_id' => 7, 'is_active' => true],
+        ]);
+        $owner = $this->actor(1, 10);
+        $this->actor(7, 10);
+
+        foreach (['inactive_user', 'project_denied', 'rbac_denied'] as $scenario) {
+            $this->database->table('users')->where('id', 7)->update([
+                'is_active' => $scenario !== 'inactive_user',
+            ]);
+            $document = $this->document(10, 50);
+            $document->forceFill(['confidentiality_level' => 'restricted'])->save();
+            $service = $this->service(
+                true,
+                true,
+                new RecordingAccessAudit,
+                authorizationResolver: static fn (User $user): bool => (int) $user->id !== 7 || $scenario !== 'rbac_denied',
+                projectResolver: static fn (User $user): bool => (int) $user->id !== 7 || $scenario !== 'project_denied',
+            );
+            $service->bootstrapCreator($document, 1);
+
+            try {
+                $service->grant(
+                    $document,
+                    $owner,
+                    LegalDocumentAccessSubject::internalUser(10, 7),
+                    ['manage'],
+                );
+                self::fail("Ineligible successor was accepted: {$scenario}");
+            } catch (DomainException $exception) {
+                self::assertSame('legal_document_access_successor_ineligible', $exception->getMessage());
+            }
+        }
+    }
+
     public function test_confidential_management_transfer_keeps_one_permanent_manager(): void
     {
         $this->database->table('organizations')->insert(['id' => 10]);
@@ -625,6 +790,93 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         self::assertNotNull($expired->fresh()?->revoked_at);
     }
 
+    public function test_owner_recovery_reloads_user_and_denies_deactivated_owner(): void
+    {
+        $this->database->table('organizations')->insert(['id' => 10]);
+        $this->database->table('organization_user')->insert([
+            'organization_id' => 10,
+            'user_id' => 1,
+            'is_active' => true,
+        ]);
+        $document = $this->document(10, null);
+        $document->forceFill(['confidentiality_level' => 'restricted'])->save();
+        $service = $this->service(true, true, new RecordingAccessAudit);
+        $grant = $service->bootstrapCreator($document, 1);
+        $this->database->table('legal_document_access_grants')->where('id', (int) $grant->id)->update([
+            'expires_at' => now()->subMinute(),
+        ]);
+        $this->database->table('users')->where('id', 1)->update(['is_active' => false]);
+
+        $this->expectException(AuthorizationException::class);
+        $service->recoverOwnerManagement($document, $this->actor(1, 10, false));
+    }
+
+    public function test_security_recovery_restores_management_after_owner_deactivation(): void
+    {
+        $this->database->table('organizations')->insert(['id' => 10]);
+        $this->database->table('organization_user')->insert([
+            ['organization_id' => 10, 'user_id' => 1, 'is_active' => true],
+            ['organization_id' => 10, 'user_id' => 2, 'is_active' => true],
+            ['organization_id' => 10, 'user_id' => 7, 'is_active' => true],
+        ]);
+        $document = $this->document(10, null);
+        $document->forceFill(['confidentiality_level' => 'secret'])->save();
+        $audit = new RecordingAccessAudit;
+        $service = $this->service(true, true, $audit);
+        $service->bootstrapCreator($document, 1);
+        $this->database->table('users')->where('id', 1)->update(['is_active' => false]);
+        $this->actor(7, 10);
+        $previous = LegalDocumentAccessGrant::query()->create([
+            'organization_id' => 10,
+            'document_id' => (int) $document->id,
+            'subject_kind' => 'internal_user',
+            'subject_organization_id' => 10,
+            'subject_user_id' => 7,
+            'abilities' => ['view'],
+            'granted_by_user_id' => 1,
+        ]);
+
+        $grant = $service->recoverManagementAsSecurityAdministrator(
+            $document,
+            $this->actor(2, 10),
+            7,
+        );
+
+        self::assertSame(7, (int) $grant->subject_user_id);
+        self::assertNull($grant->expires_at);
+        self::assertContains('manage', $grant->abilities);
+        self::assertNotNull($previous->fresh()?->revoked_at);
+        self::assertContains('access_security_recovery_replaced', $audit->events);
+        self::assertContains('access_security_recovered', $audit->events);
+    }
+
+    public function test_external_access_manager_cannot_use_security_recovery_without_break_glass_permission(): void
+    {
+        $this->database->table('organizations')->insert(['id' => 10]);
+        $this->database->table('organization_user')->insert([
+            ['organization_id' => 10, 'user_id' => 1, 'is_active' => true],
+            ['organization_id' => 10, 'user_id' => 2, 'is_active' => true],
+            ['organization_id' => 10, 'user_id' => 7, 'is_active' => true],
+        ]);
+        $document = $this->document(10, null);
+        $document->forceFill(['confidentiality_level' => 'restricted'])->save();
+        $service = $this->service(
+            true,
+            true,
+            new RecordingAccessAudit,
+            authorizationResolver: static fn (User $user, string $permission): bool => $permission !== 'legal_archive.security_recovery.manage',
+        );
+        $service->bootstrapCreator($document, 1);
+        $this->database->table('users')->where('id', 1)->update(['is_active' => false]);
+
+        $this->expectException(AuthorizationException::class);
+        $service->recoverManagementAsSecurityAdministrator(
+            $document,
+            $this->actor(2, 10),
+            7,
+        );
+    }
+
     public function test_external_discovery_does_not_require_internal_archive_permission(): void
     {
         $this->document(20, null);
@@ -653,22 +905,31 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         array $roles = [],
         ?\Closure $roleResolver = null,
         ?\Closure $actorRoleMembershipResolver = null,
+        ?\Closure $managerEligibilityResolver = null,
+        ?\Closure $authorizationResolver = null,
+        ?\Closure $membershipResolver = null,
+        ?\Closure $projectResolver = null,
     ): LegalDocumentAccessService {
         $authorization = $this->createMock(AuthorizationService::class);
-        $authorization->method('can')->willReturn($rbacAllowed);
+        $authorization->method('can')->willReturnCallback(
+            static fn (User $user, string $permission, mixed $context = null): bool => $authorizationResolver === null
+                ? $rbacAllowed
+                : (bool) $authorizationResolver($user, $permission, $context),
+        );
         $authorization->method('getUserRoleSlugs')->willReturn($roles);
         $projectAccess = $this->createMock(UserProjectAccessService::class);
         $projectAccess->method('queryAccessibleProjects')->willReturn(Project::query());
 
         return new LegalDocumentAccessService(
             $authorization,
-            static fn (User $user, int $organizationId): bool => (int) $user->current_organization_id === $organizationId,
-            static fn (User $user, int $projectId, int $organizationId): bool => $projectAllowed,
+            $membershipResolver ?? static fn (User $user, int $organizationId): bool => (int) $user->current_organization_id === $organizationId,
+            $projectResolver ?? static fn (User $user, int $projectId, int $organizationId): bool => $projectAllowed,
             $projectAccess,
             $audit,
             $this->database->getConnection(),
             roleSubjectResolver: $roleResolver,
             actorRoleMembershipResolver: $actorRoleMembershipResolver,
+            managerEligibilityResolver: $managerEligibilityResolver,
         );
     }
 
@@ -683,10 +944,18 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         ]);
     }
 
-    private function actor(int $id, int $organizationId): User
+    private function actor(int $id, int $organizationId, bool $isActive = true): User
     {
+        $this->database->table('users')->insertOrIgnore([
+            'id' => $id,
+            'is_active' => $isActive,
+        ]);
         $actor = new User;
-        $actor->forceFill(['id' => $id, 'current_organization_id' => $organizationId]);
+        $actor->forceFill([
+            'id' => $id,
+            'current_organization_id' => $organizationId,
+            'is_active' => $isActive,
+        ]);
         $actor->exists = true;
 
         return $actor;
@@ -697,6 +966,11 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         $schema = $this->database->schema();
         $schema->create('organizations', static function (Blueprint $table): void {
             $table->id();
+            $table->softDeletes();
+        });
+        $schema->create('users', static function (Blueprint $table): void {
+            $table->id();
+            $table->boolean('is_active')->default(true);
             $table->softDeletes();
         });
         $schema->create('organization_user', static function (Blueprint $table): void {

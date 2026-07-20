@@ -24,6 +24,41 @@ final class LegalDocumentSourceLifecycleMigrationTest extends TestCase
         self::assertStringContainsString('ALTER COLUMN source_create_status SET NOT NULL', $validation);
     }
 
+    public function test_create_recovery_has_durable_operation_and_lease_fields(): void
+    {
+        $schema = $this->migration('2026_07_19_000160_add_legal_document_create_recovery_lease.php');
+
+        foreach ([
+            'create_operation_id',
+            'create_operation_key',
+            'source_create_attempt_token',
+            'source_create_attempt_count',
+            'source_create_started_at',
+            'source_create_heartbeat_at',
+            'source_create_lease_expires_at',
+            'source_create_retry_action',
+        ] as $column) {
+            self::assertStringContainsString($column, $schema);
+        }
+        self::assertStringContainsString('legal_docs_create_operation_unique', $schema);
+        self::assertStringContainsString('legal_docs_manual_operation_unique', $schema);
+        self::assertStringContainsString('COALESCE(created_by_user_id, 0::bigint)', $schema);
+        self::assertStringContainsString('legal_docs_create_lease_coherence_check', $schema);
+        self::assertStringContainsString('NOT VALID', $schema);
+        self::assertStringContainsString('indexDescriptor', $schema);
+        self::assertStringContainsString('indisvalid', $schema);
+        self::assertStringContainsString('indisready', $schema);
+        self::assertStringContainsString('constraintDescriptors', $schema);
+        self::assertStringContainsString('legal_document_create_recovery_lease_is_forward_only', $schema);
+        self::assertStringContainsString("Schema::getColumnListing('legal_archive_documents')", $schema);
+        self::assertStringContainsString("if (! isset(\$existing['create_operation_id']))", $schema);
+        $validation = $this->migration('2026_07_19_000161_validate_legal_document_create_recovery_lease.php');
+        self::assertStringContainsString('limit(500)', $validation);
+        self::assertStringContainsString("'source_create_status' => 'failed'", $validation);
+        self::assertStringContainsString('VALIDATE CONSTRAINT legal_docs_create_lease_coherence_check', $validation);
+        self::assertStringContainsString('legal_document_create_recovery_lease_validation_is_forward_only', $validation);
+    }
+
     public function test_legacy_source_index_is_replaced_by_exact_pg14_descriptors(): void
     {
         $legacy = $this->migration('2026_07_19_000110_create_legal_document_profile_indexes.php');

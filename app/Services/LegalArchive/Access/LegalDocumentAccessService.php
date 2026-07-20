@@ -37,6 +37,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
         private readonly ?LegalDocumentAggregateLock $aggregateLock = null,
         private readonly ?Closure $roleSubjectResolver = null,
         private readonly ?Closure $actorRoleMembershipResolver = null,
+        private readonly ?Closure $managerEligibilityResolver = null,
     ) {}
 
     public function authorize(User $user, LegalArchiveDocument $document, string $ability): void
@@ -309,6 +310,19 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
                 (int) $document->id,
             );
             $this->authorizeManagement($actor, $lockedDocument, true);
+            if (
+                $subject->kind === LegalDocumentAccessSubjectKind::INTERNAL_USER
+                && in_array(LegalDocumentAbility::MANAGE->value, $abilities, true)
+            ) {
+                try {
+                    $successor = $this->reloadActiveUserById((int) $subject->userId, $lockedDocument);
+                } catch (Throwable) {
+                    throw new DomainException('legal_document_access_successor_ineligible');
+                }
+                if (! $this->isEligibleManager($successor, $lockedDocument, false)) {
+                    throw new DomainException('legal_document_access_successor_ineligible');
+                }
+            }
             $existing = LegalDocumentAccessGrant::query()
                 ->where('organization_id', (int) $lockedDocument->organization_id)
                 ->where('document_id', (int) $lockedDocument->id)
@@ -540,7 +554,87 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
                 (int) $document->id,
             );
 
-            return $this->recoverOwnerManagementLocked($lockedDocument, $actor);
+            $lockedActor = $this->reloadActiveUser($actor, $lockedDocument);
+            $this->authorizeManagementBoundary($lockedActor, $lockedDocument);
+
+            return $this->recoverOwnerManagementLocked($lockedDocument, $lockedActor);
+        });
+    }
+
+    public function recoverManagementAsSecurityAdministrator(
+        LegalArchiveDocument $document,
+        User $actor,
+        int $successorUserId,
+    ): LegalDocumentAccessGrant {
+        if ($successorUserId < 1) {
+            throw new DomainException('legal_document_access_subject_not_found');
+        }
+        $connection = $this->connection();
+
+        return $connection->transaction(function () use ($connection, $document, $actor, $successorUserId): LegalDocumentAccessGrant {
+            $lockedDocument = $this->lock()->lockDocument(
+                $connection,
+                (int) $document->organization_id,
+                (int) $document->id,
+            );
+            $lockedActor = $this->reloadActiveUser($actor, $lockedDocument);
+            $this->authorizeSecurityRecovery($lockedActor, $lockedDocument);
+            if (
+                ! $this->requiresExplicitInternalGrant($lockedDocument)
+                || $this->hasEffectiveInternalManager($lockedDocument)
+            ) {
+                throw new DomainException('legal_document_access_recovery_not_required');
+            }
+            $successor = $this->reloadActiveUserById($successorUserId, $lockedDocument);
+            if (! $this->isEligibleManager($successor, $lockedDocument, false)) {
+                throw new DomainException('legal_document_access_successor_ineligible');
+            }
+            $replaced = LegalDocumentAccessGrant::query()
+                ->where('organization_id', (int) $lockedDocument->organization_id)
+                ->where('document_id', (int) $lockedDocument->id)
+                ->where('subject_kind', LegalDocumentAccessSubjectKind::INTERNAL_USER->value)
+                ->where('subject_organization_id', (int) $lockedDocument->organization_id)
+                ->where('subject_user_id', (int) $successor->id)
+                ->whereNull('subject_role_slug')
+                ->whereNull('revoked_at')
+                ->lockForUpdate()
+                ->get();
+            foreach ($replaced as $replacedGrant) {
+                $replacedGrant->forceFill([
+                    'revoked_at' => now(),
+                    'revoked_by_user_id' => (int) $lockedActor->id,
+                    'revocation_reason' => $this->securityRecoveryReason(),
+                ])->save();
+                $this->audit()->record('access_security_recovery_replaced', $lockedDocument, $lockedActor, [
+                    'grant_id' => (int) $replacedGrant->id,
+                    'successor_user_id' => (int) $successor->id,
+                ]);
+            }
+            $abilities = [
+                LegalDocumentAbility::COMMENT->value,
+                LegalDocumentAbility::DOWNLOAD->value,
+                LegalDocumentAbility::MANAGE->value,
+                LegalDocumentAbility::VIEW->value,
+            ];
+            sort($abilities, SORT_STRING);
+            $grant = LegalDocumentAccessGrant::query()->create([
+                'organization_id' => (int) $lockedDocument->organization_id,
+                'document_id' => (int) $lockedDocument->id,
+                'subject_kind' => LegalDocumentAccessSubjectKind::INTERNAL_USER->value,
+                'subject_organization_id' => (int) $lockedDocument->organization_id,
+                'subject_user_id' => (int) $successor->id,
+                'subject_role_slug' => null,
+                'abilities' => $abilities,
+                'granted_by_user_id' => (int) $lockedActor->id,
+                'expires_at' => null,
+            ]);
+            $this->audit()->record('access_security_recovered', $lockedDocument, $lockedActor, [
+                'grant_id' => (int) $grant->id,
+                'successor_user_id' => (int) $successor->id,
+                'abilities' => $abilities,
+            ]);
+
+            return $grant;
         });
     }
 
@@ -623,7 +717,9 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
             return;
         }
         if ($allowOwnerRecovery && $this->isImmutableOwner($user, $document)) {
-            $this->recoverOwnerManagementLocked($document, $user);
+            $lockedUser = $this->reloadActiveUser($user, $document);
+            $this->authorizeManagementBoundary($lockedUser, $document);
+            $this->recoverOwnerManagementLocked($document, $lockedUser);
 
             return;
         }
@@ -706,18 +802,129 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
 
     private function hasOtherActiveInternalManager(LegalArchiveDocument $document, int $excludedGrantId): bool
     {
-        return LegalDocumentAccessGrant::query()
+        $grants = LegalDocumentAccessGrant::query()
             ->where('organization_id', (int) $document->organization_id)
             ->where('document_id', (int) $document->id)
             ->whereKeyNot($excludedGrantId)
             ->where('subject_kind', LegalDocumentAccessSubjectKind::INTERNAL_USER->value)
             ->whereNull('revoked_at')
-            ->where(static function (Builder $expiry): void {
-                $expiry->whereNull('expires_at')->orWhere('expires_at', '>', now());
-            })
+            ->whereNull('expires_at')
             ->whereJsonContains('abilities', LegalDocumentAbility::MANAGE->value)
             ->lockForUpdate()
-            ->first(['id']) !== null;
+            ->get();
+
+        return $grants->contains(
+            fn (LegalDocumentAccessGrant $grant): bool => $this->isEffectiveManagerGrant($grant, $document),
+        );
+    }
+
+    private function hasEffectiveInternalManager(LegalArchiveDocument $document): bool
+    {
+        return $this->hasOtherActiveInternalManager($document, 0);
+    }
+
+    private function isEffectiveManagerGrant(
+        LegalDocumentAccessGrant $grant,
+        LegalArchiveDocument $document,
+    ): bool {
+        if (
+            $grant->subject_kind !== LegalDocumentAccessSubjectKind::INTERNAL_USER->value
+            || $grant->subject_user_id === null
+            || $grant->expires_at !== null
+            || ! $grant->allows(LegalDocumentAbility::MANAGE)
+        ) {
+            return false;
+        }
+
+        try {
+            $user = $this->reloadActiveUserById((int) $grant->subject_user_id, $document);
+
+            return $this->isEligibleManager($user, $document, true);
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    private function isEligibleManager(User $user, LegalArchiveDocument $document, bool $requireObjectGrant): bool
+    {
+        try {
+            if ($this->managerEligibilityResolver !== null) {
+                $eligible = (bool) ($this->managerEligibilityResolver)($user, $document);
+            } else {
+                $activeMembership = $this->membershipResolver !== null
+                    ? $this->belongsToOrganization($user, (int) $document->organization_id)
+                    : ($this->lockActiveMembership($user, $document)
+                        && $this->belongsToOrganization($user, (int) $document->organization_id));
+                $eligible = $activeMembership
+                    && ($document->primary_project_id === null
+                        || $this->canAccessProject(
+                            $user,
+                            (int) $document->primary_project_id,
+                            (int) $document->organization_id,
+                        ))
+                    && $this->authorization->can($user, 'legal_archive.external_access.manage', [
+                        'organization_id' => (int) $document->organization_id,
+                        ...($document->primary_project_id === null
+                            ? []
+                            : ['project_id' => (int) $document->primary_project_id]),
+                    ]);
+            }
+
+            return $eligible
+                && (! $requireObjectGrant
+                    || $this->hasMatchingGrant($user, $document, LegalDocumentAbility::MANAGE));
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    private function reloadActiveUser(User $user, LegalArchiveDocument $document): User
+    {
+        return $this->reloadActiveUserById((int) $user->id, $document);
+    }
+
+    private function reloadActiveUserById(int $userId, LegalArchiveDocument $document): User
+    {
+        $user = (new User)->setConnection($document->getConnectionName())->newQuery()
+            ->whereKey($userId)
+            ->where('is_active', true)
+            ->whereNull('deleted_at')
+            ->lockForUpdate()
+            ->first();
+        if (! $user instanceof User) {
+            throw new AuthorizationException($this->message());
+        }
+        $user->current_organization_id = (int) $document->organization_id;
+
+        return $user;
+    }
+
+    private function lockActiveMembership(User $user, LegalArchiveDocument $document): bool
+    {
+        return $this->connection()->table('organization_user')
+            ->where('organization_id', (int) $document->organization_id)
+            ->where('user_id', (int) $user->id)
+            ->where('is_active', true)
+            ->lockForUpdate()
+            ->exists();
+    }
+
+    private function authorizeSecurityRecovery(User $user, LegalArchiveDocument $document): void
+    {
+        $organizationId = (int) $document->organization_id;
+        if (
+            ! $this->belongsToOrganization($user, $organizationId)
+            || ($document->primary_project_id !== null
+                && ! $this->canAccessProject($user, (int) $document->primary_project_id, $organizationId))
+            || ! $this->authorization->can($user, 'legal_archive.security_recovery.manage', [
+                'organization_id' => $organizationId,
+                ...($document->primary_project_id === null
+                    ? []
+                    : ['project_id' => (int) $document->primary_project_id]),
+            ])
+        ) {
+            throw new AuthorizationException($this->message());
+        }
     }
 
     private function actorHasRole(User $actor, string $roleSlug, LegalArchiveDocument $document): bool
@@ -815,5 +1022,12 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
         return Container::getInstance()->bound('translator')
             ? trans_message('legal_archive.messages.access_owner_recovery_reason')
             : 'legal_archive.messages.access_owner_recovery_reason';
+    }
+
+    private function securityRecoveryReason(): string
+    {
+        return Container::getInstance()->bound('translator')
+            ? trans_message('legal_archive.messages.access_security_recovery_reason')
+            : 'legal_archive.messages.access_security_recovery_reason';
     }
 }
