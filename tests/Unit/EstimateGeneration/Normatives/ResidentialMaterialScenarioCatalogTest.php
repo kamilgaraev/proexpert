@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v6', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v7', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -94,6 +94,10 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         self::assertSame('cable_installation', $catalog->issue('electrical.main_cable', 'residential')['intent_action'] ?? null);
         self::assertSame('cable_installation', $catalog->issue('electrical.power_lines', 'residential')['intent_action'] ?? null);
         self::assertSame('cable_installation', $catalog->issue('lighting.lines', 'residential')['intent_action'] ?? null);
+        self::assertSame('electrical_panel_installation', $catalog->issue('electrical.panel', 'residential')['intent_action'] ?? null);
+        self::assertSame('socket_installation', $catalog->issue('electrical.outlets', 'residential')['intent_action'] ?? null);
+        self::assertSame('socket_installation', $catalog->issue('electrical.switches', 'residential')['intent_action'] ?? null);
+        self::assertSame('lighting_fixture_installation', $catalog->issue('lighting.fixtures', 'residential')['intent_action'] ?? null);
         self::assertSame('heating_equipment', $catalog->issue('heating.unit', 'residential')['intent_action'] ?? null);
     }
 
@@ -179,6 +183,26 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'lighting.lines',
             'прокладка проводов групповых осветительных сетей под штукатурку или в бороздах',
             '08-02-403-03',
+        ];
+        yield 'residential recessed lighting panel' => [
+            'electrical.panel',
+            'щиток осветительный устанавливаемый в нише распорными дюбелями массой до 6 кг',
+            '08-03-599-01',
+        ];
+        yield 'residential recessed socket' => [
+            'electrical.outlets',
+            'розетка штепсельная утопленного типа при скрытой проводке',
+            '08-03-591-09',
+        ];
+        yield 'residential recessed switch' => [
+            'electrical.switches',
+            'выключатель одноклавишный утопленного типа при скрытой проводке',
+            '08-03-591-02',
+        ];
+        yield 'residential ceiling luminaire' => [
+            'lighting.fixtures',
+            'светильник потолочный с креплением винтами для помещений с нормальными условиями среды одноламповый',
+            '08-03-593-06',
         ];
         yield 'assembled residential heating boiler' => [
             'heating.unit',

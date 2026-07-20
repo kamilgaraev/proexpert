@@ -13,9 +13,9 @@ use Brick\Math\RoundingMode;
 
 final class ResidentialQuantityScenarioCatalog
 {
-    public const VERSION = '2.5.0';
+    public const VERSION = '2.6.0';
 
-    public const SCENARIO_ID = 'residential_preliminary_scenario:v8';
+    public const SCENARIO_ID = 'residential_preliminary_scenario:v9';
 
     private const UNITS = [
         'electrical.grounding' => 'm',
@@ -62,11 +62,24 @@ final class ResidentialQuantityScenarioCatalog
             return new ResidentialQuantityScenarioResult([], []);
         }
 
-        $floorArea = $this->quantity($baseQuantities['floor_area'] ?? null);
-        $ceilingArea = $this->quantity($baseQuantities['ceiling_area'] ?? null);
-        $firstFloorArea = $this->quantity($baseQuantities['first_floor_internal_area'] ?? null);
+        $floorArea = $this->scenarioBasis($this->quantity($baseQuantities['floor_area'] ?? null), $model);
+        $areaBasisAssumptions = $floorArea !== null
+            && in_array('preliminary_total_area_with_confirmed_geometry', $floorArea->assumptions, true)
+            ? ['preliminary_total_area_with_confirmed_geometry']
+            : [];
+        $ceilingArea = $this->scenarioBasis($this->quantity($baseQuantities['ceiling_area'] ?? null), $model);
+        $firstFloorArea = $this->scenarioBasis($this->quantity($baseQuantities['first_floor_internal_area'] ?? null), $model);
         $floors = $model->floors;
         $floorCount = count($floors);
+        if ($firstFloorArea === null && $floorArea !== null && $floorCount > 0) {
+            $firstFloorArea = $this->scaled(
+                'first_floor_internal_area',
+                'm2',
+                $floorArea,
+                (string) BigDecimal::one()->dividedBy($floorCount, 8, RoundingMode::HalfUp),
+                ['equal_floor_area_distribution_by_documented_floor_count'],
+            );
+        }
         $rooms = $floors === []
             ? []
             : array_merge(...array_map(static fn ($floor): array => $floor->rooms, $floors));
@@ -171,7 +184,10 @@ final class ResidentialQuantityScenarioCatalog
                 '1',
                 $model,
                 $serviceRooms !== [] ? 'service_room_count' : 'residential_heat_source_count',
-                [$serviceRooms !== [] ? 'one_heat_source_for_documented_service_rooms' : 'one_heat_source_per_house'],
+                [
+                    $serviceRooms !== [] ? 'one_heat_source_for_documented_service_rooms' : 'one_heat_source_per_house',
+                    ...$areaBasisAssumptions,
+                ],
             );
             $quantities['heating.radiators'] = $this->countBased(
                 'heating.radiators',
@@ -180,23 +196,23 @@ final class ResidentialQuantityScenarioCatalog
                 '1',
                 $model,
                 'heated_area_per_radiator_m2:15',
-                ['preliminary_radiator_count_by_heated_area'],
+                ['preliminary_radiator_count_by_heated_area', ...$areaBasisAssumptions],
             );
             $quantities['electrical.panel'] = $this->countBased(
                 'electrical.panel', 'pcs', 1, '1', $model, 'residential_house_count',
-                ['one_preliminary_distribution_panel_per_house'],
+                ['one_preliminary_distribution_panel_per_house', ...$areaBasisAssumptions],
             );
             $quantities['electrical.outlets'] = $this->countBased(
                 'electrical.outlets', 'pcs', max(1, max($roomCount * 4, (int) ceil((float) $floorArea->amount / 8))),
-                '1', $model, 'room_and_floor_area_allowance', ['preliminary_outlet_count_by_rooms_and_area'],
+                '1', $model, 'room_and_floor_area_allowance', ['preliminary_outlet_count_by_rooms_and_area', ...$areaBasisAssumptions],
             );
             $quantities['electrical.switches'] = $this->countBased(
                 'electrical.switches', 'pcs', max(1, max($roomCount, (int) ceil((float) $floorArea->amount / 15))),
-                '1', $model, 'room_and_floor_area_allowance', ['preliminary_switch_count_by_rooms_and_area'],
+                '1', $model, 'room_and_floor_area_allowance', ['preliminary_switch_count_by_rooms_and_area', ...$areaBasisAssumptions],
             );
             $quantities['lighting.fixtures'] = $this->countBased(
                 'lighting.fixtures', 'pcs', max(1, max($roomCount, (int) ceil((float) $floorArea->amount / 10))),
-                '1', $model, 'room_and_floor_area_allowance', ['preliminary_luminaire_count_by_rooms_and_area'],
+                '1', $model, 'room_and_floor_area_allowance', ['preliminary_luminaire_count_by_rooms_and_area', ...$areaBasisAssumptions],
             );
         } else {
             foreach ([
@@ -209,20 +225,27 @@ final class ResidentialQuantityScenarioCatalog
             }
         }
 
-        if ($ceilingArea !== null && $ceilingArea->evidenceIds !== []) {
+        $ceilingBasis = $ceilingArea ?? $floorArea;
+        if ($ceilingBasis !== null && $ceilingBasis->evidenceIds !== []) {
             $quantities['rough.ceiling'] = $this->scaled(
                 'rough.ceiling',
                 'm2',
-                $ceilingArea,
+                $ceilingBasis,
                 '1.00',
-                ['residential_internal_ceiling_preparation_area'],
+                [
+                    'residential_internal_ceiling_preparation_area',
+                    ...($ceilingArea === null ? ['ceiling_area_equal_floor_area_preliminary'] : []),
+                ],
             );
             $quantities['finish.ceiling'] = $this->scaled(
                 'finish.ceiling',
                 'm2',
-                $ceilingArea,
+                $ceilingBasis,
                 '1.00',
-                ['residential_internal_ceiling_finish_area'],
+                [
+                    'residential_internal_ceiling_finish_area',
+                    ...($ceilingArea === null ? ['ceiling_area_equal_floor_area_preliminary'] : []),
+                ],
             );
         }
 
@@ -373,8 +396,11 @@ final class ResidentialQuantityScenarioCatalog
             $object['object_type'] ?? null,
             $object['building_type'] ?? null,
             $object['description'] ?? null,
+            $object['manual_description'] ?? null,
             $factsSummary['object_type'] ?? null,
             $factsSummary['building_type'] ?? null,
+            $factsSummary['description'] ?? null,
+            $documentContext['context_text'] ?? null,
         ] as $value) {
             if (is_string($value) && ObjectTypeSignalClassifier::isResidential($value)) {
                 return true;
@@ -382,6 +408,36 @@ final class ResidentialQuantityScenarioCatalog
         }
 
         return false;
+    }
+
+    private function scenarioBasis(?QuantityData $quantity, NormalizedBuildingModelData $model): ?QuantityData
+    {
+        if ($quantity === null || $quantity->evidenceIds !== []) {
+            return $quantity;
+        }
+        if ($quantity->source !== QuantitySource::Estimated
+            || $quantity->reviewBlockers !== ['estimated_quantity_requires_review']
+            || $model->scaleStatus !== 'confirmed'
+            || $model->evidenceIds === []) {
+            return null;
+        }
+
+        return new QuantityData(
+            key: $quantity->key,
+            unit: $quantity->unit,
+            amount: $quantity->amount,
+            formulaKey: $quantity->formulaKey,
+            formulaVersion: $quantity->formulaVersion,
+            formulaInputs: $quantity->formulaInputs,
+            source: QuantitySource::Estimated,
+            evidenceIds: array_values(array_unique(array_map('strval', $model->evidenceIds))),
+            modelVersion: $model->modelVersion,
+            assumptions: array_values(array_unique([
+                ...$quantity->assumptions,
+                'preliminary_total_area_with_confirmed_geometry',
+            ])),
+            reviewBlockers: [],
+        );
     }
 
     private function quantity(mixed $quantity): ?QuantityData
@@ -404,7 +460,7 @@ final class ResidentialQuantityScenarioCatalog
             ['source_quantity' => $this->sourceReference($source), 'factor' => $factor],
             $source->evidenceIds,
             $source->modelVersion,
-            $assumptions,
+            [...$source->assumptions, ...$assumptions],
         );
     }
 
@@ -425,7 +481,7 @@ final class ResidentialQuantityScenarioCatalog
             ],
             $source->evidenceIds,
             $source->modelVersion,
-            $assumptions,
+            [...$source->assumptions, ...$assumptions],
         );
     }
 

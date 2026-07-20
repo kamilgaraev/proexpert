@@ -6,11 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v6';
+    private const CATALOG_VERSION = 'residential_material_scenario:v7';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v6';
+    private const SCENARIO_ID = 'residential_preliminary_common:v7';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v6';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v7';
 
     /**
      * @var array<string, array{
@@ -114,6 +114,34 @@ final class ResidentialMaterialScenarioCatalog
             'intent_action' => 'cable_installation',
             'normative_search_text' => 'прокладка проводов групповых осветительных сетей под штукатурку или в бороздах',
             'normative_rate_code' => '08-02-403-03',
+        ],
+        'electrical.panel' => [
+            'material_markers' => ['щиток', 'осветительн', 'ниш', 'до 6 кг'],
+            'assumption_code' => 'residential_recessed_lighting_panel',
+            'intent_action' => 'electrical_panel_installation',
+            'normative_search_text' => 'щиток осветительный устанавливаемый в нише распорными дюбелями массой до 6 кг',
+            'normative_rate_code' => '08-03-599-01',
+        ],
+        'electrical.outlets' => [
+            'material_markers' => ['розетк', 'штепсельн', 'утопленн', 'скрыт проводк'],
+            'assumption_code' => 'residential_recessed_socket',
+            'intent_action' => 'socket_installation',
+            'normative_search_text' => 'розетка штепсельная утопленного типа при скрытой проводке',
+            'normative_rate_code' => '08-03-591-09',
+        ],
+        'electrical.switches' => [
+            'material_markers' => ['выключател', 'одноклавишн', 'утопленн', 'скрыт проводк'],
+            'assumption_code' => 'residential_recessed_single_switch',
+            'intent_action' => 'socket_installation',
+            'normative_search_text' => 'выключатель одноклавишный утопленного типа при скрытой проводке',
+            'normative_rate_code' => '08-03-591-02',
+        ],
+        'lighting.fixtures' => [
+            'material_markers' => ['светильник', 'потолочн', 'нормальн услов', 'однолампов'],
+            'assumption_code' => 'residential_ceiling_luminaire',
+            'intent_action' => 'lighting_fixture_installation',
+            'normative_search_text' => 'светильник потолочный с креплением винтами для помещений с нормальными условиями среды одноламповый',
+            'normative_rate_code' => '08-03-593-06',
         ],
         'heating.unit' => [
             'material_markers' => ['котел', 'котл', 'отопительн'],
