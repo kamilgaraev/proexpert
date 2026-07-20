@@ -20,7 +20,7 @@ final class PipelineBaseInputVersionTest extends TestCase
 {
     public function test_document_floor_identity_contract_has_its_own_cache_generation(): void
     {
-        self::assertSame(5, PipelineBaseInputVersion::SCHEMA_VERSION);
+        self::assertSame(6, PipelineBaseInputVersion::SCHEMA_VERSION);
     }
 
     public function test_schema_version_is_part_of_base_input_version(): void
@@ -38,6 +38,7 @@ final class PipelineBaseInputVersionTest extends TestCase
             'input' => $input,
             'documents' => $documents,
             'document_total_area_evidence' => null,
+            'building_model' => null,
         ]));
 
         self::assertSame($expected, PipelineBaseInputVersion::fromProjection($input, $documents));

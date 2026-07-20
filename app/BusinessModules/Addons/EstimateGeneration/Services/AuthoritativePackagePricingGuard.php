@@ -72,6 +72,7 @@ final readonly class AuthoritativePackagePricingGuard
                 $selection = $this->projectMaterialSelection($resource, $reference);
                 $rule = $selection === null ? null : $this->projectMaterialRule($selection);
                 if ($priceId === null || $selection === null || $rule === null
+                    || ! $this->conjunctureSelectionMatchesPrice($priceId, $selection)
                     || ! $this->sameDecimal($resource['quantity_per_unit'] ?? null, $rule->quantity_per_work_unit ?? null)
                     || ! $this->sameDecimal($selection['price_conversion_factor'] ?? null, $rule->price_factor ?? null)
                     || (string) ($resource['unit'] ?? '') !== (string) ($rule->material_unit ?? '')
@@ -178,6 +179,34 @@ final readonly class AuthoritativePackagePricingGuard
             'price_source' => $priceSource,
             'price_source_version' => $priceSourceVersion,
         ];
+    }
+
+    /** @param array<string, mixed> $selection */
+    private function conjunctureSelectionMatchesPrice(int $priceId, array $selection): bool
+    {
+        if (($selection['price_source_kind'] ?? null) !== 'conjuncture_analysis') {
+            return ! isset($selection['price_provenance']);
+        }
+
+        $provenance = $selection['price_provenance'] ?? null;
+        if (! is_array($provenance) || ($provenance['schema_version'] ?? null) !== 'project_material_conjuncture:v1') {
+            return false;
+        }
+
+        $row = DB::table('estimate_resource_prices')
+            ->where('id', $priceId)
+            ->first(['source_price_kind', 'raw_payload']);
+        if (! is_object($row) || ($row->source_price_kind ?? null) !== 'conjuncture_analysis') {
+            return false;
+        }
+
+        $raw = $row->raw_payload ?? null;
+        if (is_string($raw)) {
+            $raw = json_decode($raw, true);
+        }
+
+        return is_array($raw) && is_array($raw['analysis'] ?? null)
+            && $raw['analysis'] == $provenance;
     }
 
     /** @param array<string, mixed> $selection */

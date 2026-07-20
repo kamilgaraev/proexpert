@@ -29,6 +29,14 @@ final class ResidentialScopeDecisionQuantityMaterializerTest extends TestCase
         self::assertSame('up_to_0_03_t', $quantities['heating.unit']->formulaInputs['equipment_mass_band']);
         self::assertSame('preliminary', $quantities['heating.unit']->formulaInputs['decision']['status']);
         self::assertSame([], $quantities['heating.unit']->formulaInputs['decision']['evidence_ids']);
+        self::assertSame([
+            'key' => 'floor_area',
+            'unit' => 'm2',
+            'amount' => '180.000000',
+            'formula_key' => 'document.facts.total_floor_area',
+            'formula_version' => '1.0.0',
+            'model_version' => 'building-model:v1',
+        ], $quantities['heating.unit']->formulaInputs['floor_area']);
         self::assertContains('residential_heat_load_kw_per_m2:0.10', $quantities['heating.power_kw']->assumptions);
         self::assertContains('901', $quantities['heating.power_kw']->evidenceIds);
         self::assertTrue(ResidentialScopeDecisionQuantityMaterializer::owns($quantities['heating.unit']));

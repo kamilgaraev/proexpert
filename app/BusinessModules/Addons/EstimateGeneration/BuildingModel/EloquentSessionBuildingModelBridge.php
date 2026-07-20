@@ -14,6 +14,7 @@ final readonly class EloquentSessionBuildingModelBridge
         private Connection $database,
         private SessionBuildingModelBridge $bridge,
         private DocumentTotalAreaConstraintResolver $areaConstraints = new DocumentTotalAreaConstraintResolver,
+        private GenerationBuildingModelRefreshPolicy $refreshPolicy = new GenerationBuildingModelRefreshPolicy,
     ) {}
 
     public function rebuild(int $sessionId): void
@@ -82,6 +83,38 @@ final readonly class EloquentSessionBuildingModelBridge
             (int) $session->id,
             PipelineBaseInputVersion::fromSession($session),
         ), $units, $this->areaConstraint($session));
+    }
+
+    public function rebuildForGeneration(int $sessionId): void
+    {
+        $latestModel = $this->database->table('estimate_generation_building_models')
+            ->where('session_id', $sessionId)
+            ->orderByDesc('id')
+            ->first(['id', 'organization_id', 'project_id', 'scale_status']);
+        $hasActiveUserConfirmation = $latestModel !== null
+            && $this->database->table('estimate_generation_building_model_evidence as links')
+                ->join('estimate_generation_evidence as evidence', function ($join): void {
+                    $join->on('evidence.id', '=', 'links.evidence_id')
+                        ->on('evidence.organization_id', '=', 'links.organization_id')
+                        ->on('evidence.project_id', '=', 'links.project_id')
+                        ->on('evidence.session_id', '=', 'links.session_id');
+                })
+                ->where('links.building_model_id', (int) $latestModel->id)
+                ->where('links.organization_id', (int) $latestModel->organization_id)
+                ->where('links.project_id', (int) $latestModel->project_id)
+                ->where('links.session_id', $sessionId)
+                ->where('evidence.source_type', 'user_input')
+                ->where('evidence.producer_name', 'user_input_normalizer')
+                ->whereNull('evidence.invalidated_at')
+                ->exists();
+        if ($latestModel !== null && $this->refreshPolicy->preservesLatestModel(
+            (string) $latestModel->scale_status,
+            $hasActiveUserConfirmation,
+        )) {
+            return;
+        }
+
+        $this->rebuild($sessionId);
     }
 
     /** @return array<string, mixed>|null */

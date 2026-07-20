@@ -219,6 +219,15 @@ Schedule::command('estimates:regional-prices:sync-fgiscs --region=RU-TA --latest
     })
     ->appendOutputTo(storage_path('logs/schedule-regional-prices-sync.log'));
 
+Schedule::command('estimates:regional-prices:sync-fgiscs-building-resources')
+    ->hourlyAt(40)
+    ->withoutOverlapping(180)
+    ->runInBackground()
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled estimates:regional-prices:sync-fgiscs-building-resources command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-building-resource-prices-sync.log'));
+
 $oneCExchangeScheduledLimit = max(1, (int) config('one_c_exchange.delivery.scheduled_limit', 50));
 
 if ((bool) config('one_c_exchange.delivery.enabled', false)) {

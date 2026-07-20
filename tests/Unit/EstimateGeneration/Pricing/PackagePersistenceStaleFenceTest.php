@@ -376,6 +376,52 @@ final class PackagePersistenceStaleFenceTest extends TestCase
     }
 
     #[Test]
+    public function revision_from_previous_package_input_version_is_not_reused(): void
+    {
+        $current = 'sha256:'.str_repeat('b', 64);
+        [$session, , $service] = $this->fixture($current);
+        $draft = $this->draft($current, [$this->acceptedWorkItem($session, $current)]);
+
+        $service->syncFromDraft($session, $draft);
+        $package = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole();
+        $legacy = $package->items()->sole();
+        $metadata = is_array($legacy->metadata) ? $legacy->metadata : [];
+        $metadata['source_input_version'] = 'sha256:'.str_repeat('a', 64);
+        $legacy->forceFill(['metadata' => $metadata])->save();
+
+        $service->syncFromDraft($session, $draft);
+
+        self::assertSame(2, $package->items()->count());
+        self::assertSame(2, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        $currentRevision = $package->items()->reorder()->orderByDesc('revision')->firstOrFail();
+        self::assertSame($current, data_get($currentRevision->metadata, 'source_input_version'));
+        self::assertSame(
+            'authoritative_package_pricing:v1',
+            data_get($currentRevision->metadata, 'pricing_calculation_identity'),
+        );
+    }
+
+    #[Test]
+    public function revision_from_previous_calculation_contract_is_not_reused(): void
+    {
+        $current = 'sha256:'.str_repeat('b', 64);
+        [$session, , $service] = $this->fixture($current);
+        $draft = $this->draft($current, [$this->acceptedWorkItem($session, $current)]);
+
+        $service->syncFromDraft($session, $draft);
+        $package = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole();
+        $legacy = $package->items()->sole();
+        $metadata = is_array($legacy->metadata) ? $legacy->metadata : [];
+        $metadata['pricing_calculation_identity'] = 'authoritative_package_pricing:legacy';
+        $legacy->forceFill(['metadata' => $metadata])->save();
+
+        $service->syncFromDraft($session, $draft);
+
+        self::assertSame(2, $package->items()->count());
+        self::assertSame(2, FinalizerTrackingSqliteConnection::$finalizerCalls);
+    }
+
+    #[Test]
     public function nested_local_estimate_version_is_ignored_when_top_level_version_is_current(): void
     {
         $current = 'sha256:'.str_repeat('b', 64);

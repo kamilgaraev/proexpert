@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands;
 
-use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePriceUpdateService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceSynchronizationService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class SyncFgiscsBuildingResourcePricesCommand extends Command
@@ -18,7 +19,7 @@ class SyncFgiscsBuildingResourcePricesCommand extends Command
 
     protected $description = 'Синхронизировать региональные сметные цены строительных ресурсов ФГИС ЦС для смет.';
 
-    public function handle(FgiscsBuildingResourcePriceUpdateService $service): int
+    public function handle(FgiscsRegionalPriceSynchronizationService $service): int
     {
         try {
             $startedAt = microtime(true);
@@ -41,6 +42,10 @@ class SyncFgiscsBuildingResourcePricesCommand extends Command
 
             return self::SUCCESS;
         } catch (Throwable $exception) {
+            Log::error('[EstimateGeneration] FGIS CS building resource price sync failed.', [
+                'exception_class' => $exception::class,
+                'exception_code' => $exception->getCode(),
+            ]);
             $this->error(trans_message('estimate_generation.operation_error'));
 
             return self::FAILURE;

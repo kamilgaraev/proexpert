@@ -28,6 +28,7 @@ final readonly class EvidenceAwarePipelineBaseInputVersionResolver
             $input,
             $documents,
             $this->buildingModelReadData->totalArea($organizationId, $projectId, $sessionId),
+            $this->buildingModelReadData->latestModel($organizationId, $projectId, $sessionId),
         );
     }
 

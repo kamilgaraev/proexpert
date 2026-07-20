@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Conjuncture\ResidentialConjunctureOfferProvider;
+use DateTimeImmutable;
+use DateTimeZone;
+
 final readonly class ResidentialProjectMaterialCatalog
 {
     public const VERSION = 'residential_project_material:v5';
@@ -65,6 +69,7 @@ final readonly class ResidentialProjectMaterialCatalog
         ],
         'lighting.fixtures' => [
             'resource_code' => '59.1.20.03-0798',
+            'conjuncture_analysis_key' => 'residential_led_ceiling_luminaire_18w',
             'fallback_group_code' => '59.1.20.03',
             'fallback_name_markers' => ['светиль'],
             'semantic_fallback_name_markers' => ['светиль', 'светодиод'],
@@ -87,6 +92,7 @@ final readonly class ResidentialProjectMaterialCatalog
         ],
         'heating.unit' => [
             'resource_code' => '89.1.63.01-0079',
+            'conjuncture_analysis_key' => 'residential_wall_mounted_single_circuit_electric_boiler_18kw',
             'unit' => 'pcs',
             'source_unit' => 'шт',
             'price_factor' => 1.0,
@@ -97,6 +103,7 @@ final readonly class ResidentialProjectMaterialCatalog
 
     public function __construct(
         private ResidentialMaterialScenarioCatalog $scenarios = new ResidentialMaterialScenarioCatalog,
+        private ?DateTimeImmutable $asOf = null,
     ) {}
 
     /** @return array<string, mixed>|null */
@@ -123,6 +130,26 @@ final readonly class ResidentialProjectMaterialCatalog
     public function resourceCodes(): array
     {
         return array_values(array_unique(array_column(self::REQUIREMENTS, 'resource_code')));
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function conjunctureRequirements(): array
+    {
+        $requirements = [];
+
+        foreach (self::REQUIREMENTS as $workItemKey => $requirement) {
+            if (trim((string) ($requirement['conjuncture_analysis_key'] ?? '')) === '') {
+                continue;
+            }
+
+            $requirements[] = [
+                'version' => self::VERSION,
+                'work_item_key' => $workItemKey,
+                ...$requirement,
+            ];
+        }
+
+        return $requirements;
     }
 
     /** @return list<string> */
@@ -241,10 +268,17 @@ final readonly class ResidentialProjectMaterialCatalog
 
     private function validPriceRow(object $row): bool
     {
-        return is_numeric($row->base_price ?? null) && (float) $row->base_price > 0
+        $valid = is_numeric($row->base_price ?? null) && (float) $row->base_price > 0
             && is_int($row->price_id ?? null) && $row->price_id > 0
             && in_array(trim((string) ($row->price_source ?? '')), ['regional_catalog', 'fsbc_base', 'fsnb_base'], true)
             && trim((string) ($row->price_source_version ?? '')) !== '';
+
+        if (! $valid) {
+            return false;
+        }
+
+        return trim((string) ($row->source_price_kind ?? '')) !== 'conjuncture_analysis'
+            || $this->conjunctureProvenance($row) !== null;
     }
 
     /** @param array<string, mixed> $requirement */
@@ -314,6 +348,10 @@ final readonly class ResidentialProjectMaterialCatalog
         $priceId = $row->price_id;
         $priceSource = trim((string) $row->price_source);
         $priceSourceVersion = trim((string) $row->price_source_version);
+        $sourcePriceKind = trim((string) ($row->source_price_kind ?? ''));
+        $priceProvenance = $sourcePriceKind === 'conjuncture_analysis'
+            ? $this->conjunctureProvenance($row)
+            : null;
 
         $priceFactor = (float) $requirement['price_factor'];
 
@@ -327,6 +365,8 @@ final readonly class ResidentialProjectMaterialCatalog
             'unit_price' => (string) round((float) $sourcePrice * $priceFactor, 6),
             'price_source' => $priceSource,
             'price_source_version' => $priceSourceVersion,
+            'price_source_kind' => $sourcePriceKind !== '' ? $sourcePriceKind : null,
+            'price_provenance' => $priceProvenance,
             'linked_resource_id' => is_int($row->construction_resource_id ?? null)
                 ? $row->construction_resource_id
                 : null,
@@ -340,11 +380,76 @@ final readonly class ResidentialProjectMaterialCatalog
                 'price_conversion_factor' => (string) $priceFactor,
                 'preferred_resource_code' => (string) $requirement['resource_code'],
                 'selection_policy' => $selectionPolicy,
+                ...$sourcePriceKind !== '' ? ['price_source_kind' => $sourcePriceKind] : [],
+                ...$priceProvenance !== null ? ['price_provenance' => $priceProvenance] : [],
                 ...isset($requirement['semantic_eligibility_policy']['version'])
                     ? ['semantic_eligibility_policy' => (string) $requirement['semantic_eligibility_policy']['version']]
                     : [],
             ],
         ];
+    }
+
+    /** @return array<string, mixed>|null */
+    private function conjunctureProvenance(object $row): ?array
+    {
+        $raw = $row->raw_payload ?? null;
+        if (is_string($raw)) {
+            $raw = json_decode($raw, true);
+        }
+        $analysis = is_array($raw) && is_array($raw['analysis'] ?? null) ? $raw['analysis'] : null;
+        $offers = is_array($analysis['eligible_offers'] ?? null) ? $analysis['eligible_offers'] : [];
+        $observedAt = DateTimeImmutable::createFromFormat(
+            '!Y-m-d',
+            is_string($analysis['observed_at'] ?? null) ? $analysis['observed_at'] : '',
+            new DateTimeZone('UTC'),
+        );
+        $asOf = $this->asOf ?? new DateTimeImmutable('today', new DateTimeZone('UTC'));
+        if (($raw['source'] ?? null) !== 'conjuncture_analysis'
+            || ($analysis['schema_version'] ?? null) !== 'project_material_conjuncture:v1'
+            || ($analysis['resource_code'] ?? null) !== trim((string) ($row->resource_code ?? ''))
+            || ($analysis['unit'] ?? null) !== trim((string) ($row->unit ?? ''))
+            || ($analysis['currency'] ?? null) !== 'RUB'
+            || ! is_string($analysis['region_code'] ?? null) || trim($analysis['region_code']) === ''
+            || ! is_string($analysis['observed_at'] ?? null)
+            || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $analysis['observed_at']) !== 1
+            || ! $observedAt instanceof DateTimeImmutable
+            || $observedAt > $asOf
+            || $observedAt < $asOf->modify('-'.ResidentialConjunctureOfferProvider::MAX_OFFER_AGE_DAYS.' days')
+            || ! is_numeric($analysis['median_price'] ?? null)
+            || round((float) $analysis['median_price'], 4) !== round((float) ($row->base_price ?? 0), 4)
+            || count($offers) < 3) {
+            return null;
+        }
+
+        $hosts = [];
+        $prices = [];
+        foreach ($offers as $offer) {
+            $url = is_array($offer) ? trim((string) ($offer['url'] ?? '')) : '';
+            $host = filter_var($url, FILTER_VALIDATE_URL) !== false && parse_url($url, PHP_URL_SCHEME) === 'https'
+                ? (string) parse_url($url, PHP_URL_HOST)
+                : '';
+            if ($host === '' || ($offer['region_code'] ?? null) !== $analysis['region_code']
+                || ($offer['unit'] ?? null) !== $analysis['unit'] || ($offer['currency'] ?? null) !== 'RUB'
+                || ! is_numeric($offer['price'] ?? null) || (float) $offer['price'] <= 0) {
+                return null;
+            }
+            $hosts[] = $host;
+            $prices[] = (float) $offer['price'];
+        }
+        if (count(array_unique($hosts)) < 3) {
+            return null;
+        }
+
+        sort($prices, SORT_NUMERIC);
+        $middle = intdiv(count($prices), 2);
+        $median = count($prices) % 2 === 1
+            ? $prices[$middle]
+            : round(($prices[$middle - 1] + $prices[$middle]) / 2, 2);
+        if (round($median, 4) !== round((float) $analysis['median_price'], 4)) {
+            return null;
+        }
+
+        return $analysis;
     }
 
     /** @param array<string, mixed> $resource @param list<object> $rows */

@@ -21,19 +21,54 @@ final class ScheduledCommandsRegistrationTest extends DatabaseLessTestCase
         }
     }
 
+    public function test_building_resource_prices_are_scheduled_hourly_after_regional_sync(): void
+    {
+        $schedule = $this->scheduleSource();
+        $regional = "Schedule::command('estimates:regional-prices:sync-fgiscs --region=RU-TA --latest-only')";
+        $building = "Schedule::command('estimates:regional-prices:sync-fgiscs-building-resources')";
+
+        $this->assertStringContainsString($building, $schedule);
+        $this->assertGreaterThan(strpos($schedule, $regional), strpos($schedule, $building));
+        $buildingPosition = strpos($schedule, $building);
+
+        $this->assertIsInt($buildingPosition);
+        $block = substr($schedule, $buildingPosition, 800);
+        $this->assertStringContainsString('->hourlyAt(40)', $block);
+        $this->assertStringContainsString('->withoutOverlapping(180)', $block);
+        $this->assertStringContainsString('->runInBackground()', $block);
+        $this->assertStringContainsString('->onFailure(', $block);
+        $this->assertStringContainsString('schedule-building-resource-prices-sync.log', $block);
+    }
+
+    public function test_building_resource_sync_command_logs_exception_identity(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 3).'/app/BusinessModules/Addons/EstimateGeneration/Normatives/Console/Commands/SyncFgiscsBuildingResourcePricesCommand.php');
+
+        $this->assertIsString($source);
+        $this->assertStringContainsString("Log::error('[EstimateGeneration] FGIS CS building resource price sync failed.'", $source);
+        $this->assertStringContainsString("'exception_class' => \$exception::class", $source);
+    }
+
     /**
      * @return list<string>
      */
     private function scheduledCommands(): array
     {
-        $schedule = file_get_contents(dirname(__DIR__, 3).'/routes/console.php');
-
-        $this->assertIsString($schedule);
+        $schedule = $this->scheduleSource();
         preg_match_all("/Schedule::command\\('([^']+)'\\)/", $schedule, $matches);
 
         return array_values(array_unique(array_map(
             static fn (string $command): string => strtok($command, ' ') ?: $command,
             $matches[1],
         )));
+    }
+
+    private function scheduleSource(): string
+    {
+        $schedule = file_get_contents(dirname(__DIR__, 3).'/routes/console.php');
+
+        $this->assertIsString($schedule);
+
+        return $schedule;
     }
 }

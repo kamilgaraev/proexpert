@@ -189,7 +189,8 @@ final class NormativeSemanticCompatibilityService
     private function actionCompatible(string $action, string $system, string $candidateTitle, string $workText): bool
     {
         if ($action === 'electric_boiler_installation_analog') {
-            return $this->containsAny($workText, ['электрическ котел', 'электрического котла'])
+            return $this->containsAny($workText, ['электрическ'])
+                && $this->containsAny($workText, ['котел', 'котл'])
                 && $this->containsAny($candidateTitle, ['оборуд', 'монтаж', 'установк'])
                 && ! $this->containsAny($candidateTitle, ['водонагревател', 'твердотопливн', 'воздушно-теплов']);
         }

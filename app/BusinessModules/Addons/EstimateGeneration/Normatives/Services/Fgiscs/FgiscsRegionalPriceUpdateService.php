@@ -31,7 +31,8 @@ class FgiscsRegionalPriceUpdateService
         private readonly LaborPriceSpreadsheetParser $parser,
         private readonly EstimateSourceStorageService $storageService,
         private readonly RegionalPriceQualityService $qualityService,
-        private readonly RegionalPriceActivationService $activationService,
+        private readonly RegionalPriceImportLifecycleService $lifecycleService,
+        private readonly RegionalPriceVersionResolver $versionResolver,
     ) {}
 
     /**
@@ -154,9 +155,50 @@ class FgiscsRegionalPriceUpdateService
      */
     private function syncPeriod(string $bucket, EstimateRegion $region, EstimatePriceZone $priceZone, EstimatePricePeriod $period, bool $latestOnly, bool $activate, bool $force, ?callable $progress): array
     {
-        $versionKey = $this->versionKey($period, $region, $priceZone);
+        $baseVersionKey = $this->versionKey($period, $region, $priceZone);
+        $versionKey = $this->versionResolver->resolveVersionKey(
+            EstimateSourceType::FGIS_LABOR_PRICES->value,
+            (int) $region->id,
+            (int) $priceZone->id,
+            (int) $period->id,
+            $baseVersionKey,
+            'worker_salary_imported',
+            $force,
+        );
         $prefix = $this->prefix($period, (int) $region->fgiscs_subject_id, (int) $priceZone->fgiscs_price_zone_id);
         $fileKey = $prefix.'worker-salary.xlsx';
+
+        $regionalVersion = EstimateRegionalPriceVersion::query()->firstOrCreate(
+            [
+                'source' => EstimateSourceType::FGIS_LABOR_PRICES->value,
+                'region_id' => $region->id,
+                'price_zone_id' => $priceZone->id,
+                'period_id' => $period->id,
+                'version_key' => $versionKey,
+            ],
+            [
+                'status' => RegionalPriceStatus::DISCOVERED->value,
+                'files_count' => 0,
+                'rows_read' => 0,
+                'rows_imported' => 0,
+                'errors_count' => 0,
+                'metadata' => [],
+            ]
+        );
+
+        if (! $force && (bool) ($regionalVersion->metadata['worker_salary_imported'] ?? false)) {
+            return [
+                'skipped' => true,
+                'reason' => 'period_already_imported',
+                'region' => $region->name,
+                'price_zone' => $priceZone->name,
+                'version_id' => $regionalVersion->id,
+                'version_key' => $regionalVersion->version_key,
+                'status' => $regionalVersion->status->value,
+            ];
+        }
+
+        $this->versionResolver->assertWritable($regionalVersion);
 
         $datasetVersion = EstimateDatasetVersion::query()->updateOrCreate(
             [
@@ -182,36 +224,6 @@ class FgiscsRegionalPriceUpdateService
                 ],
             ]
         );
-
-        $regionalVersion = EstimateRegionalPriceVersion::query()->firstOrCreate(
-            [
-                'source' => EstimateSourceType::FGIS_LABOR_PRICES->value,
-                'region_id' => $region->id,
-                'price_zone_id' => $priceZone->id,
-                'period_id' => $period->id,
-                'version_key' => $versionKey,
-            ],
-            [
-                'status' => RegionalPriceStatus::DISCOVERED->value,
-                'files_count' => 0,
-                'rows_read' => 0,
-                'rows_imported' => 0,
-                'errors_count' => 0,
-                'metadata' => [],
-            ]
-        );
-
-        if (! $force && in_array($regionalVersion->status, [RegionalPriceStatus::ACTIVE, RegionalPriceStatus::CHECKED, RegionalPriceStatus::PARSED], true)) {
-            return [
-                'skipped' => true,
-                'reason' => 'period_already_imported',
-                'region' => $region->name,
-                'price_zone' => $priceZone->name,
-                'version_id' => $regionalVersion->id,
-                'version_key' => $regionalVersion->version_key,
-                'status' => $regionalVersion->status->value,
-            ];
-        }
 
         try {
             $this->report($progress, 'download_started', [
@@ -257,12 +269,17 @@ class FgiscsRegionalPriceUpdateService
                 ]);
             }
 
+            $buildingResourcesRequired = $region->code === FgiscsRegionalCatalogService::DEFAULT_REGION_CODE
+                && (int) $priceZone->fgiscs_price_zone_id === FgiscsRegionalCatalogService::TATARSTAN_PRICE_ZONE_ID;
             $regionalVersion->update([
                 'status' => RegionalPriceStatus::CHECKED->value,
-                'metadata' => array_merge($regionalVersion->metadata ?? [], ['quality' => $quality]),
+                'metadata' => array_merge($regionalVersion->metadata ?? [], [
+                    'quality' => $quality,
+                    'worker_salary_imported' => true,
+                    'worker_salary_imported_at' => now()->toIso8601String(),
+                ]),
             ]);
-
-            $activation = $activate ? $this->activationService->activate($regionalVersion) : null;
+            $lifecycle = $this->lifecycleService->finalize($regionalVersion, $activate, $buildingResourcesRequired);
 
             $datasetVersion->update([
                 'status' => EstimateImportStatus::PARSED->value,
@@ -270,11 +287,12 @@ class FgiscsRegionalPriceUpdateService
             ]);
 
             return array_merge($stats, [
-                'status' => $activate ? RegionalPriceStatus::ACTIVE->value : RegionalPriceStatus::CHECKED->value,
+                'status' => $regionalVersion->fresh()->status->value,
                 'region' => $region->name,
                 'price_zone' => $priceZone->name,
                 'quality' => $quality,
-                'activation_id' => $activation?->id,
+                'activation_id' => $lifecycle['activation_id'],
+                'complete_quality' => $lifecycle['quality'],
                 'version_id' => $regionalVersion->id,
                 'version_key' => $versionKey,
                 'period' => $period->name,

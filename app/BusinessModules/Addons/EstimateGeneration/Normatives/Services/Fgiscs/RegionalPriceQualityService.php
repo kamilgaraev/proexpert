@@ -9,13 +9,20 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateReso
 
 class RegionalPriceQualityService
 {
+    private const BUILDING_RESOURCE_SOURCE_KINDS = [
+        'regional_building_resource_export',
+        'regional_building_resource_direct',
+        'regional_building_resource_index',
+    ];
+
     /**
      * @return array{passed:bool,metrics:array<string,mixed>,errors:array<int,string>}
      */
     public function checkWorkerSalaryVersion(EstimateRegionalPriceVersion $version): array
     {
         $query = EstimateResourcePrice::query()
-            ->where('regional_price_version_id', $version->id);
+            ->where('regional_price_version_id', $version->id)
+            ->where('source_price_kind', 'regional_worker_salary');
 
         $count = (clone $query)->count();
         $zeroCount = (clone $query)->where(function ($builder): void {
@@ -42,7 +49,7 @@ class RegionalPriceQualityService
         }
 
         if ($missingCodes !== []) {
-            $errors[] = 'Не найдены обязательные коды труда: ' . implode(', ', $missingCodes);
+            $errors[] = 'Не найдены обязательные коды труда: '.implode(', ', $missingCodes);
         }
 
         return [
@@ -52,6 +59,57 @@ class RegionalPriceQualityService
                 'zero_price_count' => $zeroCount,
                 'required_codes_found' => $foundCodes,
                 'required_codes_missing' => $missingCodes,
+            ],
+            'errors' => $errors,
+        ];
+    }
+
+    /**
+     * @return array{passed:bool,metrics:array<string,mixed>,errors:array<int,string>}
+     */
+    public function checkBuildingResourceVersion(EstimateRegionalPriceVersion $version): array
+    {
+        $query = EstimateResourcePrice::query()
+            ->where('regional_price_version_id', $version->id)
+            ->whereIn('source_price_kind', self::BUILDING_RESOURCE_SOURCE_KINDS);
+        $count = (clone $query)->count();
+        $zeroCount = (clone $query)->where(function ($builder): void {
+            $builder->whereNull('base_price')->orWhere('base_price', '<=', 0);
+        })->count();
+        $errors = [];
+
+        if ($count === 0) {
+            $errors[] = 'No building resource prices were imported.';
+        }
+
+        if ($zeroCount > 0) {
+            $errors[] = 'Building resource prices contain zero values.';
+        }
+
+        return [
+            'passed' => $errors === [],
+            'metrics' => [
+                'building_resource_count' => $count,
+                'zero_price_count' => $zeroCount,
+            ],
+            'errors' => $errors,
+        ];
+    }
+
+    /**
+     * @return array{passed:bool,metrics:array<string,mixed>,errors:array<int,string>}
+     */
+    public function checkCompleteVersion(EstimateRegionalPriceVersion $version, bool $buildingResourcesRequired): array
+    {
+        $workerSalary = $this->checkWorkerSalaryVersion($version);
+        $buildingResources = $buildingResourcesRequired ? $this->checkBuildingResourceVersion($version) : null;
+        $errors = array_merge($workerSalary['errors'], $buildingResources['errors'] ?? []);
+
+        return [
+            'passed' => $errors === [],
+            'metrics' => [
+                'worker_salary' => $workerSalary['metrics'],
+                'building_resources' => $buildingResources['metrics'] ?? null,
             ],
             'errors' => $errors,
         ];

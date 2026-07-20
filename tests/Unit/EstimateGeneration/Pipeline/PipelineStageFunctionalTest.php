@@ -220,16 +220,45 @@ final class PipelineStageFunctionalTest extends TestCase
         self::assertNull($resolver->next($seed));
         $planned = $state->priorOutputs($seed)->payload(ProcessingStage::PlanWorkItems);
         $floorItems = [];
+        $scopeDecisionItems = [];
+        $plannedItems = [];
         foreach ($planned['local_estimates'] as $localEstimate) {
             foreach ($localEstimate['sections'] as $section) {
                 foreach ($section['work_items'] as $workItem) {
-                    if (($workItem['metadata']['quantity_key'] ?? null) === 'finish.floor') {
+                    $quantityKey = $workItem['metadata']['quantity_key'] ?? null;
+                    if (is_string($quantityKey) && $quantityKey !== '') {
+                        $plannedItems[$quantityKey] = $workItem;
+                    }
+                    if ($quantityKey === 'finish.floor') {
                         $floorItems[] = $workItem;
+                    }
+                    if (in_array($quantityKey, ['heating.unit', 'sewerage.outlet_route'], true)) {
+                        $scopeDecisionItems[$quantityKey] = $workItem;
                     }
                 }
             }
         }
         self::assertNotEmpty($floorItems);
+        self::assertCount(2, $scopeDecisionItems);
+        self::assertArrayHasKey('heating.unit', $scopeDecisionItems);
+        self::assertArrayHasKey('sewerage.outlet_route', $scopeDecisionItems);
+        foreach ([
+            'electrical.panel',
+            'electrical.outlets',
+            'electrical.switches',
+            'lighting.fixtures',
+        ] as $quantityKey) {
+            self::assertArrayHasKey($quantityKey, $plannedItems);
+            self::assertSame('pcs', $plannedItems[$quantityKey]['unit']);
+            self::assertSame($quantityKey, $plannedItems[$quantityKey]['quantity_evidence']['key'] ?? null);
+            self::assertIsInt($plannedItems[$quantityKey]['quantity_evidence_id'] ?? null);
+        }
+        foreach ($scopeDecisionItems as $quantityKey => $workItem) {
+            self::assertSame($quantityKey, $workItem['quantity_evidence']['key'] ?? null, $quantityKey);
+            self::assertIsInt($workItem['quantity_evidence_id'] ?? null, $quantityKey);
+            self::assertGreaterThan(0, $workItem['quantity_evidence_id'], $quantityKey);
+            self::assertArrayNotHasKey('quantity_mapping_missing', array_flip($workItem['validation_flags'] ?? []), $quantityKey);
+        }
         self::assertSame('completed', $planned['package_plan']['work_composition_advice']['status'] ?? null);
         $extracted = $state->priorOutputs($seed)->payload(ProcessingStage::ExtractQuantities);
         $floorAreaRows = array_values(array_filter(

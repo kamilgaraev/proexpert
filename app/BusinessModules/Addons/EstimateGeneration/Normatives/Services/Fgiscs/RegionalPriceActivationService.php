@@ -14,6 +14,18 @@ class RegionalPriceActivationService
 {
     public function activate(EstimateRegionalPriceVersion $version, string $reason = 'auto_quality_passed'): EstimateRegionalPriceActivation
     {
+        $version->refresh();
+        $metadata = $version->metadata ?? [];
+
+        if ($version->status !== RegionalPriceStatus::CHECKED
+            || (int) $version->errors_count > 0
+            || ! (bool) ($metadata['complete_quality']['passed'] ?? false)
+            || ! (bool) ($metadata['worker_salary_imported'] ?? false)
+            || ((bool) ($metadata['building_resources_required'] ?? false)
+                && ! (bool) ($metadata['building_resources_imported'] ?? false))) {
+            throw new RuntimeException('Regional price version is not ready for activation.');
+        }
+
         return DB::transaction(function () use ($version, $reason): EstimateRegionalPriceActivation {
             $activation = EstimateRegionalPriceActivation::query()
                 ->where('region_id', $version->region_id)
