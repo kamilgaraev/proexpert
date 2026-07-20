@@ -5,16 +5,25 @@ declare(strict_types=1);
 namespace App\Services\Mobile;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
+use App\BusinessModules\Features\LegalArchive\Models\LegalSignatureRequest;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
+use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\LegalArchiveRegistryService;
+use App\Services\LegalArchive\Signatures\LegalDocumentSignatureService;
+use App\Services\LegalArchive\Signatures\PaperOriginalData;
+use App\Services\LegalArchive\Signatures\SignerIdentitySet;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowDecisionInput;
 use App\Services\LegalArchive\Workflow\LegalDocumentWorkflowService;
 use App\Services\LegalArchive\Workflow\LegalWorkflowActionResolver;
 use DomainException;
+use DateTimeImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
+use Illuminate\Http\UploadedFile;
+use App\Services\Storage\FileService;
 
 final readonly class MobileLegalArchiveService
 {
@@ -23,6 +32,9 @@ final readonly class MobileLegalArchiveService
         private LegalDocumentAuthorizer $authorizer,
         private LegalWorkflowActionResolver $actions,
         private LegalDocumentWorkflowService $workflow,
+        private LegalDocumentDownloadService $downloads,
+        private LegalDocumentSignatureService $signatures,
+        private FileService $files,
     ) {}
 
     public function documents(User $actor, int $organizationId, int $projectId): LengthAwarePaginator
@@ -43,7 +55,7 @@ final readonly class MobileLegalArchiveService
         }
         $this->authorizer->authorize($actor, $document, 'view');
 
-        return $document->loadMissing(['obligations']);
+        return $document->loadMissing(['currentVersion', 'versions', 'obligations', 'signatureRequests']);
     }
 
     /** @return array<string, mixed> */
@@ -94,6 +106,75 @@ final readonly class MobileLegalArchiveService
             reason: $reason,
         ));
 
-        return $this->document($actor, $organizationId, $documentId)->fresh(['project', 'currentVersion', 'versions', 'obligations']) ?? $document;
+        return $this->document($actor, $organizationId, $documentId)->fresh(['project', 'currentVersion', 'versions', 'obligations', 'signatureRequests']) ?? $document;
+    }
+
+    /** @return array{url: string, expires_in_seconds: int} */
+    public function versionUrl(User $actor, int $organizationId, int $documentId, int $versionId, string $purpose): array
+    {
+        if (! in_array($purpose, ['preview', 'download'], true)) {
+            throw new DomainException('legal_archive_file_purpose_invalid');
+        }
+        $document = $this->document($actor, $organizationId, $documentId);
+        $version = LegalArchiveDocumentVersion::query()
+            ->whereKey($versionId)
+            ->where('organization_id', $organizationId)
+            ->where('document_id', (int) $document->id)
+            ->with('documentFile.document')
+            ->first();
+        if (! $version instanceof LegalArchiveDocumentVersion) {
+            throw new DomainException('legal_archive_document_not_found');
+        }
+
+        return [
+            'url' => $this->downloads->temporaryUrl($version, $actor, $purpose),
+            'expires_in_seconds' => 300,
+        ];
+    }
+
+    public function uploadPaperOriginal(
+        User $actor,
+        int $organizationId,
+        int $signatureRequestId,
+        UploadedFile $upload,
+        DateTimeImmutable $signedAt,
+        int $documentLockVersion,
+        string $idempotencyKey,
+    ): void {
+        $request = LegalSignatureRequest::query()->with('document')->whereKey($signatureRequestId)
+            ->where('organization_id', $organizationId)->first();
+        $document = $request?->document;
+        if (! $request instanceof LegalSignatureRequest || ! $document instanceof LegalArchiveDocument) {
+            throw new DomainException('legal_archive_document_not_found');
+        }
+        $this->document($actor, $organizationId, (int) $document->id);
+        if ((string) $request->method !== 'paper' || ! $upload->isValid() || (int) $upload->getSize() < 1 || (int) $upload->getSize() > 20 * 1024 * 1024) {
+            throw new DomainException('legal_signature_paper_original_invalid');
+        }
+        $content = $upload->getContent();
+        $mimeType = is_string($content) && $content !== '' ? (new \finfo(FILEINFO_MIME_TYPE))->buffer($content) : null;
+        $extension = match ($mimeType) {
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'application/pdf' => 'pdf',
+            default => null,
+        };
+        if ($extension === null || ! is_string($content)) {
+            throw new DomainException('legal_signature_paper_original_invalid');
+        }
+        $path = "org-{$organizationId}/legal-archive/paper-originals/requests/{$request->id}/".hash('sha256', $content).".{$extension}";
+        $this->files->putImmutable($path, $content, $mimeType);
+        $this->signatures->registerPaperOriginal($request, $actor, new PaperOriginalData(
+            signedAt: $signedAt,
+            signers: SignerIdentitySet::fromSnapshot([[
+                'kind' => 'user',
+                'name' => (string) $actor->name,
+                'user_id' => (int) $actor->id,
+                'organization_id' => $organizationId,
+            ]]),
+            storageLocation: $path,
+            idempotencyKey: $idempotencyKey,
+            expectedDocumentLockVersion: $documentLockVersion,
+        ));
     }
 }

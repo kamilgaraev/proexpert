@@ -9,10 +9,12 @@ use App\Http\Resources\Api\V1\Mobile\LegalArchiveDocumentResource;
 use App\Http\Responses\MobileResponse;
 use App\Services\Mobile\MobileLegalArchiveService;
 use App\Services\LegalArchive\LegalArchiveLockConflict;
+use DateTimeImmutable;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Lang;
 use Illuminate\Validation\ValidationException;
@@ -79,6 +81,59 @@ final class LegalArchiveController extends Controller
             return MobileResponse::success(new LegalArchiveDocumentResource($found, $this->archive->summary($actor, $found)));
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'action', $document);
+        }
+    }
+
+    public function versionUrl(Request $request, int $document, int $version, string $purpose): JsonResponse
+    {
+        try {
+            $actor = $request->user();
+            if ($actor === null) {
+                return MobileResponse::error(trans_message('errors.unauthorized'), 401);
+            }
+
+            return MobileResponse::success($this->archive->versionUrl(
+                $actor,
+                (int) $actor->current_organization_id,
+                $document,
+                $version,
+                $purpose,
+            ));
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'version_url', $document);
+        }
+    }
+
+    public function uploadOriginal(Request $request, int $signatureRequest): JsonResponse
+    {
+        try {
+            $actor = $request->user();
+            if ($actor === null) {
+                return MobileResponse::error(trans_message('errors.unauthorized'), 401);
+            }
+            $validated = $request->validate([
+                'file' => ['required', 'file', 'max:20480', 'mimes:jpg,jpeg,png,pdf'],
+                'signed_at' => ['required', 'date'],
+                'lock_version' => ['required', 'integer', 'min:0'],
+                'idempotency_key' => ['required', 'uuid'],
+            ]);
+            $upload = $request->file('file');
+            if (! $upload instanceof UploadedFile) {
+                return MobileResponse::error(trans_message('legal_archive.messages.validation_error'), 422, ['file' => ['required']]);
+            }
+            $this->archive->uploadPaperOriginal(
+                $actor,
+                (int) $actor->current_organization_id,
+                $signatureRequest,
+                $upload,
+                new DateTimeImmutable((string) $validated['signed_at']),
+                (int) $validated['lock_version'],
+                (string) $validated['idempotency_key'],
+            );
+
+            return MobileResponse::success(null, trans_message('legal_archive.messages.original_registered'), 201);
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'upload_original');
         }
     }
 
