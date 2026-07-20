@@ -317,7 +317,7 @@ final class ResolveRegionalPriceTest extends TestCase
                     ...$selection,
                     'price_id' => 42,
                     'applied_unit_price' => '2000',
-                    'price_unit' => 'м3',
+                    'price_unit' => 'm2',
                 ]],
             ],
         ];

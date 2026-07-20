@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pricing\MissingRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\PriceSnapshotData;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveUnitConversion;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\Log;
@@ -198,7 +199,7 @@ class EstimatePricingService
         $groupCode = trim((string) ($resource['normative_ref']['resource_code'] ?? ''));
         $priceId = (int) ($resource['normative_ref']['price_id'] ?? $resource['price_id'] ?? 0);
         $unitPrice = (string) ($resource['unit_price'] ?? '0');
-        $priceUnit = trim((string) ($resource['price_unit'] ?? ''));
+        $resourceUnit = trim((string) ($resource['unit'] ?? ''));
         $selections = is_array($workItem['normative_match']['project_resource_selections'] ?? null)
             ? $workItem['normative_match']['project_resource_selections']
             : [];
@@ -206,7 +207,10 @@ class EstimatePricingService
             if (! is_array($selection)
                 || trim((string) ($selection['group_code'] ?? '')) !== $groupCode
                 || (int) ($selection['price_id'] ?? 0) !== $priceId
-                || trim((string) ($selection['price_unit'] ?? '')) !== $priceUnit
+                || ! NormativeUnitNormalizer::compatible(
+                    trim((string) ($selection['price_unit'] ?? '')),
+                    $resourceUnit,
+                )
                 || ! $this->sameDecimal($selection['applied_unit_price'] ?? null, $unitPrice)) {
                 continue;
             }
