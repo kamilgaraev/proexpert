@@ -71,7 +71,41 @@ final class PipelineStageFunctionalTest extends TestCase
 
             public function source(PipelineContext $context): array
             {
-                return ['input' => ['description' => 'Одноэтажный дом', 'area' => 80], 'documents' => [], 'user_id' => 7];
+                return ['input' => [
+                    'description' => 'Полное строительство одноэтажного жилого дома под ключ, включая отопление и канализацию',
+                    'area' => 80,
+                    'generation_mode' => 'ai_assisted',
+                ], 'documents' => [], 'user_id' => 7, 'document_total_area' => [
+                    'amount' => '80.000000',
+                    'evidence_id' => 701,
+                    'confidence' => 0.95,
+                    'floor_count' => 1,
+                ], 'normalized_building_model' => (new \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData(
+                    unit: 'm',
+                    scaleStatus: 'confirmed',
+                    scaleMetersPerUnit: 1.0,
+                    floors: [new \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData(
+                        key: 'floor-1',
+                        elevationM: 0.0,
+                        heightM: 3.0,
+                        rooms: [new \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\RoomData(
+                            key: 'room-1',
+                            name: 'Жилая комната',
+                            polygon: [[0, 0], [10, 0], [10, 8], [0, 8]],
+                            evidenceIds: [701],
+                            confidence: 0.95,
+                            geometryCertainty: 'confirmed',
+                        )],
+                        walls: [],
+                        openings: [],
+                        engineeringElements: [],
+                        evidenceIds: [701],
+                        confidence: 0.95,
+                        geometryCertainty: 'confirmed',
+                    )],
+                    assumptions: [],
+                    modelVersion: 'building-model:v1',
+                ))->toArray()];
             }
         };
         $matcher = $this->createMock(ResourceAssemblyService::class);
@@ -108,12 +142,40 @@ final class PipelineStageFunctionalTest extends TestCase
             {
                 public function isAvailable(): bool
                 {
-                    return false;
+                    return true;
                 }
 
                 public function chat(array $messages, PipelineContext $context, string $candidateSetHash): array
                 {
-                    throw new \LogicException('Must not be called.');
+                    return [
+                        'content' => json_encode([
+                            'schema_version' => AiResidentialWorkCompositionAdvisor::SCHEMA_VERSION,
+                            'default_decision' => [
+                                'status' => 'include',
+                                'reason_codes' => ['residential_scope'],
+                                'confidence' => 0.9,
+                            ],
+                            'exceptions' => [],
+                            'scope_decisions' => [
+                                [
+                                    'key' => 'heating_source',
+                                    'option' => 'electric_boiler',
+                                    'status' => 'preliminary',
+                                    'confidence' => 0.6,
+                                    'evidence_ids' => [],
+                                ],
+                                [
+                                    'key' => 'wastewater_destination',
+                                    'option' => 'septic',
+                                    'status' => 'preliminary',
+                                    'confidence' => 0.6,
+                                    'evidence_ids' => [],
+                                ],
+                            ],
+                        ], JSON_THROW_ON_ERROR),
+                        'model' => 'test-model',
+                        'usage_available' => true,
+                    ];
                 }
             })),
             new MatchNormativesStage($matcher, $workflow, new NormativeWorkIntentFactory, $results),
@@ -168,8 +230,14 @@ final class PipelineStageFunctionalTest extends TestCase
             }
         }
         self::assertNotEmpty($floorItems);
-        self::assertSame('80.000000', $floorItems[0]['quantity']);
-        self::assertSame('quantity_review_required', $floorItems[0]['pricing_blocker']);
+        self::assertSame('completed', $planned['package_plan']['work_composition_advice']['status'] ?? null);
+        $extracted = $state->priorOutputs($seed)->payload(ProcessingStage::ExtractQuantities);
+        $floorAreaRows = array_values(array_filter(
+            $extracted['building_quantities']['quantities'] ?? [],
+            static fn (mixed $quantity): bool => is_array($quantity) && ($quantity['key'] ?? null) === 'floor_area',
+        ));
+        self::assertNotEmpty($floorAreaRows);
+        self::assertSame('80.000000', $floorAreaRows[0]['amount']);
 
         $payload = $state->priorOutputs($seed)->payload(ProcessingStage::ValidateDraft);
         self::assertArrayHasKey('quality_summary', $payload['draft']);

@@ -57,11 +57,14 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             if (! is_array($quantity)) {
                 continue;
             }
-            $typed = QuantityData::fromArray($quantity)->toArray();
-            $quantities[$typed['key']] = $typed;
+            $typed = QuantityData::fromArray($quantity);
+            $quantities[$typed->key] = $typed;
         }
         if ($quantities !== []) {
-            $analysis['document_context']['canonical_building_quantities'] = array_values($quantities);
+            $analysis['document_context']['canonical_building_quantities'] = array_map(
+                static fn (QuantityData $quantity): array => $quantity->toArray(),
+                array_values($quantities),
+            );
         }
         $payload = $this->compiler->compile($analysis, null, true);
         $advice = $this->compositionAdvisor->advise($analysis, $payload, $context);
@@ -74,7 +77,10 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             $analysis['residential_scope_decisions'] = $advice->scopeDecisions;
         }
         if ($quantities !== []) {
-            $analysis['document_context']['canonical_building_quantities'] = array_values($quantities);
+            $analysis['document_context']['canonical_building_quantities'] = array_map(
+                static fn (QuantityData $quantity): array => $quantity->toArray(),
+                array_values($quantities),
+            );
         }
         $payload = $this->compiler->compile($analysis, null, true);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
