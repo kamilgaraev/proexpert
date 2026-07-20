@@ -302,6 +302,8 @@ final class ResolveRegionalPriceTest extends TestCase
         $conversions = new ResolveUnitConversion(static fn (): array => []);
         $resource = $this->convertedResource();
         $resource['unit'] = 'm2';
+        $resource['price_unit'] = 'м3';
+        unset($resource['project_resource_selection']);
         $item = [
             'item_type' => 'priced_work',
             'materials' => [$resource],
@@ -314,6 +316,11 @@ final class ResolveRegionalPriceTest extends TestCase
 
         self::assertSame('4000.00', $priced['total_cost']);
         self::assertSame('2000.0000', $priced['materials'][0]['unit_price']);
+        self::assertSame('m2', $priced['materials'][0]['price_unit']);
+        self::assertSame(
+            'fsnb_2022_residential_converted_child_median:v1',
+            $priced['materials'][0]['project_resource_selection']['policy'],
+        );
         self::assertArrayNotHasKey('unit_conversion_id', $priced['materials'][0]['normative_ref']);
     }
 

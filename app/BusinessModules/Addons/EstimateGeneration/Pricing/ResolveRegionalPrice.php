@@ -82,13 +82,13 @@ class ResolveRegionalPrice
 
     private function residentialConversion(array $resource, array $payload): ?array
     {
-        $selection = is_array($resource['project_resource_selection'] ?? null)
-            ? $resource['project_resource_selection']
-            : null;
         $reference = is_array($resource['normative_ref'] ?? null) ? $resource['normative_ref'] : [];
         $referenceSelection = is_array($reference['project_resource_selection'] ?? null)
             ? $reference['project_resource_selection']
             : null;
+        $selection = is_array($resource['project_resource_selection'] ?? null)
+            ? $resource['project_resource_selection']
+            : $referenceSelection;
         if ($selection === null || ! str_contains((string) ($selection['policy'] ?? ''), '_residential_converted_')) {
             return null;
         }
@@ -142,7 +142,7 @@ class ResolveRegionalPrice
             || preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', $selectedResourceCode) !== 1
             || trim((string) ($selection['source_price_unit'] ?? '')) !== $conversion['from_unit']
             || trim((string) ($payload['unit'] ?? '')) !== $conversion['from_unit']
-            || trim((string) ($resource['price_unit'] ?? '')) !== $conversion['to_unit']
+            || ! NormativeUnitNormalizer::compatible((string) ($resource['price_unit'] ?? ''), $conversion['to_unit'])
             || ! NormativeUnitNormalizer::compatible((string) ($resource['unit'] ?? ''), $conversion['to_unit'])
             || trim((string) ($selection['conversion_assumption'] ?? '')) !== $conversion['assumption']
             || ! $sourcePriceMatches || ! $factorMatches || ! $appliedPriceMatches) {
