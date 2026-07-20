@@ -863,6 +863,11 @@ class EstimateGenerationPackagePersistenceService
                 'work_category' => $workItem['work_category'] ?? null,
                 'confidence' => $workItem['confidence'] ?? null,
                 ...($workItem['metadata'] ?? []),
+                'specialization_scenario' => is_array($workItem['specialization_scenario'] ?? null)
+                    ? $workItem['specialization_scenario']
+                    : (is_array($workItem['metadata']['specialization_scenario'] ?? null)
+                        ? $workItem['metadata']['specialization_scenario']
+                        : null),
                 'quantity_evidence' => is_array($workItem['quantity_evidence'] ?? null)
                     ? $workItem['quantity_evidence']
                     : null,

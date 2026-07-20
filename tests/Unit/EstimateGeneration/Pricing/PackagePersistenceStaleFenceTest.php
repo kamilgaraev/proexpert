@@ -248,7 +248,6 @@ final class PackagePersistenceStaleFenceTest extends TestCase
             'work_item_key' => 'lighting.fixtures',
             'assumption_code' => 'residential_led_ceiling_luminaire_18w',
         ];
-        $workItem['metadata']['specialization_scenario'] = $workItem['specialization_scenario'];
         $selection = [
             'version' => 'residential_project_material:v3',
             'work_item_key' => 'lighting.fixtures',
@@ -285,6 +284,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         $package = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole();
         $item = $package->items()->sole();
         self::assertNotNull($item->pricing_finalized_at);
+        self::assertSame($workItem['specialization_scenario'], data_get($item->metadata, 'specialization_scenario'));
         self::assertSame('supplementary_project_material:v4', data_get($item->price_snapshot, 'coefficients.pricing_formula_version'));
         self::assertSame('321.00', (string) $item->total_cost);
         self::assertSame('321.00', (string) data_get($package->fresh()->totals, 'total_cost'));

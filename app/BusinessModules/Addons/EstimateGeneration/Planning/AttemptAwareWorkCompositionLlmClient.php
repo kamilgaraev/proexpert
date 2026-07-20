@@ -25,7 +25,7 @@ final readonly class AttemptAwareWorkCompositionLlmClient implements WorkComposi
         return $this->client->chat($messages, [
             'profile' => 'json',
             'temperature' => 0,
-            'max_tokens' => 2500,
+            'max_tokens' => 900,
         ], [
             'organization_id' => $context->organizationId,
             'project_id' => $context->projectId,
@@ -35,8 +35,8 @@ final readonly class AttemptAwareWorkCompositionLlmClient implements WorkComposi
             'input_version' => $context->inputVersion,
             'logical_attempt' => (int) $context->stageAttempt,
             'candidate_set_hash' => $candidateSetHash,
-            'prompt_version' => 'residential-work-composition:v1',
-            'schema_version' => 'residential-work-composition-advice:v1',
+            'prompt_version' => 'residential-work-composition:v2',
+            'schema_version' => AiResidentialWorkCompositionAdvisor::SCHEMA_VERSION,
             'model_version' => 'estimate-generation-effective-settings',
             'dataset_versions' => [ResidentialWorkCompositionCatalog::VERSION],
         ]);
