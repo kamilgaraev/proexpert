@@ -170,6 +170,40 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
         self::assertStringContainsString('REVOKE ALL ON FUNCTION public.eg_expected_package_item_price_v3(bigint) FROM PUBLIC', $migration);
     }
 
+    #[Test]
+    public function supplementary_project_material_is_database_priced_from_an_immutable_versioned_rule(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000100_finalize_supplementary_project_material_prices.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            "Schema::create('estimate_generation_project_material_rules'",
+            "Schema::create('estimate_generation_package_item_project_price_inputs'",
+            'eg_expected_package_item_price_v4',
+            'eg_expected_project_material_price_id_v4',
+            'project_material_candidate_pool:v2',
+            'candidate_resource_price_ids',
+            'supplementary_project_material:v4',
+            'quantity_per_work_unit',
+            'project_material_price_input_mismatch',
+            "dv.source_type IN ('fsbc','fsnb_2022')",
+            "selection_policy'='semantic_group_median'",
+            "selection_policy'='semantic_catalog_attributes_median'",
+            'row_number() OVER (ORDER BY base_price,resource_code,dataset_source_priority,id DESC)',
+            "selection_policy='exact_code' AND exact_rank=1",
+            'source_priority=(SELECT min(source_priority) FROM eligible)',
+            'project_material_evidence',
+            'eg_project_material_rule_immutable',
+            'eg_project_price_input_append',
+            'eg_finalized_project_material_price_immutable',
+            'eg_finalized_project_material_dataset_immutable',
+            'project_material_formula_rollback_blocked',
+            'REVOKE ALL ON FUNCTION public.eg_expected_package_item_price_v4(bigint) FROM PUBLIC',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
     private function source(): string
     {
         return (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001200_harden_estimate_generation_pricing_boundary.php');

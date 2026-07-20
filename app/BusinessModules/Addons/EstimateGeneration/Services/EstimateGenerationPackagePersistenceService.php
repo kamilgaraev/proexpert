@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEst
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -16,7 +17,9 @@ use Illuminate\Support\Facades\Log;
 
 class EstimateGenerationPackagePersistenceService
 {
-    private const CURRENT_PRICING_FORMULA_VERSION = 'project_resource:v3';
+    private const NORMATIVE_PRICING_FORMULA_VERSION = 'project_resource:v3';
+
+    private const PROJECT_MATERIAL_PRICING_FORMULA_VERSION = 'supplementary_project_material:v4';
 
     public function __construct(
         private readonly ?AuthoritativePackagePricingGuard $pricingGuard = null,
@@ -83,6 +86,71 @@ class EstimateGenerationPackagePersistenceService
 
             return false;
         });
+    }
+
+    /** @param array<string, mixed> $draft */
+    public function assertCalculatedPricesFinalized(EstimateGenerationSession $session, array $draft): void
+    {
+        $expected = [];
+        foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
+            if (! is_array($localEstimate)) {
+                continue;
+            }
+            $packageKey = $this->packageKey($localEstimate, (int) $localIndex);
+            foreach ($this->workItems($localEstimate) as $workIndex => $workItem) {
+                if ((string) ($workItem['item_type'] ?? 'priced_work') !== 'priced_work'
+                    || ! in_array((string) ($workItem['pricing_status'] ?? ''), ['calculated', 'calculated_review_required'], true)) {
+                    continue;
+                }
+                $logicalKey = (string) ($workItem['key'] ?? $packageKey.'.item.'.($workIndex + 1));
+                $expected[$packageKey.'|'.$logicalKey] = $this->hasProjectMaterialSelection($workItem)
+                    ? self::PROJECT_MATERIAL_PRICING_FORMULA_VERSION
+                    : self::NORMATIVE_PRICING_FORMULA_VERSION;
+            }
+        }
+        if ($expected === []) {
+            return;
+        }
+
+        $persisted = EstimateGenerationPackageItem::query()
+            ->select('estimate_generation_package_items.*', 'estimate_generation_packages.key as package_key')
+            ->join('estimate_generation_packages', 'estimate_generation_packages.id', '=', 'estimate_generation_package_items.package_id')
+            ->where('estimate_generation_packages.session_id', $session->id)
+            ->whereIn('estimate_generation_packages.key', array_values(array_unique(array_map(
+                static fn (string $key): string => explode('|', $key, 2)[0],
+                array_keys($expected),
+            ))))
+            ->latestLogicalRevisions()
+            ->get();
+        foreach ($persisted as $item) {
+            $identity = (string) $item->getAttribute('package_key').'|'.(string) ($item->logical_key ?? $item->key);
+            if (! isset($expected[$identity])) {
+                continue;
+            }
+            if ($item->pricing_finalized_at !== null
+                && (float) ($item->total_cost ?? 0) > 0
+                && data_get($item->price_snapshot, 'coefficients.pricing_formula_version') === $expected[$identity]) {
+                unset($expected[$identity]);
+            }
+        }
+
+        if ($expected !== []) {
+            throw new \DomainException('Calculated draft prices were not finalized by the authoritative pricing boundary.');
+        }
+    }
+
+    /** @param array<string, mixed> $workItem */
+    private function hasProjectMaterialSelection(array $workItem): bool
+    {
+        foreach (['materials', 'labor', 'machinery', 'other_resources'] as $group) {
+            foreach ($workItem[$group] ?? [] as $resource) {
+                if (is_array($resource) && is_array($resource['project_material_selection'] ?? null)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -346,6 +414,17 @@ class EstimateGenerationPackagePersistenceService
                 'updated_at' => now(),
             ]);
         }
+        foreach ($pricing['project_material_inputs'] as $ordinal => $input) {
+            DB::table('estimate_generation_package_item_project_price_inputs')->insert([
+                'package_item_id' => $item->id,
+                'ordinal' => $ordinal + 1,
+                'resource_price_id' => $input['resource_price_id'],
+                'project_material_rule_id' => $input['project_material_rule_id'],
+                'selection' => json_encode($input['selection'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
         $this->reportPricingInputCardinalityMismatch($item, $pricing['inputs'], $workItem);
         DB::select('SELECT public.eg_finalize_package_item_price(?)', [$item->id]);
     }
@@ -386,10 +465,10 @@ class EstimateGenerationPackagePersistenceService
         ]);
     }
 
-    /** @param array{item: array<string, mixed>, inputs: list<array<string, int|null>>} $pricing */
+    /** @param array{item: array<string, mixed>, inputs: list<array<string, int|null>>, project_material_inputs: list<array<string, mixed>>, formula_version: string} $pricing */
     private function samePricingIdentity(EstimateGenerationPackageItem $latest, array $pricing): bool
     {
-        if (data_get($latest->price_snapshot, 'coefficients.pricing_formula_version') !== self::CURRENT_PRICING_FORMULA_VERSION) {
+        if (data_get($latest->price_snapshot, 'coefficients.pricing_formula_version') !== $pricing['formula_version']) {
             return false;
         }
         foreach (['quantity_evidence_id', 'quantity_evidence_fingerprint', 'estimate_norm_id', 'region_id', 'price_zone_id', 'period_id', 'regional_price_version_id'] as $column) {
@@ -405,10 +484,27 @@ class EstimateGenerationPackagePersistenceService
                 'unit_conversion_id' => $input->unit_conversion_id === null ? null : (int) $input->unit_conversion_id,
             ])->all();
 
-        return $stored === $pricing['inputs'];
+        if ($stored !== $pricing['inputs']) {
+            return false;
+        }
+
+        $projectMaterials = DB::table('estimate_generation_package_item_project_price_inputs')
+            ->where('package_item_id', $latest->id)
+            ->orderBy('ordinal')
+            ->get(['resource_price_id', 'project_material_rule_id', 'selection'])
+            ->map(static fn (object $input): array => [
+                'resource_price_id' => (int) $input->resource_price_id,
+                'project_material_rule_id' => (int) $input->project_material_rule_id,
+                'selection' => is_string($input->selection)
+                    ? json_decode($input->selection, true, flags: JSON_THROW_ON_ERROR)
+                    : (array) $input->selection,
+            ])->all();
+
+        return CanonicalPipelineJson::encode($projectMaterials)
+            === CanonicalPipelineJson::encode($pricing['project_material_inputs']);
     }
 
-    /** @return array{item: array<string, mixed>, inputs: list<array<string, int|null>>}|null */
+    /** @return array{item: array<string, mixed>, inputs: list<array<string, int|null>>, project_material_inputs: list<array<string, mixed>>, formula_version: string}|null */
     private function authoritativePricing(EstimateGenerationPackage $package, array $workItem, string $logicalKey): ?array
     {
         if ((string) ($workItem['item_type'] ?? 'priced_work') !== 'priced_work') {
@@ -454,6 +550,16 @@ class EstimateGenerationPackagePersistenceService
         if ($inputs === null) {
             return null;
         }
+        $projectMaterialInputs = $this->pricingGuard->projectMaterialInputs(
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $session->id,
+            $evidenceSourceVersion,
+            $workItem,
+        );
+        if ($projectMaterialInputs === null) {
+            return null;
+        }
 
         return ['item' => [
             'price_snapshot' => null,
@@ -468,7 +574,13 @@ class EstimateGenerationPackagePersistenceService
             'quantity_evidence_fingerprint' => $evidenceFingerprint,
             'estimate_norm_id' => $normId,
             ...$context,
-        ], 'inputs' => $inputs];
+        ],
+            'inputs' => $inputs,
+            'project_material_inputs' => $projectMaterialInputs,
+            'formula_version' => $projectMaterialInputs === []
+                ? self::NORMATIVE_PRICING_FORMULA_VERSION
+                : self::PROJECT_MATERIAL_PRICING_FORMULA_VERSION,
+        ];
     }
 
     private function positiveInt(mixed $value): ?int

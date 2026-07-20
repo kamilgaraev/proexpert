@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => 'b8d5151aef7bbad3605abaeb1021a20a0936463c7ac0055dbdfa0631470524d8',
-        'training' => '82c382a0e96db5662cede171335a660e3fa1d66a5892ef7f522931f42f39dfd7',
-        'pricing' => '82c382a0e96db5662cede171335a660e3fa1d66a5892ef7f522931f42f39dfd7',
+        'geometry' => 'd35c07a6a74a5ad5e978d8b64f40bf3cb4a4c7ae5bb023f1c456baea24bdf78d',
+        'training' => '17ad0dc5df85ac6f22ae5f591850f8cdeb2f80bd52420b50a88f378ccce5501c',
+        'pricing' => '17ad0dc5df85ac6f22ae5f591850f8cdeb2f80bd52420b50a88f378ccce5501c',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = '0a2d268b2aea61ee30b959dce0fd3ed9f52380303418bba242fd564d45caf527';
+    private const FRESH_INVENTORY_DIGEST = '2d057c3f030f52b028a81b059764ef91d48fa3861c84e911fdae6755046babaa';
 
     private const SUBJECT = [
         'geometry' => [
@@ -127,6 +127,16 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001125_create_canonical_settings_snapshot_hashes.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001150_enforce_exactly_once_ai_budget_wire_claims.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001200_close_truthful_settings_schema.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000100_price_only_positive_normative_resources.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000200_keep_zero_resource_price_inputs_compatible.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000300_exclude_normative_summary_rows_from_pricing.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000400_allow_pinned_fsbc_resource_prices.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000500_backfill_norm_search_and_implicit_units.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000600_scale_quantity_by_norm_unit.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000700_parenthesize_pricing_evidence_unit.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000800_price_project_selected_resources.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_19_000100_register_scaled_piece_unit_conversion.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000100_finalize_supplementary_project_material_prices.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void

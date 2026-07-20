@@ -134,10 +134,41 @@ final class PackagePersistenceStaleFenceTest extends TestCase
             $table->unsignedBigInteger('unit_conversion_id')->nullable();
             $table->timestamps();
         });
+        Schema::create('estimate_generation_project_material_rules', function (Blueprint $table): void {
+            $table->id();
+            $table->string('catalog_version');
+            $table->string('work_item_key');
+            $table->string('assumption_code');
+            $table->string('material_unit');
+            $table->string('source_unit');
+            $table->decimal('quantity_per_work_unit', 30, 12);
+            $table->decimal('price_factor', 30, 12);
+        });
+        Schema::create('estimate_generation_package_item_project_price_inputs', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('package_item_id');
+            $table->unsignedBigInteger('project_material_rule_id');
+            $table->unsignedBigInteger('resource_price_id');
+            $table->unsignedInteger('ordinal');
+            $table->json('selection');
+            $table->timestamps();
+        });
+        DB::table('estimate_generation_project_material_rules')->insert([
+            'id' => 501,
+            'catalog_version' => 'residential_project_material:v3',
+            'work_item_key' => 'lighting.fixtures',
+            'assumption_code' => 'residential_led_ceiling_luminaire_18w',
+            'material_unit' => 'pcs',
+            'source_unit' => 'pcs',
+            'quantity_per_work_unit' => '1',
+            'price_factor' => '1',
+        ]);
     }
 
     protected function tearDown(): void
     {
+        Schema::dropIfExists('estimate_generation_package_item_project_price_inputs');
+        Schema::dropIfExists('estimate_generation_project_material_rules');
         Schema::dropIfExists('estimate_generation_package_item_price_inputs');
         Schema::dropIfExists('estimate_generation_package_items');
         Schema::dropIfExists('estimate_generation_packages');
@@ -222,6 +253,81 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         self::assertNull($item->pricing_finalized_at);
         self::assertSame(0, FinalizerTrackingSqliteConnection::$finalizerCalls);
         self::assertSame([], DB::table('estimate_generation_package_item_price_inputs')->pluck('norm_resource_id')->all());
+    }
+
+    #[Test]
+    public function supplementary_project_material_uses_typed_rule_and_is_included_in_finalized_package_total(): void
+    {
+        $current = 'sha256:'.str_repeat('b', 64);
+        [$session, , $service] = $this->fixture($current);
+        $workItem = $this->acceptedWorkItem($session, $current);
+        $workItem['specialization_scenario'] = [
+            'work_item_key' => 'lighting.fixtures',
+            'assumption_code' => 'residential_led_ceiling_luminaire_18w',
+        ];
+        $workItem['metadata']['specialization_scenario'] = $workItem['specialization_scenario'];
+        $selection = [
+            'version' => 'residential_project_material:v3',
+            'work_item_key' => 'lighting.fixtures',
+            'assumption_code' => 'residential_led_ceiling_luminaire_18w',
+            'selection_policy' => 'exact_code',
+            'source_unit_price' => '2925',
+            'source_price_unit' => 'pcs',
+            'price_conversion_factor' => '1',
+            'preferred_resource_code' => '59.1.20.03-0798',
+            'candidate_pool_version' => 'project_material_candidate_pool:v2',
+            'candidate_resource_price_ids' => [9101],
+        ];
+        $workItem['materials'][] = [
+            'code' => '59.1.20.03-0798',
+            'name' => 'Светильник светодиодный потолочный',
+            'unit' => 'pcs',
+            'price_unit' => 'pcs',
+            'quantity_per_unit' => '1',
+            'price_source' => 'fsnb_base',
+            'price_source_version' => '2026.1',
+            'project_material_selection' => $selection,
+            'normative_ref' => [
+                'norm_resource_id' => null,
+                'price_id' => 9101,
+                'resource_code' => '59.1.20.03-0798',
+                'price_source' => 'fsnb_base',
+                'price_source_version' => '2026.1',
+                'project_material_selection' => $selection,
+            ],
+        ];
+
+        $service->syncFromDraft($session, $this->draft($current, [$workItem]));
+
+        $package = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole();
+        $item = $package->items()->sole();
+        self::assertNotNull($item->pricing_finalized_at);
+        self::assertSame('supplementary_project_material:v4', data_get($item->price_snapshot, 'coefficients.pricing_formula_version'));
+        self::assertSame('321.00', (string) $item->total_cost);
+        self::assertSame('321.00', (string) data_get($package->fresh()->totals, 'total_cost'));
+        self::assertSame(501, (int) DB::table('estimate_generation_package_item_project_price_inputs')->value('project_material_rule_id'));
+        self::assertSame(9101, (int) DB::table('estimate_generation_package_item_project_price_inputs')->value('resource_price_id'));
+        $service->assertCalculatedPricesFinalized($session, $this->draft($current, [$workItem]));
+
+        $service->syncFromDraft($session, $this->draft($current, [$workItem]));
+        self::assertSame(1, $package->items()->count());
+
+        $item->forceFill(['price_snapshot' => ['coefficients' => ['pricing_formula_version' => 'project_resource:v3']]])->save();
+        try {
+            $service->assertCalculatedPricesFinalized($session, $this->draft($current, [$workItem]));
+            self::fail('A supplementary project material must not accept a positive v3 price as finalized.');
+        } catch (\DomainException $exception) {
+            self::assertStringContainsString('authoritative pricing boundary', $exception->getMessage());
+        }
+
+        $item->forceFill([
+            'pricing_finalized_at' => null,
+            'total_cost' => '0.00',
+            'price_snapshot' => ['coefficients' => ['pricing_formula_version' => 'supplementary_project_material:v4']],
+        ])->save();
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('authoritative pricing boundary');
+        $service->assertCalculatedPricesFinalized($session, $this->draft($current, [$workItem]));
     }
 
     #[Test]
@@ -384,6 +490,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         ]);
         $item = [
             'key' => $key, 'item_type' => 'priced_work', 'quantity' => '1.000000', 'unit' => 'm2',
+            'pricing_status' => 'calculated',
             'normative_match' => ['norm_id' => 101],
             'price_snapshot' => ['region_id' => 16, 'zone_id' => 3, 'period_id' => 8, 'version_id' => 11],
             'materials' => [['normative_ref' => ['norm_resource_id' => 7001, 'price_id' => 9001]]],
@@ -406,10 +513,18 @@ final class FinalizerTrackingSqliteConnection extends SQLiteConnection
     {
         if ($query === 'SELECT public.eg_finalize_package_item_price(?)') {
             self::$finalizerCalls++;
-            $snapshot = ['coefficients' => ['pricing_formula_version' => 'project_resource:v3']];
+            $hasProjectMaterial = $this->table('estimate_generation_package_item_project_price_inputs')
+                ->where('package_item_id', (int) $bindings[0])
+                ->exists();
+            $snapshot = ['coefficients' => ['pricing_formula_version' => $hasProjectMaterial
+                ? 'supplementary_project_material:v4'
+                : 'project_resource:v3']];
             $this->table('estimate_generation_package_items')->where('id', (int) $bindings[0])->update([
                 'pricing_finalized_at' => '2026-07-13 00:00:00',
                 'price_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
+                'unit_price' => $hasProjectMaterial ? '321.000000' : '0.000000',
+                'direct_cost' => $hasProjectMaterial ? '321.00' : '0.00',
+                'total_cost' => $hasProjectMaterial ? '321.00' : '0.00',
             ]);
 
             return [];

@@ -136,7 +136,10 @@ final readonly class AssembleMatchedResources
             || ($selection['version'] ?? null) !== ResidentialProjectMaterialCatalog::VERSION
             || ($selection['work_item_key'] ?? null) !== $requirement['work_item_key']
             || ($selection['assumption_code'] ?? null) !== $requirement['assumption_code']
-            || ($selection['preferred_resource_code'] ?? null) !== $requirement['resource_code']) {
+            || ($selection['preferred_resource_code'] ?? null) !== $requirement['resource_code']
+            || ($selection['candidate_pool_version'] ?? null) !== ResidentialProjectMaterialCatalog::CANDIDATE_POOL_VERSION
+            || ! is_array($selection['candidate_resource_price_ids'] ?? null)
+            || $selection['candidate_resource_price_ids'] === []) {
             return false;
         }
 

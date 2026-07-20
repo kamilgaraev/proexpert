@@ -90,6 +90,9 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             Log::info('estimate_generation.quantity_evidence_plan_outcomes', [
                 'session_id' => $context->sessionId,
                 'project_id' => $context->projectId,
+                'composition_advice_status' => $advice->status,
+                'composition_advice_model' => $advice->model,
+                'composition_advice_decisions_count' => count($advice->decisions),
                 ...$this->quantityEvidenceSummary($payload['local_estimates']),
             ]);
         }
