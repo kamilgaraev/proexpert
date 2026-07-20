@@ -28,6 +28,7 @@ final class CustomerLegalArchiveDocumentResource extends JsonResource
             'current_version' => $this->whenLoaded('currentVersion', fn () => $this->currentVersion === null ? null : $this->version($this->currentVersion)),
             'versions' => $this->whenLoaded('versions', fn () => $this->versions->map(fn ($version) => $this->version($version))->values()),
             'workflow_summary' => $workflow,
+            'obligations' => $this->whenLoaded('obligations', fn () => $this->obligations->map(fn ($obligation) => ['id' => $obligation->id, 'title' => $obligation->title, 'status' => $obligation->status, 'due_at' => $obligation->due_at?->toISOString()])->values()),
         ];
     }
 

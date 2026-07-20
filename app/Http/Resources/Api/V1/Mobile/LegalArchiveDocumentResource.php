@@ -37,6 +37,7 @@ final class LegalArchiveDocumentResource extends JsonResource
             'versions' => $this->whenLoaded('versions', fn (): array => $this->versions->map(fn ($version): array => $this->version($version))->all()),
             'signature_summary' => ['status' => ((int) ($this->signatures_count ?? 0)) > 0 ? 'registered' : 'not_signed'],
             'workflow_summary' => $this->workflowSummary,
+            'obligations' => $this->whenLoaded('obligations', fn (): array => $this->obligations->map(fn ($obligation): array => ['id' => (int) $obligation->id, 'title' => (string) $obligation->title, 'status' => (string) $obligation->status, 'due_at' => $obligation->due_at?->toISOString()])->all()),
             'updated_at' => $this->updated_at?->toISOString(),
         ];
     }
