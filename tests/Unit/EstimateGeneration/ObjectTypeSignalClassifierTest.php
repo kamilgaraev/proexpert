@@ -25,5 +25,6 @@ final class ObjectTypeSignalClassifierTest extends TestCase
         yield ['Загородный таунхаус'];
         yield ['Дачный дом с мансардой'];
         yield ['Особняк с гаражом'];
+        yield ['ИЖС'];
     }
 }

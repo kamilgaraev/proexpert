@@ -66,8 +66,8 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 array_values($quantities),
             );
         }
-        $payload = $this->compiler->compile($analysis, null, true);
-        $advice = $this->compositionAdvisor->advise($analysis, $payload, $context);
+        $baselinePayload = $this->compiler->compile($analysis, null, true);
+        $advice = $this->compositionAdvisor->advise($analysis, $baselinePayload, $context);
         [$analysis, $quantities] = $this->materializeScopeDecisionQuantities(
             $analysis,
             $quantities,
@@ -83,7 +83,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             );
         }
         $payload = $this->compiler->compile($analysis, null, true);
-        $payload = $this->compositionReconciler->reconcile($payload, $advice);
+        $payload = $this->compositionReconciler->reconcile($payload, $advice, $baselinePayload);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
