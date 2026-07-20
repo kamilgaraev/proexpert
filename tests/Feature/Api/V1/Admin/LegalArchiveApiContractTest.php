@@ -7,17 +7,16 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware;
 use App\Domain\Authorization\Services\AuthorizationService;
-use App\Http\Controllers\Api\V1\Admin\LegalArchive\LegalArchiveApiController;
+use App\Models\Contract;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAccessService;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
-use App\Services\LegalArchive\LegalArchiveLockConflict;
+use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator;
 use App\Services\LegalArchive\Profiles\LegalDocumentTypeProfileService;
 use App\Services\Project\UserProjectAccessService;
 use DomainException;
-use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,11 +24,9 @@ use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Validation\ValidationException;
 use Mockery;
-use PDO;
 use Tests\TestCase;
-use Throwable;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 final class LegalArchiveApiContractTest extends TestCase
 {
@@ -38,6 +35,9 @@ final class LegalArchiveApiContractTest extends TestCase
     private AuthorizationService $authorization;
 
     private bool $permissionAllowed = true;
+
+    /** @var list<string> */
+    private array $deniedPermissions = [];
 
     public function refreshDatabase(): void {}
 
@@ -55,9 +55,14 @@ final class LegalArchiveApiContractTest extends TestCase
         DB::setDefaultConnection('legal_api_contract');
         $this->createSchema();
         $this->authorization = Mockery::mock(AuthorizationService::class);
-        $this->authorization->shouldReceive('can')->andReturnUsing(fn (): bool => $this->permissionAllowed);
+        $this->authorization->shouldReceive('can')->andReturnUsing(
+            fn (User $user, string $permission): bool => $this->permissionAllowed
+                && ! in_array($permission, $this->deniedPermissions, true),
+        );
         $this->authorization->shouldReceive('getUserRoleSlugs')->andReturn([]);
+        $this->authorization->shouldReceive('canAccessInterface')->andReturnTrue();
         $this->app->instance(AuthorizationService::class, $this->authorization);
+        $this->app->instance(LegalDocumentAudit::class, new LegalArchiveApiContractAudit);
 
         $projectAccess = Mockery::mock(UserProjectAccessService::class);
         $projectAccess->shouldReceive('queryAccessibleProjects')->andReturnUsing(
@@ -86,12 +91,15 @@ final class LegalArchiveApiContractTest extends TestCase
             'admin.legal-archive.documents.store' => 'authorize:legal_archive.create',
             'admin.legal-archive.documents.files.store' => 'authorize:legal_archive.files.upload',
             'admin.legal-archive.workflow.submit' => 'authorize:legal_archive.workflow.submit',
+            'admin.legal-archive.documents.available-actions' => 'authorize:legal_archive.workflow.view',
             'admin.legal-archive.signatures.requests.store' => 'authorize:legal_archive.signatures.request',
             'admin.legal-archive.signatures.index' => 'authorize:legal_archive.signatures.view',
             'admin.legal-archive.signatures.verification-history' => 'authorize:legal_archive.signatures.view',
             'admin.legal-archive.access.store' => 'authorize:legal_archive.external_access.manage',
             'admin.legal-archive.retention.update' => 'authorize:legal_archive.retention.manage',
             'admin.legal-archive.type-profiles.store' => 'authorize:legal_archive.settings.manage',
+            'admin.legal-archive.type-profiles.show' => 'authorize:legal_archive.view',
+            'admin.legal-archive.workflow-templates.show' => 'authorize:legal_archive.view',
         ];
 
         foreach ($expected as $name => $permission) {
@@ -127,68 +135,6 @@ final class LegalArchiveApiContractTest extends TestCase
         self::assertNull($templateRoute->parameter('template'));
     }
 
-    public function test_admin_response_contract_covers_not_found_conflict_validation_and_etag(): void
-    {
-        $controller = new LegalArchiveApiContractProbe;
-        $request = Request::create('/api/v1/admin/legal-archive/documents/42', 'PATCH');
-        $request->attributes->set('current_organization_id', 7);
-
-        $notFound = $controller->fail(new AuthorizationException, $request, ['document_id' => 42]);
-        self::assertSame(404, $notFound->getStatusCode());
-
-        $conflict = $controller->fail(LegalArchiveLockConflict::forDocument(42, 9), $request, ['document_id' => 42]);
-        self::assertSame(409, $conflict->getStatusCode());
-        self::assertSame('"legal-document-42-v9"', $conflict->headers->get('ETag'));
-        self::assertSame('/api/v1/admin/legal-archive/documents/42', $conflict->headers->get('Location'));
-        self::assertSame(9, $conflict->getData(true)['current_lock_version']);
-        self::assertSame('legal_document', $conflict->getData(true)['aggregate_kind']);
-        self::assertSame('42', $conflict->getData(true)['aggregate_id']);
-
-        $invalid = $controller->fail(ValidationException::withMessages(['lock_version' => ['required']]), $request);
-        self::assertSame(422, $invalid->getStatusCode());
-
-        $document = new LegalArchiveDocument;
-        $document->forceFill(['id' => 42, 'lock_version' => 10]);
-        $success = $controller->tag(new JsonResponse(['success' => true]), $document);
-        self::assertSame('"legal-document-42-v10"', $success->headers->get('ETag'));
-        self::assertSame('/api/v1/admin/legal-archive/documents/42', $success->headers->get('Location'));
-
-        $user = new User;
-        $user->forceFill(['id' => 5, 'current_organization_id' => 7]);
-        $deniedRequest = Request::create('/api/v1/admin/legal-archive/documents', 'POST');
-        $deniedRequest->attributes->set('current_organization_id', 7);
-        $deniedRequest->setUserResolver(static fn (): User => $user);
-        $authorization = Mockery::mock(AuthorizationService::class);
-        $authorization->shouldReceive('can')->once()->andReturnFalse();
-        $denied = (new AuthorizeMiddleware($authorization))->handle(
-            $deniedRequest,
-            static fn (): JsonResponse => new JsonResponse([], 200),
-            'legal_archive.create',
-        );
-        self::assertSame(403, $denied->getStatusCode());
-    }
-
-    public function test_conflicts_identify_the_exact_aggregate_and_refresh_resource(): void
-    {
-        $controller = new LegalArchiveApiContractProbe;
-        $request = Request::create('/api/v1/admin/legal-archive/workflow-steps/81/approve', 'POST');
-        $request->attributes->set('current_organization_id', 7);
-
-        $step = $controller->fail(LegalArchiveLockConflict::forWorkflowStep(81, 4, 42), $request);
-        self::assertSame(409, $step->getStatusCode());
-        self::assertSame('legal_workflow_step', $step->getData(true)['aggregate_kind']);
-        self::assertSame('81', $step->getData(true)['aggregate_id']);
-        self::assertSame(42, $step->getData(true)['document_id']);
-        self::assertSame('/api/v1/admin/legal-archive/documents/42/available-actions', $step->getData(true)['refresh_url']);
-        self::assertSame('"legal-workflow-step-81-v4"', $step->headers->get('ETag'));
-
-        $profile = $controller->fail(LegalArchiveLockConflict::forProfile('profile-id', 3), $request);
-        self::assertSame('document_type_profile', $profile->getData(true)['aggregate_kind']);
-        self::assertSame('profile-id', $profile->getData(true)['aggregate_id']);
-        self::assertSame('/api/v1/admin/legal-archive/type-profiles/profile-id', $profile->headers->get('Location'));
-        self::assertSame('"legal-profile-profile-id-v3"', $profile->headers->get('ETag'));
-    }
-
     public function test_list_detail_and_actions_run_through_canonical_routes_real_services_and_permission_middleware(): void
     {
         DB::table('legal_archive_document_type_profiles')->insert([
@@ -205,35 +151,80 @@ final class LegalArchiveApiContractTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+        DB::table('legal_archive_document_type_profiles')->insert([
+            'id' => 'b81f7350-c0b1-4e06-a1cb-8662b23eab08',
+            'organization_id' => 8,
+            'code' => 'customer.supply',
+            'base_code' => 'contract.supply',
+            'name' => 'Поставка владельца 8',
+            'schema' => '[]',
+            'required_fields' => '[]',
+            'required_file_roles' => '[]',
+            'is_active' => true,
+            'lock_version' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
         $owned = $this->documentRow(42, 7, 'Договор поставки');
         $owned['type_profile_code'] = 'customer.supply';
         $retired = $this->documentRow(45, 7, 'Архивный профиль');
         $retired['type_profile_code'] = 'retired.profile';
+        $external = $this->documentRow(43, 8, 'Внешний договор');
+        $external['type_profile_code'] = 'customer.supply';
         DB::table('legal_archive_documents')->insert([
             $owned,
             $retired,
-            $this->documentRow(43, 8, 'Чужой договор'),
+            $external,
+            $this->documentRow(44, 8, 'Недоступный договор'),
+        ]);
+        DB::table('legal_document_access_grants')->insert([
+            'organization_id' => 8,
+            'document_id' => 43,
+            'subject_organization_id' => 7,
+            'subject_user_id' => null,
+            'subject_kind' => 'external_org',
+            'subject_role_slug' => null,
+            'abilities' => json_encode(['view'], JSON_THROW_ON_ERROR),
+            'granted_by_user_id' => 9,
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
         $actor = $this->actor();
 
         $list = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents?per_page=100', 'GET'), $actor);
         self::assertSame(200, $list->getStatusCode());
-        self::assertSame([45, 42], array_column($list->getData(true)['data'], 'id'));
+        self::assertSame([45, 43, 42], array_column($list->getData(true)['data'], 'id'));
         self::assertSame(100, $list->getData(true)['meta']['per_page']);
         $listed = collect($list->getData(true)['data'])->keyBy('id');
         self::assertSame('customer.supply', $listed[42]['type_profile']['code']);
         self::assertSame('Специальная поставка', $listed[42]['type_profile']['label']);
         self::assertSame('retired.profile', $listed[45]['type_profile']['code']);
+        self::assertSame('Поставка владельца 8', $listed[43]['type_profile']['label']);
+        self::assertSame('not_available', $listed[43]['workflow_summary']['status']);
+        self::assertContains('workflow_permission_denied', $listed[43]['workflow_summary']['problem_flags']);
         self::assertSame('submit', $listed[42]['workflow_summary']['available_action_details'][0]['action']);
         self::assertSame(0, $listed[42]['completeness']['files']);
         self::assertContains('no_files', $listed[42]['problem_flags']);
+
+        $this->deniedPermissions = ['legal_archive.workflow.view'];
+        $viewerList = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents?per_page=100', 'GET'), $actor);
+        self::assertSame(200, $viewerList->getStatusCode());
+        $viewerDocuments = collect($viewerList->getData(true)['data'])->keyBy('id');
+        self::assertSame('not_available', $viewerDocuments[42]['workflow_summary']['status']);
+        self::assertSame('legal_archive.workflow.view', $viewerDocuments[42]['workflow_summary']['available_action_details'][0]['permission']);
+        $this->deniedPermissions = [];
 
         $detail = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/42', 'GET'), $actor);
         self::assertSame(200, $detail->getStatusCode());
         self::assertSame('42', (string) $detail->getData(true)['data']['id']);
         self::assertSame('"legal-document-42-v3"', $detail->headers->get('ETag'));
 
-        $foreign = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/43', 'GET'), $actor);
+        $externalDetail = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/43', 'GET'), $actor);
+        self::assertSame(200, $externalDetail->getStatusCode());
+        self::assertSame('Поставка владельца 8', $externalDetail->getData(true)['data']['type_profile']['label']);
+        self::assertSame('not_available', $externalDetail->getData(true)['data']['workflow_summary']['status']);
+
+        $foreign = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/44', 'GET'), $actor);
         self::assertSame(404, $foreign->getStatusCode());
 
         $actions = $this->runCanonical(Request::create('/api/v1/admin/legal-archive/documents/42/available-actions', 'GET'), $actor);
@@ -245,24 +236,98 @@ final class LegalArchiveApiContractTest extends TestCase
         self::assertSame(403, $denied->getStatusCode());
     }
 
-    public function test_controlled_sqlite_fixture_rejects_cross_tenant_and_stale_concurrent_mutations(): void
+    public function test_http_kernel_enforces_validation_mutation_replay_conflict_and_resolvable_etags(): void
     {
-        $database = new PDO('sqlite::memory:');
-        $database->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $database->exec('CREATE TABLE legal_archive_documents (id INTEGER PRIMARY KEY, organization_id INTEGER NOT NULL, primary_project_id INTEGER, lock_version INTEGER NOT NULL)');
-        $database->exec('INSERT INTO legal_archive_documents VALUES (42, 7, 70, 3)');
+        $headers = $this->kernelHeaders();
+        DB::table('legal_archive_documents')->insert([
+            $this->documentRow(42, 7, 'Исходный договор'),
+            $this->documentRow(43, 8, 'Чужой договор'),
+        ]);
 
-        $first = $database->prepare('UPDATE legal_archive_documents SET lock_version = lock_version + 1 WHERE id = ? AND organization_id = ? AND primary_project_id = ? AND lock_version = ?');
-        $first->execute([42, 7, 70, 3]);
-        self::assertSame(1, $first->rowCount());
+        $this->deniedPermissions = ['legal_archive.update'];
+        $denied = $this->patchJson('/api/v1/admin/legal-archive/documents/42', [
+            'lock_version' => 3,
+            'title' => 'Запрещённое изменение',
+        ], $headers);
+        $denied->assertForbidden();
+        $this->deniedPermissions = [];
 
-        $stale = $database->prepare('UPDATE legal_archive_documents SET lock_version = lock_version + 1 WHERE id = ? AND organization_id = ? AND primary_project_id = ? AND lock_version = ?');
-        $stale->execute([42, 7, 70, 3]);
-        self::assertSame(0, $stale->rowCount());
+        $invalid = $this->patchJson('/api/v1/admin/legal-archive/documents/42', ['title' => 'Без версии'], $headers);
+        $invalid->assertStatus(422)->assertJsonValidationErrors(['lock_version']);
 
-        $crossTenant = $database->prepare('SELECT id FROM legal_archive_documents WHERE id = ? AND organization_id = ?');
-        $crossTenant->execute([42, 8]);
-        self::assertFalse($crossTenant->fetchColumn());
+        $updated = $this->patchJson('/api/v1/admin/legal-archive/documents/42', [
+            'lock_version' => 3,
+            'title' => 'Обновлённый договор',
+        ], $headers);
+        $updated->assertOk()->assertJsonPath('data.title', 'Обновлённый договор');
+        self::assertSame('"legal-document-42-v4"', $updated->headers->get('ETag'));
+        self::assertSame('/api/v1/admin/legal-archive/documents/42', $updated->headers->get('Location'));
+
+        $replay = $this->patchJson('/api/v1/admin/legal-archive/documents/42', [
+            'lock_version' => 3,
+            'title' => 'Повтор команды',
+        ], $headers);
+        $replay->assertStatus(409)
+            ->assertJsonPath('current_lock_version', 4)
+            ->assertJsonPath('aggregate_kind', 'legal_document')
+            ->assertJsonPath('aggregate_id', '42');
+        self::assertSame('"legal-document-42-v4"', $replay->headers->get('ETag'));
+        self::assertSame('/api/v1/admin/legal-archive/documents/42', $replay->headers->get('Location'));
+        self::assertSame('Обновлённый договор', DB::table('legal_archive_documents')->where('id', 42)->value('title'));
+
+        $foreign = $this->patchJson('/api/v1/admin/legal-archive/documents/43', [
+            'lock_version' => 3,
+            'title' => 'Попытка изменения',
+        ], $headers);
+        $foreign->assertNotFound();
+
+        $standard = $this->getJson('/api/v1/admin/legal-archive/type-profiles/contract.supply', $headers);
+        $standard->assertOk()->assertJsonPath('data.code', 'contract.supply');
+        self::assertSame('/api/v1/admin/legal-archive/type-profiles/contract.supply', $standard->headers->get('Location'));
+        $standardReloaded = $this->getJson((string) $standard->headers->get('Location'), $headers);
+        $standardReloaded->assertOk();
+        self::assertSame($standard->headers->get('ETag'), $standardReloaded->headers->get('ETag'));
+
+        DB::table('legal_workflow_templates')->insert([
+            'id' => 71,
+            'organization_id' => 7,
+            'code' => 'supply-approval',
+            'version' => 1,
+            'name' => 'Согласование поставки',
+            'definition_hash' => str_repeat('a', 64),
+            'created_by_user_id' => 5,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('legal_workflow_template_steps')->insert([
+            'template_id' => 71,
+            'organization_id' => 7,
+            'step_key' => 'legal',
+            'label' => 'Юрист',
+            'sequence' => 1,
+            'parallel_group' => 'legal',
+            'required' => true,
+            'actor_type' => 'role',
+            'actor_reference' => 'legal_reviewer',
+            'settings' => json_encode([], JSON_THROW_ON_ERROR),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('legal_workflow_template_heads')->insert([
+            'organization_id' => 7,
+            'code' => 'supply-approval',
+            'template_id' => 71,
+        ]);
+        $template = $this->getJson('/api/v1/admin/legal-archive/workflow-templates/71', $headers);
+        $template->assertOk()->assertJsonPath('data.is_current', true)->assertJsonCount(1, 'data.steps');
+        self::assertSame('/api/v1/admin/legal-archive/workflow-templates/71', $template->headers->get('Location'));
+        $templateReloaded = $this->getJson((string) $template->headers->get('Location'), $headers);
+        $templateReloaded->assertOk();
+        self::assertSame($template->headers->get('ETag'), $templateReloaded->headers->get('ETag'));
+        DB::table('legal_workflow_template_heads')->where('template_id', 71)->delete();
+        $noLongerCurrent = $this->getJson((string) $template->headers->get('Location'), $headers);
+        $noLongerCurrent->assertOk()->assertJsonPath('data.is_current', false);
+        self::assertNotSame($template->headers->get('ETag'), $noLongerCurrent->headers->get('ETag'));
     }
 
     public function test_signature_verification_history_is_bounded_tenant_scoped_and_permission_protected(): void
@@ -382,6 +447,63 @@ final class LegalArchiveApiContractTest extends TestCase
         return $actor;
     }
 
+    /** @return array<string, string> */
+    private function kernelHeaders(): array
+    {
+        DB::table('organizations')->insert([
+            'id' => 7,
+            'name' => 'Организация 7',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('users')->insert([
+            'id' => 5,
+            'name' => 'Администратор архива',
+            'email' => 'legal-archive@example.test',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('organization_user')->insert([
+            'organization_id' => 7,
+            'user_id' => 5,
+            'is_owner' => true,
+            'is_active' => true,
+            'settings' => json_encode([], JSON_THROW_ON_ERROR),
+            'project_access_mode' => 'all',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('authorization_contexts')->insert([
+            [
+                'id' => 1,
+                'type' => 'system',
+                'resource_id' => null,
+                'parent_context_id' => null,
+                'metadata' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'id' => 2,
+                'type' => 'organization',
+                'resource_id' => 7,
+                'parent_context_id' => 1,
+                'metadata' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+        $actor = User::query()->findOrFail(5);
+        $actor->current_organization_id = 7;
+        $token = JWTAuth::fromUser($actor, ['organization_id' => 7]);
+
+        return [
+            'Authorization' => 'Bearer '.$token,
+            'Accept' => 'application/json',
+        ];
+    }
+
     /** @return array<string, mixed> */
     private function documentRow(int $id, int $organizationId, string $title): array
     {
@@ -426,7 +548,31 @@ final class LegalArchiveApiContractTest extends TestCase
             $table->string('name')->nullable();
             $table->string('email')->nullable();
             $table->boolean('is_active')->default(true);
+            $table->timestamps();
             $table->softDeletes();
+        });
+        $schema->create('organizations', static function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+        $schema->create('organization_user', static function (Blueprint $table): void {
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('user_id');
+            $table->boolean('is_owner')->default(false);
+            $table->boolean('is_active')->default(true);
+            $table->json('settings')->nullable();
+            $table->string('project_access_mode')->nullable();
+            $table->timestamps();
+        });
+        $schema->create('authorization_contexts', static function (Blueprint $table): void {
+            $table->id();
+            $table->string('type');
+            $table->unsignedBigInteger('resource_id')->nullable();
+            $table->unsignedBigInteger('parent_context_id')->nullable();
+            $table->json('metadata')->nullable();
+            $table->timestamps();
         });
         $schema->create('legal_archive_documents', static function (Blueprint $table): void {
             $table->id();
@@ -599,24 +745,43 @@ final class LegalArchiveApiContractTest extends TestCase
         });
         $schema->create('legal_workflow_template_heads', static function (Blueprint $table): void {
             $table->unsignedBigInteger('organization_id');
+            $table->string('code');
             $table->unsignedBigInteger('template_id');
         });
         $schema->create('legal_workflow_templates', static function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('organization_id');
+            $table->string('code');
+            $table->unsignedInteger('version');
+            $table->string('name');
+            $table->string('definition_hash', 64);
+            $table->unsignedBigInteger('created_by_user_id')->nullable();
+            $table->timestamps();
+        });
+        $schema->create('legal_workflow_template_steps', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('template_id');
+            $table->unsignedBigInteger('organization_id');
+            $table->string('step_key');
+            $table->string('label');
+            $table->unsignedInteger('sequence');
+            $table->string('parallel_group');
+            $table->boolean('required')->default(true);
+            $table->string('policy_key')->nullable();
+            $table->string('actor_type');
+            $table->string('actor_reference');
+            $table->unsignedInteger('due_in_hours')->nullable();
+            $table->json('settings')->nullable();
+            $table->timestamps();
         });
     }
 }
 
-final class LegalArchiveApiContractProbe extends LegalArchiveApiController
+final class LegalArchiveApiContractAudit implements LegalDocumentAudit
 {
-    public function fail(Throwable $error, Request $request, array $context = []): JsonResponse
-    {
-        return $this->failure($error, $request, 'contract_probe', $context);
-    }
+    public function record(string $event, LegalArchiveDocument $document, User $actor, array $context = []): void {}
 
-    public function tag(JsonResponse $response, LegalArchiveDocument $document): JsonResponse
-    {
-        return $this->etag($response, $document);
-    }
+    public function recordForActorId(string $event, LegalArchiveDocument $document, ?int $actorId, array $context = []): void {}
+
+    public function recordContractForActorId(string $event, Contract $contract, ?int $actorId, array $context = []): void {}
 }

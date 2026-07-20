@@ -187,9 +187,10 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             }
             $actor = $this->actor($request);
             $this->access->authorize($actor, $found, 'view');
+            $summary = $this->actions->forMany($actor, collect([$found]))[(int) $found->id];
             $found->setAttribute(
                 'api_workflow_summary',
-                $this->actions->for($actor, $found)->toArray()['workflow_summary'],
+                $summary->toArray()['workflow_summary'],
             );
 
             return $this->etag(AdminResponse::success(

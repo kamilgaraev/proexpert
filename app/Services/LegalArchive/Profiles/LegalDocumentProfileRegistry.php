@@ -127,30 +127,64 @@ final class LegalDocumentProfileRegistry
      */
     public function findMany(int $organizationId, array $codes): array
     {
-        $codes = array_values(array_unique(array_filter(array_map('trim', $codes))));
-        if ($organizationId <= 0 || $codes === []) {
+        return $this->findManyForOrganizations([$organizationId => $codes])[$organizationId] ?? [];
+    }
+
+    /**
+     * @param  array<int, list<string>>  $codesByOrganization
+     * @return array<int, array<string, LegalDocumentProfile>>
+     */
+    public function findManyForOrganizations(array $codesByOrganization): array
+    {
+        $normalized = [];
+        foreach ($codesByOrganization as $organizationId => $codes) {
+            $organizationId = (int) $organizationId;
+            $codes = array_values(array_unique(array_filter(array_map('trim', $codes))));
+            if ($organizationId > 0 && $codes !== []) {
+                $normalized[$organizationId] = $codes;
+            }
+        }
+        if ($normalized === []) {
             return [];
         }
-        $customCodes = array_values(array_filter(
-            $codes,
-            fn (string $code): bool => ! isset($this->standardProfiles[$code]),
-        ));
-        $custom = $customCodes === []
-            ? collect()
-            : LegalArchiveDocumentTypeProfile::query()->forOrganization($organizationId)->active()
-                ->whereIn('code', $customCodes)->get()->keyBy('code');
-        $bulkRegistry = new self(
-            static fn (int $requestedOrganizationId, string $code): ?array => $requestedOrganizationId === $organizationId
-                ? $custom->get($code)?->toArray()
-                : null,
-            $this->standardProfiles,
-        );
+        $customPairs = [];
+        foreach ($normalized as $organizationId => $codes) {
+            $customCodes = array_values(array_filter(
+                $codes,
+                fn (string $code): bool => ! isset($this->standardProfiles[$code]),
+            ));
+            if ($customCodes !== []) {
+                $customPairs[$organizationId] = $customCodes;
+            }
+        }
+        $custom = collect();
+        if ($customPairs !== []) {
+            $custom = LegalArchiveDocumentTypeProfile::query()->active()
+                ->where(static function ($query) use ($customPairs): void {
+                    foreach ($customPairs as $organizationId => $codes) {
+                        $query->orWhere(static fn ($pair) => $pair
+                            ->where('organization_id', $organizationId)
+                            ->whereIn('code', $codes));
+                    }
+                })
+                ->get()
+                ->groupBy('organization_id');
+        }
         $resolved = [];
-        foreach ($codes as $code) {
-            try {
-                $resolved[$code] = $bulkRegistry->find($organizationId, $code);
-            } catch (InvalidArgumentException) {
-                continue;
+        foreach ($normalized as $organizationId => $codes) {
+            $owned = $custom->get($organizationId, collect())->keyBy('code');
+            $bulkRegistry = new self(
+                static fn (int $requestedOrganizationId, string $code): ?array => $requestedOrganizationId === $organizationId
+                    ? $owned->get($code)?->toArray()
+                    : null,
+                $this->standardProfiles,
+            );
+            foreach ($codes as $code) {
+                try {
+                    $resolved[$organizationId][$code] = $bulkRegistry->find($organizationId, $code);
+                } catch (InvalidArgumentException) {
+                    continue;
+                }
             }
         }
 

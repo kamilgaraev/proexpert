@@ -357,6 +357,63 @@ final class LegalDocumentWorkflowTest extends TestCase
         self::assertFalse($reassign['input_schema']['properties']['due_at']['required']);
     }
 
+    public function test_bulk_action_summaries_are_safe_and_permission_checks_are_bounded(): void
+    {
+        $actor = $this->actor(8, []);
+        $actor->grantedPermissions = ['legal_archive.view'];
+        $documents = collect(range(1, 100))->map(static function (int $id): LegalArchiveDocument {
+            $document = new LegalArchiveDocument;
+            $document->forceFill([
+                'id' => $id,
+                'organization_id' => 15,
+                'status' => 'draft',
+                'approval_status' => 'not_submitted',
+                'lock_version' => 0,
+                'open_blocking_comments_count' => 0,
+            ]);
+            $document->setRelation('currentVersion', null);
+            $document->setRelation('latestWorkflowInstance', null);
+
+            return $document;
+        });
+        $external = new LegalArchiveDocument;
+        $external->forceFill([
+            'id' => 101,
+            'organization_id' => 16,
+            'status' => 'draft',
+            'approval_status' => 'not_submitted',
+            'lock_version' => 0,
+            'open_blocking_comments_count' => 0,
+        ]);
+        $external->setRelation('currentVersion', null);
+        $external->setRelation('latestWorkflowInstance', null);
+        $documents->push($external);
+        $resolver = new LegalWorkflowActionResolver(
+            new LegalWorkflowAuthorization,
+            new LegalWorkflowActorResolver(roleLookup: static fn (): bool => true),
+        );
+
+        $this->database->getConnection()->flushQueryLog();
+        $this->database->getConnection()->enableQueryLog();
+        $summaries = $resolver->forMany($actor, $documents);
+        $queryCount = count($this->database->getConnection()->getQueryLog());
+        $this->database->getConnection()->disableQueryLog();
+
+        self::assertCount(101, $summaries);
+        self::assertSame(7, $actor->permissionChecks);
+        self::assertSame(0, $queryCount);
+        self::assertSame('not_available', $summaries[1]->status);
+        self::assertSame(['workflow_permission_denied'], $summaries[1]->problemFlags);
+        self::assertSame('legal_archive.workflow.view', $summaries[1]->availableActionDetails[0]->permission);
+        self::assertFalse($summaries[1]->availableActionDetails[0]->enabled);
+        self::assertSame('not_available', $summaries[101]->status);
+        self::assertSame(['workflow_permission_denied'], $summaries[101]->problemFlags);
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('legal_workflow_access_denied');
+        $resolver->for($actor, $documents->first());
+    }
+
     public function test_parallel_action_contract_is_step_specific_and_overdue_does_not_block_sibling(): void
     {
         [$document, $version] = $this->dossier();
@@ -1265,8 +1322,12 @@ final class WorkflowTestUser extends User
     /** @var list<string>|null */
     public ?array $grantedPermissions = null;
 
+    public int $permissionChecks = 0;
+
     public function hasPermission(string $permission, ?array $context = null): bool
     {
+        $this->permissionChecks++;
+
         return $this->grantedPermissions === null || in_array($permission, $this->grantedPermissions, true);
     }
 }

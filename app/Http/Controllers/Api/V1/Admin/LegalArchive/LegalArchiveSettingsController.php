@@ -13,6 +13,7 @@ use App\Http\Requests\Api\V1\Admin\LegalArchive\UpdateLegalArchiveTypeProfileReq
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveTypeProfileResource;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveWorkflowTemplateResource;
 use App\Http\Responses\AdminResponse;
+use App\Services\LegalArchive\CanonicalJson;
 use App\Services\LegalArchive\LegalArchiveDictionary;
 use App\Services\LegalArchive\Profiles\LegalDocumentTypeProfileService;
 use App\Services\LegalArchive\Workflow\LegalWorkflowTemplateService;
@@ -53,17 +54,7 @@ final class LegalArchiveSettingsController extends LegalArchiveApiController
         try {
             $this->actor($request);
             $standards = collect((array) config('legal-document-profiles', []))->map(
-                static fn (array $profile, string $code): array => [
-                    'id' => null, 'organization_id' => null, 'code' => $code, 'base_code' => $code,
-                    'name' => (string) ($profile['label'] ?? $code), 'category' => (string) ($profile['category'] ?? 'other'),
-                    'schema' => (array) ($profile['schema'] ?? []), 'required_fields' => (array) ($profile['required_fields'] ?? []),
-                    'required_file_roles' => (array) ($profile['required_file_roles'] ?? []),
-                    'requires_signature' => (bool) ($profile['requires_signature'] ?? false),
-                    'allowed_signature_kinds' => (array) ($profile['allowed_signature_kinds'] ?? ['paper_original', 'external_electronic', 'provider_electronic']),
-                    'required_signature_kinds' => (array) ($profile['required_signature_kinds'] ?? []),
-                    'allowed_signature_formats' => (array) ($profile['allowed_signature_formats'] ?? ['detached_cades', 'embedded_cades', 'xml_dsig']),
-                    'is_standard' => true, 'is_active' => true, 'lock_version' => 0,
-                ],
+                fn (array $profile, string $code): array => $this->standardProfile($code, $profile),
             )->values();
             $perPage = max(1, min($request->integer('per_page', 50), 100));
             $page = max(1, $request->integer('page', 1));
@@ -85,6 +76,37 @@ final class LegalArchiveSettingsController extends LegalArchiveApiController
             ]);
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'type_profiles_index');
+        }
+    }
+
+    public function showTypeProfile(Request $request, string $documentTypeProfile): JsonResponse
+    {
+        try {
+            $this->actor($request);
+            $definition = ((array) config('legal-document-profiles', []))[$documentTypeProfile] ?? null;
+            if (is_array($definition)) {
+                $profile = $this->standardProfile($documentTypeProfile, $definition);
+
+                return AdminResponse::success(
+                    new LegalArchiveTypeProfileResource($profile),
+                    trans_message('legal_archive.messages.type_profile_loaded'),
+                )->withHeaders($this->profileHeaders($profile));
+            }
+            $profile = LegalArchiveDocumentTypeProfile::query()
+                ->forOrganization($this->organizationId($request))
+                ->whereKey($documentTypeProfile)
+                ->first();
+            if (! $profile instanceof LegalArchiveDocumentTypeProfile) {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+            $profile->setAttribute('is_standard', false);
+
+            return AdminResponse::success(
+                new LegalArchiveTypeProfileResource($profile),
+                trans_message('legal_archive.messages.type_profile_loaded'),
+            )->withHeaders($this->profileHeaders($profile));
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'type_profile_show', ['profile_id' => $documentTypeProfile]);
         }
     }
 
@@ -132,6 +154,14 @@ final class LegalArchiveSettingsController extends LegalArchiveApiController
                     ->where('organization_id', $this->organizationId($request))->select('template_id'));
             }
             $items = $query->orderBy('code')->orderByDesc('version')->paginate($perPage);
+            $currentTemplateIds = DB::table('legal_workflow_template_heads')
+                ->where('organization_id', $this->organizationId($request))
+                ->pluck('template_id')
+                ->map(static fn (mixed $id): int => (int) $id)
+                ->flip();
+            foreach ($items->getCollection() as $template) {
+                $template->setAttribute('api_is_current', $currentTemplateIds->has((int) $template->id));
+            }
 
             return AdminResponse::paginated(
                 LegalArchiveWorkflowTemplateResource::collection($items->getCollection()),
@@ -143,6 +173,29 @@ final class LegalArchiveSettingsController extends LegalArchiveApiController
         }
     }
 
+    public function showWorkflowTemplate(Request $request, string $legalWorkflowTemplate): JsonResponse
+    {
+        try {
+            $this->actor($request);
+            $template = LegalWorkflowTemplate::query()
+                ->forOrganization($this->organizationId($request))
+                ->with('steps')
+                ->whereKey((int) $legalWorkflowTemplate)
+                ->first();
+            if (! $template instanceof LegalWorkflowTemplate) {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+            $this->markCurrentTemplate($template);
+
+            return AdminResponse::success(
+                new LegalArchiveWorkflowTemplateResource($template),
+                trans_message('legal_archive.messages.workflow_template_loaded'),
+            )->withHeaders($this->templateHeaders($template));
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'workflow_template_show', ['template_id' => $legalWorkflowTemplate]);
+        }
+    }
+
     public function storeWorkflowTemplate(StoreLegalArchiveWorkflowTemplateRequest $request): JsonResponse
     {
         try {
@@ -150,6 +203,7 @@ final class LegalArchiveSettingsController extends LegalArchiveApiController
                 $this->organizationId($request), (string) $request->validated('code'), (string) $request->validated('name'),
                 (array) $request->validated('steps'), $this->actor($request),
             );
+            $this->markCurrentTemplate($template);
 
             return AdminResponse::success(new LegalArchiveWorkflowTemplateResource($template), trans_message('legal_archive.messages.workflow_template_created'), 201)
                 ->withHeaders($this->templateHeaders($template));
@@ -169,6 +223,7 @@ final class LegalArchiveSettingsController extends LegalArchiveApiController
                 $this->organizationId($request), (string) $source->code, (string) $request->validated('name'),
                 (array) $request->validated('steps'), $this->actor($request),
             );
+            $this->markCurrentTemplate($created);
 
             return AdminResponse::success(new LegalArchiveWorkflowTemplateResource($created), trans_message('legal_archive.messages.workflow_template_version_created'), 201)
                 ->withHeaders($this->templateHeaders($created));
@@ -177,19 +232,53 @@ final class LegalArchiveSettingsController extends LegalArchiveApiController
         }
     }
 
-    private function profileHeaders(LegalArchiveDocumentTypeProfile $profile): array
+    /** @param LegalArchiveDocumentTypeProfile|array<string, mixed> $profile */
+    private function profileHeaders(LegalArchiveDocumentTypeProfile|array $profile): array
     {
+        $id = $profile instanceof LegalArchiveDocumentTypeProfile ? (string) $profile->id : (string) $profile['code'];
+        $lockVersion = $profile instanceof LegalArchiveDocumentTypeProfile ? (int) $profile->lock_version : 0;
+
         return [
-            'ETag' => sprintf('"legal-profile-%s-v%d"', $profile->id, $profile->lock_version),
-            'Location' => '/api/v1/admin/legal-archive/type-profiles/'.(string) $profile->id,
+            'ETag' => sprintf('"legal-profile-%s-v%d"', $id, $lockVersion),
+            'Location' => '/api/v1/admin/legal-archive/type-profiles/'.$id,
         ];
     }
 
     private function templateHeaders(LegalWorkflowTemplate $template): array
     {
+        $representation = (new LegalArchiveWorkflowTemplateResource($template))->resolve(request());
+
         return [
-            'ETag' => '"legal-workflow-template-'.(string) $template->definition_hash.'"',
+            'ETag' => '"legal-workflow-template-'.CanonicalJson::fingerprint($representation).'"',
             'Location' => '/api/v1/admin/legal-archive/workflow-templates/'.(int) $template->id,
         ];
+    }
+
+    /** @param array<string, mixed> $profile */
+    private function standardProfile(string $code, array $profile): array
+    {
+        return [
+            'id' => null, 'organization_id' => null, 'code' => $code, 'base_code' => $code,
+            'name' => (string) ($profile['label'] ?? $code), 'category' => (string) ($profile['category'] ?? 'other'),
+            'schema' => (array) ($profile['schema'] ?? []), 'required_fields' => (array) ($profile['required_fields'] ?? []),
+            'required_file_roles' => (array) ($profile['required_file_roles'] ?? []),
+            'requires_signature' => (bool) ($profile['requires_signature'] ?? false),
+            'allowed_signature_kinds' => (array) ($profile['allowed_signature_kinds'] ?? ['paper_original', 'external_electronic', 'provider_electronic']),
+            'required_signature_kinds' => (array) ($profile['required_signature_kinds'] ?? []),
+            'allowed_signature_formats' => (array) ($profile['allowed_signature_formats'] ?? ['detached_cades', 'embedded_cades', 'xml_dsig']),
+            'workflow_template_id' => $profile['workflow_template_id'] ?? null,
+            'retention_policy' => $profile['retention_policy'] ?? null,
+            'confidentiality_level' => $profile['confidentiality_level'] ?? null,
+            'is_standard' => true, 'is_active' => true, 'lock_version' => 0,
+        ];
+    }
+
+    private function markCurrentTemplate(LegalWorkflowTemplate $template): void
+    {
+        $template->setAttribute('api_is_current', DB::table('legal_workflow_template_heads')
+            ->where('organization_id', (int) $template->organization_id)
+            ->where('code', (string) $template->code)
+            ->where('template_id', (int) $template->id)
+            ->exists());
     }
 }

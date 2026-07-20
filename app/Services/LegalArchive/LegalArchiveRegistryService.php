@@ -73,7 +73,7 @@ final class LegalArchiveRegistryService
             ->orderBy($sortBy, $sortDirection)
             ->orderBy('id', $sortDirection)
             ->paginate($perPage);
-        $this->attachResolvedProfiles($documents->getCollection(), $organizationId);
+        $this->attachResolvedProfiles($documents->getCollection());
 
         return $documents;
     }
@@ -111,7 +111,7 @@ final class LegalArchiveRegistryService
             ->forOrganization($organizationId)
             ->find($documentId);
         if ($document instanceof LegalArchiveDocument) {
-            $this->attachResolvedProfiles(collect([$document]), $organizationId);
+            $this->attachResolvedProfiles(collect([$document]));
         }
 
         return $document;
@@ -121,7 +121,7 @@ final class LegalArchiveRegistryService
     {
         $document = $this->detailQuery()->find($documentId);
         if ($document instanceof LegalArchiveDocument) {
-            $this->attachResolvedProfiles(collect([$document]), (int) $document->organization_id);
+            $this->attachResolvedProfiles(collect([$document]));
         }
 
         return $document;
@@ -566,22 +566,27 @@ final class LegalArchiveRegistryService
     }
 
     /** @param Collection<int, LegalArchiveDocument> $documents */
-    private function attachResolvedProfiles(Collection $documents, int $organizationId): void
+    private function attachResolvedProfiles(Collection $documents): void
     {
-        $codes = $documents->map(
-            static fn (LegalArchiveDocument $document): string => trim((string) $document->type_profile_code),
-        )->filter()->unique()->values()->all();
-        $profiles = $this->profiles->findMany($organizationId, $codes);
-        foreach ($documents as $document) {
-            $code = trim((string) $document->type_profile_code);
-            $profile = $profiles[$code] ?? null;
-            if ($profile !== null) {
-                $document->setAttribute('api_type_profile', [
-                    'code' => $profile->code,
-                    'base_code' => $profile->baseCode,
-                    'name' => $profile->label,
-                    'label' => $profile->label,
-                ]);
+        $codesByOrganization = $documents->groupBy('organization_id')->map(
+            static fn (Collection $ownedDocuments): array => $ownedDocuments->map(
+                static fn (LegalArchiveDocument $document): string => trim((string) $document->type_profile_code),
+            )->filter()->unique()->values()->all(),
+        )->all();
+        $profilesByOrganization = $this->profiles->findManyForOrganizations($codesByOrganization);
+        foreach ($documents->groupBy('organization_id') as $organizationId => $ownedDocuments) {
+            $profiles = $profilesByOrganization[(int) $organizationId] ?? [];
+            foreach ($ownedDocuments as $document) {
+                $code = trim((string) $document->type_profile_code);
+                $profile = $profiles[$code] ?? null;
+                if ($profile !== null) {
+                    $document->setAttribute('api_type_profile', [
+                        'code' => $profile->code,
+                        'base_code' => $profile->baseCode,
+                        'name' => $profile->label,
+                        'label' => $profile->label,
+                    ]);
+                }
             }
         }
     }

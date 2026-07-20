@@ -6,6 +6,7 @@ namespace App\Services\LegalArchive\Workflow;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
+use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentComment;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
 use App\Models\User;
@@ -31,6 +32,28 @@ final readonly class LegalWorkflowActionResolver
     public function for(User $actor, LegalArchiveDocument $document): WorkflowSummary
     {
         $this->authorization->assertCan($actor, $document, LegalWorkflowPermissions::VIEW);
+        $permissions = [];
+        foreach ($this->permissions() as $permission) {
+            $permissions[$permission] = $this->authorization->can($actor, $document, $permission);
+        }
+
+        return $this->summary($actor, $document, $permissions, []);
+    }
+
+    /**
+     * @param  array<string, bool>  $permissions
+     * @param  array<int, bool>  $actorAssignments
+     */
+    private function summary(
+        User $actor,
+        LegalArchiveDocument $document,
+        array $permissions,
+        array $actorAssignments,
+        ?bool $hasBlockingComments = null,
+    ): WorkflowSummary {
+        if (! ($permissions[LegalWorkflowPermissions::VIEW] ?? false)) {
+            return $this->deniedSummary($document);
+        }
         $instance = $this->latestInstance($document);
         $version = $this->currentVersion($document);
         $problemFlags = [];
@@ -53,8 +76,8 @@ final readonly class LegalWorkflowActionResolver
         }
 
         $details = $instance instanceof LegalWorkflowInstance && $instance->status === 'in_progress'
-            ? $this->decisionActions($actor, $document, $instance, $version)
-            : [$this->submitAction($actor, $document, $version, $instance)];
+            ? $this->decisionActions($actor, $document, $instance, $version, $permissions, $actorAssignments, $hasBlockingComments)
+            : [$this->submitAction($actor, $document, $version, $instance, $permissions, $hasBlockingComments)];
         $currentSteps = $instance instanceof LegalWorkflowInstance
             ? $instance->steps
                 ->where('status', 'active')
@@ -73,7 +96,8 @@ final readonly class LegalWorkflowActionResolver
                     lockVersion: (int) $step->lock_version,
                     documentVersionId: (int) $instance->document_version_id,
                     documentContentHash: (string) $instance->document_content_hash,
-                    assignedToCurrentActor: $this->actors->canAct($actor, $step, $document),
+                    assignedToCurrentActor: $actorAssignments[(int) $step->id]
+                        ?? $this->actors->canAct($actor, $step, $document),
                     activatedAt: $step->activated_at?->toAtomString(),
                 ))
                 ->values()
@@ -100,9 +124,22 @@ final readonly class LegalWorkflowActionResolver
      */
     public function forMany(User $actor, Collection $documents): array
     {
+        if ($documents->isEmpty()) {
+            return [];
+        }
+        $permissionMaps = $this->authorization->forMany($actor, $documents, $this->permissions());
+        $actorAssignments = $this->actors->forMany($actor, $documents);
+        $blockingComments = $this->blockingCommentsForMany($documents, $permissionMaps);
         $summaries = [];
         foreach ($documents as $document) {
-            $summaries[(int) $document->id] = $this->for($actor, $document);
+            $documentId = (int) $document->id;
+            $summaries[$documentId] = $this->summary(
+                $actor,
+                $document,
+                $permissionMaps[$documentId] ?? [],
+                $actorAssignments,
+                $blockingComments[$documentId] ?? false,
+            );
         }
 
         return $summaries;
@@ -114,6 +151,9 @@ final readonly class LegalWorkflowActionResolver
         LegalArchiveDocument $document,
         LegalWorkflowInstance $instance,
         ?LegalArchiveDocumentVersion $version,
+        array $permissions,
+        array $actorAssignments,
+        ?bool $hasBlockingComments,
     ): array {
         $activeSteps = $instance->steps->where('status', 'active');
         $versionChanged = ! $version instanceof LegalArchiveDocumentVersion
@@ -121,15 +161,15 @@ final readonly class LegalWorkflowActionResolver
             || ! (bool) $version->is_current
             || $version->processing_status !== 'ready'
             || ! hash_equals((string) $instance->document_content_hash, (string) $version->content_hash);
-        $hasBlockingComments = $version instanceof LegalArchiveDocumentVersion
+        $hasBlockingComments ??= $version instanceof LegalArchiveDocumentVersion
             && $this->blockingComments->hasOpen($document, (int) $version->id);
         $details = [];
         foreach ($activeSteps as $step) {
-            $assigned = $this->actors->canAct($actor, $step, $document);
+            $assigned = $actorAssignments[(int) $step->id] ?? $this->actors->canAct($actor, $step, $document);
             $overdue = $step->due_at?->isPast() === true;
             foreach (['approve', 'reject', 'return'] as $action) {
                 $permission = LegalWorkflowPermissions::forAction($action);
-                $can = $this->authorization->can($actor, $document, $permission);
+                $can = $permissions[$permission] ?? false;
                 $blockers = array_values(array_filter([
                     $assigned ? null : $this->label('blockers.actor_not_assigned'),
                     $overdue ? $this->label('blockers.step_overdue') : null,
@@ -155,7 +195,7 @@ final readonly class LegalWorkflowActionResolver
                 );
             }
             $permission = LegalWorkflowPermissions::REASSIGN;
-            $can = $this->authorization->can($actor, $document, $permission);
+            $can = $permissions[$permission] ?? false;
             $blockers = array_values(array_filter([
                 $overdue ? $this->label('blockers.step_overdue') : null,
                 $versionChanged ? $this->label('blockers.version_changed') : null,
@@ -177,7 +217,7 @@ final readonly class LegalWorkflowActionResolver
             );
         }
         $cancelPermission = LegalWorkflowPermissions::CANCEL;
-        $canCancel = $this->authorization->can($actor, $document, $cancelPermission);
+        $canCancel = $permissions[$cancelPermission] ?? false;
         $details[] = new WorkflowActionDetail(
             action: 'cancel',
             label: $this->label('actions.cancel'),
@@ -199,14 +239,16 @@ final readonly class LegalWorkflowActionResolver
         LegalArchiveDocument $document,
         ?LegalArchiveDocumentVersion $version,
         ?LegalWorkflowInstance $latest,
+        array $permissions,
+        ?bool $hasBlockingComments,
     ): WorkflowActionDetail {
         $permission = LegalWorkflowPermissions::SUBMIT;
-        $canSubmit = $this->authorization->can($actor, $document, $permission);
+        $canSubmit = $permissions[$permission] ?? false;
         $ready = $version instanceof LegalArchiveDocumentVersion
             && (bool) $version->is_current
             && $version->processing_status === 'ready'
             && preg_match('/^[a-f0-9]{64}$/D', (string) $version->content_hash) === 1;
-        $hasBlockingComments = $version instanceof LegalArchiveDocumentVersion
+        $hasBlockingComments ??= $version instanceof LegalArchiveDocumentVersion
             && $this->blockingComments->hasOpen($document, (int) $version->id);
         $blockers = array_values(array_filter([
             $canSubmit ? null : $this->label('blockers.permission_denied'),
@@ -231,6 +273,81 @@ final readonly class LegalWorkflowActionResolver
             key: "submit:document:{$document->id}",
             scope: 'document',
         );
+    }
+
+    private function deniedSummary(LegalArchiveDocument $document): WorkflowSummary
+    {
+        return new WorkflowSummary(
+            status: 'not_available',
+            statusLabel: $this->label('statuses.not_available'),
+            instanceId: null,
+            documentVersionId: null,
+            documentContentHash: null,
+            dueAt: null,
+            problemFlags: ['workflow_permission_denied'],
+            availableActionDetails: [new WorkflowActionDetail(
+                action: 'submit',
+                label: $this->label('actions.submit'),
+                permission: LegalWorkflowPermissions::VIEW,
+                enabled: false,
+                blockers: [$this->label('blockers.permission_denied')],
+                key: "workflow:view:document:{$document->id}",
+                scope: 'document',
+            )],
+        );
+    }
+
+    /** @return list<string> */
+    private function permissions(): array
+    {
+        return [
+            LegalWorkflowPermissions::VIEW,
+            LegalWorkflowPermissions::SUBMIT,
+            LegalWorkflowPermissions::APPROVE,
+            LegalWorkflowPermissions::REJECT,
+            LegalWorkflowPermissions::RETURN,
+            LegalWorkflowPermissions::REASSIGN,
+            LegalWorkflowPermissions::CANCEL,
+        ];
+    }
+
+    /**
+     * @param  Collection<int, LegalArchiveDocument>  $documents
+     * @param  array<int, array<string, bool>>  $permissionMaps
+     * @return array<int, bool>
+     */
+    private function blockingCommentsForMany(Collection $documents, array $permissionMaps): array
+    {
+        $result = [];
+        $unresolved = [];
+        foreach ($documents as $document) {
+            $documentId = (int) $document->id;
+            if (! ($permissionMaps[$documentId][LegalWorkflowPermissions::VIEW] ?? false)) {
+                continue;
+            }
+            if (array_key_exists('open_blocking_comments_count', $document->getAttributes())) {
+                $result[$documentId] = (int) $document->open_blocking_comments_count > 0;
+            } elseif ($document->current_primary_version_id !== null) {
+                $unresolved[$documentId] = (int) $document->current_primary_version_id;
+            }
+        }
+        if ($unresolved === []) {
+            return $result;
+        }
+        $comments = LegalDocumentComment::query()
+            ->whereIn('document_id', array_keys($unresolved))
+            ->whereIn('document_version_id', array_values($unresolved))
+            ->where('is_blocking', true)
+            ->where('status', 'open')
+            ->get(['document_id', 'document_version_id']);
+        foreach ($unresolved as $documentId => $versionId) {
+            $result[$documentId] = $comments->contains(
+                static fn (LegalDocumentComment $comment): bool => (int) $comment->document_id === $documentId
+                    && (int) $comment->document_version_id === $versionId,
+            );
+        }
+
+        return $result;
     }
 
     private function latestInstance(LegalArchiveDocument $document): ?LegalWorkflowInstance

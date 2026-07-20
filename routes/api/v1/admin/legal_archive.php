@@ -19,12 +19,16 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
         ->middleware('authorize:legal_archive.view')->name('type-profiles.index');
     Route::post('type-profiles', [LegalArchiveSettingsController::class, 'storeTypeProfile'])
         ->middleware('authorize:legal_archive.settings.manage')->name('type-profiles.store');
+    Route::get('type-profiles/{documentTypeProfile}', [LegalArchiveSettingsController::class, 'showTypeProfile'])
+        ->middleware('authorize:legal_archive.view')->where('documentTypeProfile', '[A-Za-z0-9._-]+')->name('type-profiles.show');
     Route::patch('type-profiles/{documentTypeProfile}', [LegalArchiveSettingsController::class, 'updateTypeProfile'])
         ->middleware('authorize:legal_archive.settings.manage')->whereUuid('documentTypeProfile')->name('type-profiles.update');
     Route::get('workflow-templates', [LegalArchiveSettingsController::class, 'workflowTemplates'])
         ->middleware('authorize:legal_archive.view')->name('workflow-templates.index');
     Route::post('workflow-templates', [LegalArchiveSettingsController::class, 'storeWorkflowTemplate'])
         ->middleware('authorize:legal_archive.settings.manage')->name('workflow-templates.store');
+    Route::get('workflow-templates/{legalWorkflowTemplate}', [LegalArchiveSettingsController::class, 'showWorkflowTemplate'])
+        ->middleware('authorize:legal_archive.view')->whereNumber('legalWorkflowTemplate')->name('workflow-templates.show');
     Route::post('workflow-templates/{legalWorkflowTemplate}/versions', [LegalArchiveSettingsController::class, 'createWorkflowTemplateVersion'])
         ->middleware('authorize:legal_archive.settings.manage')->whereNumber('legalWorkflowTemplate')->name('workflow-templates.versions.store');
 
@@ -45,7 +49,7 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
     Route::get('documents/{legalDocument}/timeline', [LegalArchiveDocumentController::class, 'timeline'])
         ->middleware('authorize:legal_archive.audit.view')->whereNumber('legalDocument')->name('documents.timeline');
     Route::get('documents/{legalDocument}/available-actions', [LegalArchiveDocumentController::class, 'availableActions'])
-        ->middleware('authorize:legal_archive.view')->whereNumber('legalDocument')->name('documents.available-actions');
+        ->middleware('authorize:legal_archive.workflow.view')->whereNumber('legalDocument')->name('documents.available-actions');
 
     Route::post('documents/{legalDocument}/files', [LegalArchiveFileController::class, 'storeFile'])
         ->middleware(['authorize:legal_archive.files.upload', 'authorize:legal_archive.versions.create'])

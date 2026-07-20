@@ -13,10 +13,12 @@ final class LegalArchiveWorkflowTemplateResource extends JsonResource
     {
         return [
             'id' => (int) $this->id,
+            'organization_id' => (int) $this->organization_id,
             'code' => (string) $this->code,
             'name' => (string) $this->name,
             'version' => (int) $this->version,
             'definition_hash' => (string) $this->definition_hash,
+            'is_current' => (bool) $this->resource->getAttribute('api_is_current'),
             'steps' => $this->steps->map(static fn ($step): array => [
                 'key' => (string) $step->step_key,
                 'label' => (string) $step->label,

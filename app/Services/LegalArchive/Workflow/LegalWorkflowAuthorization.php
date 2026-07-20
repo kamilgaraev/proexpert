@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Collection;
 
 final class LegalWorkflowAuthorization
 {
@@ -56,5 +57,40 @@ final class LegalWorkflowAuthorization
         if (! $this->can($actor, $document, $permission)) {
             throw new DomainException('legal_workflow_access_denied');
         }
+    }
+
+    /**
+     * @param  Collection<int, LegalArchiveDocument>  $documents
+     * @param  list<string>  $permissions
+     * @return array<int, array<string, bool>>
+     */
+    public function forMany(User $actor, Collection $documents, array $permissions): array
+    {
+        $byContext = [];
+        $resolvedContexts = [];
+        $result = [];
+        foreach ($documents as $document) {
+            $documentId = (int) $document->id;
+            $organizationId = (int) $document->organization_id;
+            if ($organizationId < 1 || (int) $actor->current_organization_id !== $organizationId) {
+                $result[$documentId] = array_fill_keys($permissions, false);
+
+                continue;
+            }
+            $context = ['organization_id' => $organizationId];
+            if ($document->primary_project_id !== null) {
+                $context['project_id'] = (int) $document->primary_project_id;
+            }
+            $contextKey = $organizationId.':'.($context['project_id'] ?? 'organization');
+            if (! isset($resolvedContexts[$contextKey])) {
+                $resolvedContexts[$contextKey] = true;
+                foreach ($permissions as $permission) {
+                    $byContext[$contextKey][$permission] = $actor->hasPermission($permission, $context);
+                }
+            }
+            $result[$documentId] = $byContext[$contextKey];
+        }
+
+        return $result;
     }
 }

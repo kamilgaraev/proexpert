@@ -10,6 +10,7 @@ use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use Closure;
+use Illuminate\Support\Collection;
 
 final class LegalWorkflowActorResolver
 {
@@ -82,5 +83,42 @@ final class LegalWorkflowActorResolver
     public function supports(string $actorType): bool
     {
         return in_array($actorType, ['user', 'role'], true) || isset($this->customResolvers[$actorType]);
+    }
+
+    /**
+     * @param  Collection<int, LegalArchiveDocument>  $documents
+     * @return array<int, bool>
+     */
+    public function forMany(User $actor, Collection $documents): array
+    {
+        $resolved = [];
+        $roleCache = [];
+        foreach ($documents as $document) {
+            $instance = $document->relationLoaded('latestWorkflowInstance')
+                ? $document->latestWorkflowInstance
+                : null;
+            if ($instance === null || ! $instance->relationLoaded('steps')) {
+                continue;
+            }
+            foreach ($instance->steps->where('status', 'active') as $step) {
+                $reference = trim((string) $step->actor_reference);
+                if ((string) $step->actor_type !== 'role') {
+                    $resolved[(int) $step->id] = $this->canAct($actor, $step, $document);
+
+                    continue;
+                }
+                $key = implode(':', [
+                    (int) $document->organization_id,
+                    (int) ($document->primary_project_id ?? 0),
+                    $reference,
+                ]);
+                if (! array_key_exists($key, $roleCache)) {
+                    $roleCache[$key] = $this->canAct($actor, $step, $document);
+                }
+                $resolved[(int) $step->id] = $roleCache[$key];
+            }
+        }
+
+        return $resolved;
     }
 }
