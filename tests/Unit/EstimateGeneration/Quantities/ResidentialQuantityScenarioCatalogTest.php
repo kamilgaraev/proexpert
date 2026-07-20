@@ -111,7 +111,7 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertGreaterThan(0, (float) $result->quantities['electrical.switches']->amount);
         self::assertGreaterThan(0, (float) $result->quantities['lighting.fixtures']->amount);
         self::assertSame('67.480000', $result->quantities['plumbing.pipe']->amount);
-        self::assertSame('107.111111', $result->quantities['heating.radiators']->amount);
+        self::assertSame('14.000000', $result->quantities['heating.radiators']->amount);
         self::assertSame('pcs', $result->quantities['heating.radiators']->unit);
         self::assertContains(
             'residential_heat_load_kw_per_m2:0.10',
@@ -120,6 +120,14 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertContains(
             'residential_radiator_section_output_kw:0.18',
             $result->quantities['heating.radiators']->assumptions,
+        );
+        self::assertContains(
+            'residential_radiator_sections_per_emitter:8',
+            $result->quantities['heating.radiators']->assumptions,
+        );
+        self::assertSame(
+            '8',
+            $result->quantities['heating.radiators']->formulaInputs['radiator_sections_per_emitter'],
         );
         self::assertSame('12.980000', $result->quantities['sanitary.waterproofing']->amount);
         self::assertSame('1.000000', $result->quantities['sanitary.showers']->amount);
