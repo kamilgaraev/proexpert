@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
-use App\DTOs\Contract\ContractDTO;
-use App\DTOs\Contract\ContractDossierCreationInput;
-use App\Enums\Contract\ContractStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Services\PurchaseContractService;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\Contract\ContractAuditedMutationService;
@@ -20,6 +20,8 @@ use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Facade;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 
@@ -27,14 +29,21 @@ final class ProcurementContractConcurrencyTest extends TestCase
 {
     private Capsule $database;
 
+    private Container $container;
+
     protected function setUp(): void
     {
         parent::setUp();
+        $this->container = new Container;
         $this->database = new Capsule;
         $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
         $this->database->setAsGlobal();
-        $this->database->setEventDispatcher(new Dispatcher(new Container));
+        $this->database->setEventDispatcher(new Dispatcher($this->container));
         $this->database->bootEloquent();
+        $this->container->instance('db', $this->database->getDatabaseManager());
+        $this->container->instance('events', new Dispatcher($this->container));
+        Container::setInstance($this->container);
+        Facade::setFacadeApplication($this->container);
         Model::clearBootedModels();
         $schema = $this->database->schema();
         $schema->create('contracts', static function (Blueprint $table): void {
@@ -51,17 +60,55 @@ final class ProcurementContractConcurrencyTest extends TestCase
             $table->unique(['organization_id', 'source_type', 'source_id'], 'contract_dossier_sources_source_unique');
             $table->unique(['organization_id', 'idempotency_key'], 'contract_dossier_sources_key_unique');
         });
+        $schema->create('purchase_orders', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('supplier_id')->nullable();
+            $table->unsignedBigInteger('purchase_request_id')->nullable();
+            $table->unsignedBigInteger('external_supplier_contact_id')->nullable();
+            $table->unsignedBigInteger('supplier_party_id')->nullable();
+            $table->unsignedBigInteger('contract_id')->nullable();
+            $table->string('order_number');
+            $table->string('status');
+            $table->decimal('total_amount', 15, 2);
+            $table->json('supplier_snapshot')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+        $schema->create('organizations', static function (Blueprint $table): void {
+            $table->id();
+        });
+        $schema->create('suppliers', static function (Blueprint $table): void {
+            $table->id();
+        });
+        $schema->create('contractors', static function (Blueprint $table): void {
+            $table->id();
+        });
+        $schema->create('projects', static function (Blueprint $table): void {
+            $table->id();
+        });
     }
 
     protected function tearDown(): void
     {
         Mockery::close();
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
+        Container::setInstance(null);
         parent::tearDown();
     }
 
-    public function test_competing_purchase_order_attempts_return_the_same_persisted_contract_and_dossier(): void
+    public function test_stale_purchase_order_callers_are_serialized_by_the_real_order_adapter(): void
     {
         $this->database->table('legal_archive_documents')->insert(['id' => 41, 'organization_id' => 7]);
+        $this->database->table('organizations')->insert(['id' => 7]);
+        $order = PurchaseOrder::query()->create([
+            'organization_id' => 7,
+            'order_number' => 'PO-41',
+            'status' => PurchaseOrderStatusEnum::CONFIRMED,
+            'total_amount' => 1.0,
+        ]);
+        $staleCaller = PurchaseOrder::query()->findOrFail($order->id);
         $document = new LegalArchiveDocument;
         $document->forceFill(['id' => 41, 'organization_id' => 7]);
         $documents = Mockery::mock(ContractDossierDocumentCreator::class);
@@ -70,7 +117,7 @@ final class ProcurementContractConcurrencyTest extends TestCase
         $contracts->shouldReceive('create')->once()->andReturnUsing(static fn (): Contract => Contract::query()->create([
             'organization_id' => 7, 'number' => 'PO-41', 'dossier_creation_key' => 'purchase-order:41',
         ]));
-        $service = new ContractDossierCreationService(
+        $dossiers = new ContractDossierCreationService(
             $this->database->getConnection(),
             $contracts,
             new ContractAuditedMutationService(Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(), $this->database->getConnection()),
@@ -78,18 +125,17 @@ final class ProcurementContractConcurrencyTest extends TestCase
         );
         $actor = new User;
         $actor->forceFill(['id' => 3, 'current_organization_id' => 7]);
-        $input = new ContractDossierCreationInput(
-            new ContractDTO(project_id: null, contractor_id: null, parent_contract_id: null, number: 'PO-41', date: '2026-07-21', subject: 'Purchase order', work_type_category: null, payment_terms: null, base_amount: 1.0, total_amount: 1.0, gp_percentage: null, gp_calculation_type: null, gp_coefficient: null, warranty_retention_calculation_type: null, warranty_retention_percentage: null, warranty_retention_coefficient: null, subcontract_amount: null, planned_advance_amount: null, actual_advance_amount: null, status: ContractStatusEnum::DRAFT, start_date: null, end_date: null, notes: null),
-            'purchase-order:41', 'Purchase order', sourceType: 'purchase_order', sourceId: '41',
-        );
+        Auth::shouldReceive('user')->once()->andReturn($actor);
+        $mutations = Mockery::mock(ContractAuditedMutationService::class);
+        $service = Mockery::mock(PurchaseContractService::class, [$mutations, $dossiers])->makePartial();
+        $service->shouldReceive('validateProcurementContractCreation')->once()->andReturnNull();
 
-        $first = $service->create(7, $actor, $input);
-        $second = $service->create(7, $actor, $input);
+        $first = $service->createFromOrder($order);
+        $second = $service->createFromOrder($staleCaller);
 
-        self::assertFalse($first->replayed);
-        self::assertTrue($second->replayed);
-        self::assertSame($first->contract->id, $second->contract->id);
-        self::assertSame(41, $second->document->id);
+        self::assertSame($first->id, $second->id);
+        self::assertSame($first->id, $order->fresh()->contract_id);
+        self::assertSame(41, $first->legal_archive_document_id);
         self::assertSame(1, $this->database->table('contracts')->count());
         self::assertSame(1, $this->database->table('contract_dossier_sources')->count());
     }
