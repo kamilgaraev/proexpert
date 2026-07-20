@@ -73,7 +73,7 @@ final class RequestEstimateGeneration
             return new SessionActionResult($session, false, 'estimate_generation.input_required', 422, ['documents_summary' => $readiness['summary']]);
         }
 
-        $this->buildingModels->rebuild((int) $session->getKey());
+        $this->buildingModels->rebuildForGeneration((int) $session->getKey());
         $session = $this->advance->documentsReady($session);
         $attemptId = (string) Str::uuid();
         $session = $this->advance->generationStarted($session, $attemptId, $generationInput);

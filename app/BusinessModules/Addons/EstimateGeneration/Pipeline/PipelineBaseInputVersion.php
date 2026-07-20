@@ -9,14 +9,18 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 
 final class PipelineBaseInputVersion
 {
-    public const SCHEMA_VERSION = 5;
+    public const SCHEMA_VERSION = 6;
 
     /**
      * @param  list<array{id: int, source_version: string, status: string, derived_version: string}>  $documents
      * @param  array{evidence_id?: int, source_version?: string, fingerprint?: string, invalidation_version?: int, active?: bool}|null  $documentTotalArea
      */
-    public static function fromProjection(array $input, array $documents, ?array $documentTotalArea = null): string
-    {
+    public static function fromProjection(
+        array $input,
+        array $documents,
+        ?array $documentTotalArea = null,
+        ?array $buildingModel = null,
+    ): string {
         unset($input['generation_attempt_id'], $input['generation_requested']);
 
         return 'sha256:'.hash('sha256', CanonicalPipelineJson::encode([
@@ -24,7 +28,34 @@ final class PipelineBaseInputVersion
             'input' => $input,
             'documents' => $documents,
             'document_total_area_evidence' => self::documentTotalAreaEvidence($documentTotalArea),
+            'building_model' => self::buildingModelProjection($buildingModel),
         ]));
+    }
+
+    /**
+     * @param  array{content_version?: string, model?: array<string, mixed>}|null  $buildingModel
+     * @return array{content_version: string, scale_status: string, evidence_ids: list<int>}|null
+     */
+    private static function buildingModelProjection(?array $buildingModel): ?array
+    {
+        $contentVersion = $buildingModel['content_version'] ?? null;
+        $model = is_array($buildingModel['model'] ?? null) ? $buildingModel['model'] : [];
+        if (! is_string($contentVersion)
+            || preg_match('/^sha256:[a-f0-9]{64}$/D', $contentVersion) !== 1
+            || ! in_array($model['scale_status'] ?? null, ['confirmed', 'estimated', 'unknown'], true)) {
+            return null;
+        }
+        $evidenceIds = array_values(array_unique(array_map(
+            'intval',
+            is_array($model['evidence_ids'] ?? null) ? $model['evidence_ids'] : [],
+        )));
+        sort($evidenceIds, SORT_NUMERIC);
+
+        return [
+            'content_version' => $contentVersion,
+            'scale_status' => (string) $model['scale_status'],
+            'evidence_ids' => $evidenceIds,
+        ];
     }
 
     /**

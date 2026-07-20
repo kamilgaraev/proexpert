@@ -50,6 +50,39 @@ final class EvidenceAwarePipelineBaseInputVersionResolverTest extends TestCase
             $projectionVersion,
         );
         self::assertSame([[10, 20, 30]], $data->areaRequests);
+        self::assertSame([[10, 20, 30]], $data->modelRequests);
+    }
+
+    #[Test]
+    public function confirmed_geometry_is_part_of_the_generation_input_version(): void
+    {
+        $model = [
+            'content_version' => 'sha256:'.str_repeat('e', 64),
+            'model' => [
+                'scale_status' => 'confirmed',
+                'evidence_ids' => [903, 902, 903],
+            ],
+        ];
+        $data = new FixedAreaBuildingModelReadDataSource(null, $model);
+        $resolver = new EvidenceAwarePipelineBaseInputVersionResolver($data);
+        $session = $this->session();
+        $documents = $this->documentsProjection($session);
+        $version = $resolver->fromProjection(
+            $session->input_payload,
+            $documents,
+            10,
+            20,
+            30,
+        );
+
+        self::assertSame(
+            PipelineBaseInputVersion::fromProjection($session->input_payload, $documents, null, $model),
+            $version,
+        );
+        self::assertNotSame(
+            PipelineBaseInputVersion::fromProjection($session->input_payload, $documents),
+            $version,
+        );
     }
 
     #[Test]
@@ -123,11 +156,16 @@ final class FixedAreaBuildingModelReadDataSource implements BuildingModelReadDat
     /** @var list<array{int, int, int}> */
     public array $areaRequests = [];
 
-    public function __construct(private readonly ?array $area) {}
+    /** @var list<array{int, int, int}> */
+    public array $modelRequests = [];
+
+    public function __construct(private readonly ?array $area, private readonly ?array $model = null) {}
 
     public function latestModel(int $organizationId, int $projectId, int $sessionId): ?array
     {
-        return null;
+        $this->modelRequests[] = [$organizationId, $projectId, $sessionId];
+
+        return $this->model;
     }
 
     public function evidenceForIds(int $organizationId, int $projectId, int $sessionId, array $ids): array
