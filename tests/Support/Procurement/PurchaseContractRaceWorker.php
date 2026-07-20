@@ -56,16 +56,19 @@ try {
     $audit = Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing();
     $mutations = new ContractAuditedMutationService($audit, $connection);
     $contracts = Mockery::mock(ContractSideMutationService::class);
-    $contracts->shouldReceive('create')->once()->andReturnUsing(static function (int $organizationId, ContractDTO $dto, mixed $context = null, ?int $actorId = null, ?string $key = null): Contract {
+    $contractCreation = $contracts->shouldReceive('create')->andReturnUsing(static function (int $organizationId, ContractDTO $dto, mixed $context = null, ?int $actorId = null, ?string $key = null): Contract {
         return Contract::query()->create(['organization_id' => $organizationId, 'supplier_id' => $dto->supplier_id, 'number' => $dto->number, 'status' => 'draft', 'dossier_creation_key' => $key]);
     });
+    $role === 'leader' ? $contractCreation->once() : $contractCreation->never();
     $documents = new PurchaseContractRaceDocumentCreator($role === 'leader');
     $dossiers = new ContractDossierCreationService($connection, $contracts, $mutations, $documents);
     $actor = new User;
     $actor->forceFill(['id' => 3, 'current_organization_id' => 7]);
-    Auth::shouldReceive('user')->once()->andReturn($actor);
+    $actorLookup = Auth::shouldReceive('user')->andReturn($actor);
+    $role === 'leader' ? $actorLookup->once() : $actorLookup->never();
     $service = Mockery::mock(PurchaseContractService::class, [$mutations, $dossiers])->makePartial();
-    $service->shouldReceive('validateProcurementContractCreation')->once()->andReturnNull();
+    $validation = $service->shouldReceive('validateProcurementContractCreation')->andReturnNull();
+    $role === 'leader' ? $validation->once() : $validation->never();
     $order = PurchaseOrder::query()->findOrFail($orderId);
     if ($role === 'follower') {
         fwrite(STDOUT, "started\n");

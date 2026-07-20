@@ -110,7 +110,10 @@ final class PurchaseContractPostgresRaceTest extends TestCase
 
     private function startWorker(string $role, int $orderId): array
     {
-        $worker = dirname(__DIR__, 4).'/Support/Procurement/PurchaseContractRaceWorker.php';
+        $worker = dirname(__DIR__, 5).'/Support/Procurement/PurchaseContractRaceWorker.php';
+        if (! is_file($worker)) {
+            throw new RuntimeException('Procurement contract race worker was not found.');
+        }
         $environment = array_merge($_ENV, [
             'MOST_CONCURRENCY_TEST_DATABASE_URL' => $this->databaseUrl,
             'MOST_CONCURRENCY_TEST_SCHEMA' => $this->schema,
