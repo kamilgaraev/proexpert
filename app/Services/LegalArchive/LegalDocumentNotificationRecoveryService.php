@@ -9,7 +9,9 @@ use Illuminate\Support\Str;
 
 final class LegalDocumentNotificationRecoveryService
 {
-    public function __construct(private readonly LegalDocumentNotificationPublisher $publisher) {}
+    public function __construct(private readonly LegalDocumentNotificationPublisher $publisher)
+    {
+    }
 
     public function recoverExpired(int $limit = 100): int
     {
