@@ -67,6 +67,7 @@ final class LegalDocumentReconciliationService
                 ->orderBy('id')
                 ->chunkById(100, function (Collection $entities) use ($namedSource, $sourceType, $dryRun, &$summary, $limit): bool {
                     $documents = LegalArchiveDocument::query()
+                        ->withTrashed()
                         ->where('source_type', $sourceType)
                         ->whereIn('source_id', $entities->modelKeys())
                         ->get()
@@ -75,6 +76,18 @@ final class LegalDocumentReconciliationService
                     foreach ($entities as $entity) {
                         $organizationId = $this->organizationId($entity);
                         $document = $documents->get("{$organizationId}:{$entity->getKey()}");
+                        if ($document instanceof LegalArchiveDocument && $document->trashed()) {
+                            $summary['candidates']++;
+                            $summary['sources'][$namedSource]++;
+                            $summary['problem_flags']++;
+                            $summary['skipped']++;
+
+                            if ($summary['candidates'] >= $limit) {
+                                return false;
+                            }
+
+                            continue;
+                        }
                         $needsLinkRepair = $document instanceof LegalArchiveDocument
                             && $entity instanceof Contract
                             && (int) $entity->legal_archive_document_id !== (int) ($document?->id ?? 0);
