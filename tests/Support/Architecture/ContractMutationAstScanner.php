@@ -32,7 +32,10 @@ final class ContractMutationAstScanner
     /** @var array<string,string> */
     private array $projectPropertyTypes = [];
 
-    private const MUTATIONS = ['save', 'saveQuietly', 'update', 'updateQuietly', 'delete', 'forceDelete', 'insert', 'upsert', 'increment', 'decrement', 'touch', 'restore', 'create'];
+    /** @var array<string,string> */
+    private array $projectParentTypes = [];
+
+    private const MUTATIONS = ['save', 'savequietly', 'update', 'updatequietly', 'delete', 'forcedelete', 'insert', 'upsert', 'increment', 'decrement', 'touch', 'restore', 'create'];
 
     private const RAW_SQL_ENTRY_POINTS = [
         'statement',
@@ -40,12 +43,12 @@ final class ContractMutationAstScanner
         'insert',
         'update',
         'delete',
-        'affectingStatement',
+        'affectingstatement',
         'raw',
         'select',
-        'selectOne',
-        'selectResultSets',
-        'selectFromWriteConnection',
+        'selectone',
+        'selectresultsets',
+        'selectfromwriteconnection',
         'scalar',
         'cursor',
     ];
@@ -89,6 +92,7 @@ final class ContractMutationAstScanner
         $nodes = $this->parse($source);
         $this->projectReturnTypes = [];
         $this->projectPropertyTypes = [];
+        $this->projectParentTypes = [];
         $this->indexDeclaredDatabaseTypes($nodes);
 
         return $this->findingsFromNodes($nodes, $this->methodStructuralHashes($nodes));
@@ -108,6 +112,7 @@ final class ContractMutationAstScanner
         $declarations = [];
         $this->projectReturnTypes = [];
         $this->projectPropertyTypes = [];
+        $this->projectParentTypes = [];
         foreach ($files as $file) {
             if (! is_file($file) || ! is_readable($file)) {
                 throw new \RuntimeException('contract_ast_source_unreadable:'.$file);
@@ -117,17 +122,17 @@ final class ContractMutationAstScanner
                 throw new \RuntimeException('contract_ast_source_unreadable:'.$file);
             }
             $sources[$file] = $source;
-            preg_match('/\bnamespace\s+([^;{]+)[;{]/', $source, $namespaceMatch);
+            preg_match('/\bnamespace\s+([^;{]+)[;{]/i', $source, $namespaceMatch);
             $namespace = trim($namespaceMatch[1] ?? '');
-            preg_match_all('/\b(?:final\s+|abstract\s+|readonly\s+)*(?:class|trait|interface|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/', $source, $classMatches);
+            preg_match_all('/\b(?:final\s+|abstract\s+|readonly\s+)*(?:class|trait|interface|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/i', $source, $classMatches);
             foreach ($classMatches[1] as $class) {
-                $declarations[$class] = $file;
-                $declarations[ltrim($namespace.'\\'.$class, '\\')] = $file;
+                $declarations[$this->canonicalClassIdentity($class)] = $file;
+                $declarations[$this->canonicalClassIdentity($namespace.'\\'.$class)] = $file;
             }
-            preg_match_all('/\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/', $source, $functionMatches);
+            preg_match_all('/\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/i', $source, $functionMatches);
             foreach ($functionMatches[1] as $function) {
-                $declarations[$function] ??= $file;
-                $declarations[ltrim($namespace.'\\'.$function, '\\')] ??= $file;
+                $declarations[$this->canonicalClassIdentity($function)] ??= $file;
+                $declarations[$this->canonicalClassIdentity($namespace.'\\'.$function)] ??= $file;
             }
         }
         $snapshot = hash('sha256', json_encode(array_map(
@@ -151,7 +156,7 @@ final class ContractMutationAstScanner
             $source = $sources[$file];
             $hash = hash('sha256', $source);
             $nodes = $this->parse($source, false);
-            $contextSensitive = stripos($source, 'PDOStatement') !== false || preg_match('/->\s*execute\s*\(/', $source) === 1;
+            $contextSensitive = stripos($source, 'PDOStatement') !== false || preg_match('/->\s*execute\s*\(/i', $source) === 1;
             if ($contextSensitive) {
                 $this->indexDeclaredDatabaseTypes($nodes);
             }
@@ -174,11 +179,11 @@ final class ContractMutationAstScanner
         }
         $reachable = [];
         foreach ($sources as $file => $source) {
-            $rawCandidate = preg_match('/(?:->|::)\s*(?:statement|unprepared|affectingStatement|raw|select|selectOne|selectResultSets|selectFromWriteConnection|scalar|cursor|exec|query|prepare|execute)\s*\(/', $source) === 1;
-            $rawCandidate = $rawCandidate || (preg_match('/(?:DB\s*::|Connection(?:Interface)?|PDO|\$(?:database|connection))/', $source) === 1
-                && preg_match('/(?:->|::)\s*(?:insert|update|delete)\s*\(/', $source) === 1);
+            $rawCandidate = preg_match('/(?:->|::)\s*(?:statement|unprepared|affectingStatement|raw|select|selectOne|selectResultSets|selectFromWriteConnection|scalar|cursor|exec|query|prepare|execute)\s*\(/i', $source) === 1;
+            $rawCandidate = $rawCandidate || (preg_match('/(?:DB\s*::|Connection(?:Interface)?|PDO|\$(?:database|connection))/i', $source) === 1
+                && preg_match('/(?:->|::)\s*(?:insert|update|delete)\s*\(/i', $source) === 1);
             $contractCandidate = stripos($source, 'contract') !== false
-                && preg_match('/(?:->|::)\s*(?:save|saveQuietly|update|updateQuietly|delete|forceDelete|insert|upsert|increment|decrement|touch|restore|create)\s*\(/', $source) === 1;
+                && preg_match('/(?:->|::)\s*(?:save|saveQuietly|update|updateQuietly|delete|forceDelete|insert|upsert|increment|decrement|touch|restore|create)\s*\(/i', $source) === 1;
             if ($rawCandidate || $contractCandidate) {
                 $nodes = $mergeFile($file);
                 foreach ($this->findingsFromNodes($nodes, []) as $finding) {
@@ -253,12 +258,12 @@ final class ContractMutationAstScanner
         $finder = new NodeFinder;
         $candidate = $finder->findFirst($nodes, function (Node $node): bool {
             if ($node instanceof Node\Expr\StaticCall && $node->name instanceof Node\Identifier) {
-                return in_array($node->name->toString(), array_merge(self::MUTATIONS, self::RAW_SQL_ENTRY_POINTS, self::PDO_ENTRY_POINTS, ['execute']), true);
+                return $this->isCandidateOperation($node->name->toString());
             }
 
             return $node instanceof Node\Expr\MethodCall
                 && $node->name instanceof Node\Identifier
-                && in_array($node->name->toString(), array_merge(self::MUTATIONS, self::RAW_SQL_ENTRY_POINTS, self::PDO_ENTRY_POINTS, ['execute']), true);
+                && $this->isCandidateOperation($node->name->toString());
         });
         if ($candidate === null) {
             return [];
@@ -276,25 +281,26 @@ final class ContractMutationAstScanner
                 continue;
             }
             $class = $this->enclosingClassName($nodes, $scope);
+            $classKey = $this->canonicalClassIdentity($class);
             $classIdentity = $this->enclosingClassIdentity($nodes, $scope);
             $method = $this->scopeMethodName($nodes, $scope);
             $inheritedDatabase = $this->inheritedDatabaseState(
                 $nodes,
                 $scope,
-                $connectionProperties[$class] ?? [],
-                $pdoProperties[$class] ?? [],
-                $statementProperties[$class] ?? [],
-                $methodReturnKinds[$class] ?? [],
+                $connectionProperties[$classKey] ?? [],
+                $pdoProperties[$classKey] ?? [],
+                $statementProperties[$classKey] ?? [],
+                $methodReturnKinds[$classKey] ?? [],
             );
             $findings = array_merge($findings, $this->scopeFindings(
                 $scope,
                 $class,
                 $method,
-                $repositoryProperties[$class] ?? [],
-                $connectionProperties[$class] ?? [],
-                $pdoProperties[$class] ?? [],
-                $statementProperties[$class] ?? [],
-                $methodReturnKinds[$class] ?? [],
+                $repositoryProperties[$classKey] ?? [],
+                $connectionProperties[$classKey] ?? [],
+                $pdoProperties[$classKey] ?? [],
+                $statementProperties[$classKey] ?? [],
+                $methodReturnKinds[$classKey] ?? [],
                 $methodHashes,
                 $classIdentity,
                 $this->inheritedTypedVariables($nodes, $scope, true),
@@ -331,7 +337,7 @@ final class ContractMutationAstScanner
         array $scopeNodes,
     ): array {
         $printer = new Standard;
-        $contractVariables = $class === 'Contract' ? ['this' => true] : $inheritedContractVariables;
+        $contractVariables = $this->canonicalClassIdentity($class) === 'contract' ? ['this' => true] : $inheritedContractVariables;
         $repositoryVariables = $inheritedRepositoryVariables;
         $connectionVariables = $inheritedConnectionVariables;
         $pdoVariables = $inheritedPdoVariables;
@@ -342,7 +348,7 @@ final class ContractMutationAstScanner
         foreach ($scopeNodes as $scopeNode) {
             if ($scopeNode instanceof Node\Expr\MethodCall
                 && $scopeNode->name instanceof Node\Identifier
-                && $scopeNode->name->toString() === 'execute') {
+                && $this->canonicalIdentifier($scopeNode->name->toString()) === 'execute') {
                 $resolvesProjectStatementTypes = true;
 
                 break;
@@ -426,7 +432,7 @@ final class ContractMutationAstScanner
                 }
                 if ($assignment->expr instanceof Node\Expr\MethodCall
                     && $assignment->expr->name instanceof Node\Identifier
-                    && $assignment->expr->name->toString() === 'prepare'
+                    && $this->canonicalIdentifier($assignment->expr->name->toString()) === 'prepare'
                     && $this->isPdoExpression($assignment->expr->var, $pdoVariables, $pdoProperties, $connectionVariables, $connectionProperties)) {
                     $preparedStatements[$name] = isset($assignment->expr->args[0])
                         ? $this->constantString($assignment->expr->args[0]->value, $stringConstants)
@@ -452,7 +458,7 @@ final class ContractMutationAstScanner
             $builderIdentity = $databaseExecution
                 ? ($unresolvedExecute
                     ? 'unresolved-execute:'.(string) preg_replace('/\s+/', '', $printer->prettyPrintExpr($node))
-                    : ($this->structuralBuilderIdentity($node, $classIdentity, $objectVariables) ?? $classIdentity.'::'.$method))
+                    : ($this->structuralBuilderIdentity($node, $classIdentity, $objectVariables) ?? $this->methodIdentity($classIdentity, $method)))
                 : null;
             $structuralHash = $builderIdentity === null
                 ? null
@@ -473,10 +479,7 @@ final class ContractMutationAstScanner
         foreach ($nodes as $node) {
             if (($node instanceof Node\Expr\MethodCall || $node instanceof Node\Expr\StaticCall)
                 && $node->name instanceof Node\Identifier
-                && ($node->name->toString() === 'execute'
-                    || in_array($node->name->toString(), self::MUTATIONS, true)
-                    || in_array($node->name->toString(), self::RAW_SQL_ENTRY_POINTS, true)
-                    || in_array($node->name->toString(), self::PDO_ENTRY_POINTS, true))) {
+                && $this->isCandidateOperation($node->name->toString())) {
                 return true;
             }
         }
@@ -490,13 +493,13 @@ final class ContractMutationAstScanner
             && $node->class instanceof Node\Name
             && $this->isDatabaseFacadeName($node->class->toString())
             && $node->name instanceof Node\Identifier
-            && in_array($node->name->toString(), self::RAW_SQL_ENTRY_POINTS, true)) {
+            && in_array($this->canonicalIdentifier($node->name->toString()), self::RAW_SQL_ENTRY_POINTS, true)) {
             return true;
         }
         if (! $node instanceof Node\Expr\MethodCall || ! $node->name instanceof Node\Identifier) {
             return false;
         }
-        $operation = $node->name->toString();
+        $operation = $this->canonicalIdentifier($node->name->toString());
 
         return (in_array($operation, self::RAW_SQL_ENTRY_POINTS, true)
                 && ($this->rootedAtDatabaseConnection($node->var) || $this->isConnectionExpression($node->var, $connectionVariables, $connectionProperties)))
@@ -510,8 +513,8 @@ final class ContractMutationAstScanner
     {
         if ($node instanceof Node\Expr\StaticCall) {
             $class = $node->class instanceof Node\Name ? $node->class->toString() : $printer->prettyPrintExpr($node->class);
-            $operation = $node->name instanceof Node\Identifier ? $node->name->toString() : '';
-            if ($this->isExactContractName($class) && in_array($operation, ['create', 'updateOrCreate', 'firstOrCreate', 'destroy', 'forceDestroy'], true)) {
+            $operation = $node->name instanceof Node\Identifier ? $this->canonicalIdentifier($node->name->toString()) : '';
+            if ($this->isExactContractName($class) && in_array($operation, ['create', 'updateorcreate', 'firstorcreate', 'destroy', 'forcedestroy'], true)) {
                 return true;
             }
             if ($this->isDatabaseFacadeName($class) && in_array($operation, self::RAW_SQL_ENTRY_POINTS, true)) {
@@ -523,7 +526,7 @@ final class ContractMutationAstScanner
         if (! $node instanceof Node\Expr\MethodCall || ! $node->name instanceof Node\Identifier) {
             return false;
         }
-        $operation = $node->name->toString();
+        $operation = $this->canonicalIdentifier($node->name->toString());
         if (in_array($operation, self::RAW_SQL_ENTRY_POINTS, true)
             && ($this->rootedAtDatabaseConnection($node->var) || $this->isConnectionExpression($node->var, $connectionVariables, $connectionProperties))) {
             $sql = isset($node->args[0]) ? $this->constantString($node->args[0]->value, $stringConstants) : null;
@@ -542,7 +545,7 @@ final class ContractMutationAstScanner
         if ($operation === 'execute') {
             if ($node->var instanceof Node\Expr\MethodCall
                 && $node->var->name instanceof Node\Identifier
-                && $node->var->name->toString() === 'prepare'
+                && $this->canonicalIdentifier($node->var->name->toString()) === 'prepare'
                 && $this->isPdoExpression($node->var->var, $pdoVariables, $pdoProperties, $connectionVariables, $connectionProperties)) {
                 $sql = isset($node->var->args[0]) ? $this->constantString($node->var->args[0]->value, $stringConstants) : null;
 
@@ -567,7 +570,7 @@ final class ContractMutationAstScanner
             && $node->var->var instanceof Node\Expr\Variable
             && $node->var->var->name === 'this'
             && $node->var->name instanceof Node\Identifier
-            && in_array($node->var->name->toString(), $repositoryProperties, true);
+            && in_array($this->canonicalIdentifier($node->var->name->toString()), $repositoryProperties, true);
 
         return ($root !== null && isset($variables[$root]))
             || ($root !== null && isset($repositoryVariables[$root]))
@@ -575,8 +578,8 @@ final class ContractMutationAstScanner
             || $this->receiverContainsRepositoryProperty($receiver, $repositoryProperties)
             || $this->rootedAtExactContractStatic($node->var)
             || $this->rootedAtContractsTable($node->var, $connectionVariables, $connectionProperties)
-            || str_contains($receiver, 'contractRepository')
-            || str_contains($receiver, 'contracts()');
+            || str_contains($this->canonicalIdentifier($receiver), 'contractrepository')
+            || str_contains($this->canonicalIdentifier($receiver), 'contracts()');
     }
 
     /** @param array<string, true> $variables */
@@ -585,14 +588,14 @@ final class ContractMutationAstScanner
         if ($expression instanceof Node\Expr\Variable && is_string($expression->name) && isset($variables[$expression->name])) {
             return true;
         }
-        if ($expression instanceof Node\Expr\PropertyFetch && $expression->name instanceof Node\Identifier && $expression->name->toString() === 'contract') {
+        if ($expression instanceof Node\Expr\PropertyFetch && $expression->name instanceof Node\Identifier && $this->canonicalIdentifier($expression->name->toString()) === 'contract') {
             return true;
         }
         $printed = $printer->prettyPrintExpr($expression);
 
         return $this->rootedAtExactContractStatic($expression)
-            || preg_match('/contractRepository->(?:find|findOrFail|getById)/', $printed) === 1
-            || preg_match('/->contract\(\)->/', $printed) === 1
+            || preg_match('/contractRepository->(?:find|findOrFail|getById)/i', $printed) === 1
+            || preg_match('/->contract\(\)->/i', $printed) === 1
             || $this->rootedAtContractsTable($expression, [], []);
     }
 
@@ -627,7 +630,7 @@ final class ContractMutationAstScanner
             && $expression->class instanceof Node\Name
             && $this->isDatabaseFacadeName($expression->class->toString())
             && $expression->name instanceof Node\Identifier
-            && $expression->name->toString() === 'connection';
+            && $this->canonicalIdentifier($expression->name->toString()) === 'connection';
     }
 
     /** @param array<string, string> $constants */
@@ -699,7 +702,7 @@ final class ContractMutationAstScanner
         }
         preg_match_all('/(?<![a-z0-9_$])(?:(?:"([^"]+)"|([a-z_][a-z0-9_$]*))\s*\.\s*)?(?:"([^"]+)"|([a-z_][a-z0-9_$]*))\s*\(/i', $sql, $matches, PREG_SET_ORDER);
         foreach ($matches as $match) {
-            $function = strtolower((string) (($match[3] ?? '') !== '' ? $match[3] : ($match[4] ?? '')));
+            $function = $this->canonicalIdentifier((string) (($match[3] ?? '') !== '' ? $match[3] : ($match[4] ?? '')));
             if ($function !== '' && ! array_key_exists($function, self::SAFE_SQL_FUNCTIONS)) {
                 return true;
             }
@@ -729,7 +732,7 @@ final class ContractMutationAstScanner
 
     private function isDatabaseFacadeName(string $name): bool
     {
-        return ltrim($name, '\\') === 'Illuminate\\Support\\Facades\\DB';
+        return $this->canonicalClassIdentity($name) === 'illuminate\\support\\facades\\db';
     }
 
     private function rootedAtContractsTable(Node\Expr $expression, array $connectionVariables, array $connectionProperties): bool
@@ -737,7 +740,7 @@ final class ContractMutationAstScanner
         while ($expression instanceof Node\Expr\MethodCall || $expression instanceof Node\Expr\PropertyFetch) {
             if ($expression instanceof Node\Expr\MethodCall
                 && $expression->name instanceof Node\Identifier
-                && $expression->name->toString() === 'table'
+                && $this->canonicalIdentifier($expression->name->toString()) === 'table'
                 && isset($expression->args[0])
                 && $expression->args[0]->value instanceof Node\Scalar\String_
                 && $this->tableBasename($expression->args[0]->value->value) === 'contracts'
@@ -750,7 +753,7 @@ final class ContractMutationAstScanner
             || ! $expression->class instanceof Node\Name
             || ! $this->isDatabaseFacadeName($expression->class->toString())
             || ! $expression->name instanceof Node\Identifier
-            || $expression->name->toString() !== 'table'
+            || $this->canonicalIdentifier($expression->name->toString()) !== 'table'
             || ! isset($expression->args[0])
             || ! $expression->args[0]->value instanceof Node\Scalar\String_) {
             return false;
@@ -764,7 +767,7 @@ final class ContractMutationAstScanner
         $parts = preg_split('/\s*\.\s*/', trim($table));
         $basename = (string) end($parts);
 
-        return strtolower(trim($basename, '"`'));
+        return $this->canonicalIdentifier(trim($basename, '"`'));
     }
 
     private function isDatabaseConnectionType(?Node $node): bool
@@ -801,7 +804,9 @@ final class ContractMutationAstScanner
             return false;
         }
 
-        return in_array(ltrim($type->toString(), '\\'), $expected, true);
+        $canonical = $this->canonicalClassIdentity($type->toString());
+
+        return in_array($canonical, array_map($this->canonicalClassIdentity(...), $expected), true);
     }
 
     private function isConnectionExpression(Node\Expr $expression, array $variables, array $properties): bool
@@ -813,13 +818,13 @@ final class ContractMutationAstScanner
             && $expression->var instanceof Node\Expr\Variable
             && $expression->var->name === 'this'
             && $expression->name instanceof Node\Identifier) {
-            return in_array($expression->name->toString(), $properties, true);
+            return in_array($this->canonicalIdentifier($expression->name->toString()), $properties, true);
         }
         if ($expression instanceof Node\Expr\StaticCall
             && $expression->class instanceof Node\Name
             && $this->isDatabaseFacadeName($expression->class->toString())
             && $expression->name instanceof Node\Identifier
-            && $expression->name->toString() === 'connection') {
+            && $this->canonicalIdentifier($expression->name->toString()) === 'connection') {
             return true;
         }
 
@@ -835,16 +840,16 @@ final class ContractMutationAstScanner
             && $expression->var instanceof Node\Expr\Variable
             && $expression->var->name === 'this'
             && $expression->name instanceof Node\Identifier) {
-            return in_array($expression->name->toString(), $pdoProperties, true);
+            return in_array($this->canonicalIdentifier($expression->name->toString()), $pdoProperties, true);
         }
         if ($expression instanceof Node\Expr\New_
             && $expression->class instanceof Node\Name
-            && ltrim($expression->class->toString(), '\\') === 'PDO') {
+            && $this->canonicalClassIdentity($expression->class->toString()) === 'pdo') {
             return true;
         }
         if ($expression instanceof Node\Expr\MethodCall
             && $expression->name instanceof Node\Identifier
-            && in_array($expression->name->toString(), ['getPdo', 'getRawPdo'], true)) {
+            && in_array($this->canonicalIdentifier($expression->name->toString()), ['getpdo', 'getrawpdo'], true)) {
             return $this->isConnectionExpression($expression->var, $connectionVariables, $connectionProperties)
                 || $this->rootedAtDatabaseConnection($expression->var);
         }
@@ -862,18 +867,18 @@ final class ContractMutationAstScanner
             && $expression->var instanceof Node\Expr\Variable
             && $expression->var->name === 'this'
             && $expression->name instanceof Node\Identifier
-            && in_array($expression->name->toString(), $statementProperties, true)) {
+            && in_array($this->canonicalIdentifier($expression->name->toString()), $statementProperties, true)) {
             return true;
         }
         if ($expression instanceof Node\Expr\MethodCall
             && $expression->name instanceof Node\Identifier) {
-            if ($expression->name->toString() === 'prepare'
+            if ($this->canonicalIdentifier($expression->name->toString()) === 'prepare'
                 && $this->isPdoExpression($expression->var, $pdoVariables, $pdoProperties, $connectionVariables, $connectionProperties)) {
                 return true;
             }
             if ($expression->var instanceof Node\Expr\Variable
                 && $expression->var->name === 'this'
-                && ($methodReturnKinds[$expression->name->toString()] ?? null) === 'statement') {
+                && ($methodReturnKinds[$this->canonicalIdentifier($expression->name->toString())] ?? null) === 'statement') {
                 return true;
             }
         }
@@ -886,7 +891,7 @@ final class ContractMutationAstScanner
     {
         if (! $node instanceof Node\Expr\MethodCall
             || ! $node->name instanceof Node\Identifier
-            || $node->name->toString() !== 'execute') {
+            || $this->canonicalIdentifier($node->name->toString()) !== 'execute') {
             return false;
         }
         $key = $this->expressionKey($node->var, $printer);
@@ -914,8 +919,8 @@ final class ContractMutationAstScanner
             return true;
         }
         if ($expression instanceof Node\Expr\MethodCall && $expression->name instanceof Node\Identifier) {
-            $method = strtolower($expression->name->toString());
-            $receiver = strtolower($printer->prettyPrintExpr($expression->var));
+            $method = $this->canonicalIdentifier($expression->name->toString());
+            $receiver = $this->canonicalIdentifier($printer->prettyPrintExpr($expression->var));
 
             return in_array($method, ['make', 'build', 'prepare', 'query', 'createstatement'], true)
                 || preg_match('/(?:factory|statement|pdo|database|connection)/', $receiver) === 1;
@@ -940,41 +945,35 @@ final class ContractMutationAstScanner
             return isset($objectVariables[$expression->name]) ? 'object:'.$objectVariables[$expression->name] : null;
         }
         if ($expression instanceof Node\Expr\New_ && $expression->class instanceof Node\Name) {
-            return 'object:'.ltrim($expression->class->toString(), '\\');
+            return 'object:'.$this->resolveClassReference($expression->class->toString(), $classIdentity);
         }
         if ($expression instanceof Node\Expr\PropertyFetch
             && $expression->var instanceof Node\Expr\Variable
             && $expression->var->name === 'this'
             && $expression->name instanceof Node\Identifier) {
-            return $this->projectPropertyTypes[$classIdentity.'::$'.$expression->name->toString()] ?? null;
+            return $this->projectPropertyTypes[$this->propertyIdentity($classIdentity, $expression->name->toString())] ?? null;
         }
         if ($expression instanceof Node\Expr\StaticPropertyFetch
             && $expression->class instanceof Node\Name
             && $expression->name instanceof Node\VarLikeIdentifier) {
-            $class = $expression->class->toString();
-            if (in_array(strtolower($class), ['self', 'static'], true)) {
-                $class = $classIdentity;
-            }
+            $class = $this->resolveClassReference($expression->class->toString(), $classIdentity);
 
-            return $this->projectPropertyTypes[ltrim($class, '\\').'::$'.$expression->name->toString()] ?? null;
+            return $this->projectPropertyTypes[$this->propertyIdentity($class, $expression->name->toString())] ?? null;
         }
         if ($expression instanceof Node\Expr\StaticCall
             && $expression->class instanceof Node\Name
             && $expression->name instanceof Node\Identifier) {
-            $class = $expression->class->toString();
-            if (in_array(strtolower($class), ['self', 'static'], true)) {
-                $class = $classIdentity;
-            }
+            $class = $this->resolveClassReference($expression->class->toString(), $classIdentity);
 
-            return $this->projectReturnTypes[ltrim($class, '\\').'::'.$expression->name->toString()] ?? null;
+            return $this->projectReturnTypes[$this->methodIdentity($class, $expression->name->toString())] ?? null;
         }
         if ($expression instanceof Node\Expr\MethodCall && $expression->name instanceof Node\Identifier) {
             if ($expression->var instanceof Node\Expr\Variable && $expression->var->name === 'this') {
-                return $this->projectReturnTypes[$classIdentity.'::'.$expression->name->toString()] ?? null;
+                return $this->projectReturnTypes[$this->methodIdentity($classIdentity, $expression->name->toString())] ?? null;
             }
             $receiver = $this->expressionDeclaredType($expression->var, $objectVariables, $classIdentity);
             if (is_string($receiver) && str_starts_with($receiver, 'object:')) {
-                return $this->projectReturnTypes[substr($receiver, 7).'::'.$expression->name->toString()] ?? null;
+                return $this->projectReturnTypes[$this->methodIdentity(substr($receiver, 7), $expression->name->toString())] ?? null;
             }
         }
 
@@ -1000,19 +999,20 @@ final class ContractMutationAstScanner
 
     private function isExactContractName(string $name): bool
     {
-        $name = ltrim($name, '\\');
+        $name = $this->canonicalClassIdentity($name);
 
-        return $name === 'Contract' || $name === 'App\\Models\\Contract';
+        return $name === 'contract' || $name === 'app\\models\\contract';
     }
 
     private function isContractRepositoryType(?Node $node): bool
     {
-        return $node instanceof Node\Name && str_starts_with($this->shortName($node->toString()), 'ContractRepository');
+        return $node instanceof Node\Name && str_starts_with($this->canonicalIdentifier($this->shortName($node->toString())), 'contractrepository');
     }
 
     /** @param list<string> $properties */
     private function receiverContainsRepositoryProperty(string $receiver, array $properties): bool
     {
+        $receiver = $this->canonicalIdentifier($receiver);
         foreach ($properties as $property) {
             if (str_contains($receiver, '$this->'.$property)) {
                 return true;
@@ -1028,11 +1028,11 @@ final class ContractMutationAstScanner
         if ($expression instanceof Node\Expr\Variable && is_string($expression->name) && isset($variables[$expression->name])) {
             return true;
         }
-        if ($expression instanceof Node\Expr\PropertyFetch && $expression->name instanceof Node\Identifier && in_array($expression->name->toString(), $properties, true)) {
+        if ($expression instanceof Node\Expr\PropertyFetch && $expression->name instanceof Node\Identifier && in_array($this->canonicalIdentifier($expression->name->toString()), $properties, true)) {
             return true;
         }
 
-        return str_contains($printer->prettyPrintExpr($expression), 'contractRepository');
+        return str_contains($this->canonicalIdentifier($printer->prettyPrintExpr($expression)), 'contractrepository');
     }
 
     /** @param list<Node> $nodes @return array<string, list<string>> */
@@ -1040,11 +1040,11 @@ final class ContractMutationAstScanner
     {
         $properties = [];
         foreach ((new NodeFinder)->findInstanceOf($nodes, Node\Stmt\Class_::class) as $class) {
-            $className = $class->name?->toString() ?? 'anonymous';
+            $className = $this->canonicalClassIdentity($class->name?->toString() ?? 'anonymous');
             foreach ($class->getProperties() as $property) {
                 if ($matchesType($property->type)) {
                     foreach ($property->props as $item) {
-                        $properties[$className][] = $item->name->toString();
+                        $properties[$className][] = $this->canonicalIdentifier($item->name->toString());
                     }
                 }
             }
@@ -1053,7 +1053,7 @@ final class ContractMutationAstScanner
                     && $parameter->var instanceof Node\Expr\Variable
                     && is_string($parameter->var->name)
                     && $matchesType($parameter->type)) {
-                    $properties[$className][] = $parameter->var->name;
+                    $properties[$className][] = $this->canonicalIdentifier($parameter->var->name);
                 }
             }
         }
@@ -1066,11 +1066,11 @@ final class ContractMutationAstScanner
     {
         $kinds = [];
         foreach ((new NodeFinder)->findInstanceOf($nodes, Node\Stmt\Class_::class) as $class) {
-            $className = $class->name?->toString() ?? 'anonymous';
+            $className = $this->canonicalClassIdentity($class->name?->toString() ?? 'anonymous');
             foreach ($class->getMethods() as $method) {
                 $kind = $this->databaseTypeKind($method->returnType);
                 if ($kind !== null) {
-                    $kinds[$className][$method->name->toString()] = $kind;
+                    $kinds[$className][$this->canonicalIdentifier($method->name->toString())] = $kind;
                 }
             }
         }
@@ -1089,10 +1089,13 @@ final class ContractMutationAstScanner
             }
             $class = $declaration;
             $classIdentity = $this->declaredClassIdentity($class);
+            if ($class->extends instanceof Node\Name) {
+                $this->projectParentTypes[$classIdentity] = $this->canonicalClassIdentity($class->extends->toString());
+            }
             foreach ($class->getMethods() as $method) {
                 $type = $this->declaredTypeIdentity($method->returnType);
                 if ($type !== null) {
-                    $this->projectReturnTypes[$classIdentity.'::'.$method->name->toString()] = $type;
+                    $this->projectReturnTypes[$this->methodIdentity($classIdentity, $method->name->toString())] = $type;
                 }
             }
             foreach ($class->getProperties() as $property) {
@@ -1101,7 +1104,7 @@ final class ContractMutationAstScanner
                     continue;
                 }
                 foreach ($property->props as $item) {
-                    $this->projectPropertyTypes[$classIdentity.'::$'.$item->name->toString()] = $type;
+                    $this->projectPropertyTypes[$this->propertyIdentity($classIdentity, $item->name->toString())] = $type;
                 }
             }
             $constructor = $class->getMethod('__construct');
@@ -1116,7 +1119,7 @@ final class ContractMutationAstScanner
                 }
                 $constructorParameterTypes[$parameter->var->name] = $type;
                 if ($parameter->flags !== 0) {
-                    $this->projectPropertyTypes[$classIdentity.'::$'.$parameter->var->name] = $type;
+                    $this->projectPropertyTypes[$this->propertyIdentity($classIdentity, $parameter->var->name)] = $type;
                 }
             }
             foreach ($constructor === null ? [] : $this->nodesWithinScope($constructor) as $node) {
@@ -1131,7 +1134,7 @@ final class ContractMutationAstScanner
                 }
                 $type = $constructorParameterTypes[$node->expr->name] ?? null;
                 if ($type !== null) {
-                    $this->projectPropertyTypes[$classIdentity.'::$'.$node->var->name->toString()] = $type;
+                    $this->projectPropertyTypes[$this->propertyIdentity($classIdentity, $node->var->name->toString())] = $type;
                 }
             }
         }
@@ -1146,7 +1149,7 @@ final class ContractMutationAstScanner
             }
             $name = $function->namespacedName ?? $function->getAttribute('namespacedName');
             $identity = $name instanceof Node\Name ? $name->toString() : $function->name->toString();
-            $this->projectReturnTypes[$identity] = $type;
+            $this->projectReturnTypes[$this->canonicalClassIdentity($identity)] = $type;
         }
     }
 
@@ -1174,8 +1177,8 @@ final class ContractMutationAstScanner
         if (! $type instanceof Node\Name) {
             return null;
         }
-        $name = ltrim($type->toString(), '\\');
-        if (in_array(strtolower($name), ['false', 'true', 'null', 'void', 'never', 'mixed', 'object', 'string', 'int', 'float', 'bool', 'array', 'iterable', 'callable'], true)) {
+        $name = $this->canonicalClassIdentity($type->toString());
+        if (in_array($name, ['false', 'true', 'null', 'void', 'never', 'mixed', 'object', 'string', 'int', 'float', 'bool', 'array', 'iterable', 'callable'], true)) {
             return null;
         }
 
@@ -1214,7 +1217,7 @@ final class ContractMutationAstScanner
         }
         foreach ((new NodeFinder)->findInstanceOf($nodes, Node\Stmt\Function_::class) as $function) {
             $namespaceName = $function->namespacedName ?? $function->getAttribute('namespacedName');
-            $identity = $namespaceName instanceof Node\Name ? $namespaceName->toString() : $function->name->toString();
+            $identity = $this->canonicalClassIdentity($namespaceName instanceof Node\Name ? $namespaceName->toString() : $function->name->toString());
             $this->collectMethodStructure($function, 'function', $printer, $bodies, $calls, $identity, $source);
         }
         foreach ($calls as $identity => $targets) {
@@ -1318,8 +1321,8 @@ final class ContractMutationAstScanner
 
     private function collectMethodStructure(Node\Stmt\ClassMethod|Node\Stmt\Function_ $method, string $class, Standard $printer, array &$bodies, array &$calls, ?string $functionIdentity = null, ?string $source = null): void
     {
-        $name = $method->name->toString();
-        $identity = $functionIdentity ?? $class.'::'.$name;
+        $name = $this->canonicalIdentifier($method->name->toString());
+        $identity = $functionIdentity === null ? $this->methodIdentity($class, $name) : $this->canonicalClassIdentity($functionIdentity);
         $bodies[$identity] = $source === null
             ? $printer->prettyPrint($method->getStmts() ?? [])
             : substr($source, $method->getStartFilePos(), $method->getEndFilePos() - $method->getStartFilePos() + 1);
@@ -1353,25 +1356,22 @@ final class ContractMutationAstScanner
                 && $node->var instanceof Node\Expr\Variable
                 && $node->var->name === 'this'
                 && $node->name instanceof Node\Identifier) {
-                $calls[$identity][] = $class.'::'.$node->name->toString();
+                $calls[$identity][] = $this->methodIdentity($class, $node->name->toString());
             } elseif ($node instanceof Node\Expr\MethodCall && $node->name instanceof Node\Identifier) {
                 $receiver = $this->expressionDeclaredType($node->var, $objectVariables, $class);
                 $target = is_string($receiver) && str_starts_with($receiver, 'object:')
-                    ? substr($receiver, 7).'::'.$node->name->toString()
+                    ? $this->methodIdentity(substr($receiver, 7), $node->name->toString())
                     : null;
                 $calls[$identity][] = $target !== null && ($this->projectReturnTypes[$target] ?? null) === 'statement'
                     ? $target
-                    : 'dynamic:'.preg_replace('/\s+/', '', $printer->prettyPrintExpr($node->var)).'::'.$node->name->toString();
+                    : 'dynamic:'.$this->canonicalIdentifier((string) preg_replace('/\s+/', '', $printer->prettyPrintExpr($node->var))).'::'.$this->canonicalIdentifier($node->name->toString());
             }
             if ($node instanceof Node\Expr\StaticCall && $node->name instanceof Node\Identifier) {
                 $target = $node->class instanceof Node\Name ? $node->class->toString() : $printer->prettyPrintExpr($node->class);
-                if (in_array(strtolower($target), ['self', 'static'], true)) {
-                    $target = $class;
-                }
-                $calls[$identity][] = ltrim($target, '\\').'::'.$node->name->toString();
+                $calls[$identity][] = $this->methodIdentity($this->resolveClassReference($target, $class), $node->name->toString());
             }
             if ($node instanceof Node\Expr\FuncCall && $node->name instanceof Node\Name) {
-                $calls[$identity][] = ltrim($node->name->toString(), '\\');
+                $calls[$identity][] = $this->canonicalClassIdentity($node->name->toString());
             }
         }
     }
@@ -1380,21 +1380,18 @@ final class ContractMutationAstScanner
     {
         if ($node instanceof Node\Expr\MethodCall
             && $node->name instanceof Node\Identifier
-            && $node->name->toString() === 'execute') {
+            && $this->canonicalIdentifier($node->name->toString()) === 'execute') {
             if ($node->var instanceof Node\Expr\StaticCall
                 && $node->var->class instanceof Node\Name
                 && $node->var->name instanceof Node\Identifier) {
-                $target = $node->var->class->toString();
-                if (in_array(strtolower($target), ['self', 'static'], true)) {
-                    $target = $classIdentity;
-                }
+                $target = $this->resolveClassReference($node->var->class->toString(), $classIdentity);
 
-                return ltrim($target, '\\').'::'.$node->var->name->toString();
+                return $this->methodIdentity($target, $node->var->name->toString());
             }
             if ($node->var instanceof Node\Expr\MethodCall && $node->var->name instanceof Node\Identifier) {
                 $receiver = $this->expressionDeclaredType($node->var->var, $objectVariables, $classIdentity);
                 if (is_string($receiver) && str_starts_with($receiver, 'object:')) {
-                    return substr($receiver, 7).'::'.$node->var->name->toString();
+                    return $this->methodIdentity(substr($receiver, 7), $node->var->name->toString());
                 }
             }
         }
@@ -1407,23 +1404,20 @@ final class ContractMutationAstScanner
             && $argument->var instanceof Node\Expr\Variable
             && $argument->var->name === 'this'
             && $argument->name instanceof Node\Identifier) {
-            return $classIdentity.'::'.$argument->name->toString();
+            return $this->methodIdentity($classIdentity, $argument->name->toString());
         }
         if ($argument instanceof Node\Expr\StaticCall
             && $argument->class instanceof Node\Name
             && $argument->name instanceof Node\Identifier) {
-            $target = $argument->class->toString();
-            if (in_array(strtolower($target), ['self', 'static'], true)) {
-                $target = $classIdentity;
-            }
+            $target = $this->resolveClassReference($argument->class->toString(), $classIdentity);
 
-            return ltrim($target, '\\').'::'.$argument->name->toString();
+            return $this->methodIdentity($target, $argument->name->toString());
         }
         if ($argument instanceof Node\Expr\FuncCall && $argument->name instanceof Node\Name) {
-            return ltrim($argument->name->toString(), '\\');
+            return $this->canonicalClassIdentity($argument->name->toString());
         }
         if ($argument instanceof Node\Expr\MethodCall || $argument instanceof Node\Expr\StaticCall || $argument instanceof Node\Expr\FuncCall) {
-            return 'unresolved-expression:'.(string) preg_replace('/\s+/', '', (new Standard)->prettyPrintExpr($argument));
+            return 'unresolved-expression:'.$this->canonicalIdentifier((string) preg_replace('/\s+/', '', (new Standard)->prettyPrintExpr($argument)));
         }
 
         return null;
@@ -1434,18 +1428,18 @@ final class ContractMutationAstScanner
     {
         $properties = [];
         foreach ((new NodeFinder)->findInstanceOf($nodes, Node\Stmt\Class_::class) as $class) {
-            $className = $class->name?->toString() ?? 'anonymous';
+            $className = $this->canonicalClassIdentity($class->name?->toString() ?? 'anonymous');
             foreach ($class->getProperties() as $property) {
                 if ($this->isContractRepositoryType($property->type)) {
                     foreach ($property->props as $item) {
-                        $properties[$className][] = $item->name->toString();
+                        $properties[$className][] = $this->canonicalIdentifier($item->name->toString());
                     }
                 }
             }
             $constructor = $class->getMethod('__construct');
             foreach ($constructor?->getParams() ?? [] as $parameter) {
                 if ($parameter->flags !== 0 && $parameter->var instanceof Node\Expr\Variable && is_string($parameter->var->name) && $this->isContractRepositoryType($parameter->type)) {
-                    $properties[$className][] = $parameter->var->name;
+                    $properties[$className][] = $this->canonicalIdentifier($parameter->var->name);
                 }
             }
         }
@@ -1455,7 +1449,7 @@ final class ContractMutationAstScanner
 
     private function shortName(string $name): string
     {
-        $parts = explode('\\', ltrim($name, '\\'));
+        $parts = explode('\\', $this->canonicalClassIdentity($name));
 
         return (string) end($parts);
     }
@@ -1547,7 +1541,7 @@ final class ContractMutationAstScanner
                 }
                 if ($assignment->expr instanceof Node\Expr\MethodCall
                     && $assignment->expr->name instanceof Node\Identifier
-                    && $assignment->expr->name->toString() === 'prepare') {
+                    && $this->canonicalIdentifier($assignment->expr->name->toString()) === 'prepare') {
                     $prepared[$target] = null;
                 }
                 if (! isset($statementVariables[$target]) && $this->isStatementExpression($assignment->expr, $statementVariables, $statementProperties, $prepared, $pdoVariables, $pdoProperties, $connectionVariables, $connectionProperties, $returnKinds, [], $this->enclosingClassIdentity($nodes, $parent), $printer, false)) {
@@ -1631,8 +1625,54 @@ final class ContractMutationAstScanner
     {
         $namespacedName = $class->namespacedName ?? $class->getAttribute('namespacedName');
 
-        return $namespacedName instanceof Node\Name
+        $identity = $namespacedName instanceof Node\Name
             ? $namespacedName->toString()
             : ($class->name?->toString() ?? 'anonymous');
+
+        return $this->canonicalClassIdentity($identity);
+    }
+
+    private function isCandidateOperation(string $operation): bool
+    {
+        $operation = $this->canonicalIdentifier($operation);
+
+        return $operation === 'execute'
+            || in_array($operation, self::MUTATIONS, true)
+            || in_array($operation, self::RAW_SQL_ENTRY_POINTS, true)
+            || in_array($operation, self::PDO_ENTRY_POINTS, true);
+    }
+
+    private function methodIdentity(string $class, string $method): string
+    {
+        return $this->canonicalClassIdentity($class).'::'.$this->canonicalIdentifier($method);
+    }
+
+    private function propertyIdentity(string $class, string $property): string
+    {
+        return $this->canonicalClassIdentity($class).'::$'.$this->canonicalIdentifier($property);
+    }
+
+    private function resolveClassReference(string $class, string $currentClass): string
+    {
+        $class = $this->canonicalClassIdentity($class);
+        $currentClass = $this->canonicalClassIdentity($currentClass);
+        if ($class === 'self' || $class === 'static') {
+            return $currentClass;
+        }
+        if ($class === 'parent') {
+            return $this->projectParentTypes[$currentClass] ?? 'parent';
+        }
+
+        return $class;
+    }
+
+    private function canonicalClassIdentity(string $identity): string
+    {
+        return ltrim($this->canonicalIdentifier($identity), '\\');
+    }
+
+    private function canonicalIdentifier(string $identity): string
+    {
+        return strtr($identity, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
     }
 }

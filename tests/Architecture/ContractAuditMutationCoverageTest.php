@@ -21,99 +21,99 @@ final class ContractAuditMutationCoverageTest extends TestCase
         ];
         $structuralExemptions = [];
         foreach (array_filter(explode("\n", <<<'MANIFEST'
-AiBudgetGuard|claimWire|c251f47ef12ba8dd239535f724de8caab910ae7f7defcf03f7ad5d3a9137adfd|evidence=selectOne:sql=SELECT eg_claim_ai_budget_wire(?) AS claimed=1
-AiBudgetGuard|pendingReconciliation|ec632cc1e72fb9b769eeab19be231ed84107697379b76eac7d4db65b7e1c4e9f|evidence=selectOne:sql=SELECT eg_mark_ai_budget_reconciliation(?) AS pending=1
-AiBudgetGuard|reconcileExpired|24f4633104462dabf7e202b2545a269b0448ce4d3c0c8f8f6b033d01b8acee2b|evidence=selectOne:sql=SELECT eg_reconcile_expired_ai_budgets(?) AS reconciled=1
-AiBudgetGuard|releaseBeforeWire|b2b7fa48a03817adcd92b9be0f452829c0b4220a250cae2e2b16d60d2c31b64a|evidence=selectOne:sql=SELECT eg_release_ai_budget(?) AS released=1
-AiBudgetGuard|reserve|520fac2a59a1901e991ffcfd6a2ac03af421e0896fddf64fc5093d07b4862d1e|evidence=selectOne:sql=SELECT eg_reserve_ai_budget(?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?) AS reservation_id=1
-AiBudgetGuard|settle|4ee3c7cbe866cc6d3b4ddcb5f17ffae428694e08bf4e3ccb893b9adcd226afa6|evidence=selectOne:sql=SELECT eg_settle_ai_budget(?, ?, ?) AS settled=1
-BenchmarkRunRepository|lockStorageObject|99b11b03a6ff0036b5b236b18a988a7ebead9d219c874760b0a110e3ff437d44|evidence=select:sql=SELECT pg_advisory_lock(hashtextextended(?, 0))=1
-BenchmarkRunRepository|start|7cb6c5b970db9a8ba64bee2be36395c8fe51eb1d636aa0e6b8c2ec2018a460d3|evidence=select:sql=SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))=1
-BenchmarkRunRepository|unlockStorageObject|a5a0ce4ef33286d55189ee80e772a3f015b6d6ebbce50cd44b0b3ce1cb613be6|evidence=select:sql=SELECT pg_advisory_unlock(hashtextextended(?, 0))=1
-BuildSessionOperationalSnapshot|finalization|745d8baea2a8578d4dee6854e02dbb566721a928ed8a489e7f6cb86aea348dde|evidence=selectOne:sql=SELECT (SELECT COUNT(*) FROM estimate_generation_finalization_outbox WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS outbox_total, (SELECT COALESCE(MAX(id), 0) …=1
-BuildSessionOperationalSnapshot|sourceWatermarks|d3fe49ee303d13a38dcce5c5c761cd14563cc52592ca93bb6c272d4ae1b3d561|evidence=selectOne:sql=SELECT (SELECT COUNT(*) FROM estimate_generation_document_pages WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS pages_count, (SELECT COALESCE(MAX(id), 0) FROM e…=1
-ContractService|getContractsSummary|23ad2d19d2129c0c305836d1eda177aee124d3d03f6438ce5f19aef1f1e7779c|evidence=raw:argument="({$nearingLimitSubquery->toSql()})assubquery"=1
-DashboardController|contractsRequiringAttention|b91510a6e47aa070ce4f800ffffbd2689284bd7e3c5535ec81351c1964797e33|evidence=raw:argument='CASEWHEN(CASEWHENcontracts.total_amount>0THENROUND((COALESCE(cw.completed_amount,0)/contracts.total_amount)*100,2)ELSE0END)>=100THEN3WHENend_date<CURRENT_TIMESTAMPANDstatus=\''.\App\Enums\Contract\ContractStatusEnum::ACTIVE->value.'\'THEN2WHEN(CASEWHENcontracts.total_amount>0THENROUND((COALESCE(cw.completed_amount,0)/contracts.total_amount)*100,2)ELSE0END)>=90THEN1ELSE0END'=1
-DashboardController|getTopCreditors|cbca1d63729a20f11b0a3c648d331e64c2111adaa145eee4a7c6e16a9a921112|evidence=raw:sql=CASE WHEN contractor_id IS NOT NULL THEN (SELECT name FROM contractors WHERE id = payment_documents.contractor_id) ELSE (SELECT name FROM organizations WHERE id = payment_documents…=1
-DashboardController|getTopDebtors|e41bb63fd7be2eb47debdf8ab634208114e3c74e00c92b879fc53b8a04a63aee|evidence=raw:sql=CASE WHEN contractor_id IS NOT NULL THEN (SELECT name FROM contractors WHERE id = payment_documents.contractor_id) ELSE (SELECT name FROM organizations WHERE id = payment_documents…=1
-DatabaseNotificationCommitSequencer|run|8c8dd6db8a157032aa670b4baa6b1c790d63604848b2d98131b864ea5d836875|evidence=select:sql=SELECT pg_advisory_xact_lock(hashtextextended(CAST(? AS text), 0))=1
-EloquentBuildingModelStore|transaction|20749cf6cf1e0e8c812e60ca7a44bf791af1f225b6175bf8c6aac51302ab4958|evidence=select:sql=SELECT pg_advisory_xact_lock(?, ?)=1
-EloquentEffectiveSettingsOperationStore|pin|c9d8700383b10fedb87f7393071903947ac19318e1c2772765be59010d84a1de|evidence=selectOne:sql=SELECT * FROM eg_pin_ai_operation_settings(?, ?, ?)=1
-EloquentEvidenceRepository|descendantBatches|193839e971c6a3b6526cf393bae4c38c1bbd11437e9472c1abe5b3caddb906c5|evidence=insert:argument=$sql=1
-EloquentEvidenceRepository|descendantBatches|193839e971c6a3b6526cf393bae4c38c1bbd11437e9472c1abe5b3caddb906c5|evidence=statement:argument="CREATETEMPTABLEIFNOTEXISTS{$temporaryTable}(idbigintPRIMARYKEY)ONCOMMITDROP"=1
-EloquentEvidenceRepository|transaction|67c19101beb3f263736e92036b652acdab03b13a8a805de024dbb93ae1f61e8f|evidence=select:sql=SELECT pg_advisory_xact_lock(?, ?)=1
-ErrorTrackingController|timeseries|243a18099f965abe603742d1738853241d09c83fcd639dc49e493193c07caea8|evidence=raw:argument="DATE_TRUNC('{$interval}',last_seen_at)astime"=1
-EstimateGenerationPackagePersistenceService|appendItemRevision|3123c24ee142a3e3fc5c562f6ed80f16ccffd1e409dc4cbdc06198e9cec22dc9|evidence=select:sql=SELECT public.eg_finalize_package_item_price(?)=1
-EstimateGenerationResourceIndexRuntime|dropAll|1de26fcf9c7e4caa8a0c78636b617c297fe3f7a3088e6ecbb0416703c1b0dc3b|evidence=statement:argument=$index['dropIfExists']=1
-EstimateGenerationResourceIndexRuntime|ensureConcurrentIndex|08ab7c94420ac6bd9a27b366703e7a4bd15a9f2c7fb2c42117251a67cb4a4c64|evidence=statement:argument=$index['create']=1
-EstimateGenerationResourceIndexRuntime|ensureConcurrentIndex|08ab7c94420ac6bd9a27b366703e7a4bd15a9f2c7fb2c42117251a67cb4a4c64|evidence=statement:argument=$index['drop']=1
-EstimateGenerationResourceIndexRuntime|findIndex|4c9ad128f990e5a8e40d3f43622b1a8fa43cba30f2e517735c835693ea313f69|evidence=selectOne:sql=SELECT i.indisvalid, i.indisready, pg_get_indexdef(c.oid) AS definition FROM pg_class AS c INNER JOIN pg_namespace AS n ON n.oid = c.relnamespace INNER JOIN pg_index AS i ON i.inde…=1
-EstimateGenerationReviewQueueQuery|paginate|c0331079583c31b1ce154250ea4530165569f3ae0bdf0aa80c81d2a8568cb304|evidence=select:argument=$this->pageSql($where)=1
-EstimateGenerationReviewQueueQuery|paginate|fd553e1c913c168b870c32fbbe85c6a132231ff9f2b1c04be96431940399dae2|evidence=selectOne:argument=$this->summarySql($where)=1
-EstimateGenerationTrainingDatasetService|appendVersion|7da0fb97e423e08f7b4fdab06e61506d4458bc77ace32da405d235dc4d0635c3|evidence=select:sql=SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))=1
-GeometryDependencyInvalidator|invalidate|462a2d90538872650976351ff6711bad4081097e39d48e2fe8762d6db78fa727|evidence=select:argument='WITHRECURSIVEdescendants(id)AS(SELECTchild_idFROMestimate_generation_evidence_edgesWHEREsession_id=?ANDparent_idIN('.implode(',',array_fill(0,$roots->count(),'?')).')UNIONSELECTedge.child_idFROMestimate_generation_evidence_edgesedgeJOINdescendantstreeONtree.id=edge.parent_idWHEREedge.session_id=?)SELECTidFROMdescendants'=1
-HoldingReportService|getContractsByContractor|72cfb1fd79414a817069f3aaf9529365100005e10344fe2dd31b1e566d6ee5f3|evidence=raw:argument="({$query->toSql()})assub"=1
-ImmutableAuditPhaseBInvariantService|ensurePhaseBIndex|9a92dbbba1d6f22dfa1d20013e76f924016abdd8cde7181a120f566d4b89a641|evidence=statement:argument="CREATEUNIQUEINDEXCONCURRENTLY{$name}ONimmutable_audit_events(".implode(',',$columns).")WHERE{$predicate}"=1
-ImmutableAuditPhaseBInvariantService|ensurePhaseBIndex|9a92dbbba1d6f22dfa1d20013e76f924016abdd8cde7181a120f566d4b89a641|evidence=statement:argument="DROPINDEXCONCURRENTLYIFEXISTS{$name}"=1
-ImmutableAuditPhaseBInvariantService|functionCatalog|39222f16e4f6b21e8dfe2aa481aa9c8da38a717745a61cef8b274540f08e885f|evidence=selectOne:sql=SELECT p.prosrc, pg_get_function_identity_arguments(p.oid) AS identity_arguments, pg_get_function_result(p.oid) AS result, l.lanname AS language, p.provolatile AS volatility, p.pro…=1
-ImmutableAuditPhaseBInvariantService|index|8533f18a4db53d84bd1cb91bcc1591f855827e92566e8c8b44c501cfedcbc246|evidence=selectOne:sql=SELECT i.indisvalid, i.indisready, i.indisunique, ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) JOIN pg_attribute a ON a.attrelid = i.indrelid AND …=1
-ImmutableAuditPhaseBInvariantService|installCanonicalCore|197d1f05556ef7ddec11535d08e3d1d91a5eca2d23b0290916c46126decdbac9|evidence=unprepared:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::canonicalCoreSql()=1
-ImmutableAuditPhaseBInvariantService|installCanonicalCore|cfec38cfc7fecafda89316c15ded5c4de6ad2271c1f24a4fedf49a2f36063ac4|evidence=statement:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::SEQUENCE_ALTER_SQL=1
-ImmutableAuditPhaseBInvariantService|installCanonicalCore|cfec38cfc7fecafda89316c15ded5c4de6ad2271c1f24a4fedf49a2f36063ac4|evidence=statement:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::SEQUENCE_CREATE_SQL=1
-ImmutableAuditPhaseBInvariantService|sequenceCatalog|003c10eed535f2ee9e9be91879fd76184920845f42e44443545f89276c66996c|evidence=selectOne:sql=SELECT s.data_type, s.start_value, s.min_value, s.max_value, s.increment_by, s.cycle, s.cache_size, CASE WHEN pg_get_userbyid(q.relowner) = current_user THEN '$database_owner' ELSE…=1
-ImmutableAuditPhaseBInvariantService|triggerCatalog|415242921953fc646198f320b21b170385a3f955d9eeee6594604c611d20b7e7|evidence=selectOne:sql=SELECT t.tgname AS name, t.tgenabled AS enabled, t.tgisinternal AS internal, c.relname AS relation, p.proname AS function_name, t.tgtype AS type, CASE WHEN function_namespace.nspna…=1
-ImmutableAuditRecorder|activateWriterCredential|b72323145530842ff92ecfcedc42d66d20a983777fdbac8c76dfc53dd80e5f57|evidence=execute:argument=[$credential]=1
-ImmutableAuditRolloutService|cutover|86e4e5b604d45cefffabb63b0b368e392b540f163d726516721ff75e584b835a|evidence=select:sql=SELECT pg_advisory_lock(hashtextextended(?, 0))=2
-ImmutableAuditRolloutService|cutover|86e4e5b604d45cefffabb63b0b368e392b540f163d726516721ff75e584b835a|evidence=select:sql=SELECT pg_advisory_unlock(hashtextextended(?, 0))=2
-ImmutableAuditRolloutService|cutover|86e4e5b604d45cefffabb63b0b368e392b540f163d726516721ff75e584b835a|evidence=statement:sql=SELECT setval('immutable_audit_sequence', GREATEST((SELECT last_value FROM immutable_audit_sequence), COALESCE((SELECT MAX(sequence_id) FROM immutable_audit_events), 1)), EXISTS (S…=1
-ImmutableAuditRolloutService|ensurePhaseBIndex|a286638bc3eab9dc9f1670ca7325ee751b172b94689d4a2034b0691f036f84f2|evidence=statement:argument="CREATEUNIQUEINDEXCONCURRENTLY{$name}ONimmutable_audit_events({$columnSql})WHERE{$predicate}"=1
-ImmutableAuditRolloutService|ensurePhaseBIndex|a286638bc3eab9dc9f1670ca7325ee751b172b94689d4a2034b0691f036f84f2|evidence=statement:argument="DROPINDEXCONCURRENTLYIFEXISTS{$name}"=1
-ImmutableAuditRolloutService|lockedRolloutMarker|3a658c0c9a9e93c8918b614ebf54976e10b69c133f551a5eb8b75969cc3113f9|evidence=selectOne:argument=<<<SQLSELECTphase,writer_version,writer_credential_hash,drain_marker,drain_confirmed_at,drain_confirmed_atISNOTNULLANDdrain_confirmed_at>=clock_timestamp()-make_interval(mins=>CAST(?ASinteger))ASdrain_freshFROMimmutable_audit_rolloutWHEREsingleton=true{$forUpdateSql}SQL=1
-ImmutableAuditRolloutService|repairPermanentInvariants|7fde919b17ecdd036eb3fe906f5c51befabafb900c6beec77a40e78e8ef2abf7|evidence=select:sql=SELECT pg_advisory_lock(hashtextextended(?, 0))=2
-ImmutableAuditRolloutService|repairPermanentInvariants|7fde919b17ecdd036eb3fe906f5c51befabafb900c6beec77a40e78e8ef2abf7|evidence=select:sql=SELECT pg_advisory_unlock(hashtextextended(?, 0))=2
-LaravelNotificationSnapshotDatabase|statement|344a1fc33f0ec99fed10c711f5ae406a26c1c610961fed4a6120b5895be5360c|evidence=statement:argument=$sql=1
-NormativeRetrievalRolloutService|deploy|5d09553531c2a3f09b559404d1951414acde84d3b9810264316f52d57e69bc64|evidence=select:sql=SELECT pg_advisory_unlock(hashtext('normative-retrieval-v1'))=1
-NormativeRetrievalRolloutService|deploy|5d09553531c2a3f09b559404d1951414acde84d3b9810264316f52d57e69bc64|evidence=selectOne:sql=SELECT pg_try_advisory_lock(hashtext('normative-retrieval-v1')) AS locked=1
-NormativeRetrievalRolloutService|deploy|5d09553531c2a3f09b559404d1951414acde84d3b9810264316f52d57e69bc64|evidence=unprepared:sql=DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='estimate_norm_semantic_score_ck') THEN ALTER TABLE estimate_norm_semantic_scores ADD CONSTRAINT estimate_norm_…=1
-NormativeRetrievalRolloutService|deploy|5d09553531c2a3f09b559404d1951414acde84d3b9810264316f52d57e69bc64|evidence=unprepared:sql=DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='estimate_norms_validity_ck') THEN ALTER TABLE estimate_norms ADD CONSTRAINT estimate_norms_validity_ck CHECK (…=1
-NotificationQueryService|unreadAggregatesForQuery|5b8d33f2b7a68e023452ab5bafb2ee1ae1ee3db1182c7ff42bcdd0dfcf1d271b|evidence=raw:argument=$categoryExpression=1
-NotificationQueryService|unreadAggregatesForQuery|5b8d33f2b7a68e023452ab5bafb2ee1ae1ee3db1182c7ff42bcdd0dfcf1d271b|evidence=raw:argument=$notificationTypeExpression=1
-NotificationQueryService|unreadAggregatesForQuery|5b8d33f2b7a68e023452ab5bafb2ee1ae1ee3db1182c7ff42bcdd0dfcf1d271b|evidence=raw:argument=$typeExpression=1
-PackageInputVersionBackfill|run|3a49a5c4cfc021668d32895859a4c87e80683a77bc030d208f28d07ee0d9d404|evidence=affectingStatement:argument=self::SQL=1
-PaymentDocumentService|generateDocumentNumber|55875858fff0b2c1f766826471c663efea4ae63c8d468187112665fc98479b96|evidence=selectOne:sql=SELECT get_next_payment_document_number(?, ?, ?, ?) as number=1
-PostgresNormativeCandidateSource|find|a095a6f2fec854a0362e6030cb903a70aef0c30c9305a7c15f5d1b87b6730995|evidence=select:argument=self::QUERY_CONTRACT=1
-RagIndexer|storeVector|17082e9a98eba1d467b708e3c6f4ebeea539908997f648a44dee101dbd69ae21|evidence=update:argument=$sql=1
-RagRetriever|postgresRows|1f683253f1209ddc3d779a8969be392b59ccb6e2ece920e58ceb6c185cd7987d|evidence=select:argument=$sql=1
-ReportService|getContractPaymentsReport|318423f31432042bceca3fe18d061b4afd6cae479a4e839da45aa9174d376ed4|evidence=raw:argument='(SELECTCOALESCE(SUM(amount),0)FROMcontract_performance_actsWHEREcontract_id=contracts.idANDproject_id='.$projectId.'ANDis_approved=true)ascompleted_amount'=1
-ReportService|getContractPaymentsReport|318423f31432042bceca3fe18d061b4afd6cae479a4e839da45aa9174d376ed4|evidence=raw:argument='(SELECTCOALESCE(SUM(paid_amount),0)FROMpayment_documentsWHEREinvoiceable_type=\'App\\\\Models\\\\Contract\'ANDinvoiceable_id=contracts.idANDpayment_documents.organization_id='.$organizationId.'ANDdeleted_atISNULL)aspaid_amount'=1
-ReportService|getContractorSettlementsReport|85c9ceaae1980281a7cf2d08518d49a3be64704a313108e19bccd3ff91603e30|evidence=raw:argument=$completedAmountSubquery=1
-ReportService|getContractorSettlementsReport|85c9ceaae1980281a7cf2d08518d49a3be64704a313108e19bccd3ff91603e30|evidence=raw:argument='COALESCE(SUM((SELECTSUM(paid_amount)FROMpayment_documentsWHEREinvoiceable_type=\'App\\\\Models\\\\Contract\'ANDinvoiceable_id=contracts.idANDpayment_documents.organization_id='.$organizationId.'ANDdeleted_atISNULL)),0)astotal_paid'=1
-ReportService|getProjectProfitabilityReport|1acd67f2b740530936089bdad7474639b634400b2548832c77c97c08c7084788|evidence=raw:argument='(SELECTCOALESCE(SUM(quantity*price),0)FROMwarehouse_movementsWHEREproject_id=projects.idANDwarehouse_movements.organization_id='.$organizationId.'ANDmovement_type=\'receipt\')asmaterial_costs'=1
-ReportService|getProjectProfitabilityReport|1acd67f2b740530936089bdad7474639b634400b2548832c77c97c08c7084788|evidence=raw:argument='(SELECTCOALESCE(SUM(total_amount),0)FROMcontractsWHEREproject_id=projects.idANDcontracts.organization_id='.$organizationId.')ascontractor_costs'=1
-ReportService|getProjectTimelinesReport|cfd73b7fe6f588a7753bb88833ee4bbf8ef10d834a881ac6c9710824b96979c8|evidence=raw:argument='(SELECTCOALESCE(SUM(total_amount),0)FROMcontractsWHEREproject_id=projects.idANDcontracts.organization_id='.$organizationId.')astotal_contract_amount'=1
-ResetInvoiceNumberSequences|handle|d8457900533367444ff7fd3548388296d368892ec1a3a2abc3837883b7a88ff5|evidence=statement:argument="DROPSEQUENCEIFEXISTS".$seq->relname=1
-ResetPaymentDocumentSequences|handle|4d3e5874c1caf215f839c1b1d92ff71562a0b9b3e60b53aa80296192a98ae02f|evidence=statement:argument="DROPSEQUENCEIFEXISTS".$seq->relname=1
-SearchService|searchNearby|838534698060e4c7033bc3fc811425c92df56d67ef7d030049f72648c0db80ed|evidence=select:sql=SELECT id, name, address, latitude, longitude, status, budget_amount, (6371 * acos( cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)…=1
-SqlEstimateGenerationDashboardRepository|all|0dda1cb4a7e6337c49d1928b4d7cfbde7359e2429bb6ceca450fee4acc319536|evidence=select:argument=$query->sql=1
-SqlEstimateGenerationDashboardRepository|one|3ad3b6d339e8052349854582b0ad713a5f59123d2e3161c3391cc589c6a10374|evidence=selectOne:argument=$query->sql=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|3edf28cd7633594c5c3cb4282ad3d2154f3aa1f544ddf42ab1b2c25bdd8a7365|evidence=select:sql=SELECT c.relname, pg_get_indexdef(c.oid) AS definition FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname IN (?, ?)=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|3edf28cd7633594c5c3cb4282ad3d2154f3aa1f544ddf42ab1b2c25bdd8a7365|evidence=selectOne:sql=SELECT i.indisvalid, i.indisready, i.indisunique, ns.nspname AS schema_name, tbl.relname AS table_name, ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY AS keys(attnum,…=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|3edf28cd7633594c5c3cb4282ad3d2154f3aa1f544ddf42ab1b2c25bdd8a7365|evidence=statement:argument=$createSql=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|3edf28cd7633594c5c3cb4282ad3d2154f3aa1f544ddf42ab1b2c25bdd8a7365|evidence=statement:argument='DROPINDEXCONCURRENTLY'.$expectedSchema.'.'.$name=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|3edf28cd7633594c5c3cb4282ad3d2154f3aa1f544ddf42ab1b2c25bdd8a7365|evidence=statement:argument='DROPINDEXCONCURRENTLY'.$expectedSchema.'.'.$probe=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|3edf28cd7633594c5c3cb4282ad3d2154f3aa1f544ddf42ab1b2c25bdd8a7365|evidence=statement:argument='DROPINDEXCONCURRENTLYIFEXISTS'.$expectedSchema.'.'.$probe=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|3edf28cd7633594c5c3cb4282ad3d2154f3aa1f544ddf42ab1b2c25bdd8a7365|evidence=statement:argument=(string)$probeSql=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|0462613aaa5a1ac5e907ed0361662c0d6676e0040f6434bcf05b536453d52d19|evidence=selectOne:sql=SELECT pg_get_constraintdef(c.oid, true) AS definition FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = ? …=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|0462613aaa5a1ac5e907ed0361662c0d6676e0040f6434bcf05b536453d52d19|evidence=selectOne:sql=SELECT pg_get_constraintdef(c.oid, true) AS definition, c.convalidated FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHER…=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|0462613aaa5a1ac5e907ed0361662c0d6676e0040f6434bcf05b536453d52d19|evidence=statement:argument="ALTERTABLE{$qualified}ADDCONSTRAINT{$name}{$definition}NOTVALID"=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|0462613aaa5a1ac5e907ed0361662c0d6676e0040f6434bcf05b536453d52d19|evidence=statement:argument="ALTERTABLE{$qualified}ADDCONSTRAINT{$probe}{$definition}NOTVALID"=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|0462613aaa5a1ac5e907ed0361662c0d6676e0040f6434bcf05b536453d52d19|evidence=statement:argument="ALTERTABLE{$qualified}DROPCONSTRAINTIFEXISTS{$probe}"=1
-TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|0462613aaa5a1ac5e907ed0361662c0d6676e0040f6434bcf05b536453d52d19|evidence=statement:argument="ALTERTABLE{$qualified}DROPCONSTRAINT{$probe}"=1
-TrainingBenchmarkOnlineMigrationRuntime|restoreSessionTimeouts|7b88628ce28f3e4a05031a5ab511877bf0b8a439181998b9df6ea3dd234c11d2|evidence=select:sql=SELECT set_config('lock_timeout', ?, false), set_config('statement_timeout', ?, false)=1
-TrainingBenchmarkOnlineMigrationRuntime|swapValidatedConstraint|98e33037b647f9c0a0c45834231d138f0226ecf37d74c1bb36631c4b9905c7eb|evidence=statement:argument="ALTERTABLE{$schema}.{$table}DROPCONSTRAINTIFEXISTS{$finalName}"=1
-TrainingBenchmarkOnlineMigrationRuntime|swapValidatedConstraint|98e33037b647f9c0a0c45834231d138f0226ecf37d74c1bb36631c4b9905c7eb|evidence=statement:argument="ALTERTABLE{$schema}.{$table}RENAMECONSTRAINT{$temporaryName}TO{$finalName}"=1
-TrainingBenchmarkOnlineMigrationRuntime|swapValidatedConstraint|98e33037b647f9c0a0c45834231d138f0226ecf37d74c1bb36631c4b9905c7eb|evidence=statement:argument="LOCKTABLE{$schema}.{$table}INACCESSEXCLUSIVEMODE"=1
-TrainingBenchmarkOnlineMigrationRuntime|validateConstraint|86baf3713d3f40a6f41048d08be3c5b9de080b7bef5b412dcfaaa98725d7adff|evidence=statement:argument="ALTERTABLE{$schema}.{$table}VALIDATECONSTRAINT{$name}"=1
+AiBudgetGuard|claimWire|82bff5abc33bf29e3f4725595126d1807bd4a5f96df2d989e82c496649f394a8|evidence=selectOne:sql=SELECT eg_claim_ai_budget_wire(?) AS claimed=1
+AiBudgetGuard|pendingReconciliation|068a2d5453e6f3ea4c3ae13a36d7a68a5e7eb06cb9d34b1155e5dfb3e8db5a2c|evidence=selectOne:sql=SELECT eg_mark_ai_budget_reconciliation(?) AS pending=1
+AiBudgetGuard|reconcileExpired|109f77778d94c3dc64d8626e1ed1f048fa2269368adaeaa7ad6c2c65d15749b0|evidence=selectOne:sql=SELECT eg_reconcile_expired_ai_budgets(?) AS reconciled=1
+AiBudgetGuard|releaseBeforeWire|5244afc1591725d4d0243cb35273e97ee8b71d0da465835ac15a37f355834267|evidence=selectOne:sql=SELECT eg_release_ai_budget(?) AS released=1
+AiBudgetGuard|reserve|4144d4f2aa8c2064e9add021d6f28892f2259ea555755e73bed0712891674c48|evidence=selectOne:sql=SELECT eg_reserve_ai_budget(?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?) AS reservation_id=1
+AiBudgetGuard|settle|6b5d627d2409ea12a81956f3ef4bab0ba7c2cb30427f4cf972443d2300498d2e|evidence=selectOne:sql=SELECT eg_settle_ai_budget(?, ?, ?) AS settled=1
+BenchmarkRunRepository|lockStorageObject|f508c8c20db3cad704865d21edb825273d8a68994ef176f45af56917395e5b7c|evidence=select:sql=SELECT pg_advisory_lock(hashtextextended(?, 0))=1
+BenchmarkRunRepository|start|915dd588bfeb1f8d2fda948eccba2aa29d1803a90541bb88beffa3c4ae948c5b|evidence=select:sql=SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))=1
+BenchmarkRunRepository|unlockStorageObject|6d25371effcc2108e65acf661124937347c8de52414910dc9980410cbac0f058|evidence=select:sql=SELECT pg_advisory_unlock(hashtextextended(?, 0))=1
+BuildSessionOperationalSnapshot|finalization|af8e53fd8876260a78ba1106f214aca5ba47081b85f170657073ba5781ea3321|evidence=selectOne:sql=SELECT (SELECT COUNT(*) FROM estimate_generation_finalization_outbox WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS outbox_total, (SELECT COALESCE(MAX(id), 0) …=1
+BuildSessionOperationalSnapshot|sourceWatermarks|0365acfd0884897c6a891ea3d51a3d4926e6da361ce0f6cc80e8bb164a26be59|evidence=selectOne:sql=SELECT (SELECT COUNT(*) FROM estimate_generation_document_pages WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS pages_count, (SELECT COALESCE(MAX(id), 0) FROM e…=1
+ContractService|getContractsSummary|2a8bb800815c68ad80b34e7d3982329c4b254a2cea112c14da4be2360c439391|evidence=raw:argument="({$nearingLimitSubquery->toSql()})assubquery"=1
+DashboardController|contractsRequiringAttention|30a3d48cfc034d53b509569746a2d398741212df5bcb72430d4be9fb67f01d92|evidence=raw:argument='CASEWHEN(CASEWHENcontracts.total_amount>0THENROUND((COALESCE(cw.completed_amount,0)/contracts.total_amount)*100,2)ELSE0END)>=100THEN3WHENend_date<CURRENT_TIMESTAMPANDstatus=\''.\App\Enums\Contract\ContractStatusEnum::ACTIVE->value.'\'THEN2WHEN(CASEWHENcontracts.total_amount>0THENROUND((COALESCE(cw.completed_amount,0)/contracts.total_amount)*100,2)ELSE0END)>=90THEN1ELSE0END'=1
+DashboardController|getTopCreditors|f53a237e39c0da48feb1a3567105b3da16e47b06564472b9c9e465b60ee038e4|evidence=raw:sql=CASE WHEN contractor_id IS NOT NULL THEN (SELECT name FROM contractors WHERE id = payment_documents.contractor_id) ELSE (SELECT name FROM organizations WHERE id = payment_documents…=1
+DashboardController|getTopDebtors|37abb6d5a1f070d894758f639f7a80d5a5a770cb540542fcffe819fd380945e0|evidence=raw:sql=CASE WHEN contractor_id IS NOT NULL THEN (SELECT name FROM contractors WHERE id = payment_documents.contractor_id) ELSE (SELECT name FROM organizations WHERE id = payment_documents…=1
+DatabaseNotificationCommitSequencer|run|ae6d65e7611fa8637ca461d2d2f06498f2adf16314356e880ab1fc8d6b0417a4|evidence=select:sql=SELECT pg_advisory_xact_lock(hashtextextended(CAST(? AS text), 0))=1
+EloquentBuildingModelStore|transaction|bb7ee03d414b559819357efb84149ef05374b9ead4835e3a074bb150d289fa96|evidence=select:sql=SELECT pg_advisory_xact_lock(?, ?)=1
+EloquentEffectiveSettingsOperationStore|pin|7717853c9e554c35367d441144b6bb69137d3cc41af32448e405255663af39e4|evidence=selectOne:sql=SELECT * FROM eg_pin_ai_operation_settings(?, ?, ?)=1
+EloquentEvidenceRepository|descendantBatches|fbb69f230e8425d7a2200ca7a9e1058c347865fbbbabc5a2cacae3a4ccd22feb|evidence=insert:argument=$sql=1
+EloquentEvidenceRepository|descendantBatches|fbb69f230e8425d7a2200ca7a9e1058c347865fbbbabc5a2cacae3a4ccd22feb|evidence=statement:argument="CREATETEMPTABLEIFNOTEXISTS{$temporaryTable}(idbigintPRIMARYKEY)ONCOMMITDROP"=1
+EloquentEvidenceRepository|transaction|d766c1da7b85d8d22bb1dd0ed6d3a5e2d54987d6ba91b5bd189eab50e92be2ab|evidence=select:sql=SELECT pg_advisory_xact_lock(?, ?)=1
+ErrorTrackingController|timeseries|dbd3a697957a4541e394215753c3c17c6e7b1f90ef9cf3e8d24408bfdf4c3baf|evidence=raw:argument="DATE_TRUNC('{$interval}',last_seen_at)astime"=1
+EstimateGenerationPackagePersistenceService|appendItemRevision|874d088ac7ec02473740d5a3918138afc5a3a6d173c894e62369880676fcf97b|evidence=select:sql=SELECT public.eg_finalize_package_item_price(?)=1
+EstimateGenerationResourceIndexRuntime|dropAll|bd6cd6d8f7708bf6bda072a48af563a6ec582fb5b518ae4e3a51a976303e6f11|evidence=statement:argument=$index['dropIfExists']=1
+EstimateGenerationResourceIndexRuntime|ensureConcurrentIndex|71dafb0555e895cb83f380921568627e2b4b9e2c58a9d16507d3c57d5b30c5c3|evidence=statement:argument=$index['create']=1
+EstimateGenerationResourceIndexRuntime|ensureConcurrentIndex|71dafb0555e895cb83f380921568627e2b4b9e2c58a9d16507d3c57d5b30c5c3|evidence=statement:argument=$index['drop']=1
+EstimateGenerationResourceIndexRuntime|findIndex|4e060f76db194fe35dfdf2bf4fe2cdb4625894edf60441721f80f6e736cda0eb|evidence=selectOne:sql=SELECT i.indisvalid, i.indisready, pg_get_indexdef(c.oid) AS definition FROM pg_class AS c INNER JOIN pg_namespace AS n ON n.oid = c.relnamespace INNER JOIN pg_index AS i ON i.inde…=1
+EstimateGenerationReviewQueueQuery|paginate|57b228b9ba3240e69f32df0003ac4592f9d0c43f08a58631c9b96cffc2874e56|evidence=select:argument=$this->pageSql($where)=1
+EstimateGenerationReviewQueueQuery|paginate|70e599835af2edfbd5ee9985fd6b931030ff1c707a60c0fdf2d42f8f0d2640a1|evidence=selectOne:argument=$this->summarySql($where)=1
+EstimateGenerationTrainingDatasetService|appendVersion|e34c72d10591b580f67ff955b8403d70da97a0d378196926f3dcd094d5aecf1a|evidence=select:sql=SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))=1
+GeometryDependencyInvalidator|invalidate|36d63fc1179952e4f307d85199ba1908e39cb2a4b7754a837583d908421de037|evidence=select:argument='WITHRECURSIVEdescendants(id)AS(SELECTchild_idFROMestimate_generation_evidence_edgesWHEREsession_id=?ANDparent_idIN('.implode(',',array_fill(0,$roots->count(),'?')).')UNIONSELECTedge.child_idFROMestimate_generation_evidence_edgesedgeJOINdescendantstreeONtree.id=edge.parent_idWHEREedge.session_id=?)SELECTidFROMdescendants'=1
+HoldingReportService|getContractsByContractor|bd4040e774ceec718179b0ec33ef20027984e5fda1b49884724025c2979bf962|evidence=raw:argument="({$query->toSql()})assub"=1
+ImmutableAuditPhaseBInvariantService|ensurePhaseBIndex|9d835f4f075e51c1741894af13a1207e89b20510ee3f415a14ff1a90b4057411|evidence=statement:argument="CREATEUNIQUEINDEXCONCURRENTLY{$name}ONimmutable_audit_events(".implode(',',$columns).")WHERE{$predicate}"=1
+ImmutableAuditPhaseBInvariantService|ensurePhaseBIndex|9d835f4f075e51c1741894af13a1207e89b20510ee3f415a14ff1a90b4057411|evidence=statement:argument="DROPINDEXCONCURRENTLYIFEXISTS{$name}"=1
+ImmutableAuditPhaseBInvariantService|functionCatalog|0d8aa3718ad0e50d879480a0bb32762d33195cb857e181b30cecb7633b10e7a9|evidence=selectOne:sql=SELECT p.prosrc, pg_get_function_identity_arguments(p.oid) AS identity_arguments, pg_get_function_result(p.oid) AS result, l.lanname AS language, p.provolatile AS volatility, p.pro…=1
+ImmutableAuditPhaseBInvariantService|index|b30477b8473142e134ebd84946d4e3f700803c603a2de3485ebc2b487537dee6|evidence=selectOne:sql=SELECT i.indisvalid, i.indisready, i.indisunique, ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) JOIN pg_attribute a ON a.attrelid = i.indrelid AND …=1
+ImmutableAuditPhaseBInvariantService|installCanonicalCore|38759a04e585ccaeb2236dbd9d3af5b8b3fff59b6af1c14ac9337dfe8d298e08|evidence=statement:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::SEQUENCE_ALTER_SQL=1
+ImmutableAuditPhaseBInvariantService|installCanonicalCore|38759a04e585ccaeb2236dbd9d3af5b8b3fff59b6af1c14ac9337dfe8d298e08|evidence=statement:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::SEQUENCE_CREATE_SQL=1
+ImmutableAuditPhaseBInvariantService|installCanonicalCore|9f1b204343253bd4bd94a087f0be9b2f209777129283653698d1a663483d9f45|evidence=unprepared:argument=\App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions::canonicalCoreSql()=1
+ImmutableAuditPhaseBInvariantService|sequenceCatalog|c59363b4a723c8f5e51c78a3274ddc9da0054da7823c71e698f06da13cfaf5bb|evidence=selectOne:sql=SELECT s.data_type, s.start_value, s.min_value, s.max_value, s.increment_by, s.cycle, s.cache_size, CASE WHEN pg_get_userbyid(q.relowner) = current_user THEN '$database_owner' ELSE…=1
+ImmutableAuditPhaseBInvariantService|triggerCatalog|173378f3f50fce019f82fd984c4d59491eab2a477df90e9d7addd761d90e5f20|evidence=selectOne:sql=SELECT t.tgname AS name, t.tgenabled AS enabled, t.tgisinternal AS internal, c.relname AS relation, p.proname AS function_name, t.tgtype AS type, CASE WHEN function_namespace.nspna…=1
+ImmutableAuditRecorder|activateWriterCredential|b2b04af3e4607eb7f6c2e49bea7b80e4fb82d908b5d5a192a0560afbc94851e4|evidence=execute:argument=[$credential]=1
+ImmutableAuditRolloutService|cutover|f51d19ebb53d20561b231925732298aec6cb54928ea4b3b61e562357ec748c93|evidence=select:sql=SELECT pg_advisory_lock(hashtextextended(?, 0))=2
+ImmutableAuditRolloutService|cutover|f51d19ebb53d20561b231925732298aec6cb54928ea4b3b61e562357ec748c93|evidence=select:sql=SELECT pg_advisory_unlock(hashtextextended(?, 0))=2
+ImmutableAuditRolloutService|cutover|f51d19ebb53d20561b231925732298aec6cb54928ea4b3b61e562357ec748c93|evidence=statement:sql=SELECT setval('immutable_audit_sequence', GREATEST((SELECT last_value FROM immutable_audit_sequence), COALESCE((SELECT MAX(sequence_id) FROM immutable_audit_events), 1)), EXISTS (S…=1
+ImmutableAuditRolloutService|ensurePhaseBIndex|9a877e6b35f29b1fd69418e044283bb8f10e8a60bcfcdd55ddafe1386ca99a44|evidence=statement:argument="CREATEUNIQUEINDEXCONCURRENTLY{$name}ONimmutable_audit_events({$columnSql})WHERE{$predicate}"=1
+ImmutableAuditRolloutService|ensurePhaseBIndex|9a877e6b35f29b1fd69418e044283bb8f10e8a60bcfcdd55ddafe1386ca99a44|evidence=statement:argument="DROPINDEXCONCURRENTLYIFEXISTS{$name}"=1
+ImmutableAuditRolloutService|lockedRolloutMarker|9c408bfffb3db076f3597207da2311613b6a5ae9cb57aa0fdbf5ee7968ac31fc|evidence=selectOne:argument=<<<SQLSELECTphase,writer_version,writer_credential_hash,drain_marker,drain_confirmed_at,drain_confirmed_atISNOTNULLANDdrain_confirmed_at>=clock_timestamp()-make_interval(mins=>CAST(?ASinteger))ASdrain_freshFROMimmutable_audit_rolloutWHEREsingleton=true{$forUpdateSql}SQL=1
+ImmutableAuditRolloutService|repairPermanentInvariants|c9560da519d136c4e44f5620a5aa43e07b22423141597ca620efa48cd1903a95|evidence=select:sql=SELECT pg_advisory_lock(hashtextextended(?, 0))=2
+ImmutableAuditRolloutService|repairPermanentInvariants|c9560da519d136c4e44f5620a5aa43e07b22423141597ca620efa48cd1903a95|evidence=select:sql=SELECT pg_advisory_unlock(hashtextextended(?, 0))=2
+LaravelNotificationSnapshotDatabase|statement|57d3dd080161ab85450b391a003d4ff5f3c9145c6bcbccdf80a432c9558af5eb|evidence=statement:argument=$sql=1
+NormativeRetrievalRolloutService|deploy|e106989699ed295a6926b833a0c9f78a642ad15347be4d2b09e0eb8b07201c61|evidence=select:sql=SELECT pg_advisory_unlock(hashtext('normative-retrieval-v1'))=1
+NormativeRetrievalRolloutService|deploy|e106989699ed295a6926b833a0c9f78a642ad15347be4d2b09e0eb8b07201c61|evidence=selectOne:sql=SELECT pg_try_advisory_lock(hashtext('normative-retrieval-v1')) AS locked=1
+NormativeRetrievalRolloutService|deploy|e106989699ed295a6926b833a0c9f78a642ad15347be4d2b09e0eb8b07201c61|evidence=unprepared:sql=DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='estimate_norm_semantic_score_ck') THEN ALTER TABLE estimate_norm_semantic_scores ADD CONSTRAINT estimate_norm_…=1
+NormativeRetrievalRolloutService|deploy|e106989699ed295a6926b833a0c9f78a642ad15347be4d2b09e0eb8b07201c61|evidence=unprepared:sql=DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='estimate_norms_validity_ck') THEN ALTER TABLE estimate_norms ADD CONSTRAINT estimate_norms_validity_ck CHECK (…=1
+NotificationQueryService|unreadAggregatesForQuery|ef75407bd8494b456d277b2c25147c9e346a6c754690bd55a074f06b5dda4246|evidence=raw:argument=$categoryExpression=1
+NotificationQueryService|unreadAggregatesForQuery|ef75407bd8494b456d277b2c25147c9e346a6c754690bd55a074f06b5dda4246|evidence=raw:argument=$notificationTypeExpression=1
+NotificationQueryService|unreadAggregatesForQuery|ef75407bd8494b456d277b2c25147c9e346a6c754690bd55a074f06b5dda4246|evidence=raw:argument=$typeExpression=1
+PackageInputVersionBackfill|run|83a83f0fcec0492aca89c48e90f964cb2656803ff5216fe5df3d341c9db9fab2|evidence=affectingStatement:argument=self::SQL=1
+PaymentDocumentService|generateDocumentNumber|cfa2d24ea9d2f89f29539b3ace87ccc2d68821e6d9ed1846608701a57aef1548|evidence=selectOne:sql=SELECT get_next_payment_document_number(?, ?, ?, ?) as number=1
+PostgresNormativeCandidateSource|find|b22c58247dd2ac060813ea67dbd1d26f98dd977e750fc4f482950afd5a06d340|evidence=select:argument=self::QUERY_CONTRACT=1
+RagIndexer|storeVector|0fc24d420f10f1f5da7762ba76a709dfd06ae1bae894f5e089b4b4bb86d46cc9|evidence=update:argument=$sql=1
+RagRetriever|postgresRows|1497144fd73f582a159515a20e7f3e1dd528cfeb115d02930603014e86d8f915|evidence=select:argument=$sql=1
+ReportService|getContractPaymentsReport|b97e605e6da5a95398cb3fd4d734cc1018f35fd367648de5b5603d614884916b|evidence=raw:argument='(SELECTCOALESCE(SUM(amount),0)FROMcontract_performance_actsWHEREcontract_id=contracts.idANDproject_id='.$projectId.'ANDis_approved=true)ascompleted_amount'=1
+ReportService|getContractPaymentsReport|b97e605e6da5a95398cb3fd4d734cc1018f35fd367648de5b5603d614884916b|evidence=raw:argument='(SELECTCOALESCE(SUM(paid_amount),0)FROMpayment_documentsWHEREinvoiceable_type=\'App\\\\Models\\\\Contract\'ANDinvoiceable_id=contracts.idANDpayment_documents.organization_id='.$organizationId.'ANDdeleted_atISNULL)aspaid_amount'=1
+ReportService|getContractorSettlementsReport|8efc4214c760bd7196987f00d7f02e4715ac969036e5b3d92a68a3d794f8cc1c|evidence=raw:argument=$completedAmountSubquery=1
+ReportService|getContractorSettlementsReport|8efc4214c760bd7196987f00d7f02e4715ac969036e5b3d92a68a3d794f8cc1c|evidence=raw:argument='COALESCE(SUM((SELECTSUM(paid_amount)FROMpayment_documentsWHEREinvoiceable_type=\'App\\\\Models\\\\Contract\'ANDinvoiceable_id=contracts.idANDpayment_documents.organization_id='.$organizationId.'ANDdeleted_atISNULL)),0)astotal_paid'=1
+ReportService|getProjectProfitabilityReport|2493f000e6f1cbf7a3be6268f98c6922b3a9c5d5b07895216da861a35ab36950|evidence=raw:argument='(SELECTCOALESCE(SUM(quantity*price),0)FROMwarehouse_movementsWHEREproject_id=projects.idANDwarehouse_movements.organization_id='.$organizationId.'ANDmovement_type=\'receipt\')asmaterial_costs'=1
+ReportService|getProjectProfitabilityReport|2493f000e6f1cbf7a3be6268f98c6922b3a9c5d5b07895216da861a35ab36950|evidence=raw:argument='(SELECTCOALESCE(SUM(total_amount),0)FROMcontractsWHEREproject_id=projects.idANDcontracts.organization_id='.$organizationId.')ascontractor_costs'=1
+ReportService|getProjectTimelinesReport|130c00efe407cb2fbc04f10a8cb9132bffc4ad115e66400a8c0aae9cfa764e1a|evidence=raw:argument='(SELECTCOALESCE(SUM(total_amount),0)FROMcontractsWHEREproject_id=projects.idANDcontracts.organization_id='.$organizationId.')astotal_contract_amount'=1
+ResetInvoiceNumberSequences|handle|ff9d57b6525fbfc8700d4fdcfe7d31da387b30bc5815bb431112c4d4a07bb6c3|evidence=statement:argument="DROPSEQUENCEIFEXISTS".$seq->relname=1
+ResetPaymentDocumentSequences|handle|56267ac3cb08778355f83d0fc4e3d672bf902512a7324da4bf43d16606036b5e|evidence=statement:argument="DROPSEQUENCEIFEXISTS".$seq->relname=1
+SearchService|searchNearby|52055bff3b28c9bb787f1e6fed1ed72975ac50d52cd83debf24300dd47bd636a|evidence=select:sql=SELECT id, name, address, latitude, longitude, status, budget_amount, (6371 * acos( cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)…=1
+SqlEstimateGenerationDashboardRepository|all|171c05b6476ea126861c348f8d0f8ce10beff37221a50a34d1c1454ee5c36fdd|evidence=select:argument=$query->sql=1
+SqlEstimateGenerationDashboardRepository|one|26c10cc7036f46bb543fe28be6ad0bdafe479e32799aeaa140f3ff4ba20a270a|evidence=selectOne:argument=$query->sql=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=select:sql=SELECT c.relname, pg_get_indexdef(c.oid) AS definition FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname IN (?, ?)=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=selectOne:sql=SELECT i.indisvalid, i.indisready, i.indisunique, ns.nspname AS schema_name, tbl.relname AS table_name, ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY AS keys(attnum,…=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=statement:argument=$createSql=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=statement:argument='DROPINDEXCONCURRENTLY'.$expectedSchema.'.'.$name=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=statement:argument='DROPINDEXCONCURRENTLY'.$expectedSchema.'.'.$probe=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=statement:argument='DROPINDEXCONCURRENTLYIFEXISTS'.$expectedSchema.'.'.$probe=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConcurrentIndex|0c207bd57371b9fc298e1d203e626173fdb2563c022dbac7bab28d87497c515e|evidence=statement:argument=(string)$probeSql=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|897c3cf4e604fd80bceaf3f25b305a3ca4c3c74e77aae7fe0107d54a5fe4541d|evidence=selectOne:sql=SELECT pg_get_constraintdef(c.oid, true) AS definition FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = ? …=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|897c3cf4e604fd80bceaf3f25b305a3ca4c3c74e77aae7fe0107d54a5fe4541d|evidence=selectOne:sql=SELECT pg_get_constraintdef(c.oid, true) AS definition, c.convalidated FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHER…=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|897c3cf4e604fd80bceaf3f25b305a3ca4c3c74e77aae7fe0107d54a5fe4541d|evidence=statement:argument="ALTERTABLE{$qualified}ADDCONSTRAINT{$name}{$definition}NOTVALID"=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|897c3cf4e604fd80bceaf3f25b305a3ca4c3c74e77aae7fe0107d54a5fe4541d|evidence=statement:argument="ALTERTABLE{$qualified}ADDCONSTRAINT{$probe}{$definition}NOTVALID"=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|897c3cf4e604fd80bceaf3f25b305a3ca4c3c74e77aae7fe0107d54a5fe4541d|evidence=statement:argument="ALTERTABLE{$qualified}DROPCONSTRAINTIFEXISTS{$probe}"=1
+TrainingBenchmarkOnlineMigrationRuntime|ensureConstraint|897c3cf4e604fd80bceaf3f25b305a3ca4c3c74e77aae7fe0107d54a5fe4541d|evidence=statement:argument="ALTERTABLE{$qualified}DROPCONSTRAINT{$probe}"=1
+TrainingBenchmarkOnlineMigrationRuntime|restoreSessionTimeouts|67f339b40b3dca05a2106751c61f7ca0632cefc65fdf77e25d197a70281984a8|evidence=select:sql=SELECT set_config('lock_timeout', ?, false), set_config('statement_timeout', ?, false)=1
+TrainingBenchmarkOnlineMigrationRuntime|swapValidatedConstraint|53f71296deb1f9789d7b7cab4f96895e93042319337b619824d7d3877c1d0e9f|evidence=statement:argument="ALTERTABLE{$schema}.{$table}DROPCONSTRAINTIFEXISTS{$finalName}"=1
+TrainingBenchmarkOnlineMigrationRuntime|swapValidatedConstraint|53f71296deb1f9789d7b7cab4f96895e93042319337b619824d7d3877c1d0e9f|evidence=statement:argument="ALTERTABLE{$schema}.{$table}RENAMECONSTRAINT{$temporaryName}TO{$finalName}"=1
+TrainingBenchmarkOnlineMigrationRuntime|swapValidatedConstraint|53f71296deb1f9789d7b7cab4f96895e93042319337b619824d7d3877c1d0e9f|evidence=statement:argument="LOCKTABLE{$schema}.{$table}INACCESSEXCLUSIVEMODE"=1
+TrainingBenchmarkOnlineMigrationRuntime|validateConstraint|23e4e90fbfc41585687f7934395d1198fbbb0c5c9e72ecdec92855077f4651a8|evidence=statement:argument="ALTERTABLE{$schema}.{$table}VALIDATECONSTRAINT{$name}"=1
 MANIFEST)) as $line) {
             $separator = strrpos($line, '=');
             self::assertIsInt($separator);
@@ -699,6 +699,110 @@ PHP;
         unlink($caller);
         unlink($factory);
         rmdir($directory);
+    }
+
+    public function test_php_database_and_contract_identities_are_case_insensitive(): void
+    {
+        $findings = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+use App\Models\Contract as MixedContractAlias;
+function mutate(\aPp\mOdElS\cOnTrAcT $contract): void {
+    $contract->UPDATE(['number' => 'mixed']);
+    \ApP\MoDeLs\CoNtRaCt::CrEaTe(['number' => 'static']);
+    MixedContractAlias::cReAtE(['number' => 'alias']);
+    \iLlUmInAtE\sUpPoRt\fAcAdEs\dB::STATEMENT('UPDATE contracts SET number = 1');
+}
+PHP);
+
+        self::assertSame(['UPDATE', 'CrEaTe', 'cReAtE', 'STATEMENT'], array_column($findings, 'operation'));
+    }
+
+    public function test_pdo_statement_connection_and_nested_execute_identities_are_case_insensitive(): void
+    {
+        $findings = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+function mutate(\pdostatement $statement, \PdO $pdo, \iLlUmInAtE\dAtAbAsE\cOnNeCtIoNiNtErFaCe $connection): void {
+    $alias = $statement;
+    $nested = function () use ($alias): void { $alias->EXECUTE(); };
+    $pdo->EXEC('DELETE FROM contracts');
+    $connection->STATEMENT('UPDATE contracts SET number = 2');
+}
+PHP);
+
+        self::assertSame(['EXEC', 'STATEMENT', 'EXECUTE'], array_column($findings, 'operation'));
+        self::assertStringNotContainsString('|builder=unresolved-', $findings[2]['fingerprint']);
+    }
+
+    public function test_static_and_injected_statement_factory_identities_are_case_insensitive_and_body_sensitive(): void
+    {
+        $first = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+final class MixedFactory {
+    public static function StAtIcBuIlD(): \pDoStAtEmEnT { throw new \RuntimeException('first'); }
+    public function InJeCtEdBuIlD(): \PdOsTaTeMeNt { throw new \RuntimeException('first'); }
+}
+final class MixedConsumer {
+    public function __construct(private mIxEdFaCtOrY $factory) {}
+    public function run(): void {
+        mIxEdFaCtOrY::sTaTiCbUiLd()->ExEcUtE();
+        $this->factory->iNjEcTeDbUiLd()->eXeCuTe();
+    }
+}
+PHP);
+        $second = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+final class MixedFactory {
+    public static function StAtIcBuIlD(): \pDoStAtEmEnT { throw new \RuntimeException('second'); }
+    public function InJeCtEdBuIlD(): \PdOsTaTeMeNt { throw new \RuntimeException('second'); }
+}
+final class MixedConsumer {
+    public function __construct(private mIxEdFaCtOrY $factory) {}
+    public function run(): void {
+        mIxEdFaCtOrY::sTaTiCbUiLd()->ExEcUtE();
+        $this->factory->iNjEcTeDbUiLd()->eXeCuTe();
+    }
+}
+PHP);
+
+        self::assertCount(2, $first);
+        self::assertCount(2, $second);
+        self::assertNotSame($first[0]['fingerprint'], $second[0]['fingerprint']);
+        self::assertNotSame($first[1]['fingerprint'], $second[1]['fingerprint']);
+        self::assertStringNotContainsString('|builder=unresolved-', $first[0]['fingerprint']);
+        self::assertStringNotContainsString('|builder=unresolved-', $first[1]['fingerprint']);
+    }
+
+    public function test_parent_statement_factory_identity_is_case_insensitive_and_body_sensitive(): void
+    {
+        $first = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+class ParentStatementFactory {
+    protected static function BuIlD(): \PDOStatement { throw new \RuntimeException('first'); }
+}
+final class ChildStatementFactory extends ParentStatementFactory {
+    public static function WrAp(): \PDOStatement { return PaReNt::bUiLd(); }
+}
+final class ParentFactoryConsumer {
+    public function run(): void { cHiLdStAtEmEnTfAcToRy::wRaP()->EXECUTE(); }
+}
+PHP);
+        $second = (new ContractMutationAstScanner)->findings(<<<'PHP'
+<?php
+class ParentStatementFactory {
+    protected static function BuIlD(): \PDOStatement { throw new \RuntimeException('second'); }
+}
+final class ChildStatementFactory extends ParentStatementFactory {
+    public static function WrAp(): \PDOStatement { return PaReNt::bUiLd(); }
+}
+final class ParentFactoryConsumer {
+    public function run(): void { cHiLdStAtEmEnTfAcToRy::wRaP()->EXECUTE(); }
+}
+PHP);
+
+        self::assertCount(1, $first);
+        self::assertCount(1, $second);
+        self::assertNotSame($first[0]['fingerprint'], $second[0]['fingerprint']);
+        self::assertStringNotContainsString('|builder=unresolved-', $first[0]['fingerprint']);
     }
 
     public function test_project_statement_factory_index_is_cross_file_content_sensitive_and_unknown_call_chains_fail_closed(): void
