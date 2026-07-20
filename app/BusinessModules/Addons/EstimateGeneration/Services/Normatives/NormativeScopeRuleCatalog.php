@@ -81,7 +81,7 @@ final class NormativeScopeRuleCatalog
             return $this->rule(['gesnm_electrical', 'gesnp_electrical'], ['gesn_earthwork'], ['08'], ['01', '03', '05', '07', '09', '10', '12', '15', '16', '18', '20', '27', '28']);
         }
 
-        if ($action === 'heating_equipment') {
+        if (in_array($action, ['heating_equipment', 'heating_emitter_installation'], true)) {
             return $this->rule(['gesnm_heating', 'gesnp_plumbing'], ['gesn_earthwork'], ['18', '20'], ['01', '03', '05', '07', '08', '09', '10', '12', '15', '16', '27', '28']);
         }
 

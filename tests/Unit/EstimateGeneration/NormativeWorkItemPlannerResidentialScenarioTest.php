@@ -49,7 +49,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             'sanitary.showers' => 'pcs', 'sanitary.toilets' => 'pcs', 'sanitary.washbasins' => 'pcs',
             'sanitary.waterproofing' => 'm2', 'sanitary.tile' => 'm2', 'sewerage.pipe' => 'm',
             'sewerage.outlets' => 'pcs', 'sewerage.risers' => 'pcs', 'sewerage.revisions' => 'pcs',
-            'heating.unit' => 'pcs', 'heating.pipe' => 'm', 'heating.radiators' => 'pcs',
+            'heating.pipe' => 'm', 'heating.radiators' => 'kw',
             'ventilation.air_exchange' => 'm2', 'rough.floor' => 'm2', 'rough.walls' => 'm2',
             'rough.ceiling' => 'm2', 'finish.floor' => 'm2', 'finish.paint' => 'm2',
             'finish.ceiling' => 'm2', 'finish.baseboard' => 'm',
@@ -125,7 +125,7 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             ['electrical', 'electrical', 'electrical.outlets', 'pcs', '24.000000', '08-03-591-09'],
             ['electrical', 'electrical', 'electrical.switches', 'pcs', '15.000000', '08-03-591-02'],
             ['lighting', 'electrical', 'lighting.fixtures', 'pcs', '18.000000', '08-03-593-06'],
-            ['heating', 'heating', 'heating.unit', 'pcs', '1.000000', '18-01-001-01'],
+            ['heating', 'heating', 'heating.radiators', 'kw', '19.280000', '18-03-001-02'],
             ['plumbing', 'plumbing', 'sanitary.waterproofing', 'm2', '12.980000', '11-01-004-05'],
             ['plumbing', 'plumbing', 'sanitary.tile', 'm2', '39.497496', '15-01-019-05'],
         ] as [$package, $scope, $quantityKey, $unit, $amount, $normCode]) {
@@ -143,8 +143,8 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             self::assertIsArray($item, $quantityKey);
             self::assertSame($normCode, $item['normative_rate_code'], $quantityKey);
             self::assertContains('preliminary_material_assumption', $item['validation_flags'], $quantityKey);
-            if ($quantityKey === 'heating.unit') {
-                self::assertSame('Установка отопительного котла', $item['name']);
+            if ($quantityKey === 'heating.radiators') {
+                self::assertSame('Установка стальных радиаторов', $item['name']);
             }
         }
     }

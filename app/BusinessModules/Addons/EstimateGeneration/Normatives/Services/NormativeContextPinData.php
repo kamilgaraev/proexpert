@@ -19,12 +19,14 @@ final readonly class NormativeContextPinData
         public string $priceVersion,
         public array $catalogCandidates = [],
         public ?string $catalogContentHash = null,
+        public array $supplementaryMaterials = [],
     ) {
         if (min($datasetId, $regionId, $priceZoneId, $periodId, $regionalPriceVersionId) < 1
             || preg_match('/^[A-Za-z0-9._:-]{1,80}$/D', $datasetVersion) !== 1
             || preg_match('/^[A-Za-z0-9._:-]{1,80}$/D', $priceVersion) !== 1
             || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $applicabilityDate) !== 1
             || ! array_is_list($catalogCandidates) || count($catalogCandidates) > 128
+            || ! array_is_list($supplementaryMaterials) || count($supplementaryMaterials) > 64
             || ($catalogContentHash !== null && preg_match('/^[a-f0-9]{64}$/D', $catalogContentHash) !== 1)) {
             throw new InvalidArgumentException('Normative resource context identity is invalid.');
         }
@@ -43,6 +45,7 @@ final readonly class NormativeContextPinData
             'price_version' => $this->priceVersion,
             'catalog_content_hash' => $this->catalogContentHash,
             'catalog_candidates' => $this->catalogCandidates,
+            'supplementary_materials' => $this->supplementaryMaterials,
         ];
     }
 }

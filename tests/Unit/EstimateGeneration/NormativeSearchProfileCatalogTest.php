@@ -40,6 +40,20 @@ final class NormativeSearchProfileCatalogTest extends TestCase
         $this->assertContains('оборуд', $profile->requiredTerms);
     }
 
+    public function test_heating_emitter_profile_excludes_boilers(): void
+    {
+        $profile = (new NormativeSearchProfileCatalog)->forIntent(
+            'engineering',
+            'heating_emitter_installation',
+            'heating',
+        );
+
+        self::assertSame(['18'], $profile->allowedSectionPrefixes);
+        self::assertContains('радиатор', $profile->requiredTerms);
+        self::assertContains('котел', $profile->forbiddenDomainTerms);
+        self::assertSame(['heating_emitter_installation'], $profile->allowedAnalogActions);
+    }
+
     public function test_wall_masonry_profile_blocks_cross_domain_sections(): void
     {
         $profile = (new NormativeSearchProfileCatalog)->forIntent('walls', 'masonry', null);

@@ -1447,6 +1447,52 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         ));
     }
 
+    public function test_heating_emitter_rejects_boilers_and_accepts_radiators(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $intent = [
+            'action' => 'heating_emitter_installation',
+            'scope' => 'engineering',
+            'system' => 'heating',
+            'object_type' => 'residential',
+        ];
+
+        self::assertFalse($service->isCompatible(
+            'Установка котлов отопительных, поставляемых в сборе',
+            'Установка стальных радиаторов',
+            $intent,
+        ));
+        self::assertTrue($service->isCompatible(
+            'Установка радиаторов: стальных',
+            'Установка стальных радиаторов',
+            $intent,
+        ));
+    }
+
+    public function test_sewer_outlet_rejects_industrial_product_output_norm(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Установка из двух шприц-машин для выпуска двухслойных протекторов',
+            'Монтаж выпусков внутренней канализации',
+            [
+                'action' => 'sewer_outlet_installation',
+                'scope' => 'engineering',
+                'system' => 'sewerage',
+            ],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Прокладка трубопроводов канализации для устройства выпусков',
+            'Монтаж выпусков внутренней канализации',
+            [
+                'action' => 'sewer_outlet_installation',
+                'scope' => 'engineering',
+                'system' => 'sewerage',
+            ],
+        ));
+    }
+
     public function test_catalog_noun_forms_are_valid_for_residential_cable_work(): void
     {
         $service = new NormativeSemanticCompatibilityService;

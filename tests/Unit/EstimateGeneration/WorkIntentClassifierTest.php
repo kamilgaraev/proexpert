@@ -201,6 +201,7 @@ final class WorkIntentClassifierTest extends TestCase
             ['Монтаж канализационных ревизий', 'Канализация', 'sewer_revision_installation'],
             ['Монтаж канализационных стояков', 'Канализация', 'sewer_riser_installation'],
             ['Устройство выпусков канализации', 'Канализация', 'sewer_outlet_installation'],
+            ['Монтаж стальных радиаторов', 'Отопление', 'heating_emitter_installation'],
         ];
     }
 
