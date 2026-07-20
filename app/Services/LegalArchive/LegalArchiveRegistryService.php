@@ -13,6 +13,8 @@ use App\Services\LegalArchive\Access\LegalDocumentAccessService;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
+use App\Services\LegalArchive\Files\LegalDocumentVersionAttempt;
+use App\Services\LegalArchive\Files\LegalDocumentVersionLeaseLost;
 use App\Services\LegalArchive\Files\LegalDocumentVersionPersistenceFailed;
 use App\Services\LegalArchive\Files\VersionInput;
 use App\Services\LegalArchive\Sources\LegalDocumentCreateLeaseDecision;
@@ -157,17 +159,12 @@ final class LegalArchiveRegistryService
                     $documentFile = $replay->files()->where('role', 'primary')->first();
                     $hasReadyVersion = $documentFile instanceof LegalArchiveDocumentFile
                         && $documentFile->versions()->where('processing_status', 'ready')->exists();
+                    $this->assertCreateRecoveryInput($replay, $hasReadyVersion, $file);
                     $retryAction = $this->claimCreateAttempt($replay, $attemptToken, $hasReadyVersion);
                     if ($retryAction === 'retry_upload' && ! $documentFile instanceof LegalArchiveDocumentFile) {
                         $documentFile = $this->primaryFile($replay, $organizationId);
                     }
-                    $this->audit->recordForActorId('create_retry_pending', $replay, $userId, [
-                        'source_event_id' => 'create-retry:'.$replay->create_operation_id.':attempt-'.$replay->source_create_attempt_count,
-                        'request_fingerprint' => $requestFingerprint,
-                        'retry_action' => $retryAction,
-                        'attempt_count' => (int) $replay->source_create_attempt_count,
-                        'lease_expires_at' => $replay->source_create_lease_expires_at?->toISOString(),
-                    ]);
+                    $this->recordCreateRecoveryStarted($replay, $userId, $requestFingerprint, $retryAction);
 
                     return [$replay, $documentFile, false, $retryAction, $attemptToken];
                 }
@@ -197,31 +194,20 @@ final class LegalArchiveRegistryService
                 return [$document, $documentFile, false, $file instanceof UploadedFile ? 'retry_upload' : 'retry_finalize', $attemptToken];
             });
         } catch (QueryException $exception) {
-            $replay = $this->resolveSourceCreateReplay(
+            return $this->retryCreateAfterUniqueCollision(
+                $exception,
                 $sourceCreateIdentity,
                 $organizationId,
                 $userId,
+                $data,
+                $file,
                 $operationKey,
                 $requestFingerprint,
-                false,
             );
-            if ($replay instanceof LegalArchiveDocument && (string) $replay->source_create_status === 'completed') {
-                return $this->findForOrganization($organizationId, (int) $replay->id) ?? $replay;
-            }
-
-            throw $exception;
         }
 
         if ($replayed) {
             return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
-        }
-
-        if ($retryAction === 'retry_upload' && ! $file instanceof UploadedFile) {
-            $exception = ValidationException::withMessages([
-                'file' => [trans_message('legal_archive.messages.file_required_for_recovery')],
-            ]);
-            $this->markSourceCreateFailedWithoutMasking($document, $userId, $exception, $attemptToken, 'retry_upload');
-            throw new LegalDocumentCreateFailed($document->refresh(), $exception);
         }
 
         if ($retryAction === 'retry_upload' && $file instanceof UploadedFile && $documentFile instanceof LegalArchiveDocumentFile) {
@@ -231,9 +217,12 @@ final class LegalArchiveRegistryService
                     versionLabel: isset($data['version_label']) ? (string) $data['version_label'] : null,
                     uploadedByUserId: $userId,
                     metadata: is_array($data['version_metadata'] ?? null) ? $data['version_metadata'] : null,
-                ));
+                ), $this->createVersionAttempt($document, $attemptToken));
                 $this->heartbeatCreateAttempt($document, $attemptToken, 'retry_finalize');
             } catch (Throwable $exception) {
+                if ($exception instanceof LegalDocumentVersionLeaseLost) {
+                    throw new LegalDocumentCreateInProgress($document->refresh());
+                }
                 $this->markSourceCreateFailedWithoutMasking($document, $userId, $exception, $attemptToken, 'retry_upload');
 
                 if (! $exception instanceof \App\Services\LegalArchive\Files\LegalDocumentScanFailed
@@ -341,6 +330,7 @@ final class LegalArchiveRegistryService
             $actor,
             $organizationId,
             $operationId,
+            $file,
             $attemptToken,
         ): array {
             $query = LegalArchiveDocument::query();
@@ -356,10 +346,17 @@ final class LegalArchiveRegistryService
             $documentFile = $document->files()->where('role', 'primary')->first();
             $hasReadyVersion = $documentFile instanceof LegalArchiveDocumentFile
                 && $documentFile->versions()->where('processing_status', 'ready')->exists();
+            $this->assertCreateRecoveryInput($document, $hasReadyVersion, $file);
             $retryAction = $this->claimCreateAttempt($document, $attemptToken, $hasReadyVersion);
             if ($retryAction === 'retry_upload' && ! $documentFile instanceof LegalArchiveDocumentFile) {
                 $documentFile = $this->primaryFile($document, $organizationId);
             }
+            $this->recordCreateRecoveryStarted(
+                $document,
+                (int) $actor->id,
+                (string) $document->source_request_fingerprint,
+                $retryAction,
+            );
 
             return [$document, $documentFile, $retryAction];
         });
@@ -367,27 +364,16 @@ final class LegalArchiveRegistryService
         if ($retryAction === null) {
             return $this->findForOrganization($organizationId, (int) $document->id) ?? $document;
         }
-        if ($retryAction === 'retry_upload' && ! $file instanceof UploadedFile) {
-            $exception = ValidationException::withMessages([
-                'file' => [trans_message('legal_archive.messages.file_required_for_recovery')],
-            ]);
-            $this->markSourceCreateFailedWithoutMasking(
-                $document,
-                (int) $actor->id,
-                $exception,
-                $attemptToken,
-                'retry_upload',
-            );
-            throw $exception;
-        }
-
         if ($retryAction === 'retry_upload' && $file instanceof UploadedFile && $documentFile instanceof LegalArchiveDocumentFile) {
             try {
                 $this->documentFileService->addVersion($documentFile, $file, new VersionInput(
                     uploadedByUserId: (int) $actor->id,
-                ));
+                ), $this->createVersionAttempt($document, $attemptToken));
                 $this->heartbeatCreateAttempt($document, $attemptToken, 'retry_finalize');
             } catch (Throwable $exception) {
+                if ($exception instanceof LegalDocumentVersionLeaseLost) {
+                    throw new LegalDocumentCreateInProgress($document->refresh());
+                }
                 $this->markSourceCreateFailedWithoutMasking(
                     $document,
                     (int) $actor->id,
@@ -703,6 +689,80 @@ final class LegalArchiveRegistryService
         return $this->assertReplayState($sourceDocument);
     }
 
+    private function retryCreateAfterUniqueCollision(
+        QueryException $exception,
+        ?LegalDocumentSourceCreateIdentity $identity,
+        int $organizationId,
+        ?int $userId,
+        array $data,
+        ?UploadedFile $file,
+        ?string $operationKey,
+        string $requestFingerprint,
+    ): LegalArchiveDocument {
+        $sqlState = (string) ($exception->errorInfo[0] ?? $exception->getCode());
+        if (! in_array($sqlState, ['23000', '23505'], true)) {
+            throw $exception;
+        }
+
+        $canonical = $this->resolveSourceCreateReplay(
+            $identity,
+            $organizationId,
+            $userId,
+            $operationKey,
+            $requestFingerprint,
+            false,
+        );
+        if (! $canonical instanceof LegalArchiveDocument) {
+            throw $exception;
+        }
+        if ((string) $canonical->source_create_status === 'completed') {
+            return $this->findForOrganization($organizationId, (int) $canonical->id) ?? $canonical;
+        }
+
+        return $this->create($organizationId, $userId, $data, $file);
+    }
+
+    private function assertCreateRecoveryInput(
+        LegalArchiveDocument $document,
+        bool $hasReadyVersion,
+        ?UploadedFile $file,
+    ): void {
+        $decision = LegalDocumentCreateLeaseDecision::decide(
+            (string) $document->source_create_status,
+            $document->source_create_lease_expires_at?->toDateTimeImmutable(),
+            now()->toDateTimeImmutable(),
+            $hasReadyVersion,
+            is_string($document->source_create_retry_action) ? $document->source_create_retry_action : null,
+        );
+        if ($decision->decision === 'in_progress') {
+            throw new LegalDocumentCreateInProgress($document);
+        }
+        if ($decision->decision !== 'claim' || $decision->retryAction === null) {
+            throw new InvalidArgumentException('legal_document_source_create_claim_invalid');
+        }
+        $retryAction = $decision->retryAction;
+        if ($retryAction === 'retry_upload' && ! $file instanceof UploadedFile) {
+            throw ValidationException::withMessages([
+                'file' => [trans_message('legal_archive.messages.file_required_for_recovery')],
+            ]);
+        }
+    }
+
+    private function recordCreateRecoveryStarted(
+        LegalArchiveDocument $document,
+        ?int $userId,
+        string $requestFingerprint,
+        string $retryAction,
+    ): void {
+        $this->audit->recordForActorId('recovery_started', $document, $userId, [
+            'source_event_id' => 'create-retry:'.$document->create_operation_id.':attempt-'.$document->source_create_attempt_count,
+            'request_fingerprint' => $requestFingerprint,
+            'retry_action' => $retryAction,
+            'attempt_count' => (int) $document->source_create_attempt_count,
+            'lease_expires_at' => $document->source_create_lease_expires_at?->toISOString(),
+        ]);
+    }
+
     private function assertReplayState(LegalArchiveDocument $document): LegalArchiveDocument
     {
         $primaryFile = $document->files()->where('role', 'primary')->first();
@@ -774,6 +834,7 @@ final class LegalArchiveRegistryService
             ->whereKey($document->id)
             ->where('source_create_status', 'pending')
             ->where('source_create_attempt_token', $attemptToken)
+            ->where('source_create_lease_expires_at', '>', $now)
             ->update([
                 'source_create_heartbeat_at' => $now,
                 'source_create_lease_expires_at' => $now->copy()->addSeconds(self::CREATE_LEASE_SECONDS),
@@ -783,6 +844,34 @@ final class LegalArchiveRegistryService
         if ($updated !== 1) {
             throw new InvalidArgumentException('legal_document_source_create_lease_lost');
         }
+    }
+
+    private function createVersionAttempt(
+        LegalArchiveDocument $document,
+        string $attemptToken,
+    ): LegalDocumentVersionAttempt {
+        $operationId = (string) $document->create_operation_id;
+
+        return new LegalDocumentVersionAttempt(
+            $operationId,
+            $attemptToken,
+            static function (LegalArchiveDocument $lockedDocument, string $token): void {
+                if (
+                    (string) $lockedDocument->source_create_status !== 'pending'
+                    || ! LegalDocumentCreateLeaseDecision::ownsAttempt(
+                        $lockedDocument->source_create_attempt_token,
+                        $token,
+                    )
+                    || $lockedDocument->source_create_lease_expires_at === null
+                    || ! $lockedDocument->source_create_lease_expires_at->isFuture()
+                ) {
+                    throw new LegalDocumentVersionLeaseLost;
+                }
+            },
+            function (string $token) use ($document): void {
+                $this->heartbeatCreateAttempt($document, $token, 'retry_upload');
+            },
+        );
     }
 
     private function primaryFile(LegalArchiveDocument $document, int $organizationId): LegalArchiveDocumentFile

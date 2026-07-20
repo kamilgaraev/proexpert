@@ -62,7 +62,9 @@ final class LegalArchiveDocumentVersion extends Model
             if ($version->isDirty('processing_status')) {
                 $from = (string) $version->getOriginal('processing_status');
                 $to = (string) $version->processing_status;
-                if ($from !== 'quarantine' || ! in_array($to, ['ready', 'failed'], true)) {
+                if (! (($from === 'quarantine' && in_array($to, ['ready', 'failed'], true))
+                    || ($from === 'failed' && $to === 'quarantine'))
+                ) {
                     throw new ImmutableDataException(self::class, 'transition');
                 }
             }

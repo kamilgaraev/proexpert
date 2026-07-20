@@ -13,6 +13,8 @@ use App\Models\User;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Files\LegalDocumentFilePolicy;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
+use App\Services\LegalArchive\Files\LegalDocumentVersionAttempt;
+use App\Services\LegalArchive\Files\LegalDocumentVersionLeaseLost;
 use App\Services\LegalArchive\Files\TestingLegalDocumentScanner;
 use App\Services\LegalArchive\Files\VersionInput;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowDecisionInput;
@@ -266,6 +268,39 @@ SQL, [$step->id]);
         }
     }
 
+    public function test_reclaimed_file_operation_fences_process_blocked_in_upload_from_persisting_or_promoting(): void
+    {
+        [$document, $file, $original] = $this->fileDossier();
+        $this->first->statement('CREATE TABLE version_fence_owners (operation_id text PRIMARY KEY, attempt_token text NOT NULL)');
+        $this->first->table('version_fence_owners')->insert([
+            'operation_id' => 'source-create-race',
+            'attempt_token' => 'attempt-old',
+        ]);
+        $race = $this->runRace('version_fence', [
+            fn (ConnectionInterface $connection): array => $this->fencedFileRaceResult($connection, (int) $file->id, 0),
+            fn (ConnectionInterface $connection): array => $this->fencedFileRaceResult($connection, (int) $file->id, 1),
+        ]);
+
+        self::assertFalse($race[0]['ok']);
+        self::assertSame('legal_document_version_lease_lost', $race[0]['error']);
+        self::assertTrue($race[1]['ok']);
+        $versions = $this->first->table('legal_archive_document_versions')
+            ->where('document_file_id', $file->id)
+            ->orderBy('id')
+            ->get();
+        self::assertCount(2, $versions);
+        $winner = $versions->last();
+        self::assertSame('ready', $winner->processing_status);
+        self::assertTrue((bool) $winner->is_current);
+        self::assertFalse((bool) $versions->first()->is_current);
+        self::assertNotSame((int) $original->id, (int) $winner->id);
+        self::assertSame((int) $winner->id, (int) $file->fresh()->current_version_id);
+        self::assertSame((int) $winner->id, (int) $document->fresh()->current_primary_version_id);
+        $operation = $this->first->table('legal_archive_document_version_operations')->sole();
+        self::assertSame(2, (int) $operation->attempt_count);
+        self::assertSame((int) $winner->id, (int) $operation->document_version_id);
+    }
+
     public function test_schema_migrations_fail_closed_on_descriptor_drift_and_validate_only_allowlist(): void
     {
         $indexes = require dirname(__DIR__, 3).'/database/migrations/2026_07_19_000410_create_legal_document_workflow_indexes.php';
@@ -354,6 +389,11 @@ SQL);
             '2026_07_19_000210_create_legal_document_file_indexes',
             '2026_07_19_000220_add_legal_document_file_constraints',
             '2026_07_19_000230_validate_legal_document_file_constraints',
+            '2026_07_19_000240_create_legal_archive_file_cleanup_debts',
+            '2026_07_19_000250_create_legal_document_version_operations',
+            '2026_07_19_000260_add_legal_document_version_operation_constraints',
+            '2026_07_19_000270_validate_legal_document_version_operation_constraints',
+            '2026_07_19_000280_allow_fenced_legal_document_version_rescan',
         ] as $name) {
             $migration = require dirname(__DIR__, 3)."/database/migrations/{$name}.php";
             $migration->up();
@@ -529,6 +569,96 @@ SQL);
             $file,
             UploadedFile::fake()->createWithContent('race.pdf', "%PDF-1.7\nrace"),
             new VersionInput(uploadedByUserId: 1, makeCurrent: true),
+        );
+
+        return ['version_id' => (int) $version->id];
+    }
+
+    /** @return array{version_id: int} */
+    private function fencedFileRaceResult(ConnectionInterface $connection, int $fileId, int $worker): array
+    {
+        if ($worker === 1) {
+            $deadline = microtime(true) + 10;
+            while (! $connection->table('race_barriers')->where('race_key', 'version-upload-started')->exists()) {
+                if (microtime(true) >= $deadline) {
+                    throw new \RuntimeException('version_upload_barrier_timeout');
+                }
+                usleep(20_000);
+            }
+            $connection->table('version_fence_owners')->where('operation_id', 'source-create-race')->update([
+                'attempt_token' => 'attempt-new',
+            ]);
+        }
+        $file = (new LegalArchiveDocumentFile)->setConnection($connection->getName())->newQuery()->findOrFail($fileId);
+        $storage = new class($connection, $worker) extends FileService
+        {
+            public function __construct(
+                private readonly ConnectionInterface $connection,
+                private readonly int $worker,
+            ) {}
+
+            public function upload(
+                UploadedFile $file,
+                string $directory,
+                ?string $existingPath = null,
+                string $visibility = 'public',
+                ?Organization $organization = null,
+                bool $respectRequestedVisibility = false,
+                bool $privacyMode = false,
+            ): string|false {
+                if ($this->worker === 0) {
+                    $this->connection->table('race_barriers')->insert([
+                        'race_key' => 'version-upload-started',
+                        'worker' => 0,
+                    ]);
+                    $deadline = microtime(true) + 10;
+                    while ($this->connection->table('version_fence_owners')
+                        ->where('operation_id', 'source-create-race')
+                        ->value('attempt_token') !== 'attempt-new'
+                    ) {
+                        if (microtime(true) >= $deadline) {
+                            throw new \RuntimeException('version_reclaim_timeout');
+                        }
+                        usleep(20_000);
+                    }
+                }
+
+                return "org-1/legal/race-{$this->worker}.pdf";
+            }
+
+            public function delete(?string $path, ?Organization $organization = null): bool
+            {
+                return true;
+            }
+        };
+        $token = $worker === 0 ? 'attempt-old' : 'attempt-new';
+        $attempt = new LegalDocumentVersionAttempt(
+            'source-create-race',
+            $token,
+            function (LegalArchiveDocument $document, string $candidate) use ($connection): void {
+                $active = $connection->table('version_fence_owners')
+                    ->where('operation_id', 'source-create-race')
+                    ->value('attempt_token');
+                if (! is_string($active) || ! hash_equals($active, $candidate)) {
+                    throw new LegalDocumentVersionLeaseLost;
+                }
+            },
+        );
+        $service = new LegalDocumentFileService(
+            $storage,
+            new LegalDocumentFilePolicy([
+                'max_size_bytes' => 1024 * 1024,
+                'allowed_extensions' => ['pdf'],
+                'allowed_mime_types' => ['pdf' => ['application/pdf']],
+            ]),
+            new TestingLegalDocumentScanner,
+            $connection,
+        );
+        $version = $service->addVersion(
+            $file,
+            UploadedFile::fake()->createWithContent('race.pdf', "%PDF-1.7\nrace"),
+            new VersionInput(versionNumber: '2', uploadedByUserId: 1, makeCurrent: true),
+            $attempt,
         );
 
         return ['version_id' => (int) $version->id];

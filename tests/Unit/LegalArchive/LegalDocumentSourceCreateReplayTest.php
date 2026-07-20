@@ -239,10 +239,11 @@ final class LegalDocumentSourceCreateReplayTest extends TestCase
         self::assertIsString($registry);
         self::assertIsString($request);
         self::assertStringContainsString('catch (QueryException $exception)', $registry);
+        self::assertStringContainsString('retryCreateAfterUniqueCollision(', $registry);
         self::assertStringContainsString('resolveSourceCreateReplay(', $registry);
         self::assertStringContainsString('normalizeInput($data)', $registry);
         self::assertStringContainsString("->where('source_idempotency_key', \$identity->idempotencyKey)", $registry);
-        self::assertStringContainsString("'source_event_id' => 'create-retry:'.\$replay->create_operation_id.':attempt-'.\$replay->source_create_attempt_count", $registry);
+        self::assertStringContainsString("'source_event_id' => 'create-retry:'.\$document->create_operation_id.':attempt-'.\$document->source_create_attempt_count", $registry);
         self::assertStringNotContainsString("\$data['idempotency_key']", $registry);
         self::assertStringNotContainsString('forceDelete()', $registry);
         self::assertStringContainsString('mb_strlen(trim($rawOperationKey)) > 191', $registry);

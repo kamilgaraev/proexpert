@@ -11,6 +11,8 @@ use App\Services\LegalArchive\Files\LegalDocumentFilePolicy;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
 use App\Services\LegalArchive\Files\LegalDocumentScanFailed;
 use App\Services\LegalArchive\Files\LegalDocumentScanner;
+use App\Services\LegalArchive\Files\LegalDocumentVersionAttempt;
+use App\Services\LegalArchive\Files\LegalDocumentVersionLeaseLost;
 use App\Services\LegalArchive\Files\VersionInput;
 use App\Services\Storage\FileService;
 use Illuminate\Container\Container;
@@ -97,6 +99,26 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             $table->text('last_error')->nullable();
             $table->timestamp('resolved_at')->nullable();
             $table->timestamps();
+            $table->unique(['organization_id', 'storage_path']);
+        });
+        $this->database->schema()->create('legal_archive_document_version_operations', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('document_id');
+            $table->unsignedBigInteger('document_file_id');
+            $table->string('operation_id', 191);
+            $table->unsignedInteger('operation_generation')->default(1);
+            $table->string('request_fingerprint', 64);
+            $table->string('reserved_version_number');
+            $table->boolean('make_current');
+            $table->string('attempt_token', 191);
+            $table->unsignedInteger('attempt_count');
+            $table->string('status');
+            $table->text('storage_path')->nullable();
+            $table->unsignedBigInteger('document_version_id')->nullable();
+            $table->timestamps();
+            $table->unique(['organization_id', 'document_file_id', 'operation_id', 'operation_generation'], 'version_operation_identity_unique');
+            $table->unique(['document_file_id', 'reserved_version_number'], 'version_operation_slot_unique');
         });
         $this->database->schema()->create('legal_workflow_instances', function (Blueprint $table): void {
             $table->id();
@@ -140,6 +162,224 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         self::assertSame(2, $file->versions()->count());
         self::assertSame(1, $file->versions()->where('is_current', true)->count());
         self::assertSame('2', $file->versions()->where('is_current', true)->value('version_number'));
+    }
+
+    public function test_reclaimed_operation_fences_worker_that_loses_ownership_during_upload(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Contract']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10, 'organization_id' => 20, 'role' => 'primary', 'title' => 'Contract',
+        ]);
+        $owner = 'attempt-old';
+        $stalePath = 'org-20/legal-archive/files/1/stale.pdf';
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::exactly(2))->method('upload')->willReturnCallback(
+            function () use (&$owner, $stalePath): string {
+                if ($owner === 'attempt-old') {
+                    $owner = 'attempt-new';
+
+                    return $stalePath;
+                }
+
+                return 'org-20/legal-archive/files/1/winner.pdf';
+            },
+        );
+        $storage->expects(self::once())->method('delete')->with($stalePath, self::anything())->willReturn(true);
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::once())->method('assertClean');
+        $service = $this->service($storage, $scanner);
+        $ownership = static function (LegalArchiveDocument $document, string $token) use (&$owner): void {
+            self::assertSame(10, (int) $document->id);
+            if (! hash_equals($owner, $token)) {
+                throw new LegalDocumentVersionLeaseLost;
+            }
+        };
+
+        try {
+            $service->addVersion(
+                $file,
+                $this->pdf('same.pdf'),
+                new VersionInput(versionNumber: '1.0'),
+                new LegalDocumentVersionAttempt('create-operation', 'attempt-old', $ownership),
+            );
+            self::fail('The stale worker persisted after losing its fencing token.');
+        } catch (LegalDocumentVersionLeaseLost) {
+            self::assertSame(0, $file->versions()->count());
+        }
+
+        $winner = $service->addVersion(
+            $file->fresh(),
+            $this->pdf('same.pdf'),
+            new VersionInput(versionNumber: '1.0'),
+            new LegalDocumentVersionAttempt('create-operation', 'attempt-new', $ownership),
+        );
+
+        self::assertSame('ready', $winner->processing_status);
+        self::assertSame('1.0', $winner->version_number);
+        self::assertSame(1, $file->versions()->count());
+        self::assertSame($winner->id, $file->fresh()->current_version_id);
+        $operation = $this->connection()->table('legal_archive_document_version_operations')->sole();
+        self::assertSame(2, (int) $operation->attempt_count);
+        self::assertSame('completed', $operation->status);
+        self::assertSame($winner->id, (int) $operation->document_version_id);
+    }
+
+    public function test_reclaimed_operation_recovers_reserved_version_and_stale_scanner_cannot_promote_it(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Contract']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10, 'organization_id' => 20, 'role' => 'primary', 'title' => 'Contract',
+        ]);
+        $owner = 'attempt-old';
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('upload')->willReturn('org-20/legal-archive/files/1/reserved.pdf');
+        $storage->expects(self::never())->method('delete');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::exactly(2))->method('assertClean')->willReturnCallback(
+            function () use (&$owner): void {
+                if ($owner === 'attempt-old') {
+                    $owner = 'attempt-new';
+                }
+            },
+        );
+        $service = $this->service($storage, $scanner);
+        $ownership = static function (LegalArchiveDocument $document, string $token) use (&$owner): void {
+            if (! hash_equals($owner, $token)) {
+                throw new LegalDocumentVersionLeaseLost;
+            }
+        };
+
+        try {
+            $service->addVersion(
+                $file,
+                $this->pdf('same.pdf'),
+                new VersionInput(versionNumber: '1.0'),
+                new LegalDocumentVersionAttempt('create-operation', 'attempt-old', $ownership),
+            );
+            self::fail('The stale scanner promoted a quarantined version.');
+        } catch (LegalDocumentVersionLeaseLost) {
+            $quarantine = $file->versions()->sole();
+            self::assertSame('quarantine', $quarantine->processing_status);
+            self::assertFalse((bool) $quarantine->is_current);
+            self::assertNull($file->fresh()->current_version_id);
+        }
+
+        $winner = $service->addVersion(
+            $file->fresh(),
+            $this->pdf('same.pdf'),
+            new VersionInput(versionNumber: '1.0'),
+            new LegalDocumentVersionAttempt('create-operation', 'attempt-new', $ownership),
+        );
+
+        self::assertSame('ready', $winner->processing_status);
+        self::assertTrue((bool) $winner->is_current);
+        self::assertSame(1, $file->versions()->count());
+    }
+
+    public function test_failed_scan_is_recoverable_by_new_fenced_attempt_without_second_object_or_version(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Contract']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10, 'organization_id' => 20, 'role' => 'primary', 'title' => 'Contract',
+        ]);
+        $owner = 'attempt-old';
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('upload')->willReturn('org-20/legal-archive/files/1/recoverable.pdf');
+        $storage->expects(self::never())->method('delete');
+        $scan = 0;
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::exactly(2))->method('assertClean')->willReturnCallback(
+            static function () use (&$scan): void {
+                $scan++;
+                if ($scan === 1) {
+                    throw new RuntimeException('scanner_unavailable');
+                }
+            },
+        );
+        $service = $this->service($storage, $scanner);
+        $ownership = static function (LegalArchiveDocument $document, string $token) use (&$owner): void {
+            if (! hash_equals($owner, $token)) {
+                throw new LegalDocumentVersionLeaseLost;
+            }
+        };
+
+        try {
+            $service->addVersion(
+                $file,
+                $this->pdf('same.pdf'),
+                new VersionInput(versionNumber: '1.0'),
+                new LegalDocumentVersionAttempt('create-operation', 'attempt-old', $ownership),
+            );
+            self::fail('The first scanner call must fail.');
+        } catch (LegalDocumentScanFailed $exception) {
+            self::assertSame('failed', $exception->version->processing_status);
+        }
+
+        $owner = 'attempt-new';
+        $recovered = $service->addVersion(
+            $file->fresh(),
+            $this->pdf('same.pdf'),
+            new VersionInput(versionNumber: '1.0'),
+            new LegalDocumentVersionAttempt('create-operation', 'attempt-new', $ownership),
+        );
+
+        self::assertSame('ready', $recovered->processing_status);
+        self::assertSame(1, $file->versions()->count());
+        self::assertSame($recovered->id, $file->fresh()->current_version_id);
+        self::assertSame(2, (int) $this->connection()->table('legal_archive_document_version_operations')->value('attempt_count'));
+    }
+
+    public function test_corrected_upload_after_deterministic_scan_rejection_uses_next_slot_and_replays(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Contract']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10, 'organization_id' => 20, 'role' => 'primary', 'title' => 'Contract',
+        ]);
+        $owner = 'attempt-old';
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::exactly(2))->method('upload')->willReturnOnConsecutiveCalls(
+            'org-20/legal-archive/files/1/rejected.pdf',
+            'org-20/legal-archive/files/1/corrected.pdf',
+        );
+        $storage->expects(self::never())->method('delete');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::exactly(2))->method('assertClean')->willReturnCallback(
+            static function (UploadedFile $upload): void {
+                if ($upload->getClientOriginalName() === 'rejected.pdf') {
+                    throw new RuntimeException('malware');
+                }
+            },
+        );
+        $service = $this->service($storage, $scanner);
+        $ownership = static function (LegalArchiveDocument $document, string $token) use (&$owner): void {
+            if (! hash_equals($owner, $token)) {
+                throw new LegalDocumentVersionLeaseLost;
+            }
+        };
+
+        try {
+            $service->addVersion(
+                $file,
+                $this->pdf('rejected.pdf'),
+                new VersionInput(versionNumber: '1.0'),
+                new LegalDocumentVersionAttempt('create-operation', 'attempt-old', $ownership),
+            );
+            self::fail('The rejected upload must remain failed evidence.');
+        } catch (LegalDocumentScanFailed) {
+            self::assertSame('failed', $file->versions()->sole()->processing_status);
+        }
+
+        $owner = 'attempt-new';
+        $attempt = new LegalDocumentVersionAttempt('create-operation', 'attempt-new', $ownership);
+        $corrected = $service->addVersion($file->fresh(), $this->pdf('corrected.pdf'), new VersionInput, $attempt);
+        $replayed = $service->addVersion($file->fresh(), $this->pdf('corrected.pdf'), new VersionInput, $attempt);
+
+        self::assertSame($corrected->id, $replayed->id);
+        self::assertSame('ready', $corrected->processing_status);
+        self::assertSame(2, $file->versions()->count());
+        self::assertSame(['1.0', '1.0.2'], $file->versions()->reorder('id')->pluck('version_number')->all());
+        self::assertSame(['failed', 'completed'], $this->connection()->table('legal_archive_document_version_operations')
+            ->orderBy('operation_generation')->pluck('status')->all());
     }
 
     public function test_deletes_only_newly_uploaded_object_when_persistence_fails(): void
@@ -390,8 +630,12 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         $constraints = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000220_add_legal_document_file_constraints.php');
         $validation = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000230_validate_legal_document_file_constraints.php');
         $cleanupDebts = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000240_create_legal_archive_file_cleanup_debts.php');
+        $operations = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000250_create_legal_document_version_operations.php');
+        $operationConstraints = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000260_add_legal_document_version_operation_constraints.php');
+        $operationValidation = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000270_validate_legal_document_version_operation_constraints.php');
+        $rescanGuard = file_get_contents(__DIR__.'/../../../database/migrations/2026_07_19_000280_allow_fenced_legal_document_version_rescan.php');
 
-        foreach ([$schema, $indexes, $constraints, $validation, $cleanupDebts] as $phase) {
+        foreach ([$schema, $indexes, $constraints, $validation, $cleanupDebts, $operations, $operationConstraints, $operationValidation, $rescanGuard] as $phase) {
             self::assertIsString($phase);
         }
         self::assertStringContainsString("->unsignedBigInteger('document_file_id')->nullable()", $schema);
@@ -413,6 +657,14 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         self::assertStringContainsString('legal_archive_cleanup_debts_pending_idx', $cleanupDebts);
         self::assertStringContainsString('legal_archive_cleanup_debts_object_unique', $cleanupDebts);
         self::assertStringContainsString('legal_archive_cleanup_debts_rollback_blocked', $cleanupDebts);
+        self::assertStringContainsString('legal_archive_version_operation_identity_unique', $operations);
+        self::assertStringContainsString('legal_archive_version_operation_slot_unique', $operations);
+        self::assertStringContainsString("->string('operation_id', 191)", $operations);
+        self::assertStringContainsString('NOT VALID', $operationConstraints);
+        self::assertStringContainsString('legal_archive_version_operations_state_check', $operationConstraints);
+        self::assertGreaterThanOrEqual(2, substr_count($operationConstraints, 'ON DELETE RESTRICT'));
+        self::assertStringContainsString('VALIDATE CONSTRAINT', $operationValidation);
+        self::assertStringContainsString("OLD.processing_status = 'failed' AND NEW.processing_status = 'quarantine'", $rescanGuard);
         self::assertStringNotContainsString('UPDATE legal_archive_document_versions', $schema.$indexes.$constraints.$validation);
     }
 
