@@ -73,7 +73,7 @@ class FgiscsBuildingResourcePriceUpdateService
             (int) $priceZone->id,
             (int) $period->id,
             $baseVersionKey,
-            'project_material_conjuncture_checked',
+            'building_resources_imported',
             $force,
         );
         $prefix = $this->prefix($period, (int) $region->fgiscs_subject_id, (int) $priceZone->fgiscs_price_zone_id);
