@@ -140,7 +140,9 @@ class EstimatePricingService
                 $fromUnit = trim((string) ($resource['unit'] ?? ''));
                 $toUnit = trim((string) ($resource['price_unit'] ?? $resource['pricing']['unit'] ?? $fromUnit));
                 $version = (int) ($resource['unit_conversion_version'] ?? $regionalContext['unit_conversion_version'] ?? 1);
-                $conversion = $this->unitConversion->handle($fromUnit, $toUnit, $version);
+                $conversion = $this->hasResidentialConvertedPrice($resource)
+                    ? null
+                    : $this->unitConversion->handle($fromUnit, $toUnit, $version);
                 if ($conversion !== null) {
                     $resource['quantity'] = (string) BigDecimal::of((string) ($resource['quantity'] ?? '0'))
                         ->multipliedBy($conversion->factor);
@@ -165,6 +167,15 @@ class EstimatePricingService
         }
 
         return [$workItem, $resourceSnapshots, $costs];
+    }
+
+    private function hasResidentialConvertedPrice(array $resource): bool
+    {
+        $selection = is_array($resource['project_resource_selection'] ?? null)
+            ? $resource['project_resource_selection']
+            : [];
+
+        return str_contains((string) ($selection['policy'] ?? ''), '_residential_converted_');
     }
 
     private function snapshot(array $resourceSnapshots, BigDecimal $workCost, BigDecimal $total): PriceSnapshotData

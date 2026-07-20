@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Pricing;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialAbstractResourceConversionCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Closure;
@@ -142,6 +143,7 @@ class ResolveRegionalPrice
             || trim((string) ($selection['source_price_unit'] ?? '')) !== $conversion['from_unit']
             || trim((string) ($payload['unit'] ?? '')) !== $conversion['from_unit']
             || trim((string) ($resource['price_unit'] ?? '')) !== $conversion['to_unit']
+            || ! NormativeUnitNormalizer::compatible((string) ($resource['unit'] ?? ''), $conversion['to_unit'])
             || trim((string) ($selection['conversion_assumption'] ?? '')) !== $conversion['assumption']
             || ! $sourcePriceMatches || ! $factorMatches || ! $appliedPriceMatches) {
             throw MissingRegionalPrice::forResource(
