@@ -10,6 +10,7 @@ use App\BusinessModules\Features\Crm\Models\CrmDeal;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
+use App\Models\Estimate;
 use App\Models\Project;
 use App\Models\SupplementaryAgreement;
 use Illuminate\Database\Eloquent\Model;
@@ -51,6 +52,8 @@ final class LegalDocumentSourceResolver
             LegalDocumentSourceType::COMMERCIAL_PROPOSAL => CommercialProposal::query()
                 ->whereKey($id)->where('organization_id', $organizationId)->first(),
             LegalDocumentSourceType::CRM_DEAL => CrmDeal::query()
+                ->whereKey($id)->where('organization_id', $organizationId)->first(),
+            LegalDocumentSourceType::ESTIMATE => Estimate::query()
                 ->whereKey($id)->where('organization_id', $organizationId)->first(),
         };
         if (! $source instanceof Model) {

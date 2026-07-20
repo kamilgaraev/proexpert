@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Contract;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\BusinessModules\Features\ContractManagement\Services\ContractEstimateService;
 use App\DTOs\Contract\ContractDTO;
 use App\DTOs\Contract\ContractDossierCreationInput;
 use App\Enums\Contract\ContractSideTypeEnum;
@@ -13,6 +14,7 @@ use App\Models\Contract;
 use App\Models\User;
 use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Contract\ContractDossierCreationService;
+use App\Services\Contract\ContractFromEstimateService;
 use App\Services\Contract\ContractDossierDocumentCreator;
 use App\Services\Contract\ContractSideMutationService;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
@@ -64,6 +66,10 @@ final class ContractDossierCreationServiceTest extends TestCase
             $table->timestamps();
             $table->unique(['organization_id', 'source_type', 'source_id'], 'contract_dossier_sources_source_unique');
             $table->unique(['organization_id', 'idempotency_key'], 'contract_dossier_sources_key_unique');
+        });
+        $this->database->schema()->create('estimate_items', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('estimate_id');
         });
     }
 
@@ -173,6 +179,37 @@ final class ContractDossierCreationServiceTest extends TestCase
         self::assertTrue($second->replayed);
         self::assertSame($first->contract->id, $second->contract->id);
         self::assertSame($first->document->id, $second->document->id);
+    }
+
+    public function test_invalid_estimate_items_do_not_create_a_partial_contract(): void
+    {
+        $contracts = Mockery::mock(ContractSideMutationService::class);
+        $contracts->shouldNotReceive('create');
+        $creator = Mockery::mock(ContractDossierDocumentCreator::class);
+        $creator->shouldNotReceive('create');
+        $dossiers = new ContractDossierCreationService(
+            $this->database->getConnection(),
+            $contracts,
+            new ContractAuditedMutationService(
+                Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(),
+                $this->database->getConnection(),
+            ),
+            $creator,
+        );
+        $estimates = Mockery::mock(ContractEstimateService::class);
+        $estimates->shouldNotReceive('attachItems');
+        $service = new ContractFromEstimateService($this->database->getConnection(), $dossiers, $estimates);
+        $actor = new User;
+        $actor->forceFill(['id' => 3, 'current_organization_id' => 7]);
+        $project = new \App\Models\Project;
+        $project->forceFill(['organization_id' => 7]);
+        $estimate = new \App\Models\Estimate;
+        $estimate->forceFill(['organization_id' => 7]);
+        $input = $this->input();
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('contract_estimate_items_invalid');
+        $service->create(7, $actor, $project, $estimate, $input, [999], false);
     }
 
     private function input(): ContractDossierCreationInput

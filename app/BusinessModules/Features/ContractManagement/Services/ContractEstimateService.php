@@ -9,6 +9,7 @@ use App\Models\Contract;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\ContractEstimateItem;
+use DomainException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -27,17 +28,17 @@ class ContractEstimateService
 
             $items = EstimateItem::whereIn('id', $allIds)
                 ->where('estimate_id', $estimate->id)
+                ->lockForUpdate()
                 ->get()
                 ->keyBy('id');
+            if ($items->count() !== count($allIds)) {
+                throw new DomainException('contract_estimate_items_invalid');
+            }
 
             $attached = collect();
 
             foreach ($allIds as $itemId) {
                 $item = $items->get($itemId);
-                if (!$item) {
-                    continue;
-                }
-
                 $link = ContractEstimateItem::updateOrCreate(
                     [
                         'contract_id'      => $contract->id,
@@ -64,7 +65,7 @@ class ContractEstimateService
             return $attached;
         });
 
-        $this->estimateCacheService->invalidateStructure($estimate);
+        DB::afterCommit(fn () => $this->estimateCacheService->invalidateStructure($estimate));
 
         return $attached;
     }

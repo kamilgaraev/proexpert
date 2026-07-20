@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractSpecificationController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractStateEventController;
 use App\Http\Controllers\Api\V1\Admin\ContractController;
+use App\Http\Controllers\Api\V1\Admin\ContractFromEstimateController;
 use App\Http\Controllers\Api\V1\Admin\MaterialAnalyticsController;
 // ContractPaymentController удален - используйте модуль Payments
 use App\Http\Controllers\Api\V1\Admin\ProjectContextController;
@@ -56,6 +57,8 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
     Route::prefix('contracts')->group(function () {
         Route::get('/', [ContractController::class, 'index'])->middleware('authorize:contracts.view,project,project');
         Route::post('/', [ContractController::class, 'store'])->middleware('authorize:contracts.create,project,project');
+        Route::post('/from-estimate', [ContractFromEstimateController::class, 'store'])
+            ->middleware('authorize:contracts.create,project,project');
         Route::get('/{contract}', [ContractController::class, 'show'])->middleware('authorize:contracts.view,project,project');
         Route::match(['put', 'patch'], '/{contract}', [ContractController::class, 'update'])
             ->middleware('authorize:contracts.edit,project,project');

@@ -219,7 +219,7 @@ class StoreContractRequest extends FormRequest
         ];
     }
 
-    private function currentOrganizationId(): int
+    protected function currentOrganizationId(): int
     {
         return (int) (
             $this->attributes->get('current_organization_id')
@@ -237,7 +237,7 @@ class StoreContractRequest extends FormRequest
         }
     }
 
-    private function routeProjectId(): ?int
+    protected function routeProjectId(): ?int
     {
         $project = $this->route('project');
 
