@@ -43,7 +43,7 @@ final readonly class MobileLegalArchiveService
         }
         $this->authorizer->authorize($actor, $document, 'view');
 
-        return $document;
+        return $document->loadMissing(['obligations']);
     }
 
     /** @return array<string, mixed> */
@@ -94,6 +94,6 @@ final readonly class MobileLegalArchiveService
             reason: $reason,
         ));
 
-        return $this->document($actor, $organizationId, $documentId)->fresh(['project', 'currentVersion', 'versions']) ?? $document;
+        return $this->document($actor, $organizationId, $documentId)->fresh(['project', 'currentVersion', 'versions', 'obligations']) ?? $document;
     }
 }
