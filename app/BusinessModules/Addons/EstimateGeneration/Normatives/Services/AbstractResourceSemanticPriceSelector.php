@@ -21,7 +21,7 @@ final readonly class AbstractResourceSemanticPriceSelector
         ];
         if (in_array($attributes['family'], ['gutter_pipe', 'gutter_fitting'], true)) {
             $hints['family'] = $attributes['family'];
-        } elseif (in_array($attributes['family'], ['window_block', 'duct'], true)) {
+        } elseif (in_array($attributes['family'], ['window_block', 'duct', 'tile'], true)) {
             $hints['family'] = $attributes['family'];
             $hints['diameter_max'] = $attributes['diameter_max'];
             $hints['thickness'] = $attributes['thickness'];
@@ -154,12 +154,15 @@ final readonly class AbstractResourceSemanticPriceSelector
         $family = match (true) {
             str_contains($text, 'воздуховод') => 'duct',
             preg_match('/окон\w*\s+блок|блок\w*\s+окон/u', $text) === 1 => 'window_block',
+            str_contains($text, 'плит') => 'tile',
             $isGutter && preg_match('/^\s*труб[\p{L}]*/u', $text) === 1 => 'gutter_pipe',
             $isGutter && preg_match('/^\s*(?:колен|ворон|соединител|тройник|хомут|угол|заглуш|муфт|слив|кронштейн|держател|наконечник|паук|ограничител)/u', $text) === 1 => 'gutter_fitting',
             str_contains($text, 'труб') => 'pipe',
             default => null,
         };
         $material = match (true) {
+            str_contains($text, 'керамич') => 'ceramic',
+            str_contains($text, 'графит') => 'graphite',
             preg_match('/(?:\bпнд\b|\bhdpe\b|полиэтилен\w*[^.]{0,40}высок\w*\s+плотност)/u', $text) === 1 => 'hdpe',
             preg_match('/(?:стал\w*|\bвгп\b|водогазопровод)/u', $text) === 1 => 'steel',
             preg_match('/(?:металлич\w*|чугун\w*)/u', $text) === 1 => 'metal',
@@ -271,6 +274,10 @@ final readonly class AbstractResourceSemanticPriceSelector
                 && ($attributes['diameter_max'] !== null || $attributes['diameter'] !== null);
         }
 
+        if ($attributes['family'] === 'tile') {
+            return $attributes['material'] === 'ceramic';
+        }
+
         return $attributes['family'] === 'pipe'
             && in_array($attributes['material'], ['steel', 'hdpe'], true)
             && $attributes['diameter'] !== null
@@ -312,6 +319,10 @@ final readonly class AbstractResourceSemanticPriceSelector
                 && $candidateLimit !== null
                 && $targetLimit !== null
                 && $candidateLimit <= $targetLimit;
+        }
+
+        if ($target['family'] === 'tile') {
+            return $candidate['family'] === 'tile' && $candidate['material'] === 'ceramic';
         }
 
         if ($candidate['family'] !== $target['family']

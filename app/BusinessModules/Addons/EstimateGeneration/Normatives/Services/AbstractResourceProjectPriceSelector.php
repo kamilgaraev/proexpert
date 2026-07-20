@@ -33,6 +33,9 @@ final readonly class AbstractResourceProjectPriceSelector
             if ($selection !== null) {
                 return $selection;
             }
+            if ($this->residential->supports($normCode, $groupCode)) {
+                return null;
+            }
         }
 
         return $this->generic->select(

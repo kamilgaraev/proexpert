@@ -73,6 +73,11 @@ final readonly class ResidentialAbstractResourcePriceSelector
         return $this->conversions->supportedGroupCodes();
     }
 
+    public function supports(string $normCode, string $groupCode): bool
+    {
+        return $this->conversions->find($normCode, $groupCode) !== null;
+    }
+
     /** @return list<array{group_code: string, from_unit: string}> */
     public function supportedUnitPairs(): array
     {
