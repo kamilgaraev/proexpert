@@ -399,9 +399,13 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                             ->where('abstract_conversions.factor', '>', 0);
                     })
                     ->orWhere(function ($residentialConversion): void {
-                        $residentialConversion
-                            ->whereIn('resources.resource_code', ['05.1.03.09', '12.2.05.02', '06.2.05.04'])
-                            ->whereRaw("(resources.resource_code, prices.unit) IN (('05.1.03.09', 'м3'), ('12.2.05.02', 'м3'), ('06.2.05.04', 'т'))");
+                        foreach ($this->residentialAbstractResourcePriceSelector->supportedUnitPairs() as $index => $pair) {
+                            $method = $index === 0 ? 'where' : 'orWhere';
+                            $residentialConversion->{$method}(function ($supported) use ($pair): void {
+                                $supported->where('resources.resource_code', $pair['group_code'])
+                                    ->where('prices.unit', $pair['from_unit']);
+                            });
+                        }
                     });
             })
             ->orderBy('resources.estimate_norm_id')

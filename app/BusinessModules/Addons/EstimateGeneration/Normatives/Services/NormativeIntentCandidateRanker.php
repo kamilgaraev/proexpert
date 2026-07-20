@@ -12,6 +12,7 @@ final readonly class NormativeIntentCandidateRanker
 {
     public function __construct(
         private NormativeSemanticCompatibilityService $semanticCompatibility = new NormativeSemanticCompatibilityService,
+        private ResidentialMaterialScenarioCatalog $materialScenarios = new ResidentialMaterialScenarioCatalog,
     ) {}
 
     /** @param list<object> $candidates @param non-empty-list<array{search_text: string, unit: string, code?: string|null, material?: string|null, action?: string|null, scope?: string|null, system?: string|null, object?: string|null, object_type?: string|null, normative_section?: string|null, normative_sections?: list<string>}> $intents @return list<object>|null */
@@ -80,11 +81,12 @@ final readonly class NormativeIntentCandidateRanker
                 ? implode(' ', array_filter($candidate->work_composition, 'is_string'))
                 : (string) ($candidate->work_composition ?? ''),
         ]);
-        if (! $this->semanticCompatibility->isCompatible(
+        $semanticCompatible = $this->semanticCompatibility->isCompatible(
             $semanticText,
             $intent['search_text'],
             [...$intent, 'candidate_title' => (string) ($candidate->name ?? '')],
-        )) {
+        );
+        if (! $semanticCompatible && ! $this->matchesSignedExactScenario($candidate, $intent)) {
             return null;
         }
         if ($requestedCode !== '' && $code === $requestedCode) {
@@ -106,6 +108,30 @@ final readonly class NormativeIntentCandidateRanker
         return $matches > 0
             ? 100 - min(99, $matches) + $this->objectContextPriority($name, $search, $intent)
             : null;
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function matchesSignedExactScenario(object $candidate, array $intent): bool
+    {
+        $scenario = $intent['specialization_scenario'] ?? null;
+        $workItemKey = is_array($scenario) ? trim((string) ($scenario['work_item_key'] ?? '')) : '';
+        $objectType = ObjectTypeSignalClassifier::canonical((string) ($intent['object_type'] ?? ''));
+        $resolved = $workItemKey !== '' && $objectType === 'residential'
+            ? $this->materialScenarios->resolve($scenario, $workItemKey, $objectType)
+            : null;
+        if (! is_array($resolved)
+            || trim((string) ($resolved['normative_rate_code'] ?? '')) !== trim((string) ($candidate->code ?? ''))
+            || trim((string) ($intent['code'] ?? '')) !== trim((string) ($candidate->code ?? ''))) {
+            return false;
+        }
+
+        $candidateName = mb_strtolower(trim((string) ($candidate->name ?? '')));
+        $matchingTokens = array_filter(
+            $this->tokens((string) ($resolved['normative_search_text'] ?? '')),
+            static fn (string $token): bool => str_contains($candidateName, $token),
+        );
+
+        return count($matchingTokens) >= 2;
     }
 
     /** @param array<string, mixed> $intent */

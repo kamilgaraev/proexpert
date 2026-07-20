@@ -11,6 +11,34 @@ use PHPUnit\Framework\TestCase;
 final class ResidentialAbstractResourcePriceSelectorTest extends TestCase
 {
     #[Test]
+    public function residential_washbasin_converts_one_catalog_piece_to_one_normative_set(): void
+    {
+        $candidate = (object) [
+            'price_resource_code' => '18.2.02.08-1001',
+            'price_resource_name' => 'Умывальник керамический',
+            'price_unit' => 'шт',
+            'base_price' => 4500,
+            'unit_price' => 4500,
+            'price_id' => 20,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+
+        $selection = (new ResidentialAbstractResourcePriceSelector)->select(
+            '17-01-001-14',
+            '18.2.02.08',
+            [$candidate],
+            [4],
+        );
+
+        self::assertNotNull($selection);
+        self::assertSame(4500.0, $selection['row']->unit_price);
+        self::assertSame('компл', $selection['row']->price_unit);
+        self::assertSame('washbasin_piece_per_set:1', $selection['assumption']);
+    }
+
+    #[Test]
     public function converts_mineral_wool_volume_price_to_area_using_explicit_residential_thickness(): void
     {
         $candidate = (object) [

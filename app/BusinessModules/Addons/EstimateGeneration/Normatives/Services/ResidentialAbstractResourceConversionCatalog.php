@@ -28,6 +28,13 @@ final class ResidentialAbstractResourceConversionCatalog
             'assumption' => 'ceramic_tile_mass_t_per_m2:0.02',
             'name_markers' => ['плит', 'керамич'],
         ],
+        '17-01-001-14|18.2.02.08' => [
+            'from_unit' => 'шт',
+            'to_unit' => 'компл',
+            'factor' => '1',
+            'assumption' => 'washbasin_piece_per_set:1',
+            'name_markers' => ['умывальник'],
+        ],
     ];
 
     public function find(string $normCode, string $groupCode): ?array
@@ -41,5 +48,19 @@ final class ResidentialAbstractResourceConversionCatalog
             static fn (string $key): string => explode('|', $key, 2)[1],
             array_keys(self::CONVERSIONS),
         )));
+    }
+
+    /** @return list<array{group_code: string, from_unit: string}> */
+    public function supportedUnitPairs(): array
+    {
+        $pairs = [];
+        foreach (self::CONVERSIONS as $key => $conversion) {
+            $pairs[] = [
+                'group_code' => explode('|', $key, 2)[1],
+                'from_unit' => $conversion['from_unit'],
+            ];
+        }
+
+        return $pairs;
     }
 }

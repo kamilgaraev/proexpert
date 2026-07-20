@@ -135,6 +135,34 @@ final class ResolveRegionalPriceTest extends TestCase
     }
 
     #[Test]
+    public function residential_conversion_accepts_the_selector_six_decimal_rounding(): void
+    {
+        $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [
+            'id' => $priceId,
+            'resource_code' => '12.2.05.02-1001',
+            'unit' => 'м3',
+            'dataset_version_id' => 6,
+            'dataset_version' => '2026-05-07',
+            'dataset_status' => 'parsed',
+            'region_id' => null,
+            'price_zone_id' => null,
+            'period_id' => null,
+            'regional_price_version_id' => null,
+            'base_price' => '12345.678901',
+            'source_type' => 'fsnb_2022',
+        ]);
+        $resource = $this->convertedResource();
+        $resource['unit_price'] = '2469.135780';
+        $resource['project_resource_selection']['source_unit_price'] = '12345.678901';
+        $resource['normative_ref']['project_resource_selection']['source_unit_price'] = '12345.678901';
+
+        $snapshot = $resolver->handle($resource, $this->context());
+
+        self::assertSame('2469.1358', $snapshot->baseAmount);
+        self::assertSame('4938.27', $snapshot->finalAmount);
+    }
+
+    #[Test]
     public function base_price_from_unapproved_dataset_is_never_used(): void
     {
         $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [
