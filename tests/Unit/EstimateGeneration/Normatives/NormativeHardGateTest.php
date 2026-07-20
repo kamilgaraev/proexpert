@@ -301,6 +301,35 @@ final class NormativeHardGateTest extends TestCase
         self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
     }
 
+    public function test_signed_residential_scenario_accepts_its_exact_lexically_matching_norm(): void
+    {
+        $scenario = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog)
+            ->issue('foundation.prep', 'residential');
+        self::assertIsArray($scenario);
+        $intent = new WorkIntentData(
+            1, 2, 3, 'foundation.prep', 'устройство бетонной подготовки фундаментов общего назначения', 'm3', 'volume',
+            '', 'concreting', 'foundation', '06', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'], ['06'], (string) $scenario['normative_rate_code'],
+            specializationScenario: $scenario,
+        );
+        $candidate = $this->candidate([
+            'code' => '06-01-001-01',
+            'name' => 'Устройство бетонной подготовки и фундаментов общего назначения: Устройство бетонной подготовки',
+            'canonicalUnit' => '100 m3',
+            'unitDimension' => 'volume',
+            'material' => null,
+            'technology' => null,
+            'structure' => null,
+            'normativeSection' => '06-01',
+            'objectType' => null,
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
+        self::assertSame([], $set->rejected);
+    }
+
     public function test_work_system_is_used_by_semantic_safety_gate(): void
     {
         $intent = new WorkIntentData(

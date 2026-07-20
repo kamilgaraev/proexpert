@@ -91,7 +91,10 @@ class ResolveRegionalPrice
         if ($selection === null || ! str_contains((string) ($selection['policy'] ?? ''), '_residential_converted_')) {
             return null;
         }
-        if ($selection !== $referenceSelection) {
+        if ($referenceSelection === null
+            || ($selection['group_code'] ?? null) !== ($referenceSelection['group_code'] ?? null)
+            || ($selection['selected_resource_code'] ?? null) !== ($referenceSelection['selected_resource_code'] ?? null)
+            || ($selection['policy'] ?? null) !== ($referenceSelection['policy'] ?? null)) {
             throw MissingRegionalPrice::forResource($this->positiveInt($resource['price_id'] ?? null) ?? 0);
         }
         $normCode = trim((string) ($reference['norm_code'] ?? ''));

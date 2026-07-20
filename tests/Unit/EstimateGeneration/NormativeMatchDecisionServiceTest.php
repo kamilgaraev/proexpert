@@ -265,6 +265,42 @@ class NormativeMatchDecisionServiceTest extends TestCase
         $this->assertNotContains('semantic_mismatch', $decision->warnings);
     }
 
+    public function test_signed_residential_scenario_is_preserved_by_legacy_decision_gate(): void
+    {
+        $scenario = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog)
+            ->issue('sanitary.showers', 'residential');
+        self::assertIsArray($scenario);
+        $decision = (new NormativeMatchDecisionService)->decide([
+            'confidence' => 0.95,
+            'unit' => '10 компл',
+            'code' => '17-01-001-21',
+            'name' => 'Установка кабин душевых: с пластиковыми поддонами',
+            'section' => ['code' => '17'],
+            'resources' => [
+                'materials' => [['price_source' => 'fsnb_base', 'total_price' => 1000]],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ], [
+            'name' => 'Установка душевых кабин с пластиковым поддоном',
+            'normative_search_text' => $scenario['normative_search_text'],
+            'normative_rate_code' => $scenario['normative_rate_code'],
+            'unit' => 'pcs',
+            'object_type' => 'residential',
+            'specialization_scenario' => $scenario,
+            'work_intent' => [
+                'scope' => 'engineering',
+                'action' => 'sanitary_fixture_installation',
+                'preferred_section_prefixes' => ['17'],
+                'specialization_scenario' => $scenario,
+            ],
+        ]);
+
+        self::assertSame('accepted', $decision->status, json_encode($decision->warnings, JSON_UNESCAPED_UNICODE));
+        self::assertTrue($decision->canUseForPricing);
+    }
+
     public function test_soil_haulage_can_use_transport_norm_from_earthwork_section(): void
     {
         $decision = (new NormativeMatchDecisionService)->decide([

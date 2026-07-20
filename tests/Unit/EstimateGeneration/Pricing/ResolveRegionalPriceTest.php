@@ -163,6 +163,36 @@ final class ResolveRegionalPriceTest extends TestCase
     }
 
     #[Test]
+    public function residential_conversion_compares_reference_selection_by_catalog_identity_not_array_order(): void
+    {
+        $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [
+            'id' => $priceId,
+            'resource_code' => '12.2.05.02-1001',
+            'unit' => 'м3',
+            'dataset_version_id' => 6,
+            'dataset_version' => '2026-05-07',
+            'dataset_status' => 'parsed',
+            'regional_price_version_id' => null,
+            'region_id' => null,
+            'price_zone_id' => null,
+            'period_id' => null,
+            'base_price' => '10000.0000',
+            'source_type' => 'fsnb_2022',
+        ]);
+        $resource = $this->convertedResource();
+        $reference = $resource['normative_ref']['project_resource_selection'];
+        $resource['normative_ref']['project_resource_selection'] = [
+            'policy' => $reference['policy'],
+            'selected_resource_code' => $reference['selected_resource_code'],
+            'group_code' => $reference['group_code'],
+        ];
+
+        $snapshot = $resolver->handle($resource, $this->context());
+
+        self::assertSame('2000.0000', $snapshot->baseAmount);
+    }
+
+    #[Test]
     public function base_price_from_unapproved_dataset_is_never_used(): void
     {
         $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [

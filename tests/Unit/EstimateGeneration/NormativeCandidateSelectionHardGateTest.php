@@ -85,6 +85,39 @@ final class NormativeCandidateSelectionHardGateTest extends TestCase
         self::assertContains('unit_mismatch', $reasons);
     }
 
+    public function test_signed_residential_scenario_survives_final_selection_gate(): void
+    {
+        $scenario = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog)
+            ->issue('sanitary.showers', 'residential');
+        self::assertIsArray($scenario);
+
+        $reasons = $this->gate()->rejectionReasons(
+            [
+                'name' => 'Установка душевых кабин с пластиковым поддоном',
+                'normative_search_text' => $scenario['normative_search_text'],
+                'normative_rate_code' => $scenario['normative_rate_code'],
+                'unit' => 'pcs',
+                'specialization_scenario' => $scenario,
+                'work_intent' => [
+                    'scope' => 'engineering',
+                    'action' => 'sanitary_fixture_installation',
+                    'preferred_section_prefixes' => ['17'],
+                    'specialization_scenario' => $scenario,
+                ],
+            ],
+            ['scope_type' => 'engineering', 'section_title' => 'Водоснабжение', 'object_type' => 'residential'],
+            ['selected' => [
+                'code' => '17-01-001-21',
+                'name' => 'Установка кабин душевых: с пластиковыми поддонами',
+                'unit' => '10 компл',
+                'section' => ['code' => '17-01'],
+                'work_composition' => [],
+            ]],
+        );
+
+        self::assertSame([], $reasons);
+    }
+
     private function gate(): NormativeCandidateSelectionHardGate
     {
         return new NormativeCandidateSelectionHardGate(

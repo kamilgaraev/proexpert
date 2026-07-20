@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialSignedNormCompatibility;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClassifier;
 
 final readonly class NormativeCandidateSelectionHardGate
@@ -12,6 +13,7 @@ final readonly class NormativeCandidateSelectionHardGate
         private WorkIntentClassifier $workIntentClassifier,
         private NormativeSearchProfileCatalog $searchProfileCatalog,
         private NormativeSemanticCompatibilityService $semanticCompatibilityService,
+        private ResidentialSignedNormCompatibility $signedNormCompatibility = new ResidentialSignedNormCompatibility,
     ) {}
 
     /**
@@ -36,19 +38,29 @@ final readonly class NormativeCandidateSelectionHardGate
 
         $intent = $this->workIntentClassifier->classify($workItem, $context);
         $profile = $this->searchProfileCatalog->forIntentData($intent);
+        $objectType = ObjectTypeSignalClassifier::canonical((string) ($context['object_type'] ?? ''));
+        $signedScenario = is_array($workItem['specialization_scenario'] ?? null)
+            ? $workItem['specialization_scenario']
+            : null;
+        $signedScenarioMatches = $this->signedNormCompatibility->matches(
+            $signedScenario,
+            $objectType,
+            (string) ($candidate['code'] ?? ''),
+            (string) ($candidate['name'] ?? ''),
+        );
         $section = is_array($candidate['section'] ?? null) ? $candidate['section'] : [];
         $sectionCode = trim((string) ($section['code'] ?? $candidate['section_code'] ?? ''));
-        if ($profile->allowedSectionPrefixes !== [] && ! $this->sectionStartsWithAny($sectionCode, $profile->allowedSectionPrefixes)) {
+        if (! $signedScenarioMatches && $profile->allowedSectionPrefixes !== []
+            && ! $this->sectionStartsWithAny($sectionCode, $profile->allowedSectionPrefixes)) {
             $reasons[] = 'normative_section_mismatch';
         }
-        if ($this->sectionStartsWithAny($sectionCode, [
+        if (! $signedScenarioMatches && $this->sectionStartsWithAny($sectionCode, [
             ...$intent->forbiddenSectionPrefixes,
             ...$profile->forbiddenSectionPrefixes,
         ])) {
             $reasons[] = 'normative_section_mismatch';
         }
 
-        $objectType = ObjectTypeSignalClassifier::canonical((string) ($context['object_type'] ?? ''));
         $candidateObjectType = ObjectTypeSignalClassifier::canonical((string) ($candidate['object_type'] ?? ''));
         if ($objectType !== '' && $candidateObjectType !== ''
             && ! ObjectTypeSignalClassifier::compatible($candidateObjectType, $objectType)) {
@@ -60,7 +72,7 @@ final readonly class NormativeCandidateSelectionHardGate
             ...$this->strings($candidate['work_composition'] ?? []),
         ]));
         $workText = trim((string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''));
-        if ($candidateText === '' || $workText === '' || ! $this->semanticCompatibilityService->isCompatible(
+        $semanticCompatible = $candidateText !== '' && $workText !== '' && $this->semanticCompatibilityService->isCompatible(
             $candidateText,
             $workText,
             [
@@ -72,7 +84,8 @@ final readonly class NormativeCandidateSelectionHardGate
                 'candidate_title' => (string) ($candidate['name'] ?? ''),
             ],
             $profile->forbiddenDomainTerms,
-        )) {
+        );
+        if (! $semanticCompatible && ! $signedScenarioMatches) {
             $reasons[] = 'semantic_mismatch';
         }
 
