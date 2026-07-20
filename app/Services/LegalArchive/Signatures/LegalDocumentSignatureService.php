@@ -20,6 +20,8 @@ use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
 use App\Services\LegalArchive\Files\LegalCleanupDebtKey;
 use App\Services\LegalArchive\LegalArchiveLockConflict;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
+use App\Services\LegalArchive\LegalDocumentNotificationPublisher;
+use App\Notifications\LegalArchive\LegalDocumentSignatureRequiredNotification;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator;
 use App\Services\Storage\FileService;
@@ -49,6 +51,7 @@ final class LegalDocumentSignatureService
         private readonly LegalDocumentAggregateLock $aggregateLock = new LegalDocumentAggregateLock,
         ?LegalSignatureSigningGuard $signingGuard = null,
         ?LegalSignatureProjection $projection = null,
+        private readonly ?LegalDocumentNotificationPublisher $notifications = null,
     ) {
         $this->signingGuard = $signingGuard ?? new LegalSignatureSigningGuard(
             new LegalDocumentProfileRegistry,
@@ -99,7 +102,7 @@ final class LegalDocumentSignatureService
             'replaces_request_id' => $replacesRequestId,
         ]);
 
-        return $this->connection->transaction(function () use ($document, $version, $actor, $method, $provider, $partyId, $signers, $signerSnapshot, $key, $requestHash, $expiresAt, $replacesRequestId, $expectedDocumentLockVersion): LegalSignatureRequest {
+        $request = $this->connection->transaction(function () use ($document, $version, $actor, $method, $provider, $partyId, $signers, $signerSnapshot, $key, $requestHash, $expiresAt, $replacesRequestId, $expectedDocumentLockVersion): LegalSignatureRequest {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
             $existing = $this->requests()->where('organization_id', $lockedDocument->organization_id)
                 ->where('requested_by_user_id', $actor->id)->where('idempotency_key', $key)->lockForUpdate()->first();
@@ -197,6 +200,12 @@ final class LegalDocumentSignatureService
 
             return $request;
         }, 3);
+        foreach ($signers->identities as $signer) {
+            if ($signer->userId !== null && ($recipient = User::query()->find($signer->userId)) instanceof User) {
+                ($this->notifications ?? new LegalDocumentNotificationPublisher)->publish($document, $recipient, 'signature-request:'.$request->id.':'.$recipient->id, new LegalDocumentSignatureRequiredNotification($document));
+            }
+        }
+        return $request;
     }
 
     public function registerPaperOriginal(
