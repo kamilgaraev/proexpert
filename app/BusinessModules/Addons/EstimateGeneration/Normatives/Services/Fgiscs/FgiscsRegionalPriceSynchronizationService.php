@@ -68,6 +68,138 @@ class FgiscsRegionalPriceSynchronizationService
         ]);
     }
 
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function syncSubject(
+        int $subjectId,
+        string $bucket,
+        ?int $periodId = null,
+        bool $force = false,
+        bool $withSplitForm = true,
+        ?callable $progress = null,
+    ): array {
+        $workerSalary = $this->workerSalaryService->syncSubject(
+            subjectId: $subjectId,
+            bucket: $bucket,
+            periodId: $periodId,
+            latestOnly: true,
+            allPeriods: false,
+            force: $force,
+            progress: $progress,
+        );
+        $buildingResources = $this->buildingResourceService->syncSubject(
+            subjectId: $subjectId,
+            bucket: $bucket,
+            periodId: $periodId,
+            force: $force,
+            withSplitForm: $withSplitForm,
+            progress: $progress,
+        );
+        $final = $this->workerSalaryService->syncSubject(
+            subjectId: $subjectId,
+            bucket: $bucket,
+            periodId: $periodId,
+            latestOnly: true,
+            allPeriods: false,
+            force: false,
+            progress: $progress,
+        );
+
+        return $this->attachComponents($final, $workerSalary, $buildingResources);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function syncAllRegions(
+        string $bucket,
+        ?int $periodId = null,
+        bool $force = false,
+        bool $withSplitForm = true,
+        ?int $limit = null,
+        ?callable $progress = null,
+    ): array {
+        $workerSalary = $this->workerSalaryService->syncAllRegions(
+            bucket: $bucket,
+            periodId: $periodId,
+            latestOnly: true,
+            allPeriods: false,
+            force: $force,
+            limit: $limit,
+            progress: $progress,
+        );
+        $buildingResources = $this->buildingResourceService->syncAllRegions(
+            bucket: $bucket,
+            periodId: $periodId,
+            force: $force,
+            withSplitForm: $withSplitForm,
+            limit: $limit,
+            progress: $progress,
+        );
+        $final = $this->workerSalaryService->syncAllRegions(
+            bucket: $bucket,
+            periodId: $periodId,
+            latestOnly: true,
+            allPeriods: false,
+            force: false,
+            limit: $limit,
+            progress: $progress,
+        );
+
+        return $this->attachComponents($final, $workerSalary, $buildingResources);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $final
+     * @param  array<int, array<string, mixed>>  $workerSalary
+     * @param  array<int, array<string, mixed>>  $buildingResources
+     * @return array<int, array<string, mixed>>
+     */
+    private function attachComponents(array $final, array $workerSalary, array $buildingResources): array
+    {
+        $workerByScope = $this->indexByScope($workerSalary);
+        $buildingByScope = $this->indexByScope($buildingResources);
+
+        return array_map(function (array $result) use ($workerByScope, $buildingByScope): array {
+            $scope = $this->scope($result);
+            $buildingResult = $buildingByScope[$scope] ?? null;
+            $final = ($buildingResult['status'] ?? null) === RegionalPriceStatus::ACTIVE->value
+                ? $buildingResult
+                : $result;
+
+            return array_merge($final, [
+                'worker_salary_result' => $workerByScope[$scope] ?? null,
+                'building_resources_result' => $buildingResult,
+            ]);
+        }, $final);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $results
+     * @return array<string, array<string, mixed>>
+     */
+    private function indexByScope(array $results): array
+    {
+        $indexed = [];
+
+        foreach ($results as $result) {
+            $indexed[$this->scope($result)] = $result;
+        }
+
+        return $indexed;
+    }
+
+    /** @param array<string, mixed> $result */
+    private function scope(array $result): string
+    {
+        return implode('|', [
+            (string) ($result['region'] ?? ''),
+            (string) ($result['price_zone'] ?? ''),
+            (string) ($result['period'] ?? ''),
+        ]);
+    }
+
     /** @param array<string, mixed> $result */
     private function assertComponentSucceeded(
         array $result,

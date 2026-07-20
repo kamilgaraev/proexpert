@@ -19,6 +19,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Conjunctur
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FgiscsBuildingResourcePriceSpreadsheetParser;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Collection;
 use RuntimeException;
 use Throwable;
 
@@ -52,6 +53,73 @@ class FgiscsBuildingResourcePriceUpdateService
         $period = $this->resolvePeriod((int) $catalog['price_zone']->fgiscs_price_zone_id, $periodId);
 
         return $this->syncPeriod($bucket, $catalog['price_zone'], $period, $force, $withSplitForm, $progress);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function syncSubject(int $subjectId, string $bucket, ?int $periodId = null, bool $force = false, bool $withSplitForm = true, ?callable $progress = null): array
+    {
+        $catalog = $this->catalogService->syncSubject($subjectId);
+
+        return $this->syncPriceZones(
+            $bucket,
+            $catalog['price_zones'],
+            $periodId,
+            $force,
+            $withSplitForm,
+            $progress,
+        );
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function syncAllRegions(string $bucket, ?int $periodId = null, bool $force = false, bool $withSplitForm = true, ?int $limit = null, ?callable $progress = null): array
+    {
+        $results = [];
+
+        foreach ($this->catalogService->countrySubjects() as $index => $subject) {
+            if ($limit !== null && $index >= $limit) {
+                break;
+            }
+
+            try {
+                array_push($results, ...$this->syncSubject(
+                    (int) $subject['id'],
+                    $bucket,
+                    $periodId,
+                    $force,
+                    $withSplitForm,
+                    $progress,
+                ));
+            } catch (Throwable $exception) {
+                $results[] = [
+                    'status' => RegionalPriceStatus::FAILED->value,
+                    'subject_id' => $subject['id'],
+                    'region' => $subject['name'],
+                    'failure_code' => 'fgiscs_building_resource_region_update_failed',
+                ];
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, EstimatePriceZone>  $priceZones
+     * @return array<int, array<string, mixed>>
+     */
+    private function syncPriceZones(string $bucket, Collection $priceZones, ?int $periodId, bool $force, bool $withSplitForm, ?callable $progress): array
+    {
+        $results = [];
+
+        foreach ($priceZones as $priceZone) {
+            $period = $this->resolvePeriod((int) $priceZone->fgiscs_price_zone_id, $periodId);
+            $results[] = $this->syncPeriod($bucket, $priceZone, $period, $force, $withSplitForm, $progress);
+        }
+
+        return $results;
     }
 
     /**
@@ -98,6 +166,7 @@ class FgiscsBuildingResourcePriceUpdateService
 
         if (! $force
             && (bool) ($regionalVersion->metadata['building_resources_imported'] ?? false)
+            && (int) $regionalVersion->rows_imported > 0
             && $this->hasImportedBuildingResources($regionalVersion)) {
             $lifecycle = null;
 

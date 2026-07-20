@@ -21,11 +21,11 @@ final class ScheduledCommandsRegistrationTest extends DatabaseLessTestCase
         }
     }
 
-    public function test_building_resource_prices_are_scheduled_hourly_after_regional_sync(): void
+    public function test_all_regions_resource_prices_are_scheduled_after_all_regions_worker_prices(): void
     {
         $schedule = $this->scheduleSource();
-        $regional = "Schedule::command('estimates:regional-prices:sync-fgiscs --region=RU-TA --latest-only')";
-        $building = "Schedule::command('estimates:regional-prices:sync-fgiscs-building-resources')";
+        $regional = "Schedule::command('estimates:regional-prices:sync-fgiscs --all-regions --latest-only')";
+        $building = "Schedule::command('estimates:regional-prices:sync-fgiscs-building-resources --all-regions')";
 
         $this->assertStringContainsString($building, $schedule);
         $this->assertGreaterThan(strpos($schedule, $regional), strpos($schedule, $building));
@@ -33,11 +33,18 @@ final class ScheduledCommandsRegistrationTest extends DatabaseLessTestCase
 
         $this->assertIsInt($buildingPosition);
         $block = substr($schedule, $buildingPosition, 800);
-        $this->assertStringContainsString('->hourlyAt(0)', $block);
-        $this->assertStringContainsString('->withoutOverlapping(90)', $block);
+        $this->assertStringContainsString("->dailyAt('13:00')", $block);
+        $this->assertStringContainsString('->withoutOverlapping(720)', $block);
         $this->assertStringContainsString(
-            "->createMutexNameUsing('estimate-generation:fgiscs-building-resources:v2')",
+            "->createMutexNameUsing('estimate-generation:fgiscs-all-regions:v1')",
             $block
+        );
+        $regionalPosition = strpos($schedule, $regional);
+        $this->assertIsInt($regionalPosition);
+        $regionalBlock = substr($schedule, $regionalPosition, 700);
+        $this->assertStringContainsString(
+            "->createMutexNameUsing('estimate-generation:fgiscs-all-regions:v1')",
+            $regionalBlock
         );
         $this->assertStringContainsString('->runInBackground()', $block);
         $this->assertStringContainsString('->onFailure(', $block);
@@ -53,6 +60,8 @@ final class ScheduledCommandsRegistrationTest extends DatabaseLessTestCase
         $this->assertStringContainsString("'exception_class' => \$exception::class", $source);
         $this->assertStringContainsString('$exception->safeContext()', $source);
         $this->assertStringNotContainsString("'exception_message'", $source);
+        $this->assertStringContainsString('{--all-regions}', $source);
+        $this->assertStringContainsString('$service->syncAllRegions(', $source);
     }
 
     /**

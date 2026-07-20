@@ -116,4 +116,43 @@ class FgiscsRegionalPriceSynchronizationServiceTest extends TestCase
             ], $exception->safeContext());
         }
     }
+
+    public function test_subject_sync_keeps_active_building_resource_version_as_final_result(): void
+    {
+        $workerSalary = Mockery::mock(FgiscsRegionalPriceUpdateService::class);
+        $workerSalary->shouldReceive('syncSubject')
+            ->twice()
+            ->andReturn(
+                [[
+                    'status' => 'checked',
+                    'region' => 'Регион',
+                    'price_zone' => 'Зона',
+                    'period' => '2 квартал 2026 г.',
+                    'version_id' => 21,
+                ]],
+                [[
+                    'skipped' => true,
+                    'status' => 'checked',
+                    'region' => 'Регион',
+                    'price_zone' => 'Зона',
+                    'period' => '2 квартал 2026 г.',
+                    'version_id' => 21,
+                ]],
+            );
+        $buildingResources = Mockery::mock(FgiscsBuildingResourcePriceUpdateService::class);
+        $buildingResources->shouldReceive('syncSubject')->once()->andReturn([[
+            'status' => 'active',
+            'region' => 'Регион',
+            'price_zone' => 'Зона',
+            'period' => '2 квартал 2026 г.',
+            'version_id' => 21,
+        ]]);
+
+        $result = (new FgiscsRegionalPriceSynchronizationService($workerSalary, $buildingResources))
+            ->syncSubject(16, 'prices');
+
+        self::assertSame('active', $result[0]['status']);
+        self::assertSame(21, $result[0]['version_id']);
+        self::assertSame('checked', $result[0]['worker_salary_result']['status']);
+    }
 }

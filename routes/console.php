@@ -210,19 +210,20 @@ Schedule::command($ragBackfillCommand)
     })
     ->appendOutputTo(storage_path('logs/schedule-ai-rag-backfill.log'));
 
-Schedule::command('estimates:regional-prices:sync-fgiscs --region=RU-TA --latest-only')
-    ->dailyAt('03:30')
-    ->withoutOverlapping(180)
+Schedule::command('estimates:regional-prices:sync-fgiscs --all-regions --latest-only')
+    ->dailyAt('01:00')
+    ->withoutOverlapping(720)
+    ->createMutexNameUsing('estimate-generation:fgiscs-all-regions:v1')
     ->runInBackground()
     ->onFailure(function () {
         Log::channel('stderr')->error('Scheduled estimates:regional-prices:sync-fgiscs command failed.');
     })
     ->appendOutputTo(storage_path('logs/schedule-regional-prices-sync.log'));
 
-Schedule::command('estimates:regional-prices:sync-fgiscs-building-resources')
-    ->hourlyAt(0)
-    ->withoutOverlapping(90)
-    ->createMutexNameUsing('estimate-generation:fgiscs-building-resources:v2')
+Schedule::command('estimates:regional-prices:sync-fgiscs-building-resources --all-regions')
+    ->dailyAt('13:00')
+    ->withoutOverlapping(720)
+    ->createMutexNameUsing('estimate-generation:fgiscs-all-regions:v1')
     ->runInBackground()
     ->onFailure(function () {
         Log::channel('stderr')->error('Scheduled estimates:regional-prices:sync-fgiscs-building-resources command failed.');

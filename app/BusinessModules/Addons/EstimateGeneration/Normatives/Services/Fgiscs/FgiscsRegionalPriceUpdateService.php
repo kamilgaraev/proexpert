@@ -269,8 +269,7 @@ class FgiscsRegionalPriceUpdateService
                 ]);
             }
 
-            $buildingResourcesRequired = $region->code === FgiscsRegionalCatalogService::DEFAULT_REGION_CODE
-                && (int) $priceZone->fgiscs_price_zone_id === FgiscsRegionalCatalogService::TATARSTAN_PRICE_ZONE_ID;
+            $buildingResourcesRequired = true;
             $regionalVersion->update([
                 'status' => RegionalPriceStatus::CHECKED->value,
                 'metadata' => array_merge($regionalVersion->metadata ?? [], [
