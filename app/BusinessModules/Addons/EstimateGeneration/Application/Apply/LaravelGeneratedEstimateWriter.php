@@ -32,13 +32,17 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         private EstimateDraftPersistenceService $draftService,
         private GeneratedEstimateNumberAllocator $numberAllocator,
         private GeneratedEstimateItemMetadataFactory $itemMetadata = new GeneratedEstimateItemMetadataFactory,
+        private FinalizedPackageDraftProjector $finalizedDraftProjector = new FinalizedPackageDraftProjector,
     ) {}
 
     public function createFromSession(
         EstimateGenerationSession $session,
         ApplyGeneratedEstimateCommand $command,
     ): int {
-        $draft = $this->draftService->validatedDraft($session);
+        $draft = $this->finalizedDraftProjector->project(
+            $session,
+            $this->draftService->validatedDraft($session),
+        );
         $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
         $total = $this->draftService->persistableDraftTotal($draft);
         $estimate = $this->createEstimate($session, $command, $draft, $regionalContext, $total);
@@ -278,6 +282,10 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                     'quantity_per_unit' => $resource['quantity_per_unit'] ?? null,
                     'normative_ref' => $resource['normative_ref'] ?? null,
                     'source' => $resource['source'] ?? null,
+                    'price_source' => $resource['price_source'] ?? null,
+                    'price_source_version' => $resource['price_source_version'] ?? null,
+                    'rounding_adjustment' => $resource['rounding_adjustment'] ?? null,
+                    'project_material_selection' => $resource['project_material_selection'] ?? null,
                 ],
             ]);
 
