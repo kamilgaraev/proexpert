@@ -64,10 +64,10 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
                 (int) $request->validated('lock_version'),
             );
 
-            return AdminResponse::success($this->requestPayload($created), trans_message('legal_archive.messages.signature_request_created'), 201, [
+            return $this->etag(AdminResponse::success($this->requestPayload($created), trans_message('legal_archive.messages.signature_request_created'), 201, [
                 'document_lock_version' => (int) $owner->fresh()->lock_version,
                 'idempotency_key' => (string) $request->validated('idempotency_key'),
-            ]);
+            ]), $owner->fresh());
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'signature_request_create', ['document_id' => $document]);
         }
@@ -107,10 +107,12 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
                 );
             }
 
-            return AdminResponse::success(new LegalArchiveSignatureResource($signature), trans_message('legal_archive.messages.original_registered'), 201, [
+            $document = $pending->document()->firstOrFail();
+
+            return $this->etag(AdminResponse::success(new LegalArchiveSignatureResource($signature), trans_message('legal_archive.messages.original_registered'), 201, [
                 'document_lock_version' => (int) $pending->document()->value('lock_version'),
                 'idempotency_key' => (string) $request->validated('idempotency_key'),
-            ]);
+            ]), $document->fresh());
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'signature_original_upload', ['signature_request_id' => $signatureRequest]);
         }
@@ -119,18 +121,19 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
     public function signingSession(LegalArchiveLockRequest $request, string $signatureRequest): JsonResponse
     {
         try {
+            $pending = $this->request($request, $signatureRequest);
             $session = $this->signatures->startElectronicSession(
-                $this->request($request, $signatureRequest),
+                $pending,
                 $this->actor($request),
                 (int) $request->validated('lock_version'),
             );
 
-            return AdminResponse::success([
+            return $this->etag(AdminResponse::success([
                 'provider_request_id' => $session->providerRequestId,
                 'redirect_url' => $session->redirectUrl,
                 'expires_at' => $session->expiresAt,
                 'metadata' => $session->metadata,
-            ], trans_message('legal_archive.messages.signing_session_created'));
+            ], trans_message('legal_archive.messages.signing_session_created')), $pending->document()->firstOrFail()->fresh());
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'signature_session', ['signature_request_id' => $signatureRequest]);
         }
@@ -141,6 +144,7 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
         try {
             $pending = $this->request($request, $signatureRequest);
             $data = $request->validate([
+                'lock_version' => ['required', 'integer', 'min:0'],
                 'provider' => ['required', 'string', 'max:191'],
                 'provider_request_id' => ['required', 'string', 'max:191'],
                 'correlation_id' => ['required', 'string', 'size:64'],
@@ -154,9 +158,12 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
             $signature = $this->signatures->completeElectronic(new SignatureCallback(
                 (string) $data['provider'], (string) $data['provider_request_id'], (string) $data['correlation_id'],
                 (string) $data['replay_token'], (array) $data['payload'],
-            ));
+            ), (int) $data['lock_version']);
 
-            return AdminResponse::success(new LegalArchiveSignatureResource($signature), trans_message('legal_archive.messages.signature_completed'));
+            return $this->etag(
+                AdminResponse::success(new LegalArchiveSignatureResource($signature), trans_message('legal_archive.messages.signature_completed')),
+                $signature->document()->firstOrFail()->fresh(),
+            );
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'signature_complete', ['signature_request_id' => $signatureRequest]);
         }
@@ -171,10 +178,15 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
                 throw new \Illuminate\Auth\Access\AuthorizationException;
             }
             $this->access->authorize($this->actor($request), $documentVersion->document()->firstOrFail(), 'view');
+            $perPage = max(1, min($request->integer('per_page', 25), 100));
             $items = LegalDocumentSignature::query()->where('organization_id', $this->organizationId($request))
-                ->where('document_version_id', (int) $documentVersion->id)->with('verificationHistory')->orderByDesc('id')->get();
+                ->where('document_version_id', (int) $documentVersion->id)->orderByDesc('id')->paginate($perPage);
 
-            return AdminResponse::success(LegalArchiveSignatureResource::collection($items), trans_message('legal_archive.messages.signatures_loaded'));
+            return AdminResponse::paginated(
+                LegalArchiveSignatureResource::collection($items->getCollection()),
+                ['current_page' => $items->currentPage(), 'per_page' => $items->perPage(), 'total' => $items->total(), 'last_page' => $items->lastPage()],
+                trans_message('legal_archive.messages.signatures_loaded'),
+            );
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'signature_index', ['version_id' => $version]);
         }
@@ -183,21 +195,29 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
     public function verify(Request $request, string $signature): JsonResponse
     {
         try {
-            $data = $request->validate(['idempotency_key' => ['required', 'string', 'max:191']]);
+            $data = $request->validate([
+                'idempotency_key' => ['required', 'string', 'max:191'],
+                'lock_version' => ['required', 'integer', 'min:0'],
+            ]);
             $found = LegalDocumentSignature::query()->whereKey((int) $signature)
                 ->where('organization_id', $this->organizationId($request))->first();
             if (! $found instanceof LegalDocumentSignature) {
                 throw new \Illuminate\Auth\Access\AuthorizationException;
             }
-            $verification = $this->signatures->verify($found, $this->actor($request), (string) $data['idempotency_key']);
+            $verification = $this->signatures->verify(
+                $found,
+                $this->actor($request),
+                (string) $data['idempotency_key'],
+                (int) $data['lock_version'],
+            );
 
-            return AdminResponse::success([
+            return $this->etag(AdminResponse::success([
                 'id' => (int) $verification->id,
                 'signature_id' => (int) $verification->signature_id,
                 'status' => (string) $verification->status,
                 'verified_at' => $verification->verified_at?->toAtomString(),
                 'revocation_reason' => $verification->revocation_reason,
-            ], trans_message('legal_archive.messages.signature_verified'));
+            ], trans_message('legal_archive.messages.signature_verified')), $found->document()->firstOrFail()->fresh());
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'signature_verify', ['signature_id' => $signature]);
         }
@@ -225,24 +245,6 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
 
     private function evidence(array $value, SignerIdentitySet $signers): ElectronicSignatureEvidence
     {
-        $certificate = (array) ($value['certificate'] ?? []);
-
-        return new ElectronicSignatureEvidence(
-            signatureKind: (string) ($value['signature_kind'] ?? ''),
-            containerFormat: (string) ($value['container_format'] ?? ''),
-            signers: $signers,
-            certificateFingerprint: (string) ($certificate['fingerprint'] ?? ''),
-            certificateSerial: (string) ($certificate['serial'] ?? ''),
-            certificateIssuer: (string) ($certificate['issuer'] ?? ''),
-            certificateValidFrom: new DateTimeImmutable((string) ($certificate['valid_from'] ?? '')),
-            certificateValidUntil: new DateTimeImmutable((string) ($certificate['valid_until'] ?? '')),
-            authorityConfirmed: (bool) ($value['authority_confirmed'] ?? false),
-            timeSource: (string) ($value['time_source'] ?? ''),
-            diagnosticCode: (string) ($value['diagnostic_code'] ?? ''),
-            signedAt: new DateTimeImmutable((string) ($value['signed_at'] ?? '')),
-            verifiedAt: new DateTimeImmutable((string) ($value['verified_at'] ?? '')),
-            partyRoleSnapshot: isset($value['party_role_snapshot']) ? (string) $value['party_role_snapshot'] : null,
-            signingSessionId: isset($value['signing_session_id']) ? (string) $value['signing_session_id'] : null,
-        );
+        return ElectronicSignatureEvidence::fromArray($value, $signers);
     }
 }

@@ -43,6 +43,7 @@ final class LegalArchiveDocumentTypeProfile extends Model
         'allowed_signature_formats' => 'array',
         'is_active' => 'boolean',
         'lock_version' => 'integer',
+        'workflow_template_id' => 'integer',
     ];
 
     public function scopeForOrganization(Builder $query, int $organizationId): Builder

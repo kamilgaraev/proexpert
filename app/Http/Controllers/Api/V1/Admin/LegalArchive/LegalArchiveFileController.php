@@ -56,10 +56,10 @@ final class LegalArchiveFileController extends LegalArchiveApiController
             ]);
             $version = $this->files->addVersion($created, $request->file('file'), $this->versionInput($request));
 
-            return AdminResponse::success(new LegalArchiveFileResource($created->load('currentVersion', 'versions')), trans_message('legal_archive.messages.file_created'), 201, [
+            return $this->etag(AdminResponse::success(new LegalArchiveFileResource($created->load('currentVersion', 'versions')), trans_message('legal_archive.messages.file_created'), 201, [
                 'document_lock_version' => (int) $owner->fresh()->lock_version,
                 'version_id' => (int) $version->id,
-            ]);
+            ]), $owner->fresh());
         } catch (Throwable $error) {
             if ($error instanceof LegalDocumentScanFailed) {
                 return $this->scanFailure($error);
@@ -85,9 +85,9 @@ final class LegalArchiveFileController extends LegalArchiveApiController
             $this->access->authorizePermission($actor, $owner, 'legal_archive.versions.create');
             $version = $this->files->addVersion($logicalFile, $request->file('file'), $this->versionInput($request));
 
-            return AdminResponse::success(new LegalArchiveDocumentVersionResource($version), trans_message('legal_archive.messages.version_created'), 201, [
+            return $this->etag(AdminResponse::success(new LegalArchiveDocumentVersionResource($version), trans_message('legal_archive.messages.version_created'), 201, [
                 'document_lock_version' => (int) $owner->fresh()->lock_version,
-            ]);
+            ]), $owner->fresh());
         } catch (Throwable $error) {
             if ($error instanceof LegalDocumentScanFailed) {
                 return $this->scanFailure($error);
@@ -109,10 +109,12 @@ final class LegalArchiveFileController extends LegalArchiveApiController
             $this->access->authorizePermission($actor, $owner, 'legal_archive.versions.create');
             $version = $this->registry->addVersion($owner, $this->organizationId($request), (int) $actor->id, $request->validated(), $request->file('file'));
 
-            return AdminResponse::success(new LegalArchiveDocumentVersionResource($version), trans_message('legal_archive.messages.version_created'), 201, [
+            $response = AdminResponse::success(new LegalArchiveDocumentVersionResource($version), trans_message('legal_archive.messages.version_created'), 201, [
                 'document_lock_version' => (int) $owner->fresh()->lock_version,
                 'deprecated_alias' => true,
             ])->withHeaders(['Deprecation' => 'true', 'Sunset' => 'Wed, 31 Dec 2026 23:59:59 GMT']);
+
+            return $this->etag($response, $owner->fresh());
         } catch (Throwable $error) {
             if ($error instanceof LegalDocumentScanFailed) {
                 return $this->scanFailure($error);
@@ -127,7 +129,9 @@ final class LegalArchiveFileController extends LegalArchiveApiController
 
     private function scanFailure(LegalDocumentScanFailed $error): JsonResponse
     {
-        return AdminResponse::success(
+        $document = $error->version->document()->firstOrFail();
+
+        return $this->etag(AdminResponse::success(
             new LegalArchiveDocumentVersionResource($error->version),
             trans_message('legal_archive.messages.version_file_processing_failed'),
             202,
@@ -136,7 +140,7 @@ final class LegalArchiveFileController extends LegalArchiveApiController
                 'retry_action' => 'retry_upload',
                 'retry_document_id' => (int) $error->version->document_id,
             ],
-        );
+        ), $document->fresh());
     }
 
     private function fileRejected(): JsonResponse
@@ -175,9 +179,9 @@ final class LegalArchiveFileController extends LegalArchiveApiController
             $this->access->authorizePermission($actor, $owner, 'legal_archive.versions.manage');
             $updated = $this->files->makeCurrent($found, (int) $request->validated('lock_version'), (int) $actor->id);
 
-            return AdminResponse::success(new LegalArchiveDocumentVersionResource($updated), trans_message('legal_archive.messages.current_version_changed'), 200, [
+            return $this->etag(AdminResponse::success(new LegalArchiveDocumentVersionResource($updated), trans_message('legal_archive.messages.current_version_changed'), 200, [
                 'document_lock_version' => (int) $owner->fresh()->lock_version,
-            ]);
+            ]), $owner->fresh());
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'version_make_current', ['version_id' => $version]);
         }

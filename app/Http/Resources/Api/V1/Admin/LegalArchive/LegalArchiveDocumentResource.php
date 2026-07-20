@@ -85,6 +85,7 @@ final class LegalArchiveDocumentResource extends JsonResource
                 'problem_flags' => [],
             ],
             'problem_flags' => $problemFlags,
+            'completeness' => is_array($workflowSummary) ? ($workflowSummary['completeness'] ?? null) : null,
             'linked_contract' => $linkedContract === null ? null : [
                 'id' => $linkedContract->linked_id,
                 'number' => $linkedContract->display_name,

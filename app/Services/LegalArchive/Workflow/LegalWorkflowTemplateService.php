@@ -9,6 +9,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowTemplate;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowTemplateStep;
 use App\Models\User;
+use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowOverride;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowSnapshot;
 use Carbon\CarbonImmutable;
@@ -23,6 +24,7 @@ final class LegalWorkflowTemplateService
     public function __construct(
         private readonly ImmutableAuditIntegrityService $integrity,
         private readonly ?ConnectionInterface $connection = null,
+        private readonly LegalDocumentProfileRegistry $profiles = new LegalDocumentProfileRegistry,
     ) {}
 
     /** @param list<array<string, mixed>> $steps */
@@ -143,6 +145,19 @@ final class LegalWorkflowTemplateService
         }
 
         $profileCode = trim((string) $document->type_profile_code);
+        if ($profileCode !== '') {
+            $profile = $this->profiles->find($organizationId, $profileCode);
+            if ($profile->workflowTemplateId !== null) {
+                $template = $this->templateQuery()->forOrganization($organizationId)
+                    ->with('steps')->find($profile->workflowTemplateId);
+                if (! $template instanceof LegalWorkflowTemplate) {
+                    throw new DomainException('legal_workflow_template_not_found');
+                }
+                $this->assertIntegrity($template);
+
+                return $template;
+            }
+        }
         $candidateCodes = array_values(array_unique(array_filter([
             $profileCode,
             Str::before($profileCode, '.'),

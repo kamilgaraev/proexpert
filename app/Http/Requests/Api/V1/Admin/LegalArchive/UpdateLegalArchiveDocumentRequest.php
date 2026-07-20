@@ -47,6 +47,7 @@ final class UpdateLegalArchiveDocumentRequest extends FormRequest
             'title' => ['sometimes', 'required', 'string', 'max:512'],
             'document_number' => ['nullable', 'string', 'max:255'],
             'document_type' => ['sometimes', 'required', 'string', Rule::in(LegalArchiveDictionary::values('types'))],
+            'type_profile_code' => ['sometimes', 'required', 'string', 'max:128', 'regex:/^[a-z0-9_.-]+$/'],
             'status' => ['nullable', 'string', Rule::in(LegalArchiveDictionary::values('statuses'))],
             'direction' => ['nullable', 'string', Rule::in(LegalArchiveDictionary::values('directions'))],
             'source_system' => ['nullable', 'string', 'max:64'],

@@ -102,7 +102,7 @@ final class LegalDocumentProfileRegistry
             requiresSignature: array_key_exists('requires_signature', $custom) && $custom['requires_signature'] !== null
                 ? (bool) $custom['requires_signature']
                 : $baseProfile->requiresSignature,
-            workflowTemplateId: $this->nullableString($custom['workflow_template_id'] ?? null),
+            workflowTemplateId: $this->nullablePositiveInteger($custom['workflow_template_id'] ?? null),
             retentionPolicy: $this->nullableString($custom['retention_policy'] ?? null)
                 ?? $baseProfile->retentionPolicy,
             confidentialityLevel: $this->nullableString($custom['confidentiality_level'] ?? null)
@@ -133,7 +133,7 @@ final class LegalDocumentProfileRegistry
             requiredFileRoles: $this->stringList($definition, 'required_file_roles'),
             requiredFields: $this->stringList($definition, 'required_fields'),
             requiresSignature: (bool) ($definition['requires_signature'] ?? false),
-            workflowTemplateId: $this->nullableString($definition['workflow_template_id'] ?? null),
+            workflowTemplateId: $this->nullablePositiveInteger($definition['workflow_template_id'] ?? null),
             retentionPolicy: $this->nullableString($definition['retention_policy'] ?? null),
             confidentialityLevel: $this->nullableString($definition['confidentiality_level'] ?? null) ?? 'internal',
             isActive: true,
@@ -200,6 +200,13 @@ final class LegalDocumentProfileRegistry
     private function nullableString(mixed $value): ?string
     {
         return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    private function nullablePositiveInteger(mixed $value): ?int
+    {
+        $normalized = filter_var($value, FILTER_VALIDATE_INT);
+
+        return $normalized !== false && $normalized > 0 ? $normalized : null;
     }
 
     private function notFound(): InvalidArgumentException

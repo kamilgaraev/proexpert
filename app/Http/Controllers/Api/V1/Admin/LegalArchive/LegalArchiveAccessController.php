@@ -31,9 +31,14 @@ final class LegalArchiveAccessController extends LegalArchiveApiController
         try {
             $owner = $this->document($request, $document);
             $this->access->authorizePermission($this->actor($request), $owner, 'legal_archive.external_access.manage');
-            $grants = $owner->accessGrants()->get()->map(fn (LegalDocumentAccessGrant $grant): array => $this->payload($grant))->values()->all();
+            $perPage = max(1, min($request->integer('per_page', 50), 100));
+            $grants = $owner->accessGrants()->orderByDesc('id')->paginate($perPage);
 
-            return AdminResponse::success($grants, trans_message('legal_archive.messages.access_loaded'));
+            return AdminResponse::paginated(
+                $grants->getCollection()->map(fn (LegalDocumentAccessGrant $grant): array => $this->payload($grant))->all(),
+                ['current_page' => $grants->currentPage(), 'per_page' => $grants->perPage(), 'total' => $grants->total(), 'last_page' => $grants->lastPage()],
+                trans_message('legal_archive.messages.access_loaded'),
+            );
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'access_index', ['document_id' => $document]);
         }
@@ -60,9 +65,9 @@ final class LegalArchiveAccessController extends LegalArchiveApiController
                 (int) $request->validated('lock_version'),
             );
 
-            return AdminResponse::success($this->payload($grant), trans_message('legal_archive.messages.access_granted'), 201, [
+            return $this->etag(AdminResponse::success($this->payload($grant), trans_message('legal_archive.messages.access_granted'), 201, [
                 'document_lock_version' => (int) $owner->fresh()->lock_version,
-            ]);
+            ]), $owner->fresh());
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'access_store', ['document_id' => $document]);
         }
@@ -83,9 +88,9 @@ final class LegalArchiveAccessController extends LegalArchiveApiController
             $owner = $found->document()->firstOrFail();
             $revoked = $this->access->revoke($owner, $found, $this->actor($request), (string) $data['reason'], (int) $data['lock_version']);
 
-            return AdminResponse::success($this->payload($revoked), trans_message('legal_archive.messages.access_revoked'), 200, [
+            return $this->etag(AdminResponse::success($this->payload($revoked), trans_message('legal_archive.messages.access_revoked'), 200, [
                 'document_lock_version' => (int) $owner->fresh()->lock_version,
-            ]);
+            ]), $owner->fresh());
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'access_revoke', ['grant_id' => $grant]);
         }
@@ -102,12 +107,12 @@ final class LegalArchiveAccessController extends LegalArchiveApiController
                 (int) $request->validated('lock_version'),
             );
 
-            return AdminResponse::success(
+            return $this->etag(AdminResponse::success(
                 $this->payload($grant),
                 trans_message('legal_archive.messages.management_recovered'),
                 200,
                 ['document_lock_version' => (int) $owner->fresh()->lock_version],
-            );
+            ), $owner->fresh());
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'access_management_recovery', ['document_id' => $document]);
         }

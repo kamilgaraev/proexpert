@@ -20,7 +20,12 @@ final class LegalArchiveSignatureResource extends JsonResource
             'provider' => $this->provider,
             'signature_kind' => $this->signature_kind,
             'container_format' => $this->container_format,
-            'signers' => (array) $this->signers,
+            'signers' => collect((array) $this->signers)->map(static fn (mixed $signer): array => is_array($signer) ? [
+                'kind' => $signer['kind'] ?? null,
+                'name' => $signer['name'] ?? null,
+                'party_role' => $signer['party_role'] ?? null,
+                'position' => $signer['position'] ?? null,
+            ] : [])->all(),
             'signed_content_hash' => (string) $this->signed_content_hash,
             'verification_status' => (string) $this->verification_status,
             'diagnostic_code' => $this->diagnostic_code,

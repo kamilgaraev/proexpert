@@ -22,11 +22,13 @@ final class StoreLegalArchiveWorkflowTemplateRequest extends FormRequest
             'steps.*.key' => ['required', 'string', 'max:128'],
             'steps.*.label' => ['required', 'string', 'max:255'],
             'steps.*.sequence' => ['required', 'integer', 'min:1'],
+            'steps.*.parallel_group' => ['nullable', 'string', 'max:128'],
+            'steps.*.policy_key' => ['nullable', 'string', 'max:128'],
             'steps.*.actor_type' => ['required', 'string', 'max:64'],
             'steps.*.actor_reference' => ['required', 'string', 'max:191'],
             'steps.*.required' => ['sometimes', 'boolean'],
             'steps.*.due_in_hours' => ['nullable', 'integer', 'min:1', 'max:8760'],
-            'steps.*.settings' => ['sometimes', 'array'],
+            'steps.*.settings' => ['sometimes', 'array', 'max:50'],
         ];
     }
 }

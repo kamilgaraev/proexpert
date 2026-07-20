@@ -6,6 +6,7 @@ namespace App\Http\Requests\Api\V1\Admin\LegalArchive;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 final class RegisterLegalArchiveOriginalRequest extends FormRequest
 {
@@ -39,7 +40,36 @@ final class RegisterLegalArchiveOriginalRequest extends FormRequest
             'party_role_snapshot' => ['nullable', 'string', 'max:64'],
             'authority_confirmed' => ['sometimes', 'boolean'],
             'evidence' => ['required_if:method,external_electronic', 'nullable', 'array'],
+            'evidence.signature_kind' => ['required_if:method,external_electronic', Rule::in(['detached_cades', 'embedded_cades', 'xml_dsig'])],
+            'evidence.container_format' => ['required_if:method,external_electronic', Rule::in(['p7s', 'p7m', 'sig', 'xml'])],
+            'evidence.certificate' => ['required_if:method,external_electronic', 'array:fingerprint,serial,issuer,valid_from,valid_until'],
+            'evidence.certificate.fingerprint' => ['required_if:method,external_electronic', 'regex:/^[a-f0-9]{64}$/'],
+            'evidence.certificate.serial' => ['required_if:method,external_electronic', 'string', 'max:128'],
+            'evidence.certificate.issuer' => ['required_if:method,external_electronic', 'string', 'max:512'],
+            'evidence.certificate.valid_from' => ['required_if:method,external_electronic', 'date'],
+            'evidence.certificate.valid_until' => ['required_if:method,external_electronic', 'date', 'after:evidence.certificate.valid_from'],
+            'evidence.authority_confirmed' => ['required_if:method,external_electronic', 'boolean'],
+            'evidence.time_source' => ['required_if:method,external_electronic', Rule::in(['provider', 'trusted_timestamp', 'certificate', 'operator'])],
+            'evidence.diagnostic_code' => ['required_if:method,external_electronic', 'string', 'max:128'],
+            'evidence.signed_at' => ['required_if:method,external_electronic', 'date', 'before_or_equal:now'],
+            'evidence.verified_at' => ['required_if:method,external_electronic', 'date', 'after_or_equal:evidence.signed_at', 'before_or_equal:now'],
+            'evidence.party_role_snapshot' => ['nullable', 'string', 'max:64'],
+            'evidence.signing_session_id' => ['nullable', 'string', 'max:191'],
+            'evidence.client_ip_hash' => ['nullable', 'regex:/^[a-f0-9]{64}$/'],
+            'evidence.user_agent_hash' => ['nullable', 'regex:/^[a-f0-9]{64}$/'],
             'provider_metadata' => ['sometimes', 'array'],
         ];
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator): void {
+            if ($this->input('method') !== 'external_electronic') {
+                return;
+            }
+            if ((string) $this->input('signed_at') !== (string) $this->input('evidence.signed_at')) {
+                $validator->errors()->add('evidence.signed_at', trans_message('legal_archive.messages.validation_error'));
+            }
+        });
     }
 }

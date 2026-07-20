@@ -190,6 +190,7 @@ return [
         'legal_archive.external_access.manage' => 'Управление внешним доступом к юридическим документам',
         'legal_archive.security_recovery.manage' => 'Аварийное восстановление управления юридическими документами',
         'legal_archive.signatures.request' => 'Создание запросов на подписание',
+        'legal_archive.signatures.view' => 'Просмотр подписей юридических документов',
         'legal_archive.signatures.sign' => 'Подписание юридических документов',
         'legal_archive.signatures.verify' => 'Проверка электронных подписей',
         'legal_archive.retention.manage' => 'Управление сроками хранения юридического архива',

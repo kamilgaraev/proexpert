@@ -9,6 +9,31 @@ use DomainException;
 
 final readonly class ElectronicSignatureEvidence
 {
+    public static function fromArray(array $value, SignerIdentitySet $signers): self
+    {
+        $certificate = (array) ($value['certificate'] ?? []);
+
+        return new self(
+            signatureKind: (string) $value['signature_kind'],
+            containerFormat: (string) $value['container_format'],
+            signers: $signers,
+            certificateFingerprint: (string) $certificate['fingerprint'],
+            certificateSerial: (string) $certificate['serial'],
+            certificateIssuer: (string) $certificate['issuer'],
+            certificateValidFrom: new DateTimeImmutable((string) $certificate['valid_from']),
+            certificateValidUntil: new DateTimeImmutable((string) $certificate['valid_until']),
+            authorityConfirmed: (bool) $value['authority_confirmed'],
+            timeSource: (string) $value['time_source'],
+            diagnosticCode: (string) $value['diagnostic_code'],
+            signedAt: new DateTimeImmutable((string) $value['signed_at']),
+            verifiedAt: new DateTimeImmutable((string) $value['verified_at']),
+            partyRoleSnapshot: isset($value['party_role_snapshot']) ? (string) $value['party_role_snapshot'] : null,
+            signingSessionId: isset($value['signing_session_id']) ? (string) $value['signing_session_id'] : null,
+            clientIpHash: isset($value['client_ip_hash']) ? (string) $value['client_ip_hash'] : null,
+            userAgentHash: isset($value['user_agent_hash']) ? (string) $value['user_agent_hash'] : null,
+        );
+    }
+
     public function __construct(
         public string $signatureKind,
         public string $containerFormat,

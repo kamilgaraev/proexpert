@@ -47,10 +47,10 @@ final class LegalArchiveWorkflowController extends LegalArchiveApiController
                 ),
             );
 
-            return AdminResponse::success(new LegalArchiveWorkflowResource($instance), trans_message('legal_archive.messages.workflow_submitted'), 201, [
+            return $this->etag(AdminResponse::success(new LegalArchiveWorkflowResource($instance), trans_message('legal_archive.messages.workflow_submitted'), 201, [
                 'document_lock_version' => (int) $owner->fresh()->lock_version,
                 'idempotency_key' => (string) $request->validated('idempotency_key'),
-            ]);
+            ]), $owner->fresh());
         } catch (Throwable $error) {
             return $this->workflowFailure($error, $request, 'workflow_submit', ['document_id' => $document]);
         }
@@ -101,9 +101,9 @@ final class LegalArchiveWorkflowController extends LegalArchiveApiController
             }
             $updated = $this->workflow->cancel($workflow, $this->actor($request), $this->decisionInput($request, 'cancel'));
 
-            return AdminResponse::success(new LegalArchiveWorkflowResource($updated), trans_message('legal_archive.messages.workflow_cancelled'), 200, [
+            return $this->etag(AdminResponse::success(new LegalArchiveWorkflowResource($updated), trans_message('legal_archive.messages.workflow_cancelled'), 200, [
                 'idempotency_key' => (string) $request->validated('idempotency_key'),
-            ]);
+            ]), $workflow->document()->firstOrFail()->fresh());
         } catch (Throwable $error) {
             return $this->workflowFailure($error, $request, 'workflow_cancel', ['instance_id' => $instance]);
         }
@@ -117,9 +117,9 @@ final class LegalArchiveWorkflowController extends LegalArchiveApiController
         }
         $instance = $this->workflow->decide($step, $this->actor($request), $this->decisionInput($request, $action));
 
-        return AdminResponse::success(new LegalArchiveWorkflowResource($instance), trans_message('legal_archive.messages.workflow_decided'), 200, [
+        return $this->etag(AdminResponse::success(new LegalArchiveWorkflowResource($instance), trans_message('legal_archive.messages.workflow_decided'), 200, [
             'idempotency_key' => (string) $request->validated('idempotency_key'),
-        ]);
+        ]), $instance->document()->firstOrFail()->fresh());
     }
 
     private function decisionInput(DecideLegalArchiveWorkflowRequest $request, string $action): WorkflowDecisionInput

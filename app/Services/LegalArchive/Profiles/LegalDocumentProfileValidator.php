@@ -70,6 +70,11 @@ final class LegalDocumentProfileValidator
         return $normalized;
     }
 
+    public function assertDefinition(LegalDocumentProfile $profile): void
+    {
+        $this->validatedSchema($profile);
+    }
+
     /** @return array<string, array<string, mixed>> */
     private function validatedSchema(LegalDocumentProfile $profile): array
     {

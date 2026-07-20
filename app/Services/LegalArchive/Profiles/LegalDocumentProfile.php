@@ -20,7 +20,7 @@ final readonly class LegalDocumentProfile
         public array $requiredFileRoles,
         public array $requiredFields,
         public bool $requiresSignature,
-        public ?string $workflowTemplateId,
+        public ?int $workflowTemplateId,
         public ?string $retentionPolicy,
         public string $confidentialityLevel,
         public bool $isActive,

@@ -162,7 +162,7 @@ class RouteServiceProvider extends ServiceProvider
 
             $user = request()->user();
             if ($user && $user->current_organization_id) {
-                if ($completedWork->organization_id !== $user->current_organization_id && !$this->completedWorkIsAccessibleThroughProjectRoute($completedWork)) {
+                if ($completedWork->organization_id !== $user->current_organization_id && ! $this->completedWorkIsAccessibleThroughProjectRoute($completedWork)) {
                     abort(403, 'У вас нет доступа к этой выполненной работе');
                 }
             }
@@ -188,8 +188,6 @@ class RouteServiceProvider extends ServiceProvider
 
     /**
      * Configure the rate limiters for the application.
-     *
-     * @return void
      */
     protected function configureRateLimiting(): void
     {
@@ -222,6 +220,11 @@ class RouteServiceProvider extends ServiceProvider
                 Limit::perMinute(30)->by('legal-editor-callback:'.$key)->response($response),
             ];
         });
+        RateLimiter::for('legal-signature-callback', static function (Request $request): array {
+            $key = hash('sha256', (string) $request->ip().'|'.(string) $request->input('provider'));
+
+            return [Limit::perMinute(300)->by('legal-signature-callback:global'), Limit::perMinute(30)->by($key)];
+        });
 
         RateLimiter::for('auth', function (Request $request) {
             $identity = strtolower(trim((string) $request->input('email', '')));
@@ -239,7 +242,7 @@ class RouteServiceProvider extends ServiceProvider
         $user = request()->user();
         $projectId = request()->route('project');
 
-        if (!$user || !$user->current_organization_id || !$projectId) {
+        if (! $user || ! $user->current_organization_id || ! $projectId) {
             return false;
         }
 

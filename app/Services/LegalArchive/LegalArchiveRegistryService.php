@@ -17,6 +17,8 @@ use App\Services\LegalArchive\Files\LegalDocumentVersionAttempt;
 use App\Services\LegalArchive\Files\LegalDocumentVersionLeaseLost;
 use App\Services\LegalArchive\Files\LegalDocumentVersionPersistenceFailed;
 use App\Services\LegalArchive\Files\VersionInput;
+use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
+use App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator;
 use App\Services\LegalArchive\Sources\LegalDocumentCreateLeaseDecision;
 use App\Services\LegalArchive\Sources\LegalDocumentCreateRequestFingerprint;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceCreateIdentity;
@@ -45,16 +47,22 @@ final class LegalArchiveRegistryService
         private readonly LegalDocumentAudit $audit,
         private readonly LegalDocumentSourceResolver $sourceResolver,
         private readonly LegalDocumentAccessService $access,
+        private readonly LegalDocumentProfileRegistry $profiles = new LegalDocumentProfileRegistry,
+        private readonly LegalDocumentProfileValidator $profileValidator = new LegalDocumentProfileValidator,
     ) {}
 
     public function paginate(User $actor, int $organizationId, array $filters): LengthAwarePaginator
     {
         $perPage = max(10, min((int) ($filters['per_page'] ?? 20), 100));
 
+        $sortBy = (string) ($filters['sort_by'] ?? 'document_date');
+        $sortDirection = (string) ($filters['sort_direction'] ?? 'desc');
+
         return $this->baseQuery($actor, $organizationId, $filters)
-            ->with(['currentVersion', 'links', 'project:id,name,status,organization_id'])
-            ->orderByDesc('document_date')
-            ->orderByDesc('id')
+            ->with(['currentVersion', 'links', 'project:id,name,status,organization_id', 'latestWorkflowInstance.steps'])
+            ->withCount(['files', 'signatureRequests', 'signatures'])
+            ->orderBy($sortBy, $sortDirection)
+            ->orderBy('id', $sortDirection)
             ->paginate($perPage);
     }
 
@@ -257,6 +265,11 @@ final class LegalArchiveRegistryService
                 ->firstOrFail();
             if ((int) $document->lock_version !== $expectedLockVersion) {
                 throw new LegalArchiveLockConflict((int) $document->lock_version);
+            }
+            if (array_key_exists('type_profile_code', $data)
+                && (string) $data['type_profile_code'] !== (string) $document->type_profile_code
+                && (string) $document->lifecycle_status !== 'draft') {
+                throw new \DomainException('profile_correction_not_allowed');
             }
             $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
             $this->sourceResolver->assertOwnedSource(
@@ -526,7 +539,7 @@ final class LegalArchiveRegistryService
             'files.versions',
             'latestWorkflowInstance.steps',
             'signatureRequests',
-            'signatures.verificationHistory',
+            'signatures',
         ]);
     }
 
@@ -574,6 +587,15 @@ final class LegalArchiveRegistryService
         ];
 
         $payload = Arr::only($data, $allowed);
+        if (isset($data['type_profile_code'])) {
+            $profile = $this->profiles->find($organizationId, (string) $data['type_profile_code']);
+            $payload['type_profile_code'] = $profile->code;
+            $payload['document_type'] = $profile->category;
+            $payload['metadata'] = $this->profileValidator->validate($profile, (array) ($data['metadata'] ?? []));
+            if (! array_key_exists('confidentiality_level', $data)) {
+                $payload['confidentiality_level'] = $profile->confidentialityLevel;
+            }
+        }
         if ($forUpdate) {
             unset($payload['source_type'], $payload['source_id'], $payload['source_idempotency_key']);
         }

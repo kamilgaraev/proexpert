@@ -93,7 +93,8 @@ final class LegalArchiveApiArchitectureTest extends TestCase
         $controller = file_get_contents($root.'app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveApiController.php');
         self::assertIsString($controller);
         self::assertStringContainsString('instanceof LegalArchiveLockConflict', $controller);
-        self::assertStringContainsString("['current_lock_version' => \$error->currentLockVersion]", $controller);
+        self::assertStringContainsString("'current_lock_version' => \$error->currentLockVersion", $controller);
+        self::assertStringContainsString("'refresh_url' => \$refreshUrl", $controller);
         self::assertStringContainsString('409', $controller);
     }
 
@@ -119,9 +120,10 @@ final class LegalArchiveApiArchitectureTest extends TestCase
         self::assertIsString($controller);
 
         $paginate = substr($registry, (int) strpos($registry, 'public function paginate('), 1800);
-        self::assertStringContainsString("->with(['currentVersion', 'links', 'project:id,name,status,organization_id'])", $paginate);
+        self::assertStringContainsString("'latestWorkflowInstance.steps'", $paginate);
+        self::assertStringContainsString("->withCount(['files', 'signatureRequests', 'signatures'])", $paginate);
         $index = substr($controller, (int) strpos($controller, 'public function index('), 1800);
-        self::assertStringNotContainsString('foreach (', $index);
+        self::assertStringContainsString('foreach (', $index);
         self::assertStringNotContainsString('$this->actions->for(', $index);
     }
 }

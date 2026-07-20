@@ -43,6 +43,30 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             $actor = $this->actor($request);
             $filters = $request->validated();
             $documents = $this->registry->paginate($actor, $this->organizationId($request), $filters);
+            foreach ($documents->getCollection() as $document) {
+                $instance = $document->latestWorkflowInstance;
+                $ready = $document->currentVersion !== null && (string) $document->currentVersion->processing_status === 'ready';
+                $problemFlags = array_values(array_filter([
+                    $ready ? null : 'no_ready_primary_version',
+                    (int) $document->files_count > 0 ? null : 'no_files',
+                    $instance?->due_at?->isPast() === true && $instance->status === 'in_progress' ? 'workflow_overdue' : null,
+                ]));
+                $document->setAttribute('api_workflow_summary', [
+                    'status' => $instance?->status ?? 'not_started',
+                    'current_steps' => $instance?->steps->where('status', 'active')->map(static fn ($step): array => [
+                        'id' => (int) $step->id, 'label' => (string) $step->label, 'status' => (string) $step->status,
+                    ])->values()->all() ?? [],
+                    'available_action_details' => $instance?->status === 'in_progress'
+                        ? [['action' => 'open_workflow', 'enabled' => true]]
+                        : [['action' => 'submit', 'enabled' => $ready]],
+                    'problem_flags' => $problemFlags,
+                    'completeness' => [
+                        'files' => (int) $document->files_count,
+                        'signature_requests' => (int) $document->signature_requests_count,
+                        'signatures' => (int) $document->signatures_count,
+                    ],
+                ]);
+            }
 
             return AdminResponse::paginated(
                 LegalArchiveDocumentResource::collection($documents->getCollection()),
@@ -80,7 +104,7 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                 $document = $error->document->refresh();
                 $leaseExpiresAt = $document->source_create_lease_expires_at;
 
-                return AdminResponse::success(
+                return $this->etag(AdminResponse::success(
                     new LegalArchiveDocumentResource($document),
                     trans_message('legal_archive.messages.source_create_in_progress'),
                     202,
@@ -91,13 +115,15 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                         'lease_expires_at' => $leaseExpiresAt?->toISOString(),
                         'retry_after' => $leaseExpiresAt === null ? 1 : max(1, now()->diffInSeconds($leaseExpiresAt, false)),
                     ],
-                );
+                ), $document);
             }
             if ($error instanceof LegalDocumentCreateFailed) {
                 $this->reportCreateFailure($request, $error, $error->document);
 
-                return AdminResponse::success(
-                    new LegalArchiveDocumentResource($error->document->refresh()),
+                $document = $error->document->refresh();
+
+                return $this->etag(AdminResponse::success(
+                    new LegalArchiveDocumentResource($document),
                     trans_message('legal_archive.messages.document_file_processing_failed'),
                     202,
                     [
@@ -107,7 +133,7 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                         'retry_action' => $error->retryAction(),
                         'retry_document_id' => (int) $error->document->id,
                     ],
-                );
+                ), $document);
             }
             if ($error instanceof LegalDocumentScanFailed) {
                 $document = $this->registry->findForOrganization(
@@ -118,7 +144,7 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                     $this->reportCreateFailure($request, $error, $document);
                 }
 
-                return AdminResponse::success(
+                $response = AdminResponse::success(
                     $document === null ? null : new LegalArchiveDocumentResource($document),
                     trans_message('legal_archive.messages.document_file_processing_failed'),
                     202,
@@ -130,6 +156,8 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                         'retry_document_id' => (int) $error->version->document_id,
                     ],
                 );
+
+                return $document === null ? $response : $this->etag($response, $document);
             }
             if ($error instanceof LegalDocumentFileRejected) {
                 return AdminResponse::error(

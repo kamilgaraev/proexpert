@@ -36,6 +36,8 @@ final class LegalArchiveDocumentIndexRequest extends FormRequest
             'link_type' => ['nullable', 'string', Rule::in(LegalArchiveDictionary::values('link_types'))],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:100'],
+            'sort_by' => ['nullable', Rule::in(['document_date', 'created_at', 'updated_at', 'title', 'status', 'retention_until'])],
+            'sort_direction' => ['nullable', Rule::in(['asc', 'desc'])],
         ];
     }
 }

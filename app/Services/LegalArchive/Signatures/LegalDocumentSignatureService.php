@@ -101,12 +101,6 @@ final class LegalDocumentSignatureService
 
         return $this->connection->transaction(function () use ($document, $version, $actor, $method, $provider, $partyId, $signers, $signerSnapshot, $key, $requestHash, $expiresAt, $replacesRequestId, $expectedDocumentLockVersion): LegalSignatureRequest {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
-            if ($expectedDocumentLockVersion !== null && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
-                throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
-            }
-            $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $version->id);
-            (new LegalDocumentEditGuard($this->connection))->assertSignatureAllowed($lockedDocument);
-            $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::REQUEST_SIGNATURE->value);
             $existing = $this->requests()->where('organization_id', $lockedDocument->organization_id)
                 ->where('requested_by_user_id', $actor->id)->where('idempotency_key', $key)->lockForUpdate()->first();
             if ($existing instanceof LegalSignatureRequest) {
@@ -124,6 +118,12 @@ final class LegalDocumentSignatureService
 
                 return $existing;
             }
+            if ($expectedDocumentLockVersion !== null && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
+                throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+            }
+            $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $version->id);
+            (new LegalDocumentEditGuard($this->connection))->assertSignatureAllowed($lockedDocument);
+            $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::REQUEST_SIGNATURE->value);
             $requirements = $this->signingGuard->assertRequestAllowed($lockedDocument, $lockedVersion, $method);
             $requirementSnapshotHash = CanonicalJson::fingerprint($requirements);
             $effectiveRequestHash = CanonicalJson::fingerprint([
@@ -502,7 +502,7 @@ final class LegalDocumentSignatureService
         }, 3);
     }
 
-    public function completeElectronic(SignatureCallback $callback): LegalDocumentSignature
+    public function completeElectronic(SignatureCallback $callback, ?int $expectedDocumentLockVersion = null): LegalDocumentSignature
     {
         $candidateOperation = trim($callback->provider) === '' || trim($callback->providerRequestId) === ''
             ? null
@@ -550,6 +550,18 @@ final class LegalDocumentSignatureService
             }
 
             return $existing;
+        }
+        if ($expectedDocumentLockVersion !== null) {
+            $this->connection->transaction(function () use ($request, $expectedDocumentLockVersion): void {
+                $document = $this->aggregateLock->lockDocument(
+                    $this->connection,
+                    (int) $request->organization_id,
+                    (int) $request->document_id,
+                );
+                if ((int) $document->lock_version !== $expectedDocumentLockVersion) {
+                    throw new LegalArchiveLockConflict((int) $document->lock_version);
+                }
+            }, 3);
         }
         try {
             $result = $this->provider->complete($callback);
@@ -640,6 +652,7 @@ final class LegalDocumentSignatureService
                 'expected_operation_generation' => (int) $candidateOperation->generation,
                 'expected_provider_request_id' => (string) $candidateOperation->provider_request_id,
                 'expected_correlation_id' => (string) $candidateOperation->correlation_id,
+                'expected_document_lock_version' => $expectedDocumentLockVersion,
                 ...$this->evidenceColumns($result->evidence),
             ], false);
         } catch (Throwable $exception) {
@@ -667,8 +680,12 @@ final class LegalDocumentSignatureService
         }
     }
 
-    public function verify(LegalDocumentSignature $signature, User $actor, string $idempotencyKey): LegalSignatureVerification
-    {
+    public function verify(
+        LegalDocumentSignature $signature,
+        User $actor,
+        string $idempotencyKey,
+        ?int $expectedDocumentLockVersion = null,
+    ): LegalSignatureVerification {
         $document = $this->documents()->whereKey($signature->document_id)
             ->where('organization_id', $signature->organization_id)->first();
         if (! $document instanceof LegalArchiveDocument) {
@@ -679,10 +696,29 @@ final class LegalDocumentSignatureService
             throw new DomainException('legal_signature_electronic_verification_required');
         }
         $key = $this->validKey($idempotencyKey);
-        $existing = $this->verifications()->where('signature_id', $signature->id)
-            ->where('idempotency_key', $key)->first();
-        if ($existing instanceof LegalSignatureVerification) {
-            return $existing;
+        $requestHash = CanonicalJson::fingerprint([
+            'signature_id' => (int) $signature->id,
+            'actor_id' => (int) $actor->id,
+            'signature_content_hash' => (string) $signature->signature_content_hash,
+            'storage_version_id' => (string) $signature->storage_version_id,
+        ]);
+        $replay = $this->connection->transaction(function () use ($document, $signature, $key, $requestHash, $expectedDocumentLockVersion): ?LegalSignatureVerification {
+            $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
+            $existing = $this->verifications()->where('signature_id', $signature->id)
+                ->where('idempotency_key', $key)->lockForUpdate()->first();
+            if ($existing instanceof LegalSignatureVerification) {
+                $this->assertSameRequest($existing->request_hash, $requestHash);
+
+                return $existing;
+            }
+            if ($expectedDocumentLockVersion !== null && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
+                throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+            }
+
+            return null;
+        }, 3);
+        if ($replay instanceof LegalSignatureVerification) {
+            return $replay;
         }
         $signature = $this->signatures()->whereKey($signature->id)
             ->where('organization_id', $signature->organization_id)
@@ -716,26 +752,21 @@ final class LegalDocumentSignatureService
             is_string($descriptor['etag']) ? $descriptor['etag'] : null,
         ));
         $this->assertVerificationResult($signature, $request, $artifact, $result);
-        $requestHash = CanonicalJson::fingerprint([
-            'signature_id' => (int) $signature->id,
-            'status' => $result->status,
-            'signed_content_hash' => $result->signedContentHash,
-            'revocation_reason' => $result->revocationReason,
-            'certificate_metadata' => $result->evidence->certificateMetadata(),
-            'provider_metadata' => $result->providerMetadata,
-        ]);
 
-        return $this->connection->transaction(function () use ($signature, $request, $actor, $document, $result, $key, $requestHash): LegalSignatureVerification {
+        return $this->connection->transaction(function () use ($signature, $request, $actor, $document, $result, $key, $requestHash, $expectedDocumentLockVersion): LegalSignatureVerification {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
-            $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $signature->document_version_id);
-            $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::VERIFY_SIGNATURE->value);
-            $lockedRequest = $this->lockRequest($request);
             $existing = $this->verifications()->where('signature_id', $signature->id)->where('idempotency_key', $key)->lockForUpdate()->first();
             if ($existing instanceof LegalSignatureVerification) {
                 $this->assertSameRequest($existing->request_hash, $requestHash);
 
                 return $existing;
             }
+            if ($expectedDocumentLockVersion !== null && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
+                throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+            }
+            $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $signature->document_version_id);
+            $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::VERIFY_SIGNATURE->value);
+            $lockedRequest = $this->lockRequest($request);
             $verification = $this->newVerification()->newQuery()->create([
                 'organization_id' => (int) $signature->organization_id,
                 'document_id' => (int) $signature->document_id,
@@ -832,6 +863,26 @@ final class LegalDocumentSignatureService
 
         return $this->connection->transaction(function () use ($request, $actor, $method, $key, $requestHash, $data, $document, $authorize): LegalDocumentSignature {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
+            $existing = $this->signatures()->where('signature_request_id', $request->id)->where('idempotency_key', $key)->lockForUpdate()->first();
+            if ($existing instanceof LegalDocumentSignature) {
+                $this->assertSameRequest($existing->request_hash, $requestHash);
+                if ($method !== 'paper' && isset($data['artifact_key'])) {
+                    $artifact = $this->connection->table('legal_signature_artifacts')
+                        ->where('organization_id', $lockedDocument->organization_id)
+                        ->where('artifact_key', (string) $data['artifact_key'])->lockForUpdate()->first();
+                    if ($artifact !== null && (int) $artifact->claim_count > 0
+                        && hash_equals((string) $artifact->upload_lease_token_hash, hash('sha256', (string) ($data['artifact_attempt_token'] ?? '')))) {
+                        $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                            'claim_count' => ((int) $artifact->claim_count) - 1,
+                            'upload_lease_token_hash' => (int) $artifact->claim_count === 1 ? null : $artifact->upload_lease_token_hash,
+                            'upload_lease_expires_at' => (int) $artifact->claim_count === 1 ? null : now()->addMinutes(10),
+                            'updated_at' => now(),
+                        ]);
+                    }
+                }
+
+                return $existing;
+            }
             if (isset($data['expected_document_lock_version'])
                 && (int) $lockedDocument->lock_version !== (int) $data['expected_document_lock_version']) {
                 throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
@@ -843,31 +894,6 @@ final class LegalDocumentSignatureService
             $lockedRequest = $this->lockRequest($request);
             if ($method === 'provider_electronic') {
                 $this->assertProviderOperationFence($lockedRequest, $data);
-            }
-            $existing = $this->signatures()->where('signature_request_id', $lockedRequest->id)->where('idempotency_key', $key)->lockForUpdate()->first();
-            if ($existing instanceof LegalDocumentSignature) {
-                $this->assertSameRequest($existing->request_hash, $requestHash);
-                if ($method !== 'paper' && isset($data['artifact_key'])) {
-                    $artifact = $this->connection->table('legal_signature_artifacts')
-                        ->where('organization_id', $lockedDocument->organization_id)
-                        ->where('artifact_key', (string) $data['artifact_key'])->lockForUpdate()->first();
-                    if ($artifact !== null && (int) $artifact->claim_count > 0
-                        && hash_equals(
-                            (string) $artifact->upload_lease_token_hash,
-                            hash('sha256', (string) ($data['artifact_attempt_token'] ?? '')),
-                        )) {
-                        $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
-                            'claim_count' => ((int) $artifact->claim_count) - 1,
-                            'upload_lease_token_hash' => (string) $artifact->state === 'referenced'
-                                || (int) $artifact->claim_count === 1 ? null : $artifact->upload_lease_token_hash,
-                            'upload_lease_expires_at' => (string) $artifact->state === 'referenced'
-                                || (int) $artifact->claim_count === 1 ? null : now()->addMinutes(10),
-                            'updated_at' => now(),
-                        ]);
-                    }
-                }
-
-                return $existing;
             }
             $this->signingGuard->assertCompletionAllowed($lockedDocument, $lockedVersion, $lockedRequest);
             if ($lockedRequest->status !== 'pending' || $lockedRequest->method !== $method) {

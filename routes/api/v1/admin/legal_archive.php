@@ -86,7 +86,7 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
     Route::post('signature-requests/{signatureRequest}/complete', [LegalArchiveSignatureController::class, 'complete'])
         ->middleware('authorize:legal_archive.signatures.sign')->whereNumber('signatureRequest')->name('signatures.complete');
     Route::get('document-file-versions/{version}/signatures', [LegalArchiveSignatureController::class, 'index'])
-        ->middleware('authorize:legal_archive.files.view')->whereNumber('version')->name('signatures.index');
+        ->middleware('authorize:legal_archive.signatures.view')->whereNumber('version')->name('signatures.index');
     Route::post('signatures/{signature}/verify', [LegalArchiveSignatureController::class, 'verify'])
         ->middleware('authorize:legal_archive.signatures.verify')->whereNumber('signature')->name('signatures.verify');
 

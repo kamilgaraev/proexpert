@@ -46,6 +46,11 @@ final class LegalDocumentSignature extends Model
         return $this->belongsTo(LegalSignatureRequest::class, 'signature_request_id');
     }
 
+    public function document(): BelongsTo
+    {
+        return $this->belongsTo(LegalArchiveDocument::class, 'document_id');
+    }
+
     public function version(): BelongsTo
     {
         return $this->belongsTo(LegalArchiveDocumentVersion::class, 'document_version_id');
