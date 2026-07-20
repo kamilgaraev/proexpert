@@ -66,7 +66,7 @@ final class AbstractResourceProjectPriceSelectorTest extends TestCase
         ];
         $reinforcement = (object) [
             'price_resource_code' => '08.4.03.03-0004',
-            'price_resource_name' => 'Сталь арматурная рифленая свариваемая, класс A500C, диаметр 12 мм',
+            'price_resource_name' => 'Прокат арматурный для железобетонных конструкций, класс A500C, диаметр 12 мм',
             'price_unit' => 'т',
             'base_price' => 72_000,
             'price_id' => 21,
