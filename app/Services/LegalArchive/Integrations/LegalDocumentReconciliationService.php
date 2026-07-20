@@ -4,91 +4,203 @@ declare(strict_types=1);
 
 namespace App\Services\LegalArchive\Integrations;
 
-use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
-use App\Models\Contract;
-use App\Models\SupplementaryAgreement;
-use App\Models\ContractPerformanceAct;
-use App\BusinessModules\Features\CommercialProposals\Models\CommercialProposal;
-use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Features\CommercialProposals\Models\CommercialProposal;
 use App\BusinessModules\Features\ExecutiveDocumentation\Models\ExecutiveDocument;
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\Models\Contract;
+use App\Models\ContractPerformanceAct;
+use App\Models\SupplementaryAgreement;
 use App\Services\Contract\ContractDossierDocumentCreator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
+use InvalidArgumentException;
 
 final class LegalDocumentReconciliationService
 {
-    public function __construct(private readonly ContractDossierDocumentCreator $documents) {}
     /** @var list<string> */
-    public const SOURCES = ['contracts', 'supplementary_agreements', 'acts', 'commercial_proposals', 'procurement', 'payments', 'executive_documentation'];
+    public const SOURCES = [
+        'contracts',
+        'supplementary_agreements',
+        'acts',
+        'commercial_proposals',
+        'procurement',
+        'payments',
+        'executive_documentation',
+    ];
+
+    public function __construct(private readonly ContractDossierDocumentCreator $documents) {}
 
     /** @return array{candidates:int, linked:int, problem_flags:int, skipped:int, sources:array<string, int>} */
     public function reconcile(?int $organizationId, ?string $source, int $limit, bool $dryRun): array
     {
         $sources = $source === null ? self::SOURCES : [$this->validatedSource($source)];
-        $summary = ['candidates' => 0, 'linked' => 0, 'problem_flags' => 0, 'skipped' => 0, 'sources' => array_fill_keys($sources, 0)];
+        $summary = [
+            'candidates' => 0,
+            'linked' => 0,
+            'problem_flags' => 0,
+            'skipped' => 0,
+            'sources' => array_fill_keys($sources, 0),
+        ];
 
-        if (in_array('contracts', $sources, true)) {
-            $this->contracts($organizationId)->orderBy('id')->limit($limit)->each(function (Contract $contract) use (&$summary, $dryRun): void {
-                $summary['candidates']++;
-                $summary['sources']['contracts']++;
-                $document = LegalArchiveDocument::query()->where('organization_id', $contract->organization_id)
-                    ->where('source_type', 'contract')->where('source_id', (string) $contract->id)->first();
-                if (! $document instanceof LegalArchiveDocument) {
-                    $summary['problem_flags']++;
-                    if (! $dryRun) {
-                        $document = $this->documents->create((int) $contract->organization_id, null, [
-                            'primary_project_id' => $contract->project_id,
-                            'title' => (string) ($contract->subject ?: $contract->number),
-                            'document_number' => $contract->number,
-                            'document_type' => 'contract',
-                            'source_type' => 'contract',
-                            'source_id' => (string) $contract->id,
-                            'source_idempotency_key' => 'reconcile-contract-'.$contract->id,
-                            'links' => [['link_type' => 'contract', 'linked_type' => 'contract', 'linked_id' => (string) $contract->id, 'display_name' => $contract->number]],
-                            'metadata' => ['problem_flags' => ['missing_original']],
-                        ]);
-                        $contract->forceFill(['legal_archive_document_id' => $document->id])->save();
-                        $summary['linked']++;
-                    }
-                    return;
-                }
-                if ((int) $contract->legal_archive_document_id !== (int) $document->id && ! $dryRun) {
-                    $contract->forceFill(['legal_archive_document_id' => $document->id])->save();
-                    $summary['linked']++;
-                } else {
-                    $summary['skipped']++;
-                }
-            });
-        }
-
-        $definitions = ['supplementary_agreements' => [SupplementaryAgreement::class, 'supplementary_agreement'], 'acts' => [ContractPerformanceAct::class, 'performance_act'], 'commercial_proposals' => [CommercialProposal::class, 'commercial_proposal'], 'procurement' => [PurchaseOrder::class, 'purchase_order'], 'payments' => [PaymentDocument::class, 'payment_document'], 'executive_documentation' => [ExecutiveDocument::class, 'executive_document']];
-        foreach (array_diff($sources, ['contracts']) as $namedSource) {
-            if ($summary['candidates'] >= $limit) {
+        foreach ($sources as $namedSource) {
+            $remaining = $limit - $summary['candidates'];
+            if ($remaining < 1) {
                 break;
             }
-            [$model, $sourceType] = $definitions[$namedSource];
-            $model::query()->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId))->orderBy('id')->limit($limit - $summary['candidates'])->each(function ($entity) use (&$summary, $namedSource, $sourceType, $dryRun): void {
-                $summary['candidates']++; $summary['sources'][$namedSource]++;
-                $document = LegalArchiveDocument::query()->where('organization_id', $entity->organization_id)->where('source_type', $sourceType)->where('source_id', (string) $entity->id)->first();
-                if ($document instanceof LegalArchiveDocument) { $summary['skipped']++; return; }
-                $summary['problem_flags']++;
-                if (!$dryRun) { $this->documents->create((int) $entity->organization_id, null, ['title' => (string) ($entity->title ?? $entity->name ?? $entity->number ?? ('Документ '.$entity->id)), 'document_number' => $entity->number ?? null, 'document_type' => $sourceType, 'source_type' => $sourceType, 'source_id' => (string) $entity->id, 'source_idempotency_key' => 'reconcile-'.$sourceType.'-'.$entity->id, 'metadata' => ['problem_flags' => ['missing_original']]]); $summary['linked']++; }
-            });
+
+            $this->sourceQuery($namedSource, $organizationId)
+                ->orderBy('id')
+                ->limit($remaining)
+                ->each(function (Model $entity) use ($namedSource, $dryRun, &$summary): void {
+                    $summary['candidates']++;
+                    $summary['sources'][$namedSource]++;
+
+                    $organizationId = $this->organizationId($entity);
+                    $sourceType = $this->sourceType($namedSource);
+                    $document = LegalArchiveDocument::query()
+                        ->where('organization_id', $organizationId)
+                        ->where('source_type', $sourceType)
+                        ->where('source_id', (string) $entity->getKey())
+                        ->first();
+
+                    if ($document instanceof LegalArchiveDocument) {
+                        $this->linkContract($entity, $document, $dryRun, $summary);
+
+                        return;
+                    }
+
+                    $summary['problem_flags']++;
+                    if ($dryRun) {
+                        return;
+                    }
+
+                    $this->documents->create($organizationId, null, [
+                        'primary_project_id' => $this->projectId($entity),
+                        'title' => $this->title($entity, $sourceType),
+                        'document_number' => $this->documentNumber($entity),
+                        'document_type' => $sourceType,
+                        'source_type' => $sourceType,
+                        'source_id' => (string) $entity->getKey(),
+                        'source_idempotency_key' => "reconcile-{$sourceType}-{$entity->getKey()}",
+                        'links' => [[
+                            'link_type' => $sourceType,
+                            'linked_type' => $sourceType,
+                            'linked_id' => (string) $entity->getKey(),
+                            'display_name' => $this->documentNumber($entity) ?? $this->title($entity, $sourceType),
+                        ]],
+                        'metadata' => ['problem_flags' => ['missing_original']],
+                    ]);
+                    $summary['linked']++;
+                });
         }
 
         return $summary;
     }
 
-    private function contracts(?int $organizationId): Builder
+    private function sourceQuery(string $source, ?int $organizationId): Builder
     {
-        return Contract::query()->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId));
+        return match ($source) {
+            'contracts' => Contract::query()
+                ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId)),
+            'supplementary_agreements' => SupplementaryAgreement::query()
+                ->with('contract:id,organization_id,project_id')
+                ->whereHas('contract', static fn (Builder $query): Builder => $query->when($organizationId !== null, static fn (Builder $contract): Builder => $contract->where('organization_id', $organizationId))),
+            'acts' => ContractPerformanceAct::query()
+                ->with('contract:id,organization_id,project_id')
+                ->whereHas('contract', static fn (Builder $query): Builder => $query->when($organizationId !== null, static fn (Builder $contract): Builder => $contract->where('organization_id', $organizationId))),
+            'commercial_proposals' => CommercialProposal::query()
+                ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId)),
+            'procurement' => PurchaseOrder::query()
+                ->with('contract:id,project_id')
+                ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId)),
+            'payments' => PaymentDocument::query()
+                ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId)),
+            'executive_documentation' => ExecutiveDocument::query()
+                ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId)),
+            default => throw new InvalidArgumentException('Unknown reconciliation source.'),
+        };
+    }
+
+    private function sourceType(string $source): string
+    {
+        return match ($source) {
+            'contracts' => 'contract',
+            'supplementary_agreements' => 'supplementary_agreement',
+            'acts' => 'performance_act',
+            'commercial_proposals' => 'commercial_proposal',
+            'procurement' => 'purchase_order',
+            'payments' => 'payment_document',
+            'executive_documentation' => 'executive_document',
+        };
+    }
+
+    private function organizationId(Model $entity): int
+    {
+        $organizationId = $entity->getAttribute('organization_id')
+            ?? $entity->getRelation('contract')?->getAttribute('organization_id');
+
+        if (! is_numeric($organizationId) || (int) $organizationId < 1) {
+            throw new InvalidArgumentException('Legal archive source has no organization.');
+        }
+
+        return (int) $organizationId;
+    }
+
+    private function projectId(Model $entity): ?int
+    {
+        $projectId = $entity->getAttribute('project_id')
+            ?? $entity->getRelation('contract')?->getAttribute('project_id');
+
+        return is_numeric($projectId) && (int) $projectId > 0 ? (int) $projectId : null;
+    }
+
+    private function title(Model $entity, string $sourceType): string
+    {
+        foreach (['title', 'subject', 'description', 'name', 'number', 'order_number', 'document_number', 'act_document_number'] as $attribute) {
+            $value = $entity->getAttribute($attribute);
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return "{$sourceType} #{$entity->getKey()}";
+    }
+
+    private function documentNumber(Model $entity): ?string
+    {
+        foreach (['number', 'order_number', 'document_number', 'act_document_number'] as $attribute) {
+            $value = $entity->getAttribute($attribute);
+            if (is_string($value) && trim($value) !== '') {
+                return trim($value);
+            }
+        }
+
+        return null;
+    }
+
+    /** @param array{linked:int, skipped:int} $summary */
+    private function linkContract(Model $entity, LegalArchiveDocument $document, bool $dryRun, array &$summary): void
+    {
+        if ($entity instanceof Contract
+            && (int) $entity->legal_archive_document_id !== (int) $document->id
+            && ! $dryRun) {
+            $entity->forceFill(['legal_archive_document_id' => $document->id])->save();
+            $summary['linked']++;
+
+            return;
+        }
+
+        $summary['skipped']++;
     }
 
     private function validatedSource(string $source): string
     {
         if (! in_array($source, self::SOURCES, true)) {
-            throw new \InvalidArgumentException('Unknown reconciliation source.');
+            throw new InvalidArgumentException('Unknown reconciliation source.');
         }
+
         return $source;
     }
 }

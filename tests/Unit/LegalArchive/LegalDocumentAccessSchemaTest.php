@@ -19,6 +19,9 @@ final class LegalDocumentAccessSchemaTest extends TestCase
             'purchase_order',
             'payment_document',
             'commercial_proposal',
+            'crm_deal',
+            'estimate',
+            'executive_document',
         ], array_column(LegalDocumentSourceType::cases(), 'value'));
     }
 
