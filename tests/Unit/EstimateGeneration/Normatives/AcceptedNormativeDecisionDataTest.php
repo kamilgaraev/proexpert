@@ -284,6 +284,43 @@ final class AcceptedNormativeDecisionDataTest extends TestCase
     }
 
     #[Test]
+    public function accepts_converted_residential_price_only_with_complete_source_formula(): void
+    {
+        $record = $this->catalogCandidate();
+        $record['resources']['materials'][0] = [
+            ...$record['resources']['materials'][0],
+            'code' => '12.2.05.02',
+            'price_source' => 'fsnb_base',
+            'price_source_version' => '2026-05-07',
+            'project_resource_selection' => [
+                'group_code' => '12.2.05.02',
+                'selected_resource_code' => '12.2.05.02-1001',
+                'selected_resource_name' => 'Плиты теплоизоляционные минераловатные',
+                'price_source' => 'fsnb_base',
+                'price_source_version' => '2026-05-07',
+                'policy' => 'fsnb_2022_residential_converted_child_median:v1',
+                'candidates_count' => 3,
+                'conversion_assumption' => 'mineral_wool_thickness_m:0.20',
+                'source_unit_price' => '10000',
+                'source_price_unit' => 'м3',
+                'conversion_factor' => '0.20',
+            ],
+        ];
+
+        $decision = AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
+
+        self::assertSame(
+            'mineral_wool_thickness_m:0.20',
+            $decision->resources['materials'][0]['project_resource_selection']['conversion_assumption'],
+        );
+
+        unset($record['resources']['materials'][0]['project_resource_selection']['source_unit_price']);
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('accepted_normative_project_resource_selection_invalid');
+        AcceptedNormativeDecisionData::fromWorkflowResult($this->workflow(), $record);
+    }
+
+    #[Test]
     public function rejects_cross_dataset_catalog_records(): void
     {
         $record = $this->catalogCandidate();

@@ -27,6 +27,7 @@ final class QuantityCoverageWarning
         'sewerage_design_takeoff_missing',
         'single_storey_house',
         'soil_balance_missing',
+        'soil_transport_inputs_missing',
         'stair_construction_geometry_missing',
         'stair_railing_geometry_missing',
         'total_internal_area_missing',

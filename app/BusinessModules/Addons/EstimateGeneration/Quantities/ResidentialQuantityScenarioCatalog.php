@@ -13,9 +13,9 @@ use Brick\Math\RoundingMode;
 
 final class ResidentialQuantityScenarioCatalog
 {
-    public const VERSION = '2.6.0';
+    public const VERSION = '2.7.0';
 
-    public const SCENARIO_ID = 'residential_preliminary_scenario:v9';
+    public const SCENARIO_ID = 'residential_preliminary_scenario:v10';
 
     private const UNITS = [
         'electrical.grounding' => 'm',
@@ -24,8 +24,7 @@ final class ResidentialQuantityScenarioCatalog
         'electrical.panel' => 'pcs',
         'electrical.power_lines' => 'm',
         'electrical.switches' => 'pcs',
-        'earth.export' => 'm3',
-        'foundation.prep' => 'm2',
+        'foundation.prep' => 'm3',
         'heating.pipe' => 'm',
         'heating.radiators' => 'pcs',
         'heating.unit' => 'pcs',
@@ -37,16 +36,16 @@ final class ResidentialQuantityScenarioCatalog
         'roof.area' => 'm2',
         'roof.flat_area' => 'm2',
         'roof.gutter' => 'm',
-        'roof.rafters' => 'm2',
+        'roof.rafters' => 'm3',
         'rough.floor' => 'm2',
         'rough.ceiling' => 'm2',
-        'sanitary.points' => 'pcs',
+        'sanitary.showers' => 'pcs',
+        'sanitary.toilets' => 'pcs',
+        'sanitary.washbasins' => 'pcs',
         'sanitary.tile' => 'm2',
         'sanitary.waterproofing' => 'm2',
         'sewerage.outlets' => 'pcs',
         'sewerage.pipe' => 'm',
-        'sewerage.revisions' => 'pcs',
-        'sewerage.risers' => 'pcs',
         'stairs.flights' => 'm2',
         'stairs.railings' => 'm',
         'walls.lintels' => 'pcs',
@@ -93,21 +92,15 @@ final class ResidentialQuantityScenarioCatalog
         if ($firstFloorArea !== null && $firstFloorArea->evidenceIds !== []) {
             $quantities['foundation.prep'] = $this->scaled(
                 'foundation.prep',
-                'm2',
-                $firstFloorArea,
-                '1.00',
-                ['residential_foundation_preparation_by_footprint'],
-            );
-            $quantities['earth.export'] = $this->scaled(
-                'earth.export',
                 'm3',
                 $firstFloorArea,
-                '0.15',
-                ['preliminary_surplus_soil_by_footprint_factor:0.15'],
+                '0.10',
+                ['residential_foundation_preparation_thickness_m:0.10'],
             );
+            $omissions[] = $this->omission('earth.export', 'soil_transport_inputs_missing');
         } else {
             $omissions[] = $this->omission('foundation.prep', 'foundation_footprint_missing');
-            $omissions[] = $this->omission('earth.export', 'soil_balance_missing');
+            $omissions[] = $this->omission('earth.export', 'soil_transport_inputs_missing');
         }
 
         if ($firstFloorArea !== null && $firstFloorArea->evidenceIds !== [] && in_array($roofType, ['pitched', 'flat'], true)) {
@@ -122,10 +115,10 @@ final class ResidentialQuantityScenarioCatalog
                 $quantities['roof.area'] = $roofArea;
                 $quantities['roof.rafters'] = $this->scaled(
                     'roof.rafters',
-                    'm2',
+                    'm3',
                     $roofArea,
-                    '1.00',
-                    ['rafter_system_by_roof_area'],
+                    '0.04',
+                    ['preliminary_rafter_timber_volume_m3_per_roof_m2:0.04'],
                 );
                 $quantities['roof.gutter'] = $this->equivalentPerimeter(
                     'roof.gutter',
@@ -300,29 +293,38 @@ final class ResidentialQuantityScenarioCatalog
 
         $wetRoomCount = count($finishedWetRooms);
         if ($wetRoomCount > 0) {
-            $quantities['sanitary.points'] = $this->countBased(
-                'sanitary.points',
+            $bathingRoomCount = count(array_filter(
+                $finishedWetRooms,
+                fn (RoomData $room): bool => $this->isBathOrShowerRoom($room),
+            ));
+            $quantities['sanitary.showers'] = $this->countBased(
+                'sanitary.showers',
                 'pcs',
-                $wetRoomCount,
-                '3',
+                max(1, $bathingRoomCount),
+                '1',
                 $model,
-                'documented_wet_room_count',
-                ['preliminary_sanitary_connection_points_per_wet_room:3'],
+                'documented_bathing_room_count_or_house_minimum',
+                ['one_preliminary_shower_for_each_documented_bathing_room_house_minimum:1'],
             );
+            foreach (['sanitary.toilets', 'sanitary.washbasins'] as $fixtureKey) {
+                $quantities[$fixtureKey] = $this->countBased(
+                    $fixtureKey,
+                    'pcs',
+                    $wetRoomCount,
+                    '1',
+                    $model,
+                    'documented_wet_room_count',
+                    ['one_preliminary_'.str_replace('.', '_', $fixtureKey).'_per_wet_room'],
+                );
+            }
         } else {
-            $omissions[] = $this->omission('sanitary.points', 'documented_wet_rooms_missing');
+            foreach (['sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins'] as $fixtureKey) {
+                $omissions[] = $this->omission($fixtureKey, 'documented_wet_rooms_missing');
+            }
         }
         $quantities['sewerage.outlets'] = $this->countBased(
             'sewerage.outlets', 'pcs', 1, '1', $model, 'residential_house_count',
             ['one_preliminary_sewer_outlet_per_house'],
-        );
-        $quantities['sewerage.risers'] = $this->countBased(
-            'sewerage.risers', 'pcs', max(1, $floorCount), '1', $model, 'documented_floor_count',
-            ['one_preliminary_sewer_riser_per_floor'],
-        );
-        $quantities['sewerage.revisions'] = $this->countBased(
-            'sewerage.revisions', 'pcs', max(1, $floorCount), '1', $model, 'documented_floor_count',
-            ['one_preliminary_sewer_revision_per_floor'],
         );
 
         $finishedWetRoomAreas = array_values(array_filter(array_map(
@@ -566,6 +568,14 @@ final class ResidentialQuantityScenarioCatalog
     {
         return preg_match(
             '/(?:сануз|(?:^|\s)су(?=\s|$)|с\s*\/\s*у|ванн|душ|туалет|bath|shower|wc)/iu',
+            mb_strtolower((string) $room->name),
+        ) === 1;
+    }
+
+    private function isBathOrShowerRoom(RoomData $room): bool
+    {
+        return preg_match(
+            '/(?:ванн|душ|bath|shower)/iu',
             mb_strtolower((string) $room->name),
         ) === 1;
     }

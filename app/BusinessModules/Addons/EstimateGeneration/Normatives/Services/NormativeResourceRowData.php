@@ -68,6 +68,8 @@ final readonly class NormativeResourceRowData
             'regional_child_hard_attributes_median:v2',
             'fsbc_base_child_hard_attributes_median:v2',
             'fsnb_base_child_hard_attributes_median:v2',
+            'fsbc_residential_converted_child_median:v1',
+            'fsnb_2022_residential_converted_child_median:v1',
         ], true)
             && self::policyMatchesPriceSource($projectResourcePricePolicy, $priceSource)
             && preg_match('/^'.preg_quote($resourceCode, '/').'-\d{4}$/D', $priceResourceCode) === 1;
@@ -116,6 +118,20 @@ final readonly class NormativeResourceRowData
                 'policy' => $projectResourcePricePolicy,
                 'candidates_count' => $projectResourceCandidatesCount,
             ];
+            $conversionAssumption = trim((string) ($row->project_resource_conversion_assumption ?? ''));
+            if ($conversionAssumption !== '') {
+                $resource['project_resource_selection']['conversion_assumption'] = $conversionAssumption;
+                $sourceUnitPrice = $row->project_resource_source_unit_price ?? null;
+                $sourcePriceUnit = trim((string) ($row->project_resource_source_price_unit ?? ''));
+                $conversionFactor = $row->project_resource_conversion_factor ?? null;
+                if (is_numeric($sourceUnitPrice) && (float) $sourceUnitPrice > 0
+                    && $sourcePriceUnit !== ''
+                    && is_numeric($conversionFactor) && (float) $conversionFactor > 0) {
+                    $resource['project_resource_selection']['source_unit_price'] = (string) $sourceUnitPrice;
+                    $resource['project_resource_selection']['source_price_unit'] = $sourcePriceUnit;
+                    $resource['project_resource_selection']['conversion_factor'] = (string) $conversionFactor;
+                }
+            }
         }
 
         return new self($normId, $group, $resource);

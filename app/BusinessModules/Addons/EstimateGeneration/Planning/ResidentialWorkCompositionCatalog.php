@@ -8,7 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClass
 
 final class ResidentialWorkCompositionCatalog
 {
-    public const VERSION = 'residential_work_composition:v1';
+    public const VERSION = 'residential_work_composition:v2';
 
     /** @return array<string, list<string>> */
     public function requirements(array $draft): array
@@ -24,7 +24,7 @@ final class ResidentialWorkCompositionCatalog
         $roofType = (string) ($signals['roof_type'] ?? $dimensions['roof_type'] ?? '');
 
         return [
-            'earthworks' => ['earth.trench', 'earth.backfill', 'earth.export', 'earth.plan'],
+            'earthworks' => ['earth.trench', 'earth.backfill', 'earth.plan'],
             'foundation' => [
                 'foundation.prep', 'foundation.formwork', 'foundation.rebar',
                 'foundation.concrete', 'foundation.waterproofing',
@@ -51,12 +51,11 @@ final class ResidentialWorkCompositionCatalog
             ],
             'lighting' => ['lighting.lines', 'lighting.fixtures'],
             'plumbing' => [
-                'plumbing.pipe', 'sanitary.points',
+                'plumbing.pipe', 'sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins',
                 'sanitary.waterproofing', 'sanitary.tile',
             ],
             'sewerage' => [
                 'sewerage.pipe', 'sewerage.outlets',
-                'sewerage.risers', 'sewerage.revisions',
             ],
             'heating' => ['heating.unit', 'heating.pipe', 'heating.radiators'],
             'ventilation' => ['ventilation.air_exchange'],

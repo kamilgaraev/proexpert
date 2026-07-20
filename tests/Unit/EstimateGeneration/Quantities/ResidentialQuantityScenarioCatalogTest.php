@@ -56,10 +56,10 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'sanitary.waterproofing',
             'rough.floor',
             'sanitary.tile',
-            'sanitary.points',
+            'sanitary.showers',
+            'sanitary.toilets',
+            'sanitary.washbasins',
             'sewerage.outlets',
-            'sewerage.risers',
-            'sewerage.revisions',
         ] as $quantityKey) {
             self::assertArrayHasKey($quantityKey, $result->quantities, $quantityKey);
             self::assertTrue(ResidentialQuantityScenarioCatalog::owns($result->quantities[$quantityKey]), $quantityKey);
@@ -85,7 +85,8 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         ], $this->model(), ['object' => ['object_type' => 'house', 'floors' => 2, 'roof_type' => 'pitched']]);
 
         self::assertSame('152.955000', $result->quantities['roof.area']->amount);
-        self::assertSame('152.955000', $result->quantities['roof.rafters']->amount);
+        self::assertSame('6.118200', $result->quantities['roof.rafters']->amount);
+        self::assertSame('m3', $result->quantities['roof.rafters']->unit);
         self::assertSame('46.834688', $result->quantities['roof.gutter']->amount);
         self::assertSame('23.136000', $result->quantities['openings.windows']->amount);
         self::assertSame('9.000000', $result->quantities['openings.doors']->amount);
@@ -98,7 +99,9 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertGreaterThan(0, (float) $result->quantities['lighting.fixtures']->amount);
         self::assertSame('67.480000', $result->quantities['plumbing.pipe']->amount);
         self::assertSame('12.980000', $result->quantities['sanitary.waterproofing']->amount);
-        self::assertGreaterThan(0, (float) $result->quantities['sanitary.points']->amount);
+        self::assertSame('1.000000', $result->quantities['sanitary.showers']->amount);
+        self::assertSame('2.000000', $result->quantities['sanitary.toilets']->amount);
+        self::assertSame('2.000000', $result->quantities['sanitary.washbasins']->amount);
         self::assertGreaterThan(0, (float) $result->quantities['sanitary.tile']->amount);
         self::assertArrayNotHasKey('electrical.trays', $result->quantities);
 
@@ -138,7 +141,7 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
     }
 
     #[Test]
-    public function preliminary_house_scope_estimates_connection_counts_without_inventing_fixture_types(): void
+    public function preliminary_house_scope_estimates_standard_fixture_set_per_documented_wet_room(): void
     {
         $result = (new ResidentialQuantityScenarioCatalog)->build([
             'floor_area' => $this->quantity('floor_area', '192.800000', ['room:1', 'room:2']),
@@ -148,10 +151,10 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         ]);
 
         foreach ([
-            'sanitary.points',
+            'sanitary.showers',
+            'sanitary.toilets',
+            'sanitary.washbasins',
             'sewerage.outlets',
-            'sewerage.risers',
-            'sewerage.revisions',
             'sanitary.tile',
         ] as $quantityKey) {
             self::assertArrayHasKey($quantityKey, $result->quantities, $quantityKey);
@@ -238,7 +241,8 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             self::assertSame([], $result->quantities[$key]->reviewBlockers, $key);
             self::assertContains('preliminary_total_area_with_confirmed_geometry', $result->quantities[$key]->assumptions, $key);
         }
-        self::assertSame('90.000000', $result->quantities['foundation.prep']->amount);
+        self::assertSame('9.000000', $result->quantities['foundation.prep']->amount);
+        self::assertSame('m3', $result->quantities['foundation.prep']->unit);
         self::assertSame('180.000000', $result->quantities['rough.ceiling']->amount);
         self::assertSame('floor_area', $result->quantities['rough.ceiling']->formulaInputs['source_quantity']['key']);
     }
