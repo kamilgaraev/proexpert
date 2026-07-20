@@ -146,12 +146,13 @@ jobs:
             }
 
             stop_legacy_systemd_processes() {
-              local unit
+              local unit unit_state
               for unit in "${MOST_SYSTEMD_WRITER_UNITS[@]}"; do
                 if ! systemd_unit_exists "${unit}"; then
                   continue
                 fi
-                if systemctl is-enabled "${unit}" 2>/dev/null | grep -Eq '^masked(-runtime)?$'; then
+                unit_state="$(systemctl is-enabled "${unit}" 2>/dev/null || true)"
+                if [[ "${unit_state}" =~ ^masked(-runtime)?$ ]]; then
                   continue
                 fi
                 systemctl mask --runtime --now "${unit}"
@@ -166,13 +167,14 @@ jobs:
             }
 
             assert_legacy_runtime_stopped() {
-              local process_directory process_id command_line working_directory cgroup unit supervisor_status
+              local process_directory process_id command_line working_directory cgroup unit unit_state supervisor_status
               test -z "$(docker compose ps --status running -q ${BACKEND_SERVICES})"
               for unit in "${MOST_SYSTEMD_WRITER_UNITS[@]}"; do
                 if ! systemd_unit_exists "${unit}"; then
                   continue
                 fi
-                if ! systemctl is-enabled "${unit}" 2>/dev/null | grep -Eq '^masked(-runtime)?$'; then
+                unit_state="$(systemctl is-enabled "${unit}" 2>/dev/null || true)"
+                if [[ ! "${unit_state}" =~ ^masked(-runtime)?$ ]]; then
                   echo "MOST backend writer unit is not runtime-masked (${unit}); refusing deployment"
                   return 1
                 fi
