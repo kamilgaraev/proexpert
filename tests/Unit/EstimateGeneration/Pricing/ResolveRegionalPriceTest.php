@@ -317,6 +317,25 @@ final class ResolveRegionalPriceTest extends TestCase
         self::assertArrayNotHasKey('unit_conversion_id', $priced['materials'][0]['normative_ref']);
     }
 
+    #[Test]
+    public function missing_unit_conversion_preserves_the_rejected_unit_pair(): void
+    {
+        $resolver = new ResolveUnitConversion(static fn (): array => []);
+
+        try {
+            $resolver->handle('m2', 'м2', 3);
+            self::fail('Missing unit conversion must fail closed.');
+        } catch (MissingRegionalPrice $exception) {
+            self::assertSame('unit_conversion_missing', $exception->reason);
+            self::assertSame([
+                'from_unit' => 'm2',
+                'to_unit' => 'м2',
+                'unit_conversion_version' => 3,
+                'matching_rows_count' => 0,
+            ], $exception->context);
+        }
+    }
+
     #[DataProvider('invalidPositiveIdentifiers')]
     #[Test]
     public function identifiers_must_be_positive_integers_or_canonical_digit_strings(mixed $invalid): void
