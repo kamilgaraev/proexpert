@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v10', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v11', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);

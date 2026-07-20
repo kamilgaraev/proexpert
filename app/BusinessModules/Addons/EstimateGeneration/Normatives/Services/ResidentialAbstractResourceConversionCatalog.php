@@ -8,6 +8,7 @@ final class ResidentialAbstractResourceConversionCatalog
 {
     private const CONVERSIONS = [
         '07-01-021-01|05.1.03.09' => [
+            'candidate_group_code' => '05.1.03.09',
             'from_unit' => 'м3',
             'to_unit' => 'шт',
             'factor' => '0.04',
@@ -15,6 +16,7 @@ final class ResidentialAbstractResourceConversionCatalog
             'name_markers' => ['перемыч'],
         ],
         '12-01-013-07|12.2.05.02' => [
+            'candidate_group_code' => '12.2.05.02',
             'from_unit' => 'м3',
             'to_unit' => 'м2',
             'factor' => '0.20',
@@ -22,13 +24,15 @@ final class ResidentialAbstractResourceConversionCatalog
             'name_markers' => ['минерал', 'ват'],
         ],
         '15-01-019-05|06.2.05.04' => [
-            'from_unit' => 'т',
+            'candidate_group_code' => '06.2.01.02',
+            'from_unit' => 'м2',
             'to_unit' => 'м2',
-            'factor' => '0.02',
-            'assumption' => 'ceramic_tile_mass_t_per_m2:0.02',
-            'name_markers' => ['плит', 'керамич'],
+            'factor' => '1',
+            'assumption' => 'interior_ceramic_wall_tile_group:06.2.01.02',
+            'name_markers' => ['плит', 'керамич', 'внутренн', 'стен'],
         ],
         '17-01-001-14|18.2.02.08' => [
+            'candidate_group_code' => '18.2.02.08',
             'from_unit' => 'шт',
             'to_unit' => 'компл',
             'factor' => '1',
@@ -62,5 +66,20 @@ final class ResidentialAbstractResourceConversionCatalog
         }
 
         return $pairs;
+    }
+
+    /** @return list<array{group_code: string, candidate_group_code: string, from_unit: string}> */
+    public function supportedCandidateGroups(): array
+    {
+        $groups = [];
+        foreach (self::CONVERSIONS as $key => $conversion) {
+            $groups[] = [
+                'group_code' => explode('|', $key, 2)[1],
+                'candidate_group_code' => $conversion['candidate_group_code'],
+                'from_unit' => $conversion['from_unit'],
+            ];
+        }
+
+        return $groups;
     }
 }
