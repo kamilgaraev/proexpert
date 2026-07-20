@@ -66,7 +66,8 @@ final class LegalDocumentReconciliationService
                     foreach ($entities as $entity) {
                         $organizationId = $this->organizationId($entity);
                         $document = $documents->get("{$organizationId}:{$entity->getKey()}");
-                        $needsLinkRepair = $entity instanceof Contract
+                        $needsLinkRepair = $document instanceof LegalArchiveDocument
+                            && $entity instanceof Contract
                             && (int) $entity->legal_archive_document_id !== (int) ($document?->id ?? 0);
                         if (! $document instanceof LegalArchiveDocument && ! $needsLinkRepair) {
                             $summary['candidates']++;
