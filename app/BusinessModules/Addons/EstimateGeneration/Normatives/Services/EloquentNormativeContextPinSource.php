@@ -361,7 +361,18 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ]);
         $abstractResourceRows = $this->database->table('estimate_norm_resources as resources')
             ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
-                $join->whereRaw("prices.resource_code LIKE (resources.resource_code || '-____')")
+                $join->where(function ($resourceGroup): void {
+                    $resourceGroup->whereRaw("prices.resource_code LIKE (resources.resource_code || '-____')");
+                    foreach ($this->residentialAbstractResourcePriceSelector->supportedCandidateGroups() as $group) {
+                        if ($group['candidate_group_code'] === $group['group_code']) {
+                            continue;
+                        }
+                        $resourceGroup->orWhere(function ($mappedGroup) use ($group): void {
+                            $mappedGroup->where('resources.resource_code', $group['group_code'])
+                                ->where('prices.resource_code', 'like', $group['candidate_group_code'].'-____');
+                        });
+                    }
+                })
                     ->whereRaw("RIGHT(prices.resource_code, 4) ~ '^[0-9]{4}$'")
                     ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
                         $priceContext->where(function ($regional) use ($requested): void {

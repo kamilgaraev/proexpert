@@ -7,6 +7,7 @@ namespace Tests\Unit\EstimateGeneration\Normatives;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\AbstractResourceProjectPriceSelector;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\AbstractResourceSemanticPriceSelector;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialSignedNormCompatibility;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -83,7 +84,7 @@ final class AbstractResourceProjectPriceSelectorTest extends TestCase
     public function semantic_catalog_selects_ceramic_tile_and_rejects_graphite_tile(): void
     {
         $ceramic = (object) [
-            'price_resource_code' => '01.7.06.01-2020',
+            'price_resource_code' => '06.2.01.02-0041',
             'price_resource_name' => 'Плитка керамическая глазурованная для стен',
             'price_unit' => 'м2',
             'base_price' => 1_298.47,
@@ -113,7 +114,7 @@ final class AbstractResourceProjectPriceSelectorTest extends TestCase
             [4],
         );
 
-        self::assertSame('01.7.06.01-2020', $selection['row']->price_resource_code ?? null);
+        self::assertSame('06.2.01.02-0041', $selection['row']->price_resource_code ?? null);
     }
 
     #[Test]
@@ -123,5 +124,11 @@ final class AbstractResourceProjectPriceSelectorTest extends TestCase
 
         self::assertIsArray($scenario);
         self::assertSame('07-01-021-01', $scenario['normative_rate_code'] ?? null);
+        self::assertTrue((new ResidentialSignedNormCompatibility)->matches(
+            $scenario,
+            'house',
+            '07-01-021-01',
+            'Укладка перемычек при наибольшей массе монтажных элементов в здании: до 5 т, масса перемычки до 0,7 т',
+        ));
     }
 }

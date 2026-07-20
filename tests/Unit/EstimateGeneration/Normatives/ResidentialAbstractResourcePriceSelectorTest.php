@@ -106,10 +106,10 @@ final class ResidentialAbstractResourcePriceSelectorTest extends TestCase
             'price_dataset_source_type' => 'fsbc',
         ];
         $tile = (object) [
-            'price_resource_code' => '06.2.05.04-1001',
-            'price_resource_name' => 'Плитки керамические облицовочные',
-            'price_unit' => 'т',
-            'base_price' => 100_000,
+            'price_resource_code' => '06.2.01.02-0041',
+            'price_resource_name' => 'Плитка керамическая для внутренней облицовки стен, глазурованная, гладкая, цветная',
+            'price_unit' => 'м2',
+            'base_price' => 2_000,
             'price_id' => 19,
             'dataset_version_id' => 4,
             'regional_price_version_id' => null,
@@ -123,6 +123,12 @@ final class ResidentialAbstractResourcePriceSelectorTest extends TestCase
         self::assertSame('шт', $lintelSelection['row']->price_unit ?? null);
         self::assertSame(2_000.0, $tileSelection['row']->unit_price ?? null);
         self::assertSame('м2', $tileSelection['row']->price_unit ?? null);
+        self::assertSame('interior_ceramic_wall_tile_group:06.2.01.02', $tileSelection['assumption'] ?? null);
+        self::assertContains([
+            'group_code' => '06.2.05.04',
+            'candidate_group_code' => '06.2.01.02',
+            'from_unit' => 'м2',
+        ], $selector->supportedCandidateGroups());
     }
 
     #[Test]

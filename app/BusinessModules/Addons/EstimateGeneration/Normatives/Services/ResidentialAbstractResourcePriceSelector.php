@@ -20,10 +20,10 @@ final readonly class ResidentialAbstractResourcePriceSelector
             return null;
         }
 
-        $eligible = array_values(array_filter($candidates, static function (object $candidate) use ($groupCode, $conversion, $baseDatasetIds): bool {
+        $eligible = array_values(array_filter($candidates, static function (object $candidate) use ($conversion, $baseDatasetIds): bool {
             $name = mb_strtolower(trim((string) ($candidate->price_resource_name ?? '')));
 
-            return preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', trim((string) ($candidate->price_resource_code ?? ''))) === 1
+            return preg_match('/^'.preg_quote($conversion['candidate_group_code'], '/').'-\d{4}$/D', trim((string) ($candidate->price_resource_code ?? ''))) === 1
                 && array_filter(
                     $conversion['name_markers'],
                     static fn (string $marker): bool => ! str_contains($name, $marker),
@@ -82,5 +82,11 @@ final readonly class ResidentialAbstractResourcePriceSelector
     public function supportedUnitPairs(): array
     {
         return $this->conversions->supportedUnitPairs();
+    }
+
+    /** @return list<array{group_code: string, candidate_group_code: string, from_unit: string}> */
+    public function supportedCandidateGroups(): array
+    {
+        return $this->conversions->supportedCandidateGroups();
     }
 }
