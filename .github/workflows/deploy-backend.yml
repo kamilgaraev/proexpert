@@ -253,7 +253,7 @@ jobs:
             systemctl stop nginx
             stop_legacy_supervisor_processes
             stop_legacy_systemd_processes
-            docker compose stop --timeout 7200 ${BACKEND_SERVICES}
+            docker compose stop --timeout 30 ${BACKEND_SERVICES}
             assert_legacy_runtime_stopped
 
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan migrate:safe --force
