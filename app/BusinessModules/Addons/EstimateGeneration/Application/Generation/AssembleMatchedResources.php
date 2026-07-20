@@ -132,15 +132,15 @@ final readonly class AssembleMatchedResources
     /** @param array<string, mixed> $resource @param array<string, mixed> $selection @param array<string, mixed> $requirement */
     private function validPinnedResource(array $resource, array $selection, array $requirement): bool
     {
-        if (($resource['code'] ?? null) !== $requirement['resource_code']
-            || ($resource['unit'] ?? null) !== $requirement['unit']
+        if (($resource['unit'] ?? null) !== $requirement['unit']
             || ($selection['version'] ?? null) !== ResidentialProjectMaterialCatalog::VERSION
             || ($selection['work_item_key'] ?? null) !== $requirement['work_item_key']
-            || ($selection['assumption_code'] ?? null) !== $requirement['assumption_code']) {
+            || ($selection['assumption_code'] ?? null) !== $requirement['assumption_code']
+            || ($selection['preferred_resource_code'] ?? null) !== $requirement['resource_code']) {
             return false;
         }
 
-        $normalized = $this->projectMaterials->resourceFromPriceRow($requirement, (object) [
+        $normalized = $this->projectMaterials->resourceFromPriceRows($requirement, [(object) [
             'price_id' => $resource['price_id'] ?? null,
             'construction_resource_id' => $resource['linked_resource_id'] ?? null,
             'resource_code' => $resource['code'] ?? null,
@@ -149,11 +149,14 @@ final readonly class AssembleMatchedResources
             'base_price' => $selection['source_unit_price'] ?? null,
             'price_source' => $resource['price_source'] ?? null,
             'price_source_version' => $resource['price_source_version'] ?? null,
-        ]);
+        ]]);
 
         return $normalized !== null
+            && ($normalized['code'] ?? null) === ($resource['code'] ?? null)
             && (string) $normalized['unit_price'] === (string) ($resource['unit_price'] ?? '')
-            && (float) $normalized['quantity'] === (float) ($resource['quantity'] ?? 0);
+            && (float) $normalized['quantity'] === (float) ($resource['quantity'] ?? 0)
+            && ($normalized['project_material_requirement']['selection_policy'] ?? null)
+                === ($selection['selection_policy'] ?? null);
     }
 
     /** @return array<string, mixed> */
