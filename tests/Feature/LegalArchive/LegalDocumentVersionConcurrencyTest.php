@@ -9,7 +9,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Exceptions\ImmutableDataException;
-use App\Http\Controllers\Api\V1\Admin\LegalArchiveController;
+use App\Http\Controllers\Api\V1\Admin\LegalArchive\LegalArchiveDocumentController;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\RecoverLegalArchiveDocumentRequest;
 use App\Models\Project;
 use App\Models\User;
@@ -24,9 +24,11 @@ use App\Services\LegalArchive\Files\LegalDocumentScanner;
 use App\Services\LegalArchive\Files\LegalDocumentVersionAttempt;
 use App\Services\LegalArchive\Files\LegalDocumentVersionLeaseLost;
 use App\Services\LegalArchive\Files\VersionInput;
+use App\Services\LegalArchive\LegalArchiveLifecycleService;
 use App\Services\LegalArchive\LegalArchiveRegistryService;
 use App\Services\LegalArchive\LegalDocumentCreateFailureReporter;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceResolver;
+use App\Services\LegalArchive\Workflow\LegalWorkflowActionResolver;
 use App\Services\Project\UserProjectAccessService;
 use App\Services\Storage\FileService;
 use Illuminate\Config\Repository;
@@ -112,6 +114,7 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
             $table->unsignedBigInteger('created_by_user_id')->nullable();
             $table->unsignedBigInteger('owner_user_id')->nullable();
             $table->unsignedBigInteger('updated_by_user_id')->nullable();
+            $table->unsignedBigInteger('lock_version')->default(0);
             $table->string('title');
             $table->string('status')->nullable();
             $table->string('confidentiality_level')->nullable();
@@ -708,7 +711,13 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         Container::getInstance()->instance('request', $request);
         $failureReporter = (new \ReflectionClass(LegalDocumentCreateFailureReporter::class))
             ->newInstanceWithoutConstructor();
-        $controller = new LegalArchiveController($registry, $access, $access, $failureReporter);
+        $controller = new LegalArchiveDocumentController(
+            $registry,
+            $access,
+            (new \ReflectionClass(LegalWorkflowActionResolver::class))->newInstanceWithoutConstructor(),
+            (new \ReflectionClass(LegalArchiveLifecycleService::class))->newInstanceWithoutConstructor(),
+            $failureReporter,
+        );
 
         $response = $controller->recoverCreate($request, 'create-operation');
 
@@ -797,7 +806,13 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         Container::getInstance()->instance('request', $request);
         $failureReporter = (new \ReflectionClass(LegalDocumentCreateFailureReporter::class))
             ->newInstanceWithoutConstructor();
-        $response = (new LegalArchiveController($registry, $access, $access, $failureReporter))
+        $response = (new LegalArchiveDocumentController(
+            $registry,
+            $access,
+            (new \ReflectionClass(LegalWorkflowActionResolver::class))->newInstanceWithoutConstructor(),
+            (new \ReflectionClass(LegalArchiveLifecycleService::class))->newInstanceWithoutConstructor(),
+            $failureReporter,
+        ))
             ->recoverCreate($request, (string) $document->create_operation_id);
 
         self::assertSame(200, $response->getStatusCode(), json_encode($this->logHandler->getRecords()));

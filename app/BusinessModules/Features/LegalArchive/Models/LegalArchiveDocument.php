@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 
@@ -147,6 +148,11 @@ final class LegalArchiveDocument extends Model
     public function workflowInstances(): HasMany
     {
         return $this->hasMany(LegalWorkflowInstance::class, 'document_id')->orderByDesc('id');
+    }
+
+    public function latestWorkflowInstance(): HasOne
+    {
+        return $this->hasOne(LegalWorkflowInstance::class, 'document_id')->latestOfMany('id');
     }
 
     public function parties(): HasMany

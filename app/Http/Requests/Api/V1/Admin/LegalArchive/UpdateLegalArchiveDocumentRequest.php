@@ -42,6 +42,7 @@ final class UpdateLegalArchiveDocumentRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'lock_version' => ['required', 'integer', 'min:0'],
             'primary_project_id' => ['nullable', 'integer', 'min:1'],
             'title' => ['sometimes', 'required', 'string', 'max:512'],
             'document_number' => ['nullable', 'string', 'max:255'],

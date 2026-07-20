@@ -16,7 +16,7 @@ final class LegalDocumentManagementRecoveryApiContractTest extends TestCase
             $root.'app/Http/Requests/Api/V1/Admin/LegalArchive/RecoverLegalDocumentManagementRequest.php',
         );
         $controller = file_get_contents(
-            $root.'app/Http/Controllers/Api/V1/Admin/LegalArchiveController.php',
+            $root.'app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveAccessController.php',
         );
 
         self::assertIsString($route);
@@ -28,10 +28,10 @@ final class LegalDocumentManagementRecoveryApiContractTest extends TestCase
             $route,
         );
         self::assertStringContainsString("'successor_user_id' => ['required', 'integer', 'min:1']", $request);
+        self::assertStringContainsString("'lock_version' => ['required', 'integer', 'min:0']", $request);
         self::assertStringContainsString("'legal_archive.security_recovery.manage'", $request);
-        self::assertStringContainsString('findForOrganization(', $controller);
+        self::assertStringContainsString('$this->document($request, $document)', $controller);
         self::assertStringContainsString('recoverManagementAsSecurityAdministrator(', $controller);
-        self::assertStringContainsString('LegalArchiveDocumentResource($found->refresh())', $controller);
-        self::assertStringContainsString("'successor_user_id' => (int) \$grant->subject_user_id", $controller);
+        self::assertStringContainsString("'document_lock_version' => (int) \$owner->fresh()->lock_version", $controller);
     }
 }

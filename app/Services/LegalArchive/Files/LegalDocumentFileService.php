@@ -12,6 +12,7 @@ use App\Models\Organization;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\CanonicalJson;
 use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
+use App\Services\LegalArchive\LegalArchiveLockConflict;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\Storage\FileService;
 use DomainException;
@@ -407,6 +408,10 @@ final class LegalDocumentFileService
             (int) $file->organization_id,
             (int) $file->document_id,
         );
+        if ($input->expectedDocumentLockVersion !== null
+            && (int) $lockedDocument->lock_version !== $input->expectedDocumentLockVersion) {
+            throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+        }
         $lockedFile = $this->aggregateLock->lockFile($this->database(), $lockedDocument, (int) $file->getKey());
         $versionNumber = $input->versionNumber ?? $this->nextVersionNumber($lockedFile);
         $hasCurrent = $lockedFile->current_version_id !== null
@@ -447,6 +452,7 @@ final class LegalDocumentFileService
         if ($makeCurrent) {
             $this->setCurrentPointers($lockedDocument, $lockedFile, $version->id);
         }
+        $lockedDocument->forceFill(['lock_version' => ((int) $lockedDocument->lock_version) + 1])->save();
 
         if ($this->audit !== null) {
             $document = LegalArchiveDocument::query()->whereKey($lockedFile->document_id)->firstOrFail();
@@ -461,6 +467,44 @@ final class LegalDocumentFileService
         }
 
         return $version;
+    }
+
+    public function makeCurrent(
+        LegalArchiveDocumentVersion $version,
+        int $expectedDocumentLockVersion,
+        ?int $actorId = null,
+    ): LegalArchiveDocumentVersion {
+        return $this->database()->transaction(function () use ($version, $expectedDocumentLockVersion, $actorId): LegalArchiveDocumentVersion {
+            $document = $this->aggregateLock->lockDocument(
+                $this->database(),
+                (int) $version->organization_id,
+                (int) $version->document_id,
+            );
+            if ((int) $document->lock_version !== $expectedDocumentLockVersion) {
+                throw new LegalArchiveLockConflict((int) $document->lock_version);
+            }
+            $file = $this->aggregateLock->lockFile($this->database(), $document, (int) $version->document_file_id);
+            $version = $this->aggregateLock->lockVersion($this->database(), $document, (int) $version->id);
+            if ($version->processing_status !== 'ready') {
+                throw new DomainException('version_not_ready');
+            }
+            $this->assertCurrentVersionRotationAllowed($document);
+            if ($file->current_version_id !== null && (int) $file->current_version_id !== (int) $version->id) {
+                $this->setVersionCurrent($document, (int) $file->current_version_id, false);
+            }
+            $this->setVersionCurrent($document, (int) $version->id, true);
+            $this->setCurrentPointers($document, $file, (int) $version->id);
+            $document->forceFill(['lock_version' => $expectedDocumentLockVersion + 1])->save();
+            if ($this->audit !== null) {
+                $this->audit->recordForActorId('version_made_current', $document, $actorId, [
+                    'version_id' => (int) $version->id,
+                    'document_file_id' => (int) $file->id,
+                    'source_event_id' => 'version-current:'.(string) $version->id.':lock-'.($expectedDocumentLockVersion + 1),
+                ]);
+            }
+
+            return $version->refresh();
+        }, 3);
     }
 
     private function markFailedAndReconcileCurrent(

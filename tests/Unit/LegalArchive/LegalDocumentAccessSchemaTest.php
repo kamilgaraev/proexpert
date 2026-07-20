@@ -151,9 +151,12 @@ final class LegalDocumentAccessSchemaTest extends TestCase
     public function test_read_endpoints_load_the_owner_document_before_object_authorization(): void
     {
         $root = __DIR__.'/../../../';
-        $controller = file_get_contents($root.'app/Http/Controllers/Api/V1/Admin/LegalArchiveController.php');
-        self::assertIsString($controller);
-        self::assertSame(2, substr_count($controller, 'findForAuthorization((int) $document)'));
-        self::assertStringContainsString('$this->access->authorize($actor, $found, \'view\');', $controller);
+        $documentController = file_get_contents($root.'app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveDocumentController.php');
+        $fileController = file_get_contents($root.'app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveFileController.php');
+        self::assertIsString($documentController);
+        self::assertIsString($fileController);
+        self::assertStringContainsString('findForAuthorization((int) $document)', $documentController);
+        self::assertStringContainsString("\$this->access->authorize(\$actor, \$found, 'view');", $documentController);
+        self::assertStringContainsString('currentVersionWithUrl($this->document($request, $document), $this->actor($request))', $fileController);
     }
 }

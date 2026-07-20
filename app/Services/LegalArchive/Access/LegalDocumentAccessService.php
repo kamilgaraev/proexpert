@@ -14,6 +14,7 @@ use App\Domain\Authorization\Services\RoleScanner;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use App\Services\LegalArchive\LegalArchiveLockConflict;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\Project\UserProjectAccessService;
 use Carbon\CarbonInterface;
@@ -259,6 +260,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
         LegalDocumentAccessSubject $subject,
         array $abilities,
         ?CarbonInterface $expiresAt = null,
+        ?int $expectedDocumentLockVersion = null,
     ): LegalDocumentAccessGrant {
         $this->authorizeManagementPreflight($actor, $document);
         $abilities = array_values(array_unique(array_map('strval', $abilities)));
@@ -302,13 +304,17 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
         $connection = $this->connection();
 
         return $connection->transaction(function () use (
-            $connection, $document, $actor, $subject, $abilities, $expiresAt,
+            $connection, $document, $actor, $subject, $abilities, $expiresAt, $expectedDocumentLockVersion,
         ): LegalDocumentAccessGrant {
             $lockedDocument = $this->lock()->lockDocument(
                 $connection,
                 (int) $document->organization_id,
                 (int) $document->id,
             );
+            if ($expectedDocumentLockVersion !== null
+                && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
+                throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+            }
             $this->authorizeManagement($actor, $lockedDocument, true);
             if (
                 $subject->kind === LegalDocumentAccessSubjectKind::INTERNAL_USER
@@ -408,6 +414,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
                 }
                 throw new DomainException('legal_document_access_grant_conflict');
             }
+            $lockedDocument->forceFill(['lock_version' => ((int) $lockedDocument->lock_version) + 1])->save();
             $this->audit()->record('access_granted', $lockedDocument, $actor, [
                 'grant_id' => (int) $grant->id,
                 'subject_kind' => $subject->kind->value,
@@ -500,6 +507,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
         LegalDocumentAccessGrant $grant,
         User $actor,
         string $reason,
+        ?int $expectedDocumentLockVersion = null,
     ): LegalDocumentAccessGrant {
         $this->authorizeManagementPreflight($actor, $document);
         $reason = trim($reason);
@@ -508,8 +516,12 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
         }
         $connection = $this->connection();
 
-        return $connection->transaction(function () use ($connection, $document, $grant, $actor, $reason): LegalDocumentAccessGrant {
+        return $connection->transaction(function () use ($connection, $document, $grant, $actor, $reason, $expectedDocumentLockVersion): LegalDocumentAccessGrant {
             $lockedDocument = $this->lock()->lockDocument($connection, (int) $document->organization_id, (int) $document->id);
+            if ($expectedDocumentLockVersion !== null
+                && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
+                throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+            }
             $this->authorizeManagement($actor, $lockedDocument, true);
             $locked = LegalDocumentAccessGrant::query()
                 ->whereKey((int) $grant->id)
@@ -535,6 +547,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
                 'revoked_by_user_id' => (int) $actor->id,
                 'revocation_reason' => $reason,
             ])->save();
+            $lockedDocument->forceFill(['lock_version' => ((int) $lockedDocument->lock_version) + 1])->save();
             $this->audit()->record('access_revoked', $lockedDocument, $actor, ['grant_id' => (int) $locked->id]);
 
             return $locked;
@@ -566,18 +579,22 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
         LegalArchiveDocument $document,
         User $actor,
         int $successorUserId,
+        ?int $expectedDocumentLockVersion = null,
     ): LegalDocumentAccessGrant {
         if ($successorUserId < 1) {
             throw new DomainException('legal_document_access_subject_not_found');
         }
         $connection = $this->connection();
 
-        return $connection->transaction(function () use ($connection, $document, $actor, $successorUserId): LegalDocumentAccessGrant {
+        return $connection->transaction(function () use ($connection, $document, $actor, $successorUserId, $expectedDocumentLockVersion): LegalDocumentAccessGrant {
             $lockedDocument = $this->lock()->lockDocument(
                 $connection,
                 (int) $document->organization_id,
                 (int) $document->id,
             );
+            if ($expectedDocumentLockVersion !== null && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
+                throw new \App\Services\LegalArchive\LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+            }
             $lockedActor = $this->reloadActiveUser($actor, $lockedDocument);
             $this->authorizeSecurityRecovery($lockedActor, $lockedDocument);
             if (
@@ -635,6 +652,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
                 'successor_user_id' => (int) $successor->id,
                 'abilities' => $abilities,
             ]);
+            $lockedDocument->forceFill(['lock_version' => ((int) $lockedDocument->lock_version) + 1])->save();
 
             return $grant;
         });

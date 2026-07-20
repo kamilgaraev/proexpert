@@ -32,6 +32,11 @@ final class LegalArchiveDocumentVersionResource extends JsonResource
             'mime_type' => $this->mime_type,
             'size_bytes' => (int) $this->size_bytes,
             'content_hash' => $this->content_hash,
+            'preview_available' => $this->processing_status === 'ready'
+                && in_array($this->mime_type, ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'], true),
+            'editable' => $this->processing_status === 'ready'
+                && in_array($this->status, ['draft', 'revision_required'], true)
+                && in_array($this->mime_type, ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'], true),
             'metadata_hash' => $this->metadata_hash,
             'uploaded_by_user_id' => $this->uploaded_by_user_id,
             'uploaded_at' => $this->uploaded_at?->toISOString(),

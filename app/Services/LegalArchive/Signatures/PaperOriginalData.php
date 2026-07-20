@@ -19,5 +19,6 @@ final readonly class PaperOriginalData
         public string $timeSource = 'operator',
         public ?string $clientIpHash = null,
         public ?string $userAgentHash = null,
+        public ?int $expectedDocumentLockVersion = null,
     ) {}
 }

@@ -13,27 +13,28 @@ final class LegalArchiveAccessBoundaryTest extends TestCase
         $routes = file_get_contents(__DIR__.'/../../../routes/api/v1/admin/legal_archive.php');
 
         self::assertIsString($routes);
-        self::assertStringContainsString("Route::get('documents', [LegalArchiveController::class, 'index'])\n        ->name", $routes);
-        self::assertStringContainsString("Route::get('documents/{document}', [LegalArchiveController::class, 'show'])\n        ->name", $routes);
-        self::assertStringContainsString("Route::get('documents/{document}/current-version', [LegalArchiveController::class, 'currentVersion'])\n        ->name", $routes);
-        self::assertStringNotContainsString("Route::get('documents', [LegalArchiveController::class, 'index'])\n        ->middleware('authorize:legal_archive.view')", $routes);
+        self::assertStringContainsString("Route::get('documents', [LegalArchiveDocumentController::class, 'index'])\n        ->name", $routes);
+        self::assertStringContainsString("Route::get('documents/{document}', [LegalArchiveDocumentController::class, 'show'])\n        ->whereNumber", $routes);
+        self::assertStringContainsString("Route::get('documents/{document}/current-version', [LegalArchiveFileController::class, 'currentPrimaryVersion'])\n        ->whereNumber", $routes);
+        self::assertStringNotContainsString("Route::get('documents', [LegalArchiveDocumentController::class, 'index'])\n        ->middleware('authorize:legal_archive.view')", $routes);
     }
 
     public function test_mutation_boundaries_require_exact_permissions(): void
     {
         $routes = file_get_contents(__DIR__.'/../../../routes/api/v1/admin/legal_archive.php');
-        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchiveController.php');
+        $documentController = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveDocumentController.php');
+        $fileController = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveFileController.php');
         $indexRequest = file_get_contents(__DIR__.'/../../../app/Http/Requests/Api/V1/Admin/LegalArchive/LegalArchiveDocumentIndexRequest.php');
         $registry = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/LegalArchiveRegistryService.php');
 
-        foreach ([$routes, $controller, $indexRequest, $registry] as $source) {
+        foreach ([$routes, $documentController, $fileController, $indexRequest, $registry] as $source) {
             self::assertIsString($source);
         }
 
         self::assertStringContainsString("->middleware(['authorize:legal_archive.versions.create', 'authorize:legal_archive.files.upload'])", $routes);
-        self::assertStringContainsString("authorizePermission(\$actor, \$found, 'legal_archive.update')", $controller);
-        self::assertStringContainsString("authorizePermission(\$actor, \$found, 'legal_archive.versions.create')", $controller);
-        self::assertStringContainsString("authorizePermission(\$actor, \$found, 'legal_archive.files.upload')", $controller);
+        self::assertStringContainsString("authorizePermission(\$actor, \$found, 'legal_archive.update')", $documentController);
+        self::assertStringContainsString("authorizePermission(\$actor, \$owner, 'legal_archive.versions.create')", $fileController);
+        self::assertStringContainsString("authorizePermission(\$actor, \$owner, 'legal_archive.files.upload')", $fileController);
         self::assertStringNotContainsString('AuthorizationService', $indexRequest);
         self::assertStringContainsString('scopeAccessibleQuery($query, $actor, $organizationId)', $registry);
     }

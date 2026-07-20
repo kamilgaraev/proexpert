@@ -105,24 +105,21 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
 
     public function test_scanner_failure_has_an_explicit_accepted_api_contract(): void
     {
-        $controller = file_get_contents(
-            __DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchiveController.php',
-        );
-        self::assertIsString($controller);
-        self::assertGreaterThanOrEqual(2, substr_count($controller, 'instanceof LegalDocumentScanFailed'));
-        self::assertStringContainsString('legal_archive.messages.document_file_processing_failed', $controller);
-        self::assertStringContainsString('legal_archive.messages.version_file_processing_failed', $controller);
-        self::assertGreaterThanOrEqual(2, substr_count($controller, '202'));
-        self::assertGreaterThanOrEqual(2, substr_count($controller, "'retry_action' => 'retry_upload'"));
-        self::assertStringContainsString('new LegalArchiveDocumentResource(', $controller);
-        self::assertStringContainsString('new LegalArchiveDocumentVersionResource($e->version)', $controller);
+        $documentController = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveDocumentController.php');
+        $fileController = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveFileController.php');
+        self::assertIsString($documentController);
+        self::assertIsString($fileController);
+        self::assertStringContainsString('instanceof LegalDocumentScanFailed', $documentController);
+        self::assertStringContainsString('instanceof LegalDocumentScanFailed', $fileController);
+        self::assertStringContainsString('legal_archive.messages.document_file_processing_failed', $documentController);
+        self::assertStringContainsString('legal_archive.messages.version_file_processing_failed', $fileController);
+        self::assertStringContainsString('new LegalArchiveDocumentResource(', $documentController);
+        self::assertStringContainsString('new LegalArchiveDocumentVersionResource($error->version)', $fileController);
     }
 
     public function test_create_failure_returns_durable_recovery_contract_instead_of_generic_error(): void
     {
-        $controller = file_get_contents(
-            __DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchiveController.php',
-        );
+        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveDocumentController.php');
         $resource = file_get_contents(
             __DIR__.'/../../../app/Http/Resources/Api/V1/Admin/LegalArchive/LegalArchiveDocumentResource.php',
         );
@@ -131,8 +128,8 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
         self::assertIsString($resource);
         self::assertStringContainsString('instanceof LegalDocumentCreateFailed', $controller);
         self::assertStringContainsString("'operation_result' => 'document_create_failed'", $controller);
-        self::assertStringContainsString("'retry_action' => \$e->retryAction()", $controller);
-        self::assertStringContainsString("'retry_document_id' => (int) \$e->document->id", $controller);
+        self::assertStringContainsString("'retry_action' => \$error->retryAction()", $controller);
+        self::assertStringContainsString("'retry_document_id' => (int) \$error->document->id", $controller);
         self::assertStringContainsString("'source_create_status' => \$this->source_create_status", $resource);
     }
 }

@@ -986,6 +986,7 @@ final class LegalDocumentTenantIsolationTest extends TestCase
         });
         $schema->create('legal_archive_documents', static function (Blueprint $table): void {
             $table->id();
+            $table->unsignedBigInteger('lock_version')->default(0);
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('primary_project_id')->nullable();
             $table->string('title');

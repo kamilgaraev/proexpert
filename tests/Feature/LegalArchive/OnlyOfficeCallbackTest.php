@@ -30,7 +30,7 @@ final class OnlyOfficeCallbackTest extends TestCase
     {
         $routes = file_get_contents(__DIR__.'/../../../routes/api/v1/admin/legal_archive.php');
         self::assertIsString($routes);
-        self::assertStringContainsString("middleware('authorize:legal_archive.view')->name('document-file-versions.editor.session')", $routes);
+        self::assertStringContainsString("middleware('authorize:legal_archive.view')->whereNumber('version')->name('document-file-versions.editor.session')", $routes);
         self::assertStringContainsString('legal_archive.view', $routes);
         self::assertStringContainsString('legal_archive.files.download', $routes);
         self::assertStringContainsString('/preview', $routes);
@@ -89,7 +89,7 @@ final class OnlyOfficeCallbackTest extends TestCase
     public function test_mode_and_permission_are_bound_to_persisted_session(): void
     {
         $service = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/LegalDocumentEditorSessionService.php');
-        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalDocumentEditorController.php');
+        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveFileController.php');
         self::assertIsString($service);
         self::assertIsString($controller);
         self::assertStringContainsString('(string) $existing->mode === $mode', $service);

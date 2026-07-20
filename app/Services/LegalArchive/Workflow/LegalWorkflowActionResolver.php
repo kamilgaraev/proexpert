@@ -220,6 +220,9 @@ final readonly class LegalWorkflowActionResolver
 
     private function latestInstance(LegalArchiveDocument $document): ?LegalWorkflowInstance
     {
+        if ($document->relationLoaded('latestWorkflowInstance')) {
+            return $document->latestWorkflowInstance;
+        }
         $model = (new LegalWorkflowInstance)->setConnection($document->getConnectionName());
 
         return $model->newQuery()
@@ -232,6 +235,9 @@ final readonly class LegalWorkflowActionResolver
 
     private function currentVersion(LegalArchiveDocument $document): ?LegalArchiveDocumentVersion
     {
+        if ($document->relationLoaded('currentVersion')) {
+            return $document->currentVersion;
+        }
         if ($document->current_primary_version_id === null) {
             return null;
         }

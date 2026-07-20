@@ -28,6 +28,7 @@ final class RecoverLegalDocumentManagementRequest extends FormRequest
     {
         return [
             'successor_user_id' => ['required', 'integer', 'min:1'],
+            'lock_version' => ['required', 'integer', 'min:0'],
         ];
     }
 }

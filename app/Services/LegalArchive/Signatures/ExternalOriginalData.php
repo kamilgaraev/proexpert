@@ -12,6 +12,7 @@ final readonly class ExternalOriginalData
         public string $idempotencyKey,
         public array $providerMetadata = [],
         public ?int $partyId = null,
+        public ?int $expectedDocumentLockVersion = null,
     ) {
         BoundedEvidencePayload::assert($providerMetadata);
     }

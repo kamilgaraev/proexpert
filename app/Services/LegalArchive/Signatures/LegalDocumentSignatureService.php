@@ -18,6 +18,7 @@ use App\Services\LegalArchive\CanonicalJson;
 use App\Services\LegalArchive\Comments\LegalDocumentBlockingCommentGuard;
 use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
 use App\Services\LegalArchive\Files\LegalCleanupDebtKey;
+use App\Services\LegalArchive\LegalArchiveLockConflict;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator;
@@ -69,6 +70,7 @@ final class LegalDocumentSignatureService
         ?string $provider = null,
         ?DateTimeImmutable $expiresAt = null,
         ?int $replacesRequestId = null,
+        ?int $expectedDocumentLockVersion = null,
     ): LegalSignatureRequest {
         $this->authorizer->authorize($actor, $document, LegalDocumentAbility::REQUEST_SIGNATURE->value);
         $method = trim($method);
@@ -97,8 +99,11 @@ final class LegalDocumentSignatureService
             'replaces_request_id' => $replacesRequestId,
         ]);
 
-        return $this->connection->transaction(function () use ($document, $version, $actor, $method, $provider, $partyId, $signers, $signerSnapshot, $key, $requestHash, $expiresAt, $replacesRequestId): LegalSignatureRequest {
+        return $this->connection->transaction(function () use ($document, $version, $actor, $method, $provider, $partyId, $signers, $signerSnapshot, $key, $requestHash, $expiresAt, $replacesRequestId, $expectedDocumentLockVersion): LegalSignatureRequest {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
+            if ($expectedDocumentLockVersion !== null && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
+                throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+            }
             $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $version->id);
             (new LegalDocumentEditGuard($this->connection))->assertSignatureAllowed($lockedDocument);
             $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::REQUEST_SIGNATURE->value);
@@ -242,6 +247,7 @@ final class LegalDocumentSignatureService
             'signing_session_id' => null,
             'client_ip_hash' => $data->clientIpHash,
             'user_agent_hash' => $data->userAgentHash,
+            'expected_document_lock_version' => $data->expectedDocumentLockVersion,
         ]);
     }
 
@@ -343,6 +349,7 @@ final class LegalDocumentSignatureService
                 'artifact_key' => $artifactKey,
                 'artifact_attempt_token' => $attemptToken,
                 ...$this->pendingEvidenceColumns($metadata->evidence),
+                'expected_document_lock_version' => $metadata->expectedDocumentLockVersion,
             ]);
         } catch (Throwable $exception) {
             $this->releaseFailedArtifactClaim(
@@ -361,15 +368,19 @@ final class LegalDocumentSignatureService
         }
     }
 
-    public function startElectronicSession(LegalSignatureRequest $request, User $actor): SignatureSession
+    public function startElectronicSession(LegalSignatureRequest $request, User $actor, ?int $expectedDocumentLockVersion = null): SignatureSession
     {
         $document = $this->documentForRequest($request);
         $this->authorizer->authorize($actor, $document, LegalDocumentAbility::SIGN->value);
         $this->assertRequestMethod($request, 'provider_electronic');
         $callbackUrl = $this->configuredCallbackUrl();
         $leaseToken = Str::random(64);
-        $reservation = $this->connection->transaction(function () use ($request, $document, $actor, $leaseToken): array {
+        $reservation = $this->connection->transaction(function () use ($request, $document, $actor, $leaseToken, $expectedDocumentLockVersion): array {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
+            if ($expectedDocumentLockVersion !== null
+                && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
+                throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+            }
             $version = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $request->document_version_id);
             $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::SIGN->value);
             $lockedRequest = $this->lockRequest($request);
@@ -441,8 +452,12 @@ final class LegalDocumentSignatureService
             throw $exception;
         }
 
-        return $this->connection->transaction(function () use ($request, $session, $document, $actor, $operation, $leaseToken): SignatureSession {
+        return $this->connection->transaction(function () use ($request, $session, $document, $actor, $operation, $leaseToken, $expectedDocumentLockVersion): SignatureSession {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
+            if ($expectedDocumentLockVersion !== null
+                && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
+                throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+            }
             $version = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $request->document_version_id);
             $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::SIGN->value);
             $lockedRequest = $this->lockRequest($request);
@@ -817,6 +832,10 @@ final class LegalDocumentSignatureService
 
         return $this->connection->transaction(function () use ($request, $actor, $method, $key, $requestHash, $data, $document, $authorize): LegalDocumentSignature {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
+            if (isset($data['expected_document_lock_version'])
+                && (int) $lockedDocument->lock_version !== (int) $data['expected_document_lock_version']) {
+                throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+            }
             $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $request->document_version_id);
             if ($authorize) {
                 $this->authorizer->authorize($actor, $lockedDocument, LegalDocumentAbility::SIGN->value);

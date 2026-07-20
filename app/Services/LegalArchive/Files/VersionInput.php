@@ -16,6 +16,7 @@ final readonly class VersionInput
         public ?int $uploadedByUserId = null,
         public ?array $metadata = null,
         public bool $makeCurrent = true,
+        public ?int $expectedDocumentLockVersion = null,
     ) {}
 
     public function semanticFingerprint(): string
@@ -41,6 +42,7 @@ final readonly class VersionInput
             'uploaded_by_user_id' => $this->uploadedByUserId,
             'metadata' => $this->metadata,
             'make_current' => $this->makeCurrent,
+            'expected_document_lock_version' => $this->expectedDocumentLockVersion,
         ];
     }
 

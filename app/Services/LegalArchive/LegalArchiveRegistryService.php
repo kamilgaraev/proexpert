@@ -86,7 +86,8 @@ final class LegalArchiveRegistryService
 
     public function findForOrganization(int $organizationId, int $documentId): ?LegalArchiveDocument
     {
-        return $this->detailQuery()
+        return LegalArchiveDocument::query()
+            ->with(['currentVersion', 'versions', 'links', 'project:id,name,status,organization_id', 'createdBy:id,name,email'])
             ->forOrganization($organizationId)
             ->find($documentId);
     }
@@ -248,6 +249,15 @@ final class LegalArchiveRegistryService
     public function update(LegalArchiveDocument $document, int $organizationId, ?int $userId, array $data): LegalArchiveDocument
     {
         return DB::transaction(function () use ($document, $organizationId, $userId, $data): LegalArchiveDocument {
+            $expectedLockVersion = (int) $data['lock_version'];
+            $document = LegalArchiveDocument::query()
+                ->where('organization_id', $organizationId)
+                ->whereKey($document->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+            if ((int) $document->lock_version !== $expectedLockVersion) {
+                throw new LegalArchiveLockConflict((int) $document->lock_version);
+            }
             $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
             $this->sourceResolver->assertOwnedSource(
                 $organizationId,
@@ -256,7 +266,10 @@ final class LegalArchiveRegistryService
             );
             $before = $this->auditSnapshot($document);
 
-            $document->update($this->documentPayload($organizationId, $userId, $data, true));
+            $payload = $this->documentPayload($organizationId, $userId, $data, true);
+            unset($payload['lock_version']);
+            $payload['lock_version'] = $expectedLockVersion + 1;
+            $document->update($payload);
 
             if (array_key_exists('links', $data)) {
                 $this->replaceLinks($document, $data['links'] ?? []);
@@ -304,6 +317,7 @@ final class LegalArchiveRegistryService
                 uploadedByUserId: $userId,
                 metadata: is_array($data['metadata'] ?? null) ? $data['metadata'] : null,
                 makeCurrent: $makeCurrent,
+                expectedDocumentLockVersion: isset($data['lock_version']) ? (int) $data['lock_version'] : null,
             ));
 
             return $version;
@@ -508,6 +522,11 @@ final class LegalArchiveRegistryService
             'links',
             'project:id,name,status,organization_id',
             'createdBy:id,name,email',
+            'files.currentVersion',
+            'files.versions',
+            'latestWorkflowInstance.steps',
+            'signatureRequests',
+            'signatures.verificationHistory',
         ]);
     }
 

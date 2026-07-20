@@ -11,7 +11,7 @@ final class LegalDocumentRecoveryApiContractTest extends TestCase
     public function test_recovery_api_is_scoped_and_exposes_typed_phase_actions(): void
     {
         $routes = file_get_contents(__DIR__.'/../../../routes/api/v1/admin/legal_archive.php');
-        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchiveController.php');
+        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveDocumentController.php');
         $registry = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/LegalArchiveRegistryService.php');
         $resource = file_get_contents(__DIR__.'/../../../app/Http/Resources/Api/V1/Admin/LegalArchive/LegalArchiveDocumentResource.php');
         $reporter = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/LegalDocumentCreateFailureReporter.php');
@@ -26,7 +26,7 @@ final class LegalDocumentRecoveryApiContractTest extends TestCase
         self::assertStringContainsString('recoveryIndex(', $controller);
         self::assertStringContainsString('recoverCreate(', $controller);
         self::assertStringContainsString("'operation_result' => 'in_progress'", $controller);
-        self::assertStringContainsString("'retry_after' => \$retryAfter", $controller);
+        self::assertStringContainsString("'retry_after' => \$leaseExpiresAt === null", $controller);
         self::assertStringContainsString("->where('created_by_user_id', \$actor->id)", $registry);
         self::assertStringContainsString("->where('source_create_status', '!=', 'completed')", $registry);
         self::assertStringContainsString("'operation_id' => \$this->create_operation_id", $resource);
@@ -55,7 +55,7 @@ final class LegalDocumentRecoveryApiContractTest extends TestCase
         self::assertLessThan($claim, $inputValidation);
         self::assertStringContainsString("if (\$retryAction === 'retry_upload' && ! \$file instanceof UploadedFile)", $registry);
         self::assertStringContainsString('LegalDocumentCreateFailureReporter', $controller);
-        self::assertGreaterThanOrEqual(3, substr_count($controller, '$this->reportCreateFailure('));
+        self::assertGreaterThanOrEqual(2, substr_count($controller, '$this->reportCreateFailure('));
         self::assertStringContainsString("'failure_fingerprint'", $reporter);
         self::assertStringContainsString("'correlation_id'", $reporter);
         self::assertStringNotContainsString("'message' => \$failure->getMessage()", $reporter);

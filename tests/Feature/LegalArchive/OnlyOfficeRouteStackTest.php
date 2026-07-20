@@ -33,7 +33,7 @@ final class OnlyOfficeRouteStackTest extends TestCase
     {
         $expected = [
             'admin.legal-archive.document-file-versions.editor.session' => 'authorize:legal_archive.view',
-            'admin.legal-archive.document-file-versions.preview' => 'authorize:legal_archive.view',
+            'admin.legal-archive.document-file-versions.preview' => 'authorize:legal_archive.files.view',
             'admin.legal-archive.document-file-versions.download' => 'authorize:legal_archive.files.download',
         ];
         foreach ($expected as $name => $permission) {
