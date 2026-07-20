@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoA
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector;
+use App\BusinessModules\Addons\EstimateGeneration\Services\WorkItemDuplicateSignature;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -731,7 +732,7 @@ final class NormativeCandidateFeedbackService
     ): array {
         $workItems = $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] ?? [];
         $workItems = is_array($workItems) ? array_values($workItems) : [];
-        $signature = $this->duplicateSignature($workItem);
+        $signature = WorkItemDuplicateSignature::fromWorkItem($workItem)?->value;
         $matchingIndexes = $signature !== null ? $this->matchingDuplicateIndexes($workItems, $signature) : [];
         $isDuplicateReviewItem = $this->isDuplicateReviewItem($workItem) || count($matchingIndexes) > 1;
 
@@ -825,7 +826,7 @@ final class NormativeCandidateFeedbackService
                 continue;
             }
 
-            if ($signature !== null && $this->duplicateSignature($candidate) === $signature) {
+            if ($signature !== null && WorkItemDuplicateSignature::fromWorkItem($candidate)?->value === $signature) {
                 $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$index] = $this->clearDuplicateReviewFlags($candidate);
             }
         }
@@ -882,7 +883,7 @@ final class NormativeCandidateFeedbackService
         $indexes = [];
 
         foreach ($workItems as $index => $workItem) {
-            if (is_array($workItem) && $this->duplicateSignature($workItem) === $signature) {
+            if (is_array($workItem) && WorkItemDuplicateSignature::fromWorkItem($workItem)?->value === $signature) {
                 $indexes[] = (int) $index;
             }
         }
@@ -900,7 +901,7 @@ final class NormativeCandidateFeedbackService
         }
 
         foreach ($workItems as $workItem) {
-            if (is_array($workItem) && $this->duplicateSignature($workItem) === $signature) {
+            if (is_array($workItem) && WorkItemDuplicateSignature::fromWorkItem($workItem)?->value === $signature) {
                 $key = $this->nullableString($workItem['key'] ?? null);
 
                 if ($key !== null) {
@@ -1097,41 +1098,6 @@ final class NormativeCandidateFeedbackService
         }
 
         return false;
-    }
-
-    /**
-     * @param  array<string, mixed>  $workItem
-     */
-    private function duplicateSignature(array $workItem): ?string
-    {
-        $name = $this->normalizeSignaturePart((string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''));
-        $unit = $this->normalizeSignaturePart((string) ($workItem['unit'] ?? ''));
-        $quantity = round((float) ($workItem['quantity'] ?? 0), 4);
-
-        if ($name === '' || $unit === '' || $quantity <= 0) {
-            return null;
-        }
-
-        $normativeIdentity = $this->normalizeSignaturePart((string) (
-            $workItem['normative_rate_code']
-            ?? $workItem['normative_search_key']
-            ?? $workItem['quantity_formula']
-            ?? ''
-        ));
-
-        return hash('sha256', implode('|', [
-            $name,
-            $unit,
-            (string) $quantity,
-            $normativeIdentity,
-        ]));
-    }
-
-    private function normalizeSignaturePart(string $value): string
-    {
-        $value = mb_strtolower(trim($value));
-
-        return preg_replace('/\s+/u', ' ', $value) ?? $value;
     }
 
     /**

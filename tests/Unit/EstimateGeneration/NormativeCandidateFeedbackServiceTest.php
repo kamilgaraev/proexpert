@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateFeedbackService;
 use Illuminate\Validation\ValidationException;
@@ -422,6 +422,112 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
         self::assertSame(['work-2'], $updated['review_decisions'][0]['removed_work_item_keys']);
     }
 
+    public function test_duplicate_merge_preserves_a_distinct_technological_layer_with_the_same_norm_and_quantity(): void
+    {
+        $sharedWorkItem = [
+            'item_type' => 'priced_work',
+            'name' => 'Изоляционный слой кровли',
+            'normative_search_text' => 'устройство прокладочной изоляции в один слой',
+            'normative_rate_code' => '12-01-015-03',
+            'unit' => 'm2',
+            'quantity' => 152.955,
+            'quantity_basis' => 'Геометрия кровли',
+            'total_cost' => 15000,
+            'materials' => [['total_price' => 10000]],
+            'labor' => [['total_price' => 4500]],
+            'machinery' => [['total_price' => 500]],
+            'pricing_status' => 'calculated',
+            'validation_flags' => [],
+            'confidence' => 0.88,
+        ];
+        $vaporBarrier = [
+            ...$sharedWorkItem,
+            'quantity_formula' => 'roof.area',
+            'metadata' => [
+                'quantity_key' => 'roof.area',
+                'composition_work_key' => 'roof.vapor_barrier',
+                'material_scenario_work_key' => 'roof.vapor_barrier',
+            ],
+            'validation_flags' => ['possible_duplicate_work_item', 'requires_duplicate_review'],
+        ];
+        $draft = $this->drafts([
+            ['key' => 'vapor-1', ...$vaporBarrier],
+            ['key' => 'vapor-2', ...$vaporBarrier],
+            [
+                'key' => 'membrane-1',
+                ...$sharedWorkItem,
+                'quantity_formula' => 'roof.area',
+                'metadata' => [
+                    'quantity_key' => 'roof.area',
+                    'composition_work_key' => 'roof.membrane',
+                    'material_scenario_work_key' => 'roof.membrane',
+                ],
+            ],
+        ]);
+
+        $updated = $this->service()->applyDuplicateResolutionToDraft($draft, 'vapor-2', [
+            'action' => 'merge_with_existing',
+            'target_work_item_key' => 'vapor-1',
+        ]);
+
+        self::assertSame(
+            ['vapor-1', 'membrane-1'],
+            array_column($updated['local_estimates'][0]['sections'][0]['work_items'], 'key'),
+        );
+        self::assertSame(['vapor-2'], $updated['review_decisions'][0]['removed_work_item_keys']);
+    }
+
+    public function test_duplicate_merge_accepts_the_same_work_from_sources_with_different_metadata_completeness(): void
+    {
+        $sharedWorkItem = [
+            'item_type' => 'priced_work',
+            'name' => 'Пароизоляция скатной кровли',
+            'normative_search_text' => 'устройство пароизоляции кровли прокладочной в один слой',
+            'normative_rate_code' => '12-01-015-03',
+            'unit' => 'm2',
+            'quantity' => 152.955,
+            'quantity_formula' => 'roof.vapor_barrier',
+            'quantity_basis' => 'Геометрия кровли',
+            'total_cost' => 15000,
+            'materials' => [['total_price' => 10000]],
+            'labor' => [['total_price' => 4500]],
+            'machinery' => [['total_price' => 500]],
+            'pricing_status' => 'calculated',
+            'validation_flags' => ['possible_duplicate_work_item', 'requires_duplicate_review'],
+            'confidence' => 0.88,
+        ];
+        $draft = $this->drafts([
+            [
+                'key' => 'document-vapor-barrier',
+                ...$sharedWorkItem,
+                'metadata' => ['quantity_key' => 'roof.vapor_barrier'],
+            ],
+            [
+                'key' => 'planner-vapor-barrier',
+                ...$sharedWorkItem,
+                'metadata' => [
+                    'quantity_key' => 'roof.vapor_barrier',
+                    'composition_work_key' => 'roof.vapor_barrier',
+                    'material_scenario_work_key' => 'roof.vapor_barrier',
+                ],
+            ],
+        ]);
+
+        $updated = $this->service()->applyDuplicateResolutionToDraft($draft, 'planner-vapor-barrier', [
+            'action' => 'merge_with_existing',
+            'target_work_item_key' => 'document-vapor-barrier',
+        ]);
+
+        self::assertSame(
+            ['document-vapor-barrier'],
+            array_column($updated['local_estimates'][0]['sections'][0]['work_items'], 'key'),
+        );
+        self::assertSame(
+            ['planner-vapor-barrier'],
+            $updated['review_decisions'][0]['removed_work_item_keys'],
+        );
+    }
+
     public function test_removes_generic_no_air_work_item_from_draft(): void
     {
         $draft = $this->drafts([
@@ -477,7 +583,7 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function draft(array $workItem): array
@@ -486,7 +592,7 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
     }
 
     /**
-     * @param array<int, array<string, mixed>> $workItems
+     * @param  array<int, array<string, mixed>>  $workItems
      * @return array<string, mixed>
      */
     private function drafts(array $workItems): array
@@ -513,13 +619,12 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
             $this->createMock(EstimateValidationService::class),
             $this->createMock(EstimateGenerationPackagePersistenceService::class),
             static fn (string $key): string => $key,
-            static fn (array $messages): ValidationException => new class($messages) extends ValidationException {
+            static fn (array $messages): ValidationException => new class($messages) extends ValidationException
+            {
                 /**
-                 * @param array<string, array<int, string>> $messages
+                 * @param  array<string, array<int, string>>  $messages
                  */
-                public function __construct(private readonly array $messages)
-                {
-                }
+                public function __construct(private readonly array $messages) {}
 
                 public function errors()
                 {

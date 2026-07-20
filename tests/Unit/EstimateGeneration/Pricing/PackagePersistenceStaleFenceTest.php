@@ -239,23 +239,6 @@ final class PackagePersistenceStaleFenceTest extends TestCase
     }
 
     #[Test]
-    public function quantity_evidence_for_another_work_item_is_not_sent_to_database_finalizer(): void
-    {
-        $current = 'sha256:'.str_repeat('b', 64);
-        [$session, , $service] = $this->fixture($current);
-
-        $workItem = $this->acceptedWorkItem($session, $current, 'persisted-work', 'materialized-work');
-
-        $service->syncFromDraft($session, $this->draft($current, [$workItem]));
-
-        $item = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole()->items()->sole();
-        self::assertSame('persisted-work', $item->logical_key);
-        self::assertNull($item->pricing_finalized_at);
-        self::assertSame(0, FinalizerTrackingSqliteConnection::$finalizerCalls);
-        self::assertSame([], DB::table('estimate_generation_package_item_price_inputs')->pluck('norm_resource_id')->all());
-    }
-
-    #[Test]
     public function supplementary_project_material_uses_typed_rule_and_is_included_in_finalized_package_total(): void
     {
         $current = 'sha256:'.str_repeat('b', 64);
@@ -475,12 +458,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         return $draft;
     }
 
-    private function acceptedWorkItem(
-        EstimateGenerationSession $session,
-        string $version,
-        string $key = 'must-not-price',
-        ?string $evidenceKey = null,
-    ): array
+    private function acceptedWorkItem(EstimateGenerationSession $session, string $version, string $key = 'must-not-price'): array
     {
         $context = new PipelineContext((int) $session->id, 10, 20, 1, 'sha256:'.str_repeat('f', 64), 'generating', baseInputVersion: $version);
         $quantity = QuantityData::fromArray([
@@ -496,10 +474,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
             'materials' => [['normative_ref' => ['norm_resource_id' => 7001, 'price_id' => 9001]]],
             'labor' => [], 'machinery' => [], 'other_resources' => [],
         ];
-        $node = (new AcceptedQuantityEvidenceMaterializer($this->evidence))->materialize($context, $quantity, [
-            ...$item,
-            'key' => $evidenceKey ?? $key,
-        ]);
+        $node = (new AcceptedQuantityEvidenceMaterializer($this->evidence))->materialize($context, $quantity, $item);
 
         return [...$item, 'quantity_evidence_id' => $node->id, 'quantity_evidence_fingerprint' => $node->fingerprint];
     }

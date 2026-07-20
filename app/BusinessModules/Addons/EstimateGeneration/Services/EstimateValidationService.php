@@ -96,7 +96,7 @@ class EstimateValidationService
                     }
 
                     if ($isPricedItem) {
-                        $duplicateSignature = $this->duplicateSignature($workItem);
+                        $duplicateSignature = WorkItemDuplicateSignature::fromWorkItem($workItem)?->value;
 
                         if ($duplicateSignature !== null && isset($seenWorkItemSignatures[$duplicateSignature])) {
                             $firstDuplicateIndex = $seenWorkItemSignatures[$duplicateSignature];
@@ -440,46 +440,6 @@ class EstimateValidationService
             ...array_map('strval', $existingFlags),
             ...$flags,
         ]));
-    }
-
-    /**
-     * @param  array<string, mixed>  $workItem
-     */
-    private function duplicateSignature(array $workItem): ?string
-    {
-        $name = $this->normalizeSignaturePart((string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''));
-        $unit = $this->normalizeSignaturePart((string) ($workItem['unit'] ?? ''));
-        $quantity = round((float) ($workItem['quantity'] ?? 0), 4);
-
-        if ($name === '' || $unit === '' || $quantity <= 0) {
-            return null;
-        }
-
-        $normativeIdentity = $this->normalizeSignaturePart((string) (
-            $workItem['normative_rate_code']
-            ?? $workItem['normative_search_key']
-            ?? ''
-        ));
-        $technologicalIdentity = $this->normalizeSignaturePart((string) (
-            $workItem['quantity_formula']
-            ?? data_get($workItem, 'metadata.quantity_key')
-            ?? ''
-        ));
-
-        return hash('sha256', implode('|', [
-            $name,
-            $unit,
-            (string) $quantity,
-            $normativeIdentity,
-            $technologicalIdentity,
-        ]));
-    }
-
-    private function normalizeSignaturePart(string $value): string
-    {
-        $value = mb_strtolower(trim($value));
-
-        return preg_replace('/\s+/u', ' ', $value) ?? $value;
     }
 
     /**
