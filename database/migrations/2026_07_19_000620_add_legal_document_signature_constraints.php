@@ -174,7 +174,7 @@ BEGIN
             NEW.is_current, NEW.created_at) THEN
             RAISE EXCEPTION 'legal_archive_version_content_update_forbidden';
         END IF;
-        IF NOT ((OLD.status NOT IN ('frozen', 'signed') AND NEW.status = 'frozen')
+        IF NOT ((OLD.status = 'uploaded' AND OLD.processing_status = 'ready' AND OLD.is_current AND NEW.status = 'frozen')
             OR (OLD.status = 'frozen' AND NEW.status = 'signed')) THEN
             RAISE EXCEPTION 'legal_archive_version_signature_transition_forbidden';
         END IF;

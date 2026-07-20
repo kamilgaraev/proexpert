@@ -23,13 +23,17 @@ final readonly class LegalSignatureProjection
         $latestVerificationIds = $this->connection->table('legal_signature_verifications')
             ->selectRaw('MAX(id)')
             ->groupBy('signature_id');
-        $verificationStatuses = $this->connection->table('legal_signature_verifications as verification')
-            ->join('legal_document_signatures as signature', 'signature.id', '=', 'verification.signature_id')
-            ->whereIn('verification.id', $latestVerificationIds)
+        $electronicEvidenceStatuses = $this->connection->table('legal_document_signatures as signature')
+            ->leftJoin('legal_signature_verifications as verification', static function ($join) use ($latestVerificationIds): void {
+                $join->on('verification.signature_id', '=', 'signature.id')
+                    ->whereIn('verification.id', $latestVerificationIds);
+            })
             ->where('signature.organization_id', $document->organization_id)
             ->where('signature.document_id', $document->id)
             ->where('signature.document_version_id', $document->current_primary_version_id)
-            ->pluck('verification.status')
+            ->where('signature.method', '<>', 'paper')
+            ->selectRaw('COALESCE(verification.status, signature.verification_status) AS effective_status')
+            ->pluck('effective_status')
             ->map(static fn (mixed $status): string => (string) $status)
             ->all();
         $hasCompleted = in_array('completed', $statuses, true);
@@ -47,10 +51,12 @@ final readonly class LegalSignatureProjection
         $requirementsSatisfied = array_diff($requiredKinds, $completedKinds) === [];
         if ($requests->isEmpty()) {
             [$signatureStatus, $lifecycle] = ['not_signed', 'draft'];
-        } elseif (in_array('revoked', $statuses, true) || in_array('revoked', $verificationStatuses, true)) {
+        } elseif (in_array('revoked', $electronicEvidenceStatuses, true)) {
             [$signatureStatus, $lifecycle] = ['revoked', 'signature_failed'];
-        } elseif (array_intersect($statuses, ['failed', 'expired']) !== [] || in_array('failed', $verificationStatuses, true)) {
+        } elseif (array_intersect($statuses, ['failed', 'expired']) !== [] || in_array('failed', $electronicEvidenceStatuses, true)) {
             [$signatureStatus, $lifecycle] = ['verification_failed', 'signature_failed'];
+        } elseif (in_array('pending_verification', $electronicEvidenceStatuses, true)) {
+            [$signatureStatus, $lifecycle] = ['pending', 'signing'];
         } elseif (($hasPending && $hasCompleted) || (! $hasPending && $hasCompleted && ! $requirementsSatisfied)) {
             [$signatureStatus, $lifecycle] = ['partially_signed', 'partially_signed'];
         } elseif ($hasPending) {
@@ -58,7 +64,7 @@ final readonly class LegalSignatureProjection
         } else {
             [$signatureStatus, $lifecycle] = ['signed', 'signed'];
         }
-        $hasElectronic = $requests->contains(static fn (object $request): bool => $request->status === 'completed' && $request->method !== 'paper');
+        $hasElectronic = in_array('verified', $electronicEvidenceStatuses, true);
         $hasPaper = $requests->contains(static fn (object $request): bool => $request->status === 'completed' && $request->method === 'paper');
         $document->forceFill([
             'signature_status' => $signatureStatus,

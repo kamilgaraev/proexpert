@@ -89,6 +89,7 @@ final class LegalDocumentSignatureServiceTest extends TestCase
         self::assertStringContainsString('pg_get_indexdef', $indexes);
         self::assertStringContainsString('legal_signature_append_only_guard', $constraints);
         self::assertStringContainsString('legal_archive_version_signature_transition_forbidden', $constraints);
+        self::assertStringContainsString("OLD.status = 'uploaded' AND OLD.processing_status = 'ready' AND OLD.is_current", $constraints);
         self::assertStringContainsString('VALIDATE CONSTRAINT', $validate);
         self::assertStringContainsString('forward_only', $create);
     }

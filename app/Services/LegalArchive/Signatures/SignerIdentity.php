@@ -20,6 +20,8 @@ final readonly class SignerIdentity
         public ?string $taxNumber = null,
         public ?string $position = null,
         public ?string $partyRole = null,
+        public ?string $registrationNumber = null,
+        public ?string $authorityBasis = null,
     ) {
         if (! in_array($kind, self::KINDS, true) || trim($name) === '' || mb_strlen($name) > 255) {
             throw new DomainException('legal_signature_signer_identity_invalid');
@@ -29,12 +31,15 @@ final readonly class SignerIdentity
                 && $partyId === null && $roleSlug === null,
             'organization' => $organizationId !== null && $organizationId > 0 && $userId === null
                 && $partyId === null && $roleSlug === null && self::bounded($taxNumber, 32, true),
-            'party' => $partyId !== null && $partyId > 0 && $userId === null && $roleSlug === null,
+            'party' => $partyId !== null && $partyId > 0 && $userId === null && $roleSlug === null
+                && self::bounded($partyRole, 64, true),
             'role' => $userId !== null && $userId > 0 && $organizationId !== null && $organizationId > 0
                 && self::bounded($roleSlug, 191, true) && $partyId === null,
             'manual' => $userId === null && $organizationId === null && $partyId === null && $roleSlug === null,
         };
-        if (! $valid || ! self::bounded($taxNumber, 32) || ! self::bounded($position, 255) || ! self::bounded($partyRole, 64)) {
+        if (! $valid || ! self::bounded($taxNumber, 32) || ! self::bounded($position, 255)
+            || ! self::bounded($partyRole, 64) || ! self::bounded($registrationNumber, 64)
+            || ! self::bounded($authorityBasis, 512)) {
             throw new DomainException('legal_signature_signer_identity_invalid');
         }
     }
@@ -51,6 +56,8 @@ final readonly class SignerIdentity
             'tax_number' => $this->taxNumber === null ? null : trim($this->taxNumber),
             'position' => $this->position === null ? null : trim($this->position),
             'party_role' => $this->partyRole === null ? null : trim($this->partyRole),
+            'registration_number' => $this->registrationNumber === null ? null : trim($this->registrationNumber),
+            'authority_basis' => $this->authorityBasis === null ? null : trim($this->authorityBasis),
         ];
     }
 
@@ -66,6 +73,8 @@ final readonly class SignerIdentity
             self::nullableString($value['tax_number'] ?? null),
             self::nullableString($value['position'] ?? null),
             self::nullableString($value['party_role'] ?? null),
+            self::nullableString($value['registration_number'] ?? null),
+            self::nullableString($value['authority_basis'] ?? null),
         );
     }
 

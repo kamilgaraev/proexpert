@@ -95,6 +95,20 @@ final class LegalArchiveDocumentVersion extends Model
         }
     }
 
+    public function transitionForSignature(string $status): void
+    {
+        $from = (string) $this->status;
+        $allowed = ($from === 'uploaded' && $status === 'frozen'
+                && (string) $this->processing_status === 'ready' && (bool) $this->is_current)
+            || ($from === 'frozen' && $status === 'signed');
+        if (! $allowed) {
+            throw new ImmutableDataException(self::class, 'transition');
+        }
+        self::technicalMutation(function () use ($status): void {
+            $this->forceFill(['status' => $status])->save();
+        });
+    }
+
     public function document(): BelongsTo
     {
         return $this->belongsTo(LegalArchiveDocument::class, 'document_id');
