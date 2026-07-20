@@ -77,6 +77,7 @@ Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'verified', 'orga
             ->defaults('purpose', 'download')->whereNumber('version')->name('legal-document-versions.download');
         Route::post('/legal-workflow-steps/{step}/{action}', [LegalArchiveController::class, 'decide'])
             ->whereNumber('step')->whereIn('action', ['approve', 'reject', 'return'])->name('legal-workflow-steps.decide');
+        Route::post('/legal-signature-requests/{signatureRequest}/upload-original', [LegalArchiveController::class, 'uploadOriginal'])->whereNumber('signatureRequest')->name('legal-signature-requests.upload-original');
         Route::post('/legal-signature-requests/{signatureRequest}/signing-session', [LegalArchiveController::class, 'signingSession'])
             ->whereNumber('signatureRequest')->name('legal-signature-requests.signing-session');
         Route::get('/finance/summary', [FinanceController::class, 'summary'])->name('finance.summary');
