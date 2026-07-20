@@ -39,7 +39,7 @@ return new class extends Migration
         throw new RuntimeException('legal_workflow_migrations_are_forward_only');
     }
 
-    /** @return array<string, array{table: string, unique: bool, method: string, keys: list<string>, include: list<string>, nulls_not_distinct: bool, predicate: ?string, sql: string}> */
+    /** @return array<string, array{table: string, unique: bool, immediate: bool, exclusion: bool, primary: bool, method: string, keys: list<string>, include: list<string>, nulls_not_distinct: bool, predicate: ?string, sql: string}> */
     private function indexes(): array
     {
         return [
@@ -61,12 +61,15 @@ return new class extends Migration
         ];
     }
 
-    /** @param list<string> $keys @return array{table: string, unique: bool, method: string, keys: list<string>, include: list<string>, nulls_not_distinct: bool, predicate: ?string, sql: string} */
+    /** @param list<string> $keys @return array{table: string, unique: bool, immediate: bool, exclusion: bool, primary: bool, method: string, keys: list<string>, include: list<string>, nulls_not_distinct: bool, predicate: ?string, sql: string} */
     private function descriptor(string $table, bool $unique, array $keys, ?string $predicate, string $sql): array
     {
         return [
             'table' => $table,
             'unique' => $unique,
+            'immediate' => true,
+            'exclusion' => false,
+            'primary' => false,
             'method' => 'btree',
             'keys' => $keys,
             'include' => [],
@@ -76,7 +79,7 @@ return new class extends Migration
         ];
     }
 
-    /** @param array{table: string, unique: bool, method: string, keys: list<string>, include: list<string>, nulls_not_distinct: bool, predicate: ?string, sql: string} $expected */
+    /** @param array{table: string, unique: bool, immediate: bool, exclusion: bool, primary: bool, method: string, keys: list<string>, include: list<string>, nulls_not_distinct: bool, predicate: ?string, sql: string} $expected */
     private function sameDescriptor(object $actual, array $expected): bool
     {
         return $actual->table_name === $expected['table']
@@ -84,6 +87,9 @@ return new class extends Migration
             && (bool) $actual->indisvalid
             && (bool) $actual->indisready
             && (bool) $actual->indislive
+            && (bool) $actual->indimmediate === $expected['immediate']
+            && (bool) $actual->indisexclusion === $expected['exclusion']
+            && (bool) $actual->indisprimary === $expected['primary']
             && $actual->access_method === $expected['method']
             && (bool) $actual->indnullsnotdistinct === $expected['nulls_not_distinct']
             && (int) $actual->indnkeyatts === count($expected['keys'])
@@ -103,8 +109,11 @@ SELECT table_class.relname AS table_name,
        i.indisvalid::integer AS indisvalid,
        i.indisready::integer AS indisready,
        i.indislive::integer AS indislive,
+       i.indimmediate::integer AS indimmediate,
+       i.indisexclusion::integer AS indisexclusion,
+       i.indisprimary::integer AS indisprimary,
        i.indnkeyatts, i.indnatts,
-       i.indnullsnotdistinct::integer AS indnullsnotdistinct,
+       COALESCE((to_jsonb(i)->>'indnullsnotdistinct')::boolean, false)::integer AS indnullsnotdistinct,
        to_json(ARRAY(
            SELECT pg_get_indexdef(i.indexrelid, position, true)
            FROM generate_series(1, i.indnkeyatts) AS position

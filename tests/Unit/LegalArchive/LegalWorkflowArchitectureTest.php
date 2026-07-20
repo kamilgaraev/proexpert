@@ -21,6 +21,9 @@ final class LegalWorkflowArchitectureTest extends TestCase
             'indisvalid' => true,
             'indisready' => true,
             'indislive' => true,
+            'indimmediate' => true,
+            'indisexclusion' => false,
+            'indisprimary' => false,
             'indnkeyatts' => 4,
             'indnatts' => 4,
             'indnullsnotdistinct' => false,
@@ -40,6 +43,9 @@ final class LegalWorkflowArchitectureTest extends TestCase
             ['key_definitions' => '["organization_id","actor_type","actor_reference","due_at DESC NULLS FIRST"]'],
             ['indnatts' => 5, 'include_definitions' => '["step_key"]'],
             ['indnullsnotdistinct' => true],
+            ['indimmediate' => false],
+            ['indisexclusion' => true],
+            ['indisprimary' => true],
         ] as $drift) {
             self::assertFalse($sameDescriptorMethod->invoke($migration, (object) [
                 ...get_object_vars($actual),
@@ -66,7 +72,11 @@ final class LegalWorkflowArchitectureTest extends TestCase
         self::assertStringContainsString('JOIN pg_am access_method', $indexes);
         self::assertStringContainsString('i.indnkeyatts', $indexes);
         self::assertStringContainsString('i.indnatts', $indexes);
-        self::assertStringContainsString('i.indnullsnotdistinct', $indexes);
+        self::assertStringContainsString("COALESCE((to_jsonb(i)->>'indnullsnotdistinct')::boolean, false)::integer", $indexes);
+        self::assertStringNotContainsString('i.indnullsnotdistinct', $indexes);
+        self::assertStringContainsString('i.indimmediate', $indexes);
+        self::assertStringContainsString('i.indisexclusion', $indexes);
+        self::assertStringContainsString('i.indisprimary', $indexes);
         self::assertStringContainsString('key_definitions', $indexes);
         self::assertStringContainsString('include_definitions', $indexes);
         self::assertStringContainsString('i.indisready', $indexes);

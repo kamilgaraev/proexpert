@@ -751,7 +751,18 @@ final class LegalDocumentWorkflowTest extends TestCase
     {
         [$document, $version] = $this->dossier();
         $actor = $this->actor(8, ['legal_reviewer']);
-        $this->createTemplate($actor);
+        $this->templates->createVersion(15, 'contract', 'Бессрочное согласование', [
+            [
+                'key' => 'legal_review',
+                'label' => 'Юридическая проверка',
+                'sequence' => 10,
+                'parallel_group' => 'legal',
+                'required' => true,
+                'policy_key' => 'legal_review',
+                'actor_type' => 'role',
+                'actor_reference' => 'legal_reviewer',
+            ],
+        ], $actor);
         $instance = $this->service->submit(
             $document,
             (int) $version->id,
@@ -759,13 +770,10 @@ final class LegalDocumentWorkflowTest extends TestCase
             WorkflowOverride::none('null-due-submit'),
         );
         $step = $instance->steps()->where('status', 'active')->firstOrFail();
-        $this->database->getConnection()->table('legal_workflow_steps')
-            ->where('instance_id', $instance->id)
-            ->where('status', 'active')
-            ->update(['due_at' => null]);
-        $this->database->getConnection()->table('legal_workflow_instances')
-            ->where('id', $instance->id)
-            ->update(['due_at' => null]);
+        self::assertNull($step->due_in_hours);
+        self::assertNull($step->deadline_at);
+        self::assertNull($step->due_at);
+        self::assertNull($instance->due_at);
 
         $updated = $this->service->decide($step->refresh(), $actor, new WorkflowDecisionInput(
             'reassign',
