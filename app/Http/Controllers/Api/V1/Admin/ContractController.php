@@ -21,6 +21,8 @@ use App\Http\Resources\Api\V1\Admin\Contract\Specification\SpecificationResource
 use App\Http\Responses\AdminResponse;
 use App\Services\Contract\ContractLifecycleService;
 use App\Services\Contract\ContractService;
+use App\Services\Contract\ContractDossierCreationService;
+use App\DTOs\Contract\ContractDossierCreationInput;
 use Exception;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -36,14 +38,18 @@ class ContractController extends Controller
 
     protected ContractLifecycleService $contractLifecycleService;
 
+    protected ContractDossierCreationService $contractDossierCreationService;
+
     public function __construct(
         ContractService $contractService,
         OfficialFormsExportService $exportService,
-        ContractLifecycleService $contractLifecycleService
+        ContractLifecycleService $contractLifecycleService,
+        ContractDossierCreationService $contractDossierCreationService,
     ) {
         $this->contractService = $contractService;
         $this->exportService = $exportService;
         $this->contractLifecycleService = $contractLifecycleService;
+        $this->contractDossierCreationService = $contractDossierCreationService;
     }
 
     /**
@@ -174,12 +180,21 @@ class ContractController extends Controller
         try {
             $contractDTO = $request->toDto();
 
-            // Получаем ProjectContext если доступен (для project-based routes)
-            $projectContext = ProjectContextMiddleware::getProjectContext($request);
+            $result = $this->contractDossierCreationService->create(
+                (int) $organizationId,
+                $user,
+                new ContractDossierCreationInput(
+                    $contractDTO,
+                    $request->validated('idempotency_key'),
+                    $request->validated('document_title') ?? 'Договор №'.$contractDTO->number,
+                    $request->validated('document_profile_code') ?? $this->documentProfileCode($contractDTO),
+                    $request->validated('document_metadata') ?? [],
+                    $request->validated('document_confidentiality_level'),
+                ),
+            );
+            $contract = $result->contract;
 
-            $contract = $this->contractService->createContract($organizationId, $contractDTO, $projectContext);
-
-            return AdminResponse::success(new ContractResource($contract), null, Response::HTTP_CREATED);
+            return AdminResponse::success(new ContractResource($contract), null, $result->replayed ? Response::HTTP_OK : Response::HTTP_CREATED);
         } catch (QueryException $e) {
             Log::error('contract.store.query_failed', [
                 'organization_id' => $organizationId,
@@ -191,6 +206,11 @@ class ContractController extends Controller
         } catch (Exception $e) {
             return AdminResponse::error(trans_message('contract.create_error').': '.$e->getMessage(), Response::HTTP_BAD_REQUEST);
         }
+    }
+
+    private function documentProfileCode(\App\DTOs\Contract\ContractDTO $contract): string
+    {
+        return $contract->supplier_id !== null ? 'contract.supply' : 'contract.work';
     }
 
     /**

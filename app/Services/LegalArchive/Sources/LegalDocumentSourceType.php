@@ -13,6 +13,7 @@ enum LegalDocumentSourceType: string
     case PURCHASE_ORDER = 'purchase_order';
     case PAYMENT_DOCUMENT = 'payment_document';
     case COMMERCIAL_PROPOSAL = 'commercial_proposal';
+    case CRM_DEAL = 'crm_deal';
 
     public static function values(): array
     {

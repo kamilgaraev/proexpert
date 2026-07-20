@@ -14,6 +14,7 @@ use App\BusinessModules\Features\Tenders\Models\Tender;
 use App\BusinessModules\Features\Tenders\Services\TenderTimelineService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\DTOs\Contract\ContractDTO;
+use App\DTOs\Contract\ContractDossierCreationInput;
 use App\DTOs\Project\ProjectDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
@@ -22,7 +23,7 @@ use App\Models\Contractor;
 use App\Models\Project;
 use App\Models\Supplier;
 use App\Models\User;
-use App\Services\Contract\ContractService;
+use App\Services\Contract\ContractDossierCreationService;
 use App\Services\Logging\LoggingService;
 use App\Services\Project\ProjectBudgetAmountService;
 use App\Services\Project\ProjectService;
@@ -50,7 +51,7 @@ final class DealConversionWizardService
 
     public function __construct(
         private readonly ProjectService $projectService,
-        private readonly ContractService $contractService,
+        private readonly ContractDossierCreationService $contractDossiers,
         private readonly CrmTimelineService $crmTimeline,
         private readonly TenderTimelineService $tenderTimeline,
         private readonly AuthorizationService $authorization,
@@ -153,7 +154,15 @@ final class DealConversionWizardService
 
             try {
                 $project = $this->resolveProjectForConvert($organizationId, $preview, $data, $request);
-                $contract = $this->resolveContractForConvert($organizationId, $preview, $data, $project);
+                $contract = $this->resolveContractForConvert(
+                    $organizationId,
+                    $preview,
+                    $data,
+                    $project,
+                    $user,
+                    $idempotencyKey,
+                    $context,
+                );
 
                 $this->attachCreatedObjects($organizationId, $context, $project, $contract, $user->id);
                 $this->recordConversionEvents($organizationId, $context, $project, $contract, $user->id);
@@ -311,7 +320,15 @@ final class DealConversionWizardService
         ), $request);
     }
 
-    private function resolveContractForConvert(int $organizationId, array $preview, array $data, Project $project): Contract
+    private function resolveContractForConvert(
+        int $organizationId,
+        array $preview,
+        array $data,
+        Project $project,
+        User $actor,
+        string $idempotencyKey,
+        array $context,
+    ): Contract
     {
         if ($preview['contract']['mode'] === 'reuse') {
             $contractId = (int) ($preview['contract']['existing']['id'] ?? $data['contract']['id'] ?? 0);
@@ -333,7 +350,7 @@ final class DealConversionWizardService
         $baseAmount = $this->nullableFloat($fields['base_amount'] ?? null);
         $totalAmount = $this->nullableFloat($fields['total_amount'] ?? null) ?? $baseAmount;
 
-        return $this->contractService->createContract($organizationId, new ContractDTO(
+        $contract = new ContractDTO(
             project_id: $project->id,
             contractor_id: isset($fields['contractor_id']) ? (int) $fields['contractor_id'] : null,
             parent_contract_id: null,
@@ -365,7 +382,34 @@ final class DealConversionWizardService
             supplier_id: isset($fields['supplier_id']) ? (int) $fields['supplier_id'] : null,
             contract_category: null,
             contract_side_type: $sideType
-        ));
+        );
+        $deal = $context['deal'];
+        $proposal = $context['commercial_proposal'];
+        $links = [[
+            'link_type' => 'crm_deal',
+            'linked_type' => 'crm_deal',
+            'linked_id' => (string) $deal->id,
+            'display_name' => $deal->title,
+        ]];
+        if ($proposal instanceof CommercialProposal) {
+            $links[] = [
+                'link_type' => 'commercial_proposal',
+                'linked_type' => 'commercial_proposal',
+                'linked_id' => (string) $proposal->id,
+                'display_name' => $proposal->number,
+            ];
+        }
+
+        return $this->contractDossiers->create($organizationId, $actor, new ContractDossierCreationInput(
+            contract: $contract,
+            idempotencyKey: 'crm-conversion:'.$idempotencyKey,
+            documentTitle: 'Договор №'.$contract->number,
+            profileCode: $contract->supplier_id === null ? 'contract.work' : 'contract.supply',
+            documentMetadata: ['preview_hash' => $preview['preview_hash']],
+            sourceLinks: $links,
+            sourceType: 'crm_deal',
+            sourceId: (string) $deal->id,
+        ))->contract;
     }
 
     private function attachCreatedObjects(int $organizationId, array $context, Project $project, Contract $contract, int $actorUserId): void

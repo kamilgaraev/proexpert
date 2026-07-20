@@ -6,6 +6,7 @@ namespace App\Services\LegalArchive\Sources;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\CommercialProposals\Models\CommercialProposal;
+use App\BusinessModules\Features\Crm\Models\CrmDeal;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
@@ -24,8 +25,13 @@ final class LegalDocumentSourceResolver
             return null;
         }
         $type = is_string($sourceType) ? LegalDocumentSourceType::tryFrom($sourceType) : null;
-        $id = filter_var($sourceId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-        if ($type === null || $id === false || $organizationId < 1) {
+        if ($type === null || $organizationId < 1) {
+            $this->invalid();
+        }
+        $id = $type === LegalDocumentSourceType::CRM_DEAL
+            ? trim((string) $sourceId)
+            : filter_var($sourceId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($id === '' || $id === false) {
             $this->invalid();
         }
 
@@ -43,6 +49,8 @@ final class LegalDocumentSourceResolver
             LegalDocumentSourceType::PAYMENT_DOCUMENT => PaymentDocument::query()
                 ->whereKey($id)->where('organization_id', $organizationId)->first(),
             LegalDocumentSourceType::COMMERCIAL_PROPOSAL => CommercialProposal::query()
+                ->whereKey($id)->where('organization_id', $organizationId)->first(),
+            LegalDocumentSourceType::CRM_DEAL => CrmDeal::query()
                 ->whereKey($id)->where('organization_id', $organizationId)->first(),
         };
         if (! $source instanceof Model) {

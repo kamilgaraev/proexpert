@@ -3,13 +3,17 @@
 namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
+use App\DTOs\Contract\ContractDTO;
+use App\DTOs\Contract\ContractDossierCreationInput;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Models\Contract;
 use App\Models\Contractor;
+use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Contract\ContractAuditedMutationService;
-use App\Services\Contract\ContractStateEventService;
+use App\Services\Contract\ContractDossierCreationService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
@@ -19,55 +23,44 @@ class PurchaseContractService
 {
     public function __construct(
         private readonly ContractAuditedMutationService $contractMutations,
-        private readonly ContractStateEventService $stateEventService,
+        private readonly ContractDossierCreationService $dossiers,
     ) {}
 
-    public function createManualContract(array $data, int $organizationId): Contract
+    public function createManualContract(array $data, int $organizationId, string $idempotencyKey): Contract
     {
         $this->validateProcurementContractCreation($data, $organizationId);
 
-        DB::beginTransaction();
+        $actor = $this->actor();
+        $number = (string) ($data['number'] ?? $this->generateContractNumber($organizationId));
+        $result = $this->dossiers->create($organizationId, $actor, new ContractDossierCreationInput(
+            contract: $this->contractDto($data + ['number' => $number]),
+            idempotencyKey: 'procurement-manual:'.$idempotencyKey,
+            documentTitle: $data['subject'] ?? 'Договор поставки №'.$number,
+            profileCode: 'contract.supply',
+        ));
 
-        try {
-            $attributes = [
-                'organization_id' => $organizationId,
-                'project_id' => $data['project_id'] ?? null,
-                'supplier_id' => $data['supplier_id'],
-                'contract_category' => 'procurement',
-                'number' => $data['number'] ?? $this->generateContractNumber($organizationId),
-                'date' => $data['date'],
-                'subject' => $data['subject'],
-                'work_type_category' => ContractWorkTypeCategoryEnum::SUPPLY,
-                'base_amount' => $data['total_amount'],
-                'total_amount' => $data['total_amount'],
-                'status' => ContractStatusEnum::DRAFT,
-                'start_date' => $data['start_date'] ?? null,
-                'end_date' => $data['end_date'] ?? null,
-                'notes' => $data['notes'] ?? null,
-                'is_fixed_amount' => true,
-            ];
-            $contract = $this->contractMutations->create($attributes, Auth::id(), function (Contract $created): array {
-                $stateEvent = $this->stateEventService->createContractCreatedEvent($created);
-
-                return ['source_event_id' => 'contract_state_event:'.(string) $stateEvent->id, 'origin' => 'procurement_manual'];
-            });
-
-            DB::commit();
-
-            return $contract->fresh(['supplier', 'project', 'organization']);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw $e;
-        }
+        return $result->contract->fresh(['supplier', 'project', 'organization']);
     }
 
     public function createFromOrder(PurchaseOrder $order): Contract
     {
-        $order->loadMissing(['externalSupplierContact', 'supplierParty', 'purchaseRequest.siteRequest']);
-
-        DB::beginTransaction();
-
-        try {
+        return DB::transaction(function () use ($order): Contract {
+            $order = PurchaseOrder::query()
+                ->whereKey($order->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            if ($order->contract_id !== null) {
+                return $order->contract()->firstOrFail();
+            }
+            if (! in_array($order->status, [
+                PurchaseOrderStatusEnum::CONFIRMED,
+                PurchaseOrderStatusEnum::IN_DELIVERY,
+                PurchaseOrderStatusEnum::PARTIALLY_DELIVERED,
+                PurchaseOrderStatusEnum::DELIVERED,
+            ], true)) {
+                throw new \DomainException(trans_message('procurement.purchase_orders.contract_creation_status_invalid'));
+            }
+            $order->loadMissing(['externalSupplierContact', 'supplierParty', 'purchaseRequest.siteRequest']);
             $externalContractor = $this->resolveExternalSupplierContractor($order);
 
             $validationData = [
@@ -77,41 +70,39 @@ class PurchaseContractService
 
             $this->validateProcurementContractCreation($validationData, $order->organization_id);
 
-            $contractNumber = $this->generateContractNumber($order->organization_id);
-
-            $attributes = [
-                'organization_id' => $order->organization_id,
-                'project_id' => $order->purchaseRequest?->siteRequest?->project_id,
-                'contractor_id' => $externalContractor?->id,
-                'supplier_id' => $order->supplier_id,
-                'contract_category' => 'procurement',
-                'number' => $contractNumber,
-                'date' => now(),
-                'subject' => "Договор поставки по заказу {$order->order_number}",
-                'work_type_category' => ContractWorkTypeCategoryEnum::SUPPLY,
-                'base_amount' => $order->total_amount,
-                'total_amount' => $order->total_amount,
-                'status' => ContractStatusEnum::DRAFT,
-                'notes' => "Создан из заказа поставщику: {$order->order_number}",
-                'is_fixed_amount' => true,
-            ];
-            $contract = $this->contractMutations->create($attributes, Auth::id(), function (Contract $created) use ($order): array {
-                $stateEvent = $this->stateEventService->createContractCreatedEvent($created);
-
-                return ['source_event_id' => 'contract_state_event:'.(string) $stateEvent->id, 'purchase_order_id' => (int) $order->id];
-            });
+            $contractNumber = sprintf('ДП-%s-%d', now()->format('Ym'), $order->id);
+            $result = $this->dossiers->create($order->organization_id, $this->actor(), new ContractDossierCreationInput(
+                contract: $this->contractDto([
+                    'project_id' => $order->purchaseRequest?->siteRequest?->project_id,
+                    'contractor_id' => $externalContractor?->id,
+                    'supplier_id' => $order->supplier_id,
+                    'number' => $contractNumber,
+                    'date' => now()->toDateString(),
+                    'subject' => 'Договор поставки по заказу '.$order->order_number,
+                    'total_amount' => (float) $order->total_amount,
+                    'notes' => 'Создан из заказа поставщику: '.$order->order_number,
+                ]),
+                idempotencyKey: 'purchase-order:'.$order->id,
+                documentTitle: 'Договор поставки №'.$contractNumber,
+                profileCode: 'contract.supply',
+                sourceLinks: [[
+                    'link_type' => 'purchase_order',
+                    'linked_type' => 'purchase_order',
+                    'linked_id' => (string) $order->id,
+                    'display_name' => $order->order_number,
+                ]],
+                sourceType: 'purchase_order',
+                sourceId: (string) $order->id,
+            ));
+            $contract = $result->contract;
 
             $order->update(['contract_id' => $contract->id]);
-
-            DB::commit();
-
-            event(new \App\BusinessModules\Features\Procurement\Events\PurchaseContractCreated($contract, $order));
+            if (! $result->replayed) {
+                DB::afterCommit(static fn () => event(new \App\BusinessModules\Features\Procurement\Events\PurchaseContractCreated($contract, $order)));
+            }
 
             return $contract->fresh(['supplier', 'contractor', 'project', 'organization']);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            throw $e;
-        }
+        });
     }
 
     public function validateProcurementContractCreation(array $data, int $organizationId): void
@@ -216,6 +207,48 @@ class PurchaseContractService
         }
 
         return sprintf('ДП-%s%s-%04d', $year, $month, $nextNumber);
+    }
+
+    private function actor(): User
+    {
+        $actor = Auth::user();
+        if (! $actor instanceof User) {
+            throw new \DomainException(trans_message('auth.unauthorized'));
+        }
+
+        return $actor;
+    }
+
+    private function contractDto(array $data): ContractDTO
+    {
+        return new ContractDTO(
+            project_id: isset($data['project_id']) ? (int) $data['project_id'] : null,
+            contractor_id: isset($data['contractor_id']) ? (int) $data['contractor_id'] : null,
+            parent_contract_id: null,
+            number: (string) $data['number'],
+            date: (string) $data['date'],
+            subject: $data['subject'] ?? null,
+            work_type_category: ContractWorkTypeCategoryEnum::SUPPLY,
+            payment_terms: $data['payment_terms'] ?? null,
+            base_amount: (float) $data['total_amount'],
+            total_amount: (float) $data['total_amount'],
+            gp_percentage: null,
+            gp_calculation_type: null,
+            gp_coefficient: null,
+            warranty_retention_calculation_type: null,
+            warranty_retention_percentage: null,
+            warranty_retention_coefficient: null,
+            subcontract_amount: null,
+            planned_advance_amount: null,
+            actual_advance_amount: null,
+            status: ContractStatusEnum::DRAFT,
+            start_date: $data['start_date'] ?? null,
+            end_date: $data['end_date'] ?? null,
+            notes: $data['notes'] ?? null,
+            is_fixed_amount: true,
+            supplier_id: isset($data['supplier_id']) ? (int) $data['supplier_id'] : null,
+            contract_category: 'procurement',
+        );
     }
 
     private function resolveExternalSupplierContractor(PurchaseOrder $order): ?Contractor

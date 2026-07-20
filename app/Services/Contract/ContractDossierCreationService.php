@@ -8,6 +8,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\DTOs\Contract\ContractDossierCreationInput;
 use App\DTOs\Contract\ContractDossierCreationResult;
 use App\Models\Contract;
+use App\Models\ContractDossierSource;
 use App\Models\User;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
@@ -34,6 +35,23 @@ final class ContractDossierCreationService
         try {
             return $this->connection->transaction(function () use ($organizationId, $actor, $input): ContractDossierCreationResult {
                 $key = $input->normalizedIdempotencyKey();
+                if ($input->hasSourceIdentity()) {
+                    $source = ContractDossierSource::query()
+                        ->where('organization_id', $organizationId)
+                        ->where('source_type', $input->sourceType)
+                        ->where('source_id', $input->sourceId)
+                        ->lockForUpdate()
+                        ->first();
+                    if ($source instanceof ContractDossierSource) {
+                        $contract = $source->contract()->firstOrFail();
+
+                        return new ContractDossierCreationResult(
+                            $contract,
+                            $this->documentForReplay($contract, $organizationId),
+                            true,
+                        );
+                    }
+                }
                 $contract = Contract::query()
                     ->where('organization_id', $organizationId)
                     ->where('dossier_creation_key', $key)
@@ -63,12 +81,12 @@ final class ContractDossierCreationService
                     'source_type' => 'contract',
                     'source_id' => (string) $contract->id,
                     'source_idempotency_key' => $key,
-                    'links' => [[
+                    'links' => array_merge([[
                         'link_type' => 'contract',
                         'linked_type' => 'contract',
                         'linked_id' => (string) $contract->id,
                         'display_name' => $contract->number,
-                    ]],
+                    ]], $input->sourceLinks),
                     'metadata' => $input->documentMetadata,
                 ];
                 if ($input->confidentialityLevel !== null) {
@@ -81,12 +99,37 @@ final class ContractDossierCreationService
                     'legal_dossier_linked',
                     (int) $actor->id,
                 );
+                if ($input->hasSourceIdentity()) {
+                    ContractDossierSource::query()->create([
+                        'organization_id' => $organizationId,
+                        'contract_id' => $contract->id,
+                        'source_type' => $input->sourceType,
+                        'source_id' => $input->sourceId,
+                        'idempotency_key' => $key,
+                    ]);
+                }
 
                 return new ContractDossierCreationResult($contract->refresh(), $document, false);
             });
         } catch (QueryException $exception) {
-            if (! $this->isCreationKeyConflict($exception)) {
+            if (! $this->isCreationKeyConflict($exception) && ! $this->isSourceConflict($exception)) {
                 throw $exception;
+            }
+            if ($input->hasSourceIdentity()) {
+                $source = ContractDossierSource::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('source_type', $input->sourceType)
+                    ->where('source_id', $input->sourceId)
+                    ->first();
+                if ($source instanceof ContractDossierSource) {
+                    $contract = $source->contract()->firstOrFail();
+
+                    return new ContractDossierCreationResult(
+                        $contract,
+                        $this->documentForReplay($contract, $organizationId),
+                        true,
+                    );
+                }
             }
             $contract = Contract::query()
                 ->where('organization_id', $organizationId)
@@ -117,5 +160,11 @@ final class ContractDossierCreationService
     private function isCreationKeyConflict(QueryException $exception): bool
     {
         return str_contains($exception->getMessage(), 'contracts_dossier_creation_key_unique');
+    }
+
+    private function isSourceConflict(QueryException $exception): bool
+    {
+        return str_contains($exception->getMessage(), 'contract_dossier_sources_source_unique')
+            || str_contains($exception->getMessage(), 'contract_dossier_sources_key_unique');
     }
 }

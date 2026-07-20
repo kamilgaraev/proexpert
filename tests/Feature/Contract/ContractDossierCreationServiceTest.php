@@ -54,6 +54,17 @@ final class ContractDossierCreationServiceTest extends TestCase
             $table->unsignedBigInteger('organization_id');
             $table->timestamp('deleted_at')->nullable();
         });
+        $this->database->schema()->create('contract_dossier_sources', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('contract_id');
+            $table->string('source_type', 64);
+            $table->string('source_id', 191);
+            $table->string('idempotency_key', 191);
+            $table->timestamps();
+            $table->unique(['organization_id', 'source_type', 'source_id'], 'contract_dossier_sources_source_unique');
+            $table->unique(['organization_id', 'idempotency_key'], 'contract_dossier_sources_key_unique');
+        });
     }
 
     protected function tearDown(): void
@@ -120,6 +131,48 @@ final class ContractDossierCreationServiceTest extends TestCase
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage('contract_dossier_creation_incomplete');
         $service->create(7, $actor, $this->input());
+    }
+
+    public function test_repeated_source_reuses_one_contract_and_dossier(): void
+    {
+        $document = new LegalArchiveDocument;
+        $document->forceFill(['id' => 17, 'organization_id' => 7]);
+        $this->database->table('legal_archive_documents')->insert(['id' => 17, 'organization_id' => 7]);
+        $creator = Mockery::mock(ContractDossierDocumentCreator::class);
+        $creator->shouldReceive('create')->once()->andReturn($document);
+        $contracts = Mockery::mock(ContractSideMutationService::class);
+        $contracts->shouldReceive('create')->once()->andReturnUsing(static fn (): Contract => Contract::query()->create([
+            'organization_id' => 7,
+            'number' => 'ДП-7',
+            'dossier_creation_key' => 'purchase-order-7',
+        ]));
+        $service = new ContractDossierCreationService(
+            $this->database->getConnection(),
+            $contracts,
+            new ContractAuditedMutationService(
+                Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(),
+                $this->database->getConnection(),
+            ),
+            $creator,
+        );
+        $actor = new User;
+        $actor->forceFill(['id' => 3, 'current_organization_id' => 7]);
+        $base = $this->input();
+        $input = new ContractDossierCreationInput(
+            $base->contract,
+            'purchase-order-7',
+            'Договор поставки ДП-7',
+            sourceType: 'purchase_order',
+            sourceId: '7',
+        );
+
+        $first = $service->create(7, $actor, $input);
+        $second = $service->create(7, $actor, $input);
+
+        self::assertFalse($first->replayed);
+        self::assertTrue($second->replayed);
+        self::assertSame($first->contract->id, $second->contract->id);
+        self::assertSame($first->document->id, $second->document->id);
     }
 
     private function input(): ContractDossierCreationInput
