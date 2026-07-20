@@ -87,6 +87,14 @@ final class LegalArchiveController extends CustomerController
         }
     }
 
+    public function signingSession(Request $request, int $signatureRequest): JsonResponse
+    {
+        try {
+            $data = Validator::make($request->all(), ['lock_version' => ['required', 'integer', 'min:0']])->validate();
+            return CustomerResponse::success($this->archive->signingSession($request->user(), $this->resolveOrganizationId($request), $signatureRequest, (int) $data['lock_version']), trans_message('legal_archive.messages.signing_session_created'));
+        } catch (Throwable $error) { return $this->failure($request, $error, 'signing_session', ['signature_request_id' => $signatureRequest]); }
+    }
+
     private function failure(Request $request, Throwable $error, string $operation, array $context = []): JsonResponse
     {
         if ($error instanceof \Illuminate\Auth\Access\AuthorizationException) {

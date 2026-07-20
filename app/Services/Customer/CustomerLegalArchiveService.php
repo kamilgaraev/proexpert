@@ -7,6 +7,7 @@ namespace App\Services\Customer;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
+use App\BusinessModules\Features\LegalArchive\Models\LegalSignatureRequest;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAccessService;
@@ -14,6 +15,7 @@ use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowDecisionInput;
 use App\Services\LegalArchive\Workflow\LegalDocumentWorkflowService;
 use App\Services\LegalArchive\Workflow\LegalWorkflowActionResolver;
+use App\Services\LegalArchive\Signatures\LegalDocumentSignatureService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
 
@@ -24,6 +26,7 @@ final class CustomerLegalArchiveService
         private readonly LegalWorkflowActionResolver $actions,
         private readonly LegalDocumentWorkflowService $workflow,
         private readonly LegalDocumentDownloadService $downloads,
+        private readonly LegalDocumentSignatureService $signatures,
     ) {}
 
     /** @return Collection<int, LegalArchiveDocument> */
@@ -41,6 +44,16 @@ final class CustomerLegalArchiveService
         }
 
         return $this->attachWorkflow($actor, $query->get());
+    }
+
+    public function signingSession(User $actor, int $organizationId, int $requestId, int $lockVersion): array
+    {
+        $pending = LegalSignatureRequest::query()->with('document')->find($requestId);
+        $document = $pending?->document;
+        if (! $pending instanceof LegalSignatureRequest || ! $document instanceof LegalArchiveDocument) throw new AuthorizationException;
+        $this->assertAccessible($actor, $organizationId, $document);
+        $session = $this->signatures->startElectronicSession($pending, $actor, $lockVersion);
+        return ['provider_request_id' => $session->providerRequestId, 'redirect_url' => $session->redirectUrl, 'expires_at' => $session->expiresAt, 'metadata' => $session->metadata];
     }
 
     public function document(User $actor, int $organizationId, int $documentId): ?LegalArchiveDocument
