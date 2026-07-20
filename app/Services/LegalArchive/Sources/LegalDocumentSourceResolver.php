@@ -29,7 +29,10 @@ final class LegalDocumentSourceResolver
         if ($type === null || $organizationId < 1) {
             $this->invalid();
         }
-        $id = $type === LegalDocumentSourceType::CRM_DEAL
+        $id = in_array($type, [
+            LegalDocumentSourceType::CRM_DEAL,
+            LegalDocumentSourceType::COMMERCIAL_PROPOSAL,
+        ], true)
             ? trim((string) $sourceId)
             : filter_var($sourceId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         if ($id === '' || $id === false) {
