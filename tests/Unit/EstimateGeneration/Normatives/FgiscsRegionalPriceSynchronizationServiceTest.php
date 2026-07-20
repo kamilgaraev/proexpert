@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePriceUpdateService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceSynchronizationException;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceSynchronizationService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceUpdateService;
 use Mockery;
 use Mockery\Adapter\Phpunit\MockeryPHPUnitIntegration;
 use PHPUnit\Framework\TestCase;
-use RuntimeException;
 
 class FgiscsRegionalPriceSynchronizationServiceTest extends TestCase
 {
@@ -68,10 +68,52 @@ class FgiscsRegionalPriceSynchronizationServiceTest extends TestCase
         $buildingResources = Mockery::mock(FgiscsBuildingResourcePriceUpdateService::class);
         $buildingResources->shouldNotReceive('syncTatarstan');
 
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('worker_salary (status=failed, version_id=12)');
+        $this->expectException(FgiscsRegionalPriceSynchronizationException::class);
+        $this->expectExceptionMessage(FgiscsRegionalPriceSynchronizationException::WORKER_COMPONENT_FAILED);
 
         (new FgiscsRegionalPriceSynchronizationService($workerSalary, $buildingResources))
             ->syncTatarstan('prices', 77);
+    }
+
+    public function test_mismatched_skipped_component_revisions_report_safe_final_state(): void
+    {
+        $workerSalary = Mockery::mock(FgiscsRegionalPriceUpdateService::class);
+        $workerSalary->shouldReceive('syncTatarstan')
+            ->twice()
+            ->andReturn(
+                [
+                    'skipped' => true,
+                    'status' => 'active',
+                    'version_id' => 10,
+                ],
+                [
+                    'skipped' => true,
+                    'status' => 'checked',
+                    'version_id' => 11,
+                ],
+            );
+        $buildingResources = Mockery::mock(FgiscsBuildingResourcePriceUpdateService::class);
+        $buildingResources->shouldReceive('syncTatarstan')->once()->andReturn([
+            'skipped' => true,
+            'status' => 'checked',
+            'version_id' => 11,
+        ]);
+
+        try {
+            (new FgiscsRegionalPriceSynchronizationService($workerSalary, $buildingResources))
+                ->syncTatarstan('prices', 77);
+            self::fail('Synchronization mismatch must fail.');
+        } catch (FgiscsRegionalPriceSynchronizationException $exception) {
+            self::assertSame(FgiscsRegionalPriceSynchronizationException::FINAL_VERSION_NOT_ACTIVE, $exception->failureCode);
+            self::assertSame([
+                'failure_code' => 'final_version_not_active',
+                'worker_status' => 'active',
+                'worker_version_id' => 10,
+                'building_status' => 'checked',
+                'building_version_id' => 11,
+                'final_status' => 'checked',
+                'final_version_id' => 11,
+            ], $exception->safeContext());
+        }
     }
 }

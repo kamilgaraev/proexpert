@@ -33,7 +33,7 @@ final class ScheduledCommandsRegistrationTest extends DatabaseLessTestCase
 
         $this->assertIsInt($buildingPosition);
         $block = substr($schedule, $buildingPosition, 800);
-        $this->assertStringContainsString('->hourlyAt(0)', $block);
+        $this->assertStringContainsString('->hourlyAt(15)', $block);
         $this->assertStringContainsString('->withoutOverlapping(90)', $block);
         $this->assertStringContainsString(
             "->createMutexNameUsing('estimate-generation:fgiscs-building-resources:v2')",
@@ -51,6 +51,8 @@ final class ScheduledCommandsRegistrationTest extends DatabaseLessTestCase
         $this->assertIsString($source);
         $this->assertStringContainsString("Log::error('[EstimateGeneration] FGIS CS building resource price sync failed.'", $source);
         $this->assertStringContainsString("'exception_class' => \$exception::class", $source);
+        $this->assertStringContainsString('$exception->safeContext()', $source);
+        $this->assertStringNotContainsString("'exception_message'", $source);
     }
 
     /**
