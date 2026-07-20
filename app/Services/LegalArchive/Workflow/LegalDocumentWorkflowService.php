@@ -31,6 +31,7 @@ final class LegalDocumentWorkflowService
         private readonly LegalWorkflowTemplateService $templates,
         private readonly LegalWorkflowAuthorization $authorization,
         private readonly LegalWorkflowActorResolver $actors,
+        private readonly LegalWorkflowAssignmentValidator $assignments,
         private readonly LegalDocumentAudit $audit,
         private readonly ImmutableAuditIntegrityService $integrity,
         private readonly ConnectionInterface $connection,
@@ -42,9 +43,13 @@ final class LegalDocumentWorkflowService
         User $actor,
         WorkflowOverride $override,
     ): LegalWorkflowInstance {
-        $this->authorization->assertCan($actor, $document, 'legal_archive.workflow.submit');
+        $this->authorization->assertCan($actor, $document, LegalWorkflowPermissions::SUBMIT);
         $idempotencyKey = $this->validKey($override->idempotencyKey);
-        $requestHash = '';
+        $clientRequestHash = hash('sha256', $this->integrity->canonicalJson([
+            'document_id' => (int) $document->id,
+            'document_version_id' => $versionId,
+            'command' => $override->canonicalPayload(),
+        ]));
 
         try {
             return $this->connection->transaction(function () use (
@@ -53,13 +58,31 @@ final class LegalDocumentWorkflowService
                 $actor,
                 $override,
                 $idempotencyKey,
-                &$requestHash,
+                $clientRequestHash,
             ): LegalWorkflowInstance {
+                $existing = $this->findSubmitReplay(
+                    (int) $document->organization_id,
+                    (int) $document->id,
+                    $idempotencyKey,
+                    $clientRequestHash,
+                );
+                if ($existing instanceof LegalWorkflowInstance) {
+                    return $existing;
+                }
                 $lockedDocument = $this->documents()->whereKey($document->getKey())->lockForUpdate()->first();
                 if (! $lockedDocument instanceof LegalArchiveDocument) {
                     throw new DomainException('legal_workflow_document_not_found');
                 }
-                $this->authorization->assertCan($actor, $lockedDocument, 'legal_archive.workflow.submit');
+                $this->authorization->assertCan($actor, $lockedDocument, LegalWorkflowPermissions::SUBMIT);
+                $existing = $this->findSubmitReplay(
+                    (int) $lockedDocument->organization_id,
+                    (int) $lockedDocument->id,
+                    $idempotencyKey,
+                    $clientRequestHash,
+                );
+                if ($existing instanceof LegalWorkflowInstance) {
+                    return $existing;
+                }
                 if (
                     $override->expectedDocumentLockVersion !== null
                     && (int) $lockedDocument->lock_version !== $override->expectedDocumentLockVersion
@@ -75,7 +98,7 @@ final class LegalDocumentWorkflowService
                 }
                 $snapshot = $this->templates->snapshot($template, $override);
                 foreach ($snapshot->payload['steps'] as $definition) {
-                    if (! $this->actors->assignmentExists(
+                    if (! $this->assignments->exists(
                         (string) $definition['actor_type'],
                         (string) $definition['actor_reference'],
                         $lockedDocument,
@@ -92,16 +115,6 @@ final class LegalDocumentWorkflowService
                     'override' => $override->canonicalPayload(),
                 ]));
 
-                $existing = $this->instances()
-                    ->where('organization_id', (int) $lockedDocument->organization_id)
-                    ->where('document_id', (int) $lockedDocument->id)
-                    ->where('idempotency_key', $idempotencyKey)
-                    ->first();
-                if ($existing instanceof LegalWorkflowInstance) {
-                    $this->assertSameRequest($existing->request_hash, $requestHash);
-
-                    return $existing->load('steps', 'decisions');
-                }
                 $latest = $this->instances()
                     ->where('organization_id', (int) $lockedDocument->organization_id)
                     ->where('document_id', (int) $lockedDocument->id)
@@ -133,8 +146,10 @@ final class LegalDocumentWorkflowService
                     'document_content_hash' => (string) $version->content_hash,
                     'template_id' => (int) $template->id,
                     'template_version' => (int) $template->version,
+                    'template_definition_hash' => (string) $template->definition_hash,
                     'template_snapshot' => $snapshot->payload,
                     'snapshot_hash' => $snapshot->hash,
+                    'client_request_hash' => $clientRequestHash,
                     'request_hash' => $requestHash,
                     'idempotency_key' => $idempotencyKey,
                     'status' => 'in_progress',
@@ -189,8 +204,8 @@ final class LegalDocumentWorkflowService
                 ->where('document_id', (int) $document->id)
                 ->where('idempotency_key', $idempotencyKey)
                 ->first();
-            if ($existing instanceof LegalWorkflowInstance && $requestHash !== '') {
-                $this->assertSameRequest($existing->request_hash, $requestHash);
+            if ($existing instanceof LegalWorkflowInstance) {
+                $this->assertSameRequest($existing->client_request_hash, $clientRequestHash);
 
                 return $existing->load('steps', 'decisions');
             }
@@ -204,6 +219,25 @@ final class LegalDocumentWorkflowService
             }
             throw $exception;
         }
+    }
+
+    private function findSubmitReplay(
+        int $organizationId,
+        int $documentId,
+        string $idempotencyKey,
+        string $clientRequestHash,
+    ): ?LegalWorkflowInstance {
+        $existing = $this->instances()
+            ->where('organization_id', $organizationId)
+            ->where('document_id', $documentId)
+            ->where('idempotency_key', $idempotencyKey)
+            ->first();
+        if (! $existing instanceof LegalWorkflowInstance) {
+            return null;
+        }
+        $this->assertSameRequest($existing->client_request_hash, $clientRequestHash);
+
+        return $existing->load('steps', 'decisions');
     }
 
     public function decide(
@@ -252,9 +286,7 @@ final class LegalDocumentWorkflowService
             ) {
                 throw new DomainException('legal_workflow_version_changed');
             }
-            $permission = $input->action === 'reassign'
-                ? 'legal_archive.workflow.reassign'
-                : 'legal_archive.workflow.decide';
+            $permission = LegalWorkflowPermissions::forAction($input->action);
             $this->authorization->assertCan($actor, $document, $permission);
 
             $existing = $this->decisions()
@@ -290,26 +322,49 @@ final class LegalDocumentWorkflowService
             $fromStatus = (string) $lockedStep->status;
             $instanceFromStatus = (string) $instance->status;
             $context = [];
+            $decision = null;
             if ($input->action === 'reassign') {
-                if (! $this->actors->assignmentExists(
+                if (! $this->assignments->exists(
                     (string) $input->reassignActorType,
                     trim((string) $input->reassignActorReference),
                     $document,
                 )) {
                     throw new DomainException('legal_workflow_actor_target_not_available');
                 }
+                $newDueAt = CarbonImmutable::parse((string) $input->dueAt)->utc();
+                $newActorReference = trim((string) $input->reassignActorReference);
                 $context = [
                     'from_actor_type' => (string) $lockedStep->actor_type,
                     'from_actor_reference' => (string) $lockedStep->actor_reference,
+                    'from_due_at' => $lockedStep->due_at?->utc()->toAtomString(),
                     'to_actor_type' => $input->reassignActorType,
-                    'to_actor_reference' => $input->reassignActorReference,
+                    'to_actor_reference' => $newActorReference,
+                    'to_due_at' => $newDueAt->toAtomString(),
                 ];
-                $lockedStep->forceFill([
-                    'actor_type' => $input->reassignActorType,
-                    'actor_reference' => trim((string) $input->reassignActorReference),
-                    'due_at' => CarbonImmutable::parse((string) $input->dueAt)->utc(),
-                    'lock_version' => ((int) $lockedStep->lock_version) + 1,
-                ])->save();
+                $decision = $this->createStepDecision(
+                    $instance,
+                    $lockedStep,
+                    $document,
+                    $actor,
+                    $input,
+                    $requestHash,
+                    $idempotencyKey,
+                    $fromStatus,
+                    $fromStatus,
+                    $context,
+                    [
+                        'from_actor_type' => (string) $lockedStep->actor_type,
+                        'from_actor_reference' => (string) $lockedStep->actor_reference,
+                        'from_due_at' => $lockedStep->due_at,
+                        'to_actor_type' => (string) $input->reassignActorType,
+                        'to_actor_reference' => $newActorReference,
+                        'to_due_at' => $newDueAt,
+                        'assignment_revision' => ((int) $lockedStep->assignment_revision) + 1,
+                        'previous_reassign_decision_id' => $lockedStep->last_reassign_decision_id,
+                    ],
+                );
+                $this->authorizeDatabaseReassignment($decision);
+                $lockedStep->applyReassignment($decision);
             } else {
                 $toStatus = match ($input->action) {
                     'approve' => 'approved',
@@ -327,25 +382,18 @@ final class LegalDocumentWorkflowService
             $this->applyInstanceTransition($instance, $lockedStep, $document, $input->action);
             $instance->save();
 
-            $decision = $this->newDecision()->newQuery()->create([
-                'organization_id' => (int) $instance->organization_id,
-                'instance_id' => (int) $instance->id,
-                'step_id' => (int) $lockedStep->id,
-                'document_id' => (int) $document->id,
-                'document_version_id' => (int) $instance->document_version_id,
-                'document_content_hash' => (string) $instance->document_content_hash,
-                'actor_type' => 'user',
-                'actor_user_id' => (int) $actor->id,
-                'action' => $input->action,
-                'comment' => $this->nullableTrim($input->comment),
-                'reason' => $this->nullableTrim($input->reason),
-                'from_status' => $fromStatus,
-                'to_status' => (string) $lockedStep->status,
-                'context' => $context,
-                'request_hash' => $requestHash,
-                'idempotency_key' => $idempotencyKey,
-                'decided_at' => now(),
-            ]);
+            $decision ??= $this->createStepDecision(
+                $instance,
+                $lockedStep,
+                $document,
+                $actor,
+                $input,
+                $requestHash,
+                $idempotencyKey,
+                $fromStatus,
+                (string) $lockedStep->status,
+                $context,
+            );
             $this->audit->record("workflow_{$input->action}", $document, $actor, [
                 'source_event_id' => "workflow-decision:{$decision->id}",
                 'idempotency_key' => "workflow-decision:{$instance->id}:{$idempotencyKey}",
@@ -363,6 +411,52 @@ final class LegalDocumentWorkflowService
         }, 3);
     }
 
+    /** @param array<string, mixed> $context @param array<string, mixed> $reassignment */
+    private function createStepDecision(
+        LegalWorkflowInstance $instance,
+        LegalWorkflowStep $step,
+        LegalArchiveDocument $document,
+        User $actor,
+        WorkflowDecisionInput $input,
+        string $requestHash,
+        string $idempotencyKey,
+        string $fromStatus,
+        string $toStatus,
+        array $context,
+        array $reassignment = [],
+    ): LegalWorkflowDecision {
+        return $this->newDecision()->newQuery()->create([
+            'organization_id' => (int) $instance->organization_id,
+            'instance_id' => (int) $instance->id,
+            'step_id' => (int) $step->id,
+            'document_id' => (int) $document->id,
+            'document_version_id' => (int) $instance->document_version_id,
+            'document_content_hash' => (string) $instance->document_content_hash,
+            'actor_type' => 'user',
+            'actor_user_id' => (int) $actor->id,
+            'action' => $input->action,
+            'comment' => $this->nullableTrim($input->comment),
+            'reason' => $this->nullableTrim($input->reason),
+            'from_status' => $fromStatus,
+            'to_status' => $toStatus,
+            'context' => $context,
+            ...$reassignment,
+            'request_hash' => $requestHash,
+            'idempotency_key' => $idempotencyKey,
+            'decided_at' => now(),
+        ]);
+    }
+
+    private function authorizeDatabaseReassignment(LegalWorkflowDecision $decision): void
+    {
+        if ($this->connection->getDriverName() !== 'pgsql') {
+            return;
+        }
+        $this->connection->select("SELECT set_config('app.legal_workflow_reassign_decision_id', ?, true)", [
+            (string) $decision->id,
+        ]);
+    }
+
     public function cancel(LegalWorkflowInstance $instance, User $actor, WorkflowDecisionInput $input): LegalWorkflowInstance
     {
         if ($input->action !== 'cancel' || $this->nullableTrim($input->reason) === null) {
@@ -377,7 +471,7 @@ final class LegalDocumentWorkflowService
                 throw new DomainException('legal_workflow_instance_not_found');
             }
             $document = $this->documents()->whereKey($locked->document_id)->lockForUpdate()->firstOrFail();
-            $this->authorization->assertCan($actor, $document, 'legal_archive.workflow.cancel');
+            $this->authorization->assertCan($actor, $document, LegalWorkflowPermissions::CANCEL);
             $existing = $this->decisions()->where('instance_id', $locked->id)->where('idempotency_key', $idempotencyKey)->first();
             if ($existing instanceof LegalWorkflowDecision) {
                 $this->assertSameRequest($existing->request_hash, $requestHash);
@@ -521,7 +615,7 @@ final class LegalDocumentWorkflowService
                 $next->forceFill([
                     'status' => 'active',
                     'activated_at' => $activatedAt,
-                    'due_at' => $next->deadline_at ?? ($next->due_in_hours === null ? null : now()->addHours((int) $next->due_in_hours)),
+                    'due_at' => $next->deadline_at ?? ($next->due_in_hours === null ? null : $activatedAt->copy()->addHours((int) $next->due_in_hours)),
                     'lock_version' => ((int) $next->lock_version) + 1,
                 ])->save();
             }

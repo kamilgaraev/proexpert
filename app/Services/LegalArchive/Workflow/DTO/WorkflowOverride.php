@@ -33,4 +33,13 @@ final readonly class WorkflowOverride
             'expected_document_lock_version' => $this->expectedDocumentLockVersion,
         ];
     }
+
+    /** @return array<string, mixed> */
+    public function snapshotPayload(): array
+    {
+        return [
+            'step_overrides' => $this->stepOverrides,
+            'additional_steps' => $this->additionalSteps,
+        ];
+    }
 }

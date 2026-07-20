@@ -9,6 +9,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
+use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowTemplate;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
@@ -18,11 +19,16 @@ use Throwable;
 
 final readonly class LegalWorkflowRecoveryService
 {
+    private LegalWorkflowTemplateService $templates;
+
     public function __construct(
         private ImmutableAuditIntegrityService $integrity,
         private LegalDocumentAudit $audit,
         private ConnectionInterface $connection,
-    ) {}
+        ?LegalWorkflowTemplateService $templates = null,
+    ) {
+        $this->templates = $templates ?? new LegalWorkflowTemplateService($integrity, $connection);
+    }
 
     public function markRequired(LegalWorkflowInstance $instance, string $reason): void
     {
@@ -83,6 +89,7 @@ final readonly class LegalWorkflowRecoveryService
                 ) {
                     throw new DomainException('legal_workflow_reconciliation_integrity_failed');
                 }
+                $this->assertTemplateIdentity($instance);
                 $this->assertStepsMatchSnapshot($instance);
 
                 if ($instance->status === 'in_progress') {
@@ -100,11 +107,12 @@ final readonly class LegalWorkflowRecoveryService
                             ->where('status', 'pending')
                             ->min('sequence');
                         if ($next !== null) {
+                            $activatedAt = now();
                             foreach ($this->steps()->where('instance_id', $instance->id)->where('sequence', $next)->lockForUpdate()->get() as $step) {
                                 $step->forceFill([
                                     'status' => 'active',
-                                    'activated_at' => now(),
-                                    'due_at' => $step->deadline_at ?? ($step->due_in_hours === null ? null : now()->addHours((int) $step->due_in_hours)),
+                                    'activated_at' => $activatedAt,
+                                    'due_at' => $step->deadline_at ?? ($step->due_in_hours === null ? null : $activatedAt->copy()->addHours((int) $step->due_in_hours)),
                                     'lock_version' => ((int) $step->lock_version) + 1,
                                 ])->save();
                             }
@@ -187,7 +195,97 @@ final readonly class LegalWorkflowRecoveryService
             ]) {
                 throw new DomainException('legal_workflow_reconciliation_step_mismatch');
             }
+            $this->assertAssignmentChain($instance, $step, $definition);
         }
+    }
+
+    private function assertTemplateIdentity(LegalWorkflowInstance $instance): void
+    {
+        $template = (new LegalWorkflowTemplate)->setConnection($this->connection->getName())->newQuery()
+            ->whereKey($instance->template_id)
+            ->where('organization_id', $instance->organization_id)
+            ->where('version', $instance->template_version)
+            ->where('definition_hash', $instance->template_definition_hash)
+            ->with('steps')
+            ->first();
+        if (! $template instanceof LegalWorkflowTemplate) {
+            throw new DomainException('legal_workflow_reconciliation_template_mismatch');
+        }
+        $this->templates->assertIntegrity($template);
+        $identity = $instance->template_snapshot['template_identity'] ?? null;
+        if (! is_array($identity) || [
+            (int) ($identity['organization_id'] ?? 0),
+            (int) ($identity['template_id'] ?? 0),
+            (string) ($identity['code'] ?? ''),
+            (int) ($identity['version'] ?? 0),
+            (string) ($identity['definition_hash'] ?? ''),
+        ] !== [
+            (int) $template->organization_id,
+            (int) $template->id,
+            (string) $template->code,
+            (int) $template->version,
+            (string) $template->definition_hash,
+        ]) {
+            throw new DomainException('legal_workflow_reconciliation_template_mismatch');
+        }
+    }
+
+    /** @param array<string, mixed> $definition */
+    private function assertAssignmentChain(
+        LegalWorkflowInstance $instance,
+        LegalWorkflowStep $step,
+        array $definition,
+    ): void {
+        $actorType = (string) ($definition['actor_type'] ?? '');
+        $actorReference = (string) ($definition['actor_reference'] ?? '');
+        $dueAt = $step->activated_at === null
+            ? null
+            : ($step->deadline_at ?? ($step->due_in_hours === null ? null : $step->activated_at->copy()->addHours((int) $step->due_in_hours)));
+        $previousDecisionId = null;
+        $revision = 0;
+        $decisions = $instance->decisions()
+            ->where('step_id', $step->id)
+            ->where('action', 'reassign')
+            ->orderBy('assignment_revision')
+            ->get();
+        foreach ($decisions as $decision) {
+            $revision++;
+            if (
+                (int) $decision->assignment_revision !== $revision
+                || $decision->previous_reassign_decision_id !== $previousDecisionId
+                || $decision->from_actor_type !== $actorType
+                || $decision->from_actor_reference !== $actorReference
+                || ! $this->sameInstant($decision->from_due_at, $dueAt)
+            ) {
+                throw new DomainException('legal_workflow_reconciliation_assignment_chain_invalid');
+            }
+            $actorType = (string) $decision->to_actor_type;
+            $actorReference = (string) $decision->to_actor_reference;
+            $dueAt = $decision->to_due_at;
+            $previousDecisionId = (int) $decision->id;
+        }
+        if (
+            (int) $step->assignment_revision !== $revision
+            || $step->last_reassign_decision_id !== $previousDecisionId
+            || $step->actor_type !== $actorType
+            || $step->actor_reference !== $actorReference
+            || ! $this->sameInstant($step->due_at, $dueAt)
+        ) {
+            throw new DomainException('legal_workflow_reconciliation_assignment_chain_invalid');
+        }
+    }
+
+    private function sameInstant(mixed $left, mixed $right): bool
+    {
+        if ($left === null || $right === null) {
+            return $left === null && $right === null;
+        }
+
+        if (! $left instanceof \DateTimeInterface || ! $right instanceof \DateTimeInterface) {
+            return false;
+        }
+
+        return $left->getTimestamp() === $right->getTimestamp();
     }
 
     private function instances(): Builder

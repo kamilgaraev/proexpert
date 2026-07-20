@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -61,8 +60,10 @@ return new class extends Migration
                 $table->char('document_content_hash', 64);
                 $table->unsignedBigInteger('template_id');
                 $table->unsignedInteger('template_version');
+                $table->char('template_definition_hash', 64);
                 $table->jsonb('template_snapshot');
                 $table->char('snapshot_hash', 64);
+                $table->char('client_request_hash', 64);
                 $table->char('request_hash', 64);
                 $table->string('idempotency_key', 191);
                 $table->string('status', 32);
@@ -99,6 +100,8 @@ return new class extends Migration
                 $table->string('actor_reference', 191);
                 $table->string('status', 32);
                 $table->unsignedInteger('lock_version')->default(0);
+                $table->unsignedInteger('assignment_revision')->default(0);
+                $table->unsignedBigInteger('last_reassign_decision_id')->nullable();
                 $table->unsignedInteger('due_in_hours')->nullable();
                 $table->timestampTz('deadline_at')->nullable();
                 $table->timestampTz('activated_at')->nullable();
@@ -125,6 +128,14 @@ return new class extends Migration
                 $table->string('from_status', 32);
                 $table->string('to_status', 32);
                 $table->jsonb('context')->nullable();
+                $table->string('from_actor_type', 32)->nullable();
+                $table->string('from_actor_reference', 191)->nullable();
+                $table->timestampTz('from_due_at')->nullable();
+                $table->string('to_actor_type', 32)->nullable();
+                $table->string('to_actor_reference', 191)->nullable();
+                $table->timestampTz('to_due_at')->nullable();
+                $table->unsignedInteger('assignment_revision')->nullable();
+                $table->unsignedBigInteger('previous_reassign_decision_id')->nullable();
                 $table->char('request_hash', 64);
                 $table->string('idempotency_key', 191);
                 $table->timestampTz('decided_at');
@@ -139,16 +150,6 @@ return new class extends Migration
 
     public function down(): void
     {
-        foreach (['legal_workflow_decisions', 'legal_workflow_instances', 'legal_workflow_templates'] as $table) {
-            if (Schema::hasTable($table) && DB::table($table)->exists()) {
-                throw new RuntimeException('legal_workflow_rollback_blocked_by_data');
-            }
-        }
-        Schema::dropIfExists('legal_workflow_decisions');
-        Schema::dropIfExists('legal_workflow_steps');
-        Schema::dropIfExists('legal_workflow_instances');
-        Schema::dropIfExists('legal_workflow_template_steps');
-        Schema::dropIfExists('legal_workflow_template_heads');
-        Schema::dropIfExists('legal_workflow_templates');
+        throw new RuntimeException('legal_workflow_migrations_are_forward_only');
     }
 };

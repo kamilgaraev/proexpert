@@ -46,6 +46,15 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
                     'legal_archive.versions.create',
                     'legal_archive.retention.manage',
                     'legal_archive.legal_hold.manage',
+                    'legal_archive.workflow.view',
+                    'legal_archive.workflow.submit',
+                    'legal_archive.workflow.approve',
+                    'legal_archive.workflow.reject',
+                    'legal_archive.workflow.return',
+                    'legal_archive.workflow.reassign',
+                    'legal_archive.workflow.cancel',
+                    'legal_archive.workflow.manage',
+                    'legal_archive.workflow_templates.manage',
                 ],
             ],
         ]);
@@ -56,8 +65,13 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
         $this->assertSame('Просмотр юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.view']);
         $this->assertSame('Создание версий документов юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.versions.create']);
         $this->assertSame('Управление запретом удаления документов юридического архива', $translated['module_permissions']['legal-archive']['legal_archive.legal_hold.manage']);
+        $this->assertSame('Согласование юридических документов', $translated['module_permissions']['legal-archive']['legal_archive.workflow.approve']);
+        $this->assertSame('Отклонение юридических документов', $translated['module_permissions']['legal-archive']['legal_archive.workflow.reject']);
+        $this->assertSame('Возврат юридических документов на доработку', $translated['module_permissions']['legal-archive']['legal_archive.workflow.return']);
+        $this->assertSame('Настройка маршрутов согласования юридических документов', $translated['module_permissions']['legal-archive']['legal_archive.workflow_templates.manage']);
         $this->assertStringNotContainsString('legal_archive.view', $flattenedValues);
         $this->assertStringNotContainsString('legal_archive.versions.create', $flattenedValues);
+        $this->assertStringNotContainsString('legal_archive.workflow.', $flattenedValues);
     }
 
     private function valuesOnly(array $value): array

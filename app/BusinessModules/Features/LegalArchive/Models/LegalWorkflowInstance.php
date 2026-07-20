@@ -15,7 +15,8 @@ final class LegalWorkflowInstance extends Model
 {
     protected $fillable = [
         'organization_id', 'document_id', 'document_version_id', 'document_content_hash',
-        'template_id', 'template_version', 'template_snapshot', 'snapshot_hash', 'request_hash',
+        'template_id', 'template_version', 'template_definition_hash', 'template_snapshot', 'snapshot_hash',
+        'client_request_hash', 'request_hash',
         'idempotency_key', 'status', 'lock_version', 'submitted_by_user_id', 'submitted_at',
         'due_at', 'completed_at', 'cancelled_at', 'expired_at', 'reconciliation_required_at',
         'reconciliation_reason', 'reconciliation_attempts', 'reconciliation_last_error',
@@ -33,7 +34,8 @@ final class LegalWorkflowInstance extends Model
         self::updating(static function (self $instance): void {
             $immutable = [
                 'organization_id', 'document_id', 'document_version_id', 'document_content_hash',
-                'template_id', 'template_version', 'template_snapshot', 'snapshot_hash', 'request_hash',
+                'template_id', 'template_version', 'template_definition_hash', 'template_snapshot', 'snapshot_hash',
+                'client_request_hash', 'request_hash',
                 'idempotency_key', 'submitted_by_user_id', 'submitted_at',
             ];
             if ($instance->isDirty($immutable)) {

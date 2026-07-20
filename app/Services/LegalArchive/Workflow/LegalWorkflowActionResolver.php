@@ -10,6 +10,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowInstance;
 use App\BusinessModules\Features\LegalArchive\Models\LegalWorkflowStep;
 use App\Models\User;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowActionDetail;
+use App\Services\LegalArchive\Workflow\DTO\WorkflowCurrentStep;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowSummary;
 use Illuminate\Container\Container;
 
@@ -22,6 +23,7 @@ final readonly class LegalWorkflowActionResolver
 
     public function for(User $actor, LegalArchiveDocument $document): WorkflowSummary
     {
+        $this->authorization->assertCan($actor, $document, LegalWorkflowPermissions::VIEW);
         $instance = $this->latestInstance($document);
         $version = $this->currentVersion($document);
         $problemFlags = [];
@@ -46,6 +48,30 @@ final readonly class LegalWorkflowActionResolver
         $details = $instance instanceof LegalWorkflowInstance && $instance->status === 'in_progress'
             ? $this->decisionActions($actor, $document, $instance, $version)
             : [$this->submitAction($actor, $document, $version, $instance)];
+        $currentSteps = $instance instanceof LegalWorkflowInstance
+            ? $instance->steps
+                ->where('status', 'active')
+                ->map(fn (LegalWorkflowStep $step): WorkflowCurrentStep => new WorkflowCurrentStep(
+                    id: (int) $step->id,
+                    key: (string) $step->step_key,
+                    label: (string) $step->label,
+                    status: (string) $step->status,
+                    sequence: (int) $step->sequence,
+                    parallelGroup: (string) $step->parallel_group,
+                    required: (bool) $step->required,
+                    assigneeType: (string) $step->actor_type,
+                    assigneeReference: (string) $step->actor_reference,
+                    dueAt: $step->due_at?->toAtomString(),
+                    overdue: $step->due_at?->isPast() === true,
+                    lockVersion: (int) $step->lock_version,
+                    documentVersionId: (int) $instance->document_version_id,
+                    documentContentHash: (string) $instance->document_content_hash,
+                    assignedToCurrentActor: $this->actors->canAct($actor, $step, $document),
+                    activatedAt: $step->activated_at?->toAtomString(),
+                ))
+                ->values()
+                ->all()
+            : [];
 
         return new WorkflowSummary(
             status: $instance?->status ?? 'not_started',
@@ -56,6 +82,8 @@ final readonly class LegalWorkflowActionResolver
             dueAt: $instance?->due_at?->toAtomString(),
             problemFlags: $problemFlags,
             availableActionDetails: $details,
+            currentSteps: $currentSteps,
+            expectedInstanceLockVersion: $instance?->lock_version === null ? null : (int) $instance->lock_version,
         );
     }
 
@@ -66,61 +94,75 @@ final readonly class LegalWorkflowActionResolver
         LegalWorkflowInstance $instance,
         ?LegalArchiveDocumentVersion $version,
     ): array {
-        $activeSteps = $instance->steps->filter(
-            fn (LegalWorkflowStep $step): bool => $step->status === 'active' && $this->actors->canAct($actor, $step, $document),
-        );
-        $hasActiveStep = $instance->steps->contains(
-            static fn (LegalWorkflowStep $step): bool => $step->status === 'active',
-        );
-        $hasActorStep = $activeSteps->isNotEmpty();
-        $overdue = $activeSteps->contains(static fn (LegalWorkflowStep $step): bool => $step->due_at?->isPast() === true);
+        $activeSteps = $instance->steps->where('status', 'active');
         $versionChanged = ! $version instanceof LegalArchiveDocumentVersion
             || (int) $document->current_primary_version_id !== (int) $instance->document_version_id
             || ! (bool) $version->is_current
             || $version->processing_status !== 'ready'
             || ! hash_equals((string) $instance->document_content_hash, (string) $version->content_hash);
-        $decidePermission = 'legal_archive.workflow.decide';
-        $canDecide = $this->authorization->can($actor, $document, $decidePermission);
-        $decisionBlockers = array_values(array_filter([
-            $hasActorStep ? null : $this->label('blockers.actor_not_assigned'),
-            $overdue ? $this->label('blockers.step_overdue') : null,
-            $versionChanged ? $this->label('blockers.version_changed') : null,
-            $canDecide ? null : $this->label('blockers.permission_denied'),
-        ]));
         $details = [];
-        foreach (['approve', 'reject', 'return'] as $action) {
+        foreach ($activeSteps as $step) {
+            $assigned = $this->actors->canAct($actor, $step, $document);
+            $overdue = $step->due_at?->isPast() === true;
+            foreach (['approve', 'reject', 'return'] as $action) {
+                $permission = LegalWorkflowPermissions::forAction($action);
+                $can = $this->authorization->can($actor, $document, $permission);
+                $blockers = array_values(array_filter([
+                    $assigned ? null : $this->label('blockers.actor_not_assigned'),
+                    $overdue ? $this->label('blockers.step_overdue') : null,
+                    $versionChanged ? $this->label('blockers.version_changed') : null,
+                    $can ? null : $this->label('blockers.permission_denied'),
+                ]));
+                $details[] = new WorkflowActionDetail(
+                    action: $action,
+                    label: $this->label("actions.{$action}"),
+                    permission: $permission,
+                    enabled: $blockers === [],
+                    blockers: $blockers,
+                    targetStepId: (int) $step->id,
+                    expectedInstanceLockVersion: (int) $instance->lock_version,
+                    expectedStepLockVersion: (int) $step->lock_version,
+                    key: "{$action}:step:{$step->id}",
+                    scope: 'step',
+                    instanceId: (int) $instance->id,
+                    requiresComment: in_array($action, ['reject', 'return'], true),
+                );
+            }
+            $permission = LegalWorkflowPermissions::REASSIGN;
+            $can = $this->authorization->can($actor, $document, $permission);
+            $blockers = array_values(array_filter([
+                $overdue ? $this->label('blockers.step_overdue') : null,
+                $versionChanged ? $this->label('blockers.version_changed') : null,
+                $can ? null : $this->label('blockers.permission_denied'),
+            ]));
             $details[] = new WorkflowActionDetail(
-                $action,
-                $this->label("actions.{$action}"),
-                $decidePermission,
-                $decisionBlockers === [],
-                $decisionBlockers,
+                action: 'reassign',
+                label: $this->label('actions.reassign'),
+                permission: $permission,
+                enabled: $blockers === [],
+                blockers: $blockers,
+                targetStepId: (int) $step->id,
+                expectedInstanceLockVersion: (int) $instance->lock_version,
+                expectedStepLockVersion: (int) $step->lock_version,
+                key: "reassign:step:{$step->id}",
+                scope: 'step',
+                instanceId: (int) $instance->id,
+                requiresReason: true,
             );
         }
-
-        $reassignPermission = 'legal_archive.workflow.reassign';
-        $canReassign = $this->authorization->can($actor, $document, $reassignPermission);
-        $reassignBlockers = array_values(array_filter([
-            $hasActiveStep ? null : $this->label('blockers.no_active_step'),
-            $overdue ? $this->label('blockers.step_overdue') : null,
-            $versionChanged ? $this->label('blockers.version_changed') : null,
-            $canReassign ? null : $this->label('blockers.permission_denied'),
-        ]));
-        $details[] = new WorkflowActionDetail(
-            'reassign',
-            $this->label('actions.reassign'),
-            $reassignPermission,
-            $reassignBlockers === [],
-            $reassignBlockers,
-        );
-        $cancelPermission = 'legal_archive.workflow.cancel';
+        $cancelPermission = LegalWorkflowPermissions::CANCEL;
         $canCancel = $this->authorization->can($actor, $document, $cancelPermission);
         $details[] = new WorkflowActionDetail(
-            'cancel',
-            $this->label('actions.cancel'),
-            $cancelPermission,
-            $canCancel,
-            $canCancel ? [] : [$this->label('blockers.permission_denied')],
+            action: 'cancel',
+            label: $this->label('actions.cancel'),
+            permission: $cancelPermission,
+            enabled: $canCancel,
+            blockers: $canCancel ? [] : [$this->label('blockers.permission_denied')],
+            expectedInstanceLockVersion: (int) $instance->lock_version,
+            key: "cancel:instance:{$instance->id}",
+            scope: 'instance',
+            instanceId: (int) $instance->id,
+            requiresReason: true,
         );
 
         return $details;
@@ -132,7 +174,7 @@ final readonly class LegalWorkflowActionResolver
         ?LegalArchiveDocumentVersion $version,
         ?LegalWorkflowInstance $latest,
     ): WorkflowActionDetail {
-        $permission = 'legal_archive.workflow.submit';
+        $permission = LegalWorkflowPermissions::SUBMIT;
         $canSubmit = $this->authorization->can($actor, $document, $permission);
         $ready = $version instanceof LegalArchiveDocumentVersion
             && (bool) $version->is_current
@@ -142,9 +184,24 @@ final readonly class LegalWorkflowActionResolver
             $canSubmit ? null : $this->label('blockers.permission_denied'),
             $ready ? null : $this->label('blockers.version_not_ready'),
             $latest?->status === 'in_progress' ? $this->label('blockers.active_workflow_exists') : null,
+            $latest instanceof LegalWorkflowInstance
+                && in_array($latest->status, ['returned', 'rejected'], true)
+                && $version instanceof LegalArchiveDocumentVersion
+                && (int) $latest->document_version_id === (int) $version->id
+                && hash_equals((string) $latest->document_content_hash, (string) $version->content_hash)
+                    ? $this->label('blockers.new_version_required')
+                    : null,
         ]));
 
-        return new WorkflowActionDetail('submit', $this->label('actions.submit'), $permission, $blockers === [], $blockers);
+        return new WorkflowActionDetail(
+            action: 'submit',
+            label: $this->label('actions.submit'),
+            permission: $permission,
+            enabled: $blockers === [],
+            blockers: $blockers,
+            key: "submit:document:{$document->id}",
+            scope: 'document',
+        );
     }
 
     private function latestInstance(LegalArchiveDocument $document): ?LegalWorkflowInstance

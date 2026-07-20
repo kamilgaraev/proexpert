@@ -20,11 +20,19 @@ final class LegalWorkflowSnapshotTest extends TestCase
             $this->financeStep(sequence: 20),
         ];
 
-        $first = $service->snapshotFromDefinitions(15, 'contract', 3, $steps, WorkflowOverride::none('submit-1'));
+        $first = $service->snapshotFromDefinitions(15, 'contract', 3, $steps, WorkflowOverride::none('submit-1'), 71, str_repeat('a', 64));
         $steps[1]['label'] = 'Изменённый финансовый контроль';
         $second = $service->snapshotFromDefinitions(15, 'contract', 4, $steps, WorkflowOverride::none('submit-2'));
 
         self::assertSame('Финансовый контроль', $first->payload['steps'][1]['label']);
+        self::assertSame([
+            'organization_id' => 15,
+            'template_id' => 71,
+            'code' => 'contract',
+            'version' => 3,
+            'definition_hash' => str_repeat('a', 64),
+        ], $first->payload['template_identity']);
+        self::assertSame(['step_overrides' => [], 'additional_steps' => []], $first->payload['override']);
         self::assertNotSame($first->hash, $second->hash);
         self::assertSame($first->hash, hash('sha256', $service->canonicalJson($first->payload)));
     }

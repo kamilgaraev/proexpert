@@ -15,9 +15,15 @@ final class LegalWorkflowDecision extends Model
         'organization_id', 'instance_id', 'step_id', 'document_id', 'document_version_id',
         'document_content_hash', 'actor_type', 'actor_user_id', 'action', 'comment', 'reason', 'from_status',
         'to_status', 'context', 'request_hash', 'idempotency_key', 'decided_at',
+        'from_actor_type', 'from_actor_reference', 'from_due_at', 'to_actor_type', 'to_actor_reference',
+        'to_due_at', 'assignment_revision', 'previous_reassign_decision_id',
     ];
 
-    protected $casts = ['context' => 'array', 'decided_at' => 'datetime'];
+    protected $casts = [
+        'context' => 'array', 'decided_at' => 'datetime', 'from_due_at' => 'datetime', 'to_due_at' => 'datetime',
+        'assignment_revision' => 'integer',
+        'previous_reassign_decision_id' => 'integer',
+    ];
 
     protected static function booted(): void
     {

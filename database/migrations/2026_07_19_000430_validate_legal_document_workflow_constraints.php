@@ -20,5 +20,8 @@ return new class extends Migration
         }
     }
 
-    public function down(): void {}
+    public function down(): void
+    {
+        throw new RuntimeException('legal_workflow_migrations_are_forward_only');
+    }
 };

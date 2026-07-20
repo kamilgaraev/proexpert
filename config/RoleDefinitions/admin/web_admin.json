@@ -55,10 +55,14 @@
     "legal_archive.versions.create",
     "legal_archive.retention.manage",
     "legal_archive.legal_hold.manage",
+    "legal_archive.workflow.view",
     "legal_archive.workflow.submit",
-    "legal_archive.workflow.decide",
+    "legal_archive.workflow.approve",
+    "legal_archive.workflow.reject",
+    "legal_archive.workflow.return",
     "legal_archive.workflow.reassign",
     "legal_archive.workflow.cancel",
+    "legal_archive.workflow.manage",
     "legal_archive.workflow_templates.manage"
   ],
   "module_permissions": {
@@ -452,10 +456,14 @@
       "legal_archive.versions.create",
       "legal_archive.retention.manage",
       "legal_archive.legal_hold.manage",
+      "legal_archive.workflow.view",
       "legal_archive.workflow.submit",
-      "legal_archive.workflow.decide",
+      "legal_archive.workflow.approve",
+      "legal_archive.workflow.reject",
+      "legal_archive.workflow.return",
       "legal_archive.workflow.reassign",
       "legal_archive.workflow.cancel",
+      "legal_archive.workflow.manage",
       "legal_archive.workflow_templates.manage"
     ],
     "access_recertification": [

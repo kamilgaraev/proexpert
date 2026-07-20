@@ -40,7 +40,7 @@ final class LegalWorkflowTemplateService
             || (int) $actor->current_organization_id !== $organizationId
             || $code === ''
             || $name === ''
-            || ! $actor->hasPermission('legal_archive.workflow_templates.manage', ['organization_id' => $organizationId])
+            || ! $actor->hasPermission(LegalWorkflowPermissions::MANAGE_TEMPLATES, ['organization_id' => $organizationId])
         ) {
             throw new DomainException('legal_workflow_template_access_denied');
         }
@@ -97,6 +97,8 @@ final class LegalWorkflowTemplateService
                     'settings' => $step['settings'],
                 ]);
             }
+            $template->load('steps');
+            $this->assertIntegrity($template);
 
             $attributes = [
                 'template_id' => $template->id,
@@ -116,7 +118,7 @@ final class LegalWorkflowTemplateService
                     ->update($attributes);
             }
 
-            return $template->load('steps');
+            return $template;
         }, 3);
     }
 
@@ -133,6 +135,8 @@ final class LegalWorkflowTemplateService
                 ->with('steps')
                 ->find($templateId);
             if ($template instanceof LegalWorkflowTemplate) {
+                $this->assertIntegrity($template);
+
                 return $template;
             }
             throw new DomainException('legal_workflow_template_not_found');
@@ -155,6 +159,8 @@ final class LegalWorkflowTemplateService
                     ->with('steps')
                     ->find((int) $templateId);
                 if ($template instanceof LegalWorkflowTemplate) {
+                    $this->assertIntegrity($template);
+
                     return $template;
                 }
             }
@@ -165,7 +171,24 @@ final class LegalWorkflowTemplateService
 
     public function snapshot(LegalWorkflowTemplate $template, WorkflowOverride $override): WorkflowSnapshot
     {
-        $steps = $template->steps->map(static fn (LegalWorkflowTemplateStep $step): array => [
+        $this->assertIntegrity($template);
+        $steps = $this->definitionsFromTemplate($template);
+
+        return $this->snapshotFromDefinitions(
+            (int) $template->organization_id,
+            (string) $template->code,
+            (int) $template->version,
+            $steps,
+            $override,
+            (int) $template->id,
+            (string) $template->definition_hash,
+        );
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function definitionsFromTemplate(LegalWorkflowTemplate $template): array
+    {
+        return $template->steps->map(static fn (LegalWorkflowTemplateStep $step): array => [
             'key' => (string) $step->step_key,
             'label' => (string) $step->label,
             'sequence' => (int) $step->sequence,
@@ -177,14 +200,6 @@ final class LegalWorkflowTemplateService
             'due_in_hours' => $step->due_in_hours === null ? null : (int) $step->due_in_hours,
             'settings' => (array) ($step->settings ?? []),
         ])->all();
-
-        return $this->snapshotFromDefinitions(
-            (int) $template->organization_id,
-            (string) $template->code,
-            (int) $template->version,
-            $steps,
-            $override,
-        );
     }
 
     /** @param list<array<string, mixed>> $steps */
@@ -194,6 +209,8 @@ final class LegalWorkflowTemplateService
         int $templateVersion,
         array $steps,
         WorkflowOverride $override,
+        int $templateId = 0,
+        ?string $definitionHash = null,
     ): WorkflowSnapshot {
         foreach ($override->additionalSteps as $additionalStep) {
             if (($additionalStep['required'] ?? false) === true || ($additionalStep['policy_key'] ?? null) !== null) {
@@ -205,10 +222,15 @@ final class LegalWorkflowTemplateService
             $override->stepOverrides,
         );
         $payload = [
-            'schema_version' => 1,
-            'organization_id' => $organizationId,
-            'template_code' => $templateCode,
-            'template_version' => $templateVersion,
+            'schema_version' => 2,
+            'template_identity' => [
+                'organization_id' => $organizationId,
+                'template_id' => $templateId,
+                'code' => $templateCode,
+                'version' => $templateVersion,
+                'definition_hash' => $definitionHash ?? hash('sha256', $this->canonicalJson($this->normalizeDefinitions($steps, []))),
+            ],
+            'override' => $override->snapshotPayload(),
             'steps' => $normalized,
         ];
 
@@ -218,6 +240,17 @@ final class LegalWorkflowTemplateService
     public function canonicalJson(mixed $payload): string
     {
         return $this->integrity->canonicalJson($payload);
+    }
+
+    public function assertIntegrity(LegalWorkflowTemplate $template): void
+    {
+        $actual = hash('sha256', $this->canonicalJson($this->normalizeDefinitions(
+            $this->definitionsFromTemplate($template),
+            [],
+        )));
+        if (! is_string($template->definition_hash) || ! hash_equals($template->definition_hash, $actual)) {
+            throw new DomainException('legal_workflow_template_integrity_failed');
+        }
     }
 
     /**

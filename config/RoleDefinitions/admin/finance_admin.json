@@ -25,8 +25,11 @@
     "legal_archive.update",
     "legal_archive.files.upload",
     "legal_archive.versions.create",
+    "legal_archive.workflow.view",
     "legal_archive.workflow.submit",
-    "legal_archive.workflow.decide",
+    "legal_archive.workflow.approve",
+    "legal_archive.workflow.reject",
+    "legal_archive.workflow.return",
     "legal_archive.workflow.reassign"
   ],
   "module_permissions": {
@@ -140,8 +143,11 @@
       "legal_archive.update",
       "legal_archive.files.upload",
       "legal_archive.versions.create",
+      "legal_archive.workflow.view",
       "legal_archive.workflow.submit",
-      "legal_archive.workflow.decide",
+      "legal_archive.workflow.approve",
+      "legal_archive.workflow.reject",
+      "legal_archive.workflow.return",
       "legal_archive.workflow.reassign"
     ],
     "budgeting": [
