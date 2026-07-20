@@ -18,7 +18,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateReso
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Conjuncture\ResidentialConjuncturePriceImporter;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FgiscsBuildingResourcePriceSpreadsheetParser;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
@@ -241,26 +240,13 @@ class FgiscsBuildingResourcePriceUpdateService
         $rowsRead = 0;
         $rowsImported = 0;
         $errorsCount = 0;
-        $spoolPaths = [];
-        $spoolHandles = [];
+        $batches = array_fill_keys(self::SOURCE_KINDS, []);
 
         try {
-            foreach (self::SOURCE_KINDS as $sourceKind) {
-                $spoolPath = tempnam(sys_get_temp_dir(), 'fgiscs-price-spool-');
-
-                if ($spoolPath === false) {
-                    throw new RuntimeException('Unable to create a temporary regional price spool.');
-                }
-
-                $handle = fopen($spoolPath, 'wb');
-
-                if ($handle === false) {
-                    throw new RuntimeException('Unable to open a temporary regional price spool.');
-                }
-
-                $spoolPaths[$sourceKind] = $spoolPath;
-                $spoolHandles[$sourceKind] = $handle;
-            }
+            EstimateResourcePrice::query()
+                ->where('regional_price_version_id', $regionalVersion->id)
+                ->whereIn('source_price_kind', self::SOURCE_KINDS)
+                ->delete();
 
             foreach ($downloads as $fileKey => $download) {
                 $path = tempnam(sys_get_temp_dir(), 'fgiscs-building-resources-').'.xlsx';
@@ -274,16 +260,24 @@ class FgiscsBuildingResourcePriceUpdateService
                             continue;
                         }
 
-                        $handle = $spoolHandles[$price->sourcePriceKind] ?? null;
-
-                        if (! is_resource($handle)) {
+                        if (! array_key_exists($price->sourcePriceKind, $batches)) {
                             throw new RuntimeException('Unsupported regional building resource price source.');
                         }
 
-                        $payload = json_encode($price->toArray(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+                        $resourceCode = trim($price->code);
+                        $batches[$price->sourcePriceKind][$resourceCode] = $this->pricePriority->preferred(
+                            $batches[$price->sourcePriceKind][$resourceCode] ?? null,
+                            $price,
+                        );
 
-                        if (fwrite($handle, $payload.PHP_EOL) === false) {
-                            throw new RuntimeException('Unable to write a temporary regional price spool.');
+                        if (count($batches[$price->sourcePriceKind]) >= self::UPSERT_BATCH_SIZE) {
+                            $rowsImported += $this->upsertPriceBatch(
+                                array_values($batches[$price->sourcePriceKind]),
+                                $datasetVersion,
+                                $regionalVersion,
+                            );
+                            $batches[$price->sourcePriceKind] = [];
+                            $this->persistImportProgress($regionalVersion, $datasetVersion, $rowsRead, $rowsImported);
                         }
 
                         $this->reportRowsProgress($progress, $fileKey, $rowsRead, $rowsImported, $errorsCount);
@@ -295,25 +289,14 @@ class FgiscsBuildingResourcePriceUpdateService
                 }
             }
 
-            foreach ($spoolHandles as $handle) {
-                fclose($handle);
-            }
-            $spoolHandles = [];
-
-            DB::transaction(function () use ($spoolPaths, $datasetVersion, $regionalVersion, &$rowsImported): void {
-                EstimateResourcePrice::query()
-                    ->where('regional_price_version_id', $regionalVersion->id)
-                    ->whereIn('source_price_kind', self::SOURCE_KINDS)
-                    ->delete();
-
-                foreach (self::SOURCE_KINDS as $sourceKind) {
-                    $rowsImported += $this->upsertSpool(
-                        $spoolPaths[$sourceKind],
-                        $datasetVersion,
-                        $regionalVersion,
-                    );
+            foreach ($batches as $batch) {
+                if ($batch === []) {
+                    continue;
                 }
-            });
+
+                $rowsImported += $this->upsertPriceBatch(array_values($batch), $datasetVersion, $regionalVersion);
+                $this->persistImportProgress($regionalVersion, $datasetVersion, $rowsRead, $rowsImported);
+            }
             $rowsImported = (int) EstimateResourcePrice::query()
                 ->where('regional_price_version_id', $regionalVersion->id)
                 ->whereIn('source_price_kind', self::SOURCE_KINDS)
@@ -328,18 +311,6 @@ class FgiscsBuildingResourcePriceUpdateService
             );
 
             throw $exception;
-        } finally {
-            foreach ($spoolHandles as $handle) {
-                if (is_resource($handle)) {
-                    fclose($handle);
-                }
-            }
-
-            foreach ($spoolPaths as $spoolPath) {
-                if (is_file($spoolPath)) {
-                    @unlink($spoolPath);
-                }
-            }
         }
 
         return [
@@ -347,6 +318,22 @@ class FgiscsBuildingResourcePriceUpdateService
             'rows_imported' => $rowsImported,
             'errors_count' => $errorsCount,
         ];
+    }
+
+    private function persistImportProgress(
+        EstimateRegionalPriceVersion $regionalVersion,
+        EstimateDatasetVersion $datasetVersion,
+        int $rowsRead,
+        int $rowsImported,
+    ): void {
+        $regionalVersion->update([
+            'rows_read' => $rowsRead,
+            'rows_imported' => $rowsImported,
+        ]);
+        $datasetVersion->update([
+            'rows_read' => $rowsRead,
+            'rows_imported' => $rowsImported,
+        ]);
     }
 
     private function recordImportFailure(
@@ -388,51 +375,6 @@ class FgiscsBuildingResourcePriceUpdateService
         }
     }
 
-    private function upsertSpool(
-        string $spoolPath,
-        EstimateDatasetVersion $datasetVersion,
-        EstimateRegionalPriceVersion $regionalVersion,
-    ): int {
-        $handle = fopen($spoolPath, 'rb');
-
-        if ($handle === false) {
-            throw new RuntimeException('Unable to read a temporary regional price spool.');
-        }
-
-        $processed = 0;
-        $batch = [];
-
-        try {
-            while (($line = fgets($handle)) !== false) {
-                /** @var array{code:string,name:string,unit:?string,current_price:float|int,source_price_kind:string,raw_data:array<string,mixed>} $payload */
-                $payload = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
-                $price = new FgiscsBuildingResourcePriceDTO(
-                    code: $payload['code'],
-                    name: $payload['name'],
-                    unit: $payload['unit'],
-                    currentPrice: (float) $payload['current_price'],
-                    sourcePriceKind: $payload['source_price_kind'],
-                    rawData: $payload['raw_data'],
-                );
-                $resourceCode = trim($price->code);
-                $batch[$resourceCode] = $this->pricePriority->preferred($batch[$resourceCode] ?? null, $price);
-
-                if (count($batch) >= self::UPSERT_BATCH_SIZE) {
-                    $processed += $this->upsertPriceBatch(array_values($batch), $datasetVersion, $regionalVersion);
-                    $batch = [];
-                }
-            }
-
-            if ($batch !== []) {
-                $processed += $this->upsertPriceBatch(array_values($batch), $datasetVersion, $regionalVersion);
-            }
-        } finally {
-            fclose($handle);
-        }
-
-        return $processed;
-    }
-
     /**
      * @param  list<FgiscsBuildingResourcePriceDTO>  $prices
      */
@@ -441,10 +383,32 @@ class FgiscsBuildingResourcePriceUpdateService
         EstimateDatasetVersion $datasetVersion,
         EstimateRegionalPriceVersion $regionalVersion,
     ): int {
+        if ($prices === []) {
+            return 0;
+        }
+
         $resourceCodes = array_values(array_unique(array_map(
             static fn (FgiscsBuildingResourcePriceDTO $price): string => trim($price->code),
             $prices,
         )));
+        $existingSourceKinds = EstimateResourcePrice::query()
+            ->where('dataset_version_id', $datasetVersion->id)
+            ->where('price_type', EstimateResourceType::MATERIAL->value)
+            ->whereIn('resource_code', $resourceCodes)
+            ->pluck('source_price_kind', 'resource_code')
+            ->all();
+        $prices = array_values(array_filter(
+            $prices,
+            fn (FgiscsBuildingResourcePriceDTO $price): bool => $this->pricePriority->shouldReplace(
+                (string) ($existingSourceKinds[trim($price->code)] ?? ''),
+                $price,
+            ),
+        ));
+
+        if ($prices === []) {
+            return 0;
+        }
+
         $resourceIds = ConstructionResource::query()
             ->whereIn('ksr_code', $resourceCodes)
             ->orderByDesc('dataset_version_id')

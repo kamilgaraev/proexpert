@@ -22,6 +22,8 @@ class FgiscsBuildingResourcePricePriorityTest extends TestCase
 
         self::assertSame($direct, $priority->preferred($indexed, $direct));
         self::assertSame($direct, $priority->preferred($direct, $indexed));
+        self::assertTrue($priority->shouldReplace('regional_building_resource_index', $direct));
+        self::assertFalse($priority->shouldReplace('regional_building_resource_direct', $indexed));
     }
 
     public function test_import_contract_uses_bounded_batches_in_price_priority_order(): void
@@ -38,8 +40,10 @@ class FgiscsBuildingResourcePricePriorityTest extends TestCase
         $source = file_get_contents($reflection->getFileName());
 
         self::assertIsString($source);
-        self::assertStringContainsString('count($batch) >= self::UPSERT_BATCH_SIZE', $source);
+        self::assertStringContainsString('count($batches[$price->sourcePriceKind]) >= self::UPSERT_BATCH_SIZE', $source);
         self::assertStringContainsString('EstimateResourcePrice::query()->upsert(', $source);
+        self::assertStringContainsString('$this->persistImportProgress(', $source);
+        self::assertStringNotContainsString('DB::transaction(function () use ($spoolPaths', $source);
         self::assertStringContainsString("'building_resources_imported' => false", $source);
         self::assertStringContainsString("'building_resources_imported',\n            \$force,", $source);
         self::assertStringContainsString("'building_resources_already_imported'", $source);

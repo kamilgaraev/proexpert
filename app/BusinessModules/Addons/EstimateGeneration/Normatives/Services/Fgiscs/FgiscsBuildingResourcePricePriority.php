@@ -18,15 +18,20 @@ class FgiscsBuildingResourcePricePriority
         ?FgiscsBuildingResourcePriceDTO $current,
         FgiscsBuildingResourcePriceDTO $candidate,
     ): FgiscsBuildingResourcePriceDTO {
-        if ($current === null || $this->priority($candidate) > $this->priority($current)) {
+        if ($current === null || $this->priority($candidate->sourcePriceKind) > $this->priority($current->sourcePriceKind)) {
             return $candidate;
         }
 
         return $current;
     }
 
-    private function priority(FgiscsBuildingResourcePriceDTO $price): int
+    public function shouldReplace(string $currentSourcePriceKind, FgiscsBuildingResourcePriceDTO $candidate): bool
     {
-        return self::PRIORITIES[$price->sourcePriceKind] ?? 0;
+        return $this->priority($candidate->sourcePriceKind) >= $this->priority($currentSourcePriceKind);
+    }
+
+    private function priority(string $sourcePriceKind): int
+    {
+        return self::PRIORITIES[$sourcePriceKind] ?? 0;
     }
 }
