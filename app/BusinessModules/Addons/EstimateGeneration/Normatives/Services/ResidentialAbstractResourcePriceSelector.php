@@ -59,10 +59,17 @@ final readonly class ResidentialAbstractResourcePriceSelector
         $selected->price_unit = $conversion['to_unit'];
         $selected->project_resource_conversion_assumption = $conversion['assumption'];
 
+        $policy = $conversion['candidate_group_code'] === $groupCode
+            ? (string) $selected->price_dataset_source_type.'_residential_converted_child_median:v1'
+            : match ((string) $selected->price_dataset_source_type) {
+                'fsbc' => 'fsbc_semantic_hard_attributes_median:v4',
+                'fsnb_2022' => 'fsnb_semantic_hard_attributes_median:v4',
+            };
+
         return [
             'row' => $selected,
             'candidates_count' => count($eligible),
-            'policy' => (string) $selected->price_dataset_source_type.'_residential_converted_child_median:v1',
+            'policy' => $policy,
             'assumption' => $conversion['assumption'],
         ];
     }
