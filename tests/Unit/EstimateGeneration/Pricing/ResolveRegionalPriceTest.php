@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Pricing;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\MissingRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveUnitConversion;
@@ -188,6 +190,30 @@ final class ResolveRegionalPriceTest extends TestCase
         ];
 
         $snapshot = $resolver->handle($resource, $this->context());
+
+        self::assertSame('2000.0000', $snapshot->baseAmount);
+    }
+
+    #[Test]
+    public function residential_conversion_accepts_an_eloquent_base_catalog_price(): void
+    {
+        $dataset = new EstimateDatasetVersion([
+            'source_type' => 'fsnb_2022',
+            'version_key' => '2026-05-07',
+            'status' => 'parsed',
+        ]);
+        $dataset->setAttribute('id', 6);
+        $price = new EstimateResourcePrice([
+            'dataset_version_id' => 6,
+            'resource_code' => '12.2.05.02-1001',
+            'unit' => 'м3',
+            'base_price' => '10000.0000',
+        ]);
+        $price->setAttribute('id', 42);
+        $price->setRelation('datasetVersion', $dataset);
+        $resolver = new ResolveRegionalPrice(static fn (int $priceId): EstimateResourcePrice => $price);
+
+        $snapshot = $resolver->handle($this->convertedResource(), $this->context());
 
         self::assertSame('2000.0000', $snapshot->baseAmount);
     }
