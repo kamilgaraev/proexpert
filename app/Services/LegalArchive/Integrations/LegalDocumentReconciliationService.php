@@ -63,8 +63,11 @@ final class LegalDocumentReconciliationService
 
         $definitions = ['supplementary_agreements' => [SupplementaryAgreement::class, 'supplementary_agreement'], 'acts' => [ContractPerformanceAct::class, 'act'], 'commercial_proposals' => [CommercialProposal::class, 'commercial_proposal'], 'procurement' => [PurchaseOrder::class, 'procurement'], 'payments' => [PaymentDocument::class, 'payment'], 'executive_documentation' => [ExecutiveDocument::class, 'executive_documentation']];
         foreach (array_diff($sources, ['contracts']) as $namedSource) {
+            if ($summary['candidates'] >= $limit) {
+                break;
+            }
             [$model, $sourceType] = $definitions[$namedSource];
-            $model::query()->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId))->orderBy('id')->limit(max(0, $limit - $summary['candidates']))->each(function ($entity) use (&$summary, $namedSource, $sourceType, $dryRun): void {
+            $model::query()->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId))->orderBy('id')->limit($limit - $summary['candidates'])->each(function ($entity) use (&$summary, $namedSource, $sourceType, $dryRun): void {
                 $summary['candidates']++; $summary['sources'][$namedSource]++;
                 $document = LegalArchiveDocument::query()->where('organization_id', $entity->organization_id)->where('source_type', $sourceType)->where('source_id', (string) $entity->id)->first();
                 if ($document instanceof LegalArchiveDocument) { $summary['skipped']++; return; }
