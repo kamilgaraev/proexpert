@@ -13,9 +13,9 @@ use Brick\Math\RoundingMode;
 
 final class ResidentialQuantityScenarioCatalog
 {
-    public const VERSION = '3.2.0';
+    public const VERSION = '3.3.0';
 
-    public const SCENARIO_ID = 'residential_preliminary_scenario:v15';
+    public const SCENARIO_ID = 'residential_preliminary_scenario:v16';
 
     private const UNITS = [
         'electrical.grounding' => 'm',
@@ -29,6 +29,7 @@ final class ResidentialQuantityScenarioCatalog
         'finish.paint' => 'm2',
         'heating.pipe' => 'm',
         'heating.radiators' => 'pcs',
+        'heating.unit' => 'pcs',
         'lighting.lines' => 'm',
         'lighting.fixtures' => 'pcs',
         'openings.doors' => 'm2',
@@ -50,6 +51,7 @@ final class ResidentialQuantityScenarioCatalog
         'sanitary.tile' => 'm2',
         'sanitary.waterproofing' => 'm2',
         'sewerage.pipe' => 'm',
+        'sewerage.outlets' => 'pcs',
         'stairs.flights' => 'm2',
         'stairs.landings' => 'm2',
         'stairs.railings' => 'm',
@@ -58,6 +60,7 @@ final class ResidentialQuantityScenarioCatalog
         'walls.lintels' => 'pcs',
         'finish.ceiling' => 'm2',
         'ventilation.air_exchange' => 'm2',
+        'ventilation.distribution_devices' => 'pcs',
     ];
 
     public function __construct(private readonly RoofTypeResolver $roofTypes = new RoofTypeResolver) {}
@@ -206,6 +209,18 @@ final class ResidentialQuantityScenarioCatalog
                 'lighting.fixtures', 'pcs', max(1, max($roomCount, (int) ceil((float) $floorArea->amount / 10))),
                 '1', $model, 'room_and_floor_area_allowance', ['preliminary_luminaire_count_by_rooms_and_area', ...$areaBasisAssumptions],
             );
+            if ($finishedWetRooms !== []) {
+                $quantities['ventilation.distribution_devices'] = $this->countBased(
+                    'ventilation.distribution_devices', 'pcs', count($finishedWetRooms),
+                    '1', $model, 'documented_wet_room_count',
+                    ['one_preliminary_exhaust_terminal_per_documented_wet_room', ...$areaBasisAssumptions],
+                );
+            } else {
+                $omissions[] = $this->omission(
+                    'ventilation.distribution_devices',
+                    'documented_wet_rooms_missing',
+                );
+            }
         } else {
             foreach ([
                 'openings.windows', 'electrical.main_cable', 'electrical.power_lines', 'lighting.lines',

@@ -59,6 +59,7 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
             'heating.pipe',
             'heating.radiators',
             'ventilation.air_exchange',
+            'ventilation.distribution_devices',
             'sanitary.waterproofing',
             'rough.floor',
             'sanitary.tile',
@@ -73,8 +74,6 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         }
 
         self::assertArrayNotHasKey('electrical.trays', $result->quantities);
-        self::assertArrayNotHasKey('heating.unit', $result->quantities);
-        self::assertArrayNotHasKey('sewerage.outlets', $result->quantities);
         self::assertArrayNotHasKey('ventilation.office_points', $result->quantities);
         self::assertArrayNotHasKey('ventilation.warehouse_points', $result->quantities);
         foreach ($result->omissions as $omission) {
@@ -113,6 +112,7 @@ final class ResidentialQuantityScenarioCatalogTest extends TestCase
         self::assertGreaterThan(0, (float) $result->quantities['lighting.fixtures']->amount);
         self::assertSame('67.480000', $result->quantities['plumbing.pipe']->amount);
         self::assertSame('14.000000', $result->quantities['heating.radiators']->amount);
+        self::assertSame('2.000000', $result->quantities['ventilation.distribution_devices']->amount);
         self::assertSame('pcs', $result->quantities['heating.radiators']->unit);
         self::assertContains(
             'residential_heat_load_kw_per_m2:0.10',

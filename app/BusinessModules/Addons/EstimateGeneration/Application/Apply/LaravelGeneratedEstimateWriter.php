@@ -20,6 +20,8 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
 {
     private const ESTIMATE_NAME_MAX_LENGTH = 255;
 
+    private const ESTIMATE_ITEM_RESOURCE_NAME_MAX_LENGTH = 255;
+
     private const NUMBER_CREATE_ATTEMPTS = 4;
 
     /** @var array<string, int|null> */
@@ -285,6 +287,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                     'price_source' => $resource['price_source'] ?? null,
                     'price_source_version' => $resource['price_source_version'] ?? null,
                     'rounding_adjustment' => $resource['rounding_adjustment'] ?? null,
+                    'project_resource_selection' => $resource['project_resource_selection'] ?? null,
                     'project_material_selection' => $resource['project_material_selection'] ?? null,
                 ],
             ]);
@@ -292,7 +295,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
             EstimateItemResource::create([
                 'estimate_item_id' => $parent->id,
                 'resource_type' => $itemType === EstimatePositionItemType::MACHINERY->value ? 'equipment' : $itemType,
-                'name' => $resource['name'],
+                'name' => $this->estimateItemResourceName((string) $resource['name']),
                 'description' => $resource['normative_ref']['resource_code'] ?? ($resource['source'] ?? null),
                 'measurement_unit_id' => $measurementUnitId,
                 'quantity_per_unit' => $resource['quantity_per_unit'] ?? 1,
@@ -301,6 +304,11 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                 'total_amount' => $resource['total_price'],
             ]);
         }
+    }
+
+    protected function estimateItemResourceName(string $name): string
+    {
+        return mb_substr($name, 0, self::ESTIMATE_ITEM_RESOURCE_NAME_MAX_LENGTH);
     }
 
     protected function resolveMeasurementUnitId(int $organizationId, string $unit): ?int

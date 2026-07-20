@@ -116,6 +116,18 @@ final class GeneratedEstimateWriterRetryTest extends TestCase
         }
     }
 
+    #[Test]
+    public function resource_ledger_name_is_limited_by_its_multibyte_database_column(): void
+    {
+        $writer = $this->writer([$this->estimate(91)]);
+        $name = str_repeat('Светильник потолочный ', 20);
+
+        $normalized = $writer->estimateItemResourceNameForTest($name);
+
+        self::assertSame(255, mb_strlen($normalized));
+        self::assertSame(mb_substr($name, 0, 255), $normalized);
+    }
+
     /** @param array<int, Estimate|\Throwable> $outcomes */
     private function writer(array $outcomes): TestRetryGeneratedEstimateWriter
     {
@@ -196,6 +208,11 @@ final class TestRetryGeneratedEstimateWriter extends LaravelGeneratedEstimateWri
             [],
             100,
         );
+    }
+
+    public function estimateItemResourceNameForTest(string $name): string
+    {
+        return $this->estimateItemResourceName($name);
     }
 
     protected function transactionAttempt(callable $callback): mixed

@@ -210,9 +210,11 @@ final class EstimateGenerationActionController extends Controller
         } catch (InvalidEstimateGenerationTransition $e) {
             return AdminResponse::error(trans_message('estimate_generation.apply_not_ready'), 422);
         } catch (\Throwable $e) {
+            report($e);
             Log::error('[EstimateGeneration] Apply failed', [
                 'failure_code' => 'apply_failed',
                 'session_id' => $session->id,
+                'exception_class' => $e::class,
             ]);
 
             return AdminResponse::error(trans_message('estimate_generation.apply_error'), 500);

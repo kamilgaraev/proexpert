@@ -50,8 +50,9 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             'sanitary.showers' => 'pcs', 'sanitary.toilets' => 'pcs', 'sanitary.washbasins' => 'pcs',
             'sanitary.waterproofing' => 'm2', 'sanitary.tile' => 'm2', 'sanitary.floor_tile' => 'm2', 'sewerage.pipe' => 'm',
             'sewerage.outlets' => 'pcs', 'sewerage.risers' => 'pcs', 'sewerage.revisions' => 'pcs',
-            'heating.pipe' => 'm', 'heating.radiators' => 'pcs',
-            'ventilation.air_exchange' => 'm2', 'rough.floor' => 'm2', 'rough.walls' => 'm2',
+            'heating.unit' => 'pcs', 'heating.pipe' => 'm', 'heating.radiators' => 'pcs',
+            'ventilation.air_exchange' => 'm2', 'ventilation.distribution_devices' => 'pcs',
+            'rough.floor' => 'm2', 'rough.walls' => 'm2',
             'rough.ceiling' => 'm2', 'finish.floor' => 'm2', 'finish.paint' => 'm2',
             'finish.ceiling' => 'm2', 'finish.baseboard' => 'm',
         ];

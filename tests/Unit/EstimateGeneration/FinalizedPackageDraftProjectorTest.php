@@ -54,9 +54,104 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
             .'/app/BusinessModules/Addons/EstimateGeneration/Application/Apply/LaravelGeneratedEstimateWriter.php');
 
         self::assertIsString($source);
-        foreach (['price_source', 'price_source_version', 'rounding_adjustment', 'project_material_selection'] as $field) {
+        foreach (['price_source', 'price_source_version', 'rounding_adjustment', 'project_resource_selection', 'project_material_selection'] as $field) {
             self::assertStringContainsString("'{$field}' => \$resource['{$field}'] ?? null", $source);
         }
+    }
+
+    #[Test]
+    public function it_projects_a_priced_abstract_norm_resource_as_a_material_with_selection_trace(): void
+    {
+        $item = $this->finalizedItem();
+        $snapshot = $item->price_snapshot;
+        $snapshot['final_amount'] = '549.50';
+        $snapshot['coefficients']['pricing_formula_version'] = 'project_resource:v3';
+        $snapshot['coefficients']['resource_evidence'] = [[
+            'norm_resource_id' => 701,
+            'norm_id' => 101,
+            'resource_code' => '08.1.02.22',
+            'resource_type' => 'abstract',
+            'norm_quantity' => '1',
+            'work_to_norm_factor' => '1',
+            'resource_price_id' => 901,
+            'price_unit' => 'шт',
+            'base_price' => '274.75',
+            'conversion_factor' => '1',
+        ]];
+        $snapshot['coefficients']['provenance']['resources'] = [[
+            'norm_resource_id' => 701,
+            'resource_code' => '08.1.02.22',
+            'resource_name' => 'Соединитель желоба металлический',
+            'resource_type' => 'abstract',
+            'price_id' => 901,
+            'regional_version' => ['version_key' => '2026-Q2'],
+        ]];
+        $snapshot['coefficients']['project_material_evidence'] = [];
+        $resources = [
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [],
+            'other' => [[
+                'name' => 'Изделия для водосточных труб',
+                'unit' => 'шт',
+                'quantity' => '2',
+                'unit_price' => '1',
+                'total_price' => '2',
+                'project_resource_selection' => [
+                    'group_code' => '08.1.02.22',
+                    'selected_resource_code' => '12.1.01.05-0058',
+                    'selected_resource_name' => 'Соединитель желоба металлический',
+                    'policy' => 'regional_semantic_metal_gutter_family_median:v1',
+                ],
+                'normative_ref' => [
+                    'norm_resource_id' => 701,
+                    'resource_code' => '08.1.02.22',
+                    'price_id' => 1,
+                ],
+            ]],
+        ];
+        $this->replaceRawAttributes($item, [
+            'unit_price' => '274.750000',
+            'direct_cost' => '549.50',
+            'total_cost' => '549.50',
+            'price_snapshot' => $snapshot,
+            'resources' => $resources,
+        ]);
+
+        $projected = (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$item]);
+        $resource = $projected['local_estimates'][0]['sections'][0]['work_items'][0]['materials'][0];
+
+        self::assertSame('abstract', $resource['resource_type']);
+        self::assertSame('549.50', $resource['total_price']);
+        self::assertSame('regional_catalog', $resource['price_source']);
+        self::assertSame('12.1.01.05-0058', $resource['project_resource_selection']['selected_resource_code']);
+    }
+
+    #[Test]
+    public function it_replays_database_rounding_for_base_and_supplementary_material_totals_separately(): void
+    {
+        $item = $this->finalizedItem();
+        $snapshot = $item->price_snapshot;
+        $snapshot['final_amount'] = '1.02';
+        $snapshot['coefficients']['project_material_amount'] = '0.01';
+        $snapshot['coefficients']['resource_evidence'][0]['norm_quantity'] = '1';
+        $snapshot['coefficients']['resource_evidence'][0]['base_price'] = '1.006';
+        $snapshot['coefficients']['project_material_evidence'][0]['quantity_per_work_unit'] = '1';
+        $snapshot['coefficients']['project_material_evidence'][0]['base_price'] = '0.008';
+        $this->replaceRawAttributes($item, [
+            'quantity' => '1.000000000000000000',
+            'unit_price' => '1.020000',
+            'direct_cost' => '1.02',
+            'total_cost' => '1.02',
+            'price_snapshot' => $snapshot,
+        ]);
+
+        $projected = (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$item]);
+        $workItem = $projected['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertSame('1.02', $workItem['total_cost']);
+        self::assertSame('0.01', $workItem['materials_cost']);
+        self::assertSame('1.01', $workItem['labor_cost']);
     }
 
     #[Test]
@@ -66,6 +161,32 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
         $this->expectExceptionMessage('incomplete');
 
         (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), []);
+    }
+
+    #[Test]
+    public function it_accepts_a_finalized_price_from_a_package_with_non_blocking_recommendations(): void
+    {
+        $item = $this->finalizedItem();
+        $item->setAttribute('package_status', 'review_required');
+
+        $projected = (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$item]);
+
+        self::assertSame(
+            '400.00',
+            $projected['local_estimates'][0]['sections'][0]['work_items'][0]['total_cost'],
+        );
+    }
+
+    #[Test]
+    public function it_rejects_a_finalized_price_from_a_blocked_package(): void
+    {
+        $item = $this->finalizedItem();
+        $item->setAttribute('package_status', 'blocked');
+
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('Finalized package is not ready to be applied.');
+
+        (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$item]);
     }
 
     #[Test]
@@ -203,6 +324,7 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
                 'final_amount' => '400.00',
                 'coefficients' => [
                     'pricing_formula_version' => 'supplementary_project_material:v4',
+                    'project_material_amount' => '100.00',
                     'resource_evidence' => [[
                         'norm_resource_id' => 701,
                         'norm_id' => 101,

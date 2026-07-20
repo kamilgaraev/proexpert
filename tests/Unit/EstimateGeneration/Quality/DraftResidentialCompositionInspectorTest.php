@@ -30,7 +30,7 @@ final class DraftResidentialCompositionInspectorTest extends TestCase
         self::assertSame([[
             'key' => 'heating',
             'title' => 'Отопление',
-            'missing_items' => ['heating.radiators'],
+            'missing_items' => ['heating.unit', 'heating.radiators'],
         ]], $missing);
     }
 

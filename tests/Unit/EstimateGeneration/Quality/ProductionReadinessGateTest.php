@@ -112,6 +112,75 @@ final class ProductionReadinessGateTest extends TestCase
         self::assertTrue($result->canApply);
     }
 
+    #[Test]
+    #[DataProvider('requiredQuantityCoverageOmissions')]
+    public function unresolved_required_quantity_scope_blocks_apply(
+        string $packageKey,
+        string $quantityKey,
+        string $reason,
+    ): void {
+        $draft = $this->readyDraft();
+        $draft['local_estimates'][0]['key'] = $packageKey;
+        $draft['local_estimates'][0]['coverage_warnings'] = [[
+            'quantity_key' => $quantityKey,
+            'reason' => $reason,
+            'package_key' => $packageKey,
+        ]];
+
+        $inspection = (new DraftReadinessInspector)->inspect($draft);
+        $result = (new EstimatorReadinessEvaluator)->evaluate($this->input($inspection->metrics));
+        $issue = array_values(array_filter(
+            $inspection->blockingIssues,
+            static fn (array $issue): bool => ($issue['code'] ?? null) === 'required_scope_unresolved',
+        ))[0] ?? null;
+
+        self::assertSame($quantityKey, $issue['details']['quantity_coverage'][0]['quantity_key'] ?? null);
+        self::assertSame($reason, $issue['details']['quantity_coverage'][0]['reason'] ?? null);
+        self::assertFalse($result->canApply);
+    }
+
+    public static function requiredQuantityCoverageOmissions(): iterable
+    {
+        yield 'heating source' => ['heating', 'heating.unit', 'heating_source_type_missing'];
+        yield 'sewer outlet' => ['sewerage', 'sewerage.outlets', 'sewer_outlet_route_missing'];
+    }
+
+    #[Test]
+    #[DataProvider('advisoryQuantityCoverageOmissions')]
+    public function explicit_external_or_not_applicable_scope_remains_visible_without_blocking(
+        string $packageKey,
+        string $quantityKey,
+        string $reason,
+    ): void {
+        $draft = $this->readyDraft();
+        $draft['local_estimates'][0]['key'] = $packageKey;
+        $draft['local_estimates'][0]['coverage_warnings'] = [[
+            'quantity_key' => $quantityKey,
+            'reason' => $reason,
+            'package_key' => $packageKey,
+        ]];
+
+        $inspection = (new DraftReadinessInspector)->inspect($draft);
+        $result = (new EstimatorReadinessEvaluator)->evaluate($this->input($inspection->metrics));
+        $warning = array_values(array_filter(
+            $inspection->warnings,
+            static fn (array $issue): bool => ($issue['code'] ?? null) === 'quantity_scope_omission',
+        ))[0] ?? null;
+
+        self::assertSame($quantityKey, $warning['details']['quantity_coverage'][0]['quantity_key'] ?? null);
+        self::assertSame($reason, $warning['details']['quantity_coverage'][0]['reason'] ?? null);
+        self::assertNotContains('required_scope_unresolved', array_column($inspection->blockingIssues, 'code'));
+        self::assertTrue($result->canApply);
+    }
+
+    public static function advisoryQuantityCoverageOmissions(): iterable
+    {
+        yield 'external networks' => ['external_networks', 'networks.external', 'external_network_route_missing'];
+        yield 'geodesy' => ['site', 'site.geodesy', 'site_geodetic_inputs_missing'];
+        yield 'site setup' => ['site', 'site.setup', 'site_preparation_scope_missing'];
+        yield 'not applicable' => ['electrical', 'electrical.trays', 'not_applicable_to_residential_preliminary_scenario'];
+    }
+
     private function input(array $draftMetrics): EstimatorReadinessInput
     {
         return new EstimatorReadinessInput('ready_to_apply', true, 'passed', 'passed', array_merge([
