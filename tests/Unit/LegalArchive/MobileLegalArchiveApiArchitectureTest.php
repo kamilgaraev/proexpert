@@ -80,8 +80,9 @@ final class MobileLegalArchiveApiArchitectureTest extends TestCase
         self::assertStringContainsString("'current_lock_version' => \$error->currentLockVersion", $failure);
         self::assertStringContainsString("'refresh_url' => \$error->refreshUrl", $failure);
         self::assertStringContainsString('if ($error instanceof DomainException)', $failure);
+        self::assertStringContainsString("if (\$error->getMessage() === 'legal_archive_document_not_found')", $failure);
+        self::assertStringContainsString("trans_message('legal_archive.messages.document_not_found'), 404", $failure);
         self::assertStringContainsString("trans_message('legal_archive.messages.operation_conflict'),\n                409", $failure);
-        self::assertStringNotContainsString("trans_message('legal_archive.messages.document_not_found'), 404);\n    }", $failure);
     }
 
     private function methodSource(string $source, string $method): string

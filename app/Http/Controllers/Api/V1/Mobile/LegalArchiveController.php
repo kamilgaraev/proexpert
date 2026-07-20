@@ -97,6 +97,9 @@ final class LegalArchiveController extends Controller
             ]);
         }
         if ($error instanceof DomainException) {
+            if ($error->getMessage() === 'legal_archive_document_not_found') {
+                return MobileResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
             $key = 'legal_archive.domain_errors.'.$error->getMessage();
 
             return MobileResponse::error(
