@@ -20,6 +20,7 @@ use App\Services\LegalArchive\Files\VersionInput;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator;
 use App\Services\LegalArchive\Sources\LegalDocumentCreateLeaseDecision;
+use App\Services\Contract\ContractDossierDocumentCreator;
 use App\Services\LegalArchive\Sources\LegalDocumentCreateRequestFingerprint;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceCreateIdentity;
 use App\Services\LegalArchive\Sources\LegalDocumentSourceResolver;
@@ -38,7 +39,7 @@ use Throwable;
 
 use function trans_message;
 
-final class LegalArchiveRegistryService
+final class LegalArchiveRegistryService implements ContractDossierDocumentCreator
 {
     private const CREATE_LEASE_SECONDS = 1800;
 

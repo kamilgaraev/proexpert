@@ -54,6 +54,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->bind(
+            \App\Services\Contract\ContractDossierDocumentCreator::class,
+            \App\Services\LegalArchive\LegalArchiveRegistryService::class,
+        );
         $this->app->bind(\App\Services\Contract\ContractAuditedMutationService::class, function ($app) {
             return new \App\Services\Contract\ContractAuditedMutationService(
                 $app->make(\App\Services\LegalArchive\Audit\LegalDocumentAudit::class),

@@ -38,7 +38,9 @@ class ContractSideMutationService
     public function create(
         int $organizationId,
         ContractDTO $contractDTO,
-        ?ProjectContext $projectContext = null
+        ?ProjectContext $projectContext = null,
+        ?int $actorId = null,
+        ?string $dossierCreationKey = null,
     ): Contract {
         if ($projectContext && ! $projectContext->roleConfig->canManageContracts) {
             throw new Exception(
@@ -59,13 +61,14 @@ class ContractSideMutationService
             'contract_side_type' => $contractDTO->contract_side_type?->value,
             'contract_number' => $contractDTO->number,
             'project_id' => $contractDTO->project_id,
-            'user_id' => Auth::id(),
+            'user_id' => $actorId ?? Auth::id(),
             'has_project_context' => $projectContext !== null,
             'is_self_execution' => $contractDTO->is_self_execution,
         ]);
 
         $contractData = $contractDTO->toArray();
         $contractData['organization_id'] = $targetOrganizationId;
+        $contractData['dossier_creation_key'] = $dossierCreationKey;
 
         if (! $contractDTO->is_fixed_amount && (! isset($contractData['total_amount']) || $contractData['total_amount'] === null)) {
             $contractData['total_amount'] = 0;
@@ -97,7 +100,7 @@ class ContractSideMutationService
             }
 
             $stateEvent = $this->stateEventService->createContractCreatedEvent($contract);
-            $this->contractMutations->recordCreated($contract, Auth::id(), [
+            $this->contractMutations->recordCreated($contract, $actorId ?? Auth::id(), [
                 'source_event_id' => 'contract_state_event:'.(string) $stateEvent->id,
             ]);
 
@@ -111,7 +114,7 @@ class ContractSideMutationService
                 'contractor_id' => $contract->contractor_id,
                 'supplier_id' => $contract->supplier_id,
                 'contract_side_type' => $contract->contract_side_type?->value,
-                'user_id' => Auth::id(),
+                'user_id' => $actorId ?? Auth::id(),
             ]);
 
             $this->logging->audit('contract.created', [
@@ -120,7 +123,7 @@ class ContractSideMutationService
                 'contract_id' => $contract->id,
                 'contract_number' => $contract->number,
                 'transaction_type' => 'contract_created',
-                'performed_by' => Auth::id() ?? 'system',
+                'performed_by' => $actorId ?? Auth::id() ?? 'system',
                 'contract_amount' => $contract->total_amount,
             ]);
 
@@ -132,7 +135,7 @@ class ContractSideMutationService
                 'organization_id' => $targetOrganizationId,
                 'contract_number' => $contractDTO->number ?? null,
                 'error_message' => $exception->getMessage(),
-                'user_id' => Auth::id(),
+                'user_id' => $actorId ?? Auth::id(),
             ], 'error');
 
             throw $exception;

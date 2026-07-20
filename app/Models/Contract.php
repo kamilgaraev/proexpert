@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Enums\Contract\ContractPartySideEnum;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
@@ -60,6 +61,8 @@ class Contract extends Model
         'is_fixed_amount',
         'is_multi_project',
         'is_self_execution',
+        'legal_archive_document_id',
+        'dossier_creation_key',
     ];
 
     protected $casts = [
@@ -90,6 +93,11 @@ class Contract extends Model
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
+    }
+
+    public function legalArchiveDocument(): BelongsTo
+    {
+        return $this->belongsTo(LegalArchiveDocument::class, 'legal_archive_document_id');
     }
 
     public function project(): BelongsTo
