@@ -16,6 +16,8 @@ use App\Services\LegalArchive\Comments\LegalDocumentBlockingCommentGuard;
 use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
 use App\Services\LegalArchive\LegalArchiveLockConflict;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
+use App\Services\LegalArchive\LegalDocumentNotificationPublisher;
+use App\Notifications\LegalArchive\LegalDocumentApprovalRequiredNotification;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowDecisionInput;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowOverride;
 use Carbon\CarbonImmutable;
@@ -45,6 +47,7 @@ final class LegalDocumentWorkflowService
         private readonly ConnectionInterface $connection,
         ?LegalDocumentAggregateLock $aggregateLock = null,
         ?LegalDocumentBlockingCommentGuard $blockingComments = null,
+        private readonly ?LegalDocumentNotificationPublisher $notifications = null,
     ) {
         $this->aggregateLock = $aggregateLock ?? new LegalDocumentAggregateLock;
         $this->blockingComments = $blockingComments ?? new LegalDocumentBlockingCommentGuard;
@@ -65,7 +68,7 @@ final class LegalDocumentWorkflowService
         ]));
 
         try {
-            return $this->connection->transaction(function () use (
+            $instance = $this->connection->transaction(function () use (
                 $document,
                 $versionId,
                 $actor,
@@ -222,6 +225,15 @@ final class LegalDocumentWorkflowService
 
                 return $instance->load('steps', 'decisions');
             }, 3);
+            $document = $document->fresh();
+            foreach ($instance->steps->where('status', 'active') as $step) {
+                if ((string) $step->actor_type === 'user' && ctype_digit((string) $step->actor_reference)
+                    && ($recipient = User::query()->find((int) $step->actor_reference)) instanceof User
+                    && $document instanceof LegalArchiveDocument) {
+                    ($this->notifications ?? new LegalDocumentNotificationPublisher)->publish($document, $recipient, 'workflow-step:'.$step->id.':'.$recipient->id, new LegalDocumentApprovalRequiredNotification($document));
+                }
+            }
+            return $instance;
         } catch (QueryException $exception) {
             $existing = $this->instances()
                 ->where('organization_id', (int) $document->organization_id)
