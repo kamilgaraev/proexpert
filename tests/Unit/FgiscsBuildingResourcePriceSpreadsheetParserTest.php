@@ -96,6 +96,80 @@ class FgiscsBuildingResourcePriceSpreadsheetParserTest extends TestCase
         $this->assertSame(1.38, $prices[1]->rawData['group_index']);
     }
 
+    public function test_it_stops_after_material_section_when_official_export_switches_to_other_resource_kinds(): void
+    {
+        $rows = [
+            ['Код строительного ресурса', 'Наименование', 'Единица измерения', 'Отпускная цена', 'Сметная цена'],
+            ['02.1.01.02-0003', 'Грунт песчаный', 'м3', '120.00', '603.20'],
+            ['Справочно', 'Промежуточная строка без кода ресурса', '-', '-', '-'],
+            ['12.2.05.02-0006', 'Плиты теплоизоляционные', 'м3', '1000.00', '1415.60'],
+            ['91.21.03-507', 'Аппараты абразивоструйные', 'маш.-ч', '-', '500.00'],
+        ];
+
+        for ($index = 1; $index <= 500; $index++) {
+            $rows[] = [
+                sprintf('02-30-3-03-%04d', $index),
+                'Перевозка грузов автомобильным транспортом',
+                '1 т груза',
+                '-',
+                '100.00',
+            ];
+        }
+
+        $rows[] = ['23.1.02.03-9999', 'Строка после завершённого раздела материалов', 'м3', '100.00', '200.00'];
+        $file = $this->xlsx($rows);
+
+        $prices = iterator_to_array((new FgiscsBuildingResourcePriceSpreadsheetParser)->parse($file));
+
+        $this->assertSame(
+            ['02.1.01.02-0003', '12.2.05.02-0006'],
+            array_map(static fn ($price): string => $price->code, $prices),
+        );
+    }
+
+    public function test_it_stops_split_form_after_material_section_when_resource_code_column_is_reordered(): void
+    {
+        $file = $this->xlsx([
+            [
+                'Индекс изменения сметной стоимости к группе однородных строительных ресурсов',
+                'Сметная цена в текущем уровне цен, руб.',
+                'Код группы однородных строительных ресурсов',
+                'Наименование группы однородных строительных ресурсов',
+                'Код группы, ресурса',
+                'Наименование строительного ресурса, затрат',
+                'Единица измерения',
+                'Сметная цена в базисном уровне цен по состоянию на 01.01.2022, руб.',
+                'Отпускная цена в базисном уровне цен по состоянию на 01.01.2022, руб.',
+            ],
+            ['-', '603.20', '440', 'Пескогрунты', '02.1.01.02-0003', 'Грунт песчаный', 'м3', '514.19', '150.00'],
+            ['-', '500.00', '-', 'Машины', '91.21.03-507', 'Аппараты абразивоструйные', 'маш.-ч', '400.00', '300.00'],
+            ['-', '200.00', '999', 'Материалы', '23.1.02.03-9999', 'Строка после завершённого раздела', 'м3', '100.00', '90.00'],
+        ]);
+
+        $prices = iterator_to_array((new FgiscsBuildingResourcePriceSpreadsheetParser)->parse($file));
+
+        $this->assertSame(
+            ['02.1.01.02-0003'],
+            array_map(static fn ($price): string => $price->code, $prices),
+        );
+    }
+
+    public function test_it_does_not_stop_on_recognized_non_material_code_before_material_section_starts(): void
+    {
+        $file = $this->xlsx([
+            ['Код строительного ресурса', 'Наименование', 'Единица измерения', 'Отпускная цена', 'Сметная цена'],
+            ['91.21.03-507', 'Аппараты абразивоструйные', 'маш.-ч', '-', '500.00'],
+            ['02.1.01.02-0003', 'Грунт песчаный', 'м3', '120.00', '603.20'],
+        ]);
+
+        $prices = iterator_to_array((new FgiscsBuildingResourcePriceSpreadsheetParser)->parse($file));
+
+        $this->assertSame(
+            ['02.1.01.02-0003'],
+            array_map(static fn ($price): string => $price->code, $prices),
+        );
+    }
+
     /**
      * @param  array<int, array<int, string>>  $rows
      */
