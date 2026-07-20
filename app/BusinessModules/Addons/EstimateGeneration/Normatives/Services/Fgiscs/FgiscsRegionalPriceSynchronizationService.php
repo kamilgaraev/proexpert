@@ -55,7 +55,10 @@ class FgiscsRegionalPriceSynchronizationService
         }
 
         if (($final['status'] ?? null) !== RegionalPriceStatus::ACTIVE->value) {
-            throw new RuntimeException('Regional price synchronization did not activate a complete version.');
+            throw new RuntimeException(sprintf(
+                'Regional price synchronization did not activate a complete version: %s.',
+                $this->resultSummary($final),
+            ));
         }
 
         return array_merge($final, [
@@ -71,7 +74,32 @@ class FgiscsRegionalPriceSynchronizationService
             RegionalPriceStatus::FAILED->value,
             RegionalPriceStatus::UNAVAILABLE->value,
         ], true)) {
-            throw new RuntimeException('Regional price component synchronization failed: '.$component);
+            throw new RuntimeException(sprintf(
+                'Regional price component synchronization failed: %s (%s).',
+                $component,
+                $this->resultSummary($result),
+            ));
         }
+    }
+
+    /** @param array<string, mixed> $result */
+    private function resultSummary(array $result): string
+    {
+        $metadata = is_array($result['metadata'] ?? null) ? $result['metadata'] : [];
+        $parts = [
+            'status='.(string) ($result['status'] ?? 'unknown'),
+        ];
+
+        foreach (['version_id', 'version_key', 'failure_code', 'reason'] as $key) {
+            if (isset($result[$key]) && $result[$key] !== '') {
+                $parts[] = $key.'='.(string) $result[$key];
+            }
+        }
+
+        if (isset($metadata['building_resources_failure_code'])) {
+            $parts[] = 'failure_code='.(string) $metadata['building_resources_failure_code'];
+        }
+
+        return implode(', ', $parts);
     }
 }

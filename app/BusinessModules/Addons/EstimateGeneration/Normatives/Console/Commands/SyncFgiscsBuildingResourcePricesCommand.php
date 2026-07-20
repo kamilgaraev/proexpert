@@ -45,6 +45,7 @@ class SyncFgiscsBuildingResourcePricesCommand extends Command
             Log::error('[EstimateGeneration] FGIS CS building resource price sync failed.', [
                 'exception_class' => $exception::class,
                 'exception_code' => $exception->getCode(),
+                'exception_message' => $exception->getMessage(),
             ]);
             $this->error(trans_message('estimate_generation.operation_error'));
 
