@@ -5,13 +5,17 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Pricing;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialAbstractResourceConversionCatalog;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Closure;
 
 class ResolveRegionalPrice
 {
-    public function __construct(private readonly ?Closure $lookup = null) {}
+    public function __construct(
+        private readonly ?Closure $lookup = null,
+        private readonly ResidentialAbstractResourceConversionCatalog $residentialConversions = new ResidentialAbstractResourceConversionCatalog,
+    ) {}
 
     public function handle(array $resource, array $regionalContext): PriceSnapshotData
     {
@@ -38,10 +42,24 @@ class ResolveRegionalPrice
             throw MissingRegionalPrice::forResource($priceId);
         }
 
+        $baseAmount = BigDecimal::of((string) $payload['base_price']);
         $coefficients = ['quantity' => $this->decimal($resource['quantity'] ?? 0, 6)];
         if ($baseCatalogPrice) {
             $coefficients['price_kind'] = 'base_catalog';
             $coefficients['dataset_version_id'] = (int) $payload['dataset_version_id'];
+        }
+        $conversion = $baseCatalogPrice ? $this->residentialConversion($resource, $payload) : null;
+        if ($conversion !== null) {
+            $baseAmount = $baseAmount->multipliedBy($conversion['factor']);
+            $coefficients = [
+                ...$coefficients,
+                'price_kind' => 'base_catalog_converted',
+                'source_unit_price' => $this->decimal($payload['base_price'], 4),
+                'source_price_unit' => $conversion['from_unit'],
+                'conversion_factor' => $conversion['factor'],
+                'conversion_assumption' => $conversion['assumption'],
+                'selected_resource_code' => $conversion['selected_resource_code'],
+            ];
         }
 
         return new PriceSnapshotData(
@@ -51,14 +69,74 @@ class ResolveRegionalPrice
             versionId: $versionId,
             sourceType: (string) ($payload['source_type'] ?? 'regional_catalog'),
             sourceReference: 'estimate_resource_prices:'.$priceId,
-            baseAmount: $this->decimal($payload['base_price'] ?? 0, 4),
+            baseAmount: (string) $baseAmount->toScale(4, RoundingMode::HalfUp),
             coefficients: $coefficients,
-            finalAmount: (string) BigDecimal::of((string) ($payload['base_price'] ?? '0'))
+            finalAmount: (string) $baseAmount
                 ->multipliedBy(BigDecimal::of((string) ($resource['quantity'] ?? '0')))
                 ->toScale(2, RoundingMode::HalfUp),
             currency: (string) ($payload['currency'] ?? 'RUB'),
             capturedAt: now()->toIso8601String(),
         );
+    }
+
+    private function residentialConversion(array $resource, array $payload): ?array
+    {
+        $selection = is_array($resource['project_resource_selection'] ?? null)
+            ? $resource['project_resource_selection']
+            : null;
+        $reference = is_array($resource['normative_ref'] ?? null) ? $resource['normative_ref'] : [];
+        $referenceSelection = is_array($reference['project_resource_selection'] ?? null)
+            ? $reference['project_resource_selection']
+            : null;
+        if ($selection === null || ! str_contains((string) ($selection['policy'] ?? ''), '_residential_converted_')) {
+            return null;
+        }
+        if ($selection !== $referenceSelection) {
+            throw MissingRegionalPrice::forResource($this->positiveInt($resource['price_id'] ?? null) ?? 0);
+        }
+        $normCode = trim((string) ($reference['norm_code'] ?? ''));
+        $groupCode = trim((string) ($reference['resource_code'] ?? ''));
+        $conversion = $this->residentialConversions->find($normCode, $groupCode);
+        if ($conversion === null) {
+            throw MissingRegionalPrice::forResource($this->positiveInt($resource['price_id'] ?? null) ?? 0);
+        }
+        $sourceType = (string) ($payload['source_type'] ?? '');
+        $expectedPolicy = $sourceType.'_residential_converted_child_median:v1';
+        $expectedPriceSource = match ($sourceType) {
+            'fsbc' => 'fsbc_base',
+            'fsnb_2022' => 'fsnb_base',
+            default => null,
+        };
+        $selectedResourceCode = trim((string) ($selection['selected_resource_code'] ?? ''));
+        $datasetVersion = trim((string) ($payload['dataset_version'] ?? ''));
+        try {
+            $sourcePriceMatches = BigDecimal::of((string) ($selection['source_unit_price'] ?? '0'))
+                ->isEqualTo(BigDecimal::of((string) ($payload['base_price'] ?? '0')));
+            $factorMatches = BigDecimal::of((string) ($selection['conversion_factor'] ?? '0'))
+                ->isEqualTo(BigDecimal::of($conversion['factor']));
+            $appliedPriceMatches = BigDecimal::of((string) ($resource['unit_price'] ?? '0'))
+                ->isEqualTo(BigDecimal::of((string) $payload['base_price'])->multipliedBy($conversion['factor']));
+        } catch (\Throwable) {
+            throw MissingRegionalPrice::forResource($this->positiveInt($resource['price_id'] ?? null) ?? 0);
+        }
+        if (($selection['group_code'] ?? null) !== $groupCode
+            || ($selection['policy'] ?? null) !== $expectedPolicy
+            || ($selection['price_source'] ?? null) !== $expectedPriceSource
+            || trim((string) ($selection['price_source_version'] ?? '')) !== $datasetVersion
+            || $selectedResourceCode !== trim((string) ($payload['resource_code'] ?? ''))
+            || preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', $selectedResourceCode) !== 1
+            || trim((string) ($selection['source_price_unit'] ?? '')) !== $conversion['from_unit']
+            || trim((string) ($payload['unit'] ?? '')) !== $conversion['from_unit']
+            || trim((string) ($resource['price_unit'] ?? '')) !== $conversion['to_unit']
+            || trim((string) ($selection['conversion_assumption'] ?? '')) !== $conversion['assumption']
+            || ! $sourcePriceMatches || ! $factorMatches || ! $appliedPriceMatches) {
+            throw MissingRegionalPrice::forResource($this->positiveInt($resource['price_id'] ?? null) ?? 0);
+        }
+
+        return [
+            ...$conversion,
+            'selected_resource_code' => $selectedResourceCode,
+        ];
     }
 
     /** @param array<string, mixed> $embeddedPrice */
@@ -117,6 +195,7 @@ class ResolveRegionalPrice
         return [
             ...$price->getAttributes(),
             'source_type' => $price->datasetVersion?->source_type?->value ?? 'regional_catalog',
+            'dataset_version' => $price->datasetVersion?->version_key,
             'dataset_status' => $price->datasetVersion?->status?->value ?? $price->datasetVersion?->status,
             'currency' => is_array($price->raw_payload) ? ($price->raw_payload['currency'] ?? 'RUB') : 'RUB',
         ];

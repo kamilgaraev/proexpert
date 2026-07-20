@@ -192,7 +192,7 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         $intent = $factory->intent($item, $context, 'fsnb-2026.1');
 
         self::assertSame(['ламинат', 'ламинированн'], $intent->specializationScenario['material_markers'] ?? null);
-        self::assertSame('residential_preliminary_common:v8', $intent->specializationScenario['scenario_id'] ?? null);
+        self::assertSame('residential_preliminary_common:v9', $intent->specializationScenario['scenario_id'] ?? null);
     }
 
     public function test_signed_engineering_scenario_overrides_ambiguous_classifier_action_and_section(): void
@@ -226,6 +226,47 @@ final class NormativeWorkIntentFactoryTest extends TestCase
 
         self::assertSame('cable_installation', $intent->technology);
         self::assertSame(['08'], $intent->normativeSections);
+    }
+
+    public function test_signed_residential_construction_scenarios_override_ambiguous_actions_and_sections(): void
+    {
+        $catalog = new ResidentialMaterialScenarioCatalog;
+        $factory = new NormativeWorkIntentFactory(
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
+            null,
+            $catalog,
+        );
+
+        foreach ([
+            ['foundation.prep', 'm3', 'concreting', '06'],
+            ['sanitary.showers', 'pcs', 'sanitary_fixture_installation', '17'],
+            ['sanitary.toilets', 'pcs', 'sanitary_fixture_installation', '17'],
+            ['sanitary.washbasins', 'pcs', 'sanitary_fixture_installation', '17'],
+            ['rough.floor', 'm2', 'floor_preparation', '11'],
+        ] as [$quantityKey, $unit, $action, $section]) {
+            $scenario = $catalog->issue($quantityKey, 'residential');
+            self::assertIsArray($scenario);
+            $intent = $factory->intent([
+                'key' => $quantityKey,
+                'name' => 'Общестроительная работа',
+                'normative_search_text' => $scenario['normative_search_text'],
+                'normative_rate_code' => $scenario['normative_rate_code'],
+                'unit' => $unit,
+                'metadata' => ['material_scenario_work_key' => $quantityKey],
+                'specialization_scenario' => $scenario,
+            ], [
+                'organization_id' => 1,
+                'project_id' => 89,
+                'session_id' => 58,
+                'scope_type' => 'custom',
+                'object_type' => 'house',
+                'applicability_date' => '2026-07-20',
+                'source_refs' => ['doc:1'],
+            ], 'fsnb-2026.1');
+
+            self::assertSame($action, $intent->technology);
+            self::assertSame([$section], $intent->normativeSections);
+        }
     }
 
     public function test_trusted_specialization_evidence_suppresses_preliminary_scenario(): void

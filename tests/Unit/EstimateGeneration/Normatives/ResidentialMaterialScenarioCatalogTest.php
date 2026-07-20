@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v8', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v9', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -99,6 +99,11 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         self::assertSame('socket_installation', $catalog->issue('electrical.switches', 'residential')['intent_action'] ?? null);
         self::assertSame('lighting_fixture_installation', $catalog->issue('lighting.fixtures', 'residential')['intent_action'] ?? null);
         self::assertSame('heating_equipment', $catalog->issue('heating.unit', 'residential')['intent_action'] ?? null);
+        self::assertSame('concreting', $catalog->issue('foundation.prep', 'residential')['intent_action'] ?? null);
+        self::assertSame('sanitary_fixture_installation', $catalog->issue('sanitary.showers', 'residential')['intent_action'] ?? null);
+        self::assertSame('sanitary_fixture_installation', $catalog->issue('sanitary.toilets', 'residential')['intent_action'] ?? null);
+        self::assertSame('sanitary_fixture_installation', $catalog->issue('sanitary.washbasins', 'residential')['intent_action'] ?? null);
+        self::assertSame('floor_preparation', $catalog->issue('rough.floor', 'residential')['intent_action'] ?? null);
     }
 
     #[DataProvider('verifiedNormativeSpecializations')]

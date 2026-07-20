@@ -81,6 +81,60 @@ final class ResolveRegionalPriceTest extends TestCase
     }
 
     #[Test]
+    public function verified_residential_abstract_resource_conversion_produces_a_catalog_grounded_snapshot(): void
+    {
+        $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [
+            'id' => $priceId,
+            'resource_code' => '12.2.05.02-1001',
+            'unit' => 'м3',
+            'dataset_version_id' => 6,
+            'dataset_version' => '2026-05-07',
+            'dataset_status' => 'parsed',
+            'region_id' => null,
+            'price_zone_id' => null,
+            'period_id' => null,
+            'regional_price_version_id' => null,
+            'base_price' => '10000.0000',
+            'source_type' => 'fsnb_2022',
+        ]);
+
+        $snapshot = $resolver->handle($this->convertedResource(), $this->context());
+
+        self::assertSame('2000.0000', $snapshot->baseAmount);
+        self::assertSame('4000.00', $snapshot->finalAmount);
+        self::assertSame('base_catalog_converted', $snapshot->coefficients['price_kind']);
+        self::assertSame('10000.0000', $snapshot->coefficients['source_unit_price']);
+        self::assertSame('м3', $snapshot->coefficients['source_price_unit']);
+        self::assertSame('0.20', $snapshot->coefficients['conversion_factor']);
+        self::assertSame('mineral_wool_thickness_m:0.20', $snapshot->coefficients['conversion_assumption']);
+    }
+
+    #[Test]
+    public function residential_conversion_rejects_a_tampered_factor_even_when_the_price_id_exists(): void
+    {
+        $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [
+            'id' => $priceId,
+            'resource_code' => '12.2.05.02-1001',
+            'unit' => 'м3',
+            'dataset_version_id' => 6,
+            'dataset_version' => '2026-05-07',
+            'dataset_status' => 'parsed',
+            'region_id' => null,
+            'price_zone_id' => null,
+            'period_id' => null,
+            'regional_price_version_id' => null,
+            'base_price' => '10000.0000',
+            'source_type' => 'fsnb_2022',
+        ]);
+        $resource = $this->convertedResource();
+        $resource['project_resource_selection']['conversion_factor'] = '0.01';
+        $resource['normative_ref']['project_resource_selection']['conversion_factor'] = '0.01';
+
+        $this->expectException(MissingRegionalPrice::class);
+        $resolver->handle($resource, $this->context());
+    }
+
+    #[Test]
     public function base_price_from_unapproved_dataset_is_never_used(): void
     {
         $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [
@@ -169,6 +223,38 @@ final class ResolveRegionalPriceTest extends TestCase
     private function resource(): array
     {
         return ['price_id' => 42, 'quantity' => 2.5, 'unit_price' => 100.0, 'total_price' => 250.0];
+    }
+
+    private function convertedResource(): array
+    {
+        $selection = [
+            'group_code' => '12.2.05.02',
+            'selected_resource_code' => '12.2.05.02-1001',
+            'selected_resource_name' => 'Плиты теплоизоляционные минераловатные',
+            'price_source' => 'fsnb_base',
+            'price_source_version' => '2026-05-07',
+            'policy' => 'fsnb_2022_residential_converted_child_median:v1',
+            'candidates_count' => 3,
+            'conversion_assumption' => 'mineral_wool_thickness_m:0.20',
+            'source_unit_price' => '10000',
+            'source_price_unit' => 'м3',
+            'conversion_factor' => '0.20',
+        ];
+
+        return [
+            'price_id' => 42,
+            'unit' => 'м2',
+            'price_unit' => 'м2',
+            'quantity' => '2',
+            'unit_price' => '2000',
+            'project_resource_selection' => $selection,
+            'normative_ref' => [
+                'norm_code' => '12-01-013-07',
+                'resource_code' => '12.2.05.02',
+                'price_id' => 42,
+                'project_resource_selection' => $selection,
+            ],
+        ];
     }
 
     private function context(int $regionId = 16): array
