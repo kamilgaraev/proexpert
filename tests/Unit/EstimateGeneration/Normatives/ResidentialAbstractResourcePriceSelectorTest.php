@@ -92,7 +92,74 @@ final class ResidentialAbstractResourcePriceSelectorTest extends TestCase
     }
 
     #[Test]
-    public function supports_only_the_verified_lintel_and_tile_conversions(): void
+    public function selects_reinforcement_steel_for_the_exact_monolithic_floor_norm_instead_of_embedded_parts(): void
+    {
+        $reinforcement = (object) [
+            'price_resource_code' => '08.4.03.03-0004',
+            'price_resource_name' => 'Сталь арматурная рифленая свариваемая, класс A500C, диаметр 12 мм',
+            'price_unit' => 'т',
+            'base_price' => 72_000,
+            'price_id' => 21,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+        $embeddedParts = (object) [
+            'price_resource_code' => '08.4.01.02-0011',
+            'price_resource_name' => 'Детали закладные и накладные',
+            'price_unit' => 'т',
+            'base_price' => 115_095,
+            'price_id' => 22,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+        $wrongDiameter = (object) [
+            ...get_object_vars($reinforcement),
+            'price_resource_code' => '08.4.03.03-0006',
+            'price_resource_name' => 'Сталь арматурная рифленая свариваемая, класс A500C, диаметр 16 мм',
+            'base_price' => 60_000,
+            'price_id' => 23,
+        ];
+
+        $selection = (new ResidentialAbstractResourcePriceSelector)->select(
+            '06-23-003-05',
+            '08.4.01.02',
+            [$embeddedParts, $wrongDiameter, $reinforcement],
+            [4],
+        );
+
+        self::assertNotNull($selection);
+        self::assertSame('08.4.03.03-0004', $selection['row']->price_resource_code);
+        self::assertSame(72_000.0, $selection['row']->unit_price);
+        self::assertSame('т', $selection['row']->price_unit);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v4', $selection['policy']);
+        self::assertSame('monolithic_floor_reinforcement_steel_group:08.4.03.03', $selection['assumption']);
+    }
+
+    #[Test]
+    public function reinforcement_conversion_is_restricted_to_the_verified_norm_and_semantic_resource(): void
+    {
+        $reinforcement = (object) [
+            'price_resource_code' => '08.4.03.03-0004',
+            'price_resource_name' => 'Сталь арматурная рифленая свариваемая, класс A500C, диаметр 12 мм',
+            'price_unit' => 'т',
+            'base_price' => 72_000,
+            'price_id' => 21,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+        $unrelated = clone $reinforcement;
+        $unrelated->price_resource_name = 'Прокат стальной листовой оцинкованный';
+        $selector = new ResidentialAbstractResourcePriceSelector;
+
+        self::assertNull($selector->select('06-23-003-04', '08.4.01.02', [$reinforcement], [4]));
+        self::assertNull($selector->select('06-23-003-05', '08.4.01.02', [$unrelated], [4]));
+    }
+
+    #[Test]
+    public function supports_only_verified_residential_resource_conversions(): void
     {
         $selector = new ResidentialAbstractResourcePriceSelector;
         $lintel = (object) [
@@ -129,6 +196,11 @@ final class ResidentialAbstractResourcePriceSelectorTest extends TestCase
             'group_code' => '06.2.05.04',
             'candidate_group_code' => '06.2.01.02',
             'from_unit' => 'м2',
+        ], $selector->supportedCandidateGroups());
+        self::assertContains([
+            'group_code' => '08.4.01.02',
+            'candidate_group_code' => '08.4.03.03',
+            'from_unit' => 'т',
         ], $selector->supportedCandidateGroups());
     }
 

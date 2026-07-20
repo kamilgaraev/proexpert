@@ -613,6 +613,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         ];
         $planner = $this->planner();
         $names = [];
+        $slabItems = [];
 
         foreach ([
             'walls' => 'walls',
@@ -621,15 +622,26 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             'heating' => 'heating',
         ] as $packageKey => $scopeType) {
             $localEstimate = $this->localEstimate($packageKey, $packageKey, $scopeType, 12);
+            $items = $planner->build($localEstimate, $localEstimate['sections'][0], $analysis);
             $names = [
                 ...$names,
-                ...array_column($planner->build($localEstimate, $localEstimate['sections'][0], $analysis), 'name'),
+                ...array_column($items, 'name'),
             ];
+            if ($packageKey === 'slabs') {
+                $slabItems = $items;
+            }
         }
 
         self::assertContains('Устройство внутренних перегородок', $names);
         self::assertContains('Бетонирование монолитного перекрытия', $names);
         self::assertContains('Армирование монолитного перекрытия', $names);
+        $slabRebar = array_values(array_filter(
+            $slabItems,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'slabs.rebar',
+        ))[0] ?? null;
+        self::assertIsArray($slabRebar);
+        self::assertSame('06-23-003-05', $slabRebar['specialization_scenario']['normative_rate_code'] ?? null);
+        self::assertSame('monolithic_floor_reinforcement_steel', $slabRebar['specialization_scenario']['assumption_code'] ?? null);
         self::assertNotContains('Монтаж оконных блоков', $names);
         self::assertNotContains('Монтаж дверных блоков', $names);
         self::assertNotContains('Устройство плиты пола', $names);
@@ -1401,7 +1413,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         ))[0] ?? null;
 
         self::assertIsArray($floor);
-        self::assertSame('residential_preliminary_common:v11', $floor['specialization_scenario']['scenario_id'] ?? null);
+        self::assertSame('residential_preliminary_common:v12', $floor['specialization_scenario']['scenario_id'] ?? null);
         self::assertSame(['ламинат', 'ламинированн'], $floor['specialization_scenario']['material_markers'] ?? null);
         self::assertSame('warning', $floor['metadata']['material_assumption']['severity'] ?? null);
         self::assertTrue($floor['metadata']['material_assumption']['requires_confirmation'] ?? false);
