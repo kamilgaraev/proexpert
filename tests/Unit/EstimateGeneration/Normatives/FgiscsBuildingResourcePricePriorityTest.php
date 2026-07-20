@@ -1,0 +1,56 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\EstimateGeneration\Normatives;
+
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTOs\FgiscsBuildingResourcePriceDTO;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePricePriority;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePriceUpdateService;
+use PHPUnit\Framework\TestCase;
+use ReflectionClass;
+
+class FgiscsBuildingResourcePricePriorityTest extends TestCase
+{
+    public function test_direct_price_wins_over_index_price_regardless_of_import_order(): void
+    {
+        $priority = new FgiscsBuildingResourcePricePriority;
+        $indexed = $this->price(120.0, 'regional_building_resource_index');
+        $direct = $this->price(150.0, 'regional_building_resource_direct');
+
+        self::assertSame($direct, $priority->preferred($indexed, $direct));
+        self::assertSame($direct, $priority->preferred($direct, $indexed));
+    }
+
+    public function test_import_contract_uses_bounded_batches_in_price_priority_order(): void
+    {
+        $reflection = new ReflectionClass(FgiscsBuildingResourcePriceUpdateService::class);
+
+        self::assertSame(1000, $reflection->getConstant('UPSERT_BATCH_SIZE'));
+        self::assertSame([
+            'regional_building_resource_index',
+            'regional_building_resource_export',
+            'regional_building_resource_direct',
+        ], $reflection->getConstant('SOURCE_KINDS'));
+
+        $source = file_get_contents($reflection->getFileName());
+
+        self::assertIsString($source);
+        self::assertStringContainsString('count($batch) >= self::UPSERT_BATCH_SIZE', $source);
+        self::assertStringContainsString('EstimateResourcePrice::query()->upsert(', $source);
+        self::assertStringContainsString("'building_resources_imported' => false", $source);
+        self::assertStringContainsString('throw $exception;', $source);
+        self::assertStringNotContainsString('catch (\\Throwable)', $source);
+    }
+
+    private function price(float $value, string $sourcePriceKind): FgiscsBuildingResourcePriceDTO
+    {
+        return new FgiscsBuildingResourcePriceDTO(
+            code: '02.1.01.02-0003',
+            name: 'Material',
+            unit: 'm3',
+            currentPrice: $value,
+            sourcePriceKind: $sourcePriceKind,
+        );
+    }
+}

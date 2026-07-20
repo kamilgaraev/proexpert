@@ -19,13 +19,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\Fgi
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
+use Throwable;
 
 class FgiscsBuildingResourcePriceUpdateService
 {
+    private const UPSERT_BATCH_SIZE = 1000;
+
     private const SOURCE_KINDS = [
+        'regional_building_resource_index',
         'regional_building_resource_export',
         'regional_building_resource_direct',
-        'regional_building_resource_index',
     ];
 
     public function __construct(
@@ -33,8 +36,10 @@ class FgiscsBuildingResourcePriceUpdateService
         private readonly FgiscsRegionalCatalogService $catalogService,
         private readonly FgiscsBuildingResourcePriceSpreadsheetParser $parser,
         private readonly EstimateSourceStorageService $storageService,
-    ) {
-    }
+        private readonly RegionalPriceImportLifecycleService $lifecycleService,
+        private readonly RegionalPriceVersionResolver $versionResolver,
+        private readonly FgiscsBuildingResourcePricePriority $pricePriority,
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -59,8 +64,50 @@ class FgiscsBuildingResourcePriceUpdateService
         ?callable $progress,
     ): array {
         $region = $priceZone->region()->firstOrFail();
-        $versionKey = $this->versionKey($period, (string) $region->code, (int) $priceZone->fgiscs_price_zone_id);
+        $baseVersionKey = $this->versionKey($period, (string) $region->code, (int) $priceZone->fgiscs_price_zone_id);
+        $versionKey = $this->versionResolver->resolveVersionKey(
+            EstimateSourceType::FGIS_LABOR_PRICES->value,
+            (int) $region->id,
+            (int) $priceZone->id,
+            (int) $period->id,
+            $baseVersionKey,
+            'building_resources_imported',
+            $force,
+        );
         $prefix = $this->prefix($period, (int) $region->fgiscs_subject_id, (int) $priceZone->fgiscs_price_zone_id);
+
+        $regionalVersion = EstimateRegionalPriceVersion::query()->firstOrCreate(
+            [
+                'source' => EstimateSourceType::FGIS_LABOR_PRICES->value,
+                'region_id' => $region->id,
+                'price_zone_id' => $priceZone->id,
+                'period_id' => $period->id,
+                'version_key' => $versionKey,
+            ],
+            [
+                'status' => RegionalPriceStatus::DISCOVERED->value,
+                'files_count' => 0,
+                'rows_read' => 0,
+                'rows_imported' => 0,
+                'errors_count' => 0,
+                'metadata' => [],
+            ]
+        );
+
+        if (! $force && (bool) ($regionalVersion->metadata['building_resources_imported'] ?? false)) {
+            return [
+                'skipped' => true,
+                'reason' => 'building_resources_already_imported',
+                'region' => $region->name,
+                'price_zone' => $priceZone->name,
+                'period' => $period->name,
+                'version_id' => $regionalVersion->id,
+                'version_key' => $versionKey,
+                'status' => $regionalVersion->status->value,
+            ];
+        }
+
+        $this->versionResolver->assertWritable($regionalVersion);
 
         $datasetVersion = EstimateDatasetVersion::query()->updateOrCreate(
             [
@@ -85,37 +132,6 @@ class FgiscsBuildingResourcePriceUpdateService
             ]
         );
 
-        $regionalVersion = EstimateRegionalPriceVersion::query()->firstOrCreate(
-            [
-                'source' => EstimateSourceType::FGIS_LABOR_PRICES->value,
-                'region_id' => $region->id,
-                'price_zone_id' => $priceZone->id,
-                'period_id' => $period->id,
-                'version_key' => $versionKey,
-            ],
-            [
-                'status' => RegionalPriceStatus::DISCOVERED->value,
-                'files_count' => 0,
-                'rows_read' => 0,
-                'rows_imported' => 0,
-                'errors_count' => 0,
-                'metadata' => [],
-            ]
-        );
-
-        if (!$force && (bool) ($regionalVersion->metadata['building_resources_imported'] ?? false)) {
-            return [
-                'skipped' => true,
-                'reason' => 'building_resources_already_imported',
-                'region' => $region->name,
-                'price_zone' => $priceZone->name,
-                'period' => $period->name,
-                'version_id' => $regionalVersion->id,
-                'version_key' => $versionKey,
-                'status' => $regionalVersion->status->value,
-            ];
-        }
-
         $downloads = [];
         $files = [
             'building-resources.xlsx' => fn () => $this->client->downloadBuildingResources((int) $priceZone->fgiscs_price_zone_id, (int) $period->fgiscs_period_id),
@@ -126,7 +142,7 @@ class FgiscsBuildingResourcePriceUpdateService
         }
 
         foreach ($files as $fileName => $download) {
-            $fileKey = $prefix . $fileName;
+            $fileKey = $prefix.$fileName;
             $this->report($progress, 'download_started', ['file' => $fileKey]);
             $downloads[$fileKey] = $download();
             $this->storageService->disk($bucket)->put($fileKey, $downloads[$fileKey]->content);
@@ -146,7 +162,6 @@ class FgiscsBuildingResourcePriceUpdateService
             ]),
         ]);
 
-        $initialStatus = $regionalVersion->status;
         $stats = $this->importDownloads($downloads, $datasetVersion, $regionalVersion, $progress);
 
         $datasetVersion->update([
@@ -159,7 +174,7 @@ class FgiscsBuildingResourcePriceUpdateService
         ]);
 
         $regionalVersion->update([
-            'status' => $this->finalStatus($initialStatus),
+            'status' => RegionalPriceStatus::PARSED->value,
             'files_count' => max((int) $regionalVersion->files_count, count($downloads)),
             'rows_read' => max((int) $regionalVersion->rows_read, $stats['rows_read']),
             'rows_imported' => (int) EstimateResourcePrice::query()
@@ -173,6 +188,9 @@ class FgiscsBuildingResourcePriceUpdateService
             ]),
         ]);
 
+        $activationRequested = (bool) ($regionalVersion->metadata['activation_requested'] ?? false);
+        $lifecycle = $this->lifecycleService->finalize($regionalVersion, $activationRequested, true);
+
         return array_merge($stats, [
             'status' => $regionalVersion->fresh()->status->value,
             'region' => $region->name,
@@ -181,11 +199,13 @@ class FgiscsBuildingResourcePriceUpdateService
             'version_id' => $regionalVersion->id,
             'version_key' => $versionKey,
             'files_count' => count($downloads),
+            'activation_id' => $lifecycle['activation_id'],
+            'complete_quality' => $lifecycle['quality'],
         ]);
     }
 
     /**
-     * @param array<string, \App\BusinessModules\Addons\EstimateGeneration\Normatives\DTOs\FgiscsDownloadDTO> $downloads
+     * @param  array<string, \App\BusinessModules\Addons\EstimateGeneration\Normatives\DTOs\FgiscsDownloadDTO>  $downloads
      * @return array{rows_read:int,rows_imported:int,errors_count:int}
      */
     private function importDownloads(array $downloads, EstimateDatasetVersion $datasetVersion, EstimateRegionalPriceVersion $regionalVersion, ?callable $progress): array
@@ -194,32 +214,52 @@ class FgiscsBuildingResourcePriceUpdateService
         $rowsRead = 0;
         $rowsImported = 0;
         $errorsCount = 0;
+        $spoolPaths = [];
+        $spoolHandles = [];
 
-        DB::transaction(function () use ($downloads, $datasetVersion, $regionalVersion, $progress, &$rowsRead, &$rowsImported, &$errorsCount): void {
-            EstimateResourcePrice::query()
-                ->where('regional_price_version_id', $regionalVersion->id)
-                ->whereIn('source_price_kind', self::SOURCE_KINDS)
-                ->delete();
+        try {
+            foreach (self::SOURCE_KINDS as $sourceKind) {
+                $spoolPath = tempnam(sys_get_temp_dir(), 'fgiscs-price-spool-');
+
+                if ($spoolPath === false) {
+                    throw new RuntimeException('Unable to create a temporary regional price spool.');
+                }
+
+                $handle = fopen($spoolPath, 'wb');
+
+                if ($handle === false) {
+                    throw new RuntimeException('Unable to open a temporary regional price spool.');
+                }
+
+                $spoolPaths[$sourceKind] = $spoolPath;
+                $spoolHandles[$sourceKind] = $handle;
+            }
 
             foreach ($downloads as $fileKey => $download) {
-                $path = tempnam(sys_get_temp_dir(), 'fgiscs-building-resources-') . '.xlsx';
+                $path = tempnam(sys_get_temp_dir(), 'fgiscs-building-resources-').'.xlsx';
                 file_put_contents($path, $download->content);
 
                 try {
                     foreach ($this->parser->parse($path) as $price) {
                         $rowsRead++;
 
-                        if (!$price instanceof FgiscsBuildingResourcePriceDTO) {
+                        if (! $price instanceof FgiscsBuildingResourcePriceDTO) {
                             continue;
                         }
 
-                        try {
-                            $this->storeRegionalPrice($price, $datasetVersion, $regionalVersion);
-                            $rowsImported++;
-                            $this->reportRowsProgress($progress, $fileKey, $rowsRead, $rowsImported, $errorsCount);
-                        } catch (\Throwable) {
-                            $errorsCount++;
+                        $handle = $spoolHandles[$price->sourcePriceKind] ?? null;
+
+                        if (! is_resource($handle)) {
+                            throw new RuntimeException('Unsupported regional building resource price source.');
                         }
+
+                        $payload = json_encode($price->toArray(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+
+                        if (fwrite($handle, $payload.PHP_EOL) === false) {
+                            throw new RuntimeException('Unable to write a temporary regional price spool.');
+                        }
+
+                        $this->reportRowsProgress($progress, $fileKey, $rowsRead, $rowsImported, $errorsCount);
                     }
                 } finally {
                     if (is_file($path)) {
@@ -227,7 +267,62 @@ class FgiscsBuildingResourcePriceUpdateService
                     }
                 }
             }
-        });
+
+            foreach ($spoolHandles as $handle) {
+                fclose($handle);
+            }
+            $spoolHandles = [];
+
+            DB::transaction(function () use ($spoolPaths, $datasetVersion, $regionalVersion, &$rowsImported): void {
+                EstimateResourcePrice::query()
+                    ->where('regional_price_version_id', $regionalVersion->id)
+                    ->whereIn('source_price_kind', self::SOURCE_KINDS)
+                    ->delete();
+
+                foreach (self::SOURCE_KINDS as $sourceKind) {
+                    $rowsImported += $this->upsertSpool(
+                        $spoolPaths[$sourceKind],
+                        $datasetVersion,
+                        $regionalVersion,
+                    );
+                }
+            });
+            $rowsImported = (int) EstimateResourcePrice::query()
+                ->where('regional_price_version_id', $regionalVersion->id)
+                ->whereIn('source_price_kind', self::SOURCE_KINDS)
+                ->count();
+        } catch (Throwable $exception) {
+            $errorsCount++;
+            $regionalVersion->update([
+                'status' => RegionalPriceStatus::FAILED->value,
+                'errors_count' => max(1, (int) $regionalVersion->errors_count + 1),
+                'metadata' => array_merge($regionalVersion->metadata ?? [], [
+                    'building_resources_imported' => false,
+                    'building_resources_failure_code' => 'building_resource_import_failed',
+                ]),
+            ]);
+            $datasetVersion->update([
+                'status' => EstimateImportStatus::FAILED->value,
+                'rows_read' => $rowsRead,
+                'rows_imported' => 0,
+                'errors_count' => $errorsCount,
+                'finished_at' => now(),
+            ]);
+
+            throw $exception;
+        } finally {
+            foreach ($spoolHandles as $handle) {
+                if (is_resource($handle)) {
+                    fclose($handle);
+                }
+            }
+
+            foreach ($spoolPaths as $spoolPath) {
+                if (is_file($spoolPath)) {
+                    @unlink($spoolPath);
+                }
+            }
+        }
 
         return [
             'rows_read' => $rowsRead,
@@ -236,37 +331,112 @@ class FgiscsBuildingResourcePriceUpdateService
         ];
     }
 
-    private function storeRegionalPrice(FgiscsBuildingResourcePriceDTO $dto, EstimateDatasetVersion $datasetVersion, EstimateRegionalPriceVersion $regionalVersion): void
-    {
-        $resourceCode = trim($dto->code);
+    private function upsertSpool(
+        string $spoolPath,
+        EstimateDatasetVersion $datasetVersion,
+        EstimateRegionalPriceVersion $regionalVersion,
+    ): int {
+        $handle = fopen($spoolPath, 'rb');
 
-        EstimateResourcePrice::query()->updateOrCreate(
-            [
+        if ($handle === false) {
+            throw new RuntimeException('Unable to read a temporary regional price spool.');
+        }
+
+        $processed = 0;
+        $batch = [];
+
+        try {
+            while (($line = fgets($handle)) !== false) {
+                /** @var array{code:string,name:string,unit:?string,current_price:float|int,source_price_kind:string,raw_data:array<string,mixed>} $payload */
+                $payload = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
+                $price = new FgiscsBuildingResourcePriceDTO(
+                    code: $payload['code'],
+                    name: $payload['name'],
+                    unit: $payload['unit'],
+                    currentPrice: (float) $payload['current_price'],
+                    sourcePriceKind: $payload['source_price_kind'],
+                    rawData: $payload['raw_data'],
+                );
+                $resourceCode = trim($price->code);
+                $batch[$resourceCode] = $this->pricePriority->preferred($batch[$resourceCode] ?? null, $price);
+
+                if (count($batch) >= self::UPSERT_BATCH_SIZE) {
+                    $processed += $this->upsertPriceBatch(array_values($batch), $datasetVersion, $regionalVersion);
+                    $batch = [];
+                }
+            }
+
+            if ($batch !== []) {
+                $processed += $this->upsertPriceBatch(array_values($batch), $datasetVersion, $regionalVersion);
+            }
+        } finally {
+            fclose($handle);
+        }
+
+        return $processed;
+    }
+
+    /**
+     * @param  list<FgiscsBuildingResourcePriceDTO>  $prices
+     */
+    private function upsertPriceBatch(
+        array $prices,
+        EstimateDatasetVersion $datasetVersion,
+        EstimateRegionalPriceVersion $regionalVersion,
+    ): int {
+        $resourceCodes = array_values(array_unique(array_map(
+            static fn (FgiscsBuildingResourcePriceDTO $price): string => trim($price->code),
+            $prices,
+        )));
+        $resourceIds = ConstructionResource::query()
+            ->whereIn('ksr_code', $resourceCodes)
+            ->orderByDesc('dataset_version_id')
+            ->get(['id', 'ksr_code'])
+            ->unique('ksr_code')
+            ->mapWithKeys(static fn (ConstructionResource $resource): array => [$resource->ksr_code => $resource->id])
+            ->all();
+        $timestamp = now();
+        $rows = array_map(static function (FgiscsBuildingResourcePriceDTO $price) use ($datasetVersion, $regionalVersion, $resourceIds, $timestamp): array {
+            $resourceCode = trim($price->code);
+
+            return [
                 'dataset_version_id' => $datasetVersion->id,
                 'regional_price_version_id' => $regionalVersion->id,
-                'resource_code' => $resourceCode,
-                'price_type' => EstimateResourceType::MATERIAL->value,
-            ],
-            [
                 'region_id' => $regionalVersion->region_id,
                 'price_zone_id' => $regionalVersion->price_zone_id,
                 'period_id' => $regionalVersion->period_id,
-                'construction_resource_id' => $this->findConstructionResourceId($resourceCode),
-                'resource_name' => $dto->name,
-                'unit' => $dto->unit,
-                'base_price' => $dto->currentPrice,
-                'source_price_kind' => $dto->sourcePriceKind,
-                'raw_payload' => $dto->rawData,
-            ]
-        );
-    }
+                'construction_resource_id' => $resourceIds[$resourceCode] ?? null,
+                'resource_code' => $resourceCode,
+                'resource_name' => $price->name,
+                'unit' => $price->unit,
+                'base_price' => $price->currentPrice,
+                'price_type' => EstimateResourceType::MATERIAL->value,
+                'source_price_kind' => $price->sourcePriceKind,
+                'raw_payload' => json_encode($price->rawData, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+                'created_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ];
+        }, $prices);
 
-    private function findConstructionResourceId(string $code): ?int
-    {
-        return ConstructionResource::query()
-            ->where('ksr_code', $code)
-            ->latest('dataset_version_id')
-            ->value('id');
+        EstimateResourcePrice::query()->upsert(
+            $rows,
+            ['dataset_version_id', 'resource_code', 'price_type'],
+            [
+                'regional_price_version_id',
+                'region_id',
+                'price_zone_id',
+                'period_id',
+                'construction_resource_id',
+                'resource_name',
+                'unit',
+                'base_price',
+                'source_price_kind',
+                'raw_payload',
+                'updated_at',
+            ],
+        );
+
+        return count($rows);
     }
 
     private function resolvePeriod(int $priceZoneId, ?int $periodId): EstimatePricePeriod
@@ -280,15 +450,6 @@ class FgiscsBuildingResourcePriceUpdateService
         }
 
         return $this->catalogService->latestPeriod($priceZoneId);
-    }
-
-    private function finalStatus(RegionalPriceStatus|string|null $status): string
-    {
-        $value = $status instanceof RegionalPriceStatus ? $status->value : (string) $status;
-
-        return in_array($value, [RegionalPriceStatus::ACTIVE->value, RegionalPriceStatus::CHECKED->value], true)
-            ? $value
-            : RegionalPriceStatus::PARSED->value;
     }
 
     private function versionKey(EstimatePricePeriod $period, string $regionCode, int $priceZoneId): string
@@ -324,7 +485,7 @@ class FgiscsBuildingResourcePriceUpdateService
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      */
     private function report(?callable $progress, string $event, array $payload): void
     {

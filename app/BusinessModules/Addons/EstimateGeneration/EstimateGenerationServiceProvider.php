@@ -94,12 +94,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\RolloutNorm
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ApprovedNormativeDatasetLookup;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EloquentApprovedNormativeDatasetLookup;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePricePriority;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePriceUpdateService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsClient;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalCatalogService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceSynchronizationService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceUpdateService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceActivationService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceImportLifecycleService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceQualityService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceVersionResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateImportStatisticsService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateNormativeQualityService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateResourceClassificationService;
@@ -542,9 +546,13 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(FgiscsRegionalCatalogService::class);
         $this->app->singleton(FgiscsRegionalPriceUpdateService::class);
         $this->app->singleton(FgiscsBuildingResourcePriceSpreadsheetParser::class);
+        $this->app->singleton(FgiscsBuildingResourcePricePriority::class);
         $this->app->singleton(FgiscsBuildingResourcePriceUpdateService::class);
+        $this->app->singleton(FgiscsRegionalPriceSynchronizationService::class);
         $this->app->singleton(RegionalPriceQualityService::class);
         $this->app->singleton(RegionalPriceActivationService::class);
+        $this->app->singleton(RegionalPriceImportLifecycleService::class);
+        $this->app->singleton(RegionalPriceVersionResolver::class);
     }
 
     public function boot(): void
