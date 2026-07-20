@@ -105,6 +105,76 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
         }
     }
 
+    public function test_cancelled_session_keeps_document_review_acknowledgement_after_generation_started(): void
+    {
+        $settings = $this->settings(true, '0.7000');
+        $store = new class($settings) implements EffectiveSettingsOperationStore
+        {
+            public function __construct(private readonly EffectiveEstimateGenerationSettings $settings) {}
+
+            public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
+            {
+                return new EffectiveSettingsPair($this->settings, $this->settings);
+            }
+        };
+        $session = new EstimateGenerationSession;
+        $session->forceFill([
+            'id' => 56,
+            'organization_id' => 7,
+            'state_version' => 4,
+            'status' => EstimateGenerationStatus::Cancelled,
+            'input_payload' => ['generation_attempt_id' => 'attempt-56'],
+        ]);
+        $session->exists = true;
+        $session->setRelation('documents', collect([
+            $this->qualitySignalDocument([
+                'classification' => ['confidence' => 0.69],
+                'geometry' => ['confidence' => 0.81],
+            ]),
+        ]));
+
+        $result = (new DocumentGenerationReadinessService(new EffectiveSettingsResolver($store)))
+            ->evaluate($session);
+
+        self::assertTrue($result['summary']['review_acknowledged']);
+        self::assertTrue($result['can_generate']);
+    }
+
+    public function test_cancelled_session_without_generation_attempt_still_requires_document_review(): void
+    {
+        $settings = $this->settings(true, '0.7000');
+        $store = new class($settings) implements EffectiveSettingsOperationStore
+        {
+            public function __construct(private readonly EffectiveEstimateGenerationSettings $settings) {}
+
+            public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
+            {
+                return new EffectiveSettingsPair($this->settings, $this->settings);
+            }
+        };
+        $session = new EstimateGenerationSession;
+        $session->forceFill([
+            'id' => 57,
+            'organization_id' => 7,
+            'state_version' => 1,
+            'status' => EstimateGenerationStatus::Cancelled,
+            'input_payload' => [],
+        ]);
+        $session->exists = true;
+        $session->setRelation('documents', collect([
+            $this->qualitySignalDocument([
+                'classification' => ['confidence' => 0.69],
+                'geometry' => ['confidence' => 0.81],
+            ]),
+        ]));
+
+        $result = (new DocumentGenerationReadinessService(new EffectiveSettingsResolver($store)))
+            ->evaluate($session);
+
+        self::assertFalse($result['summary']['review_acknowledged']);
+        self::assertFalse($result['can_generate']);
+    }
+
     public function test_geometry_hard_blocker_cannot_be_disabled(): void
     {
         $document = $this->qualitySignalDocument([
