@@ -120,6 +120,43 @@ final class ResidentialProjectMaterialCatalogTest extends TestCase
     }
 
     #[Test]
+    public function missing_new_luminaire_group_uses_a_strict_semantic_catalog_equivalent(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog($scenarios);
+        $requirement = $catalog->requirementForIntent([
+            'specialization_scenario' => $scenarios->issue('lighting.fixtures', 'residential'),
+        ]);
+
+        self::assertIsArray($requirement);
+        $resource = $catalog->resourceFromPriceRows($requirement, [
+            (object) [
+                'price_id' => 51,
+                'resource_code' => '20.3.02.03-0101',
+                'resource_name' => 'Светильник промышленный светодиодный подвесной IP65',
+                'unit' => 'шт',
+                'base_price' => '4100.00',
+                'price_source' => 'regional_catalog',
+                'price_source_version' => 'region-2026-q2',
+            ],
+            (object) [
+                'price_id' => 52,
+                'resource_code' => '20.3.02.03-0102',
+                'resource_name' => 'Светильник потолочный светодиодный накладной IP20, 18 Вт',
+                'unit' => 'шт',
+                'base_price' => '1850.00',
+                'price_source' => 'fsnb_base',
+                'price_source_version' => 'fsnb-2022',
+            ],
+        ]);
+
+        self::assertIsArray($resource);
+        self::assertSame('20.3.02.03-0102', $resource['code']);
+        self::assertSame('1850', $resource['unit_price']);
+        self::assertSame('semantic_catalog_attributes_median', $resource['project_material_requirement']['selection_policy']);
+    }
+
+    #[Test]
     public function mismatched_price_identity_fails_closed(): void
     {
         $scenarios = new ResidentialMaterialScenarioCatalog;

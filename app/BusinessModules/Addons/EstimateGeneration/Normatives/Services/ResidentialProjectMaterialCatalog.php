@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final readonly class ResidentialProjectMaterialCatalog
 {
-    public const VERSION = 'residential_project_material:v2';
+    public const VERSION = 'residential_project_material:v3';
 
     private const REQUIREMENTS = [
         'electrical.main_cable' => [
@@ -63,6 +63,7 @@ final readonly class ResidentialProjectMaterialCatalog
             'resource_code' => '59.1.20.03-0798',
             'fallback_group_code' => '59.1.20.03',
             'fallback_name_markers' => ['светиль'],
+            'semantic_fallback_name_markers' => ['светиль', 'светодиод', 'потолоч'],
             'unit' => 'pcs',
             'source_unit' => 'шт',
             'price_factor' => 1.0,
@@ -107,6 +108,20 @@ final readonly class ResidentialProjectMaterialCatalog
         return array_values(array_unique(array_filter(array_column(self::REQUIREMENTS, 'fallback_group_code'))));
     }
 
+    /** @return list<list<string>> */
+    public function semanticFallbackNameMarkerSets(): array
+    {
+        return array_values(array_filter(array_map(
+            static fn (array $requirement): array => array_values(array_filter(array_map(
+                'strval',
+                is_array($requirement['semantic_fallback_name_markers'] ?? null)
+                    ? $requirement['semantic_fallback_name_markers']
+                    : [],
+            ))),
+            self::REQUIREMENTS,
+        )));
+    }
+
     /** @param array<string, mixed> $requirement @param list<object> $rows */
     public function resourceFromPriceRows(array $requirement, array $rows): ?array
     {
@@ -134,7 +149,24 @@ final readonly class ResidentialProjectMaterialCatalog
                 && $this->validPriceRow($row);
         }));
         if ($eligible === []) {
-            return null;
+            $semanticMarkers = is_array($requirement['semantic_fallback_name_markers'] ?? null)
+                ? array_values(array_filter(array_map('strval', $requirement['semantic_fallback_name_markers'])))
+                : [];
+            $eligible = array_values(array_filter($rows, function (object $row) use ($requirement, $semanticMarkers): bool {
+                $name = mb_strtolower(trim((string) ($row->resource_name ?? '')));
+
+                return $semanticMarkers !== []
+                    && preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}-\d{4}$/D', trim((string) ($row->resource_code ?? ''))) === 1
+                    && trim((string) ($row->unit ?? '')) === ($requirement['source_unit'] ?? null)
+                    && array_filter($semanticMarkers, static fn (string $marker): bool => ! str_contains($name, mb_strtolower($marker))) === []
+                    && $this->validPriceRow($row);
+            }));
+            if ($eligible === []) {
+                return null;
+            }
+            $selectionPolicy = 'semantic_catalog_attributes_median';
+        } else {
+            $selectionPolicy = 'semantic_group_median';
         }
 
         $regional = array_values(array_filter(
@@ -151,7 +183,7 @@ final readonly class ResidentialProjectMaterialCatalog
         });
         $selected = $eligible[intdiv(count($eligible) - 1, 2)];
 
-        return $this->mapPriceRow($requirement, $selected, 'semantic_group_median');
+        return $this->mapPriceRow($requirement, $selected, $selectionPolicy);
     }
 
     /** @param array<string, mixed> $requirement */

@@ -851,6 +851,13 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 foreach ($this->projectMaterials->fallbackGroupCodes() as $groupCode) {
                     $resourceCodes->orWhere('project_prices.resource_code', 'like', $groupCode.'-____');
                 }
+                foreach ($this->projectMaterials->semanticFallbackNameMarkerSets() as $markers) {
+                    $resourceCodes->orWhere(static function ($semantic) use ($markers): void {
+                        foreach ($markers as $marker) {
+                            $semantic->where('project_prices.resource_name', 'ilike', '%'.$marker.'%');
+                        }
+                    });
+                }
             })
             ->where('project_prices.base_price', '>', 0)
             ->where(function ($context) use ($requested, $basePriceDatasetIds): void {
