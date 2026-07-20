@@ -11,7 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationScope
 final class EstimatorScopeInferenceService
 {
     /**
-     * @param array<string, mixed> $factsSummary
+     * @param  array<string, mixed>  $factsSummary
      * @return array<int, array<string, mixed>>
      */
     public function persistForDocument(
@@ -37,7 +37,7 @@ final class EstimatorScopeInferenceService
     }
 
     /**
-     * @param array<string, mixed> $analysis
+     * @param  array<string, mixed>  $analysis
      * @return array<int, array<string, mixed>>
      */
     public function inferFromAnalysis(array $analysis): array
@@ -52,7 +52,7 @@ final class EstimatorScopeInferenceService
     }
 
     /**
-     * @param array<string, mixed> $document
+     * @param  array<string, mixed>  $document
      * @return array<int, array<string, mixed>>
      */
     public function inferFromDocumentPayload(array $document): array
@@ -70,7 +70,7 @@ final class EstimatorScopeInferenceService
             : (is_array($drawingSummary['elements'] ?? null) ? $drawingSummary['elements'] : []);
 
         foreach ($takeoffs as $takeoff) {
-            if (!is_array($takeoff)) {
+            if (! is_array($takeoff)) {
                 continue;
             }
 
@@ -82,7 +82,7 @@ final class EstimatorScopeInferenceService
         }
 
         foreach ($elements as $element) {
-            if (!is_array($element)) {
+            if (! is_array($element)) {
                 continue;
             }
 
@@ -94,7 +94,7 @@ final class EstimatorScopeInferenceService
         }
 
         foreach ($factsSummary['engineering_systems'] ?? [] as $system) {
-            if (!is_array($system)) {
+            if (! is_array($system)) {
                 continue;
             }
 
@@ -112,7 +112,7 @@ final class EstimatorScopeInferenceService
                 $document,
                 [
                     'fact' => $system,
-                    'quantity_key' => $scopeType . '.points',
+                    'quantity_key' => $scopeType.'.points',
                 ]
             );
         }
@@ -121,8 +121,8 @@ final class EstimatorScopeInferenceService
     }
 
     /**
-     * @param array<string, mixed> $takeoff
-     * @param array<string, mixed> $document
+     * @param  array<string, mixed>  $takeoff
+     * @param  array<string, mixed>  $document
      * @return array<string, mixed>|null
      */
     private function inferenceFromTakeoff(array $takeoff, array $document): ?array
@@ -143,7 +143,7 @@ final class EstimatorScopeInferenceService
                 'takeoff' => $takeoff,
             ]),
             'engineering_route_length' => $this->baseInference('drawing_takeoff', $this->routeScope($takeoff), $this->scopeTitle($this->routeScope($takeoff)), 0.8, $document, [
-                'quantity_key' => $this->routeScope($takeoff) . '.pipe',
+                'quantity_key' => $this->routeScope($takeoff).'.pipe',
                 'quantity_value' => $takeoff['quantity'] ?? $takeoff['value'] ?? null,
                 'unit' => $takeoff['unit'] ?? 'м',
                 'takeoff' => $takeoff,
@@ -154,8 +154,8 @@ final class EstimatorScopeInferenceService
     }
 
     /**
-     * @param array<string, mixed> $takeoff
-     * @param array<string, mixed> $document
+     * @param  array<string, mixed>  $takeoff
+     * @param  array<string, mixed>  $document
      * @return array<string, mixed>|null
      */
     private function specificationInference(array $takeoff, array $document): ?array
@@ -184,8 +184,8 @@ final class EstimatorScopeInferenceService
     }
 
     /**
-     * @param array<string, mixed> $element
-     * @param array<string, mixed> $document
+     * @param  array<string, mixed>  $element
+     * @param  array<string, mixed>  $document
      * @return array<string, mixed>|null
      */
     private function inferenceFromElement(array $element, array $document): ?array
@@ -202,7 +202,7 @@ final class EstimatorScopeInferenceService
                 'element' => $element,
             ]),
             'engineering_route' => $this->baseInference('drawing_element', $this->routeScope($element), $this->scopeTitle($this->routeScope($element)), 0.76, $document, [
-                'quantity_key' => $this->routeScope($element) . '.pipe',
+                'quantity_key' => $this->routeScope($element).'.pipe',
                 'element' => $element,
             ]),
             'unmapped_specification_row' => $this->unmappedQuantityRowInference($element, $document),
@@ -211,8 +211,8 @@ final class EstimatorScopeInferenceService
     }
 
     /**
-     * @param array<string, mixed> $element
-     * @param array<string, mixed> $document
+     * @param  array<string, mixed>  $element
+     * @param  array<string, mixed>  $document
      * @return array<string, mixed>|null
      */
     private function unmappedQuantityRowInference(array $element, array $document): ?array
@@ -230,7 +230,7 @@ final class EstimatorScopeInferenceService
         $source = trim((string) ($payload['source'] ?? 'unmapped_quantity_row'));
         $reason = trim((string) ($payload['reason'] ?? 'quantity_row_not_mapped'));
         $sourceRef = is_array($element['source_ref'] ?? null) ? $element['source_ref'] : [];
-        $quantityKey = 'unmapped.' . substr(sha1(implode('|', [
+        $quantityKey = 'unmapped.'.substr(sha1(implode('|', [
             $document['id'] ?? '',
             $document['filename'] ?? '',
             $sourceRef['page_number'] ?? '',
@@ -239,7 +239,7 @@ final class EstimatorScopeInferenceService
             $unit,
             (string) $quantity,
         ])), 0, 16);
-        $scopeType = $this->scopeFromUnmappedQuantityText($title . ' ' . $line);
+        $scopeType = $this->scopeFromUnmappedQuantityText($title.' '.$line);
 
         return $this->baseInference('unmapped_quantity_row', $scopeType, $title, 0.72, $document, [
             'quantity_key' => $quantityKey,
@@ -254,8 +254,8 @@ final class EstimatorScopeInferenceService
     }
 
     /**
-     * @param array<string, mixed> $document
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $document
+     * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */
     private function baseInference(
@@ -292,7 +292,7 @@ final class EstimatorScopeInferenceService
     }
 
     /**
-     * @param array<string, mixed> $inference
+     * @param  array<string, mixed>  $inference
      * @return array<string, mixed>
      */
     private function scopeInferenceAttributes(EstimateGenerationDocument $document, array $inference): array
@@ -332,7 +332,7 @@ final class EstimatorScopeInferenceService
     }
 
     /**
-     * @param array<string, mixed> $inference
+     * @param  array<string, mixed>  $inference
      * @return array<string, mixed>
      */
     private function normalizeInference(array $inference): array
@@ -359,16 +359,16 @@ final class EstimatorScopeInferenceService
         }
 
         foreach (['quantity_key', 'quantity_value', 'unit', 'source'] as $field) {
-            if (!array_key_exists($field, $payload) && array_key_exists($field, $workIntent)) {
+            if (! array_key_exists($field, $payload) && array_key_exists($field, $workIntent)) {
                 $payload[$field] = $workIntent[$field];
             }
 
-            if (!array_key_exists($field, $payload) && array_key_exists($field, $normativeBasis)) {
+            if (! array_key_exists($field, $payload) && array_key_exists($field, $normativeBasis)) {
                 $payload[$field] = $normativeBasis[$field];
             }
         }
 
-        if ($scopeType !== '' && !array_key_exists('scope_type', $payload)) {
+        if ($scopeType !== '' && ! array_key_exists('scope_type', $payload)) {
             $payload['scope_type'] = $scopeType;
         }
 
@@ -393,11 +393,38 @@ final class EstimatorScopeInferenceService
         $text = mb_strtolower((string) ($payload['label'] ?? $payload['name'] ?? $payload['source_text'] ?? ''));
 
         return match (true) {
-            str_contains($text, 'вент') || str_contains($text, 'в ') => 'ventilation',
-            str_contains($text, 'каб') || str_contains($text, 'эл') => 'electrical',
-            str_contains($text, 'отоп') || str_contains($text, 'т ') => 'heating',
+            str_contains($text, 'вент')
+                || str_contains($text, 'воздуховод')
+                || $this->matchesEngineeringRouteCode($text, ['в', 'v']) => 'ventilation',
+            str_contains($text, 'кабел')
+                || str_contains($text, 'элект')
+                || str_contains($text, 'освещ')
+                || str_contains($text, 'розет')
+                || str_contains($text, 'светиль')
+                || $this->matchesEngineeringRouteCode($text, ['э', 'e']) => 'electrical',
+            str_contains($text, 'отоп')
+                || str_contains($text, 'тепл')
+                || str_contains($text, 'радиатор')
+                || $this->matchesEngineeringRouteCode($text, ['т', 't']) => 'heating',
             default => 'plumbing',
         };
+    }
+
+    /** @param list<string> $codes */
+    private function matchesEngineeringRouteCode(string $text, array $codes): bool
+    {
+        $text = trim($text);
+
+        foreach ($codes as $code) {
+            if ($text === $code || preg_match(
+                '/(?:^|[^\p{L}\p{N}])'.preg_quote($code, '/').'\s*[-.]?\s*\d+(?=$|[^\p{L}\p{N}])/u',
+                $text,
+            ) === 1) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function engineeringScope(string $value): ?string
@@ -419,7 +446,7 @@ final class EstimatorScopeInferenceService
             return (float) $value;
         }
 
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             return null;
         }
 
@@ -485,7 +512,7 @@ final class EstimatorScopeInferenceService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $inferences
+     * @param  array<int, array<string, mixed>>  $inferences
      * @return array<int, array<string, mixed>>
      */
     private function unique(array $inferences): array
