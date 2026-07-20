@@ -139,10 +139,14 @@ class EstimatePricingService
                     throw MissingRegionalPrice::forResource(0, 'resource_payload_invalid');
                 }
                 $fromUnit = trim((string) ($resource['unit'] ?? ''));
-                $projectSelection = $this->projectResourceSelection($resource);
+                $projectSelection = $this->projectResourceSelection($resource, $workItem);
                 if ($this->isResidentialConvertedSelection($projectSelection)) {
                     $resource['project_resource_selection'] = $projectSelection;
                     $resource['price_unit'] = $fromUnit;
+                    $resource['normative_ref'] = [
+                        ...(is_array($resource['normative_ref'] ?? null) ? $resource['normative_ref'] : []),
+                        'project_resource_selection' => $projectSelection,
+                    ];
                     $workItem[$group][$index] = $resource;
                 }
                 $toUnit = trim((string) ($resource['price_unit'] ?? $resource['pricing']['unit'] ?? $fromUnit));
@@ -181,20 +185,50 @@ class EstimatePricingService
         return $this->isResidentialConvertedSelection($this->projectResourceSelection($resource));
     }
 
-    private function projectResourceSelection(array $resource): array
+    private function projectResourceSelection(array $resource, array $workItem = []): array
     {
         if (is_array($resource['project_resource_selection'] ?? null)) {
             return $resource['project_resource_selection'];
         }
 
-        return is_array($resource['normative_ref']['project_resource_selection'] ?? null)
-            ? $resource['normative_ref']['project_resource_selection']
+        if (is_array($resource['normative_ref']['project_resource_selection'] ?? null)) {
+            return $resource['normative_ref']['project_resource_selection'];
+        }
+
+        $groupCode = trim((string) ($resource['normative_ref']['resource_code'] ?? ''));
+        $priceId = (int) ($resource['normative_ref']['price_id'] ?? $resource['price_id'] ?? 0);
+        $unitPrice = (string) ($resource['unit_price'] ?? '0');
+        $priceUnit = trim((string) ($resource['price_unit'] ?? ''));
+        $selections = is_array($workItem['normative_match']['project_resource_selections'] ?? null)
+            ? $workItem['normative_match']['project_resource_selections']
             : [];
+        foreach ($selections as $selection) {
+            if (! is_array($selection)
+                || trim((string) ($selection['group_code'] ?? '')) !== $groupCode
+                || (int) ($selection['price_id'] ?? 0) !== $priceId
+                || trim((string) ($selection['price_unit'] ?? '')) !== $priceUnit
+                || ! $this->sameDecimal($selection['applied_unit_price'] ?? null, $unitPrice)) {
+                continue;
+            }
+
+            return $selection;
+        }
+
+        return [];
     }
 
     private function isResidentialConvertedSelection(array $selection): bool
     {
         return str_contains((string) ($selection['policy'] ?? ''), '_residential_converted_');
+    }
+
+    private function sameDecimal(mixed $left, mixed $right): bool
+    {
+        try {
+            return BigDecimal::of((string) $left)->isEqualTo(BigDecimal::of((string) $right));
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     private function snapshot(array $resourceSnapshots, BigDecimal $workCost, BigDecimal $total): PriceSnapshotData
