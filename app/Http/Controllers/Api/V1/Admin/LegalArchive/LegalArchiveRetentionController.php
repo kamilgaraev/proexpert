@@ -23,11 +23,11 @@ final class LegalArchiveRetentionController extends LegalArchiveApiController
         private readonly LegalDocumentGovernanceService $governance,
     ) {}
 
-    public function update(UpdateLegalArchiveRetentionRequest $request, string $document): JsonResponse
+    public function update(UpdateLegalArchiveRetentionRequest $request, string $legalDocument): JsonResponse
     {
         try {
             $updated = $this->governance->updateRetention(
-                $this->document($request, $document),
+                $this->document($request, $legalDocument),
                 $this->actor($request),
                 $request->safe()->except('lock_version'),
                 (int) $request->validated('lock_version'),
@@ -35,15 +35,15 @@ final class LegalArchiveRetentionController extends LegalArchiveApiController
 
             return $this->etag(AdminResponse::success(new LegalArchiveDocumentResource($updated), trans_message('legal_archive.messages.retention_updated')), $updated);
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'retention_update', ['document_id' => $document]);
+            return $this->failure($error, $request, 'retention_update', ['document_id' => $legalDocument]);
         }
     }
 
-    public function legalHold(UpdateLegalArchiveLegalHoldRequest $request, string $document): JsonResponse
+    public function legalHold(UpdateLegalArchiveLegalHoldRequest $request, string $legalDocument): JsonResponse
     {
         try {
             $updated = $this->governance->setLegalHold(
-                $this->document($request, $document),
+                $this->document($request, $legalDocument),
                 $this->actor($request),
                 (bool) $request->validated('enabled'),
                 (int) $request->validated('lock_version'),
@@ -51,7 +51,7 @@ final class LegalArchiveRetentionController extends LegalArchiveApiController
 
             return $this->etag(AdminResponse::success(new LegalArchiveDocumentResource($updated), trans_message('legal_archive.messages.legal_hold_updated')), $updated);
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'legal_hold_update', ['document_id' => $document]);
+            return $this->failure($error, $request, 'legal_hold_update', ['document_id' => $legalDocument]);
         }
     }
 

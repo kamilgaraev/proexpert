@@ -12,6 +12,10 @@ final class LegalDocumentBlockingCommentGuard
 {
     public function hasOpen(LegalArchiveDocument $document, int $versionId): bool
     {
+        if (array_key_exists('open_blocking_comments_count', $document->getAttributes())) {
+            return (int) $document->getAttribute('open_blocking_comments_count') > 0;
+        }
+
         $comment = (new LegalDocumentComment)->setConnection($document->getConnectionName());
 
         return $comment->newQuery()

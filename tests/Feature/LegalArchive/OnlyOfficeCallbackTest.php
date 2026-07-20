@@ -30,7 +30,7 @@ final class OnlyOfficeCallbackTest extends TestCase
     {
         $routes = file_get_contents(__DIR__.'/../../../routes/api/v1/admin/legal_archive.php');
         self::assertIsString($routes);
-        self::assertStringContainsString("middleware('authorize:legal_archive.view')->whereNumber('version')->name('document-file-versions.editor.session')", $routes);
+        self::assertStringContainsString("middleware('authorize:legal_archive.view')->whereNumber('documentVersion')->name('document-file-versions.editor.session')", $routes);
         self::assertStringContainsString('legal_archive.view', $routes);
         self::assertStringContainsString('legal_archive.files.download', $routes);
         self::assertStringContainsString('/preview', $routes);
@@ -39,7 +39,7 @@ final class OnlyOfficeCallbackTest extends TestCase
         self::assertIsString($editor);
         self::assertStringContainsString("\$context->mode === 'view'", $editor);
         self::assertStringContainsString("\$context->mode === 'review'", $editor);
-        self::assertStringContainsString('document-file-versions/{version}/editor/session', $routes);
+        self::assertStringContainsString('document-file-versions/{documentVersion}/editor/session', $routes);
         self::assertStringNotContainsString('documents/{document}/versions/{version}/editor', $routes);
         $api = file_get_contents(__DIR__.'/../../../routes/api.php');
         self::assertIsString($api);

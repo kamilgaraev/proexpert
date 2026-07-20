@@ -410,7 +410,7 @@ final class LegalDocumentFileService
         );
         if ($input->expectedDocumentLockVersion !== null
             && (int) $lockedDocument->lock_version !== $input->expectedDocumentLockVersion) {
-            throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+            throw LegalArchiveLockConflict::forDocument((int) $lockedDocument->id, (int) $lockedDocument->lock_version);
         }
         $lockedFile = $this->aggregateLock->lockFile($this->database(), $lockedDocument, (int) $file->getKey());
         $versionNumber = $input->versionNumber ?? $this->nextVersionNumber($lockedFile);
@@ -481,7 +481,7 @@ final class LegalDocumentFileService
                 (int) $version->document_id,
             );
             if ((int) $document->lock_version !== $expectedDocumentLockVersion) {
-                throw new LegalArchiveLockConflict((int) $document->lock_version);
+                throw LegalArchiveLockConflict::forDocument((int) $document->id, (int) $document->lock_version);
             }
             $file = $this->aggregateLock->lockFile($this->database(), $document, (int) $version->document_file_id);
             $version = $this->aggregateLock->lockVersion($this->database(), $document, (int) $version->id);

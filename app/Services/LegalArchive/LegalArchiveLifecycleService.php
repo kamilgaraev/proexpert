@@ -75,7 +75,7 @@ final readonly class LegalArchiveLifecycleService
             $locked = $this->lock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
             $this->access->authorizePermission($actor, $locked, $permission);
             if ((int) $locked->lock_version !== $expectedLockVersion) {
-                throw new LegalArchiveLockConflict((int) $locked->lock_version);
+                throw LegalArchiveLockConflict::forDocument((int) $locked->id, (int) $locked->lock_version);
             }
             $before = ['status' => $locked->status, 'lifecycle_status' => $locked->lifecycle_status, 'lock_version' => (int) $locked->lock_version];
             $locked->forceFill([

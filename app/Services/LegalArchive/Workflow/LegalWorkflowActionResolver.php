@@ -14,6 +14,7 @@ use App\Services\LegalArchive\Workflow\DTO\WorkflowActionDetail;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowCurrentStep;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowSummary;
 use Illuminate\Container\Container;
+use Illuminate\Support\Collection;
 
 final readonly class LegalWorkflowActionResolver
 {
@@ -91,6 +92,20 @@ final readonly class LegalWorkflowActionResolver
             currentSteps: $currentSteps,
             expectedInstanceLockVersion: $instance?->lock_version === null ? null : (int) $instance->lock_version,
         );
+    }
+
+    /**
+     * @param  Collection<int, LegalArchiveDocument>  $documents
+     * @return array<int, WorkflowSummary>
+     */
+    public function forMany(User $actor, Collection $documents): array
+    {
+        $summaries = [];
+        foreach ($documents as $document) {
+            $summaries[(int) $document->id] = $this->for($actor, $document);
+        }
+
+        return $summaries;
     }
 
     /** @return list<WorkflowActionDetail> */

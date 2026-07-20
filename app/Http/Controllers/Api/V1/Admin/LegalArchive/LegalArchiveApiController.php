@@ -40,18 +40,21 @@ abstract class LegalArchiveApiController extends Controller
     protected function failure(Throwable $error, Request $request, string $operation, array $context = []): JsonResponse
     {
         if ($error instanceof LegalArchiveLockConflict) {
-            $refreshUrl = isset($context['document_id'])
-                ? '/api/v1/admin/legal-archive/documents/'.(int) $context['document_id']
-                : '/api/v1/admin/legal-archive/documents';
-
             return AdminResponse::error(
                 trans_message('legal_archive.messages.lock_conflict'),
                 409,
                 null,
-                ['current_lock_version' => $error->currentLockVersion, 'refresh_url' => $refreshUrl],
+                [
+                    'aggregate_kind' => $error->aggregateKind,
+                    'aggregate_id' => $error->aggregateId,
+                    'document_id' => $error->documentId,
+                    'current_lock_version' => $error->currentLockVersion,
+                    'refresh_url' => $error->refreshUrl,
+                    'resource_url' => $error->refreshUrl,
+                ],
             )->withHeaders([
-                'ETag' => sprintf('"legal-document-lock-v%d"', $error->currentLockVersion),
-                'Location' => $refreshUrl,
+                'ETag' => $error->etag,
+                'Location' => $error->refreshUrl,
             ]);
         }
         if ($error instanceof AuthorizationException) {

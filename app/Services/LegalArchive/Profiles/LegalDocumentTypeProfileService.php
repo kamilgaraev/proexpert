@@ -9,6 +9,7 @@ use App\Services\LegalArchive\LegalArchiveLockConflict;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Log;
 
 final readonly class LegalDocumentTypeProfileService
 {
@@ -21,6 +22,20 @@ final readonly class LegalDocumentTypeProfileService
     public function create(int $organizationId, array $data): LegalArchiveDocumentTypeProfile
     {
         return $this->connection->transaction(function () use ($organizationId, $data): LegalArchiveDocumentTypeProfile {
+            $base = $this->registry->find($organizationId, (string) $data['base_code']);
+            $data = [
+                'schema' => [],
+                'required_fields' => [],
+                'required_file_roles' => [],
+                'requires_signature' => null,
+                'allowed_signature_kinds' => null,
+                'required_signature_kinds' => null,
+                'allowed_signature_formats' => null,
+                'workflow_template_id' => null,
+                'retention_policy' => $base->retentionPolicy,
+                'confidentiality_level' => $base->confidentialityLevel,
+                ...$data,
+            ];
             $this->assertInput($data);
             $this->assertWorkflowTemplate($organizationId, $data['workflow_template_id'] ?? null);
             if (LegalArchiveDocumentTypeProfile::query()->forOrganization($organizationId)
@@ -35,7 +50,16 @@ final readonly class LegalDocumentTypeProfileService
                     'lock_version' => 0,
                 ]);
             } catch (QueryException $error) {
-                throw new DomainException('profile_code_duplicate', previous: $error);
+                if ($this->isProfileCodeUniqueViolation($error)) {
+                    throw new DomainException('profile_code_duplicate', previous: $error);
+                }
+                Log::error('legal_archive.profile_create_failed', [
+                    'organization_id' => $organizationId,
+                    'code' => (string) $data['code'],
+                    'sql_state' => $error->errorInfo[0] ?? $error->getCode(),
+                ]);
+
+                throw $error;
             }
             if ((bool) $profile->is_active) {
                 $this->assertResolved($organizationId, (string) $profile->code);
@@ -59,7 +83,7 @@ final readonly class LegalDocumentTypeProfileService
                 ...$changes,
             ]);
             if ((int) $profile->lock_version !== $expectedLockVersion) {
-                throw new LegalArchiveLockConflict((int) $profile->lock_version);
+                throw LegalArchiveLockConflict::forProfile((string) $profile->id, (int) $profile->lock_version);
             }
             $this->assertWorkflowTemplate($organizationId, $changes['workflow_template_id'] ?? $profile->workflow_template_id);
             $profile->forceFill([
@@ -109,12 +133,26 @@ final readonly class LegalDocumentTypeProfileService
                 throw new DomainException('profile_definition_invalid');
             }
         }
-        $allowedKinds = (array) ($data['allowed_signature_kinds'] ?? ['paper_original', 'external_electronic', 'provider_electronic']);
-        $requiredKinds = (array) ($data['required_signature_kinds'] ?? []);
+        $allowedKinds = $data['allowed_signature_kinds'] ?? ['paper_original', 'external_electronic', 'provider_electronic'];
+        $allowedKinds = $allowedKinds === null ? ['paper_original', 'external_electronic', 'provider_electronic'] : (array) $allowedKinds;
+        $requiredKinds = $data['required_signature_kinds'] ?? [];
+        $requiredKinds = $requiredKinds === null ? [] : (array) $requiredKinds;
+        $allowedFormats = $data['allowed_signature_formats'] ?? [];
+        $allowedFormats = $allowedFormats === null ? [] : (array) $allowedFormats;
         if (array_diff($allowedKinds, ['paper_original', 'external_electronic', 'provider_electronic']) !== []
             || array_diff($requiredKinds, $allowedKinds) !== []
-            || array_diff((array) ($data['allowed_signature_formats'] ?? []), ['detached_cades', 'embedded_cades', 'xml_dsig']) !== []) {
+            || array_diff($allowedFormats, ['detached_cades', 'embedded_cades', 'xml_dsig']) !== []) {
             throw new DomainException('profile_definition_invalid');
         }
+    }
+
+    private function isProfileCodeUniqueViolation(QueryException $error): bool
+    {
+        $sqlState = (string) ($error->errorInfo[0] ?? $error->getCode());
+        $detail = mb_strtolower((string) ($error->errorInfo[2] ?? $error->getMessage()));
+
+        return $sqlState === '23505'
+            && (str_contains($detail, 'legal_doc_profiles_org_code_unique')
+                || str_contains($detail, '(organization_id, code)'));
     }
 }

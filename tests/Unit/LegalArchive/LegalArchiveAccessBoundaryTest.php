@@ -14,8 +14,8 @@ final class LegalArchiveAccessBoundaryTest extends TestCase
 
         self::assertIsString($routes);
         self::assertStringContainsString("Route::get('documents', [LegalArchiveDocumentController::class, 'index'])\n        ->name", $routes);
-        self::assertStringContainsString("Route::get('documents/{document}', [LegalArchiveDocumentController::class, 'show'])\n        ->whereNumber", $routes);
-        self::assertStringContainsString("Route::get('documents/{document}/current-version', [LegalArchiveFileController::class, 'currentPrimaryVersion'])\n        ->whereNumber", $routes);
+        self::assertStringContainsString("Route::get('documents/{legalDocument}', [LegalArchiveDocumentController::class, 'show'])\n        ->whereNumber", $routes);
+        self::assertStringContainsString("Route::get('documents/{legalDocument}/current-version', [LegalArchiveFileController::class, 'currentPrimaryVersion'])\n        ->whereNumber", $routes);
         self::assertStringNotContainsString("Route::get('documents', [LegalArchiveDocumentController::class, 'index'])\n        ->middleware('authorize:legal_archive.view')", $routes);
     }
 

@@ -39,7 +39,7 @@ final class OnlyOfficeRouteStackTest extends TestCase
         foreach ($expected as $name => $permission) {
             $route = Route::getRoutes()->getByName($name);
             self::assertNotNull($route, $name);
-            self::assertStringContainsString('document-file-versions/{version}', $route->uri());
+            self::assertStringContainsString('document-file-versions/{documentVersion}', $route->uri());
             self::assertContains($permission, $route->gatherMiddleware());
         }
     }

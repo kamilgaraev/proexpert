@@ -17,7 +17,7 @@ final class LegalArchiveApiReviewContractTest extends TestCase
 
         foreach (['public function createRequest(', 'private function registerOriginal('] as $method) {
             $section = substr($service, (int) strpos($service, $method), 12000);
-            self::assertLessThan(strpos($section, 'throw new LegalArchiveLockConflict'), strpos($section, '$existing instanceof'));
+            self::assertLessThan(strpos($section, 'LegalArchiveLockConflict::forDocument'), strpos($section, '$existing instanceof'));
             self::assertStringContainsString('assertSameRequest', $section);
         }
         $verify = substr($service, (int) strpos($service, 'public function verify('), 9000);
@@ -40,17 +40,26 @@ final class LegalArchiveApiReviewContractTest extends TestCase
         self::assertStringContainsString('NOT VALID', $migration);
         self::assertStringContainsString('VALIDATE CONSTRAINT', $migration);
         self::assertStringContainsString('CREATE INDEX CONCURRENTLY IF NOT EXISTS', $migration);
+        self::assertStringContainsString('legal_profile_workflow_template_uuid_reconciliation_required', $migration);
+        self::assertStringContainsString('FOREIGN KEY (organization_id, code, template_id)', $migration);
+        self::assertStringContainsString('FOREIGN KEY (organization_id, workflow_template_id)', $migration);
+        self::assertStringContainsString('REFERENCES legal_workflow_template_heads (organization_id, template_id)', $migration);
+        self::assertStringContainsString('DROP COLUMN workflow_template_legacy_uuid', $migration);
+        self::assertStringNotContainsString('UPDATE legal_archive_document_type_profiles', $migration);
+        self::assertStringNotContainsString('split_part', $migration);
     }
 
     public function test_workflow_settings_round_trip_every_step_field_and_lists_are_bounded(): void
     {
         $store = file_get_contents(__DIR__.'/../../../app/Http/Requests/Api/V1/Admin/LegalArchive/StoreLegalArchiveWorkflowTemplateRequest.php');
         $settings = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveSettingsController.php');
+        $resource = file_get_contents(__DIR__.'/../../../app/Http/Resources/Api/V1/Admin/LegalArchive/LegalArchiveWorkflowTemplateResource.php');
         self::assertIsString($store);
         self::assertIsString($settings);
+        self::assertIsString($resource);
         foreach (['parallel_group', 'policy_key', 'settings'] as $field) {
             self::assertStringContainsString("steps.*.{$field}", $store);
-            self::assertStringContainsString("'{$field}'", $settings);
+            self::assertStringContainsString("'{$field}'", $resource);
         }
         self::assertStringContainsString('paginate($perPage)', $settings);
         self::assertStringContainsString("boolean('all_versions')", $settings);
@@ -83,7 +92,7 @@ final class LegalArchiveApiReviewContractTest extends TestCase
         }
         $base = file_get_contents($root.'LegalArchiveApiController.php');
         self::assertIsString($base);
-        self::assertStringContainsString("'Location' => \$refreshUrl", $base);
-        self::assertStringContainsString("'refresh_url' => \$refreshUrl", $base);
+        self::assertStringContainsString("'Location' => \$error->refreshUrl", $base);
+        self::assertStringContainsString("'refresh_url' => \$error->refreshUrl", $base);
     }
 }

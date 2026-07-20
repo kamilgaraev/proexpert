@@ -293,6 +293,62 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertContains('signature_callback_rejected', $this->audit->events);
     }
 
+    public function test_provider_session_replay_precedes_stale_document_lock_check(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $provider = new FixedElectronicSignatureProvider;
+        $service = new LegalDocumentSignatureService(
+            $provider, $this->access, $this->audit, $this->storage, $this->database->getConnection(),
+        );
+        $request = $service->createRequest(
+            $document, $version, $actor, 'provider_electronic', $this->signerSet('Иван'),
+            'provider-replay-before-lock', provider: 'fixed', expectedDocumentLockVersion: (int) $document->lock_version,
+        );
+        $expectedLockVersion = (int) $document->fresh()->lock_version;
+        $session = $service->startElectronicSession($request, $actor, $expectedLockVersion);
+        $this->database->getConnection()->table('legal_archive_documents')->where('id', $document->id)
+            ->update(['lock_version' => $expectedLockVersion + 1]);
+
+        $replay = $service->startElectronicSession($request->refresh(), $actor, $expectedLockVersion);
+
+        self::assertSame($session->providerRequestId, $replay->providerRequestId);
+        self::assertSame(1, $provider->startCalls);
+    }
+
+    public function test_provider_side_effect_is_durably_tracked_when_document_changes_before_finalize(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $provider = new FixedElectronicSignatureProvider;
+        $provider->onStart = function () use ($document): void {
+            $this->database->getConnection()->table('legal_archive_documents')->where('id', $document->id)
+                ->increment('lock_version');
+        };
+        $service = new LegalDocumentSignatureService(
+            $provider, $this->access, $this->audit, $this->storage, $this->database->getConnection(),
+        );
+        $request = $service->createRequest(
+            $document, $version, $actor, 'provider_electronic', $this->signerSet('Иван'),
+            'provider-race-after-reservation', provider: 'fixed', expectedDocumentLockVersion: (int) $document->lock_version,
+        );
+        $expectedLockVersion = (int) $document->fresh()->lock_version;
+
+        try {
+            $service->startElectronicSession($request, $actor, $expectedLockVersion);
+            self::fail('Concurrent document mutation was not reported.');
+        } catch (\App\Services\LegalArchive\LegalArchiveLockConflict $conflict) {
+            self::assertSame($expectedLockVersion + 1, $conflict->currentLockVersion);
+        }
+
+        $operation = $this->database->getConnection()->table('legal_signature_provider_operations')->sole();
+        self::assertSame('started', $operation->status);
+        self::assertSame('provider-request-1', $operation->provider_request_id);
+        self::assertSame('provider-request-1', $request->refresh()->provider_request_id);
+
+        $replay = $service->startElectronicSession($request->refresh(), $actor, $expectedLockVersion);
+        self::assertSame('provider-request-1', $replay->providerRequestId);
+        self::assertSame(1, $provider->startCalls);
+    }
+
     public function test_provider_callback_rejects_result_and_evidence_signer_drift(): void
     {
         [$document, $version, $actor] = $this->fixture();
@@ -1704,6 +1760,8 @@ final class FixedElectronicSignatureProvider implements ElectronicSignatureProvi
 
     public ?\Closure $onComplete = null;
 
+    public ?\Closure $onStart = null;
+
     private ?SignerIdentitySet $expectedSigners = null;
 
     private function signers(): SignerIdentitySet
@@ -1729,6 +1787,7 @@ final class FixedElectronicSignatureProvider implements ElectronicSignatureProvi
     {
         $this->startCalls++;
         $this->expectedSigners = $context->signers;
+        ($this->onStart ?? static fn (): null => null)();
 
         return new SignatureSession(
             'fixed', "provider-request-{$this->startCalls}", $context->correlationId, 'https://fixed.test/session',

@@ -43,23 +43,15 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             $actor = $this->actor($request);
             $filters = $request->validated();
             $documents = $this->registry->paginate($actor, $this->organizationId($request), $filters);
+            $workflowSummaries = $this->actions->forMany($actor, $documents->getCollection());
             foreach ($documents->getCollection() as $document) {
-                $instance = $document->latestWorkflowInstance;
-                $ready = $document->currentVersion !== null && (string) $document->currentVersion->processing_status === 'ready';
-                $problemFlags = array_values(array_filter([
-                    $ready ? null : 'no_ready_primary_version',
-                    (int) $document->files_count > 0 ? null : 'no_files',
-                    $instance?->due_at?->isPast() === true && $instance->status === 'in_progress' ? 'workflow_overdue' : null,
-                ]));
+                $workflowSummary = $workflowSummaries[(int) $document->id]->toArray()['workflow_summary'];
+                if ((int) $document->files_count < 1) {
+                    $workflowSummary['problem_flags'][] = 'no_files';
+                    $workflowSummary['problem_flags'] = array_values(array_unique($workflowSummary['problem_flags']));
+                }
                 $document->setAttribute('api_workflow_summary', [
-                    'status' => $instance?->status ?? 'not_started',
-                    'current_steps' => $instance?->steps->where('status', 'active')->map(static fn ($step): array => [
-                        'id' => (int) $step->id, 'label' => (string) $step->label, 'status' => (string) $step->status,
-                    ])->values()->all() ?? [],
-                    'available_action_details' => $instance?->status === 'in_progress'
-                        ? [['action' => 'open_workflow', 'enabled' => true]]
-                        : [['action' => 'submit', 'enabled' => $ready]],
-                    'problem_flags' => $problemFlags,
+                    ...$workflowSummary,
                     'completeness' => [
                         'files' => (int) $document->files_count,
                         'signature_requests' => (int) $document->signature_requests_count,
@@ -186,77 +178,80 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
         );
     }
 
-    public function show(Request $request, string $document): JsonResponse
+    public function show(Request $request, string $legalDocument): JsonResponse
     {
         try {
-            $found = $this->registry->findForAuthorization((int) $document);
+            $found = $this->registry->findForAuthorization((int) $legalDocument);
             if ($found === null) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
             $actor = $this->actor($request);
             $this->access->authorize($actor, $found, 'view');
-            $found->setAttribute('api_workflow_summary', $this->actions->for($actor, $found)->toArray());
+            $found->setAttribute(
+                'api_workflow_summary',
+                $this->actions->for($actor, $found)->toArray()['workflow_summary'],
+            );
 
             return $this->etag(AdminResponse::success(
                 new LegalArchiveDocumentResource($found),
                 trans_message('legal_archive.messages.document_loaded'),
             ), $found);
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'document_show', ['document_id' => $document]);
+            return $this->failure($error, $request, 'document_show', ['document_id' => $legalDocument]);
         }
     }
 
-    public function update(UpdateLegalArchiveDocumentRequest $request, string $document): JsonResponse
+    public function update(UpdateLegalArchiveDocumentRequest $request, string $legalDocument): JsonResponse
     {
         try {
-            $found = $this->requiredDocument($request, $document);
+            $found = $this->requiredDocument($request, $legalDocument);
             $actor = $this->actor($request);
             $this->access->authorizePermission($actor, $found, 'legal_archive.update');
             $updated = $this->registry->update($found, $this->organizationId($request), (int) $actor->id, $request->validated());
 
             return $this->etag(AdminResponse::success(new LegalArchiveDocumentResource($updated), trans_message('legal_archive.messages.document_updated')), $updated);
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'document_update', ['document_id' => $document]);
+            return $this->failure($error, $request, 'document_update', ['document_id' => $legalDocument]);
         }
     }
 
-    public function archive(LegalArchiveLockRequest $request, string $document): JsonResponse
+    public function archive(LegalArchiveLockRequest $request, string $legalDocument): JsonResponse
     {
         try {
-            $updated = $this->lifecycle->archive($this->requiredDocument($request, $document), $this->actor($request), (int) $request->validated('lock_version'));
+            $updated = $this->lifecycle->archive($this->requiredDocument($request, $legalDocument), $this->actor($request), (int) $request->validated('lock_version'));
 
             return $this->etag(AdminResponse::success(new LegalArchiveDocumentResource($updated), trans_message('legal_archive.messages.document_archived')), $updated);
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'document_archive', ['document_id' => $document]);
+            return $this->failure($error, $request, 'document_archive', ['document_id' => $legalDocument]);
         }
     }
 
-    public function restore(LegalArchiveLockRequest $request, string $document): JsonResponse
+    public function restore(LegalArchiveLockRequest $request, string $legalDocument): JsonResponse
     {
         try {
-            $updated = $this->lifecycle->restore($this->requiredDocument($request, $document), $this->actor($request), (int) $request->validated('lock_version'));
+            $updated = $this->lifecycle->restore($this->requiredDocument($request, $legalDocument), $this->actor($request), (int) $request->validated('lock_version'));
 
             return $this->etag(AdminResponse::success(new LegalArchiveDocumentResource($updated), trans_message('legal_archive.messages.document_restored')), $updated);
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'document_restore', ['document_id' => $document]);
+            return $this->failure($error, $request, 'document_restore', ['document_id' => $legalDocument]);
         }
     }
 
-    public function activate(LegalArchiveLockRequest $request, string $document): JsonResponse
+    public function activate(LegalArchiveLockRequest $request, string $legalDocument): JsonResponse
     {
         try {
-            $updated = $this->lifecycle->activate($this->requiredDocument($request, $document), $this->actor($request), (int) $request->validated('lock_version'));
+            $updated = $this->lifecycle->activate($this->requiredDocument($request, $legalDocument), $this->actor($request), (int) $request->validated('lock_version'));
 
             return $this->etag(AdminResponse::success(new LegalArchiveDocumentResource($updated), trans_message('legal_archive.messages.document_activated')), $updated);
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'document_activate', ['document_id' => $document]);
+            return $this->failure($error, $request, 'document_activate', ['document_id' => $legalDocument]);
         }
     }
 
-    public function timeline(Request $request, string $document): JsonResponse
+    public function timeline(Request $request, string $legalDocument): JsonResponse
     {
         try {
-            $found = $this->requiredDocument($request, $document);
+            $found = $this->requiredDocument($request, $legalDocument);
             $actor = $this->actor($request);
             $this->access->authorizePermission($actor, $found, 'legal_archive.audit.view');
             $events = ImmutableAuditEvent::query()
@@ -273,18 +268,18 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                 'last_page' => $events->lastPage(),
             ], trans_message('legal_archive.messages.timeline_loaded'));
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'document_timeline', ['document_id' => $document]);
+            return $this->failure($error, $request, 'document_timeline', ['document_id' => $legalDocument]);
         }
     }
 
-    public function availableActions(Request $request, string $document): JsonResponse
+    public function availableActions(Request $request, string $legalDocument): JsonResponse
     {
         try {
-            $found = $this->requiredDocument($request, $document);
+            $found = $this->requiredDocument($request, $legalDocument);
 
             return AdminResponse::success($this->actions->for($this->actor($request), $found)->toArray(), trans_message('legal_archive.messages.available_actions_loaded'));
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'document_actions', ['document_id' => $document]);
+            return $this->failure($error, $request, 'document_actions', ['document_id' => $legalDocument]);
         }
     }
 

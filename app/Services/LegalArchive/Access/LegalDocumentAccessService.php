@@ -313,7 +313,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
             );
             if ($expectedDocumentLockVersion !== null
                 && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
-                throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+                throw LegalArchiveLockConflict::forDocument((int) $lockedDocument->id, (int) $lockedDocument->lock_version);
             }
             $this->authorizeManagement($actor, $lockedDocument, true);
             if (
@@ -520,7 +520,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
             $lockedDocument = $this->lock()->lockDocument($connection, (int) $document->organization_id, (int) $document->id);
             if ($expectedDocumentLockVersion !== null
                 && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
-                throw new LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+                throw LegalArchiveLockConflict::forDocument((int) $lockedDocument->id, (int) $lockedDocument->lock_version);
             }
             $this->authorizeManagement($actor, $lockedDocument, true);
             $locked = LegalDocumentAccessGrant::query()
@@ -593,7 +593,7 @@ final class LegalDocumentAccessService implements LegalDocumentAuthorizer
                 (int) $document->id,
             );
             if ($expectedDocumentLockVersion !== null && (int) $lockedDocument->lock_version !== $expectedDocumentLockVersion) {
-                throw new \App\Services\LegalArchive\LegalArchiveLockConflict((int) $lockedDocument->lock_version);
+                throw LegalArchiveLockConflict::forDocument((int) $lockedDocument->id, (int) $lockedDocument->lock_version);
             }
             $lockedActor = $this->reloadActiveUser($actor, $lockedDocument);
             $this->authorizeSecurityRecovery($lockedActor, $lockedDocument);

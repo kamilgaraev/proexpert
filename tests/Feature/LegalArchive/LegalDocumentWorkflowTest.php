@@ -14,6 +14,7 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Exceptions\ImmutableDataException;
 use App\Models\User;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use App\Services\LegalArchive\LegalArchiveLockConflict;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowDecisionInput;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowOverride;
 use App\Services\LegalArchive\Workflow\LegalDocumentWorkflowService;
@@ -273,8 +274,23 @@ final class LegalDocumentWorkflowTest extends TestCase
         try {
             $this->service->decide($step, $actor, new WorkflowDecisionInput('approve', 'stale', 99, 0));
             self::fail('Устаревшее действие принято');
-        } catch (DomainException $exception) {
-            self::assertSame('legal_workflow_stale_action', $exception->getMessage());
+        } catch (LegalArchiveLockConflict $exception) {
+            self::assertSame('legal_workflow_instance', $exception->aggregateKind);
+            self::assertSame((string) $instance->id, $exception->aggregateId);
+            self::assertSame((int) $document->id, $exception->documentId);
+            self::assertSame((int) $instance->lock_version, $exception->currentLockVersion);
+        }
+
+        try {
+            $this->service->decide($step, $actor, new WorkflowDecisionInput(
+                'approve', 'stale-step', (int) $instance->lock_version, 99,
+            ));
+            self::fail('Устаревшая версия шага принята');
+        } catch (LegalArchiveLockConflict $exception) {
+            self::assertSame('legal_workflow_step', $exception->aggregateKind);
+            self::assertSame((string) $step->id, $exception->aggregateId);
+            self::assertSame((int) $document->id, $exception->documentId);
+            self::assertSame((int) $step->lock_version, $exception->currentLockVersion);
         }
 
         $this->audit->fail = true;
@@ -529,6 +545,17 @@ final class LegalDocumentWorkflowTest extends TestCase
         $actor = $this->actor(8, ['legal_reviewer']);
         $this->createTemplate($actor);
         $instance = $this->service->submit($document, (int) $version->id, $actor, WorkflowOverride::none('cancel-submit'));
+        try {
+            $this->service->cancel($instance, $actor, new WorkflowDecisionInput(
+                'cancel', 'cancel-stale', 99, 0, reason: 'Проверка конфликта',
+            ));
+            self::fail('Устаревшая отмена принята');
+        } catch (LegalArchiveLockConflict $exception) {
+            self::assertSame('legal_workflow_instance', $exception->aggregateKind);
+            self::assertSame((string) $instance->id, $exception->aggregateId);
+            self::assertSame((int) $document->id, $exception->documentId);
+            self::assertSame((int) $instance->lock_version, $exception->currentLockVersion);
+        }
         $cancelled = $this->service->cancel($instance, $actor, new WorkflowDecisionInput(
             'cancel', 'cancel-1', 1, 0, reason: 'Документ отозван инициатором',
         ));

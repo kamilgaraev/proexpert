@@ -155,8 +155,8 @@ final class LegalDocumentAccessSchemaTest extends TestCase
         $fileController = file_get_contents($root.'app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveFileController.php');
         self::assertIsString($documentController);
         self::assertIsString($fileController);
-        self::assertStringContainsString('findForAuthorization((int) $document)', $documentController);
+        self::assertStringContainsString('findForAuthorization((int) $legalDocument)', $documentController);
         self::assertStringContainsString("\$this->access->authorize(\$actor, \$found, 'view');", $documentController);
-        self::assertStringContainsString('currentVersionWithUrl($this->document($request, $document), $this->actor($request))', $fileController);
+        self::assertStringContainsString('currentVersionWithUrl($this->document($request, $legalDocument), $this->actor($request))', $fileController);
     }
 }

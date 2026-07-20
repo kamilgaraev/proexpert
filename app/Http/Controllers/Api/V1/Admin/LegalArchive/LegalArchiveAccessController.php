@@ -26,10 +26,10 @@ final class LegalArchiveAccessController extends LegalArchiveApiController
         private readonly LegalDocumentAccessService $access,
     ) {}
 
-    public function index(Request $request, string $document): JsonResponse
+    public function index(Request $request, string $legalDocument): JsonResponse
     {
         try {
-            $owner = $this->document($request, $document);
+            $owner = $this->document($request, $legalDocument);
             $this->access->authorizePermission($this->actor($request), $owner, 'legal_archive.external_access.manage');
             $perPage = max(1, min($request->integer('per_page', 50), 100));
             $grants = $owner->accessGrants()->orderByDesc('id')->paginate($perPage);
@@ -40,14 +40,14 @@ final class LegalArchiveAccessController extends LegalArchiveApiController
                 trans_message('legal_archive.messages.access_loaded'),
             );
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'access_index', ['document_id' => $document]);
+            return $this->failure($error, $request, 'access_index', ['document_id' => $legalDocument]);
         }
     }
 
-    public function store(UpdateLegalArchiveAccessRequest $request, string $document): JsonResponse
+    public function store(UpdateLegalArchiveAccessRequest $request, string $legalDocument): JsonResponse
     {
         try {
-            $owner = $this->document($request, $document);
+            $owner = $this->document($request, $legalDocument);
             $kind = LegalDocumentAccessSubjectKind::from((string) $request->validated('subject_kind'));
             $organizationId = (int) $request->validated('subject_organization_id');
             $subject = match ($kind) {
@@ -69,18 +69,18 @@ final class LegalArchiveAccessController extends LegalArchiveApiController
                 'document_lock_version' => (int) $owner->fresh()->lock_version,
             ]), $owner->fresh());
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'access_store', ['document_id' => $document]);
+            return $this->failure($error, $request, 'access_store', ['document_id' => $legalDocument]);
         }
     }
 
-    public function revoke(Request $request, string $grant): JsonResponse
+    public function revoke(Request $request, string $legalAccessGrant): JsonResponse
     {
         try {
             $data = $request->validate([
                 'lock_version' => ['required', 'integer', 'min:0'],
                 'reason' => ['required', 'string', 'max:5000'],
             ]);
-            $found = LegalDocumentAccessGrant::query()->whereKey((int) $grant)
+            $found = LegalDocumentAccessGrant::query()->whereKey((int) $legalAccessGrant)
                 ->where('organization_id', $this->organizationId($request))->first();
             if (! $found instanceof LegalDocumentAccessGrant) {
                 throw new \Illuminate\Auth\Access\AuthorizationException;
@@ -92,14 +92,14 @@ final class LegalArchiveAccessController extends LegalArchiveApiController
                 'document_lock_version' => (int) $owner->fresh()->lock_version,
             ]), $owner->fresh());
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'access_revoke', ['grant_id' => $grant]);
+            return $this->failure($error, $request, 'access_revoke', ['grant_id' => $legalAccessGrant]);
         }
     }
 
-    public function recoverManagement(RecoverLegalDocumentManagementRequest $request, string $document): JsonResponse
+    public function recoverManagement(RecoverLegalDocumentManagementRequest $request, string $legalDocument): JsonResponse
     {
         try {
-            $owner = $this->document($request, $document);
+            $owner = $this->document($request, $legalDocument);
             $grant = $this->access->recoverManagementAsSecurityAdministrator(
                 $owner,
                 $this->actor($request),
@@ -114,7 +114,7 @@ final class LegalArchiveAccessController extends LegalArchiveApiController
                 ['document_lock_version' => (int) $owner->fresh()->lock_version],
             ), $owner->fresh());
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'access_management_recovery', ['document_id' => $document]);
+            return $this->failure($error, $request, 'access_management_recovery', ['document_id' => $legalDocument]);
         }
     }
 

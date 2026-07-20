@@ -31,7 +31,7 @@ final class LegalDocumentGovernanceService
                 ->where('organization_id', $document->organization_id)->lockForUpdate()->firstOrFail();
             $this->assertAllowed($document, $actor, 'legal_archive.retention.manage');
             if ((int) $document->lock_version !== $expectedLockVersion) {
-                throw new LegalArchiveLockConflict((int) $document->lock_version);
+                throw LegalArchiveLockConflict::forDocument((int) $document->id, (int) $document->lock_version);
             }
             $before = Arr::only($document->getAttributes(), [
                 'retention_policy',
@@ -67,7 +67,7 @@ final class LegalDocumentGovernanceService
                 ->where('organization_id', $document->organization_id)->lockForUpdate()->firstOrFail();
             $this->assertAllowed($document, $actor, 'legal_archive.legal_hold.manage');
             if ((int) $document->lock_version !== $expectedLockVersion) {
-                throw new LegalArchiveLockConflict((int) $document->lock_version);
+                throw LegalArchiveLockConflict::forDocument((int) $document->id, (int) $document->lock_version);
             }
             $before = (bool) $document->legal_hold;
             $document->forceFill([

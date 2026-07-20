@@ -22,7 +22,7 @@ final class LegalDocumentManagementRecoveryApiContractTest extends TestCase
         self::assertIsString($route);
         self::assertIsString($request);
         self::assertIsString($controller);
-        self::assertStringContainsString('documents/{document}/management-recovery', $route);
+        self::assertStringContainsString('documents/{legalDocument}/management-recovery', $route);
         self::assertStringContainsString(
             "middleware('authorize:legal_archive.security_recovery.manage')",
             $route,
@@ -30,7 +30,7 @@ final class LegalDocumentManagementRecoveryApiContractTest extends TestCase
         self::assertStringContainsString("'successor_user_id' => ['required', 'integer', 'min:1']", $request);
         self::assertStringContainsString("'lock_version' => ['required', 'integer', 'min:0']", $request);
         self::assertStringContainsString("'legal_archive.security_recovery.manage'", $request);
-        self::assertStringContainsString('$this->document($request, $document)', $controller);
+        self::assertStringContainsString('$this->document($request, $legalDocument)', $controller);
         self::assertStringContainsString('recoverManagementAsSecurityAdministrator(', $controller);
         self::assertStringContainsString("'document_lock_version' => (int) \$owner->fresh()->lock_version", $controller);
     }

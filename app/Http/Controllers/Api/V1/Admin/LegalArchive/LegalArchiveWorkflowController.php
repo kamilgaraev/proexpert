@@ -10,7 +10,6 @@ use App\Http\Requests\Api\V1\Admin\LegalArchive\DecideLegalArchiveWorkflowReques
 use App\Http\Requests\Api\V1\Admin\LegalArchive\SubmitLegalArchiveWorkflowRequest;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveWorkflowResource;
 use App\Http\Responses\AdminResponse;
-use App\Services\LegalArchive\LegalArchiveLockConflict;
 use App\Services\LegalArchive\LegalArchiveRegistryService;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowDecisionInput;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowOverride;
@@ -27,10 +26,10 @@ final class LegalArchiveWorkflowController extends LegalArchiveApiController
         private readonly LegalDocumentWorkflowService $workflow,
     ) {}
 
-    public function submit(SubmitLegalArchiveWorkflowRequest $request, string $document): JsonResponse
+    public function submit(SubmitLegalArchiveWorkflowRequest $request, string $legalDocument): JsonResponse
     {
         try {
-            $owner = $this->registry->findForOrganization($this->organizationId($request), (int) $document);
+            $owner = $this->registry->findForOrganization($this->organizationId($request), (int) $legalDocument);
             if ($owner === null) {
                 throw new \Illuminate\Auth\Access\AuthorizationException;
             }
@@ -52,50 +51,50 @@ final class LegalArchiveWorkflowController extends LegalArchiveApiController
                 'idempotency_key' => (string) $request->validated('idempotency_key'),
             ]), $owner->fresh());
         } catch (Throwable $error) {
-            return $this->workflowFailure($error, $request, 'workflow_submit', ['document_id' => $document]);
+            return $this->failure($error, $request, 'workflow_submit', ['document_id' => $legalDocument]);
         }
     }
 
-    public function approve(DecideLegalArchiveWorkflowRequest $request, string $step): JsonResponse
+    public function approve(DecideLegalArchiveWorkflowRequest $request, string $legalWorkflowStep): JsonResponse
     {
         try {
-            return $this->decide($request, $step, 'approve');
+            return $this->decide($request, $legalWorkflowStep, 'approve');
         } catch (Throwable $error) {
-            return $this->workflowFailure($error, $request, 'workflow_approve', ['step_id' => $step]);
+            return $this->failure($error, $request, 'workflow_approve', ['step_id' => $legalWorkflowStep]);
         }
     }
 
-    public function reject(DecideLegalArchiveWorkflowRequest $request, string $step): JsonResponse
+    public function reject(DecideLegalArchiveWorkflowRequest $request, string $legalWorkflowStep): JsonResponse
     {
         try {
-            return $this->decide($request, $step, 'reject');
+            return $this->decide($request, $legalWorkflowStep, 'reject');
         } catch (Throwable $error) {
-            return $this->workflowFailure($error, $request, 'workflow_reject', ['step_id' => $step]);
+            return $this->failure($error, $request, 'workflow_reject', ['step_id' => $legalWorkflowStep]);
         }
     }
 
-    public function returnForRevision(DecideLegalArchiveWorkflowRequest $request, string $step): JsonResponse
+    public function returnForRevision(DecideLegalArchiveWorkflowRequest $request, string $legalWorkflowStep): JsonResponse
     {
         try {
-            return $this->decide($request, $step, 'return');
+            return $this->decide($request, $legalWorkflowStep, 'return');
         } catch (Throwable $error) {
-            return $this->workflowFailure($error, $request, 'workflow_return', ['step_id' => $step]);
+            return $this->failure($error, $request, 'workflow_return', ['step_id' => $legalWorkflowStep]);
         }
     }
 
-    public function reassign(DecideLegalArchiveWorkflowRequest $request, string $step): JsonResponse
+    public function reassign(DecideLegalArchiveWorkflowRequest $request, string $legalWorkflowStep): JsonResponse
     {
         try {
-            return $this->decide($request, $step, 'reassign');
+            return $this->decide($request, $legalWorkflowStep, 'reassign');
         } catch (Throwable $error) {
-            return $this->workflowFailure($error, $request, 'workflow_reassign', ['step_id' => $step]);
+            return $this->failure($error, $request, 'workflow_reassign', ['step_id' => $legalWorkflowStep]);
         }
     }
 
-    public function cancel(DecideLegalArchiveWorkflowRequest $request, string $instance): JsonResponse
+    public function cancel(DecideLegalArchiveWorkflowRequest $request, string $legalWorkflowInstance): JsonResponse
     {
         try {
-            $workflow = LegalWorkflowInstance::query()->forOrganization($this->organizationId($request))->whereKey((int) $instance)->first();
+            $workflow = LegalWorkflowInstance::query()->forOrganization($this->organizationId($request))->whereKey((int) $legalWorkflowInstance)->first();
             if (! $workflow instanceof LegalWorkflowInstance) {
                 throw new \Illuminate\Auth\Access\AuthorizationException;
             }
@@ -105,7 +104,7 @@ final class LegalArchiveWorkflowController extends LegalArchiveApiController
                 'idempotency_key' => (string) $request->validated('idempotency_key'),
             ]), $workflow->document()->firstOrFail()->fresh());
         } catch (Throwable $error) {
-            return $this->workflowFailure($error, $request, 'workflow_cancel', ['instance_id' => $instance]);
+            return $this->failure($error, $request, 'workflow_cancel', ['instance_id' => $legalWorkflowInstance]);
         }
     }
 
@@ -135,18 +134,5 @@ final class LegalArchiveWorkflowController extends LegalArchiveApiController
             reassignActorReference: $request->validated('target_actor_id'),
             dueAt: $request->validated('due_at'),
         );
-    }
-
-    private function workflowFailure(Throwable $error, DecideLegalArchiveWorkflowRequest|SubmitLegalArchiveWorkflowRequest $request, string $operation, array $context): JsonResponse
-    {
-        if ($error instanceof \DomainException && $error->getMessage() === 'legal_workflow_stale_action') {
-            $current = isset($context['step_id'])
-                ? LegalWorkflowStep::query()->whereKey((int) $context['step_id'])->value('lock_version')
-                : $this->registry->findForOrganization($this->organizationId($request), (int) ($context['document_id'] ?? 0))?->lock_version;
-
-            return $this->failure(new LegalArchiveLockConflict((int) $current), $request, $operation, $context);
-        }
-
-        return $this->failure($error, $request, $operation, $context);
     }
 }

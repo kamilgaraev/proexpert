@@ -34,14 +34,14 @@ final class LegalArchiveApiArchitectureTest extends TestCase
         self::assertIsString($routes);
 
         foreach ([
-            'documents/{document}/files',
-            'document-files/{file}/versions',
-            'documents/{document}/workflow/submit',
+            'documents/{legalDocument}/files',
+            'document-files/{legalDocumentFile}/versions',
+            'documents/{legalDocument}/workflow/submit',
             'signature-requests/{signatureRequest}/signing-session',
-            'documents/{document}/access',
-            'documents/{document}/retention',
-            'documents/{document}/legal-hold',
-            'documents/{document}/timeline',
+            'documents/{legalDocument}/access',
+            'documents/{legalDocument}/retention',
+            'documents/{legalDocument}/legal-hold',
+            'documents/{legalDocument}/timeline',
             'type-profiles',
             'workflow-templates',
         ] as $uri) {
@@ -94,7 +94,7 @@ final class LegalArchiveApiArchitectureTest extends TestCase
         self::assertIsString($controller);
         self::assertStringContainsString('instanceof LegalArchiveLockConflict', $controller);
         self::assertStringContainsString("'current_lock_version' => \$error->currentLockVersion", $controller);
-        self::assertStringContainsString("'refresh_url' => \$refreshUrl", $controller);
+        self::assertStringContainsString("'refresh_url' => \$error->refreshUrl", $controller);
         self::assertStringContainsString('409', $controller);
     }
 
@@ -112,7 +112,7 @@ final class LegalArchiveApiArchitectureTest extends TestCase
         self::assertSame(2, substr_count($files, "'Sunset' => 'Wed, 31 Dec 2026 23:59:59 GMT'"));
     }
 
-    public function test_list_uses_bounded_eager_loading_without_per_document_workflow_resolution(): void
+    public function test_list_uses_bounded_eager_loading_and_bulk_workflow_resolution(): void
     {
         $registry = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/LegalArchiveRegistryService.php');
         $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveDocumentController.php');
@@ -121,9 +121,12 @@ final class LegalArchiveApiArchitectureTest extends TestCase
 
         $paginate = substr($registry, (int) strpos($registry, 'public function paginate('), 1800);
         self::assertStringContainsString("'latestWorkflowInstance.steps'", $paginate);
-        self::assertStringContainsString("->withCount(['files', 'signatureRequests', 'signatures'])", $paginate);
+        foreach (['files', 'signatureRequests', 'signatures', 'open_blocking_comments_count'] as $relation) {
+            self::assertStringContainsString($relation, $paginate);
+        }
         $index = substr($controller, (int) strpos($controller, 'public function index('), 1800);
         self::assertStringContainsString('foreach (', $index);
+        self::assertStringContainsString('$this->actions->forMany(', $index);
         self::assertStringNotContainsString('$this->actions->for(', $index);
     }
 }

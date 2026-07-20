@@ -11,6 +11,7 @@ use App\Http\Requests\Api\V1\Admin\LegalArchive\CreateLegalArchiveSignatureReque
 use App\Http\Requests\Api\V1\Admin\LegalArchive\LegalArchiveLockRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\RegisterLegalArchiveOriginalRequest;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveSignatureResource;
+use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalSignatureVerificationResource;
 use App\Http\Responses\AdminResponse;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\LegalArchiveRegistryService;
@@ -36,10 +37,10 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
         private readonly LegalDocumentAuthorizer $access,
     ) {}
 
-    public function createRequests(CreateLegalArchiveSignatureRequest $request, string $document): JsonResponse
+    public function createRequests(CreateLegalArchiveSignatureRequest $request, string $legalDocument): JsonResponse
     {
         try {
-            $owner = $this->registry->findForOrganization($this->organizationId($request), (int) $document);
+            $owner = $this->registry->findForOrganization($this->organizationId($request), (int) $legalDocument);
             if ($owner === null) {
                 throw new \Illuminate\Auth\Access\AuthorizationException;
             }
@@ -69,7 +70,7 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
                 'idempotency_key' => (string) $request->validated('idempotency_key'),
             ]), $owner->fresh());
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'signature_request_create', ['document_id' => $document]);
+            return $this->failure($error, $request, 'signature_request_create', ['document_id' => $legalDocument]);
         }
     }
 
@@ -169,18 +170,18 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
         }
     }
 
-    public function index(Request $request, string $version): JsonResponse
+    public function index(Request $request, string $documentVersion): JsonResponse
     {
         try {
-            $documentVersion = LegalArchiveDocumentVersion::query()->whereKey((int) $version)
+            $documentVersionModel = LegalArchiveDocumentVersion::query()->whereKey((int) $documentVersion)
                 ->where('organization_id', $this->organizationId($request))->first();
-            if (! $documentVersion instanceof LegalArchiveDocumentVersion) {
+            if (! $documentVersionModel instanceof LegalArchiveDocumentVersion) {
                 throw new \Illuminate\Auth\Access\AuthorizationException;
             }
-            $this->access->authorize($this->actor($request), $documentVersion->document()->firstOrFail(), 'view');
+            $this->access->authorize($this->actor($request), $documentVersionModel->document()->firstOrFail(), 'view');
             $perPage = max(1, min($request->integer('per_page', 25), 100));
             $items = LegalDocumentSignature::query()->where('organization_id', $this->organizationId($request))
-                ->where('document_version_id', (int) $documentVersion->id)->orderByDesc('id')->paginate($perPage);
+                ->where('document_version_id', (int) $documentVersionModel->id)->orderByDesc('id')->paginate($perPage);
 
             return AdminResponse::paginated(
                 LegalArchiveSignatureResource::collection($items->getCollection()),
@@ -188,18 +189,18 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
                 trans_message('legal_archive.messages.signatures_loaded'),
             );
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'signature_index', ['version_id' => $version]);
+            return $this->failure($error, $request, 'signature_index', ['version_id' => $documentVersion]);
         }
     }
 
-    public function verify(Request $request, string $signature): JsonResponse
+    public function verify(Request $request, string $legalSignature): JsonResponse
     {
         try {
             $data = $request->validate([
                 'idempotency_key' => ['required', 'string', 'max:191'],
                 'lock_version' => ['required', 'integer', 'min:0'],
             ]);
-            $found = LegalDocumentSignature::query()->whereKey((int) $signature)
+            $found = LegalDocumentSignature::query()->whereKey((int) $legalSignature)
                 ->where('organization_id', $this->organizationId($request))->first();
             if (! $found instanceof LegalDocumentSignature) {
                 throw new \Illuminate\Auth\Access\AuthorizationException;
@@ -219,7 +220,34 @@ final class LegalArchiveSignatureController extends LegalArchiveApiController
                 'revocation_reason' => $verification->revocation_reason,
             ], trans_message('legal_archive.messages.signature_verified')), $found->document()->firstOrFail()->fresh());
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'signature_verify', ['signature_id' => $signature]);
+            return $this->failure($error, $request, 'signature_verify', ['signature_id' => $legalSignature]);
+        }
+    }
+
+    public function verificationHistory(Request $request, string $legalSignature): JsonResponse
+    {
+        try {
+            $found = LegalDocumentSignature::query()->whereKey((int) $legalSignature)
+                ->where('organization_id', $this->organizationId($request))->first();
+            if (! $found instanceof LegalDocumentSignature) {
+                throw new \Illuminate\Auth\Access\AuthorizationException;
+            }
+            $this->access->authorize($this->actor($request), $found->document()->firstOrFail(), 'view');
+            $items = $found->verificationHistory()->reorder()->orderByDesc('id')
+                ->paginate(max(1, min($request->integer('per_page', 25), 100)));
+
+            return AdminResponse::paginated(
+                LegalSignatureVerificationResource::collection($items->getCollection()),
+                [
+                    'current_page' => $items->currentPage(),
+                    'per_page' => $items->perPage(),
+                    'total' => $items->total(),
+                    'last_page' => $items->lastPage(),
+                ],
+                trans_message('legal_archive.messages.signature_verification_history_loaded'),
+            );
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'signature_verification_history', ['signature_id' => $legalSignature]);
         }
     }
 

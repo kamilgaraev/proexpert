@@ -121,6 +121,42 @@ final class LegalDocumentProfileRegistry
         );
     }
 
+    /**
+     * @param  list<string>  $codes
+     * @return array<string, LegalDocumentProfile>
+     */
+    public function findMany(int $organizationId, array $codes): array
+    {
+        $codes = array_values(array_unique(array_filter(array_map('trim', $codes))));
+        if ($organizationId <= 0 || $codes === []) {
+            return [];
+        }
+        $customCodes = array_values(array_filter(
+            $codes,
+            fn (string $code): bool => ! isset($this->standardProfiles[$code]),
+        ));
+        $custom = $customCodes === []
+            ? collect()
+            : LegalArchiveDocumentTypeProfile::query()->forOrganization($organizationId)->active()
+                ->whereIn('code', $customCodes)->get()->keyBy('code');
+        $bulkRegistry = new self(
+            static fn (int $requestedOrganizationId, string $code): ?array => $requestedOrganizationId === $organizationId
+                ? $custom->get($code)?->toArray()
+                : null,
+            $this->standardProfiles,
+        );
+        $resolved = [];
+        foreach ($codes as $code) {
+            try {
+                $resolved[$code] = $bulkRegistry->find($organizationId, $code);
+            } catch (InvalidArgumentException) {
+                continue;
+            }
+        }
+
+        return $resolved;
+    }
+
     /** @param array<string, mixed> $definition */
     private function fromStandardProfile(string $code, array $definition): LegalDocumentProfile
     {

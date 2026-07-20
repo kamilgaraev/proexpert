@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
 use App\Services\LegalArchive\Comments\LegalDocumentBlockingCommentGuard;
 use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
+use App\Services\LegalArchive\LegalArchiveLockConflict;
 use App\Services\LegalArchive\LegalDocumentAggregateLock;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowDecisionInput;
 use App\Services\LegalArchive\Workflow\DTO\WorkflowOverride;
@@ -100,7 +101,10 @@ final class LegalDocumentWorkflowService
                     $override->expectedDocumentLockVersion !== null
                     && (int) $lockedDocument->lock_version !== $override->expectedDocumentLockVersion
                 ) {
-                    throw new DomainException('legal_workflow_stale_action');
+                    throw LegalArchiveLockConflict::forDocument(
+                        (int) $lockedDocument->id,
+                        (int) $lockedDocument->lock_version,
+                    );
                 }
 
                 $version = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, $versionId);
@@ -340,11 +344,19 @@ final class LegalDocumentWorkflowService
 
                 return $instance->load('steps', 'decisions');
             }
-            if (
-                (int) $instance->lock_version !== $input->expectedInstanceLockVersion
-                || (int) $lockedStep->lock_version !== $input->expectedStepLockVersion
-            ) {
-                throw new DomainException('legal_workflow_stale_action');
+            if ((int) $instance->lock_version !== $input->expectedInstanceLockVersion) {
+                throw LegalArchiveLockConflict::forWorkflowInstance(
+                    (int) $instance->id,
+                    (int) $instance->lock_version,
+                    (int) $document->id,
+                );
+            }
+            if ((int) $lockedStep->lock_version !== $input->expectedStepLockVersion) {
+                throw LegalArchiveLockConflict::forWorkflowStep(
+                    (int) $lockedStep->id,
+                    (int) $lockedStep->lock_version,
+                    (int) $document->id,
+                );
             }
             if ($instance->status !== 'in_progress' || $lockedStep->status !== 'active') {
                 throw new DomainException('legal_workflow_step_not_active');
@@ -528,7 +540,14 @@ final class LegalDocumentWorkflowService
 
                 return $locked->load('steps', 'decisions');
             }
-            if ((int) $locked->lock_version !== $input->expectedInstanceLockVersion || $locked->status !== 'in_progress') {
+            if ((int) $locked->lock_version !== $input->expectedInstanceLockVersion) {
+                throw LegalArchiveLockConflict::forWorkflowInstance(
+                    (int) $locked->id,
+                    (int) $locked->lock_version,
+                    (int) $document->id,
+                );
+            }
+            if ($locked->status !== 'in_progress') {
                 throw new DomainException('legal_workflow_stale_action');
             }
             $this->finishInstance($locked, $document, 'cancelled');

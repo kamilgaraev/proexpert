@@ -31,9 +31,10 @@ final class LegalArchiveDocumentResource extends JsonResource
             'document_number' => $this->document_number,
             'document_type' => $this->document_type,
             'document_type_label' => LegalArchiveDictionary::label('types', $this->document_type),
-            'type_profile' => [
+            'type_profile' => $this->resource->getAttribute('api_type_profile') ?? [
                 'code' => (string) ($this->type_profile_code ?: $this->document_type),
                 'base_code' => (string) $this->document_type,
+                'name' => LegalArchiveDictionary::label('types', (string) $this->document_type),
                 'label' => LegalArchiveDictionary::label('types', (string) $this->document_type),
             ],
             'status' => $this->status,

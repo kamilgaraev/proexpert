@@ -78,6 +78,7 @@ return [
         'signing_session_created' => 'Сессия подписания создана.',
         'signature_completed' => 'Результат подписания принят.',
         'signatures_loaded' => 'Подписи документа загружены.',
+        'signature_verification_history_loaded' => 'История проверок подписи загружена.',
         'signature_verified' => 'Подпись проверена.',
         'access_loaded' => 'Настройки доступа загружены.',
         'access_granted' => 'Доступ к документу предоставлен.',

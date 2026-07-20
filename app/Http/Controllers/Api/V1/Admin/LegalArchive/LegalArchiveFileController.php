@@ -38,11 +38,11 @@ final class LegalArchiveFileController extends LegalArchiveApiController
         private readonly LegalDocumentAuthorizer $access,
     ) {}
 
-    public function storeFile(StoreLegalArchiveFileRequest $request, string $document): JsonResponse
+    public function storeFile(StoreLegalArchiveFileRequest $request, string $legalDocument): JsonResponse
     {
         $created = null;
         try {
-            $owner = $this->document($request, $document);
+            $owner = $this->document($request, $legalDocument);
             $actor = $this->actor($request);
             $this->access->authorizePermission($actor, $owner, 'legal_archive.files.upload');
             $this->access->authorizePermission($actor, $owner, 'legal_archive.versions.create');
@@ -71,14 +71,14 @@ final class LegalArchiveFileController extends LegalArchiveApiController
                 $created->delete();
             }
 
-            return $this->failure($error, $request, 'file_store', ['document_id' => $document]);
+            return $this->failure($error, $request, 'file_store', ['document_id' => $legalDocument]);
         }
     }
 
-    public function storeVersion(StoreLegalArchiveFileVersionRequest $request, string $file): JsonResponse
+    public function storeVersion(StoreLegalArchiveFileVersionRequest $request, string $legalDocumentFile): JsonResponse
     {
         try {
-            $logicalFile = $this->file($request, $file);
+            $logicalFile = $this->file($request, $legalDocumentFile);
             $owner = $logicalFile->document()->firstOrFail();
             $actor = $this->actor($request);
             $this->access->authorizePermission($actor, $owner, 'legal_archive.files.upload');
@@ -96,14 +96,14 @@ final class LegalArchiveFileController extends LegalArchiveApiController
                 return $this->fileRejected();
             }
 
-            return $this->failure($error, $request, 'version_store', ['file_id' => $file]);
+            return $this->failure($error, $request, 'version_store', ['file_id' => $legalDocumentFile]);
         }
     }
 
-    public function storePrimaryVersion(StoreLegalArchiveVersionRequest $request, string $document): JsonResponse
+    public function storePrimaryVersion(StoreLegalArchiveVersionRequest $request, string $legalDocument): JsonResponse
     {
         try {
-            $owner = $this->document($request, $document);
+            $owner = $this->document($request, $legalDocument);
             $actor = $this->actor($request);
             $this->access->authorizePermission($actor, $owner, 'legal_archive.files.upload');
             $this->access->authorizePermission($actor, $owner, 'legal_archive.versions.create');
@@ -123,7 +123,7 @@ final class LegalArchiveFileController extends LegalArchiveApiController
                 return $this->fileRejected();
             }
 
-            return $this->failure($error, $request, 'primary_version_store', ['document_id' => $document]);
+            return $this->failure($error, $request, 'primary_version_store', ['document_id' => $legalDocument]);
         }
     }
 
@@ -152,28 +152,28 @@ final class LegalArchiveFileController extends LegalArchiveApiController
         );
     }
 
-    public function preview(Request $request, string $version): JsonResponse
+    public function preview(Request $request, string $documentVersion): JsonResponse
     {
         try {
-            return $this->fileUrl($request, $version, 'preview');
+            return $this->fileUrl($request, $documentVersion, 'preview');
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'file_preview', ['version_id' => $version]);
+            return $this->failure($error, $request, 'file_preview', ['version_id' => $documentVersion]);
         }
     }
 
-    public function download(Request $request, string $version): JsonResponse
+    public function download(Request $request, string $documentVersion): JsonResponse
     {
         try {
-            return $this->fileUrl($request, $version, 'download');
+            return $this->fileUrl($request, $documentVersion, 'download');
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'file_download', ['version_id' => $version]);
+            return $this->failure($error, $request, 'file_download', ['version_id' => $documentVersion]);
         }
     }
 
-    public function makeCurrent(LegalArchiveLockRequest $request, string $version): JsonResponse
+    public function makeCurrent(LegalArchiveLockRequest $request, string $documentVersion): JsonResponse
     {
         try {
-            $found = $this->version($request, $version);
+            $found = $this->version($request, $documentVersion);
             $owner = $found->document()->firstOrFail();
             $actor = $this->actor($request);
             $this->access->authorizePermission($actor, $owner, 'legal_archive.versions.manage');
@@ -183,15 +183,15 @@ final class LegalArchiveFileController extends LegalArchiveApiController
                 'document_lock_version' => (int) $owner->fresh()->lock_version,
             ]), $owner->fresh());
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'version_make_current', ['version_id' => $version]);
+            return $this->failure($error, $request, 'version_make_current', ['version_id' => $documentVersion]);
         }
     }
 
-    public function compare(Request $request, string $version, string $other): JsonResponse
+    public function compare(Request $request, string $documentVersion, string $otherDocumentVersion): JsonResponse
     {
         try {
-            $left = $this->version($request, $version);
-            $right = $this->version($request, $other);
+            $left = $this->version($request, $documentVersion);
+            $right = $this->version($request, $otherDocumentVersion);
             if ((int) $left->document_id !== (int) $right->document_id) {
                 throw new DomainException('versions_not_comparable');
             }
@@ -204,14 +204,14 @@ final class LegalArchiveFileController extends LegalArchiveApiController
                 'size_difference_bytes' => (int) $right->size_bytes - (int) $left->size_bytes,
             ], trans_message('legal_archive.messages.versions_compared'));
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'version_compare', ['version_id' => $version, 'other_version_id' => $other]);
+            return $this->failure($error, $request, 'version_compare', ['version_id' => $documentVersion, 'other_version_id' => $otherDocumentVersion]);
         }
     }
 
-    public function editorSession(Request $request, string $version): JsonResponse
+    public function editorSession(Request $request, string $documentVersion): JsonResponse
     {
         try {
-            $found = $this->version($request, $version);
+            $found = $this->version($request, $documentVersion);
             $mode = (string) $request->input('mode', 'edit');
             if (! in_array($mode, ['view', 'review', 'edit'], true)) {
                 throw new DomainException('legal_document_editor_mode_invalid');
@@ -219,14 +219,14 @@ final class LegalArchiveFileController extends LegalArchiveApiController
 
             return AdminResponse::success($this->editor->open($found, $this->actor($request), $mode, $request->boolean('upgrade_mode')), trans_message('legal_archive.messages.editor_opened'));
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'editor_session', ['version_id' => $version]);
+            return $this->failure($error, $request, 'editor_session', ['version_id' => $documentVersion]);
         }
     }
 
-    public function currentPrimaryVersion(Request $request, string $document): JsonResponse
+    public function currentPrimaryVersion(Request $request, string $legalDocument): JsonResponse
     {
         try {
-            $version = $this->registry->currentVersionWithUrl($this->document($request, $document), $this->actor($request));
+            $version = $this->registry->currentVersionWithUrl($this->document($request, $legalDocument), $this->actor($request));
             if ($version === null) {
                 return AdminResponse::error(trans_message('legal_archive.messages.current_version_not_found'), 404);
             }
@@ -235,7 +235,7 @@ final class LegalArchiveFileController extends LegalArchiveApiController
                 'deprecated_alias' => true,
             ])->withHeaders(['Deprecation' => 'true', 'Sunset' => 'Wed, 31 Dec 2026 23:59:59 GMT']);
         } catch (Throwable $error) {
-            return $this->failure($error, $request, 'current_primary_version', ['document_id' => $document]);
+            return $this->failure($error, $request, 'current_primary_version', ['document_id' => $legalDocument]);
         }
     }
 

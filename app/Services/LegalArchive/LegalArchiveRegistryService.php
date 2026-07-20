@@ -28,6 +28,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -58,12 +59,23 @@ final class LegalArchiveRegistryService
         $sortBy = (string) ($filters['sort_by'] ?? 'document_date');
         $sortDirection = (string) ($filters['sort_direction'] ?? 'desc');
 
-        return $this->baseQuery($actor, $organizationId, $filters)
+        $documents = $this->baseQuery($actor, $organizationId, $filters)
             ->with(['currentVersion', 'links', 'project:id,name,status,organization_id', 'latestWorkflowInstance.steps'])
-            ->withCount(['files', 'signatureRequests', 'signatures'])
+            ->withCount([
+                'files',
+                'signatureRequests',
+                'signatures',
+                'comments as open_blocking_comments_count' => static fn (Builder $query): Builder => $query
+                    ->where('is_blocking', true)
+                    ->where('status', 'open')
+                    ->whereColumn('document_version_id', 'legal_archive_documents.current_primary_version_id'),
+            ])
             ->orderBy($sortBy, $sortDirection)
             ->orderBy('id', $sortDirection)
             ->paginate($perPage);
+        $this->attachResolvedProfiles($documents->getCollection(), $organizationId);
+
+        return $documents;
     }
 
     public function summary(User $actor, int $organizationId, array $filters): array
@@ -94,15 +106,25 @@ final class LegalArchiveRegistryService
 
     public function findForOrganization(int $organizationId, int $documentId): ?LegalArchiveDocument
     {
-        return LegalArchiveDocument::query()
+        $document = LegalArchiveDocument::query()
             ->with(['currentVersion', 'versions', 'links', 'project:id,name,status,organization_id', 'createdBy:id,name,email'])
             ->forOrganization($organizationId)
             ->find($documentId);
+        if ($document instanceof LegalArchiveDocument) {
+            $this->attachResolvedProfiles(collect([$document]), $organizationId);
+        }
+
+        return $document;
     }
 
     public function findForAuthorization(int $documentId): ?LegalArchiveDocument
     {
-        return $this->detailQuery()->find($documentId);
+        $document = $this->detailQuery()->find($documentId);
+        if ($document instanceof LegalArchiveDocument) {
+            $this->attachResolvedProfiles(collect([$document]), (int) $document->organization_id);
+        }
+
+        return $document;
     }
 
     public function paginateRecoveries(User $actor, int $organizationId, int $perPage = 20): LengthAwarePaginator
@@ -264,7 +286,7 @@ final class LegalArchiveRegistryService
                 ->lockForUpdate()
                 ->firstOrFail();
             if ((int) $document->lock_version !== $expectedLockVersion) {
-                throw new LegalArchiveLockConflict((int) $document->lock_version);
+                throw LegalArchiveLockConflict::forDocument((int) $document->id, (int) $document->lock_version);
             }
             if (array_key_exists('type_profile_code', $data)
                 && (string) $data['type_profile_code'] !== (string) $document->type_profile_code
@@ -541,6 +563,27 @@ final class LegalArchiveRegistryService
             'signatureRequests',
             'signatures',
         ]);
+    }
+
+    /** @param Collection<int, LegalArchiveDocument> $documents */
+    private function attachResolvedProfiles(Collection $documents, int $organizationId): void
+    {
+        $codes = $documents->map(
+            static fn (LegalArchiveDocument $document): string => trim((string) $document->type_profile_code),
+        )->filter()->unique()->values()->all();
+        $profiles = $this->profiles->findMany($organizationId, $codes);
+        foreach ($documents as $document) {
+            $code = trim((string) $document->type_profile_code);
+            $profile = $profiles[$code] ?? null;
+            if ($profile !== null) {
+                $document->setAttribute('api_type_profile', [
+                    'code' => $profile->code,
+                    'base_code' => $profile->baseCode,
+                    'name' => $profile->label,
+                    'label' => $profile->label,
+                ]);
+            }
+        }
     }
 
     private function applySearch(Builder $query, string $search): void
