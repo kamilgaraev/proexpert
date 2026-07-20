@@ -77,6 +77,11 @@ final class ManualOriginalRegistrationTest extends TestCase
                     'legal-document-signatures.redirect_hosts' => ['fixed.test'],
                     'legal-document-signatures.start_lease_seconds' => 90,
                     'legal-document-signatures.max_session_seconds' => 900,
+                    'legal-document-signatures.driver' => 'disabled',
+                    'legal-document-signatures.drivers' => [
+                        'disabled' => DisabledElectronicSignatureProvider::class,
+                        'external-edo' => TrustedExternalSignatureProvider::class,
+                    ],
                     default => $default,
                 };
             }
@@ -100,6 +105,16 @@ final class ManualOriginalRegistrationTest extends TestCase
                 'version_id' => 'version-1',
                 'content_type' => $mime,
                 'created' => true,
+            ];
+        });
+        $this->storage->method('describeVersion')->willReturnCallback(static function (string $path, string $versionId): array {
+            $body = pack('H*', '3082010006092a864886f70d010702a0820100308200fc');
+
+            return [
+                'body' => $body,
+                'version_id' => $versionId,
+                'etag' => 'etag',
+                'content_type' => 'application/pkcs7-signature',
             ];
         });
         $this->service = new LegalDocumentSignatureService(
@@ -126,7 +141,7 @@ final class ManualOriginalRegistrationTest extends TestCase
     {
         [$document, $version, $actor] = $this->fixture();
         $request = $this->service->createRequest($document, $version, $actor, 'paper', $this->signerSet('Иван Иванов', 'Директор'), 'request-1');
-        self::assertSame('uploaded', $version->refresh()->status);
+        self::assertSame('frozen', $version->refresh()->status);
         self::assertSame($version->content_hash, $request->signed_content_hash);
 
         $signature = $this->service->registerPaperOriginal($request, $actor, new PaperOriginalData(
@@ -137,7 +152,7 @@ final class ManualOriginalRegistrationTest extends TestCase
         ));
 
         self::assertSame($version->content_hash, $signature->signed_content_hash);
-        self::assertSame('uploaded', $version->refresh()->status);
+        self::assertSame('signed', $version->refresh()->status);
         self::assertSame('signed', $document->refresh()->signature_status);
         self::assertSame('paper_original', $document->legal_significance_status);
         self::assertSame(['signature_requested', 'signature_registered'], $this->audit->events);
@@ -159,7 +174,7 @@ final class ManualOriginalRegistrationTest extends TestCase
         ));
     }
 
-    public function test_external_electronic_original_works_with_disabled_online_provider_and_stores_container_in_s3(): void
+    public function test_external_electronic_import_stays_pending_until_trusted_verification(): void
     {
         [$document, $version, $actor] = $this->fixture();
         $request = $this->service->createRequest(
@@ -171,15 +186,58 @@ final class ManualOriginalRegistrationTest extends TestCase
             'external-edo',
             $this->evidence($this->signerSet('Иван')),
             'external-signature',
-            'verified',
             ['source' => 'import'],
         ));
 
         self::assertSame($version->content_hash, $signature->signed_content_hash);
         self::assertSame(hash('sha256', $container), $signature->signature_content_hash);
         self::assertStringStartsWith('org-10/', (string) $signature->signature_path);
-        self::assertSame('verified', $signature->verification_status);
-        self::assertSame('edo_original', $document->refresh()->legal_significance_status);
+        self::assertSame('pending_verification', $signature->verification_status);
+        self::assertNull($signature->verified_at);
+        self::assertSame('pending', $document->refresh()->signature_status);
+        self::assertNotSame('edo_original', $document->legal_significance_status);
+        $replay = $this->service->registerExternalOriginal(
+            $request->refresh(),
+            UploadedFile::fake()->createWithContent('signature.p7s', $container),
+            $actor,
+            new ExternalOriginalData('external-edo', $this->evidence($this->signerSet('Иван')), 'external-signature', ['source' => 'import']),
+        );
+        self::assertSame($signature->id, $replay->id);
+        try {
+            $this->service->registerExternalOriginal(
+                $request->refresh(),
+                UploadedFile::fake()->createWithContent('signature.p7s', $container),
+                $actor,
+                new ExternalOriginalData('external-edo', $this->evidence($this->signerSet('Иван')), 'external-signature', ['source' => 'changed']),
+            );
+            self::fail('External import replay accepted a changed command.');
+        } catch (DomainException $exception) {
+            self::assertSame('legal_signature_idempotency_conflict', $exception->getMessage());
+        }
+
+        $this->database->getConnection()->table('legal_signature_verifications')->insert([
+            'organization_id' => 10,
+            'document_id' => $document->id,
+            'document_version_id' => $version->id,
+            'signature_id' => $signature->id,
+            'provider' => 'external-edo',
+            'status' => 'failed',
+            'signed_content_hash' => $version->content_hash,
+            'certificate_metadata' => json_encode([], JSON_THROW_ON_ERROR),
+            'provider_metadata' => json_encode([], JSON_THROW_ON_ERROR),
+            'revocation_reason' => null,
+            'verified_by_user_id' => $actor->id,
+            'verified_at' => now()->subSecond(),
+            'idempotency_key' => 'historical-failure',
+            'request_hash' => str_repeat('9', 64),
+            'created_at' => now()->subSecond(),
+            'updated_at' => now()->subSecond(),
+        ]);
+        $verification = $this->service->verify($signature, $actor, 'external-verification');
+        self::assertSame('verified', $verification->status);
+        self::assertSame('completed', $request->refresh()->status);
+        self::assertSame('signed', $version->refresh()->status);
+        self::assertSame('signed', $document->refresh()->signature_status);
     }
 
     public function test_provider_callback_is_correlated_authenticated_hash_bound_and_replay_safe(): void
@@ -207,6 +265,70 @@ final class ManualOriginalRegistrationTest extends TestCase
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage('legal_signature_request_not_found');
         $service->completeElectronic(new SignatureCallback('fixed', $session->providerRequestId, str_repeat('0', 64), 'provider-event-2', ['status' => 'signed']));
+    }
+
+    public function test_expired_provider_session_starts_new_generation(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $provider = new FixedElectronicSignatureProvider;
+        $service = new LegalDocumentSignatureService(
+            $provider, $this->access, $this->audit, $this->storage, $this->database->getConnection(),
+        );
+        $request = $service->createRequest(
+            $document, $version, $actor, 'provider_electronic', $this->signerSet('Signer'), 'restart-request', provider: 'fixed',
+        );
+        $first = $service->startElectronicSession($request, $actor);
+        $firstOperation = $this->database->getConnection()->table('legal_signature_provider_operations')->sole();
+        $this->database->getConnection()->table('legal_signature_provider_operations')->where('id', $firstOperation->id)
+            ->update(['session_expires_at' => now()->subMinute()]);
+
+        $second = $service->startElectronicSession($request->refresh(), $actor);
+        $secondOperation = $this->database->getConnection()->table('legal_signature_provider_operations')->sole();
+
+        self::assertNotSame($first->providerRequestId, $second->providerRequestId);
+        self::assertSame(2, $provider->startCalls);
+        self::assertSame(2, (int) $secondOperation->generation);
+        self::assertNotSame($firstOperation->provider_idempotency_key, $secondOperation->provider_idempotency_key);
+    }
+
+    public function test_failed_external_registration_removes_exact_storage_version(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $request = $this->service->createRequest(
+            $document, $version, $actor, 'external_electronic', $this->signerSet('Иван'), 'cleanup-request', provider: 'external-edo',
+        );
+        $container = pack('H*', '3082010006092a864886f70d010702a0820100308200fc');
+        $storage = $this->createMock(FileService::class);
+        $storage->method('putImmutable')->willReturnCallback(static fn (string $path, string $body, string $mime): array => [
+            'path' => $path, 'body' => $body, 'size' => strlen($body), 'sha256' => hash('sha256', $body),
+            'etag' => 'exact-etag', 'version_id' => 'exact-version', 'content_type' => $mime, 'created' => true,
+        ]);
+        $storage->expects(self::once())->method('removeImmutable')->with(
+            self::stringContains("/{$request->id}/"),
+            'exact-version',
+        );
+        $service = new LegalDocumentSignatureService(
+            new DisabledElectronicSignatureProvider, $this->access, $this->audit, $storage, $this->database->getConnection(),
+        );
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('legal_signature_signers_mismatch');
+        $service->registerExternalOriginal(
+            $request,
+            UploadedFile::fake()->createWithContent('signature.p7s', $container),
+            $actor,
+            new ExternalOriginalData('external-edo', $this->evidence($this->signerSet('Другой')), 'cleanup-import'),
+        );
+    }
+
+    public function test_projection_never_marks_document_without_requests_as_signed(): void
+    {
+        [$document] = $this->fixture();
+
+        (new LegalSignatureProjection($this->database->getConnection()))->apply($document);
+
+        self::assertSame('not_signed', $document->refresh()->signature_status);
+        self::assertSame('draft', $document->lifecycle_status);
     }
 
     public function test_current_pointer_or_content_race_is_rejected(): void
@@ -399,6 +521,7 @@ final class ManualOriginalRegistrationTest extends TestCase
             $table->unsignedBigInteger('profile_lock_version');
             $table->json('allowed_signature_kinds');
             $table->json('required_signature_kinds');
+            $table->json('allowed_signature_formats');
             $table->string('requirement_snapshot_hash', 64);
             $table->string('correlation_id', 64);
             $table->string('provider_request_id')->nullable();
@@ -472,6 +595,8 @@ final class ManualOriginalRegistrationTest extends TestCase
             $table->string('status');
             $table->string('correlation_id', 64);
             $table->string('provider_idempotency_key', 64)->unique();
+            $table->string('request_idempotency_key', 64);
+            $table->unsignedInteger('generation');
             $table->string('lease_token_hash', 64)->nullable();
             $table->timestamp('lease_expires_at')->nullable();
             $table->unsignedInteger('attempt_count')->default(0);
@@ -549,7 +674,7 @@ final class FixedElectronicSignatureProvider implements ElectronicSignatureProvi
         $this->expectedSigners = $context->signers;
 
         return new SignatureSession(
-            'fixed', 'provider-request-1', $context->correlationId, 'https://fixed.test/session',
+            'fixed', "provider-request-{$this->startCalls}", $context->correlationId, 'https://fixed.test/session',
             (new DateTimeImmutable('+5 minutes'))->format(DATE_ATOM),
         );
     }
@@ -569,6 +694,53 @@ final class FixedElectronicSignatureProvider implements ElectronicSignatureProvi
         return new SignatureVerificationResult(
             'verified', 'fixed', 'provider-request-1', str_repeat('b', 64),
             (string) $context->signature->signed_content_hash, $this->signers(), $this->evidence(), $context->artifact,
+        );
+    }
+}
+
+final class TrustedExternalSignatureProvider implements ElectronicSignatureProvider
+{
+    public function start(SignatureContext $context): SignatureSession
+    {
+        throw new DomainException('external_provider_start_forbidden');
+    }
+
+    public function complete(SignatureCallback $callback): SignatureVerificationResult
+    {
+        throw new DomainException('external_provider_callback_forbidden');
+    }
+
+    public function verify(SignatureVerificationContext $context): SignatureVerificationResult
+    {
+        $request = $context->signature->request()->firstOrFail();
+        $signers = SignerIdentitySet::fromSnapshot((array) $context->signature->signers);
+        $signedAt = new DateTimeImmutable((string) $context->signature->signed_at);
+        $evidence = new ElectronicSignatureEvidence(
+            (string) $context->signature->signature_kind,
+            (string) $context->signature->container_format,
+            $signers,
+            str_repeat('d', 64),
+            '01AB',
+            'Trusted CA',
+            $signedAt->modify('-1 year'),
+            $signedAt->modify('+1 year'),
+            true,
+            'trusted_timestamp',
+            'verified',
+            $signedAt,
+            new DateTimeImmutable('now'),
+        );
+
+        return new SignatureVerificationResult(
+            'verified',
+            (string) $context->signature->provider,
+            "external-verification:{$context->signature->id}",
+            (string) $request->correlation_id,
+            (string) $context->signature->signed_content_hash,
+            $signers,
+            $evidence,
+            $context->artifact,
+            providerMetadata: ['trust_service' => 'test'],
         );
     }
 }

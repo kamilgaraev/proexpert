@@ -88,7 +88,7 @@ final class LegalDocumentSignatureServiceTest extends TestCase
         self::assertStringContainsString('CREATE UNIQUE INDEX CONCURRENTLY', $indexes);
         self::assertStringContainsString('pg_get_indexdef', $indexes);
         self::assertStringContainsString('legal_signature_append_only_guard', $constraints);
-        self::assertStringNotContainsString('CREATE OR REPLACE FUNCTION legal_archive_versions_immutable_guard', $constraints);
+        self::assertStringContainsString('legal_archive_version_signature_transition_forbidden', $constraints);
         self::assertStringContainsString('VALIDATE CONSTRAINT', $validate);
         self::assertStringContainsString('forward_only', $create);
     }

@@ -27,5 +27,6 @@ final readonly class LegalDocumentProfile
         public int $lockVersion,
         public array $allowedSignatureKinds = ['paper_original', 'external_electronic', 'provider_electronic'],
         public array $requiredSignatureKinds = [],
+        public array $allowedSignatureFormats = ['detached_cades', 'embedded_cades', 'xml_dsig'],
     ) {}
 }

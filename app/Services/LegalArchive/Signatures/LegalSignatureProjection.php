@@ -20,8 +20,12 @@ final readonly class LegalSignatureProjection
             ->orderBy('id')
             ->get(['status', 'method', 'required_signature_kinds']);
         $statuses = $requests->pluck('status')->map(static fn (mixed $status): string => (string) $status)->all();
+        $latestVerificationIds = $this->connection->table('legal_signature_verifications')
+            ->selectRaw('MAX(id)')
+            ->groupBy('signature_id');
         $verificationStatuses = $this->connection->table('legal_signature_verifications as verification')
             ->join('legal_document_signatures as signature', 'signature.id', '=', 'verification.signature_id')
+            ->whereIn('verification.id', $latestVerificationIds)
             ->where('signature.organization_id', $document->organization_id)
             ->where('signature.document_id', $document->id)
             ->where('signature.document_version_id', $document->current_primary_version_id)
@@ -41,7 +45,9 @@ final readonly class LegalSignatureProjection
             ->map(static fn (object $request): string => $request->method === 'paper' ? 'paper_original' : (string) $request->method)
             ->unique()->values()->all();
         $requirementsSatisfied = array_diff($requiredKinds, $completedKinds) === [];
-        if (in_array('revoked', $statuses, true) || in_array('revoked', $verificationStatuses, true)) {
+        if ($requests->isEmpty()) {
+            [$signatureStatus, $lifecycle] = ['not_signed', 'draft'];
+        } elseif (in_array('revoked', $statuses, true) || in_array('revoked', $verificationStatuses, true)) {
             [$signatureStatus, $lifecycle] = ['revoked', 'signature_failed'];
         } elseif (array_intersect($statuses, ['failed', 'expired']) !== [] || in_array('failed', $verificationStatuses, true)) {
             [$signatureStatus, $lifecycle] = ['verification_failed', 'signature_failed'];

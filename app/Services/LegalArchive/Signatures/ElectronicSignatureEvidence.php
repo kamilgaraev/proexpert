@@ -57,6 +57,25 @@ final readonly class ElectronicSignatureEvidence
         ];
     }
 
+    public function snapshot(): array
+    {
+        return [
+            'signature_kind' => $this->signatureKind,
+            'container_format' => $this->containerFormat,
+            'signers' => $this->signers->snapshot(),
+            'certificate' => $this->certificateMetadata(),
+            'authority_confirmed' => $this->authorityConfirmed,
+            'time_source' => $this->timeSource,
+            'diagnostic_code' => $this->diagnosticCode,
+            'signed_at' => $this->signedAt->format(DATE_ATOM),
+            'verified_at' => $this->verifiedAt->format(DATE_ATOM),
+            'party_role_snapshot' => $this->partyRoleSnapshot,
+            'signing_session_id' => $this->signingSessionId,
+            'client_ip_hash' => $this->clientIpHash,
+            'user_agent_hash' => $this->userAgentHash,
+        ];
+    }
+
     private static function bounded(?string $value, int $max): bool
     {
         return $value === null || (trim($value) !== '' && mb_strlen($value) <= $max);

@@ -37,19 +37,29 @@ final readonly class LegalSignatureExpiryService
 
     private function expireOne(int $requestId): bool
     {
-        return $this->connection->transaction(function () use ($requestId): bool {
+        $candidate = (new LegalSignatureRequest)->setConnection($this->connection->getName())
+            ->newQuery()->whereKey($requestId)->first();
+        if (! $candidate instanceof LegalSignatureRequest) {
+            return false;
+        }
+
+        return $this->connection->transaction(function () use ($candidate): bool {
+            $document = $this->aggregateLock->lockDocument(
+                $this->connection,
+                (int) $candidate->organization_id,
+                (int) $candidate->document_id,
+            );
+            $this->aggregateLock->lockVersion($this->connection, $document, (int) $candidate->document_version_id);
             $request = (new LegalSignatureRequest)->setConnection($this->connection->getName())
-                ->newQuery()->whereKey($requestId)->lockForUpdate()->first();
+                ->newQuery()->whereKey($candidate->id)
+                ->where('organization_id', $candidate->organization_id)
+                ->where('document_id', $candidate->document_id)
+                ->where('document_version_id', $candidate->document_version_id)
+                ->lockForUpdate()->first();
             if (! $request instanceof LegalSignatureRequest || $request->status !== 'pending'
                 || $request->expires_at === null || $request->expires_at->isFuture()) {
                 return false;
             }
-            $document = $this->aggregateLock->lockDocument(
-                $this->connection,
-                (int) $request->organization_id,
-                (int) $request->document_id,
-            );
-            $this->aggregateLock->lockVersion($this->connection, $document, (int) $request->document_version_id);
             if ($this->connection->getDriverName() === 'pgsql') {
                 $this->connection->statement("SET LOCAL most.legal_signature_mutation = 'service'");
             }

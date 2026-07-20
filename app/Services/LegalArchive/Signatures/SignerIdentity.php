@@ -30,8 +30,8 @@ final readonly class SignerIdentity
             'organization' => $organizationId !== null && $organizationId > 0 && $userId === null
                 && $partyId === null && $roleSlug === null && self::bounded($taxNumber, 32, true),
             'party' => $partyId !== null && $partyId > 0 && $userId === null && $roleSlug === null,
-            'role' => $organizationId !== null && $organizationId > 0 && self::bounded($roleSlug, 191, true)
-                && $userId === null && $partyId === null,
+            'role' => $userId !== null && $userId > 0 && $organizationId !== null && $organizationId > 0
+                && self::bounded($roleSlug, 191, true) && $partyId === null,
             'manual' => $userId === null && $organizationId === null && $partyId === null && $roleSlug === null,
         };
         if (! $valid || ! self::bounded($taxNumber, 32) || ! self::bounded($position, 255) || ! self::bounded($partyRole, 64)) {

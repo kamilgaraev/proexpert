@@ -46,6 +46,7 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
             $this->database->getConnection($connection)->statement("SET search_path TO {$this->schema}");
         }
         $this->installBaseSchema();
+        (require dirname(__DIR__, 3).'/database/migrations/2026_07_19_000280_allow_fenced_legal_document_version_rescan.php')->up();
         foreach (['000600_create_legal_document_signatures', '000610_create_legal_document_signature_indexes', '000620_add_legal_document_signature_constraints', '000630_validate_legal_document_signature_constraints'] as $suffix) {
             (require dirname(__DIR__, 3)."/database/migrations/2026_07_19_{$suffix}.php")->up();
         }
@@ -114,9 +115,16 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
             'organization_id' => 1, 'document_id' => 1, 'document_version_id' => 1, 'signature_request_id' => $requestId,
             'party_id' => null, 'method' => 'paper', 'provider' => null, 'signer_name' => 'Иван',
             'signers' => json_encode([['name' => 'Иван']], JSON_THROW_ON_ERROR), 'signed_content_hash' => str_repeat('a', 64),
-            'signature_path' => null, 'signature_content_hash' => null, 'certificate_metadata' => '{}', 'provider_metadata' => '{}',
+            'signature_path' => null, 'signature_content_hash' => null, 'storage_version_id' => null, 'storage_etag' => null,
+            'detected_mime_type' => null, 'certificate_metadata' => '{}', 'provider_metadata' => '{}',
             'storage_location' => 'Архив', 'signed_at' => now()->subDay(), 'verified_at' => null,
-            'verification_status' => 'registered', 'revocation_reason' => null, 'registered_by_user_id' => 1,
+            'verification_status' => 'registered', 'signature_kind' => 'paper_original', 'container_format' => null,
+            'signer_snapshot_hash' => str_repeat('e', 64), 'signer_user_id' => null, 'signer_organization_id' => null,
+            'party_role_snapshot' => null, 'certificate_fingerprint' => null, 'certificate_serial' => null,
+            'certificate_issuer' => null, 'certificate_valid_from' => null, 'certificate_valid_until' => null,
+            'authority_confirmed' => false, 'time_source' => 'operator', 'diagnostic_code' => 'paper_original_registered',
+            'signing_session_id' => null, 'client_ip_hash' => null, 'user_agent_hash' => null,
+            'revocation_reason' => null, 'registered_by_user_id' => 1,
             'idempotency_key' => 'paper', 'request_hash' => str_repeat('b', 64), 'created_at' => now(), 'updated_at' => now(),
         ]);
         try {
@@ -145,6 +153,17 @@ CREATE TABLE legal_document_parties (
  id bigint PRIMARY KEY, snapshot_set_id bigint NOT NULL, document_version_id bigint NOT NULL,
  document_id bigint NOT NULL, organization_id bigint NOT NULL
 );
+CREATE TABLE legal_archive_document_type_profiles (id uuid PRIMARY KEY);
+CREATE TABLE legal_archive_file_cleanup_debts (
+ id bigserial PRIMARY KEY, organization_id bigint NOT NULL, storage_path text NOT NULL, reason text NOT NULL,
+ attempts integer NOT NULL DEFAULT 0, next_attempt_at timestamptz, last_error text, resolved_at timestamptz,
+ created_at timestamptz, updated_at timestamptz, UNIQUE (organization_id, storage_path)
+);
+CREATE TABLE legal_document_access_grants (
+ id bigserial PRIMARY KEY, abilities jsonb NOT NULL, subject_kind text NOT NULL
+);
+ALTER TABLE legal_document_access_grants ADD CONSTRAINT legal_document_access_abilities_check
+CHECK (jsonb_typeof(abilities) = 'array' AND jsonb_array_length(abilities) > 0 AND abilities <@ '["view","comment","approve","sign","download","manage"]'::jsonb AND (NOT abilities ? 'manage' OR subject_kind = 'internal_user'));
 SQL);
     }
 
@@ -167,7 +186,12 @@ SQL);
         return [
             'organization_id' => 1, 'document_id' => 1, 'document_version_id' => 1, 'party_id' => null,
             'method' => 'paper', 'provider' => null, 'status' => 'pending', 'signed_content_hash' => str_repeat('a', 64),
-            'signers' => json_encode([['name' => 'Иван']], JSON_THROW_ON_ERROR), 'correlation_id' => str_repeat('c', 64),
+            'signers' => json_encode([['name' => 'Иван']], JSON_THROW_ON_ERROR), 'signer_snapshot_hash' => str_repeat('e', 64),
+            'profile_code' => 'contract.work', 'profile_lock_version' => 0,
+            'allowed_signature_kinds' => json_encode(['paper_original'], JSON_THROW_ON_ERROR),
+            'required_signature_kinds' => json_encode([], JSON_THROW_ON_ERROR),
+            'allowed_signature_formats' => json_encode(['detached_cades'], JSON_THROW_ON_ERROR),
+            'requirement_snapshot_hash' => str_repeat('f', 64), 'correlation_id' => str_repeat('c', 64),
             'idempotency_key' => 'same-command', 'request_hash' => str_repeat('d', 64), 'requested_by_user_id' => 1,
             'requested_at' => now(), 'created_at' => now(), 'updated_at' => now(),
         ];

@@ -25,6 +25,7 @@ final class LegalArchiveDocumentTypeProfile extends Model
         'requires_signature',
         'allowed_signature_kinds',
         'required_signature_kinds',
+        'allowed_signature_formats',
         'workflow_template_id',
         'retention_policy',
         'confidentiality_level',
@@ -39,6 +40,7 @@ final class LegalArchiveDocumentTypeProfile extends Model
         'requires_signature' => 'boolean',
         'allowed_signature_kinds' => 'array',
         'required_signature_kinds' => 'array',
+        'allowed_signature_formats' => 'array',
         'is_active' => 'boolean',
         'lock_version' => 'integer',
     ];

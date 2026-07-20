@@ -209,4 +209,29 @@ final class LegalDocumentProfileRegistryTest extends TestCase
 
         self::assertFalse($registry->find(15, 'customer.no-signature')->requiresSignature);
     }
+
+    public function test_null_signature_settings_inherit_channels_and_crypto_formats(): void
+    {
+        $registry = new LegalDocumentProfileRegistry(
+            static fn (int $organizationId, string $code): ?array => [
+                'organization_id' => $organizationId,
+                'code' => $code,
+                'base_code' => 'contract.supply',
+                'name' => 'Наследуемый профиль',
+                'schema' => [],
+                'required_fields' => [],
+                'required_file_roles' => [],
+                'allowed_signature_kinds' => null,
+                'required_signature_kinds' => null,
+                'allowed_signature_formats' => null,
+                'is_active' => true,
+            ],
+            require dirname(__DIR__, 3).'/config/legal-document-profiles.php',
+        );
+
+        $profile = $registry->find(15, 'customer.inherited-signatures');
+        self::assertSame(['paper_original', 'external_electronic', 'provider_electronic'], $profile->allowedSignatureKinds);
+        self::assertSame([], $profile->requiredSignatureKinds);
+        self::assertSame(['detached_cades', 'embedded_cades', 'xml_dsig'], $profile->allowedSignatureFormats);
+    }
 }

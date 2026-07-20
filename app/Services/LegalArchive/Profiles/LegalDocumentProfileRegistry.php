@@ -109,12 +109,15 @@ final class LegalDocumentProfileRegistry
                 ?? $baseProfile->confidentialityLevel,
             isActive: true,
             lockVersion: max(0, (int) ($custom['lock_version'] ?? 0)),
-            allowedSignatureKinds: array_key_exists('allowed_signature_kinds', $custom)
+            allowedSignatureKinds: array_key_exists('allowed_signature_kinds', $custom) && $custom['allowed_signature_kinds'] !== null
                 ? $this->signatureKinds($custom, 'allowed_signature_kinds')
                 : $baseProfile->allowedSignatureKinds,
-            requiredSignatureKinds: array_key_exists('required_signature_kinds', $custom)
+            requiredSignatureKinds: array_key_exists('required_signature_kinds', $custom) && $custom['required_signature_kinds'] !== null
                 ? $this->signatureKinds($custom, 'required_signature_kinds')
                 : $baseProfile->requiredSignatureKinds,
+            allowedSignatureFormats: array_key_exists('allowed_signature_formats', $custom) && $custom['allowed_signature_formats'] !== null
+                ? $this->signatureFormats($custom, 'allowed_signature_formats')
+                : $baseProfile->allowedSignatureFormats,
         );
     }
 
@@ -137,6 +140,7 @@ final class LegalDocumentProfileRegistry
             lockVersion: 0,
             allowedSignatureKinds: $this->signatureKinds($definition, 'allowed_signature_kinds', ['paper_original', 'external_electronic', 'provider_electronic']),
             requiredSignatureKinds: $this->signatureKinds($definition, 'required_signature_kinds'),
+            allowedSignatureFormats: $this->signatureFormats($definition, 'allowed_signature_formats', ['detached_cades', 'embedded_cades', 'xml_dsig']),
         );
     }
 
@@ -172,6 +176,17 @@ final class LegalDocumentProfileRegistry
         }
 
         return $kinds;
+    }
+
+    /** @param array<string, mixed> $values @param list<string> $default @return list<string> */
+    private function signatureFormats(array $values, string $key, array $default = []): array
+    {
+        $formats = array_key_exists($key, $values) ? $this->stringList($values, $key) : $default;
+        if (array_diff($formats, ['detached_cades', 'embedded_cades', 'xml_dsig']) !== []) {
+            throw new InvalidArgumentException(trans_message('legal_archive.profiles.schema_invalid'));
+        }
+
+        return $formats;
     }
 
     /** @param array<mixed> $values @return list<string> */

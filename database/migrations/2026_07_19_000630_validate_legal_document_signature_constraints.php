@@ -13,13 +13,21 @@ return new class extends Migration
         if (Schema::getConnection()->getDriverName() !== 'pgsql') {
             return;
         }
-        foreach (DB::select("SELECT c.conname, c.conrelid::regclass::text AS table_name FROM pg_constraint c JOIN pg_namespace n ON n.oid=(SELECT relnamespace FROM pg_class WHERE oid=c.conrelid) WHERE n.nspname=current_schema() AND (c.conname LIKE 'legal_signature_%' OR c.conname LIKE 'legal_document_signatures_%')") as $constraint) {
-            DB::statement("ALTER TABLE {$constraint->table_name} VALIDATE CONSTRAINT {$constraint->conname}");
+        foreach ($this->manifest() as $name => $table) {
+            $constraint = DB::selectOne('SELECT c.conrelid::regclass::text AS table_name, c.convalidated::integer AS validated FROM pg_constraint c JOIN pg_namespace n ON n.oid=(SELECT relnamespace FROM pg_class WHERE oid=c.conrelid) WHERE n.nspname=current_schema() AND c.conname=?', [$name]);
+            if ($constraint === null || $constraint->table_name !== $table) {
+                throw new RuntimeException("legal_signature_constraint_manifest_mismatch:{$name}");
+            }
+            if (! (bool) $constraint->validated) {
+                DB::statement("ALTER TABLE {$table} VALIDATE CONSTRAINT {$name}");
+            }
         }
         DB::statement('ALTER TABLE legal_document_access_grants VALIDATE CONSTRAINT legal_document_access_abilities_check');
-        $invalid = DB::selectOne("SELECT count(*) AS aggregate FROM pg_constraint c JOIN pg_namespace n ON n.oid=(SELECT relnamespace FROM pg_class WHERE oid=c.conrelid) WHERE n.nspname=current_schema() AND NOT c.convalidated AND (c.conname LIKE 'legal_signature_%' OR c.conname LIKE 'legal_document_signatures_%')");
-        if ((int) ($invalid->aggregate ?? 0) !== 0) {
-            throw new RuntimeException('legal_signature_constraints_not_validated');
+        foreach ($this->manifest() as $name => $table) {
+            $validated = DB::selectOne('SELECT c.convalidated::integer AS validated FROM pg_constraint c JOIN pg_namespace n ON n.oid=(SELECT relnamespace FROM pg_class WHERE oid=c.conrelid) WHERE n.nspname=current_schema() AND c.conname=? AND c.conrelid=?::regclass', [$name, $table]);
+            if ($validated === null || ! (bool) $validated->validated) {
+                throw new RuntimeException("legal_signature_constraint_not_validated:{$name}");
+            }
         }
         $access = DB::selectOne("SELECT c.convalidated::integer AS validated, pg_get_constraintdef(c.oid, true) AS definition FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=current_schema() AND t.relname='legal_document_access_grants' AND c.conname='legal_document_access_abilities_check'");
         if ($access === null || ! (bool) $access->validated
@@ -32,5 +40,28 @@ return new class extends Migration
     public function down(): void
     {
         throw new RuntimeException('legal_document_signature_migrations_are_forward_only');
+    }
+
+    private function manifest(): array
+    {
+        $request = ['organization_fk', 'document_fk', 'version_fk', 'party_fk', 'user_fk', 'method_check', 'status_check', 'hash_check', 'signers_check', 'provider_check', 'callback_check', 'time_check'];
+        $signature = ['request_fk', 'organization_fk', 'version_fk', 'party_fk', 'user_fk', 'method_check', 'hash_check', 'evidence_check', 'revocation_check', 'time_check', 'typed_evidence_check'];
+        $verification = ['signature_fk', 'organization_fk', 'user_fk', 'status_check', 'hash_check', 'revocation_check'];
+        $operation = ['request_fk', 'status_check', 'hash_check', 'lease_check'];
+        $manifest = [];
+        foreach ($request as $suffix) {
+            $manifest["legal_signature_requests_{$suffix}"] = 'legal_signature_requests';
+        }
+        foreach ($signature as $suffix) {
+            $manifest["legal_document_signatures_{$suffix}"] = 'legal_document_signatures';
+        }
+        foreach ($verification as $suffix) {
+            $manifest["legal_signature_verifications_{$suffix}"] = 'legal_signature_verifications';
+        }
+        foreach ($operation as $suffix) {
+            $manifest["legal_signature_provider_operations_{$suffix}"] = 'legal_signature_provider_operations';
+        }
+
+        return $manifest;
     }
 };

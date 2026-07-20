@@ -17,13 +17,13 @@ final class LegalSignatureRequest extends Model
     protected $fillable = [
         'organization_id', 'document_id', 'document_version_id', 'party_id', 'method', 'provider',
         'status', 'signed_content_hash', 'signers', 'signer_snapshot_hash', 'correlation_id', 'provider_request_id',
-        'profile_code', 'profile_lock_version', 'allowed_signature_kinds', 'required_signature_kinds', 'requirement_snapshot_hash',
+        'profile_code', 'profile_lock_version', 'allowed_signature_kinds', 'required_signature_kinds', 'allowed_signature_formats', 'requirement_snapshot_hash',
         'callback_replay_hash', 'callback_payload_hash', 'session_metadata', 'idempotency_key',
         'request_hash', 'requested_by_user_id', 'requested_at', 'expires_at', 'completed_at',
     ];
 
     protected $casts = [
-        'signers' => 'array', 'allowed_signature_kinds' => 'array', 'required_signature_kinds' => 'array',
+        'signers' => 'array', 'allowed_signature_kinds' => 'array', 'required_signature_kinds' => 'array', 'allowed_signature_formats' => 'array',
         'profile_lock_version' => 'integer', 'session_metadata' => 'array', 'requested_at' => 'immutable_datetime',
         'expires_at' => 'immutable_datetime', 'completed_at' => 'immutable_datetime',
     ];

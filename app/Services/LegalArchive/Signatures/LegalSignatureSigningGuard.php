@@ -41,6 +41,7 @@ final readonly class LegalSignatureSigningGuard
             'profile_lock_version' => $profile->lockVersion,
             'allowed_signature_kinds' => $profile->allowedSignatureKinds,
             'required_signature_kinds' => $profile->requiredSignatureKinds,
+            'allowed_signature_formats' => $profile->allowedSignatureFormats,
         ];
     }
 
@@ -54,6 +55,7 @@ final readonly class LegalSignatureSigningGuard
             || (int) $request->document_version_id !== (int) $version->id
             || (int) $request->organization_id !== (int) $document->organization_id
             || ! hash_equals((string) $request->signed_content_hash, (string) $version->content_hash)
+            || ! in_array((string) $version->status, ['frozen', 'signed'], true)
             || $request->status !== 'pending'
             || ($request->expires_at !== null && $request->expires_at->isPast())) {
             throw new DomainException('legal_signature_request_not_pending');

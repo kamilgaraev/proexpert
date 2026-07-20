@@ -241,6 +241,13 @@ Schedule::command('contracts:reconcile-audit-debts --limit=100')
         Log::error('contract.audit_reconciliation.schedule_failed');
     });
 
+Schedule::command('legal-signatures:expire --limit=200')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onFailure(function (): void {
+        Log::error('legal_signature.expiry_schedule_failed');
+    });
+
 Schedule::command('immutable-audit:rollout-status')
     ->everyFiveMinutes()
     ->withoutOverlapping(5)

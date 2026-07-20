@@ -19,6 +19,22 @@ return new class extends Migration
                 if (! Schema::hasColumn('legal_archive_document_type_profiles', 'required_signature_kinds')) {
                     $table->jsonb('required_signature_kinds')->nullable();
                 }
+                if (! Schema::hasColumn('legal_archive_document_type_profiles', 'allowed_signature_formats')) {
+                    $table->jsonb('allowed_signature_formats')->nullable();
+                }
+            });
+        }
+        if (Schema::hasTable('legal_archive_file_cleanup_debts')) {
+            Schema::table('legal_archive_file_cleanup_debts', static function (Blueprint $table): void {
+                if (! Schema::hasColumn('legal_archive_file_cleanup_debts', 'storage_version_id')) {
+                    $table->text('storage_version_id')->nullable();
+                }
+                if (! Schema::hasColumn('legal_archive_file_cleanup_debts', 'storage_etag')) {
+                    $table->string('storage_etag', 255)->nullable();
+                }
+                if (! Schema::hasColumn('legal_archive_file_cleanup_debts', 'content_hash')) {
+                    $table->char('content_hash', 64)->nullable();
+                }
             });
         }
         if (! Schema::hasTable('legal_signature_requests')) {
@@ -38,6 +54,7 @@ return new class extends Migration
                 $table->unsignedBigInteger('profile_lock_version');
                 $table->jsonb('allowed_signature_kinds');
                 $table->jsonb('required_signature_kinds');
+                $table->jsonb('allowed_signature_formats');
                 $table->char('requirement_snapshot_hash', 64);
                 $table->char('correlation_id', 64);
                 $table->string('provider_request_id', 255)->nullable();
@@ -112,6 +129,8 @@ return new class extends Migration
                 $table->string('status', 32);
                 $table->char('correlation_id', 64);
                 $table->char('provider_idempotency_key', 64)->unique();
+                $table->char('request_idempotency_key', 64);
+                $table->unsignedInteger('generation');
                 $table->char('lease_token_hash', 64)->nullable();
                 $table->timestampTz('lease_expires_at')->nullable();
                 $table->unsignedInteger('attempt_count')->default(0);
@@ -163,6 +182,7 @@ return new class extends Migration
             ['legal_signature_requests', 'signers', 'jsonb', 'NO'],
             ['legal_signature_requests', 'signer_snapshot_hash', 'bpchar', 'NO'],
             ['legal_signature_requests', 'required_signature_kinds', 'jsonb', 'NO'],
+            ['legal_signature_requests', 'allowed_signature_formats', 'jsonb', 'NO'],
             ['legal_signature_requests', 'requirement_snapshot_hash', 'bpchar', 'NO'],
             ['legal_document_signatures', 'storage_version_id', 'text', 'YES'],
             ['legal_document_signatures', 'detected_mime_type', 'varchar', 'YES'],
@@ -170,10 +190,16 @@ return new class extends Migration
             ['legal_document_signatures', 'authority_confirmed', 'bool', 'NO'],
             ['legal_signature_provider_operations', 'id', 'uuid', 'NO'],
             ['legal_signature_provider_operations', 'status', 'varchar', 'NO'],
+            ['legal_signature_provider_operations', 'request_idempotency_key', 'bpchar', 'NO'],
+            ['legal_signature_provider_operations', 'generation', 'int4', 'NO'],
             ['legal_signature_provider_operations', 'session_metadata', 'jsonb', 'YES'],
             ['legal_signature_verifications', 'signed_content_hash', 'bpchar', 'NO'],
             ['legal_archive_document_type_profiles', 'allowed_signature_kinds', 'jsonb', 'YES'],
             ['legal_archive_document_type_profiles', 'required_signature_kinds', 'jsonb', 'YES'],
+            ['legal_archive_document_type_profiles', 'allowed_signature_formats', 'jsonb', 'YES'],
+            ['legal_archive_file_cleanup_debts', 'storage_version_id', 'text', 'YES'],
+            ['legal_archive_file_cleanup_debts', 'storage_etag', 'varchar', 'YES'],
+            ['legal_archive_file_cleanup_debts', 'content_hash', 'bpchar', 'YES'],
         ];
         foreach ($manifest as [$table, $column, $type, $nullable]) {
             $actual = DB::selectOne('SELECT udt_name, is_nullable FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=? AND column_name=?', [$table, $column]);
