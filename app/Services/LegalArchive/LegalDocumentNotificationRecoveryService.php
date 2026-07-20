@@ -5,13 +5,12 @@ declare(strict_types=1);
 namespace App\Services\LegalArchive;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalDocumentNotificationDelivery;
-use App\Notifications\LegalArchive\LegalDocumentApprovalRequiredNotification;
-use App\Notifications\LegalArchive\LegalDocumentDeadlineNotification;
-use App\Notifications\LegalArchive\LegalDocumentSignatureRequiredNotification;
 use Illuminate\Support\Str;
 
 final class LegalDocumentNotificationRecoveryService
 {
+    public function __construct(private readonly LegalDocumentNotificationPublisher $publisher) {}
+
     public function recoverExpired(int $limit = 100): int
     {
         $deliveries = LegalDocumentNotificationDelivery::query()
@@ -22,34 +21,58 @@ final class LegalDocumentNotificationRecoveryService
             ->get();
 
         $recovered = 0;
+
         foreach ($deliveries as $delivery) {
             $token = Str::random(64);
+            $leaseToken = hash('sha256', $token);
+            $notificationId = $delivery->notification_id ?? (string) Str::uuid();
             $claimed = LegalDocumentNotificationDelivery::query()
                 ->whereKey($delivery->id)
                 ->where('status', 'sending')
                 ->where('lease_expires_at', '<=', now())
-                ->update(['lease_token' => hash('sha256', $token), 'lease_expires_at' => now()->addMinutes(5), 'attempt_count' => ((int) $delivery->attempt_count) + 1]);
+                ->update([
+                    'notification_id' => $notificationId,
+                    'lease_token' => $leaseToken,
+                    'lease_expires_at' => now()->addMinutes(5),
+                    'attempt_count' => ((int) $delivery->attempt_count) + 1,
+                ]);
+
             if ($claimed !== 1) {
                 continue;
             }
+
+            $delivery->forceFill([
+                'notification_id' => $notificationId,
+                'lease_token' => $leaseToken,
+            ]);
+
             try {
-                $delivery->loadMissing(['document', 'recipient']);
-                $notification = match ($delivery->notification_type) {
-                    LegalDocumentApprovalRequiredNotification::class => new LegalDocumentApprovalRequiredNotification($delivery->document),
-                    LegalDocumentSignatureRequiredNotification::class => new LegalDocumentSignatureRequiredNotification($delivery->document),
-                    LegalDocumentDeadlineNotification::class => new LegalDocumentDeadlineNotification(
-                        $delivery->document,
-                        str_starts_with((string) data_get($delivery->notification_payload, 'type'), 'legal_document_')
-                            ? substr((string) data_get($delivery->notification_payload, 'type'), strlen('legal_document_'))
-                            : 'obligation_due',
-                    ),
-                    default => throw new \LogicException('Unsupported legal notification delivery type.'),
-                };
-                $delivery->recipient->notify($notification);
-                LegalDocumentNotificationDelivery::query()->whereKey($delivery->id)->where('lease_token', hash('sha256', $token))->update(['status' => 'delivered', 'delivered_at' => now(), 'lease_token' => null, 'lease_expires_at' => null]);
-                $recovered++;
+                $delivery->loadMissing('recipient');
+                if ($delivery->recipient === null) {
+                    LegalDocumentNotificationDelivery::query()
+                        ->whereKey($delivery->id)
+                        ->where('lease_token', $leaseToken)
+                        ->update([
+                            'status' => 'discarded',
+                            'lease_token' => null,
+                            'lease_expires_at' => null,
+                        ]);
+
+                    continue;
+                }
+
+                if ($this->publisher->persistClaimed($delivery, $delivery->recipient)) {
+                    $recovered++;
+                }
             } catch (\Throwable) {
-                LegalDocumentNotificationDelivery::query()->whereKey($delivery->id)->where('lease_token', hash('sha256', $token))->update(['status' => 'sending', 'lease_token' => null, 'lease_expires_at' => now()->subSecond()]);
+                LegalDocumentNotificationDelivery::query()
+                    ->whereKey($delivery->id)
+                    ->where('lease_token', $leaseToken)
+                    ->update([
+                        'status' => 'sending',
+                        'lease_token' => null,
+                        'lease_expires_at' => now()->subSecond(),
+                    ]);
             }
         }
 
