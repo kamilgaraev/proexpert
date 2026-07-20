@@ -32,6 +32,7 @@ return new class extends Migration
                 throw new RuntimeException("legal_document_editor_index_descriptor_mismatch:{$name}");
             }
         }
+        $this->assertIndexManifest();
     }
 
     public function down(): void
@@ -39,14 +40,56 @@ return new class extends Migration
         throw new RuntimeException('legal_document_editor_session_indexes_forward_only');
     }
 
+    public function assertIndexManifest(): void
+    {
+        foreach ($this->indexes() as $name => $sql) {
+            $descriptor = $this->descriptor($name);
+            if ($descriptor === null || ! $this->matches($descriptor, $sql)
+                || ! (bool) $descriptor->valid || ! (bool) $descriptor->ready || ! (bool) $descriptor->live) {
+                throw new RuntimeException("legal_document_editor_index_manifest_mismatch:{$name}");
+            }
+        }
+        $expected = [
+            'legal_document_editor_sessions' => ['legal_document_editor_sessions_pkey', 'legal_editor_sessions_document_key_unique',
+                'legal_editor_sessions_generation_unique', 'legal_editor_sessions_tenant_unique', 'legal_editor_sessions_binding_unique',
+                'legal_editor_sessions_saved_version_unique', 'legal_editor_sessions_active_version_unique', 'legal_editor_sessions_expiry_idx'],
+            'legal_document_editor_participants' => ['legal_document_editor_participants_pkey',
+                'legal_editor_participants_actor_unique', 'legal_editor_participants_user_idx'],
+            'legal_document_editor_saves' => ['legal_document_editor_saves_pkey', 'legal_editor_saves_generation_unique',
+                'legal_editor_saves_replay_unique', 'legal_editor_saves_operation_unique',
+                'legal_editor_saves_saved_version_unique', 'legal_editor_saves_lease_idx'],
+        ];
+        foreach ($expected as $table => $names) {
+            $actual = array_map(static fn (object $row): string => (string) $row->name, DB::select(<<<'SQL'
+SELECT i.relname name FROM pg_index x JOIN pg_class i ON i.oid=x.indexrelid
+JOIN pg_class t ON t.oid=x.indrelid JOIN pg_namespace n ON n.oid=t.relnamespace
+WHERE n.nspname=current_schema() AND t.relname=? ORDER BY i.relname
+SQL, [$table]));
+            sort($names);
+            if ($actual !== $names) {
+                throw new RuntimeException("legal_document_editor_index_set_mismatch:{$table}");
+            }
+        }
+    }
+
     private function indexes(): array
     {
         return [
+            'legal_archive_versions_editor_file_ownership_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_archive_versions_editor_file_ownership_unique ON legal_archive_document_versions USING btree (id, document_file_id, document_id, organization_id)',
             'legal_editor_sessions_document_key_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_sessions_document_key_unique ON legal_document_editor_sessions USING btree (document_key)',
             'legal_editor_sessions_generation_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_sessions_generation_unique ON legal_document_editor_sessions USING btree (organization_id, document_id, source_version_id, generation)',
+            'legal_editor_sessions_tenant_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_sessions_tenant_unique ON legal_document_editor_sessions USING btree (id, organization_id)',
+            'legal_editor_sessions_binding_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_sessions_binding_unique ON legal_document_editor_sessions USING btree (id, organization_id, document_id, source_version_id, document_file_id)',
             'legal_editor_sessions_saved_version_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_sessions_saved_version_unique ON legal_document_editor_sessions USING btree (saved_version_id) WHERE saved_version_id IS NOT NULL',
             'legal_editor_sessions_active_version_unique' => "CREATE UNIQUE INDEX CONCURRENTLY legal_editor_sessions_active_version_unique ON legal_document_editor_sessions USING btree (organization_id, document_id, source_version_id) WHERE status IN ('active','processing')",
             'legal_editor_sessions_expiry_idx' => "CREATE INDEX CONCURRENTLY legal_editor_sessions_expiry_idx ON legal_document_editor_sessions USING btree (expires_at, id) WHERE status IN ('active','processing')",
+            'legal_editor_participants_actor_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_participants_actor_unique ON legal_document_editor_participants USING btree (editor_session_id, actor_key)',
+            'legal_editor_participants_user_idx' => 'CREATE INDEX CONCURRENTLY legal_editor_participants_user_idx ON legal_document_editor_participants USING btree (organization_id, user_id, joined_at) WHERE user_id IS NOT NULL',
+            'legal_editor_saves_generation_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_saves_generation_unique ON legal_document_editor_saves USING btree (editor_session_id, save_generation)',
+            'legal_editor_saves_replay_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_saves_replay_unique ON legal_document_editor_saves USING btree (editor_session_id, replay_hash)',
+            'legal_editor_saves_operation_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_saves_operation_unique ON legal_document_editor_saves USING btree (operation_id) WHERE operation_id IS NOT NULL',
+            'legal_editor_saves_saved_version_unique' => 'CREATE UNIQUE INDEX CONCURRENTLY legal_editor_saves_saved_version_unique ON legal_document_editor_saves USING btree (saved_version_id) WHERE saved_version_id IS NOT NULL',
+            'legal_editor_saves_lease_idx' => "CREATE INDEX CONCURRENTLY legal_editor_saves_lease_idx ON legal_document_editor_saves USING btree (lease_expires_at, id) WHERE state = 'processing'",
         ];
     }
 
@@ -56,7 +99,7 @@ return new class extends Migration
 SELECT pg_get_indexdef(ic.oid) definition, tc.relname table_name, am.amname access_method,
  i.indisunique::integer is_unique, i.indisprimary::integer is_primary,
  i.indimmediate::integer is_immediate, i.indisexclusion::integer is_exclusion,
- i.indnullsnotdistinct::integer nulls_not_distinct, i.indnkeyatts, i.indnatts,
+ COALESCE((to_jsonb(i)->>'indnullsnotdistinct')::boolean,false)::integer nulls_not_distinct, i.indnkeyatts, i.indnatts,
  i.indisvalid::integer valid, i.indisready::integer ready, i.indislive::integer live,
  EXISTS(SELECT 1 FROM pg_constraint c WHERE c.conindid=ic.oid)::integer constraint_owned
 FROM pg_class ic JOIN pg_namespace n ON n.oid=ic.relnamespace

@@ -19,22 +19,20 @@ final class LegalDocumentEditorSession extends Model
     protected $fillable = [
         'id', 'organization_id', 'document_id', 'source_version_id', 'document_file_id',
         'opened_by_user_id', 'provider', 'mode', 'status', 'generation', 'document_key',
-        'source_content_hash', 'callback_replay_hash', 'callback_lease_token_hash',
-        'callback_lease_expires_at', 'callback_attempt_count', 'saved_version_id',
-        'expires_at', 'completed_at', 'failure_code',
+        'source_content_hash', 'saved_version_id',
+        'expires_at', 'completed_at', 'failure_code', 'next_save_generation',
     ];
 
     protected $casts = [
-        'generation' => 'integer', 'callback_attempt_count' => 'integer',
-        'callback_lease_expires_at' => 'immutable_datetime', 'expires_at' => 'immutable_datetime',
+        'generation' => 'integer', 'next_save_generation' => 'integer', 'expires_at' => 'immutable_datetime',
         'completed_at' => 'immutable_datetime',
     ];
 
     protected static function booted(): void
     {
         self::updating(static function (self $session): void {
-            $allowed = ['status', 'callback_replay_hash', 'callback_lease_token_hash', 'callback_lease_expires_at',
-                'callback_attempt_count', 'saved_version_id', 'completed_at', 'failure_code', 'updated_at'];
+            $allowed = ['status', 'saved_version_id', 'completed_at', 'failure_code',
+                'next_save_generation', 'updated_at'];
             if (self::$serviceMutationDepth < 1 || array_diff(array_keys($session->getDirty()), $allowed) !== []) {
                 throw new ImmutableDataException(self::class, 'update');
             }
@@ -49,11 +47,14 @@ final class LegalDocumentEditorSession extends Model
                     throw new ImmutableDataException(self::class, 'transition');
                 }
             }
-            if (($session->getOriginal('callback_replay_hash') !== null && $session->isDirty('callback_replay_hash'))
-                || ($session->isDirty('saved_version_id')
+            if ($session->isDirty('saved_version_id')
                     && ! ($from === 'processing' && $to === 'completed'
-                        && $session->getOriginal('saved_version_id') === null && $session->saved_version_id !== null))) {
+                        && $session->getOriginal('saved_version_id') === null && $session->saved_version_id !== null)) {
                 throw new ImmutableDataException(self::class, 'update');
+            }
+            if ($session->isDirty('next_save_generation')
+                && (int) $session->next_save_generation !== ((int) $session->getOriginal('next_save_generation')) + 1) {
+                throw new ImmutableDataException(self::class, 'generation');
             }
         });
         self::deleting(static function (): never {
