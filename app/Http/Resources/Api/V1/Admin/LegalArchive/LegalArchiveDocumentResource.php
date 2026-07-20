@@ -72,6 +72,11 @@ final class LegalArchiveDocumentResource extends JsonResource
                 'until' => $this->retention_until?->toISOString(),
                 'legal_hold' => (bool) $this->legal_hold,
             ],
+            'obligations' => $this->whenLoaded('obligations', fn () => $this->obligations->map(fn ($obligation) => [
+                'id' => $obligation->id, 'title' => $obligation->title, 'status' => $obligation->status,
+                'due_at' => $obligation->due_at?->toISOString(), 'amount' => $obligation->amount,
+                'volume' => $obligation->volume, 'unit' => $obligation->unit,
+            ])->values()),
             'lock_version' => (int) $this->lock_version,
             'current_version' => new LegalArchiveDocumentVersionResource($this->whenLoaded('currentVersion')),
             'current_primary_version' => new LegalArchiveDocumentVersionResource($this->whenLoaded('currentVersion')),
