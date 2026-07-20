@@ -486,18 +486,34 @@ final class LegalSignaturePostgresConcurrencyTest extends TestCase
         self::assertSame(1, (new LegalSignatureArtifactReconciler(
             $this->signatureStorage($this->first), $this->first, $this->audit(), $this->metrics(),
         ))->reconcile());
+        $canonical = $this->first->table('legal_signature_artifacts')->sole();
+        self::assertSame('ambiguous', $canonical->state);
+        $canonicalTokenHash = hash('sha256', 'canonical-b-owner');
+        $this->first->table('legal_signature_artifacts')->where('id', $canonical->id)->update([
+            'claim_count' => 1,
+            'upload_lease_token_hash' => $canonicalTokenHash,
+            'upload_lease_expires_at' => now()->addMinutes(5),
+            'updated_at' => now(),
+        ]);
         $this->first->select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', [$gate]);
         pcntl_waitpid($pid, $status);
         self::assertTrue(pcntl_wifexited($status));
         self::assertSame(0, pcntl_wexitstatus($status));
         self::assertSame(0, $this->first->table('legal_document_signatures')->count());
-        self::assertSame('deleting', $this->first->table('legal_signature_artifacts')->value('state'));
+        $canonicalAfter = $this->first->table('legal_signature_artifacts')->where('id', $canonical->id)->sole();
+        self::assertSame('ambiguous', $canonicalAfter->state);
+        self::assertSame(1, (int) $canonicalAfter->claim_count);
+        self::assertSame($canonicalTokenHash, $canonicalAfter->upload_lease_token_hash);
+        $lateArtifact = $this->first->table('legal_signature_artifacts')->where('id', '<>', $canonical->id)->sole();
+        self::assertSame('deleting', $lateArtifact->state);
         self::assertSame(1, $this->first->table('legal_archive_file_cleanup_debts')->count());
-        $lateVersion = (string) $this->first->table('legal_signature_artifacts')->value('storage_version_id');
+        $lateVersion = (string) $lateArtifact->storage_version_id;
         self::assertSame(1, (new LegalSignatureCleanupDebtService(
             $this->signatureStorage($this->first), $this->first, $this->audit(), $this->metrics(),
         ))->processDue());
-        self::assertSame('deleted', $this->first->table('legal_signature_artifacts')->value('state'));
+        self::assertSame('deleted', $this->first->table('legal_signature_artifacts')->where('id', $lateArtifact->id)->value('state'));
+        self::assertSame('ambiguous', $this->first->table('legal_signature_artifacts')->where('id', $canonical->id)->value('state'));
+        self::assertNull($this->first->table('legal_archive_file_cleanup_debts')->value('dead_lettered_at'));
         self::assertSame(1, $this->first->table('signature_test_storage_deletions')
             ->where('storage_version_id', $lateVersion)->count());
     }

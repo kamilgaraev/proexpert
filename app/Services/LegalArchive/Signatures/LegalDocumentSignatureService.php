@@ -1444,51 +1444,85 @@ final class LegalDocumentSignatureService
         if ($versionId === '') {
             throw new RuntimeException('legal_signature_artifact_version_missing');
         }
-        $this->connection->transaction(function () use ($organizationId, $artifactKey, $path, $versionId): void {
+        $cleanupRequired = $this->connection->transaction(function () use ($organizationId, $artifactKey, $path, $versionId): bool {
             $this->lockArtifactMutex($organizationId, $path);
             $artifact = $this->connection->table('legal_signature_artifacts')
                 ->where('organization_id', $organizationId)->where('artifact_key', $artifactKey)
                 ->lockForUpdate()->first();
-            if ($artifact === null || $artifact->referenced_signature_id !== null
-                || in_array((string) $artifact->state, ['referenced', 'deleted'], true)) {
-                return;
+            if ($artifact === null) {
+                throw new RuntimeException('legal_signature_artifact_recovery_state_missing');
             }
-            $signatureExists = $this->signatures()->where('organization_id', $organizationId)
+            $referencedSignatureId = $this->signatures()->where('organization_id', $organizationId)
                 ->where('signature_path', $path)->where('storage_version_id', $versionId)
-                ->lockForUpdate()->exists();
-            if ($signatureExists) {
-                return;
+                ->lockForUpdate()->value('id');
+            if ($artifact->storage_version_id !== null && hash_equals((string) $artifact->storage_version_id, $versionId)) {
+                if (in_array((string) $artifact->state, ['uploading', 'uploaded', 'ambiguous'], true)) {
+                    $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                        'next_reconcile_at' => now(), 'updated_at' => now(),
+                    ]);
+                }
+
+                return false;
             }
             $leaseActive = $artifact->upload_lease_expires_at !== null && now()->lt($artifact->upload_lease_expires_at);
-            if ($leaseActive) {
-                $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
-                    'next_reconcile_at' => now(), 'updated_at' => now(),
-                ]);
-
-                return;
-            }
-            if ((string) $artifact->state === 'confirmed_absent') {
-                $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
-                    'state' => 'uploading', 'claim_count' => 0, 'updated_at' => now(),
-                ]);
-            }
-            if (in_array((string) $artifact->state, ['uploading', 'ambiguous', 'confirmed_absent'], true)) {
+            $canonicalCanOwnVersion = ! $leaseActive
+                && $artifact->storage_version_id === null
+                && in_array((string) $artifact->state, ['uploading', 'ambiguous', 'confirmed_absent'], true);
+            if ($canonicalCanOwnVersion && $referencedSignatureId === null) {
+                if ((string) $artifact->state === 'confirmed_absent') {
+                    $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                        'state' => 'uploading', 'claim_count' => 0, 'updated_at' => now(),
+                    ]);
+                }
                 $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
                     'state' => 'uploaded', 'storage_version_id' => $versionId,
                     'cleanup_owned' => true, 'updated_at' => now(),
                 ]);
+                $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
+                    'state' => 'deleting', 'cleanup_owned' => true, 'claim_count' => 0,
+                    'upload_lease_token_hash' => null, 'upload_lease_expires_at' => null,
+                    'next_reconcile_at' => null, 'last_error_code' => null, 'updated_at' => now(),
+                ]);
+
+                return true;
             }
-            $this->connection->table('legal_signature_artifacts')->where('id', $artifact->id)->update([
-                'state' => 'deleting',
-                'cleanup_owned' => true,
-                'claim_count' => 0,
-                'upload_lease_token_hash' => null,
-                'upload_lease_expires_at' => null,
-                'next_reconcile_at' => null,
-                'last_error_code' => null,
-                'updated_at' => now(),
+            $lateArtifactKey = CanonicalJson::fingerprint([
+                'canonical_artifact_key' => $artifactKey,
+                'storage_version_id' => $versionId,
             ]);
+            $now = now();
+            $this->connection->table('legal_signature_artifacts')->insertOrIgnore([
+                'organization_id' => $organizationId,
+                'document_id' => (int) $artifact->document_id,
+                'document_version_id' => (int) $artifact->document_version_id,
+                'signature_request_id' => (int) $artifact->signature_request_id,
+                'artifact_key' => $lateArtifactKey,
+                'storage_path' => $path,
+                'storage_version_id' => $versionId,
+                'content_hash' => (string) $artifact->content_hash,
+                'put_request_hash' => (string) $artifact->put_request_hash,
+                'state' => $referencedSignatureId === null ? 'deleting' : 'referenced',
+                'claim_count' => 0,
+                'cleanup_owned' => $referencedSignatureId === null,
+                'referenced_signature_id' => $referencedSignatureId,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            $lateArtifact = $this->connection->table('legal_signature_artifacts')
+                ->where('organization_id', $organizationId)->where('artifact_key', $lateArtifactKey)
+                ->lockForUpdate()->first();
+            if ($lateArtifact === null
+                || ! hash_equals((string) $lateArtifact->storage_path, $path)
+                || ! hash_equals((string) $lateArtifact->storage_version_id, $versionId)
+                || ! hash_equals((string) $lateArtifact->content_hash, (string) $artifact->content_hash)) {
+                throw new RuntimeException('legal_signature_late_artifact_identity_conflict');
+            }
+
+            return true;
         }, 3);
+        if (! $cleanupRequired) {
+            return;
+        }
         $now = now();
         $this->connection->table('legal_archive_file_cleanup_debts')->upsert([[
             'organization_id' => $organizationId,

@@ -61,6 +61,11 @@ final readonly class LegalSignatureCleanupDebtService
             $artifact = $this->connection->table('legal_signature_artifacts')
                 ->where('organization_id', $row->organization_id)
                 ->where('storage_path', $row->storage_path)
+                ->where('storage_version_id', $row->storage_version_id)
+                ->lockForUpdate()->first();
+            $pathArtifact = $artifact ?? $this->connection->table('legal_signature_artifacts')
+                ->where('organization_id', $row->organization_id)
+                ->where('storage_path', $row->storage_path)
                 ->lockForUpdate()->first();
             $referencedSignatureId = $this->connection->table('legal_document_signatures')
                 ->where('organization_id', $row->organization_id)
@@ -95,11 +100,11 @@ final readonly class LegalSignatureCleanupDebtService
                 && $artifact->referenced_signature_id === null
                 && ($artifact->deletion_lease_expires_at === null || now()->gte($artifact->deletion_lease_expires_at));
             if (! $authorized) {
-                $reconciliationPending = $artifact !== null
-                    && in_array((string) $artifact->state, ['uploading', 'uploaded', 'ambiguous'], true)
-                    && ($artifact->storage_version_id === null
-                        || (int) $artifact->claim_count > 0
-                        || ($artifact->upload_lease_expires_at !== null && now()->lt($artifact->upload_lease_expires_at)));
+                $reconciliationPending = $artifact === null && $pathArtifact !== null
+                    && in_array((string) $pathArtifact->state, ['uploading', 'uploaded', 'ambiguous'], true)
+                    && ($pathArtifact->storage_version_id === null
+                        || (int) $pathArtifact->claim_count > 0
+                        || ($pathArtifact->upload_lease_expires_at !== null && now()->lt($pathArtifact->upload_lease_expires_at)));
                 if ($reconciliationPending) {
                     $this->connection->table('legal_archive_file_cleanup_debts')->where('id', $id)->update([
                         'last_error' => 'legal_signature_cleanup_reconciliation_pending',
