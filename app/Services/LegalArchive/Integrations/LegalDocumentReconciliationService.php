@@ -54,6 +54,14 @@ final class LegalDocumentReconciliationService
                 break;
             }
 
+            if ($namedSource === 'contracts') {
+                $this->repairContractLinks($organizationId, $remaining, $dryRun, $summary);
+                $remaining = $limit - $summary['candidates'];
+                if ($remaining < 1) {
+                    continue;
+                }
+            }
+
             $sourceType = $this->sourceType($namedSource);
             $this->unreconciled($this->sourceQuery($namedSource, $organizationId), $namedSource, $sourceType)
                 ->orderBy('id')
@@ -141,6 +149,35 @@ final class LegalDocumentReconciliationService
                 ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId)),
             default => throw new InvalidArgumentException('Unknown reconciliation source.'),
         };
+    }
+
+    /** @param array{candidates:int, linked:int, problem_flags:int, skipped:int, sources:array<string, int>} $summary */
+    private function repairContractLinks(?int $organizationId, int $limit, bool $dryRun, array &$summary): void
+    {
+        Contract::query()
+            ->join('legal_archive_documents as dossier', function ($join): void {
+                $join->on('dossier.organization_id', '=', 'contracts.organization_id')
+                    ->where('dossier.source_type', '=', 'contract')
+                    ->whereRaw('dossier.source_id = CAST(contracts.id AS text)');
+            })
+            ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('contracts.organization_id', $organizationId))
+            ->where(function (Builder $query): void {
+                $query->whereNull('contracts.legal_archive_document_id')
+                    ->orWhereColumn('contracts.legal_archive_document_id', '!=', 'dossier.id');
+            })
+            ->orderBy('contracts.id')
+            ->limit($limit)
+            ->get(['contracts.*', 'dossier.id as reconciliation_document_id'])
+            ->each(function (Contract $contract) use ($dryRun, &$summary): void {
+                $summary['candidates']++;
+                $summary['sources']['contracts']++;
+                if ($dryRun) {
+                    return;
+                }
+
+                $contract->forceFill(['legal_archive_document_id' => (int) $contract->getAttribute('reconciliation_document_id')])->save();
+                $summary['linked']++;
+            });
     }
 
     private function unreconciled(Builder $query, string $source, string $sourceType): Builder
