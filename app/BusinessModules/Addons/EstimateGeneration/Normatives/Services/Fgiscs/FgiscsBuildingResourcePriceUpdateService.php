@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimatePric
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimatePriceZone;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Conjuncture\ResidentialConjuncturePriceImporter;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FgiscsBuildingResourcePriceSpreadsheetParser;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use Illuminate\Support\Facades\DB;
@@ -39,6 +40,7 @@ class FgiscsBuildingResourcePriceUpdateService
         private readonly RegionalPriceImportLifecycleService $lifecycleService,
         private readonly RegionalPriceVersionResolver $versionResolver,
         private readonly FgiscsBuildingResourcePricePriority $pricePriority,
+        private readonly ResidentialConjuncturePriceImporter $conjuncturePrices,
     ) {}
 
     /**
@@ -71,7 +73,7 @@ class FgiscsBuildingResourcePriceUpdateService
             (int) $priceZone->id,
             (int) $period->id,
             $baseVersionKey,
-            'building_resources_imported',
+            'project_material_conjuncture_checked',
             $force,
         );
         $prefix = $this->prefix($period, (int) $region->fgiscs_subject_id, (int) $priceZone->fgiscs_price_zone_id);
@@ -163,7 +165,11 @@ class FgiscsBuildingResourcePriceUpdateService
         ]);
 
         $stats = $this->importDownloads($downloads, $datasetVersion, $regionalVersion, $progress);
-
+        $conjunctureStats = $this->conjuncturePrices->import(
+            $datasetVersion,
+            $regionalVersion,
+            (string) $region->code,
+        );
         $datasetVersion->update([
             'status' => EstimateImportStatus::PARSED->value,
             'files_count' => count($downloads),
@@ -185,6 +191,10 @@ class FgiscsBuildingResourcePriceUpdateService
                 'building_resources_imported' => true,
                 'building_resources_imported_at' => now()->toIso8601String(),
                 'building_resources_stats' => $stats,
+                'project_material_conjuncture_checked' => true,
+                'project_material_conjuncture_checked_at' => now()->toIso8601String(),
+                'project_material_conjuncture_complete' => $conjunctureStats['missing'] === 0,
+                'project_material_conjuncture_stats' => $conjunctureStats,
             ]),
         ]);
 
@@ -201,6 +211,7 @@ class FgiscsBuildingResourcePriceUpdateService
             'files_count' => count($downloads),
             'activation_id' => $lifecycle['activation_id'],
             'complete_quality' => $lifecycle['quality'],
+            'project_material_conjuncture' => $conjunctureStats,
         ]);
     }
 

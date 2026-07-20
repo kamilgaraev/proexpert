@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Residentia
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialProjectMaterialCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
+use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 
 final class AssembleMatchedResourcesTest extends TestCase
@@ -156,6 +157,68 @@ final class AssembleMatchedResourcesTest extends TestCase
         self::assertSame('calculated', $item['pricing_status']);
     }
 
+    public function test_conjuncture_price_provenance_is_visible_on_material_and_normative_match(): void
+    {
+        $scenarios = new ResidentialMaterialScenarioCatalog;
+        $catalog = new ResidentialProjectMaterialCatalog(
+            $scenarios,
+            new DateTimeImmutable('2026-07-20 23:59:59 UTC'),
+        );
+        $scenario = $scenarios->issue('heating.unit', 'residential');
+        self::assertIsArray($scenario);
+        $requirement = $catalog->requirementForIntent(['specialization_scenario' => $scenario]);
+        self::assertIsArray($requirement);
+        $analysis = [
+            'schema_version' => 'project_material_conjuncture:v1',
+            'analysis_key' => 'residential_wall_mounted_single_circuit_electric_boiler_18kw',
+            'resource_code' => '89.1.63.01-0079',
+            'resource_name' => 'Котёл электрический настенный одноконтурный, 18 кВт',
+            'unit' => 'шт',
+            'currency' => 'RUB',
+            'region_code' => 'RU-TA',
+            'observed_at' => '2026-07-20',
+            'median_price' => 18810.0,
+            'eligible_offers' => [
+                $this->offer('https://supplier-one.example/boiler', 10710.0),
+                $this->offer('https://supplier-two.example/boiler', 18810.0),
+                $this->offer('https://supplier-three.example/boiler', 20400.0),
+            ],
+            'rejected_offers' => [],
+            'eligibility' => ['minimum_offers' => 3],
+        ];
+        $resource = $catalog->resourceFromPriceRow($requirement, (object) [
+            'price_id' => 802,
+            'construction_resource_id' => null,
+            'resource_code' => '89.1.63.01-0079',
+            'resource_name' => $analysis['resource_name'],
+            'unit' => 'шт',
+            'base_price' => '18810.00',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => 'region-16-q2-2026-r1',
+            'source_price_kind' => 'conjuncture_analysis',
+            'raw_payload' => ['source' => 'conjuncture_analysis', 'analysis' => $analysis],
+        ]);
+        self::assertIsArray($resource);
+
+        $input = $this->data($scenario, [[
+            'work_item_key' => 'heating.unit',
+            'requirement' => $requirement,
+            'status' => 'priced',
+            'resource' => $resource,
+        ]]);
+        $input['local_estimates'][0]['sections'][0]['work_items'][0]['key'] = 'heating.unit';
+        $input['local_estimates'][0]['sections'][0]['work_items'][0]['quantity'] = 1;
+        $item = (new AssembleMatchedResources($catalog))->handle($input)['data']['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertSame('conjuncture_analysis', $item['materials'][0]['price_source_kind']);
+        self::assertSame(3, count($item['materials'][0]['price_provenance']['eligible_offers']));
+        self::assertSame('conjuncture_analysis', $item['materials'][0]['normative_ref']['price_source_kind']);
+        self::assertSame(
+            'project_material_conjuncture:v1',
+            $item['project_material_selections'][0]['price_provenance']['schema_version'],
+        );
+    }
+
     public function test_tampered_pinned_project_material_price_is_rejected(): void
     {
         $catalog = new ResidentialProjectMaterialCatalog;
@@ -208,6 +271,21 @@ final class AssembleMatchedResourcesTest extends TestCase
                     ]],
                 ]],
             ]],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function offer(string $url, float $price): array
+    {
+        return [
+            'supplier' => parse_url($url, PHP_URL_HOST),
+            'url' => $url,
+            'region_code' => 'RU-TA',
+            'observed_at' => '2026-07-20',
+            'product_name' => 'Котёл электрический настенный одноконтурный, 18 кВт',
+            'unit' => 'шт',
+            'currency' => 'RUB',
+            'price' => $price,
         ];
     }
 }

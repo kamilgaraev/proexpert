@@ -101,6 +101,8 @@ final readonly class AssembleMatchedResources
             'total_price' => round($quantity * $unitPrice, 2),
             'price_source' => $resource['price_source'],
             'price_source_version' => $resource['price_source_version'],
+            'price_source_kind' => $resource['price_source_kind'] ?? null,
+            'price_provenance' => $resource['price_provenance'] ?? null,
             'source' => 'project_material_catalog:'.ResidentialProjectMaterialCatalog::VERSION,
             'confidence' => $workItem['confidence'] ?? 0.8,
             'project_material_selection' => $selection,
@@ -111,6 +113,8 @@ final readonly class AssembleMatchedResources
                 'price_id' => $resource['price_id'],
                 'price_source' => $resource['price_source'],
                 'price_source_version' => $resource['price_source_version'],
+                'price_source_kind' => $resource['price_source_kind'] ?? null,
+                'price_provenance' => $resource['price_provenance'] ?? null,
                 'project_material_selection' => $selection,
             ],
         ];
@@ -124,6 +128,8 @@ final readonly class AssembleMatchedResources
             'unit_price' => $unitPrice,
             'price_source' => $resource['price_source'],
             'price_source_version' => $resource['price_source_version'],
+            'price_source_kind' => $resource['price_source_kind'] ?? null,
+            'price_provenance' => $resource['price_provenance'] ?? null,
         ]];
 
         return $workItem;
@@ -152,6 +158,10 @@ final readonly class AssembleMatchedResources
             'base_price' => $selection['source_unit_price'] ?? null,
             'price_source' => $resource['price_source'] ?? null,
             'price_source_version' => $resource['price_source_version'] ?? null,
+            'source_price_kind' => $resource['price_source_kind'] ?? null,
+            'raw_payload' => is_array($resource['price_provenance'] ?? null)
+                ? ['source' => 'conjuncture_analysis', 'analysis' => $resource['price_provenance']]
+                : null,
         ]]);
 
         return $normalized !== null
@@ -159,7 +169,11 @@ final readonly class AssembleMatchedResources
             && (string) $normalized['unit_price'] === (string) ($resource['unit_price'] ?? '')
             && (float) $normalized['quantity'] === (float) ($resource['quantity'] ?? 0)
             && ($normalized['project_material_requirement']['selection_policy'] ?? null)
-                === ($selection['selection_policy'] ?? null);
+                === ($selection['selection_policy'] ?? null)
+            && ($normalized['project_material_requirement']['price_source_kind'] ?? null)
+                === ($selection['price_source_kind'] ?? null)
+            && ($normalized['project_material_requirement']['price_provenance'] ?? null)
+                == ($selection['price_provenance'] ?? null);
     }
 
     /** @return array<string, mixed> */
