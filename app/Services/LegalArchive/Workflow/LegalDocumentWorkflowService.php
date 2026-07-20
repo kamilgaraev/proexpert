@@ -368,7 +368,7 @@ final class LegalDocumentWorkflowService
                     'from_due_at' => $lockedStep->due_at?->utc()->toAtomString(),
                     'to_actor_type' => $input->reassignActorType,
                     'to_actor_reference' => $newActorReference,
-                    'to_due_at' => $newDueAt->toAtomString(),
+                    'to_due_at' => $newDueAt?->toAtomString(),
                 ];
                 $decision = $this->createStepDecision(
                     $instance,
@@ -822,16 +822,6 @@ final class LegalDocumentWorkflowService
         return $value === '' ? null : $value;
     }
 
-    private function documents(): Builder
-    {
-        return $this->newDocument()->newQuery();
-    }
-
-    private function versions(): Builder
-    {
-        return $this->newVersion()->newQuery();
-    }
-
     private function instances(): Builder
     {
         return $this->newInstance()->newQuery();
@@ -845,16 +835,6 @@ final class LegalDocumentWorkflowService
     private function decisions(): Builder
     {
         return $this->newDecision()->newQuery();
-    }
-
-    private function newDocument(): LegalArchiveDocument
-    {
-        return (new LegalArchiveDocument)->setConnection($this->connection->getName());
-    }
-
-    private function newVersion(): LegalArchiveDocumentVersion
-    {
-        return (new LegalArchiveDocumentVersion)->setConnection($this->connection->getName());
     }
 
     private function newInstance(): LegalWorkflowInstance

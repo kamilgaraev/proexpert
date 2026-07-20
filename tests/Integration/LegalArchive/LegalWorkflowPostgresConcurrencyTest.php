@@ -270,7 +270,13 @@ SQL, [$step->id]);
     {
         $indexes = require dirname(__DIR__, 3).'/database/migrations/2026_07_19_000410_create_legal_document_workflow_indexes.php';
         $this->first->statement('DROP INDEX legal_workflow_steps_actor_queue_idx');
-        $this->first->statement('CREATE INDEX legal_workflow_steps_actor_queue_idx ON legal_workflow_steps (organization_id)');
+        $this->first->statement(
+            "CREATE INDEX legal_workflow_steps_actor_queue_idx
+             ON legal_workflow_steps
+             (organization_id, actor_type, actor_reference, due_at DESC NULLS FIRST)
+             INCLUDE (step_key)
+             WHERE status = 'active'",
+        );
         try {
             $indexes->up();
             self::fail('A valid index with a wrong descriptor was accepted.');

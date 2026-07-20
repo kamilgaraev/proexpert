@@ -8,6 +8,46 @@ use PHPUnit\Framework\TestCase;
 
 final class LegalWorkflowArchitectureTest extends TestCase
 {
+    public function test_index_descriptor_rejects_semantic_catalog_drift_without_database(): void
+    {
+        $migration = require __DIR__.'/../../../database/migrations/2026_07_19_000410_create_legal_document_workflow_indexes.php';
+        $indexesMethod = new \ReflectionMethod($migration, 'indexes');
+        $sameDescriptorMethod = new \ReflectionMethod($migration, 'sameDescriptor');
+        $expected = $indexesMethod->invoke($migration)['legal_workflow_steps_actor_queue_idx'];
+        $actual = (object) [
+            'table_name' => 'legal_workflow_steps',
+            'access_method' => 'btree',
+            'indisunique' => false,
+            'indisvalid' => true,
+            'indisready' => true,
+            'indislive' => true,
+            'indnkeyatts' => 4,
+            'indnatts' => 4,
+            'indnullsnotdistinct' => false,
+            'key_definitions' => json_encode([
+                'organization_id',
+                'actor_type',
+                'actor_reference',
+                'due_at',
+            ], JSON_THROW_ON_ERROR),
+            'include_definitions' => '[]',
+            'predicate' => "status = 'active'::text",
+        ];
+
+        self::assertTrue($sameDescriptorMethod->invoke($migration, $actual, $expected));
+        foreach ([
+            ['access_method' => 'hash'],
+            ['key_definitions' => '["organization_id","actor_type","actor_reference","due_at DESC NULLS FIRST"]'],
+            ['indnatts' => 5, 'include_definitions' => '["step_key"]'],
+            ['indnullsnotdistinct' => true],
+        ] as $drift) {
+            self::assertFalse($sameDescriptorMethod->invoke($migration, (object) [
+                ...get_object_vars($actual),
+                ...$drift,
+            ], $expected));
+        }
+    }
+
     public function test_schema_is_multi_phase_online_and_enforces_exact_tenant_hash_ownership(): void
     {
         $root = __DIR__.'/../../../';
@@ -22,6 +62,13 @@ final class LegalWorkflowArchitectureTest extends TestCase
         self::assertStringContainsString('$withinTransaction = false', $indexes);
         self::assertStringContainsString('CREATE UNIQUE INDEX CONCURRENTLY', $indexes);
         self::assertStringContainsString('pg_get_expr(i.indpred', $indexes);
+        self::assertStringContainsString('pg_get_indexdef(i.indexrelid, position, true)', $indexes);
+        self::assertStringContainsString('JOIN pg_am access_method', $indexes);
+        self::assertStringContainsString('i.indnkeyatts', $indexes);
+        self::assertStringContainsString('i.indnatts', $indexes);
+        self::assertStringContainsString('i.indnullsnotdistinct', $indexes);
+        self::assertStringContainsString('key_definitions', $indexes);
+        self::assertStringContainsString('include_definitions', $indexes);
         self::assertStringContainsString('i.indisready', $indexes);
         self::assertStringContainsString('i.indisunique', $indexes);
         self::assertStringContainsString('legal_workflow_index_descriptor_mismatch', $indexes);
@@ -115,6 +162,12 @@ final class LegalWorkflowArchitectureTest extends TestCase
         self::assertStringContainsString('lockVersion', $workflow);
         self::assertStringContainsString('lockVersion', $files);
         self::assertStringContainsString('legal_document_active_workflow_exists', $files);
+        self::assertStringNotContainsString('private function documents()', $workflow);
+        self::assertStringNotContainsString('private function versions()', $workflow);
+        $recovery = file_get_contents($root.'app/Services/LegalArchive/Workflow/LegalWorkflowRecoveryService.php');
+        self::assertIsString($recovery);
+        self::assertStringNotContainsString('private function documents()', $recovery);
+        self::assertStringNotContainsString('private function versions()', $recovery);
     }
 
     public function test_decisions_and_template_versions_are_append_only_in_models_and_postgres(): void

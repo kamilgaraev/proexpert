@@ -747,6 +747,45 @@ final class LegalDocumentWorkflowTest extends TestCase
         self::assertSame($reassignedDue->timestamp, $instance->due_at?->timestamp);
     }
 
+    public function test_reassign_without_due_at_preserves_null_deadlines_everywhere(): void
+    {
+        [$document, $version] = $this->dossier();
+        $actor = $this->actor(8, ['legal_reviewer']);
+        $this->createTemplate($actor);
+        $instance = $this->service->submit(
+            $document,
+            (int) $version->id,
+            $actor,
+            WorkflowOverride::none('null-due-submit'),
+        );
+        $step = $instance->steps()->where('status', 'active')->firstOrFail();
+        $this->database->getConnection()->table('legal_workflow_steps')
+            ->where('instance_id', $instance->id)
+            ->where('status', 'active')
+            ->update(['due_at' => null]);
+        $this->database->getConnection()->table('legal_workflow_instances')
+            ->where('id', $instance->id)
+            ->update(['due_at' => null]);
+
+        $updated = $this->service->decide($step->refresh(), $actor, new WorkflowDecisionInput(
+            'reassign',
+            'null-due-reassign',
+            1,
+            0,
+            reason: 'Исполнитель изменён без срока',
+            reassignActorType: 'user',
+            reassignActorReference: '9',
+        ));
+
+        $decision = $updated->decisions()->where('idempotency_key', 'null-due-reassign')->firstOrFail();
+        self::assertNull($decision->from_due_at);
+        self::assertNull($decision->to_due_at);
+        self::assertNull($decision->context['from_due_at'] ?? null);
+        self::assertNull($decision->context['to_due_at'] ?? null);
+        self::assertNull($updated->steps()->whereKey($step->id)->value('due_at'));
+        self::assertNull($updated->due_at);
+    }
+
     public function test_recovery_repairs_only_deterministic_projection_and_verifies_before_clearing_marker(): void
     {
         [$document, $version] = $this->dossier();

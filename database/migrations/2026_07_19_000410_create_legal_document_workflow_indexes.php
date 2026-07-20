@@ -16,24 +16,7 @@ return new class extends Migration
             return;
         }
         foreach ($this->indexes() as $name => $expected) {
-            $actual = DB::selectOne(
-                <<<'SQL'
-SELECT table_class.relname AS table_name,
-       i.indisunique, i.indisvalid, i.indisready, i.indislive,
-       COALESCE(array_agg(attribute.attname ORDER BY key.ordinality)
-           FILTER (WHERE key.attnum > 0), ARRAY[]::name[]) AS columns,
-       pg_get_expr(i.indpred, i.indrelid) AS predicate
-FROM pg_index i
-JOIN pg_class index_class ON index_class.oid = i.indexrelid
-JOIN pg_namespace namespace ON namespace.oid = index_class.relnamespace
-JOIN pg_class table_class ON table_class.oid = i.indrelid
-LEFT JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS key(attnum, ordinality) ON true
-LEFT JOIN pg_attribute attribute ON attribute.attrelid = i.indrelid AND attribute.attnum = key.attnum
-WHERE namespace.nspname = current_schema() AND index_class.relname = ?
-GROUP BY table_class.relname, i.indisunique, i.indisvalid, i.indisready, i.indislive, i.indpred, i.indrelid
-SQL,
-                [$name],
-            );
+            $actual = $this->indexDescriptor($name);
             if ($actual !== null && ! $this->sameDescriptor($actual, $expected)) {
                 if ((bool) $actual->indisvalid && (bool) $actual->indisready && (bool) $actual->indislive) {
                     throw new RuntimeException("legal_workflow_index_descriptor_mismatch:{$name}");
@@ -44,24 +27,7 @@ SQL,
             if ($actual === null) {
                 DB::statement($expected['sql']);
             }
-            $verified = DB::selectOne(
-                <<<'SQL'
-SELECT table_class.relname AS table_name,
-       i.indisunique, i.indisvalid, i.indisready, i.indislive,
-       COALESCE(array_agg(attribute.attname ORDER BY key.ordinality)
-           FILTER (WHERE key.attnum > 0), ARRAY[]::name[]) AS columns,
-       pg_get_expr(i.indpred, i.indrelid) AS predicate
-FROM pg_index i
-JOIN pg_class index_class ON index_class.oid = i.indexrelid
-JOIN pg_namespace namespace ON namespace.oid = index_class.relnamespace
-JOIN pg_class table_class ON table_class.oid = i.indrelid
-LEFT JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS key(attnum, ordinality) ON true
-LEFT JOIN pg_attribute attribute ON attribute.attrelid = i.indrelid AND attribute.attnum = key.attnum
-WHERE namespace.nspname = current_schema() AND index_class.relname = ?
-GROUP BY table_class.relname, i.indisunique, i.indisvalid, i.indisready, i.indislive, i.indpred, i.indrelid
-SQL,
-                [$name],
-            );
+            $verified = $this->indexDescriptor($name);
             if ($verified === null || ! $this->sameDescriptor($verified, $expected)) {
                 throw new RuntimeException("legal_workflow_index_descriptor_mismatch:{$name}");
             }
@@ -73,7 +39,7 @@ SQL,
         throw new RuntimeException('legal_workflow_migrations_are_forward_only');
     }
 
-    /** @return array<string, array{table: string, unique: bool, columns: list<string>, predicate: ?string, sql: string}> */
+    /** @return array<string, array{table: string, unique: bool, method: string, keys: list<string>, include: list<string>, nulls_not_distinct: bool, predicate: ?string, sql: string}> */
     private function indexes(): array
     {
         return [
@@ -95,26 +61,84 @@ SQL,
         ];
     }
 
-    /** @param list<string> $columns @return array{table: string, unique: bool, columns: list<string>, predicate: ?string, sql: string} */
-    private function descriptor(string $table, bool $unique, array $columns, ?string $predicate, string $sql): array
+    /** @param list<string> $keys @return array{table: string, unique: bool, method: string, keys: list<string>, include: list<string>, nulls_not_distinct: bool, predicate: ?string, sql: string} */
+    private function descriptor(string $table, bool $unique, array $keys, ?string $predicate, string $sql): array
     {
-        return compact('table', 'unique', 'columns', 'predicate', 'sql');
+        return [
+            'table' => $table,
+            'unique' => $unique,
+            'method' => 'btree',
+            'keys' => $keys,
+            'include' => [],
+            'nulls_not_distinct' => false,
+            'predicate' => $predicate,
+            'sql' => $sql,
+        ];
     }
 
-    /** @param array{table: string, unique: bool, columns: list<string>, predicate: ?string, sql: string} $expected */
+    /** @param array{table: string, unique: bool, method: string, keys: list<string>, include: list<string>, nulls_not_distinct: bool, predicate: ?string, sql: string} $expected */
     private function sameDescriptor(object $actual, array $expected): bool
     {
-        $columns = is_string($actual->columns)
-            ? str_getcsv(trim($actual->columns, '{}'))
-            : (array) $actual->columns;
-
         return $actual->table_name === $expected['table']
             && (bool) $actual->indisunique === $expected['unique']
             && (bool) $actual->indisvalid
             && (bool) $actual->indisready
             && (bool) $actual->indislive
-            && array_values($columns) === $expected['columns']
+            && $actual->access_method === $expected['method']
+            && (bool) $actual->indnullsnotdistinct === $expected['nulls_not_distinct']
+            && (int) $actual->indnkeyatts === count($expected['keys'])
+            && (int) $actual->indnatts === count($expected['keys']) + count($expected['include'])
+            && $this->definitions($actual->key_definitions) === $expected['keys']
+            && $this->definitions($actual->include_definitions) === $expected['include']
             && $this->normalizePredicate($actual->predicate) === $this->normalizePredicate($expected['predicate']);
+    }
+
+    private function indexDescriptor(string $name): ?object
+    {
+        return DB::selectOne(
+            <<<'SQL'
+SELECT table_class.relname AS table_name,
+       access_method.amname AS access_method,
+       i.indisunique::integer AS indisunique,
+       i.indisvalid::integer AS indisvalid,
+       i.indisready::integer AS indisready,
+       i.indislive::integer AS indislive,
+       i.indnkeyatts, i.indnatts,
+       i.indnullsnotdistinct::integer AS indnullsnotdistinct,
+       to_json(ARRAY(
+           SELECT pg_get_indexdef(i.indexrelid, position, true)
+           FROM generate_series(1, i.indnkeyatts) AS position
+           ORDER BY position
+       )) AS key_definitions,
+       to_json(ARRAY(
+           SELECT pg_get_indexdef(i.indexrelid, position, true)
+           FROM generate_series(i.indnkeyatts + 1, i.indnatts) AS position
+           ORDER BY position
+       )) AS include_definitions,
+       pg_get_expr(i.indpred, i.indrelid) AS predicate
+FROM pg_index i
+JOIN pg_class index_class ON index_class.oid = i.indexrelid
+JOIN pg_namespace namespace ON namespace.oid = index_class.relnamespace
+JOIN pg_class table_class ON table_class.oid = i.indrelid
+JOIN pg_am access_method ON access_method.oid = index_class.relam
+WHERE namespace.nspname = current_schema() AND index_class.relname = ?
+SQL,
+            [$name],
+        );
+    }
+
+    /** @return list<string> */
+    private function definitions(mixed $definitions): array
+    {
+        if (is_array($definitions)) {
+            return array_values(array_map('strval', $definitions));
+        }
+        if (! is_string($definitions)) {
+            return [];
+        }
+        $decoded = json_decode($definitions, true);
+
+        return is_array($decoded) ? array_values(array_map('strval', $decoded)) : [];
     }
 
     private function normalizePredicate(mixed $predicate): ?string

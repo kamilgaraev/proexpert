@@ -495,14 +495,4 @@ final readonly class LegalWorkflowRecoveryService
     {
         return (new LegalWorkflowStep)->setConnection($this->connection->getName())->newQuery();
     }
-
-    private function documents(): Builder
-    {
-        return (new LegalArchiveDocument)->setConnection($this->connection->getName())->newQuery();
-    }
-
-    private function versions(): Builder
-    {
-        return (new LegalArchiveDocumentVersion)->setConnection($this->connection->getName())->newQuery();
-    }
 }
