@@ -93,6 +93,7 @@ class EstimatePricingService
                     'norm_code' => $workItem['normative_match']['code'] ?? null,
                     'price_id' => $exception->priceId,
                     'reason' => $exception->reason,
+                    ...$exception->context,
                 ]);
                 $this->blockMissingSnapshot($workItem);
 
