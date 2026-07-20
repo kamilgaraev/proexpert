@@ -65,14 +65,12 @@ final class HoldingLegalArchiveDossierResource extends JsonResource
                     'id' => (int) $file->id,
                     'title' => (string) $file->title,
                     'role' => (string) $file->role,
-                    'current_version' => $file->currentVersion instanceof LegalArchiveDocumentVersion ? [
-                        'id' => (int) $file->currentVersion->id,
-                        'version_number' => (int) $file->currentVersion->version_number,
-                        'original_filename' => (string) $file->currentVersion->original_filename,
-                        'mime_type' => (string) $file->currentVersion->mime_type,
-                        'size_bytes' => (int) $file->currentVersion->size_bytes,
-                        'preview_available' => (string) $file->currentVersion->processing_status === 'ready',
-                    ] : null,
+                    'current_version' => $file->currentVersion instanceof LegalArchiveDocumentVersion
+                        ? $this->version($file->currentVersion)
+                        : null,
+                    'versions' => $file->versions
+                        ->map(fn (LegalArchiveDocumentVersion $version): array => $this->version($version))
+                        ->values(),
                 ],
             )->values() : [],
             'permissions' => [
@@ -81,6 +79,19 @@ final class HoldingLegalArchiveDossierResource extends JsonResource
             ],
             'created_at' => $document->created_at?->toISOString(),
             'updated_at' => $document->updated_at?->toISOString(),
+        ];
+    }
+
+    /** @return array{id:int,version_number:int,original_filename:string,mime_type:string,size_bytes:int,preview_available:bool} */
+    private function version(LegalArchiveDocumentVersion $version): array
+    {
+        return [
+            'id' => (int) $version->id,
+            'version_number' => (int) $version->version_number,
+            'original_filename' => (string) $version->original_filename,
+            'mime_type' => (string) $version->mime_type,
+            'size_bytes' => (int) $version->size_bytes,
+            'preview_available' => (string) $version->processing_status === 'ready',
         ];
     }
 }

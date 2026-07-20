@@ -140,7 +140,7 @@ final class HoldingLegalArchiveController extends Controller
                 $query->whereIn('linked_type', ['contract', Contract::class])
                     ->where('linked_id', (int) $contract->id);
             })
-            ->with(['organization:id,name', 'files.currentVersion', 'signatures'])
+            ->with(['organization:id,name', 'files.currentVersion', 'files.versions', 'signatures'])
             ->orderByDesc('id')
             ->get();
 
