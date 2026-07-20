@@ -16,6 +16,7 @@ final class NormativeHardGate
 {
     public function __construct(
         private readonly NormativeSemanticCompatibilityService $semanticCompatibility = new NormativeSemanticCompatibilityService,
+        private readonly ResidentialSignedNormCompatibility $signedNormCompatibility = new ResidentialSignedNormCompatibility,
     ) {}
 
     /** @param list<NormativeCandidateData> $candidates */
@@ -100,7 +101,7 @@ final class NormativeHardGate
             || ($candidate->validTo !== null && $candidate->validTo < $intent->applicabilityDate)) {
             $reasons[] = 'applicability_date_mismatch';
         }
-        if (! $this->semanticCompatibility->isCompatible(
+        $semanticCompatible = $this->semanticCompatibility->isCompatible(
             implode(' ', [$candidate->name, ...$candidate->workComposition]),
             $intent->intent,
             [
@@ -114,6 +115,12 @@ final class NormativeHardGate
                 'specialization_evidence' => $intent->specializationEvidence,
                 'specialization_scenario' => $intent->specializationScenario,
             ],
+        );
+        if (! $semanticCompatible && ! $this->signedNormCompatibility->matches(
+            $intent->specializationScenario,
+            $intent->objectType,
+            $candidate->code,
+            $candidate->name,
         )) {
             $reasons[] = 'semantic_mismatch';
         }
