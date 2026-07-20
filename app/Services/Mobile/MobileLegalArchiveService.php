@@ -23,7 +23,6 @@ use DateTimeImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Http\UploadedFile;
-use App\Services\Storage\FileService;
 
 final readonly class MobileLegalArchiveService
 {
@@ -34,7 +33,6 @@ final readonly class MobileLegalArchiveService
         private LegalDocumentWorkflowService $workflow,
         private LegalDocumentDownloadService $downloads,
         private LegalDocumentSignatureService $signatures,
-        private FileService $files,
     ) {}
 
     public function documents(User $actor, int $organizationId, int $projectId): LengthAwarePaginator
@@ -175,9 +173,6 @@ final readonly class MobileLegalArchiveService
             idempotencyKey: $idempotencyKey,
             expectedDocumentLockVersion: $documentLockVersion,
         );
-        if (! $this->signatures->preflightPaperOriginalUpload($request, $actor, $original)) {
-            $this->files->putImmutable($path, $content, $mimeType);
-        }
-        $this->signatures->registerPaperOriginal($request, $actor, $original);
+        $this->signatures->registerPaperOriginalArtifact($request, $actor, $original, $content, $mimeType);
     }
 }

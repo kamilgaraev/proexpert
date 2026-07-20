@@ -165,6 +165,105 @@ final class ManualOriginalRegistrationTest extends TestCase
         self::assertSame(['signature_requested', 'signature_registered'], $this->audit->events);
     }
 
+    public function test_paper_original_artifact_keeps_upload_lease_until_the_registered_signature_references_its_s3_version(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $request = $this->service->createRequest($document, $version, $actor, 'paper', $this->signerSet('Иван'), 'paper-artifact-request');
+        $content = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9ZQAAAABJRU5ErkJggg==', true);
+        self::assertIsString($content);
+        $path = "org-10/legal-archive/paper-originals/requests/{$request->id}/".hash('sha256', $content).'.png';
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('putImmutable')->willReturnCallback(function (string $storedPath, string $body, string $mime): array {
+            $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->sole();
+            self::assertSame('uploading', $artifact->state);
+            self::assertSame(1, (int) $artifact->claim_count);
+            self::assertNotNull($artifact->upload_lease_token_hash);
+            self::assertNotNull($artifact->upload_lease_expires_at);
+
+            return [
+                'path' => $storedPath,
+                'body' => $body,
+                'size' => strlen($body),
+                'sha256' => hash('sha256', $body),
+                'etag' => 'paper-etag',
+                'version_id' => 'paper-version',
+                'content_type' => $mime,
+                'created' => true,
+            ];
+        });
+        $this->service = new LegalDocumentSignatureService(
+            new DisabledElectronicSignatureProvider,
+            $this->access,
+            $this->audit,
+            $storage,
+            $this->database->getConnection(),
+        );
+
+        $signature = $this->service->registerPaperOriginalArtifact($request, $actor, new PaperOriginalData(
+            new DateTimeImmutable('-1 day'),
+            $this->signerSet('Иван'),
+            $path,
+            'paper-artifact-registration',
+            expectedDocumentLockVersion: (int) $document->refresh()->lock_version,
+        ), $content, 'image/png');
+
+        $artifact = $this->database->getConnection()->table('legal_signature_artifacts')->sole();
+        self::assertSame('referenced', $artifact->state);
+        self::assertSame((int) $signature->id, (int) $artifact->referenced_signature_id);
+        self::assertSame('paper-version', $artifact->storage_version_id);
+        self::assertSame($path, $artifact->storage_path);
+        self::assertSame(0, (int) $artifact->claim_count);
+        self::assertNull($artifact->upload_lease_token_hash);
+    }
+
+    public function test_paper_original_artifact_cleans_the_uploaded_version_when_final_revalidation_detects_a_document_lock_change(): void
+    {
+        [$document, $version, $actor] = $this->fixture();
+        $request = $this->service->createRequest($document, $version, $actor, 'paper', $this->signerSet('Иван'), 'paper-lock-request');
+        $content = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL9ZQAAAABJRU5ErkJggg==', true);
+        self::assertIsString($content);
+        $path = "org-10/legal-archive/paper-originals/requests/{$request->id}/".hash('sha256', $content).'.png';
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('putImmutable')->willReturnCallback(function (string $storedPath, string $body, string $mime) use ($document): array {
+            $this->database->getConnection()->table('legal_archive_documents')->where('id', $document->id)->increment('lock_version');
+
+            return [
+                'path' => $storedPath,
+                'body' => $body,
+                'size' => strlen($body),
+                'sha256' => hash('sha256', $body),
+                'etag' => 'paper-etag',
+                'version_id' => 'paper-version',
+                'content_type' => $mime,
+                'created' => true,
+            ];
+        });
+        $storage->expects(self::once())->method('removeImmutable')->with($path, 'paper-version');
+        $this->service = new LegalDocumentSignatureService(
+            new DisabledElectronicSignatureProvider,
+            $this->access,
+            $this->audit,
+            $storage,
+            $this->database->getConnection(),
+        );
+
+        try {
+            $this->service->registerPaperOriginalArtifact($request, $actor, new PaperOriginalData(
+                new DateTimeImmutable('-1 day'),
+                $this->signerSet('Иван'),
+                $path,
+                'paper-lock-registration',
+                expectedDocumentLockVersion: (int) $document->refresh()->lock_version,
+            ), $content, 'image/png');
+            self::fail('The stale paper-original request was registered.');
+        } catch (\App\Services\LegalArchive\LegalArchiveLockConflict $exception) {
+            self::assertSame((int) $document->id, $exception->documentId);
+        }
+
+        self::assertSame(0, $this->database->getConnection()->table('legal_document_signatures')->count());
+        self::assertSame('deleted', $this->database->getConnection()->table('legal_signature_artifacts')->value('state'));
+    }
+
     public function test_registration_is_idempotent_and_rejects_payload_drift(): void
     {
         [$document, $version, $actor] = $this->fixture();

@@ -260,6 +260,175 @@ final class LegalDocumentSignatureService
         ]);
     }
 
+    public function registerPaperOriginalArtifact(
+        LegalSignatureRequest $request,
+        User $actor,
+        PaperOriginalData $data,
+        string $content,
+        string $detectedMimeType,
+    ): LegalDocumentSignature {
+        $this->assertPaperOriginalArtifact($request, $data, $content, $detectedMimeType);
+        if ($this->preflightPaperOriginalUpload($request, $actor, $data)) {
+            return $this->registerPaperOriginal($request, $actor, $data);
+        }
+
+        $storedPath = trim($data->storageLocation);
+        $contentHash = hash('sha256', $content);
+        $reservation = $this->reserveSignatureArtifact(
+            (int) $request->organization_id,
+            (int) $request->document_id,
+            (int) $request->document_version_id,
+            (int) $request->id,
+            $storedPath,
+            $contentHash,
+            $detectedMimeType,
+        );
+        $artifactKey = $reservation['artifact_key'];
+        $attemptToken = $reservation['attempt_token'];
+        $this->heartbeatSignatureArtifact((int) $request->organization_id, $artifactKey, $attemptToken);
+
+        try {
+            $stored = $this->fileService->putImmutable($storedPath, $content, $detectedMimeType);
+        } catch (Throwable $error) {
+            try {
+                $this->markSignatureArtifactAmbiguous((int) $request->organization_id, $artifactKey, $attemptToken, $error);
+            } catch (DomainException) {
+            }
+
+            throw $error;
+        }
+
+        try {
+            $alreadyRegistered = $this->preflightPaperOriginalUpload($request, $actor, $data);
+        } catch (Throwable $exception) {
+            $this->bindStoredArtifactOrRecoverLateVersion(
+                $request,
+                $artifactKey,
+                $attemptToken,
+                $storedPath,
+                $contentHash,
+                $stored,
+            );
+            $this->releaseFailedArtifactClaim(
+                (int) $request->organization_id,
+                (int) $request->document_id,
+                (int) $request->document_version_id,
+                $storedPath,
+                (string) $stored['version_id'],
+                is_string($stored['etag']) ? $stored['etag'] : null,
+                (string) $stored['sha256'],
+                $exception,
+                $artifactKey,
+                $attemptToken,
+            );
+
+            throw $exception;
+        }
+        $this->bindStoredArtifactOrRecoverLateVersion(
+            $request,
+            $artifactKey,
+            $attemptToken,
+            $storedPath,
+            $contentHash,
+            $stored,
+        );
+        if (! hash_equals($contentHash, (string) $stored['sha256'])
+            || (string) $stored['version_id'] === ''
+            || (string) $stored['body'] !== $content) {
+            $error = new DomainException('legal_signature_paper_original_invalid');
+            $this->releaseFailedArtifactClaim(
+                (int) $request->organization_id,
+                (int) $request->document_id,
+                (int) $request->document_version_id,
+                $storedPath,
+                (string) $stored['version_id'],
+                is_string($stored['etag']) ? $stored['etag'] : null,
+                (string) $stored['sha256'],
+                $error,
+                $artifactKey,
+                $attemptToken,
+            );
+
+            throw $error;
+        }
+        if ($alreadyRegistered) {
+            $this->releaseFailedArtifactClaim(
+                (int) $request->organization_id,
+                (int) $request->document_id,
+                (int) $request->document_version_id,
+                $storedPath,
+                (string) $stored['version_id'],
+                is_string($stored['etag']) ? $stored['etag'] : null,
+                (string) $stored['sha256'],
+                new DomainException('legal_signature_paper_original_already_registered'),
+                $artifactKey,
+                $attemptToken,
+            );
+
+            return $this->registerPaperOriginal($request, $actor, $data);
+        }
+
+        try {
+            $this->heartbeatSignatureArtifact((int) $request->organization_id, $artifactKey, $attemptToken);
+
+            return $this->registerOriginal($request, $actor, 'paper', $data->idempotencyKey, [
+                'signed_at' => $data->signedAt,
+                'signers' => $data->signers->snapshot(),
+                'party_id' => $data->partyId,
+                'provider' => null,
+                'signature_path' => null,
+                'signature_content_hash' => null,
+                'certificate_metadata' => [],
+                'provider_metadata' => [
+                    'party_role_snapshot' => $data->partyRoleSnapshot,
+                    'authority_confirmed' => $data->authorityConfirmed,
+                    'time_source' => $data->timeSource,
+                    'client_ip_hash' => $data->clientIpHash,
+                    'user_agent_hash' => $data->userAgentHash,
+                ],
+                'storage_location' => $storedPath,
+                'verification_status' => 'registered',
+                'verified_at' => null,
+                'revocation_reason' => null,
+                'signature_kind' => 'paper_original',
+                'container_format' => null,
+                'signer_snapshot_hash' => $data->signers->hash(),
+                'signer_user_id' => $data->signers->primary()->userId,
+                'signer_organization_id' => $data->signers->primary()->organizationId,
+                'party_role_snapshot' => $data->partyRoleSnapshot ?? $data->signers->primary()->partyRole,
+                'certificate_fingerprint' => null,
+                'certificate_serial' => null,
+                'certificate_issuer' => null,
+                'certificate_valid_from' => null,
+                'certificate_valid_until' => null,
+                'authority_confirmed' => $data->authorityConfirmed,
+                'time_source' => $data->timeSource,
+                'diagnostic_code' => 'paper_original_registered',
+                'signing_session_id' => null,
+                'client_ip_hash' => $data->clientIpHash,
+                'user_agent_hash' => $data->userAgentHash,
+                'expected_document_lock_version' => $data->expectedDocumentLockVersion,
+                'artifact_key' => $artifactKey,
+                'artifact_attempt_token' => $attemptToken,
+            ]);
+        } catch (Throwable $exception) {
+            $this->releaseFailedArtifactClaim(
+                (int) $request->organization_id,
+                (int) $request->document_id,
+                (int) $request->document_version_id,
+                $storedPath,
+                (string) $stored['version_id'],
+                is_string($stored['etag']) ? $stored['etag'] : null,
+                (string) $stored['sha256'],
+                $exception,
+                $artifactKey,
+                $attemptToken,
+            );
+
+            throw $exception;
+        }
+    }
+
     public function preflightPaperOriginalUpload(
         LegalSignatureRequest $request,
         User $actor,
@@ -316,6 +485,32 @@ final class LegalDocumentSignatureService
 
             return false;
         }, 3);
+    }
+
+    private function assertPaperOriginalArtifact(
+        LegalSignatureRequest $request,
+        PaperOriginalData $data,
+        string $content,
+        string $detectedMimeType,
+    ): void {
+        $path = trim($data->storageLocation);
+        $extension = match ($detectedMimeType) {
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'application/pdf' => 'pdf',
+            default => null,
+        };
+        $expectedPath = "org-{$request->organization_id}/legal-archive/paper-originals/requests/{$request->id}/"
+            .hash('sha256', $content).".{$extension}";
+        if ($content === ''
+            || $extension === null
+            || ! hash_equals($expectedPath, $path)) {
+            throw new DomainException('legal_signature_paper_original_invalid');
+        }
+        $actualMimeType = (new \finfo(FILEINFO_MIME_TYPE))->buffer($content);
+        if (! is_string($actualMimeType) || ! hash_equals($detectedMimeType, $actualMimeType)) {
+            throw new DomainException('legal_signature_paper_original_invalid');
+        }
     }
 
     public function registerExternalOriginal(
@@ -940,7 +1135,7 @@ final class LegalDocumentSignatureService
             $existing = $this->signatures()->where('signature_request_id', $request->id)->where('idempotency_key', $key)->lockForUpdate()->first();
             if ($existing instanceof LegalDocumentSignature) {
                 $this->assertSameRequest($existing->request_hash, $requestHash);
-                if ($method !== 'paper' && isset($data['artifact_key'])) {
+                if (isset($data['artifact_key'])) {
                     $artifact = $this->connection->table('legal_signature_artifacts')
                         ->where('organization_id', $lockedDocument->organization_id)
                         ->where('artifact_key', (string) $data['artifact_key'])->lockForUpdate()->first();
