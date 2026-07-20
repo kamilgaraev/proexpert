@@ -68,7 +68,7 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
         self::assertStringNotContainsString('public function transitionProcessingStatus', $source);
     }
 
-    public function test_technical_mutation_capability_is_confined_to_model_and_file_service(): void
+    public function test_technical_mutation_capability_is_confined_to_model_file_and_signature_services(): void
     {
         $root = realpath(__DIR__.'/../../../app');
         self::assertIsString($root);
@@ -77,6 +77,7 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
             [
                 __DIR__.'/../../../app/BusinessModules/Features/LegalArchive/Models/LegalArchiveDocumentVersion.php',
                 __DIR__.'/../../../app/Services/LegalArchive/Files/LegalDocumentFileService.php',
+                __DIR__.'/../../../app/Services/LegalArchive/Signatures/LegalDocumentSignatureService.php',
             ],
         ));
         $violations = [];

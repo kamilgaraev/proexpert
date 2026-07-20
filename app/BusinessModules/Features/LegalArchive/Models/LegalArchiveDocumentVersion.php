@@ -48,13 +48,14 @@ final class LegalArchiveDocumentVersion extends Model
     {
         self::updating(static function (self $version): void {
             $dirty = array_keys($version->getDirty());
-            $allowed = ['processing_status', 'is_current', 'updated_at'];
+            $allowed = ['processing_status', 'is_current', 'status', 'updated_at'];
             $originalStatus = (string) $version->getOriginal('status');
 
             if (
                 self::$technicalMutationDepth < 1
                 || array_diff($dirty, $allowed) !== []
-                || in_array($originalStatus, ['signed', 'frozen'], true)
+                || $originalStatus === 'signed'
+                || ($originalStatus === 'frozen' && (! $version->isDirty('status') || (string) $version->status !== 'signed'))
             ) {
                 throw new ImmutableDataException(self::class, 'update');
             }
@@ -65,6 +66,15 @@ final class LegalArchiveDocumentVersion extends Model
                 if (! (($from === 'quarantine' && in_array($to, ['ready', 'failed'], true))
                     || ($from === 'failed' && $to === 'quarantine'))
                 ) {
+                    throw new ImmutableDataException(self::class, 'transition');
+                }
+            }
+            if ($version->isDirty('status')) {
+                $to = (string) $version->status;
+                if (! in_array($to, ['frozen', 'signed'], true)) {
+                    throw new ImmutableDataException(self::class, 'transition');
+                }
+                if ($originalStatus === 'frozen' && $to !== 'signed') {
                     throw new ImmutableDataException(self::class, 'transition');
                 }
             }
@@ -118,5 +128,10 @@ final class LegalArchiveDocumentVersion extends Model
     public function partySnapshotSet(): HasOne
     {
         return $this->hasOne(LegalDocumentPartySnapshotSet::class, 'document_version_id');
+    }
+
+    public function signatures(): HasMany
+    {
+        return $this->hasMany(LegalDocumentSignature::class, 'document_version_id')->orderBy('id');
     }
 }

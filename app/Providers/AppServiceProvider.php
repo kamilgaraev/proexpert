@@ -102,6 +102,24 @@ class AppServiceProvider extends ServiceProvider
             \App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class,
             \App\Services\LegalArchive\Access\LegalDocumentAccessService::class,
         );
+        $this->app->bind(\App\Services\LegalArchive\Signatures\ElectronicSignatureProvider::class, function ($app) {
+            $driver = (string) config('legal-document-signatures.driver', 'disabled');
+            $provider = config("legal-document-signatures.drivers.{$driver}");
+            if (! is_string($provider) || ! is_a($provider, \App\Services\LegalArchive\Signatures\ElectronicSignatureProvider::class, true)) {
+                $provider = \App\Services\LegalArchive\Signatures\DisabledElectronicSignatureProvider::class;
+            }
+
+            return $app->make($provider);
+        });
+        $this->app->bind(\App\Services\LegalArchive\Signatures\LegalDocumentSignatureService::class, function ($app) {
+            return new \App\Services\LegalArchive\Signatures\LegalDocumentSignatureService(
+                $app->make(\App\Services\LegalArchive\Signatures\ElectronicSignatureProvider::class),
+                $app->make(\App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class),
+                $app->make(\App\Services\LegalArchive\Audit\LegalDocumentAudit::class),
+                $app->make(\App\Services\Storage\FileService::class),
+                $app->make('db')->connection(),
+            );
+        });
 
         // Регистрируем FileService как singleton
         $this->app->singleton(FileService::class, function ($app) {

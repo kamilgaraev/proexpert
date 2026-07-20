@@ -169,6 +169,16 @@ final class LegalArchiveDocument extends Model
         return $this->hasMany(LegalDocumentComment::class, 'document_id')->orderBy('id');
     }
 
+    public function signatureRequests(): HasMany
+    {
+        return $this->hasMany(LegalSignatureRequest::class, 'document_id')->orderByDesc('id');
+    }
+
+    public function signatures(): HasMany
+    {
+        return $this->hasMany(LegalDocumentSignature::class, 'document_id')->orderByDesc('id');
+    }
+
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');
