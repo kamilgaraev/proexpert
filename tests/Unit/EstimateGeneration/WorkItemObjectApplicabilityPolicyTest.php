@@ -20,6 +20,9 @@ final class WorkItemObjectApplicabilityPolicyTest extends TestCase
         self::assertFalse(WorkItemObjectApplicabilityPolicy::allows('warehouse.floor_concrete', $analysis));
         self::assertFalse(WorkItemObjectApplicabilityPolicy::allows('warehouse.floor_rebar', $analysis));
         self::assertFalse(WorkItemObjectApplicabilityPolicy::allows('office.ceiling', $analysis));
+        self::assertFalse(WorkItemObjectApplicabilityPolicy::allows('sewerage.risers', $analysis));
+        self::assertFalse(WorkItemObjectApplicabilityPolicy::allows('sewerage.revisions', $analysis));
+        self::assertTrue(WorkItemObjectApplicabilityPolicy::allows('sewerage.pipe', $analysis));
         self::assertTrue(WorkItemObjectApplicabilityPolicy::allows('facade.area', $analysis));
     }
 

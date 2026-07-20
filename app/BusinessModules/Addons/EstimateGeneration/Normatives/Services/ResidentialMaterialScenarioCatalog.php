@@ -6,11 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 final class ResidentialMaterialScenarioCatalog
 {
-    private const CATALOG_VERSION = 'residential_material_scenario:v15';
+    private const CATALOG_VERSION = 'residential_material_scenario:v18';
 
-    private const SCENARIO_ID = 'residential_preliminary_common:v15';
+    private const SCENARIO_ID = 'residential_preliminary_common:v18';
 
-    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v15';
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v18';
 
     /**
      * @var array<string, array{
@@ -91,7 +91,9 @@ final class ResidentialMaterialScenarioCatalog
             'material_markers' => ['гидроветрозащитн', 'диффузионн', 'мембран'],
             'assumption_code' => 'pitched_roof_diffusion_membrane',
             'intent_action' => 'waterproofing',
-            'normative_search_text' => 'устройство подкровельной гидроизоляционной диффузионной мембраны',
+            'work_item_name' => 'Укладка подкровельной диффузионной мембраны',
+            'normative_search_text' => 'устройство пароизоляции кровли прокладочной в один слой',
+            'normative_rate_code' => '12-01-015-03',
         ],
         'roof.battens' => [
             'material_markers' => ['деревянн', 'обрешетк', 'бруск'],
@@ -120,8 +122,17 @@ final class ResidentialMaterialScenarioCatalog
                 'диаметром до 200 мм',
             ],
             'assumption_code' => 'residential_small_galvanized_ducts',
+            'work_item_name' => 'Монтаж вытяжных воздуховодов жилого дома',
             'normative_search_text' => 'монтаж воздуховодов',
             'normative_rate_code' => '20-01-001-01',
+        ],
+        'sewerage.pipe' => [
+            'material_markers' => ['полипропилен', 'канализационн', 'диаметр 50 мм'],
+            'assumption_code' => 'residential_internal_sewer_pp_50mm',
+            'intent_action' => 'pipeline_installation',
+            'work_item_name' => 'Прокладка внутренней канализации со стояками и ревизиями',
+            'normative_search_text' => 'прокладка внутренних трубопроводов канализации из полипропиленовых труб диаметром 50 мм',
+            'normative_rate_code' => '16-04-004-01',
         ],
         'stairs.flights' => [
             'material_markers' => ['внутриквартирн', 'лестниц', 'без подшив'],
@@ -209,6 +220,14 @@ final class ResidentialMaterialScenarioCatalog
             'assumption_code' => 'wet_zone_ceramic_wall_tile',
             'normative_search_text' => 'гладкая облицовка стен керамическими плитками на клее по кирпичу и бетону',
             'normative_rate_code' => '15-01-019-05',
+        ],
+        'sanitary.floor_tile' => [
+            'material_markers' => ['плитк', 'керамическ', 'для полов', 'одноцветн'],
+            'assumption_code' => 'wet_zone_ceramic_floor_tile',
+            'intent_action' => 'tiling',
+            'work_item_name' => 'Устройство плиточного покрытия пола мокрых зон',
+            'normative_search_text' => 'устройство покрытий на цементном растворе из плиток керамических для полов одноцветных с красителем',
+            'normative_rate_code' => '11-01-027-03',
         ],
         'sanitary.showers' => [
             'material_markers' => ['кабина душевая', 'пластиковый поддон'],

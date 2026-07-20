@@ -8,7 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClass
 
 final class ResidentialWorkCompositionCatalog
 {
-    public const VERSION = 'residential_work_composition:v4';
+    public const VERSION = 'residential_work_composition:v5';
 
     /** @return array<string, list<string>> */
     public function requirements(array $draft): array
@@ -55,9 +55,9 @@ final class ResidentialWorkCompositionCatalog
             'lighting' => ['lighting.lines', 'lighting.fixtures'],
             'plumbing' => [
                 'plumbing.pipe', 'sanitary.showers', 'sanitary.toilets', 'sanitary.washbasins',
-                'sanitary.waterproofing', 'sanitary.tile',
+                'sanitary.waterproofing', 'sanitary.tile', 'sanitary.floor_tile',
             ],
-            'sewerage' => ['sewerage.pipe', 'sewerage.risers', 'sewerage.revisions'],
+            'sewerage' => ['sewerage.pipe'],
             'heating' => ['heating.pipe', 'heating.radiators'],
             'ventilation' => ['ventilation.air_exchange'],
             'rough_finishing' => ['rough.floor', 'rough.walls', 'rough.ceiling'],

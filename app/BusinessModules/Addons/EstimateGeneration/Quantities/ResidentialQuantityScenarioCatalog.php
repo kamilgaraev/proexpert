@@ -13,9 +13,9 @@ use Brick\Math\RoundingMode;
 
 final class ResidentialQuantityScenarioCatalog
 {
-    public const VERSION = '3.0.0';
+    public const VERSION = '3.1.0';
 
-    public const SCENARIO_ID = 'residential_preliminary_scenario:v13';
+    public const SCENARIO_ID = 'residential_preliminary_scenario:v14';
 
     private const UNITS = [
         'electrical.grounding' => 'm',
@@ -25,6 +25,8 @@ final class ResidentialQuantityScenarioCatalog
         'electrical.power_lines' => 'm',
         'electrical.switches' => 'pcs',
         'foundation.prep' => 'm3',
+        'finish.floor' => 'm2',
+        'finish.paint' => 'm2',
         'heating.pipe' => 'm',
         'heating.radiators' => 'pcs',
         'lighting.lines' => 'm',
@@ -42,6 +44,7 @@ final class ResidentialQuantityScenarioCatalog
         'rough.floor' => 'm2',
         'rough.ceiling' => 'm2',
         'sanitary.showers' => 'pcs',
+        'sanitary.floor_tile' => 'm2',
         'sanitary.toilets' => 'pcs',
         'sanitary.washbasins' => 'pcs',
         'sanitary.tile' => 'm2',
@@ -66,6 +69,8 @@ final class ResidentialQuantityScenarioCatalog
         }
 
         $floorArea = $this->scenarioBasis($this->quantity($baseQuantities['floor_area'] ?? null), $model);
+        $wallArea = $this->scenarioBasis($this->quantity($baseQuantities['net_wall_area'] ?? null), $model)
+            ?? $this->scenarioBasis($this->quantity($baseQuantities['gross_wall_area'] ?? null), $model);
         $areaBasisAssumptions = $floorArea !== null
             && in_array('preliminary_total_area_with_confirmed_geometry', $floorArea->assumptions, true)
             ? ['preliminary_total_area_with_confirmed_geometry']
@@ -355,10 +360,10 @@ final class ResidentialQuantityScenarioCatalog
         }
         $omissions[] = $this->omission('sewerage.outlets', 'sewer_outlet_route_missing');
 
-        $finishedWetRoomAreas = array_values(array_filter(array_map(
-            fn (RoomData $room): ?array => $this->roomArea($room),
-            $finishedWetRooms,
-        )));
+        $finishedWetRoomAreas = array_values(array_filter(
+            array_map(fn (RoomData $room): ?array => $this->roomArea($room), $finishedWetRooms),
+            static fn (?array $room): bool => $room !== null && $room['evidence_ids'] !== [],
+        ));
         if ($finishedWetRoomAreas !== []) {
             $wetFloorArea = array_reduce(
                 $finishedWetRoomAreas,
@@ -388,9 +393,47 @@ final class ResidentialQuantityScenarioCatalog
                 $model->modelVersion,
                 ['preliminary_wet_room_wall_tile_factor:3.35'],
             );
+            $quantities['sanitary.floor_tile'] = $this->make(
+                'sanitary.floor_tile',
+                'm2',
+                (string) $wetFloorArea->toScale(6, RoundingMode::HalfUp),
+                ['documented_wet_rooms' => $wetRoomInputs],
+                $wetRoomEvidenceIds,
+                $model->modelVersion,
+                ['wet_zone_floor_tile_uses_evidenced_room_area'],
+            );
         } else {
             $omissions[] = $this->omission('sanitary.waterproofing', 'finished_wet_room_area_missing');
             $omissions[] = $this->omission('sanitary.tile', 'finished_wet_room_area_missing');
+            $omissions[] = $this->omission('sanitary.floor_tile', 'finished_wet_room_area_missing');
+        }
+
+        if ($floorArea !== null && $floorArea->evidenceIds !== []) {
+            $quantities['finish.floor'] = $this->subtract(
+                'finish.floor',
+                $floorArea,
+                $quantities['sanitary.floor_tile'] ?? null,
+                ['dry_floor_area_excludes_evidenced_wet_rooms'],
+            );
+        }
+
+        $wallFinishBasis = $wallArea;
+        if ($wallFinishBasis === null && $floorArea !== null && $floorArea->evidenceIds !== []) {
+            $wallFinishBasis = $this->scaled(
+                'internal_wall_finish_area',
+                'm2',
+                $floorArea,
+                '3.00',
+                ['preliminary_internal_wall_finish_area_factor:3.00'],
+            );
+        }
+        if ($wallFinishBasis !== null && $wallFinishBasis->evidenceIds !== []) {
+            $quantities['finish.paint'] = $this->subtract(
+                'finish.paint',
+                $wallFinishBasis,
+                $quantities['sanitary.tile'] ?? null,
+                ['paint_area_excludes_evidenced_wet_room_wall_tile'],
+            );
         }
 
         $omissions[] = $this->omission('electrical.trays', 'not_applicable_to_residential_preliminary_scenario');
@@ -493,6 +536,39 @@ final class ResidentialQuantityScenarioCatalog
             $source->evidenceIds,
             $source->modelVersion,
             [...$source->assumptions, ...$assumptions],
+        );
+    }
+
+    private function subtract(
+        string $key,
+        QuantityData $minuend,
+        ?QuantityData $subtrahend,
+        array $assumptions,
+    ): QuantityData {
+        $amount = BigDecimal::of($minuend->amount)
+            ->minus($subtrahend?->amount ?? '0');
+        if ($amount->compareTo(BigDecimal::zero()) < 0) {
+            $amount = BigDecimal::zero();
+        }
+
+        return $this->make(
+            $key,
+            'm2',
+            (string) $amount->toScale(6, RoundingMode::HalfUp),
+            [
+                'total_area' => $this->sourceReference($minuend),
+                'excluded_area' => $subtrahend === null ? null : $this->sourceReference($subtrahend),
+            ],
+            array_values(array_unique([
+                ...$minuend->evidenceIds,
+                ...($subtrahend?->evidenceIds ?? []),
+            ])),
+            $minuend->modelVersion,
+            [
+                ...$minuend->assumptions,
+                ...($subtrahend?->assumptions ?? []),
+                ...$assumptions,
+            ],
         );
     }
 

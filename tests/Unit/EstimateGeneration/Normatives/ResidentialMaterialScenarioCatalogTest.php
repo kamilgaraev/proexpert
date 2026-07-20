@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v15', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v18', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -78,6 +78,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
 
         self::assertIsArray($issued);
         self::assertSame('20-01-001-01', $issued['normative_rate_code']);
+        self::assertSame('Монтаж вытяжных воздуховодов жилого дома', $issued['work_item_name']);
         self::assertSame('монтаж воздуховодов', $issued['normative_search_text']);
         self::assertContains('листовой оцинкованной стали', $issued['material_markers']);
         self::assertContains('диаметром до 200 мм', $issued['material_markers']);
@@ -267,16 +268,30 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         ];
     }
 
-    public function test_issues_bounded_membrane_intent_without_inventing_a_rate_code(): void
+    public function test_uses_single_sheet_layer_rate_for_diffusion_membrane_with_explicit_material_substitution(): void
     {
         $issued = (new ResidentialMaterialScenarioCatalog)->issue('roof.membrane', 'residential');
 
         self::assertIsArray($issued);
         self::assertSame('waterproofing', $issued['intent_action']);
         self::assertSame(
-            'устройство подкровельной гидроизоляционной диффузионной мембраны',
+            'устройство пароизоляции кровли прокладочной в один слой',
             $issued['normative_search_text'],
         );
-        self::assertArrayNotHasKey('normative_rate_code', $issued);
+        self::assertSame('12-01-015-03', $issued['normative_rate_code']);
+        self::assertSame('Укладка подкровельной диффузионной мембраны', $issued['work_item_name']);
+    }
+
+    public function test_combines_internal_sewer_risers_and_revisions_under_verified_pipeline_rate(): void
+    {
+        $issued = (new ResidentialMaterialScenarioCatalog)->issue('sewerage.pipe', 'residential');
+
+        self::assertIsArray($issued);
+        self::assertSame('16-04-004-01', $issued['normative_rate_code']);
+        self::assertSame(
+            'Прокладка внутренней канализации со стояками и ревизиями',
+            $issued['work_item_name'],
+        );
+        self::assertSame('pipeline_installation', $issued['intent_action']);
     }
 }
