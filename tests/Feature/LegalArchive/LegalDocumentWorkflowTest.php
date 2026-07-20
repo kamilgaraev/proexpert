@@ -472,13 +472,95 @@ final class LegalDocumentWorkflowTest extends TestCase
         $queryCount = count($this->database->getConnection()->getQueryLog());
         $this->database->getConnection()->disableQueryLog();
 
-        self::assertSame(9, $queryCount);
+        self::assertSame(10, $queryCount);
         self::assertCount(100, $permissions);
         self::assertCount(100, $assignments);
         self::assertTrue($permissions[1][LegalWorkflowPermissions::VIEW]);
         self::assertTrue($permissions[100][LegalWorkflowPermissions::VIEW]);
         self::assertTrue($assignments[1]);
         self::assertTrue($assignments[100]);
+    }
+
+    public function test_bulk_workflow_authorization_loads_only_page_contexts_and_preloads_project_count_conditions(): void
+    {
+        $actor = new User;
+        $actor->forceFill(['id' => 8, 'current_organization_id' => 15, 'name' => 'Reviewer']);
+        $this->database->getConnection()->table('users')->insert([
+            'id' => 8,
+            'name' => 'Reviewer',
+            'current_organization_id' => 15,
+        ]);
+        Container::getInstance()->instance(PermissionResolver::class, new BatchWorkflowPermissionResolver);
+        $system = AuthorizationContext::query()->create(['type' => AuthorizationContext::TYPE_SYSTEM]);
+        $organization = AuthorizationContext::query()->create([
+            'type' => AuthorizationContext::TYPE_ORGANIZATION,
+            'resource_id' => 15,
+            'parent_context_id' => $system->id,
+        ]);
+        $documents = collect();
+        foreach (range(1, 100) as $id) {
+            $projectContext = AuthorizationContext::query()->create([
+                'type' => AuthorizationContext::TYPE_PROJECT,
+                'resource_id' => $id,
+                'parent_context_id' => $organization->id,
+            ]);
+            $this->database->getConnection()->table('projects')->insert([
+                'id' => $id,
+                'status' => 'active',
+            ]);
+            if ($id < 100) {
+                $assignment = UserRoleAssignment::query()->create([
+                    'user_id' => 8,
+                    'role_slug' => 'legal_reviewer',
+                    'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+                    'context_id' => $projectContext->id,
+                    'is_active' => true,
+                ]);
+                $assignment->conditions()->create([
+                    'condition_type' => \App\Domain\Authorization\Enums\ConditionType::PROJECT_COUNT,
+                    'condition_data' => ['max_projects' => 3],
+                    'is_active' => true,
+                ]);
+            }
+            $document = new LegalArchiveDocument;
+            $document->forceFill([
+                'id' => $id,
+                'organization_id' => 15,
+                'primary_project_id' => $id,
+                'status' => 'draft',
+                'approval_status' => 'not_submitted',
+                'open_blocking_comments_count' => 0,
+            ]);
+            $documents->push($document);
+        }
+        foreach (range(1001, 3000) as $id) {
+            AuthorizationContext::query()->create([
+                'type' => AuthorizationContext::TYPE_PROJECT,
+                'resource_id' => $id,
+                'parent_context_id' => $organization->id,
+            ]);
+        }
+        $this->database->getConnection()->table('project_user')->insert([
+            ['project_id' => 1, 'user_id' => 8, 'is_active' => true],
+            ['project_id' => 2, 'user_id' => 8, 'is_active' => true],
+        ]);
+
+        $connection = $this->database->getConnection();
+        $connection->flushQueryLog();
+        $connection->enableQueryLog();
+        $permissions = (new LegalWorkflowAuthorization)->forMany($actor, $documents, [LegalWorkflowPermissions::VIEW]);
+        $queries = $connection->getQueryLog();
+        $connection->disableQueryLog();
+
+        self::assertSame(7, count($queries));
+        self::assertTrue($permissions[1][LegalWorkflowPermissions::VIEW]);
+        self::assertTrue($permissions[99][LegalWorkflowPermissions::VIEW]);
+        self::assertFalse($permissions[100][LegalWorkflowPermissions::VIEW]);
+        $projectContextQueries = array_values(array_filter($queries, static fn (array $query): bool => str_contains($query['query'], 'authorization_contexts')
+            && str_contains($query['query'], 'parent_context_id')
+            && count($query['bindings']) === 102));
+        self::assertCount(1, $projectContextQueries);
+        self::assertSame(102, count($projectContextQueries[0]['bindings']));
     }
 
     public function test_parallel_action_contract_is_step_specific_and_overdue_does_not_block_sibling(): void
@@ -1213,6 +1295,17 @@ final class LegalDocumentWorkflowTest extends TestCase
             $table->unsignedBigInteger('user_id');
             $table->boolean('is_active');
             $table->string('project_access_mode');
+        });
+        $schema->create('users', function (Blueprint $table): void {
+            $table->unsignedBigInteger('id')->primary();
+            $table->string('name');
+            $table->unsignedBigInteger('current_organization_id')->nullable();
+            $table->timestamp('deleted_at')->nullable();
+        });
+        $schema->create('projects', function (Blueprint $table): void {
+            $table->unsignedBigInteger('id')->primary();
+            $table->string('status');
+            $table->timestamp('deleted_at')->nullable();
         });
         $schema->create('authorization_contexts', function (Blueprint $table): void {
             $table->id();
