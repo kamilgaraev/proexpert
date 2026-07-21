@@ -93,13 +93,13 @@ final class ImmutableAuditPhaseBInvariantService
     private function currentDescriptors(ConnectionInterface $connection): array
     {
         $descriptors = [];
-        foreach (['allocator' => 'immutable_audit_allocate_sequence', 'writer_guard_function' => 'immutable_audit_writer_guard', 'append_only_function' => 'immutable_audit_prevent_mutation', 'sequence_sync_function' => 'immutable_audit_sync_sequence_after_insert'] as $key => $function) {
+        foreach (['allocator' => ImmutableAuditInvariantDefinitions::ALLOCATOR_FUNCTION, 'writer_guard_function' => ImmutableAuditInvariantDefinitions::WRITER_GUARD_FUNCTION, 'append_only_function' => ImmutableAuditInvariantDefinitions::APPEND_ONLY_FUNCTION, 'sequence_sync_function' => ImmutableAuditInvariantDefinitions::SEQUENCE_SYNC_FUNCTION] as $key => $function) {
             $row = $this->functionCatalog($connection, $function);
             if ($row !== null) {
                 $descriptors[$key] = $this->functionDescriptor($row);
             }
         }
-        foreach (['writer_guard_trigger' => ['immutable_audit_writer_guard', 'immutable_audit_writer_guard'], 'append_only_trigger' => ['immutable_audit_events_append_only', 'immutable_audit_prevent_mutation'], 'sequence_sync_trigger' => ['immutable_audit_sequence_sync', 'immutable_audit_sync_sequence_after_insert']] as $key => [$trigger, $function]) {
+        foreach (['writer_guard_trigger' => ['immutable_audit_writer_guard', ImmutableAuditInvariantDefinitions::WRITER_GUARD_FUNCTION], 'append_only_trigger' => ['immutable_audit_events_append_only', ImmutableAuditInvariantDefinitions::APPEND_ONLY_FUNCTION], 'sequence_sync_trigger' => ['immutable_audit_sequence_sync', ImmutableAuditInvariantDefinitions::SEQUENCE_SYNC_FUNCTION]] as $key => [$trigger, $function]) {
             $row = $this->triggerCatalog($connection, $trigger, $function);
             if ($row !== null) {
                 $descriptors[$key] = $this->triggerDescriptor($row);

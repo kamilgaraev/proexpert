@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\ImmutableAudit\Services;
 
+use App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions;
 use App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventData;
 use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
 use DateTimeInterface;
@@ -213,7 +214,7 @@ final class ImmutableAuditRecorder
     private function nextSequenceId(): int
     {
         if ($this->database()->getDriverName() === 'pgsql') {
-            $row = $this->database()->selectOne('SELECT immutable_audit_allocate_sequence() AS value');
+            $row = $this->database()->selectOne('SELECT '.ImmutableAuditInvariantDefinitions::ALLOCATOR_FUNCTION.'() AS value');
 
             return (int) ($row->value ?? 0);
         }
