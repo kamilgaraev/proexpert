@@ -11,7 +11,7 @@ use App\Models\Project;
 final class ProjectCommandCenterService
 {
     public function __construct(
-        private readonly ?ProjectProblemCollector $problemCollector = null,
+        private readonly ProjectProblemCollector $problemCollector,
     ) {
     }
 
@@ -32,7 +32,7 @@ final class ProjectCommandCenterService
             generatedAt: $generatedAt,
         );
 
-        return $data->withProblems(($this->problemCollector ?? new ProjectProblemCollector())->collect(
+        return $data->withProblems($this->problemCollector->collect(
             project: $project,
             projectContext: $projectContext,
             now: $generatedAt,

@@ -54,6 +54,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->bind(\App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemCollector::class, static fn () => new \App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemCollector([
+            new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\SafetyViolationProblemSource(),
+        ]));
+
         $this->app->bind(
             \App\Services\Contract\ContractDossierDocumentCreator::class,
             \App\Services\LegalArchive\LegalArchiveRegistryService::class,

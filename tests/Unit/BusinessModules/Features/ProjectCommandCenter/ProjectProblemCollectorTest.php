@@ -7,6 +7,8 @@ namespace Tests\Unit\BusinessModules\Features\ProjectCommandCenter;
 use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectProblemItem;
 use App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemCollector;
 use App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemSource;
+use App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\SafetyViolationProblemSource;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyViolation;
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Domain\Project\ValueObjects\ProjectRoleConfig;
 use App\Enums\ProjectOrganizationRole;
@@ -61,6 +63,39 @@ final class ProjectProblemCollectorTest extends TestCase
         $foreignProject->setAttribute('id', 43);
 
         self::assertSame([], $collector->collect($foreignProject, $this->context(), new DateTimeImmutable())['items']);
+    }
+
+    public function test_it_collects_existing_safety_problem_flags_with_project_scoped_action(): void
+    {
+        $violation = new SafetyViolation([
+            'id' => 18,
+            'project_id' => 42,
+            'organization_id' => 7,
+            'title' => 'Ограждение не установлено',
+            'due_date' => new DateTimeImmutable('2026-07-20T00:00:00+03:00'),
+            'created_at' => new DateTimeImmutable('2026-07-19T10:00:00+03:00'),
+        ]);
+        $violation->setAttribute('id', 18);
+        $source = new SafetyViolationProblemSource(
+            violations: static fn (): array => [$violation],
+            surface: static fn (): array => [
+                'problem_flags' => [[
+                    'severity' => 'critical',
+                    'message' => 'Нарушение не устранено в срок.',
+                ]],
+                'workflow_summary' => ['status_label' => 'Открыто'],
+            ],
+        );
+
+        $result = (new ProjectProblemCollector([$source]))->collect(
+            $this->project(),
+            $this->context(['safety-management.view']),
+            new DateTimeImmutable('2026-07-21T12:00:00+03:00'),
+        );
+
+        self::assertSame('safety-violation-18', $result['items'][0]['id']);
+        self::assertSame('/safety/violations', $result['items'][0]['action']['route']);
+        self::assertSame(['project_id' => 42], $result['items'][0]['action']['query']);
     }
 
     private function problem(
