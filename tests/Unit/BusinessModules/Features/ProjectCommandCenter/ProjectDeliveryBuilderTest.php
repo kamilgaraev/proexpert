@@ -28,13 +28,27 @@ final class ProjectDeliveryBuilderTest extends TestCase
         ], CarbonImmutable::parse('2026-07-21'), 42)->toArray();
 
         self::assertTrue($result['available']);
-        self::assertSame('2026-09-19', $result['forecast_completion_date']);
+        self::assertFalse($result['forecast_completion']['available']);
+        self::assertSame('project_command_center.delivery.forecast_completion_unavailable', $result['forecast_completion']['reason_key']);
         self::assertSame(9, $result['schedule_deviation_days']);
         self::assertSame(3, $result['counts']['overdue_stages']);
         self::assertNull($result['counts']['critical_materials']);
         self::assertFalse($result['data_completeness']['critical_materials']['available']);
         self::assertSame(['project_id' => 42], $result['actions']['overdue_stages']['query']);
         self::assertContains('project_command_center.delivery.active_safety_findings', $result['risk_reasons']);
+    }
+
+    public function test_it_uses_a_recorded_actual_completion_without_calculating_a_forecast(): void
+    {
+        $result = (new ProjectDeliveryBuilder())->fromFacts([
+            'schedule' => [
+                'planned_end_date' => '2026-09-10',
+                'actual_end_date' => '2026-09-12',
+            ],
+        ], CarbonImmutable::parse('2026-07-21'), 42)->toArray();
+
+        self::assertTrue($result['forecast_completion']['available']);
+        self::assertSame('2026-09-12', $result['forecast_completion']['date']);
     }
 
     public function test_it_marks_delivery_unavailable_when_schedule_is_missing(): void

@@ -46,6 +46,22 @@ final class ProjectFinanceHealthBuilderTest extends TestCase
         self::assertSame('project_command_center.finance.payment_schedule_unavailable', $result['cash_flow']['reason_key']);
     }
 
+    public function test_it_keeps_all_outstanding_documents_in_receivables_and_payables(): void
+    {
+        $result = $this->builder()->fromFacts([
+            'metrics' => ['bac' => 1_000, 'ac' => 500, 'eac' => 1_100],
+            'payments' => [
+                ['direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-08-10'],
+                ['direction' => 'incoming', 'amount' => 300, 'due_at' => null],
+                ['direction' => 'outgoing', 'amount' => 250, 'due_at' => null],
+            ],
+        ], CarbonImmutable::parse('2026-07-21'))->toArray();
+
+        self::assertSame(1000.0, $result['cash_flow']['accounts_receivable']);
+        self::assertSame(250.0, $result['cash_flow']['accounts_payable']);
+        self::assertSame(700.0, $result['cash_flow']['projections'][0]['incoming']);
+    }
+
     public function test_it_marks_missing_actual_costs_explicitly(): void
     {
         $result = $this->builder()->fromFacts([

@@ -28,7 +28,7 @@ final class ProjectDeliveryBuilder
             ->orderByRaw("CASE status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END")
             ->orderByDesc('updated_at')
             ->first([
-                'id', 'planned_end_date', 'baseline_end_date', 'overall_progress_percent',
+                'id', 'planned_end_date', 'baseline_end_date', 'actual_end_date', 'overall_progress_percent',
                 'critical_path_calculated', 'critical_path_duration_days',
             ]);
 
@@ -55,6 +55,7 @@ final class ProjectDeliveryBuilder
             'schedule' => [
                 'planned_end_date' => $schedule->planned_end_date,
                 'baseline_end_date' => $schedule->baseline_end_date,
+                'actual_end_date' => $schedule->actual_end_date,
                 'progress_percent' => $schedule->overall_progress_percent,
                 'critical_path_calculated' => (bool) $schedule->critical_path_calculated,
                 'critical_path_duration_days' => $schedule->critical_path_duration_days,
@@ -81,12 +82,18 @@ final class ProjectDeliveryBuilder
         $baselineEnd = ! empty($schedule['baseline_end_date'])
             ? CarbonImmutable::parse((string) $schedule['baseline_end_date'])->startOfDay()
             : null;
-        $forecastCompletion = $this->forecastCompletion($plannedEnd, $baselineEnd, $facts['overdue_stages_count'] ?? 0);
         $scheduleDeviation = $baselineEnd === null ? null : $baselineEnd->diffInDays($plannedEnd, false);
         $riskReasons = $this->riskReasons($facts, $scheduleDeviation);
+        $actualEnd = ! empty($schedule['actual_end_date'])
+            ? CarbonImmutable::parse((string) $schedule['actual_end_date'])->startOfDay()
+            : null;
 
         return ProjectDeliveryData::available([
-            'forecast_completion_date' => $forecastCompletion->toDateString(),
+            'forecast_completion' => [
+                'available' => $actualEnd !== null,
+                'reason_key' => $actualEnd === null ? 'project_command_center.delivery.forecast_completion_unavailable' : null,
+                'date' => $actualEnd?->toDateString(),
+            ],
             'schedule_deviation_days' => $scheduleDeviation,
             'progress_percent' => $this->number($schedule['progress_percent'] ?? null),
             'critical_path' => [
@@ -122,14 +129,6 @@ final class ProjectDeliveryBuilder
             $problems['items'] ?? [],
             static fn (mixed $item): bool => is_array($item) && ($item['module'] ?? null) === 'safety',
         ));
-    }
-
-    private function forecastCompletion(CarbonImmutable $plannedEnd, ?CarbonImmutable $baselineEnd, mixed $overdueStages): CarbonImmutable
-    {
-        $overdueDays = max(0, (int) $overdueStages);
-        $baselineDelay = $baselineEnd === null ? 0 : max(0, $baselineEnd->diffInDays($plannedEnd, false));
-
-        return $plannedEnd->addDays(max($overdueDays, $baselineDelay));
     }
 
     private function riskReasons(array $facts, ?int $scheduleDeviation): array
