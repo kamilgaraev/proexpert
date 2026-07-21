@@ -176,7 +176,7 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             $poolCandidatesCount += $query->count();
             $selectedForIntent = $this->ranker->select($query->all(), [$intent]);
             if ($selectedForIntent !== null) {
-                $norms = $norms->concat(array_slice($selectedForIntent, 0, 1));
+                $norms = $norms->concat($selectedForIntent);
             } else {
                 $this->telemetryPrePriceCandidates(
                     $requested,
@@ -315,73 +315,28 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             ->orderBy('id')
             ->get(['id', 'estimate_norm_id', 'construction_resource_id', 'resource_code', 'resource_name', 'unit', 'quantity', 'resource_type']);
         $this->progress($progress, 'abstract_resource_rows_started', ['norms_count' => $norms->count()]);
-        $abstractResourceRows = collect();
+        $normsById = $norms->keyBy('id');
+        $selectedAbstractRows = collect();
         foreach ($abstractDefinitions as $definition) {
-            $abstractResourceRows = $abstractResourceRows->concat($this->abstractPriceRowsForDefinition(
+            $selected = $this->selectAbstractPriceRow(
                 $definition,
+                $normsById->get((int) $definition->estimate_norm_id),
+                $intents,
                 $requested,
                 $basePriceDatasetIds,
-            ));
-            if ($abstractResourceRows->count() > 10_000) {
-                break;
+            );
+            if ($selected !== null) {
+                $selectedAbstractRows->push($selected);
             }
         }
-        $this->progress($progress, 'abstract_resource_rows_loaded', ['abstract_resource_rows_count' => $abstractResourceRows->count()]);
-        if ($resourceRows->count() + $abstractResourceRows->count() > 10_000) {
+        $this->progress($progress, 'abstract_resource_rows_loaded', ['abstract_resource_rows_count' => $selectedAbstractRows->count()]);
+        if ($resourceRows->count() + $selectedAbstractRows->count() > 10_000) {
             $this->telemetry('resources_limit_exceeded', [
                 'selected_count' => $norms->count(),
-                'resource_rows_count' => $resourceRows->count() + $abstractResourceRows->count(),
+                'resource_rows_count' => $resourceRows->count() + $selectedAbstractRows->count(),
             ]);
 
             return null;
-        }
-        $selectedAbstractRows = collect();
-        $normsById = $norms->keyBy('id');
-        foreach ($abstractResourceRows->groupBy('norm_resource_id') as $candidateRows) {
-            $candidateRowList = $candidateRows->values()->all();
-            $representative = $candidateRowList[0] ?? null;
-            if (! is_object($representative)) {
-                continue;
-            }
-            $norm = $normsById->get((int) $representative->estimate_norm_id);
-            $selection = $this->abstractResourceProjectPriceSelector->select(
-                $intents,
-                is_object($norm) ? trim((string) $norm->code) : '',
-                is_object($norm) ? (string) $norm->name : '',
-                trim((string) $representative->resource_code),
-                trim((string) ($representative->resource_name ?? '')),
-                $requested->regionalPriceVersionId,
-                $candidateRowList,
-                $basePriceDatasetIds,
-            );
-            if ($selection === null) {
-                $this->telemetry('abstract_resource_candidates_rejected', [
-                    'norm_code' => is_object($norm) ? trim((string) $norm->code) : '',
-                    'norm_name' => is_object($norm) ? trim((string) $norm->name) : '',
-                    'group_code' => trim((string) $representative->resource_code),
-                    'group_name' => trim((string) ($representative->resource_name ?? '')),
-                    'candidates' => array_map(static fn (object $candidate): array => [
-                        'resource_code' => trim((string) ($candidate->price_resource_code ?? '')),
-                        'resource_name' => trim((string) ($candidate->price_resource_name ?? '')),
-                        'unit' => trim((string) ($candidate->price_unit ?? '')),
-                        'base_price' => is_numeric($candidate->base_price ?? null)
-                            ? (float) $candidate->base_price
-                            : null,
-                        'source_type' => trim((string) ($candidate->price_dataset_source_type ?? '')),
-                        'regional_price_version_id' => isset($candidate->regional_price_version_id)
-                            ? (int) $candidate->regional_price_version_id
-                            : null,
-                    ], array_slice($candidateRowList, 0, 20)),
-                ]);
-
-                continue;
-            }
-            $selection['row']->project_resource_candidates_count = $selection['candidates_count'];
-            $selection['row']->project_resource_price_policy = $selection['policy'];
-            if (isset($selection['assumption'])) {
-                $selection['row']->project_resource_conversion_assumption = $selection['assumption'];
-            }
-            $selectedAbstractRows->push($selection['row']);
         }
         $unresolvedAbstractDefinitions = $abstractDefinitions->reject(static fn (object $row): bool => $selectedAbstractRows->contains(
             static fn (object $selected): bool => (int) $selected->norm_resource_id === (int) $row->id,
@@ -957,6 +912,40 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             'section' => (string) $candidate->section_code,
             ...($coverage[(int) $candidate->id] ?? []),
         ])->all();
+    }
+
+    /** @param array<int, int> $basePriceDatasetIds */
+    private function selectAbstractPriceRow(
+        object $definition,
+        mixed $norm,
+        array $intents,
+        NormativeContextPinData $requested,
+        array $basePriceDatasetIds,
+    ): ?object {
+        $candidates = $this->abstractPriceRowsForDefinition($definition, $requested, $basePriceDatasetIds)->all();
+        if ($candidates === [] || ! is_object($norm)) {
+            return null;
+        }
+        $selection = $this->abstractResourceProjectPriceSelector->select(
+            $intents,
+            trim((string) $norm->code),
+            (string) $norm->name,
+            trim((string) $definition->resource_code),
+            trim((string) $definition->resource_name),
+            $requested->regionalPriceVersionId,
+            $candidates,
+            $basePriceDatasetIds,
+        );
+        if ($selection === null) {
+            return null;
+        }
+        $selection['row']->project_resource_candidates_count = $selection['candidates_count'];
+        $selection['row']->project_resource_price_policy = $selection['policy'];
+        if (isset($selection['assumption'])) {
+            $selection['row']->project_resource_conversion_assumption = $selection['assumption'];
+        }
+
+        return $selection['row'];
     }
 
     /** @param array<int, int> $basePriceDatasetIds */
