@@ -36,7 +36,7 @@ CASE WHEN nr.resource_code ~ '^[0-9]{2}\.[0-9]\.[0-9]{2}\.[0-9]{2}$' THEN
       ELSE rp.resource_code IS DISTINCT FROM nr.resource_code END
 SQL;
         $updated = preg_replace(
-            "/CASE WHEN LOWER\\(COALESCE\\(nr\\.raw_payload->>'source_tag', ''\\)\\) = 'abstractresource'\\s+THEN.*?ELSE rp\\.resource_code IS DISTINCT FROM nr\\.resource_code END/is",
+            '/rp\.resource_code\s+IS\s+DISTINCT\s+FROM\s+nr\.resource_code/i',
             $replacement,
             $definition,
             1,
