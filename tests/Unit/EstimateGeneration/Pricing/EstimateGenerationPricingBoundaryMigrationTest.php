@@ -229,6 +229,17 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
     }
 
     #[Test]
+    public function pinned_abstract_conversion_uses_the_normative_output_unit_and_price_input_unit(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_001400_fix_pinned_abstract_resource_conversion_units.php');
+
+        self::assertIsString($migration);
+        self::assertStringContainsString('public.eg_expected_package_item_price_v8(bigint)', $migration);
+        self::assertStringContainsString('nr.unit IS DISTINCT FROM arc.to_unit', $migration);
+        self::assertStringContainsString('rp.unit IS DISTINCT FROM arc.from_unit', $migration);
+    }
+
+    #[Test]
     public function supplementary_project_material_is_database_priced_from_an_immutable_versioned_rule(): void
     {
         $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000100_finalize_supplementary_project_material_prices.php');
