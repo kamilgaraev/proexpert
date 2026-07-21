@@ -29,9 +29,16 @@ final class OnlyOfficeProductionTransportContractTest extends TestCase
         $root = dirname(__DIR__, 3);
         $compose = (string) file_get_contents($root.'/deploy/onlyoffice/docker-compose.yml');
         $environment = (string) file_get_contents($root.'/deploy/onlyoffice/.env.example');
+        $deployment = (string) file_get_contents($root.'/.github/workflows/deploy-backend.yml');
 
         self::assertStringContainsString('extra_hosts:', $compose);
         self::assertStringContainsString('${ONLYOFFICE_CALLBACK_HOST:?Set ONLYOFFICE_CALLBACK_HOST in .env}:host-gateway', $compose);
         self::assertStringContainsString('ONLYOFFICE_CALLBACK_HOST=api.example.ru', $environment);
+        self::assertStringContainsString("- 'deploy/**'", $deployment);
+        self::assertStringContainsString('apply_onlyoffice_callback_transport', $deployment);
+        self::assertStringContainsString('ENV_FILE="deploy/onlyoffice/.env"', $deployment);
+        self::assertStringContainsString('docker compose up -d --force-recreate onlyoffice', $deployment);
+        self::assertStringContainsString('sed -E "s/^', $deployment);
+        self::assertStringNotContainsString('sed -E \\"', $deployment);
     }
 }

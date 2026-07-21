@@ -25,6 +25,7 @@ on:
       - '.dockerignore'
       - 'docker-compose.yml'
       - 'docker/**'
+      - 'deploy/**'
       - 'lang/**'
       - 'monitoring/**'
       - 'public/**'
@@ -100,6 +101,7 @@ jobs:
             [[ "${REVERB_APP_KEY}" =~ ^[0-9a-f]{64}$ ]]
 
             cd /var/www/prohelper
+            PREVIOUS_RELEASE_SHA="$(git rev-parse HEAD)"
             git fetch origin "${RELEASE_SHA}"
             git reset --hard "${RELEASE_SHA}"
             test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"
@@ -135,6 +137,45 @@ jobs:
               test "${#current_secret}" -eq 64
               upsert_env LEGAL_ARCHIVE_AUDIT_WRITER_SECRET "${current_secret}"
               unset current_secret
+            }
+
+            apply_onlyoffice_callback_transport() {
+              local callback_base_url callback_host root_env_file
+              callback_base_url="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_CALLBACK_BASE_URL=' .env | cut -d= -f2- || true)"
+              if [ -z "${callback_base_url}" ]; then
+                callback_base_url="$(grep -m1 '^APP_URL=' .env | cut -d= -f2- || true)"
+              fi
+              callback_base_url="$(printf '%s' "${callback_base_url}" | sed -E "s/^['\"]//; s/['\"]$//")"
+              if [[ "${callback_base_url}" != https://* ]]; then
+                echo 'OnlyOffice callback base URL must use HTTPS; refusing deployment'
+                return 1
+              fi
+              callback_host="${callback_base_url#https://}"
+              callback_host="${callback_host%%/*}"
+              if [[ ! "${callback_host}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
+                echo 'OnlyOffice callback URL must contain a DNS hostname without a port; refusing deployment'
+                return 1
+              fi
+
+              root_env_file="${ENV_FILE}"
+              ENV_FILE="deploy/onlyoffice/.env"
+              ENV_TEMP_FILE=''
+              ENV_EXPECTED_UID=''
+              ENV_EXPECTED_GID=''
+              initialize_secure_env
+              upsert_env ONLYOFFICE_CALLBACK_HOST "${callback_host}"
+              (
+                cd deploy/onlyoffice
+                docker compose config --quiet
+                docker compose up -d --force-recreate onlyoffice
+                docker compose ps --status running -q onlyoffice | grep -qx '.\+'
+                docker exec most-onlyoffice curl -fsS -o /dev/null --connect-timeout 10 --max-time 20 "https://${callback_host}/"
+              )
+              ENV_FILE="${root_env_file}"
+              ENV_TEMP_FILE=''
+              ENV_EXPECTED_UID=''
+              ENV_EXPECTED_GID=''
+              initialize_secure_env
             }
 
             stop_legacy_supervisor_processes() {
@@ -268,6 +309,9 @@ jobs:
             remove_env_key LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED
 
             ensure_immutable_audit_writer_secret
+            if ! git diff --quiet "${PREVIOUS_RELEASE_SHA}" "${RELEASE_SHA}" -- deploy/onlyoffice; then
+              apply_onlyoffice_callback_transport
+            fi
             docker compose pull clamav
             docker compose up -d clamav
             for attempt in $(seq 1 72); do
