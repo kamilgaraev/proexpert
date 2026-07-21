@@ -94,6 +94,14 @@ final class LegalDocumentVersionOperationPostgresSchema
     /** @param array{table: string, name: string, definition: string, type: string, deferrable: bool, deferred: bool, keys: ?list<string>, referenced_table: ?string, referenced_keys: ?list<string>, update_action: ?string, delete_action: ?string, match_type: ?string} $expected */
     public static function constraintMatches(object $actual, array $expected, ?bool $validated = null): bool
     {
+        if ($expected['name'] === 'legal_archive_version_operations_state_check' && self::compatibleStateConstraint($actual->definition)) {
+            return $actual->table_name === $expected['table']
+                && $actual->contype === $expected['type']
+                && ! (bool) $actual->condeferrable
+                && ! (bool) $actual->condeferred
+                && ($validated === null || (bool) $actual->convalidated === $validated);
+        }
+
         return $actual->table_name === $expected['table']
             && $actual->contype === $expected['type']
             && (bool) $actual->condeferrable === $expected['deferrable']
