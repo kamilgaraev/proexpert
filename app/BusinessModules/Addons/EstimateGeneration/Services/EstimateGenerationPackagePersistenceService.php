@@ -490,6 +490,12 @@ class EstimateGenerationPackagePersistenceService
             ->join('estimate_norm_resources as resources', 'resources.id', '=', 'inputs.norm_resource_id')
             ->join('estimate_resource_prices as prices', 'prices.id', '=', 'inputs.resource_price_id')
             ->leftJoin('estimate_generation_unit_conversions as conversions', 'conversions.id', '=', 'inputs.unit_conversion_id')
+            ->leftJoin(
+                'estimate_generation_pinned_abstract_resource_conversions as abstract_conversions',
+                'abstract_conversions.id',
+                '=',
+                'inputs.pinned_abstract_resource_conversion_id',
+            )
             ->leftJoin('estimate_regional_price_versions as versions', 'versions.id', '=', 'prices.regional_price_version_id')
             ->where('inputs.package_item_id', $item->id)
             ->where(function ($query) use ($item): void {
@@ -527,6 +533,8 @@ class EstimateGenerationPackagePersistenceService
                 'prices.unit as price_unit', 'prices.region_id', 'prices.price_zone_id', 'prices.period_id',
                 'prices.regional_price_version_id', 'prices.base_price', 'versions.status as version_status',
                 'conversions.id as conversion_id', 'conversions.from_unit', 'conversions.to_unit', 'conversions.factor',
+                'inputs.pinned_abstract_resource_conversion_id', 'abstract_conversions.rule_key as abstract_conversion_rule_key',
+                'abstract_conversions.version as abstract_conversion_rule_version',
             ]);
 
         if ($mismatches->isNotEmpty()) {
