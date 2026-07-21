@@ -241,6 +241,31 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
         ));
         $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\CompletenessArbiter::class,
+            static function ($app): \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\CompletenessArbiter {
+                $settings = config('estimate-generation.completeness_arbiter');
+                $settings = is_array($settings) ? $settings : [];
+                $model = trim((string) ($settings['model'] ?? 'openai/gpt-5-mini'));
+                $promptVersion = trim((string) ($settings['prompt_version'] ?? 'completeness-arbiter:v1'));
+                if (($settings['enabled'] ?? false) !== true) {
+                    return new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\DisabledCompletenessArbiter($model, $promptVersion);
+                }
+
+                return new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\AttemptAwareCompletenessArbiter(
+                    $app->make(RerankWireClient::class),
+                    $app->make(AiUsageStore::class),
+                    $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
+                    $model,
+                    $promptVersion,
+                    trim((string) ($settings['schema_version'] ?? 'completeness-arbiter:v1')),
+                    max(1, min(64_000, (int) ($settings['max_input_tokens'] ?? 24_000))),
+                    max(1, min(8_000, (int) ($settings['max_output_tokens'] ?? 2_000))),
+                    max(1, min(120, (int) ($settings['timeout_seconds'] ?? 20))),
+                );
+            },
+        );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ShadowArbiterCoordinator::class);
+        $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Planning\WorkCompositionLlmClient::class,
             \App\BusinessModules\Addons\EstimateGeneration\Planning\AttemptAwareWorkCompositionLlmClient::class,
         );
