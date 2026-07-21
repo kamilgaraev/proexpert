@@ -230,6 +230,15 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             ->get(['estimate_norm_id', $this->database->raw('COUNT(*) AS resource_count')])
             ->mapWithKeys(static fn (object $row): array => [(int) $row->estimate_norm_id => (int) $row->resource_count])
             ->all();
+        $expectedNormalResourceCounts = $this->database->table('estimate_norm_resources')
+            ->whereIn('estimate_norm_id', $ids)
+            ->where('quantity', '>', 0)
+            ->where('resource_type', '<>', 'summary')
+            ->whereRaw("LOWER(COALESCE(raw_payload->>'source_tag', '')) <> 'abstractresource'")
+            ->groupBy('estimate_norm_id')
+            ->get(['estimate_norm_id', $this->database->raw('COUNT(*) AS resource_count')])
+            ->mapWithKeys(static fn (object $row): array => [(int) $row->estimate_norm_id => (int) $row->resource_count])
+            ->all();
         $processableNormIds = array_values(array_filter($ids, function (int $id) use ($expectedResourceCounts): bool {
             $resourceCount = (int) ($expectedResourceCounts[$id] ?? 0);
 
@@ -259,7 +268,7 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
         $basePricePlaceholders = implode(', ', array_fill(0, count($basePriceDatasetIds), '?'));
         $normalizedCandidateUnitSql = "LOWER(REGEXP_REPLACE(COALESCE(candidate_prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(resources.unit, ''), '[[:space:].,-]+', '', 'g'))";
         $this->progress($progress, 'resource_rows_started', ['norms_count' => $norms->count()]);
-        $resourceRows = $this->database->table('estimate_norm_resources as resources')
+        $normalResourceRowsQuery = $this->database->table('estimate_norm_resources as resources')
             ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
                 $join->on('prices.resource_code', '=', 'resources.resource_code')
                     ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
@@ -276,7 +285,6 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             })
             ->leftJoin('estimate_dataset_versions as price_datasets', 'price_datasets.id', '=', 'prices.dataset_version_id')
             ->leftJoin('estimate_regional_price_versions as price_regional_versions', 'price_regional_versions.id', '=', 'prices.regional_price_version_id')
-            ->whereIn('resources.estimate_norm_id', $ids)
             ->where('resources.quantity', '>', 0)
             ->where('resources.resource_type', '<>', 'summary')
             ->whereRaw("LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) <> 'abstractresource'")
@@ -317,9 +325,8 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                     $fgisLaborPriceDatasetId,
                     $fsbcBasePriceDatasetId,
                 ],
-            )
-            ->orderBy('resources.estimate_norm_id')->orderBy('resources.id')
-            ->get([
+            );
+        $resourceRowColumns = [
                 'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
                 'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
                 'prices.id as price_id', 'prices.construction_resource_id as price_construction_resource_id',
@@ -328,7 +335,76 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                 'price_regional_versions.version_key as regional_price_version_key',
                 'price_datasets.source_type as price_dataset_source_type',
                 'price_datasets.version_key as price_dataset_version',
-            ]);
+            ];
+        $resourceRows = collect();
+        $admittedNormalNormIds = [];
+        $reservedResourceRowsCount = 0;
+        foreach ($rankedNormIdsByIntent as $intentIndex => $rankedNormIds) {
+            $admittedForIntent = false;
+            foreach ($rankedNormIds as $normId) {
+                if (! in_array($normId, $processableNormIds, true)) {
+                    continue;
+                }
+                if (isset($admittedNormalNormIds[$normId])) {
+                    $admittedForIntent = true;
+
+                    break;
+                }
+                $expectedNormalCount = (int) ($expectedNormalResourceCounts[$normId] ?? 0);
+                $expectedResourceCount = (int) ($expectedResourceCounts[$normId] ?? 0);
+                if ($reservedResourceRowsCount + $expectedResourceCount > self::MAX_FINAL_RESOURCE_ROWS) {
+                    $this->telemetry('candidate_bundle_rejected', [
+                        'norm_id' => $normId,
+                        'intent_index' => $intentIndex + 1,
+                        'reason' => 'final_resource_budget_exceeded',
+                        'expected_normal_resource_rows_count' => $expectedNormalCount,
+                        'expected_resource_rows_count' => $expectedResourceCount,
+                        'reserved_resource_rows_count' => $reservedResourceRowsCount,
+                        'resource_limit' => self::MAX_FINAL_RESOURCE_ROWS,
+                    ]);
+
+                    continue;
+                }
+                $candidateRows = (clone $normalResourceRowsQuery)
+                    ->where('resources.estimate_norm_id', $normId)
+                    ->orderBy('resources.id')
+                    ->get($resourceRowColumns);
+                $this->progress($progress, 'candidate_normal_resource_rows_loaded', [
+                    'intent_index' => $intentIndex + 1,
+                    'norm_id' => $normId,
+                    'expected_resource_rows_count' => $expectedNormalCount,
+                    'priced_resource_rows_count' => $candidateRows->count(),
+                ]);
+                if ($candidateRows->count() !== $expectedNormalCount) {
+                    $this->telemetry('candidate_bundle_rejected', [
+                        'norm_id' => $normId,
+                        'intent_index' => $intentIndex + 1,
+                        'reason' => 'normal_resource_price_coverage_incomplete',
+                        'expected_normal_resource_rows_count' => $expectedNormalCount,
+                        'priced_normal_resource_rows_count' => $candidateRows->count(),
+                    ]);
+
+                    continue;
+                }
+                $resourceRows = $resourceRows->concat($candidateRows);
+                $admittedNormalNormIds[$normId] = true;
+                $reservedResourceRowsCount += $expectedResourceCount;
+                $admittedForIntent = true;
+
+                break;
+            }
+            if (! $admittedForIntent) {
+                $this->telemetry('candidate_bundle_rejected', [
+                    'intent_index' => $intentIndex + 1,
+                    'reason' => 'no_normal_resource_bundle_for_intent',
+                    'ranked_norm_ids' => $rankedNormIds,
+                ]);
+
+                return null;
+            }
+        }
+        $ids = array_map('intval', array_keys($admittedNormalNormIds));
+        $norms = $norms->filter(static fn (object $norm): bool => in_array((int) $norm->id, $ids, true))->values();
         $this->progress($progress, 'resource_rows_loaded', ['resource_rows_count' => $resourceRows->count()]);
         $abstractDefinitions = $this->database->table('estimate_norm_resources')
             ->whereIn('estimate_norm_id', $ids)
@@ -341,7 +417,7 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
         $this->progress($progress, 'abstract_resource_rows_started', ['norms_count' => $norms->count()]);
         $normsById = $norms->keyBy('id');
         $selectedAbstractRows = collect();
-        foreach ($abstractDefinitions as $definition) {
+        foreach ($abstractDefinitions as $abstractIndex => $definition) {
             $selected = $this->selectAbstractPriceRow(
                 $definition,
                 $normsById->get((int) $definition->estimate_norm_id),
@@ -352,6 +428,11 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             if ($selected !== null) {
                 $selectedAbstractRows->push($selected);
             }
+            $this->progress($progress, 'abstract_resource_candidate_processed', [
+                'abstract_index' => $abstractIndex + 1,
+                'abstract_definitions_count' => $abstractDefinitions->count(),
+                'selected_rows_count' => $selectedAbstractRows->count(),
+            ]);
         }
         $this->progress($progress, 'abstract_resource_rows_loaded', ['abstract_resource_rows_count' => $selectedAbstractRows->count()]);
         $unresolvedAbstractDefinitions = $abstractDefinitions->reject(static fn (object $row): bool => $selectedAbstractRows->contains(
@@ -496,7 +577,12 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             ]);
         $this->progress($progress, 'semantic_price_rows_loaded', ['resource_rows_count' => $semanticProjectPrices->count()]);
         if ($semanticProjectPrices->count() <= 5_000) {
-            foreach ($unresolvedAbstractDefinitions as $definition) {
+            foreach ($unresolvedAbstractDefinitions as $semanticIndex => $definition) {
+                $this->progress($progress, 'semantic_abstract_resource_started', [
+                    'abstract_index' => $semanticIndex + 1,
+                    'abstract_definitions_count' => $unresolvedAbstractDefinitions->count(),
+                    'selected_rows_count' => $selectedAbstractRows->count(),
+                ]);
                 $norm = $normsById->get((int) $definition->estimate_norm_id);
                 if (! is_object($norm)) {
                     continue;
@@ -525,6 +611,11 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                 $selected->project_resource_candidates_count = $selection['candidates_count'];
                 $selected->project_resource_price_policy = $selection['policy'];
                 $selectedAbstractRows->push($selected);
+                $this->progress($progress, 'semantic_abstract_resource_processed', [
+                    'abstract_index' => $semanticIndex + 1,
+                    'abstract_definitions_count' => $unresolvedAbstractDefinitions->count(),
+                    'selected_rows_count' => $selectedAbstractRows->count(),
+                ]);
             }
         }
         $selectedAbstractCounts = $selectedAbstractRows
