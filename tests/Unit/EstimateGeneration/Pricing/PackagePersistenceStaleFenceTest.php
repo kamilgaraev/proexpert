@@ -56,6 +56,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         });
         $database->connection($this->connectionName);
         FinalizerTrackingSqliteConnection::$finalizerCalls = 0;
+        FinalizerTrackingSqliteConnection::$driverName = 'sqlite';
         Schema::create('estimate_generation_sessions', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('organization_id');
@@ -134,6 +135,12 @@ final class PackagePersistenceStaleFenceTest extends TestCase
             $table->unsignedBigInteger('unit_conversion_id')->nullable();
             $table->timestamps();
         });
+        Schema::create('estimate_norm_resources', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('estimate_norm_id');
+            $table->decimal('quantity', 20, 6);
+            $table->string('resource_type');
+        });
         Schema::create('estimate_generation_project_material_rules', function (Blueprint $table): void {
             $table->id();
             $table->string('catalog_version');
@@ -169,6 +176,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
     {
         Schema::dropIfExists('estimate_generation_package_item_project_price_inputs');
         Schema::dropIfExists('estimate_generation_project_material_rules');
+        Schema::dropIfExists('estimate_norm_resources');
         Schema::dropIfExists('estimate_generation_package_item_price_inputs');
         Schema::dropIfExists('estimate_generation_package_items');
         Schema::dropIfExists('estimate_generation_packages');
@@ -236,6 +244,27 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         self::assertNotNull($package->items()->sole()->pricing_finalized_at);
         self::assertSame([7001], DB::table('estimate_generation_package_item_price_inputs')->pluck('norm_resource_id')->all());
         self::assertSame([9001], DB::table('estimate_generation_package_item_price_inputs')->pluck('resource_price_id')->all());
+    }
+
+    #[Test]
+    public function pricing_input_cardinality_mismatch_keeps_item_unfinalized_without_calling_finalizer(): void
+    {
+        FinalizerTrackingSqliteConnection::$driverName = 'pgsql';
+        DB::table('estimate_norm_resources')->insert([
+            ['id' => 7001, 'estimate_norm_id' => 101, 'quantity' => '1.000000', 'resource_type' => 'material'],
+            ['id' => 7002, 'estimate_norm_id' => 101, 'quantity' => '1.000000', 'resource_type' => 'labor'],
+        ]);
+        $current = 'sha256:'.str_repeat('b', 64);
+        [$session, , $service] = $this->fixture($current);
+
+        $service->syncFromDraft($session, $this->draft($current, [$this->acceptedWorkItem($session, $current)]));
+
+        $package = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole();
+        $item = $package->items()->sole();
+        self::assertSame(0, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertNull($item->pricing_finalized_at);
+        self::assertSame('blocked', $package->fresh()->status);
+        self::assertContains('missing_price_snapshot', $package->fresh()->quality_summary['critical_flags']);
     }
 
     #[Test]
@@ -529,6 +558,13 @@ final class PackagePersistenceStaleFenceTest extends TestCase
 final class FinalizerTrackingSqliteConnection extends SQLiteConnection
 {
     public static int $finalizerCalls = 0;
+
+    public static string $driverName = 'sqlite';
+
+    public function getDriverName()
+    {
+        return self::$driverName;
+    }
 
     public function select($query, $bindings = [], $useReadPdo = true)
     {

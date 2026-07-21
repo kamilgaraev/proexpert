@@ -428,8 +428,15 @@ class EstimateGenerationPackagePersistenceService
                 'updated_at' => now(),
             ]);
         }
-        $this->reportPricingInputCardinalityMismatch($item, $pricing['inputs'], $workItem);
-        $this->reportPricingInputContractMismatch($item);
+        $hasCardinalityMismatch = $this->reportPricingInputCardinalityMismatch($item, $pricing['inputs'], $workItem);
+        if ($hasCardinalityMismatch) {
+            return;
+        }
+
+        if ($this->reportPricingInputContractMismatch($item)) {
+            return;
+        }
+
         try {
             DB::select('SELECT public.eg_finalize_package_item_price(?)', [$item->id]);
         } catch (QueryException $exception) {
@@ -449,9 +456,9 @@ class EstimateGenerationPackagePersistenceService
         EstimateGenerationPackageItem $item,
         array $inputs,
         array $workItem,
-    ): void {
+    ): bool {
         if (DB::getDriverName() !== 'pgsql') {
-            return;
+            return false;
         }
         $expectedIds = DB::table('estimate_norm_resources')
             ->where('estimate_norm_id', $item->estimate_norm_id)
@@ -465,7 +472,7 @@ class EstimateGenerationPackagePersistenceService
         sort($actualIds, SORT_NUMERIC);
 
         if ($expectedIds === $actualIds) {
-            return;
+            return false;
         }
 
         Log::warning('estimate_generation.pricing_input_cardinality_mismatch', [
@@ -478,12 +485,14 @@ class EstimateGenerationPackagePersistenceService
             'missing_norm_resource_ids' => array_values(array_diff($expectedIds, $actualIds)),
             'unexpected_norm_resource_ids' => array_values(array_diff($actualIds, $expectedIds)),
         ]);
+
+        return true;
     }
 
-    private function reportPricingInputContractMismatch(EstimateGenerationPackageItem $item): void
+    private function reportPricingInputContractMismatch(EstimateGenerationPackageItem $item): bool
     {
         if (DB::getDriverName() !== 'pgsql') {
-            return;
+            return false;
         }
 
         $mismatches = DB::table('estimate_generation_package_item_price_inputs as inputs')
@@ -542,7 +551,11 @@ class EstimateGenerationPackagePersistenceService
                 ],
                 'inputs' => $mismatches->map(static fn (object $input): array => (array) $input)->all(),
             ]);
+
+            return true;
         }
+
+        return false;
     }
 
     /** @param array{item: array<string, mixed>, inputs: list<array<string, int|null>>, project_material_inputs: list<array<string, mixed>>, formula_version: string} $pricing */
