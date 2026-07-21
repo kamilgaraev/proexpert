@@ -56,6 +56,7 @@ final class LegalWorkflowPostgresConstraints
         $normalized = strtolower((string) $definition);
         $normalized = str_replace('not valid', '', $normalized);
         $normalized = (string) preg_replace('/::[a-z_ ]+(?:\[\])?/', '', $normalized);
+        $normalized = (string) preg_replace('/\b([a-z_]+)\s+between\s+(\d+)\s+and\s+(\d+)/', '$1 >= $2 and $1 <= $3', $normalized);
         $normalized = (string) preg_replace('/["\s()]+/', '', $normalized);
         $normalized = str_replace(['=anyarray[', ']'], ['in', ''], $normalized);
 
