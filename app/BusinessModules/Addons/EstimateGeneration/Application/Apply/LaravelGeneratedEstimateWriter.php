@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateBudgetScope;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateScopeMetadataProjector;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -37,6 +38,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         private GeneratedEstimateItemMetadataFactory $itemMetadata = new GeneratedEstimateItemMetadataFactory,
         private FinalizedPackageDraftProjector $finalizedDraftProjector = new FinalizedPackageDraftProjector,
         private EstimateBudgetScope $budgetScope = new EstimateBudgetScope,
+        private EstimateScopeMetadataProjector $scopeMetadata = new EstimateScopeMetadataProjector,
     ) {}
 
     public function createFromSession(
@@ -89,11 +91,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                         'draft_traceability' => $draft['traceability'] ?? [],
                         'quality_summary' => $draft['quality_summary'] ?? null,
                         'regional_context' => $regionalContext,
-                        'ai_scope' => [
-                            'completeness' => $draft['completeness'] ?? [],
-                            'budget_scope' => $budgetScope,
-                            'arbiter_review' => $draft['arbiter_review'] ?? [],
-                        ],
+                        'ai_scope' => $this->scopeMetadata->project($draft, $budgetScope),
                     ],
                     'total_direct_costs' => $total,
                     'total_amount' => $total,

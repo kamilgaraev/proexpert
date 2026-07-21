@@ -42,7 +42,7 @@ final class EstimateBudgetScope
             : [];
         $amount = $component['amount'] ?? null;
 
-        if (($component['status'] ?? null) !== 'calculated' || ! is_numeric($amount) || (float) $amount < 0) {
+        if (($component['status'] ?? null) !== 'calculated' || ! is_numeric($amount) || (float) $amount <= 0) {
             return ['status' => 'not_calculated', 'amount' => null];
         }
 

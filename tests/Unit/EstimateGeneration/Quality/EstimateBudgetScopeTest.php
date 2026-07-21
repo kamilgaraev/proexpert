@@ -41,4 +41,21 @@ final class EstimateBudgetScopeTest extends TestCase
         self::assertSame(1150.0, $scope['commercial_budget']['amount']);
         self::assertSame('commercial_budget', $scope['claim']);
     }
+
+    #[Test]
+    public function it_does_not_accept_zero_as_a_calculated_overhead_or_profit(): void
+    {
+        $scope = (new EstimateBudgetScope)->project([
+            'completeness' => ['status' => 'full_confirmed_scope'],
+            'budget_calculation' => [
+                'overhead' => ['status' => 'calculated', 'amount' => 0.0],
+                'profit' => ['status' => 'calculated', 'amount' => 0.0],
+            ],
+        ], 1000.0);
+
+        self::assertSame('not_calculated', $scope['overhead']['status']);
+        self::assertSame('not_calculated', $scope['profit']['status']);
+        self::assertSame('not_calculated', $scope['commercial_budget']['status']);
+        self::assertSame('confirmed_direct_costs', $scope['claim']);
+    }
 }

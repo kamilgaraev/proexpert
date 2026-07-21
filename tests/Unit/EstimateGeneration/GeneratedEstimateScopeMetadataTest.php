@@ -36,8 +36,39 @@ final class GeneratedEstimateScopeMetadataTest extends TestCase
         $session->id = 42;
         $session->exists = true;
         $draft = [
-            'completeness' => ['status' => 'confirmed_scope_only', 'scopes' => []],
-            'arbiter_review' => ['status' => 'shadow_review', 'verdict' => 'review_required'],
+            'completeness' => [
+                'status' => 'confirmed_scope_only',
+                'scopes' => [[
+                    'key' => 'heating',
+                    'title' => 'Secret description from a document',
+                    'state' => 'unresolved',
+                    'required_items' => ['heating.unit'],
+                    'covered_items' => [],
+                    'missing_items' => ['heating.unit'],
+                    'evidence_refs' => ['evidence:1'],
+                    'exclusion_reason' => null,
+                ]],
+            ],
+            'arbiter_review' => [
+                'mode' => 'shadow',
+                'status' => 'reviewed',
+                'outcome' => 'human_review',
+                'input_hash' => 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                'prompt_version' => 'completeness-arbiter:v1',
+                'schema_version' => 'completeness-arbiter:v1',
+                'model' => 'openai/gpt-5-mini',
+                'input_tokens' => 100,
+                'output_tokens' => 20,
+                'findings' => [[
+                    'scope_key' => 'heating',
+                    'package_keys' => ['heating'],
+                    'evidence_refs' => ['evidence:1'],
+                    'action' => 'review',
+                    'reason_code' => 'evidence_required',
+                    'raw_reason' => 'Secret document text',
+                ]],
+                'raw_prompt' => 'Secret description from a document',
+            ],
         ];
 
         $writer->createEstimateForTest($session, $draft, 1200.0);
@@ -45,11 +76,39 @@ final class GeneratedEstimateScopeMetadataTest extends TestCase
         self::assertSame(1200.0, $writer->attributes['total_direct_costs']);
         self::assertSame(1200.0, $writer->attributes['total_amount']);
         self::assertSame(1200.0, $writer->attributes['total_amount_with_vat']);
-        self::assertSame($draft['completeness'], $writer->attributes['metadata']['ai_scope']['completeness']);
+        self::assertSame([
+            'status' => 'confirmed_scope_only',
+            'scopes' => [[
+                'key' => 'heating',
+                'state' => 'unresolved',
+                'required_items' => ['heating.unit'],
+                'covered_items' => [],
+                'missing_items' => ['heating.unit'],
+                'evidence_refs' => ['evidence:1'],
+                'exclusion_reason' => null,
+            ]],
+        ], $writer->attributes['metadata']['ai_scope']['completeness']);
         self::assertSame(1200.0, $writer->attributes['metadata']['ai_scope']['budget_scope']['direct_costs']);
         self::assertSame('not_calculated', $writer->attributes['metadata']['ai_scope']['budget_scope']['overhead']['status']);
         self::assertNull($writer->attributes['metadata']['ai_scope']['budget_scope']['commercial_budget']['amount']);
-        self::assertSame($draft['arbiter_review'], $writer->attributes['metadata']['ai_scope']['arbiter_review']);
+        self::assertSame([
+            'mode' => 'shadow',
+            'status' => 'reviewed',
+            'outcome' => 'human_review',
+            'input_hash' => 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+            'prompt_version' => 'completeness-arbiter:v1',
+            'schema_version' => 'completeness-arbiter:v1',
+            'model' => 'openai/gpt-5-mini',
+            'input_tokens' => 100,
+            'output_tokens' => 20,
+            'findings' => [[
+                'scope_key' => 'heating',
+                'package_keys' => ['heating'],
+                'evidence_refs' => ['evidence:1'],
+                'action' => 'review',
+                'reason_code' => 'evidence_required',
+            ]],
+        ], $writer->attributes['metadata']['ai_scope']['arbiter_review']);
     }
 }
 
