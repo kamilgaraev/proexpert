@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Admin\LegalArchive;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentFile;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\LegalArchiveLockRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\StoreLegalArchiveFileRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\StoreLegalArchiveFileVersionRequest;
@@ -13,6 +14,7 @@ use App\Http\Requests\Api\V1\Admin\LegalArchive\StoreLegalArchiveVersionRequest;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentVersionResource;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveFileResource;
 use App\Http\Responses\AdminResponse;
+use App\Models\Contract;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Editor\LegalDocumentEditorSessionService;
 use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
@@ -167,6 +169,45 @@ final class LegalArchiveFileController extends LegalArchiveApiController
             return $this->fileUrl($request, $documentVersion, 'download');
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'file_download', ['version_id' => $documentVersion]);
+        }
+    }
+
+    public function contractFileUrl(Request $request, int $project, int $contract, string $legalDocument, string $documentVersion, string $purpose): JsonResponse
+    {
+        try {
+            $organizationId = $this->organizationId($request);
+            $linkedContract = Contract::query()->whereKey($contract)->where('project_id', $project)
+                ->where('organization_id', $organizationId)->first();
+            $document = LegalArchiveDocument::query()->whereKey((int) $legalDocument)
+                ->where('organization_id', $organizationId)->where('primary_project_id', $project)->first();
+            $found = $this->version($request, $documentVersion);
+
+            if ($linkedContract === null
+                || $document === null
+                || (int) $linkedContract->legal_archive_document_id !== (int) $legalDocument
+                || (int) $found->document_id !== (int) $legalDocument) {
+                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
+
+            $url = $this->downloads->temporaryUrlForContract($found, $this->actor($request), $linkedContract, $purpose);
+
+            return AdminResponse::success([
+                'url' => $url,
+                'expires_in_seconds' => max(60, (int) config('file-uploads.legal_archive.temporary_url_minutes', 5) * 60),
+                'version' => new LegalArchiveDocumentVersionResource($found),
+            ], trans_message('legal_archive.messages.file_url_created'))->withHeaders([
+                'Cache-Control' => 'private, no-store, max-age=0', 'Pragma' => 'no-cache',
+                'X-Content-Type-Options' => 'nosniff', 'Content-Security-Policy' => "default-src 'none'; frame-ancestors 'self'",
+                'Referrer-Policy' => 'no-referrer',
+            ]);
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'contract_file_url', [
+                'project_id' => $project,
+                'contract_id' => $contract,
+                'document_id' => $legalDocument,
+                'version_id' => $documentVersion,
+                'purpose' => $purpose,
+            ]);
         }
     }
 
