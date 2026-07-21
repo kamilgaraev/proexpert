@@ -23,6 +23,7 @@ class EstimateGenerationRegionalContextResolver
         if ($selectedVersionId !== null) {
             $version = EstimateRegionalPriceVersion::query()
                 ->with(['region', 'priceZone', 'period'])
+                ->where('status', RegionalPriceStatus::ACTIVE->value)
                 ->find($selectedVersionId);
 
             if ($version !== null) {
@@ -84,11 +85,7 @@ class EstimateGenerationRegionalContextResolver
         $query = EstimateRegionalPriceVersion::query()
             ->with(['region', 'priceZone', 'period'])
             ->where('region_id', $regionId)
-            ->whereIn('status', [
-                RegionalPriceStatus::ACTIVE->value,
-                RegionalPriceStatus::CHECKED->value,
-                RegionalPriceStatus::PARSED->value,
-            ]);
+            ->where('status', RegionalPriceStatus::ACTIVE->value);
 
         if ($priceZoneId !== null) {
             $query->where('price_zone_id', $priceZoneId);
@@ -103,7 +100,6 @@ class EstimateGenerationRegionalContextResolver
         }
 
         return $query
-            ->orderByRaw("CASE status WHEN 'active' THEN 0 WHEN 'checked' THEN 1 WHEN 'parsed' THEN 2 ELSE 3 END")
             ->latest('id')
             ->first();
     }
