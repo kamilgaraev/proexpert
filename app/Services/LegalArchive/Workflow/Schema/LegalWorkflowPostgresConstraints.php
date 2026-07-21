@@ -44,7 +44,7 @@ final class LegalWorkflowPostgresConstraints
     /** @param array{table: string, name: string, definition: string, type: string, deferrable: bool, deferred: bool} $expected */
     public static function matches(object $actual, array $expected): bool
     {
-        if ($expected['name'] === 'legal_workflow_template_steps_actor_check') {
+        if ($expected['type'] === 'c') {
             return $actual->table_name === $expected['table']
                 && $actual->contype === $expected['type']
                 && ! (bool) $actual->condeferrable
