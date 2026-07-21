@@ -163,6 +163,29 @@ final class LegalDocumentAccessPostgresIntegrationTest extends TestCase
         self::assertSame(1, (int) $constraint->validated);
     }
 
+    public function test_forward_access_ability_migration_accepts_owner_edit_grant(): void
+    {
+        $this->installAllInvariants();
+        $this->currentMigration('2026_07_21_000010_add_edit_legal_document_access_ability.php')->up();
+        $this->currentMigration('2026_07_21_000020_validate_legal_document_access_edit_ability.php')->up();
+        [$documentId] = $this->dossier(1);
+
+        $this->first->table('legal_document_access_grants')->insert([
+            'organization_id' => 1,
+            'document_id' => $documentId,
+            'subject_kind' => 'internal_user',
+            'subject_organization_id' => 1,
+            'subject_user_id' => 1,
+            'subject_role_slug' => null,
+            'abilities' => '["view","edit","manage"]',
+            'granted_by_user_id' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        self::assertSame(1, $this->first->table('legal_document_access_grants')->count());
+    }
+
     public function test_descriptor_drift_fails_closed(): void
     {
         $this->migration('000510_create_legal_document_access_indexes')->up();
@@ -563,6 +586,11 @@ final class LegalDocumentAccessPostgresIntegrationTest extends TestCase
     private function migration(string $suffix): object
     {
         return require dirname(__DIR__, 3)."/database/migrations/2026_07_19_{$suffix}.php";
+    }
+
+    private function currentMigration(string $filename): object
+    {
+        return require dirname(__DIR__, 3)."/database/migrations/{$filename}";
     }
 
     private function installBaseSchema(): void

@@ -89,6 +89,9 @@ final class LegalDocumentAccessSchemaTest extends TestCase
         self::assertStringContainsString('legal_document_access_abilities_predecessor_mismatch', $migration);
         self::assertStringContainsString('legal_document_access_ability_migrations_are_forward_only', $migration);
         self::assertStringContainsString('VALIDATE CONSTRAINT legal_document_access_abilities_check', $validation);
+        $postgres = file_get_contents(__DIR__.'/../../Integration/LegalArchive/LegalDocumentAccessPostgresIntegrationTest.php');
+        self::assertIsString($postgres);
+        self::assertStringContainsString('test_forward_access_ability_migration_accepts_owner_edit_grant', $postgres);
     }
 
     public function test_postgres_contract_covers_version_history_descriptor_drift_invalid_recovery_and_races(): void
