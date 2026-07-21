@@ -240,6 +240,17 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
     }
 
     #[Test]
+    public function deferred_price_input_validator_uses_the_same_v8_formula_as_the_finalizer(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_001500_route_deferred_price_input_validation_to_v8.php');
+
+        self::assertIsString($migration);
+        self::assertStringContainsString("public.eg_price_input_deferred_validate()", $migration);
+        self::assertStringContainsString("pricing_formula_version'='semantic_project_resource:v8'", $migration);
+        self::assertStringContainsString('public.eg_expected_package_item_price_closed_v8(item_id)', $migration);
+    }
+
+    #[Test]
     public function supplementary_project_material_is_database_priced_from_an_immutable_versioned_rule(): void
     {
         $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000100_finalize_supplementary_project_material_prices.php');
