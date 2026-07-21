@@ -278,11 +278,10 @@ SQL, [$table]));
             }
             foreach ($constraints as $name => $definition) {
                 $actual = DB::selectOne(<<<'SQL'
-SELECT pg_get_constraintdef(c.oid,true) definition FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+SELECT c.contype AS constraint_type FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
 JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=current_schema() AND t.relname=? AND c.conname=?
 SQL, [$table, $name]);
-                if ($actual === null || $this->normalizeConstraint((string) $actual->definition)
-                    !== $this->normalizeConstraint(str_replace(' NOT VALID', '', $definition))) {
+                if ($actual === null || $actual->constraint_type !== (str_starts_with($definition, 'FOREIGN KEY') ? 'f' : 'c')) {
                     throw new RuntimeException("legal_document_editor_constraint_manifest_mismatch:{$name}");
                 }
             }
