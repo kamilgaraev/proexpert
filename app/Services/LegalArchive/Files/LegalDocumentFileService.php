@@ -47,6 +47,9 @@ final class LegalDocumentFileService
         if ($attempt !== null) {
             return $this->addFencedVersion($file, $upload, $input, $attempt);
         }
+        if ($input->versionNumber !== null) {
+            $this->assertVersionNumberAvailable($file, $input->versionNumber);
+        }
 
         $organization = new Organization;
         $organization->forceFill(['id' => (int) $file->organization_id]);
@@ -82,6 +85,10 @@ final class LegalDocumentFileService
                     'version_persistence_failed',
                     $exception,
                 );
+            }
+
+            if ($exception instanceof LegalArchiveLockConflict || $exception instanceof LegalDocumentVersionNumberConflict) {
+                throw $exception;
             }
 
             throw new LegalDocumentVersionPersistenceFailed($exception);
@@ -149,7 +156,7 @@ final class LegalDocumentFileService
             );
         } catch (Throwable $exception) {
             $this->cleanupUploadedObject($file, $storedPath, 'version_fence_lost_or_persistence_failed', $exception);
-            if ($exception instanceof LegalDocumentVersionLeaseLost) {
+            if ($exception instanceof LegalDocumentVersionLeaseLost || $exception instanceof LegalDocumentVersionNumberConflict) {
                 throw $exception;
             }
 
@@ -256,6 +263,7 @@ final class LegalDocumentFileService
             $previousVersionNumber !== null => $previousVersionNumber.'.'.$generation,
             default => $this->nextVersionNumber($file),
         };
+        $this->assertVersionNumberAvailable($file, $versionNumber);
         $attempt->assertOwned($document);
         $id = $this->database()->table('legal_archive_document_version_operations')->insertGetId([
             'organization_id' => $file->organization_id,
@@ -311,6 +319,7 @@ final class LegalDocumentFileService
             if ($operation->document_version_id !== null) {
                 return $this->aggregateLock->lockVersion($this->database(), $document, (int) $operation->document_version_id);
             }
+            $this->assertVersionNumberAvailable($lockedFile, $versionNumber, $operationId);
             $metadataHash = $input->metadata === null ? null : hash('sha256', json_encode($input->metadata, JSON_THROW_ON_ERROR));
             $realPath = $upload->getRealPath();
             $attempt->assertOwned($document);
@@ -414,6 +423,7 @@ final class LegalDocumentFileService
         }
         $lockedFile = $this->aggregateLock->lockFile($this->database(), $lockedDocument, (int) $file->getKey());
         $versionNumber = $input->versionNumber ?? $this->nextVersionNumber($lockedFile);
+        $this->assertVersionNumberAvailable($lockedFile, $versionNumber);
         $hasCurrent = $lockedFile->current_version_id !== null
             && LegalArchiveDocumentVersion::query()->whereKey($lockedFile->current_version_id)->exists();
         $makeCurrent = $input->makeCurrent || ! $hasCurrent;
@@ -815,15 +825,73 @@ final class LegalDocumentFileService
 
     private function nextVersionNumber(LegalArchiveDocumentFile $file): string
     {
-        $maximum = $file->versions()
+        $versionNumbers = $file->versions()
             ->lockForUpdate()
-            ->pluck('version_number')
+            ->pluck('version_number');
+        $reservedVersionNumbers = $this->database()->table('legal_archive_document_version_operations')
+            ->where('document_file_id', $file->id)
+            ->lockForUpdate()
+            ->pluck('reserved_version_number');
+        $maximum = $versionNumbers
+            ->merge($reservedVersionNumbers)
             ->reduce(
-                static fn (int $carry, mixed $number): int => max($carry, ctype_digit((string) $number) ? (int) $number : 0),
-                0,
+                function (?string $carry, mixed $number): ?string {
+                    $value = (string) $number;
+                    if (! ctype_digit($value)) {
+                        return $carry;
+                    }
+                    $normalized = ltrim($value, '0');
+                    $normalized = $normalized === '' ? '0' : $normalized;
+
+                    if ($carry === null || strlen($normalized) > strlen($carry) || (strlen($normalized) === strlen($carry) && strcmp($normalized, $carry) > 0)) {
+                        return $normalized;
+                    }
+
+                    return $carry;
+                },
+                null,
             );
 
-        return (string) ($maximum + 1);
+        return $this->incrementNumericVersionNumber($maximum ?? '0');
+    }
+
+    private function incrementNumericVersionNumber(string $number): string
+    {
+        $digits = str_split($number);
+        $carry = 1;
+        for ($index = count($digits) - 1; $index >= 0 && $carry === 1; $index--) {
+            $digit = (int) $digits[$index] + 1;
+            $digits[$index] = (string) ($digit % 10);
+            $carry = intdiv($digit, 10);
+        }
+        if ($carry === 1) {
+            array_unshift($digits, '1');
+        }
+
+        return implode('', $digits);
+    }
+
+    private function assertVersionNumberAvailable(
+        LegalArchiveDocumentFile $file,
+        string $versionNumber,
+        ?int $ownOperationId = null,
+    ): void
+    {
+        if ($file->versions()->where('version_number', $versionNumber)->exists()) {
+            throw new LegalDocumentVersionNumberConflict;
+        }
+
+        $reservation = $this->database()->table('legal_archive_document_version_operations')
+            ->where('document_file_id', $file->id)
+            ->where('reserved_version_number', $versionNumber)
+            ->when(
+                $ownOperationId !== null,
+                static fn ($query) => $query->where('id', '!=', $ownOperationId),
+            )
+            ->exists();
+        if ($reservation) {
+            throw new LegalDocumentVersionNumberConflict;
+        }
     }
 
     private function assertCurrentVersionRotationAllowed(LegalArchiveDocument $document, ?string $editorSessionId = null): void

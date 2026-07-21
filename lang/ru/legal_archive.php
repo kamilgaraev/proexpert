@@ -104,6 +104,7 @@ return [
         'workflow_template_version_created' => 'Новая версия маршрута согласования выпущена.',
     ],
     'domain_errors' => [
+        'legal_document_version_number_taken' => 'Этот номер версии уже используется. Укажите следующий номер версии.',
         'archive_blocked_by_legal_hold' => 'Документ нельзя архивировать, пока действует запрет удаления.',
         'document_not_archived' => 'Документ не находится в архиве.',
         'activation_requirements_not_met' => 'Для ввода в действие документ должен быть согласован и подписан.',
