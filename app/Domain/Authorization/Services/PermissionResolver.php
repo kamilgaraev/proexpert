@@ -294,7 +294,8 @@ class PermissionResolver
     public function getSystemPermissions(UserRoleAssignment $assignment): array
     {
         $organizationId = $this->extractOrganizationId($assignment);
-        $cacheKey = 'system_perms_'.self::CACHE_SCHEMA_VERSION."_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
+        $roleRevision = Cache::get('authorization_roles_revision', 0);
+        $cacheKey = 'system_perms_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
 
         return Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
             $perms = [];
@@ -321,7 +322,8 @@ class PermissionResolver
     public function getModulePermissions(UserRoleAssignment $assignment): array
     {
         $organizationId = $this->extractOrganizationId($assignment);
-        $cacheKey = 'module_perms_'.self::CACHE_SCHEMA_VERSION."_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
+        $roleRevision = Cache::get('authorization_roles_revision', 0);
+        $cacheKey = 'module_perms_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
 
         return Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
             // 1. Пробуем из файлов
@@ -623,8 +625,9 @@ class PermissionResolver
     {
         $userVersion = Cache::get("user_permission_version_{$userId}", 0);
         $globalVersion = Cache::get('permission_global_version', 0);
+        $roleRevision = Cache::get('authorization_roles_revision', 0);
 
-        $baseKey = 'permission_'.self::CACHE_SCHEMA_VERSION."_{$userId}_{$roleSlug}_{$permission}_".md5(json_encode($context));
+        $baseKey = 'permission_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$userId}_{$roleSlug}_{$permission}_".md5(json_encode($context));
 
         return "{$baseKey}_v{$userVersion}_{$globalVersion}";
     }

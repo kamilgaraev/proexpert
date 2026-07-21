@@ -15,6 +15,7 @@ class RoleScanner
 {
     private const ROLES_PATH = 'config/RoleDefinitions';
     private const CACHE_KEY = 'authorization_roles:v2';
+    private const CACHE_REVISION_KEY = 'authorization_roles_revision';
     private const CACHE_TTL = 3600; // 1 час
 
     /**
@@ -130,6 +131,8 @@ class RoleScanner
     public function clearCache(): void
     {
         Cache::forget(self::CACHE_KEY);
+        Cache::add(self::CACHE_REVISION_KEY, 0);
+        Cache::increment(self::CACHE_REVISION_KEY);
     }
 
     /**
