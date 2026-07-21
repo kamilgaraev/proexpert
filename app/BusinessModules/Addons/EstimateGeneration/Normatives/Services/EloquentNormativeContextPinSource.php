@@ -267,12 +267,14 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
         $ids = $processableNormIds;
         $basePricePlaceholders = implode(', ', array_fill(0, count($basePriceDatasetIds), '?'));
         $normalizedCandidateUnitSql = "LOWER(REGEXP_REPLACE(COALESCE(candidate_prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(resources.unit, ''), '[[:space:].,-]+', '', 'g'))";
+        $normalizedPriceUnitSql = "LOWER(REGEXP_REPLACE(COALESCE(prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(resources.unit, ''), '[[:space:].,-]+', '', 'g'))";
         $this->progress($progress, 'resource_rows_started', ['norms_count' => $norms->count()]);
         $normalResourceRowsQuery = function (int $normId) use (
             $requested,
             $basePriceDatasetIds,
             $basePricePlaceholders,
             $normalizedCandidateUnitSql,
+            $normalizedPriceUnitSql,
             $fgisLaborPriceDatasetId,
             $fsbcBasePriceDatasetId,
         ) {
@@ -306,6 +308,19 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                 ->where('resources.resource_type', '<>', 'summary')
                 ->whereRaw("LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) <> 'abstractresource'")
                 ->where('prices.base_price', '>', 0)
+                ->where(function ($units) use ($normalizedPriceUnitSql): void {
+                    $units->whereRaw('prices.unit IS NOT DISTINCT FROM resources.unit')
+                        ->orWhereRaw($normalizedPriceUnitSql)
+                        ->orWhereExists(function ($conversion): void {
+                            $conversion->selectRaw('1')
+                                ->from('estimate_generation_unit_conversions as price_conversions')
+                                ->whereColumn('price_conversions.from_unit', 'resources.unit')
+                                ->whereColumn('price_conversions.to_unit', 'prices.unit')
+                                ->where('price_conversions.version', 1)
+                                ->where('price_conversions.is_active', true)
+                                ->where('price_conversions.factor', '>', 0);
+                        });
+                })
                 ->whereRaw("resources.resource_type IN ('labor', 'machine_labor') OR COALESCE(prices.source_price_kind, '') <> 'regional_worker_salary'")
                 ->whereRaw(
                     'prices.id = (SELECT candidate_prices.id FROM estimate_resource_prices AS candidate_prices
