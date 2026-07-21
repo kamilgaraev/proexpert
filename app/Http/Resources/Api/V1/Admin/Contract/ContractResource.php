@@ -188,6 +188,7 @@ class ContractResource extends JsonResource
             'work_type_category' => $workTypeCategory?->value ?? $workTypeCategoryValue,
             'work_type_category_label' => $workTypeCategory?->label(),
             'payment_terms' => $this->payment_terms,
+            'delivery_terms' => $this->delivery_terms,
             'base_amount' => $modelBaseAmount,
             'total_amount' => $totalAmountCalculated,
             'gp_percentage' => (float) ($this->gp_percentage ?? 0),

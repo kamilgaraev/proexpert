@@ -393,7 +393,7 @@ final class ContractLegalDossierService
         $subject = $this->firstFilledString($contract->subject);
         $buyer = $this->firstFilledString($contract->organization?->legal_name, $contract->organization?->name);
         $supplier = $this->firstFilledString($contract->supplier?->name, $contract->contractor?->name);
-        $deliveryTerms = $this->firstFilledString($contract->payment_terms);
+        $deliveryTerms = $this->firstFilledString($contract->delivery_terms);
         $price = $contract->total_amount ?? $contract->base_amount;
         if (
             $subject === null

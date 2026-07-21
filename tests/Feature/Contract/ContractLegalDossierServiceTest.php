@@ -28,6 +28,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Routing\Route;
+use Illuminate\Support\Facades\Facade;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 use Illuminate\Validation\ValidationException;
@@ -42,7 +43,30 @@ final class ContractLegalDossierServiceTest extends TestCase
         $this->database = new Capsule;
         $this->database->addConnection(['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
         $this->database->setAsGlobal();
-        $this->database->setEventDispatcher(new Dispatcher(new Container));
+        $container = new Container;
+        $container->instance('app', new class {
+            public function getLocale(): string
+            {
+                return 'ru';
+            }
+        });
+        $container->instance('config', new class {
+            public function get(string $key, mixed $default = null): mixed
+            {
+                return $default;
+            }
+        });
+        $container->instance('translator', new class {
+            public function get(string $key): string
+            {
+                return $key;
+            }
+        });
+        $container->instance('log', new class {
+            public function warning(string $message): void {}
+        });
+        Facade::setFacadeApplication($container);
+        $this->database->setEventDispatcher(new Dispatcher($container));
         $this->database->bootEloquent();
         Model::clearBootedModels();
 
@@ -58,6 +82,7 @@ final class ContractLegalDossierServiceTest extends TestCase
             $table->string('work_type_category')->nullable();
             $table->string('subject')->nullable();
             $table->string('payment_terms')->nullable();
+            $table->string('delivery_terms')->nullable();
             $table->text('notes')->nullable();
             $table->decimal('base_amount', 20, 4)->nullable();
             $table->decimal('total_amount', 20, 4)->nullable();
@@ -172,15 +197,26 @@ final class ContractLegalDossierServiceTest extends TestCase
 
     public function test_create_derives_supply_profile_for_supplier_contract(): void
     {
-        Organization::query()->create(['id' => 7, 'name' => 'Заказчик МОСТ']);
-        Supplier::query()->create(['id' => 55, 'organization_id' => 7, 'name' => 'Поставщик МОСТ']);
+        Organization::query()->forceCreate(['id' => 7, 'name' => 'Заказчик МОСТ']);
+        Supplier::query()->forceCreate(['id' => 55, 'organization_id' => 7, 'name' => 'Поставщик МОСТ']);
         $contract = $this->contract([
             'supplier_id' => 55,
             'subject' => 'Поставка материалов',
-            'payment_terms' => 'Поставка в течение 10 дней после оплаты',
+            'payment_terms' => 'Оплата после приемки',
             'base_amount' => 1000,
             'total_amount' => 1250,
         ]);
+        $contract->forceFill([
+            'delivery_terms' => 'Поставка в течение 10 дней после оплаты',
+        ])->save();
+        $storedContract = Contract::query()
+            ->with(['organization:id,name,legal_name', 'supplier:id,organization_id,name'])
+            ->findOrFail((int) $contract->id);
+        self::assertSame('Поставка материалов', $storedContract->subject);
+        self::assertSame('Оплата после приемки', $storedContract->payment_terms);
+        self::assertSame('Поставка в течение 10 дней после оплаты', $storedContract->delivery_terms);
+        self::assertSame('Заказчик МОСТ', $storedContract->organization?->name);
+        self::assertSame('Поставщик МОСТ', $storedContract->supplier?->name);
         $creator = Mockery::mock(ContractDossierDocumentCreator::class);
         $creator->shouldReceive('create')->once()->withArgs(function (int $organizationId, int $actorId, array $data): bool {
             self::assertSame(7, $organizationId);
@@ -219,16 +255,23 @@ final class ContractLegalDossierServiceTest extends TestCase
 
     public function test_create_derives_supply_profile_for_external_procurement_contract(): void
     {
-        Organization::query()->create(['id' => 7, 'name' => 'Заказчик МОСТ']);
-        Contractor::query()->create(['id' => 56, 'organization_id' => 7, 'name' => 'Внешний поставщик МОСТ']);
+        Organization::query()->forceCreate(['id' => 7, 'name' => 'Заказчик МОСТ']);
+        Contractor::withoutEvents(static fn (): Contractor => Contractor::query()->forceCreate([
+            'id' => 56,
+            'organization_id' => 7,
+            'name' => 'Внешний поставщик МОСТ',
+        ]));
         $contract = $this->contract([
             'contractor_id' => 56,
             'contract_category' => 'procurement',
             'subject' => 'Поставка материалов',
-            'payment_terms' => 'Поставка в течение 10 дней после оплаты',
+            'payment_terms' => 'Оплата после приемки',
             'base_amount' => 1000,
             'total_amount' => 1250,
         ]);
+        $contract->forceFill([
+            'delivery_terms' => 'Поставка в течение 10 дней после оплаты',
+        ])->save();
         $creator = Mockery::mock(ContractDossierDocumentCreator::class);
         $creator->shouldReceive('create')->once()->withArgs(function (int $organizationId, int $actorId, array $data): bool {
             self::assertSame(7, $organizationId);

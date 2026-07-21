@@ -42,6 +42,7 @@ class Contract extends Model
         'subject',
         'work_type_category',
         'payment_terms',
+        'delivery_terms',
         'base_amount',
         'total_amount',
         'gp_percentage',

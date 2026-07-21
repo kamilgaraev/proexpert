@@ -41,7 +41,8 @@ class ContractDTO
         public readonly bool $is_self_execution = false,
         public readonly ?int $supplier_id = null,
         public readonly ?string $contract_category = null,
-        public readonly ?ContractSideTypeEnum $contract_side_type = null
+        public readonly ?ContractSideTypeEnum $contract_side_type = null,
+        public readonly ?string $delivery_terms = null
     ) {
     }
 
@@ -56,6 +57,7 @@ class ContractDTO
             'subject' => $this->subject,
             'work_type_category' => $this->work_type_category?->value,
             'payment_terms' => $this->payment_terms,
+            'delivery_terms' => $this->delivery_terms,
             'base_amount' => $this->base_amount,
             'total_amount' => $this->total_amount,
             'gp_percentage' => $this->gp_percentage,
