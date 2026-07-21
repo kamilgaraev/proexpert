@@ -109,10 +109,11 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
 
     public function test_legal_archive_permissions_are_assigned_to_expected_admin_roles(): void
     {
-        $root = dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'config'.DIRECTORY_SEPARATOR.'RoleDefinitions'.DIRECTORY_SEPARATOR.'admin';
-        $webAdmin = json_decode((string) file_get_contents($root.DIRECTORY_SEPARATOR.'web_admin.json'), true, flags: JSON_THROW_ON_ERROR);
-        $financeAdmin = json_decode((string) file_get_contents($root.DIRECTORY_SEPARATOR.'finance_admin.json'), true, flags: JSON_THROW_ON_ERROR);
-        $viewer = json_decode((string) file_get_contents($root.DIRECTORY_SEPARATOR.'admin_viewer.json'), true, flags: JSON_THROW_ON_ERROR);
+        $root = dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'config'.DIRECTORY_SEPARATOR.'RoleDefinitions';
+        $webAdmin = json_decode((string) file_get_contents($root.DIRECTORY_SEPARATOR.'admin'.DIRECTORY_SEPARATOR.'web_admin.json'), true, flags: JSON_THROW_ON_ERROR);
+        $financeAdmin = json_decode((string) file_get_contents($root.DIRECTORY_SEPARATOR.'admin'.DIRECTORY_SEPARATOR.'finance_admin.json'), true, flags: JSON_THROW_ON_ERROR);
+        $viewer = json_decode((string) file_get_contents($root.DIRECTORY_SEPARATOR.'admin'.DIRECTORY_SEPARATOR.'admin_viewer.json'), true, flags: JSON_THROW_ON_ERROR);
+        $organizationAdmin = json_decode((string) file_get_contents($root.DIRECTORY_SEPARATOR.'lk'.DIRECTORY_SEPARATOR.'organization_admin.json'), true, flags: JSON_THROW_ON_ERROR);
 
         foreach (['legal_archive.files.download', 'legal_archive.external_access.manage', 'legal_archive.signatures.request', 'legal_archive.signatures.view', 'legal_archive.signatures.sign', 'legal_archive.signatures.verify'] as $permission) {
             self::assertContains($permission, $webAdmin['system_permissions']);
@@ -144,6 +145,11 @@ final class LegalArchivePermissionTranslatorTest extends TestCase
         self::assertContains('legal_archive.files.view', $viewer['module_permissions']['legal-archive']);
         self::assertContains('legal_archive.signatures.view', $viewer['system_permissions']);
         self::assertContains('legal_archive.signatures.view', $viewer['module_permissions']['legal-archive']);
+
+        foreach ($webAdmin['module_permissions']['legal-archive'] as $permission) {
+            self::assertContains($permission, $organizationAdmin['system_permissions']);
+            self::assertContains($permission, $organizationAdmin['module_permissions']['legal-archive']);
+        }
     }
 
     private function valuesOnly(array $value): array
