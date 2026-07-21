@@ -57,6 +57,10 @@ return [
             // bucket устанавливается динамически в OrgBucketService
             'endpoint' => env('AWS_ENDPOINT', 'https://storage.yandexcloud.net'),
             'use_path_style_endpoint' => false, // для Yandex Object Storage нужен virtual-host style
+            'http' => [
+                'connect_timeout' => (float) env('AWS_CONNECT_TIMEOUT', 5),
+                'timeout' => (float) env('AWS_REQUEST_TIMEOUT', 60),
+            ],
             'throw'   => false,
             'report'  => false,
         ],
