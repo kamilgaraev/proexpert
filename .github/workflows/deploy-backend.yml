@@ -278,18 +278,6 @@ jobs:
             assert_legacy_runtime_stopped
 
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan migrate:safe --force
-            for attempt in $(seq 1 360); do
-              backfill_result="$(MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan estimate-generation:normative-retrieval-backfill --batch=5000)"
-              printf '%s\n' "${backfill_result}"
-              if grep -q '"complete":true' <<< "${backfill_result}"; then
-                break
-              fi
-              if [ "${attempt}" -eq 360 ]; then
-                echo 'Normative retrieval backfill did not complete within the deployment window'
-                exit 1
-              fi
-            done
-            MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan estimate-generation:normative-retrieval-rollout deploy
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan auth:diagnose --clear-cache
             assert_legacy_runtime_stopped
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true api php artisan immutable-audit:confirm-drain
