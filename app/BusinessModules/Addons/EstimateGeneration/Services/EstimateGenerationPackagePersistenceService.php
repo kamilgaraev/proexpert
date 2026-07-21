@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\Log;
 
 class EstimateGenerationPackagePersistenceService
 {
-    private const NORMATIVE_PRICING_FORMULA_VERSION = 'project_resource:v3';
+    private const NORMATIVE_PRICING_FORMULA_VERSION = 'semantic_project_resource:v7';
 
     private const PROJECT_MATERIAL_PRICING_FORMULA_VERSION = 'supplementary_project_material:v4';
 
