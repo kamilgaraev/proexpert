@@ -24,7 +24,7 @@ return new class extends Migration
 
                 continue;
             }
-            DB::statement("ALTER TABLE {$table} ADD CONSTRAINT {$name} {$definition}");
+            DB::unprepared("ALTER TABLE {$table} ADD CONSTRAINT {$name} {$definition}");
         }
         $schema = (string) DB::selectOne('SELECT current_schema() AS name')->name;
         if (preg_match('/^[a-z_][a-z0-9_]*$/D', $schema) !== 1) {
@@ -116,7 +116,7 @@ SQL;
             throw new RuntimeException('legal_document_access_abilities_predecessor_mismatch');
         }
         DB::statement('ALTER TABLE legal_document_access_grants DROP CONSTRAINT legal_document_access_abilities_check');
-        DB::statement("ALTER TABLE legal_document_access_grants ADD CONSTRAINT legal_document_access_abilities_check {$new} NOT VALID");
+        DB::unprepared("ALTER TABLE legal_document_access_grants ADD CONSTRAINT legal_document_access_abilities_check {$new} NOT VALID");
     }
 
     private function extendVersionGuard(): void

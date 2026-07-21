@@ -23,7 +23,7 @@ FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON 
 WHERE n.nspname=current_schema() AND t.relname=? AND c.conname=?
 SQL, [$table, $name]);
                 if ($actual === null) {
-                    DB::statement("ALTER TABLE {$table} ADD CONSTRAINT {$name} {$definition}");
+                    DB::unprepared("ALTER TABLE {$table} ADD CONSTRAINT {$name} {$definition}");
                 } elseif ($this->normalizeConstraint((string) $actual->definition)
                     !== $this->normalizeConstraint(str_replace(' NOT VALID', '', $definition))) {
                     throw new RuntimeException("legal_document_editor_constraint_descriptor_mismatch:{$name}");
