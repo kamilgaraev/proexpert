@@ -100,6 +100,7 @@ class FgiscsBuildingResourcePriceUpdateService
                     'exception_class' => $exception::class,
                     'exception_code' => $exception->getCode(),
                     'database_column' => $this->databaseColumn($exception),
+                    'database_reason' => $this->databaseReason($exception),
                 ]);
 
                 $results[] = [
@@ -116,11 +117,25 @@ class FgiscsBuildingResourcePriceUpdateService
 
     private function databaseColumn(Throwable $exception): ?string
     {
-        $message = $exception->getPrevious()?->getMessage() ?? '';
+        $message = $this->databaseMessage($exception);
 
         return preg_match('/column "([^"]+)"/', $message, $matches) === 1
             ? $matches[1]
             : null;
+    }
+
+    private function databaseReason(Throwable $exception): ?string
+    {
+        $message = $this->databaseMessage($exception);
+
+        return preg_match('/ERROR:\s*([^\r\n]+)/', $message, $matches) === 1
+            ? mb_substr($matches[1], 0, 300)
+            : null;
+    }
+
+    private function databaseMessage(Throwable $exception): string
+    {
+        return $exception->getPrevious()?->getMessage() ?? $exception->getMessage();
     }
 
     /**
