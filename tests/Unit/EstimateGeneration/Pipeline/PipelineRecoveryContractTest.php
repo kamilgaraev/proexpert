@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationPipelinesJob;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -53,5 +54,14 @@ final class PipelineRecoveryContractTest extends TestCase
         self::assertIsString($provider);
         self::assertStringContainsString('new RecoverEstimateGenerationPipelinesJob', $provider);
         self::assertStringContainsString('->everyMinute()', $provider);
+    }
+
+    #[Test]
+    public function pipeline_recovery_uses_the_dedicated_recovery_worker(): void
+    {
+        $job = new RecoverEstimateGenerationPipelinesJob;
+
+        self::assertSame('redis_estimate_generation', $job->connection);
+        self::assertSame('estimate-generation-recovery', $job->queue);
     }
 }
