@@ -176,7 +176,7 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             $poolCandidatesCount += $query->count();
             $selectedForIntent = $this->ranker->select($query->all(), [$intent]);
             if ($selectedForIntent !== null) {
-                $norms = $norms->concat($selectedForIntent);
+                $norms = $norms->concat(array_slice($selectedForIntent, 0, 1));
             } else {
                 $this->telemetryPrePriceCandidates(
                     $requested,
