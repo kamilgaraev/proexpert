@@ -22,7 +22,8 @@ final readonly class ResidentialAbstractResourcePriceSelector
 
         $eligible = array_values(array_filter($candidates, static function (object $candidate) use ($conversion, $baseDatasetIds): bool {
             $name = mb_strtolower(trim((string) ($candidate->price_resource_name ?? '')));
-            $isRegional = (int) ($candidate->regional_price_version_id ?? 0) > 0;
+            $isRegional = (int) ($candidate->regional_price_version_id ?? 0) > 0
+                && (string) ($candidate->source_price_kind ?? '') !== 'regional_worker_salary';
             $isApprovedBase = in_array((int) ($candidate->dataset_version_id ?? 0), $baseDatasetIds, true)
                 && ! $isRegional
                 && in_array((string) ($candidate->price_dataset_source_type ?? ''), ['fsbc', 'fsnb_2022'], true);

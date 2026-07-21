@@ -345,7 +345,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
                 'prices.id as price_id', 'prices.dataset_version_id', 'prices.construction_resource_id as price_construction_resource_id',
                 'prices.resource_code as price_resource_code', 'prices.resource_name as price_resource_name',
-                'prices.price_type', 'prices.unit as price_unit', 'prices.base_price as unit_price',
+                'prices.price_type', 'prices.source_price_kind', 'prices.unit as price_unit', 'prices.base_price as unit_price',
                 'prices.base_price', 'prices.regional_price_version_id',
                 'price_regional_versions.version_key as regional_price_version_key',
                 'price_datasets.source_type as price_dataset_source_type',

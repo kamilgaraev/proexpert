@@ -101,6 +101,30 @@ final class ResidentialAbstractResourcePriceSelectorTest extends TestCase
     }
 
     #[Test]
+    public function rejects_regional_worker_salary_as_a_residential_material_candidate(): void
+    {
+        $candidate = (object) [
+            'price_resource_code' => '12.2.05.02-0006',
+            'price_resource_name' => 'РџР»РёС‚С‹ С‚РµРїР»РѕРёР·РѕР»СЏС†РёРѕРЅРЅС‹Рµ РјРёРЅРµСЂР°Р»РѕРІР°С‚РЅС‹Рµ',
+            'price_unit' => 'Рј3',
+            'base_price' => 7078,
+            'unit_price' => 7078,
+            'price_id' => 17,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => 150,
+            'price_dataset_source_type' => 'fgis_labor_prices',
+            'source_price_kind' => 'regional_worker_salary',
+        ];
+
+        self::assertNull((new ResidentialAbstractResourcePriceSelector)->select(
+            '12-01-013-07',
+            '12.2.05.02',
+            [$candidate],
+            [4],
+        ));
+    }
+
+    #[Test]
     public function conversion_requires_the_exact_norm_and_semantically_matching_resource_name(): void
     {
         $candidate = (object) [
