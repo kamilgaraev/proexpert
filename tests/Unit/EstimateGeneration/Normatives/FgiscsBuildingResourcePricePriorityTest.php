@@ -52,6 +52,8 @@ class FgiscsBuildingResourcePricePriorityTest extends TestCase
         self::assertStringContainsString('private function hasImportedBuildingResources(', $source);
         self::assertStringContainsString('public function syncAllRegions(', $source);
         self::assertStringContainsString("'fgiscs_building_resource_region_update_failed'", $source);
+        self::assertStringContainsString("Log::error('[EstimateGeneration] FGIS CS building resource regional sync failed.'", $source);
+        self::assertStringContainsString("'exception_class' => \$exception::class", $source);
         self::assertStringContainsString("\$this->lifecycleService->finalize(\n                    \$regionalVersion", $source);
         self::assertStringContainsString('$regionalVersion->refresh();', $source);
         self::assertStringContainsString("'project_material_conjuncture_checked' => true", $source);
