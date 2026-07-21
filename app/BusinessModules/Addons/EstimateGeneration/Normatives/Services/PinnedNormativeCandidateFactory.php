@@ -41,7 +41,8 @@ final readonly class PinnedNormativeCandidateFactory
         $selected = $this->ranker->select($rankable, [[
             'search_text' => (string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''),
             'unit' => (string) ($workItem['unit'] ?? ''),
-            'code' => is_string($workItem['normative_rate_code'] ?? null) ? $workItem['normative_rate_code'] : null,
+            'code' => $canonicalIntent?->requestedNormativeCode
+                ?? (is_string($workItem['normative_rate_code'] ?? null) ? $workItem['normative_rate_code'] : null),
             'action' => $canonicalIntent?->technology ?? (is_string($workItem['work_intent']['action'] ?? null)
                 ? $workItem['work_intent']['action']
                 : null),

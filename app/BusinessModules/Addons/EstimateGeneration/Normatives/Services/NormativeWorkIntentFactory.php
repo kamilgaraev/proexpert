@@ -56,6 +56,11 @@ final class NormativeWorkIntentFactory
         if (preg_match('/^(\d{2})-\d{2}-\d{3}-\d{2}$/D', $rateCode, $matches) === 1) {
             $classified['preferred_section_prefixes'] = [$matches[1]];
         }
+        $requestedNormativeCode = $rateCode !== ''
+            ? $rateCode
+            : (is_string($item['normative_rate_code'] ?? null) && $item['normative_rate_code'] !== ''
+                ? $item['normative_rate_code']
+                : null);
 
         $preferredSections = array_values(array_filter(
             $classified['preferred_section_prefixes'] ?? [],
@@ -72,9 +77,7 @@ final class NormativeWorkIntentFactory
             $objectType,
             $datasetVersion, 'parsed', $this->region($context), new DateTimeImmutable((string) $context['applicability_date']),
             $evidence, $preferredSections,
-            is_string($item['normative_rate_code'] ?? null) && $item['normative_rate_code'] !== ''
-                ? $item['normative_rate_code']
-                : null,
+            $requestedNormativeCode,
             (string) ($intent->system ?? ''),
             (string) ($classified['object'] ?? ''),
             $specializationEvidence,

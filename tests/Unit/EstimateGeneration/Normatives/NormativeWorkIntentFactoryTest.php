@@ -188,6 +188,7 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         ], 'fsnb-2026.1');
 
         self::assertSame('07-01-021-01', $intent->specializationScenario['normative_rate_code'] ?? null);
+        self::assertSame('07-01-021-01', $intent->requestedNormativeCode);
         self::assertCount(1, $intent->specializationEvidence);
     }
 
