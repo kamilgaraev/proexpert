@@ -93,6 +93,10 @@ class AdminResponse
 
     protected static function transformData(mixed $data): mixed
     {
+        if (is_array($data)) {
+            return array_map(static fn (mixed $value): mixed => self::transformData($value), $data);
+        }
+
         if ($data instanceof ResourceCollection) {
             $resolved = $data->response()->getData(true);
 
@@ -104,18 +108,18 @@ class AdminResponse
                     || array_key_exists('summary', $resolved)
                 )
             ) {
-                return $resolved;
+                return self::transformData($resolved);
             }
 
-            return $resolved['data'] ?? $resolved;
+            return self::transformData($resolved['data'] ?? $resolved);
         }
 
         if ($data instanceof JsonResource) {
-            return $data->resolve();
+            return self::transformData($data->resolve());
         }
 
         if ($data instanceof Arrayable) {
-            return $data->toArray();
+            return self::transformData($data->toArray());
         }
 
         return $data;
