@@ -56,9 +56,6 @@ class AuthorizationDiagnosticsCommand extends Command
         
         $this->roleScanner->clearCache();
         
-        // Очищаем также кеш разрешений в array driver
-        \Cache::flush();
-        
         $this->info('✅ Кеш ролей очищен');
     }
 
@@ -206,4 +203,3 @@ class AuthorizationDiagnosticsCommand extends Command
         }
     }
 }
-

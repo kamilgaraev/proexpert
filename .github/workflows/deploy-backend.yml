@@ -278,6 +278,7 @@ jobs:
             assert_legacy_runtime_stopped
 
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan migrate:safe --force
+            MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan auth:diagnose --clear-cache
             assert_legacy_runtime_stopped
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED=true api php artisan immutable-audit:confirm-drain
             assert_legacy_runtime_stopped
