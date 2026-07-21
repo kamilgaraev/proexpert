@@ -428,6 +428,7 @@ class EstimateGenerationPackagePersistenceService
             ]);
         }
         $this->reportPricingInputCardinalityMismatch($item, $pricing['inputs'], $workItem);
+        $this->reportPricingInputContractMismatch($item);
         DB::select('SELECT public.eg_finalize_package_item_price(?)', [$item->id]);
     }
 
@@ -465,6 +466,71 @@ class EstimateGenerationPackagePersistenceService
             'missing_norm_resource_ids' => array_values(array_diff($expectedIds, $actualIds)),
             'unexpected_norm_resource_ids' => array_values(array_diff($actualIds, $expectedIds)),
         ]);
+    }
+
+    private function reportPricingInputContractMismatch(EstimateGenerationPackageItem $item): void
+    {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
+        $mismatches = DB::table('estimate_generation_package_item_price_inputs as inputs')
+            ->join('estimate_norm_resources as resources', 'resources.id', '=', 'inputs.norm_resource_id')
+            ->join('estimate_resource_prices as prices', 'prices.id', '=', 'inputs.resource_price_id')
+            ->leftJoin('estimate_generation_unit_conversions as conversions', 'conversions.id', '=', 'inputs.unit_conversion_id')
+            ->leftJoin('estimate_regional_price_versions as versions', 'versions.id', '=', 'prices.regional_price_version_id')
+            ->where('inputs.package_item_id', $item->id)
+            ->where(function ($query) use ($item): void {
+                $query->where('resources.estimate_norm_id', '<>', $item->estimate_norm_id)
+                    ->orWhereRaw(
+                        "CASE WHEN LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) = 'abstractresource' ".
+                        "THEN resources.resource_code !~ '^[0-9]{2}\\.[0-9]\\.[0-9]{2}\\.[0-9]{2}$' ".
+                        "OR prices.resource_code !~ ('^'||replace(resources.resource_code, '.', '\\\\.')||'-[0-9]{4}$') ".
+                        'ELSE prices.resource_code IS DISTINCT FROM resources.resource_code END',
+                    )
+                    ->orWhere('prices.region_id', '<>', $item->region_id)
+                    ->orWhere('prices.price_zone_id', '<>', $item->price_zone_id)
+                    ->orWhere('prices.period_id', '<>', $item->period_id)
+                    ->orWhere('prices.regional_price_version_id', '<>', $item->regional_price_version_id)
+                    ->orWhere('versions.status', '<>', 'active')
+                    ->orWhereNull('prices.base_price')
+                    ->orWhere('prices.base_price', '<=', 0)
+                    ->orWhere(function ($unit) {
+                        $unit->whereColumn('prices.unit', '<>', 'resources.unit')
+                            ->where(function ($conversion) {
+                                $conversion->whereNull('conversions.id')
+                                    ->orWhereColumn('conversions.from_unit', '<>', 'resources.unit')
+                                    ->orWhereColumn('conversions.to_unit', '<>', 'prices.unit')
+                                    ->orWhere('conversions.factor', '<=', 0);
+                            });
+                    })
+                    ->orWhere(function ($unit) {
+                        $unit->whereColumn('prices.unit', '=', 'resources.unit')
+                            ->whereNotNull('conversions.id');
+                    });
+            })
+            ->orderBy('inputs.ordinal')
+            ->get([
+                'inputs.ordinal', 'resources.id as norm_resource_id', 'resources.resource_code as norm_resource_code',
+                'resources.unit as norm_unit', 'prices.id as price_id', 'prices.resource_code as price_resource_code',
+                'prices.unit as price_unit', 'prices.region_id', 'prices.price_zone_id', 'prices.period_id',
+                'prices.regional_price_version_id', 'prices.base_price', 'versions.status as version_status',
+                'conversions.id as conversion_id', 'conversions.from_unit', 'conversions.to_unit', 'conversions.factor',
+            ]);
+
+        if ($mismatches->isNotEmpty()) {
+            Log::warning('estimate_generation.pricing_input_contract_mismatch', [
+                'package_item_id' => $item->id,
+                'estimate_norm_id' => $item->estimate_norm_id,
+                'context' => [
+                    'region_id' => $item->region_id,
+                    'price_zone_id' => $item->price_zone_id,
+                    'period_id' => $item->period_id,
+                    'regional_price_version_id' => $item->regional_price_version_id,
+                ],
+                'inputs' => $mismatches,
+            ]);
+        }
     }
 
     /** @param array{item: array<string, mixed>, inputs: list<array<string, int|null>>, project_material_inputs: list<array<string, mixed>>, formula_version: string} $pricing */
