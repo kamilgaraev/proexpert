@@ -281,7 +281,13 @@ final class LegalArchiveFileController extends LegalArchiveApiController
                 throw new DomainException('legal_document_editor_mode_invalid');
             }
 
-            return AdminResponse::success($this->editor->open($found, $this->actor($request), $mode, $request->boolean('upgrade_mode')), trans_message('legal_archive.messages.editor_opened'));
+            return AdminResponse::success($this->editor->open(
+                $found,
+                $this->actor($request),
+                $mode,
+                $request->boolean('upgrade_mode'),
+                $request->boolean('restart'),
+            ), trans_message('legal_archive.messages.editor_opened'));
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'editor_session', ['version_id' => $documentVersion]);
         }
@@ -305,7 +311,7 @@ final class LegalArchiveFileController extends LegalArchiveApiController
             }
 
             return AdminResponse::success(
-                $this->editor->open($found, $this->actor($request), 'edit'),
+                $this->editor->open($found, $this->actor($request), 'edit', false, $request->boolean('restart')),
                 trans_message('legal_archive.messages.editor_opened'),
             );
         } catch (Throwable $error) {

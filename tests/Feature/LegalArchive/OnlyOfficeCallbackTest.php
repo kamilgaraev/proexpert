@@ -98,6 +98,20 @@ final class OnlyOfficeCallbackTest extends TestCase
         self::assertStringContainsString('upgrade_mode', $controller);
     }
 
+    public function test_editor_restart_creates_a_separate_generation_without_interrupting_a_save(): void
+    {
+        $service = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/LegalDocumentEditorSessionService.php');
+        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveFileController.php');
+
+        self::assertIsString($service);
+        self::assertIsString($controller);
+        self::assertStringContainsString('bool $restart = false', $service);
+        self::assertStringContainsString('legal_document_editor_restart_pending_save', $service);
+        self::assertStringContainsString("'failure_code' => 'restarted'", $service);
+        self::assertStringContainsString('} elseif (! $upgradeMode || $mode !== \'edit\' || (string) $existing->mode !== \'review\'', $service);
+        self::assertStringContainsString('$request->boolean(\'restart\')', $controller);
+    }
+
     public function test_completed_replay_precedes_reauthorization_and_active_completion_reauthorizes_again(): void
     {
         $service = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/LegalDocumentEditorSessionService.php');

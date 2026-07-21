@@ -119,6 +119,7 @@ return [
         'legal_workflow_active_instance_exists' => 'Согласование документа уже выполняется.',
         'legal_workflow_new_version_required' => 'Для повторного согласования создайте новую версию документа.',
         'legal_workflow_step_not_active' => 'Этот шаг согласования уже завершён или недоступен.',
+        'legal_document_editor_restart_pending_save' => 'Редактор сохраняет изменения. Дождитесь завершения сохранения и повторите попытку.',
         'legal_signature_version_not_found' => 'Версия для подписания не найдена.',
         'legal_signature_version_changed' => 'Версия документа изменилась. Создайте новый запрос на подписание.',
         'legal_signature_callback_invalid' => 'Результат подписания не прошёл проверку.',
