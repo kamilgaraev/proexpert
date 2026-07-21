@@ -412,7 +412,17 @@ final class NormativeWorkItemPlannerService
     private function withTrustedSpecializationEvidence(array $definition, array $evidence): array
     {
         $metadata = is_array($definition['metadata'] ?? null) ? $definition['metadata'] : [];
-        unset($metadata['specialization_scenario'], $metadata['material_assumption'], $metadata['material_scenario_work_key']);
+        $workItemKey = $this->materialScenarioWorkItemKey($definition);
+        $catalog = $this->materialScenarioCatalog ?? new ResidentialMaterialScenarioCatalog;
+        $scenario = $catalog->issue($workItemKey, 'residential');
+        $keepScenario = is_array($scenario) && $this->trustedEvidenceMatchesScenario($evidence, $scenario);
+        unset($metadata['material_assumption']);
+        if ($keepScenario) {
+            $metadata['material_scenario_work_key'] = $workItemKey;
+            $metadata['specialization_scenario'] = $scenario;
+        } else {
+            unset($metadata['specialization_scenario'], $metadata['material_scenario_work_key']);
+        }
 
         $searches = $this->uniqueEvidenceValues($evidence, 'normative_search_text');
         $codes = $this->uniqueEvidenceValues($evidence, 'normative_rate_code');
@@ -428,6 +438,36 @@ final class NormativeWorkItemPlannerService
         ];
 
         return $definition;
+    }
+
+    private function trustedEvidenceMatchesScenario(array $evidence, array $scenario): bool
+    {
+        $codes = $this->uniqueEvidenceValues($evidence, 'normative_rate_code');
+        $scenarioCode = trim((string) ($scenario['normative_rate_code'] ?? ''));
+        if ($codes !== []) {
+            return count($codes) === 1 && $scenarioCode !== '' && $codes[0] === $scenarioCode;
+        }
+
+        $markers = array_values(array_filter(
+            $scenario['material_markers'] ?? [],
+            static fn (mixed $marker): bool => is_string($marker) && trim($marker) !== '',
+        ));
+        if ($markers === []) {
+            return false;
+        }
+
+        $text = mb_strtolower(implode(' ', array_map(
+            static fn (array $item): string => (string) ($item['text'] ?? ''),
+            $evidence,
+        )));
+
+        foreach ($markers as $marker) {
+            if (str_contains($text, mb_strtolower($marker))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

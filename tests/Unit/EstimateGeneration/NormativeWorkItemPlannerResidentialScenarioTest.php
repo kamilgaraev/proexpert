@@ -458,6 +458,37 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
     }
 
     #[Test]
+    public function trusted_lintel_evidence_keeps_the_matching_signed_scenario(): void
+    {
+        $analysis = [
+            'object' => ['object_type' => 'house'],
+            'document_context' => [
+                'canonical_building_quantities' => [
+                    $this->evidencedQuantity('walls.lintels', 'pcs', '12.000000')->toArray(),
+                ],
+                'specialization_evidence' => [
+                    'walls.lintels' => [[
+                        'text' => 'Железобетонные перемычки по проекту',
+                        'source' => 'document',
+                        'evidence_refs' => ['document:lintels'],
+                    ]],
+                ],
+            ],
+        ];
+        $estimate = $this->estimate('walls', 'walls');
+
+        $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+        $item = array_values(array_filter(
+            $items,
+            static fn (array $candidate): bool => ($candidate['quantity_formula'] ?? null) === 'walls.lintels',
+        ))[0] ?? null;
+
+        self::assertIsArray($item);
+        self::assertSame('07-01-021-01', $item['specialization_scenario']['normative_rate_code'] ?? null);
+        self::assertSame('Железобетонные перемычки по проекту', $item['specialization_evidence'][0]['text'] ?? null);
+    }
+
+    #[Test]
     public function normalized_building_model_wall_material_suppresses_preliminary_wall_scenario(): void
     {
         $model = new NormalizedBuildingModelData(
