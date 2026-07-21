@@ -421,7 +421,7 @@ SQL, [$match[1]]);
             'legal_signature_request_binding_guard' => ['legal_document_signatures', 'legal_signature_request_binding_guard', 7],
             'legal_signature_provider_operation_guard' => ['legal_signature_provider_operations', 'legal_signature_provider_operation_guard', 27],
             'legal_signature_artifact_guard' => ['legal_signature_artifacts', 'legal_signature_artifact_guard', 27],
-            'legal_archive_versions_immutable_guard' => ['legal_archive_document_versions', 'legal_archive_versions_immutable_guard', 'BEFORE UPDATE OR DELETE'],
+            'legal_archive_versions_immutable_guard' => ['legal_archive_document_versions', 'legal_archive_versions_immutable_guard', 27],
         ];
         foreach ($expected as $triggerName => [$table, $function, $event]) {
             $descriptor = DB::selectOne(<<<'SQL'
