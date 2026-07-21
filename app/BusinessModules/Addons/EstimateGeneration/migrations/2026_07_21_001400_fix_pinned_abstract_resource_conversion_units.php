@@ -20,7 +20,7 @@ return new class extends Migration
 
         $updated = preg_replace(
             '/OR nr\.unit IS DISTINCT FROM arc\.from_unit\s+OR rp\.unit IS DISTINCT FROM arc\.to_unit/i',
-            'OR nr.unit IS DISTINCT FROM arc.to_unit\n          OR rp.unit IS DISTINCT FROM arc.from_unit',
+            "OR nr.unit IS DISTINCT FROM arc.to_unit\n          OR rp.unit IS DISTINCT FROM arc.from_unit",
             $definition,
             1,
             $count,
