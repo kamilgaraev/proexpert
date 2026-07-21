@@ -87,6 +87,10 @@ final readonly class ResidentialAbstractResourcePriceSelector
             'candidates_count' => count($eligible),
             'policy' => $policy,
             'assumption' => $conversion['assumption'],
+            'abstract_selection_rule_key' => $normCode.'|'.$groupCode,
+            'abstract_selection_rule_version' => 1,
+            'price_factor' => $conversion['factor'],
+            'quantity_factor' => (string) (1 / (float) $conversion['factor']),
         ];
     }
 

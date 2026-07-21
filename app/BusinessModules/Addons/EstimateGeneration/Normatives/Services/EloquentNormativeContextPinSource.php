@@ -1161,6 +1161,11 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
         }
         $selection['row']->project_resource_candidates_count = $selection['candidates_count'];
         $selection['row']->project_resource_price_policy = $selection['policy'];
+        if (isset($selection['abstract_selection_rule_key'], $selection['abstract_selection_rule_version'], $selection['quantity_factor'])) {
+            $selection['row']->project_resource_abstract_selection_rule_key = $selection['abstract_selection_rule_key'];
+            $selection['row']->project_resource_abstract_selection_rule_version = $selection['abstract_selection_rule_version'];
+            $selection['row']->project_resource_quantity_factor = $selection['quantity_factor'];
+        }
         if (isset($selection['assumption'])) {
             $selection['row']->project_resource_conversion_assumption = $selection['assumption'];
         }

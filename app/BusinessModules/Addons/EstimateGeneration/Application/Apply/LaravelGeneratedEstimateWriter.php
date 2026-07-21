@@ -297,6 +297,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                     'rounding_adjustment' => $resource['rounding_adjustment'] ?? null,
                     'project_resource_selection' => $resource['project_resource_selection'] ?? null,
                     'project_material_selection' => $resource['project_material_selection'] ?? null,
+                    'machine_price_breakdown' => $resource['machine_price_breakdown'] ?? null,
                 ],
             ]);
 

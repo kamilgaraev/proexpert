@@ -1400,6 +1400,9 @@ final class NormativeContextPinResolverTest extends TestCase
             'project_resource_source_unit_price' => 10_000,
             'project_resource_source_price_unit' => 'м3',
             'project_resource_conversion_factor' => 0.20,
+            'project_resource_abstract_selection_rule_key' => '12-01-013-07|12.2.05.02',
+            'project_resource_abstract_selection_rule_version' => 1,
+            'project_resource_quantity_factor' => '5',
         ]);
 
         self::assertSame([
@@ -1414,6 +1417,9 @@ final class NormativeContextPinResolverTest extends TestCase
             'source_unit_price' => '10000',
             'source_price_unit' => 'м3',
             'conversion_factor' => '0.2',
+            'abstract_selection_rule_key' => '12-01-013-07|12.2.05.02',
+            'abstract_selection_rule_version' => 1,
+            'quantity_factor' => '5',
         ], $mapped->resource['project_resource_selection']);
     }
 
