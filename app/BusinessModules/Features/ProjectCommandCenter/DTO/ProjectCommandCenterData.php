@@ -103,6 +103,19 @@ final readonly class ProjectCommandCenterData
         );
     }
 
+    public function withAnalytics(array $analytics): self
+    {
+        return new self(
+            project: $this->project,
+            period: $this->period,
+            generatedAt: $this->generatedAt,
+            problems: $this->problems,
+            finance: $this->finance,
+            delivery: $this->delivery,
+            analytics: $analytics,
+        );
+    }
+
     private static function normalizeDate(mixed $date): ?string
     {
         if ($date instanceof DateTimeInterface) {

@@ -15,6 +15,7 @@ final class ProjectCommandCenterService
         private readonly ProjectProblemCollector $problemCollector,
         private readonly ProjectFinanceHealthBuilder $financeHealthBuilder,
         private readonly ProjectDeliveryBuilder $deliveryBuilder,
+        private readonly ProjectAnalyticsBuilder $analyticsBuilder,
     ) {
     }
 
@@ -41,9 +42,21 @@ final class ProjectCommandCenterService
             now: $generatedAt,
         );
 
+        $finance = $this->financeHealthBuilder->build($project, $projectContext, $generatedAt)->toArray();
+        $delivery = $this->deliveryBuilder->build($project, $projectContext, $generatedAt, $problems)->toArray();
+
         return $data
             ->withProblems($problems)
-            ->withFinance($this->financeHealthBuilder->build($project, $projectContext, $generatedAt)->toArray())
-            ->withDelivery($this->deliveryBuilder->build($project, $projectContext, $generatedAt, $problems)->toArray());
+            ->withFinance($finance)
+            ->withDelivery($delivery)
+            ->withAnalytics($this->analyticsBuilder->fromFacts(
+                finance: $finance,
+                delivery: $delivery,
+                problems: $problems,
+                period: $period,
+                dateFrom: $dateFrom,
+                dateTo: $dateTo,
+                asOf: $generatedAt,
+            ));
     }
 }
