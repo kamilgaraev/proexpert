@@ -34,7 +34,23 @@ final class ProjectDeliveryBuilderTest extends TestCase
         self::assertSame(3, $result['counts']['overdue_stages']);
         self::assertNull($result['counts']['critical_materials']);
         self::assertFalse($result['data_completeness']['critical_materials']['available']);
-        self::assertSame(['project_id' => 42], $result['actions']['overdue_stages']['query']);
+        self::assertSame([
+            'overdue_stages' => [
+                'route' => '/projects/42/schedules',
+                'query' => ['project_id' => 42],
+            ],
+            'pending_work_confirmations' => [
+                'route' => '/workflow/completed-works',
+                'query' => ['project_id' => 42],
+            ],
+            'active_safety_findings' => [
+                'route' => '/safety-management',
+                'query' => ['project_id' => 42],
+            ],
+        ], $result['actions']);
+        self::assertStringNotContainsString('/project-schedule', json_encode($result['actions'], JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('/completed-works?', json_encode($result['actions'], JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('/safety/violations', json_encode($result['actions'], JSON_THROW_ON_ERROR));
         self::assertContains('project_command_center.delivery.active_safety_findings', $result['risk_reasons']);
     }
 

@@ -116,9 +116,9 @@ final class ProjectDeliveryBuilder
             ],
             'risk_reasons' => $riskReasons,
             'actions' => [
-                'overdue_stages' => $this->action('/project-schedule', $projectId),
-                'pending_work_confirmations' => $this->action('/completed-works', $projectId),
-                'active_safety_findings' => $this->action('/safety/violations', $projectId),
+                'overdue_stages' => $this->action("/projects/{$projectId}/schedules", $projectId),
+                'pending_work_confirmations' => $this->action('/workflow/completed-works', $projectId),
+                'active_safety_findings' => $this->action('/safety-management', $projectId),
             ],
         ]);
     }

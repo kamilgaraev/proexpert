@@ -34,7 +34,7 @@ final class ProjectProblemCollectorTest extends TestCase
 
         self::assertSame(['safety-violation-3', 'schedule-task-7', 'completed-work-5', 'material-8'], array_column($result['items'], 'id'));
         self::assertSame(['total' => 4, 'critical' => 1, 'risk' => 3, 'attention' => 0], $result['summary']);
-        self::assertSame('/safety/violations', $result['items'][0]['action']['route']);
+        self::assertSame('/safety-management', $result['items'][0]['action']['route']);
         self::assertSame(['project_id' => 42], $result['items'][0]['action']['query']);
         self::assertArrayNotHasKey('url', $result['items'][0]['action']);
     }
@@ -104,8 +104,9 @@ final class ProjectProblemCollectorTest extends TestCase
         );
 
         self::assertSame('safety-violation-18', $result['items'][0]['id']);
-        self::assertSame('/safety/violations', $result['items'][0]['action']['route']);
+        self::assertSame('/safety-management', $result['items'][0]['action']['route']);
         self::assertSame(['project_id' => 42], $result['items'][0]['action']['query']);
+        self::assertStringNotContainsString('/safety/violations', json_encode($result['items'][0]['action'], JSON_THROW_ON_ERROR));
         self::assertSame(['project_id' => 42, 'organization_id' => 7], $captured);
     }
 

@@ -10,9 +10,9 @@ use InvalidArgumentException;
 final readonly class ProjectProblemItem
 {
     private const ROUTES = [
-        'safety' => '/safety/violations',
-        'schedule' => '/project-schedule',
-        'completed_work' => '/completed-works',
+        'safety' => '/safety-management',
+        'schedule' => '/projects/{project_id}/schedules',
+        'completed_work' => '/workflow/completed-works',
         'materials' => '/materials',
         'quality' => '/quality-control/defects',
     ];
@@ -93,7 +93,7 @@ final readonly class ProjectProblemItem
             'due_at' => $this->dueAt?->format(DATE_ATOM),
             'detected_at' => $this->detectedAt->format(DATE_ATOM),
             'action' => [
-                'route' => self::ROUTES[$this->actionModule],
+                'route' => str_replace('{project_id}', (string) $projectId, self::ROUTES[$this->actionModule]),
                 'query' => ['project_id' => $projectId],
             ],
         ];
