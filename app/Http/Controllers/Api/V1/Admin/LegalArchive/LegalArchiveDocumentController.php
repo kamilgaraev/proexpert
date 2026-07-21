@@ -129,6 +129,12 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                 ), $document);
             }
             if ($error instanceof LegalDocumentScanFailed) {
+                $failureCode = $error->failureCode();
+                $messageKey = match ($failureCode) {
+                    'malware_detected' => 'legal_archive.messages.document_file_malware_detected',
+                    'scanner_unavailable' => 'legal_archive.messages.document_file_scan_unavailable',
+                    default => 'legal_archive.messages.document_file_processing_failed',
+                };
                 $document = $this->registry->findForOrganization(
                     $this->organizationId($request),
                     (int) $error->version->document_id,
@@ -139,10 +145,11 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
 
                 $response = AdminResponse::success(
                     $document === null ? null : new LegalArchiveDocumentResource($document),
-                    trans_message('legal_archive.messages.document_file_processing_failed'),
+                    trans_message($messageKey),
                     202,
                     [
                         'processing_status' => 'failed',
+                        'processing_failure_code' => $failureCode,
                         'operation_result' => 'document_create_failed',
                         'operation_id' => $document?->create_operation_id,
                         'retry_action' => 'retry_upload',
@@ -166,7 +173,9 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
 
     private function reportCreateFailure(Request $request, Throwable $failure, \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument $document): void
     {
-        $original = $failure instanceof LegalDocumentCreateFailed ? ($failure->getPrevious() ?? $failure) : $failure;
+        $original = $failure instanceof LegalDocumentCreateFailed || $failure instanceof LegalDocumentScanFailed
+            ? ($failure->getPrevious() ?? $failure)
+            : $failure;
         $operationId = is_string($document->create_operation_id) && $document->create_operation_id !== ''
             ? $document->create_operation_id
             : 'document-'.(string) $document->id;

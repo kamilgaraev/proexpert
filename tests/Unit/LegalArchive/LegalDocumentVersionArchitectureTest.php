@@ -113,6 +113,8 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
         self::assertStringContainsString('instanceof LegalDocumentScanFailed', $fileController);
         self::assertStringContainsString('legal_archive.messages.document_file_processing_failed', $documentController);
         self::assertStringContainsString('legal_archive.messages.version_file_processing_failed', $fileController);
+        self::assertStringContainsString("'processing_failure_code' => \$failureCode", $documentController);
+        self::assertStringContainsString("'processing_failure_code' => \$failureCode", $fileController);
         self::assertStringContainsString('new LegalArchiveDocumentResource(', $documentController);
         self::assertStringContainsString('new LegalArchiveDocumentVersionResource($error->version)', $fileController);
     }

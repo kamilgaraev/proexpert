@@ -28,6 +28,7 @@ use App\Services\LegalArchive\LegalArchiveRegistryService;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 use function trans_message;
@@ -135,13 +136,32 @@ final class LegalArchiveFileController extends LegalArchiveApiController
     private function scanFailure(LegalDocumentScanFailed $error): JsonResponse
     {
         $document = $error->version->document()->firstOrFail();
+        $failureCode = $error->failureCode();
+        $cause = $error->getPrevious();
+        $messageKey = match ($failureCode) {
+            'malware_detected' => 'legal_archive.messages.version_file_malware_detected',
+            'scanner_unavailable' => 'legal_archive.messages.version_file_scan_unavailable',
+            default => 'legal_archive.messages.version_file_processing_failed',
+        };
+
+        Log::warning('legal_archive.file_scan_failed', [
+            'organization_id' => (int) $error->version->organization_id,
+            'document_id' => (int) $error->version->document_id,
+            'document_version_id' => (int) $error->version->id,
+            'uploaded_by_user_id' => $error->version->uploaded_by_user_id === null
+                ? null
+                : (int) $error->version->uploaded_by_user_id,
+            'failure_code' => $failureCode,
+            'error_class' => $cause instanceof Throwable ? $cause::class : null,
+        ]);
 
         return $this->etag(AdminResponse::success(
             new LegalArchiveDocumentVersionResource($error->version),
-            trans_message('legal_archive.messages.version_file_processing_failed'),
+            trans_message($messageKey),
             202,
             [
                 'processing_status' => 'failed',
+                'processing_failure_code' => $failureCode,
                 'retry_action' => 'retry_upload',
                 'retry_document_id' => (int) $error->version->document_id,
             ],
