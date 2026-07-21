@@ -6,6 +6,8 @@ services:
     environment:
       JWT_ENABLED: "true"
       JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:?Set ONLYOFFICE_JWT_SECRET in .env}
+    extra_hosts:
+      - "${ONLYOFFICE_CALLBACK_HOST:?Set ONLYOFFICE_CALLBACK_HOST in .env}:host-gateway"
     ports:
       - "127.0.0.1:8088:80"
     volumes:

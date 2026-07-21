@@ -6,6 +6,7 @@
 
 1. Создайте DNS-запись `office.<ваш-домен>` на IP production-сервера.
 2. Скопируйте `.env.example` в `.env` и задайте домен и новый JWT-секрет длиной не менее 32 символов. Файл `.env` не коммитить.
+   Укажите `ONLYOFFICE_CALLBACK_HOST=api.<ваш-домен>`: контейнер редактора будет обращаться к API через Docker host gateway, сохраняя HTTPS-имя API и не требуя внешнего порта.
 3. Замените `office.example.ru` в `nginx.conf.example` на реальный домен, установите конфигурацию Nginx и выпустите TLS-сертификат для этого домена.
 4. В этой папке выполните `docker compose up -d`.
 5. Убедитесь, что `curl -fsS https://office.<ваш-домен>/healthcheck` возвращает `true`.

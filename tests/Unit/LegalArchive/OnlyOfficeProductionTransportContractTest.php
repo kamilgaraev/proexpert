@@ -23,4 +23,15 @@ final class OnlyOfficeProductionTransportContractTest extends TestCase
         self::assertStringContainsString('new CurlHttpClient', $fetcher);
         self::assertStringNotContainsString("'proxy' => ''", $fetcher);
     }
+
+    public function test_document_server_reaches_the_api_callback_through_the_docker_host_gateway(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $compose = (string) file_get_contents($root.'/deploy/onlyoffice/docker-compose.yml');
+        $environment = (string) file_get_contents($root.'/deploy/onlyoffice/.env.example');
+
+        self::assertStringContainsString('extra_hosts:', $compose);
+        self::assertStringContainsString('${ONLYOFFICE_CALLBACK_HOST:?Set ONLYOFFICE_CALLBACK_HOST in .env}:host-gateway', $compose);
+        self::assertStringContainsString('ONLYOFFICE_CALLBACK_HOST=api.example.ru', $environment);
+    }
 }
