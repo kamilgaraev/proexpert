@@ -35,7 +35,10 @@ final class LegalArchiveDocumentResourceTest extends TestCase
                 return 'ru';
             }
         });
-        $container->instance('config', new Repository(['app' => ['fallback_locale' => 'ru']]));
+        $container->instance('config', new Repository([
+            'app' => ['fallback_locale' => 'ru'],
+            'legal-document-editor' => ['enabled' => false],
+        ]));
         $container->instance('translator', $translator);
         $container->instance('request', Request::create('/'));
 
@@ -107,9 +110,26 @@ final class LegalArchiveDocumentResourceTest extends TestCase
         $this->assertSame('Входящий', $payload['direction_label']);
         $this->assertSame('Правовой статус не подтвержден', $payload['legal_significance_status_label']);
         $this->assertTrue($payload['retention']['legal_hold']);
+        $this->assertFalse($payload['editor']['enabled']);
         $this->assertSame('1.0', $payload['current_version']['version_number']);
         $this->assertSame('На проверке безопасности', $payload['current_version']['processing_status_label']);
         $this->assertSame('Проект', $payload['links'][0]['link_type_label']);
         $this->assertArrayNotHasKey('file_path', $payload['current_version']);
+    }
+
+    public function test_document_resource_exposes_enabled_editor_only_for_supported_driver(): void
+    {
+        app('config')->set('legal-document-editor.enabled', true);
+        app('config')->set('legal-document-editor.driver', 'onlyoffice');
+
+        $document = new LegalArchiveDocument(['document_type' => 'contract']);
+        $document->id = 42;
+
+        $enabled = (new LegalArchiveDocumentResource($document))->resolve(Request::create('/'));
+        $this->assertTrue($enabled['editor']['enabled']);
+
+        app('config')->set('legal-document-editor.driver', 'unsupported');
+        $unsupported = (new LegalArchiveDocumentResource($document))->resolve(Request::create('/'));
+        $this->assertFalse($unsupported['editor']['enabled']);
     }
 }

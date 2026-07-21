@@ -78,6 +78,10 @@ final class LegalArchiveDocumentResource extends JsonResource
                 'volume' => $obligation->volume, 'unit' => $obligation->unit,
             ])->values()),
             'lock_version' => (int) $this->lock_version,
+            'editor' => [
+                'enabled' => (bool) config('legal-document-editor.enabled', false)
+                    && (string) config('legal-document-editor.driver', 'onlyoffice') === 'onlyoffice',
+            ],
             'current_version' => new LegalArchiveDocumentVersionResource($this->whenLoaded('currentVersion')),
             'current_primary_version' => new LegalArchiveDocumentVersionResource($this->whenLoaded('currentVersion')),
             'versions' => LegalArchiveDocumentVersionResource::collection($this->whenLoaded('versions')),
