@@ -62,3 +62,4 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 rr
 rr.exe
 .rr
+.worktrees/
