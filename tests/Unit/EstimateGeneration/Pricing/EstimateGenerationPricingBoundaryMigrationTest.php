@@ -171,6 +171,27 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
     }
 
     #[Test]
+    public function semantic_abstract_resource_selection_is_finalized_only_from_the_pinned_resource_reference(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_000200_finalize_semantic_abstract_resource_prices.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            'eg_expected_package_item_price_v5',
+            'semantic_project_resource:v5',
+            "persisted_resource.value->'normative_ref'->>'norm_resource_id' = nr.id::text",
+            "persisted_resource.value->'normative_ref'->>'price_id' = rp.id::text",
+            "->>'selected_resource_code' = rp.resource_code",
+            'regional_semantic_metal_gutter_family_median:v1',
+            'regional_semantic_pipe_hard_attributes_median:v1',
+            'public.eg_expected_package_item_price_closed_v5(p_item_id)',
+            'estimate_generation.semantic_abstract_price_formula_rollback_blocked',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
+    #[Test]
     public function supplementary_project_material_is_database_priced_from_an_immutable_versioned_rule(): void
     {
         $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000100_finalize_supplementary_project_material_prices.php');
