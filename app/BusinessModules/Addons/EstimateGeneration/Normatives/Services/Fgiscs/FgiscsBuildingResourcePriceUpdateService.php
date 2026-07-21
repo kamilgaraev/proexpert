@@ -94,6 +94,13 @@ class FgiscsBuildingResourcePriceUpdateService
                     $progress,
                 ));
             } catch (Throwable $exception) {
+                Log::error('[EstimateGeneration] FGIS CS building resource regional sync failed.', [
+                    'subject_id' => $subject['id'],
+                    'region' => $subject['name'],
+                    'exception_class' => $exception::class,
+                    'exception_code' => $exception->getCode(),
+                ]);
+
                 $results[] = [
                     'status' => RegionalPriceStatus::FAILED->value,
                     'subject_id' => $subject['id'],
