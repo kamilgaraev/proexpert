@@ -49,12 +49,14 @@ class ResolveRegionalPrice
             $coefficients['price_kind'] = 'base_catalog';
             $coefficients['dataset_version_id'] = (int) $payload['dataset_version_id'];
         }
-        $conversion = $baseCatalogPrice ? $this->residentialConversion($resource, $payload) : null;
+        $conversion = ($regionalPrice || $baseCatalogPrice)
+            ? $this->residentialConversion($resource, $payload, $regionalPrice)
+            : null;
         if ($conversion !== null) {
             $baseAmount = $baseAmount->multipliedBy($conversion['factor']);
             $coefficients = [
                 ...$coefficients,
-                'price_kind' => 'base_catalog_converted',
+                'price_kind' => $regionalPrice ? 'regional_catalog_converted' : 'base_catalog_converted',
                 'source_unit_price' => $this->decimal($payload['base_price'], 4),
                 'source_price_unit' => $conversion['from_unit'],
                 'conversion_factor' => $conversion['factor'],
@@ -80,7 +82,7 @@ class ResolveRegionalPrice
         );
     }
 
-    private function residentialConversion(array $resource, array $payload): ?array
+    private function residentialConversion(array $resource, array $payload, bool $regionalPrice): ?array
     {
         $reference = is_array($resource['normative_ref'] ?? null) ? $resource['normative_ref'] : [];
         $referenceSelection = is_array($reference['project_resource_selection'] ?? null)
@@ -111,14 +113,20 @@ class ResolveRegionalPrice
             );
         }
         $sourceType = (string) ($payload['source_type'] ?? '');
-        $expectedPolicy = $sourceType.'_residential_converted_child_median:v1';
-        $expectedPriceSource = match ($sourceType) {
-            'fsbc' => 'fsbc_base',
-            'fsnb_2022' => 'fsnb_base',
-            default => null,
-        };
+        $expectedPolicy = $regionalPrice
+            ? 'regional_residential_converted_child_median:v1'
+            : $sourceType.'_residential_converted_child_median:v1';
+        $expectedPriceSource = $regionalPrice
+            ? 'regional_catalog'
+            : match ($sourceType) {
+                'fsbc' => 'fsbc_base',
+                'fsnb_2022' => 'fsnb_base',
+                default => null,
+            };
         $selectedResourceCode = trim((string) ($selection['selected_resource_code'] ?? ''));
-        $datasetVersion = trim((string) ($payload['dataset_version'] ?? ''));
+        $sourceVersion = trim((string) ($regionalPrice
+            ? ($payload['regional_price_version'] ?? '')
+            : ($payload['dataset_version'] ?? '')));
         try {
             $sourcePriceMatches = BigDecimal::of((string) ($selection['source_unit_price'] ?? '0'))
                 ->isEqualTo(BigDecimal::of((string) ($payload['base_price'] ?? '0')));
@@ -137,7 +145,7 @@ class ResolveRegionalPrice
         if (($selection['group_code'] ?? null) !== $groupCode
             || ($selection['policy'] ?? null) !== $expectedPolicy
             || ($selection['price_source'] ?? null) !== $expectedPriceSource
-            || trim((string) ($selection['price_source_version'] ?? '')) !== $datasetVersion
+            || trim((string) ($selection['price_source_version'] ?? '')) !== $sourceVersion
             || $selectedResourceCode !== trim((string) ($payload['resource_code'] ?? ''))
             || preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', $selectedResourceCode) !== 1
             || trim((string) ($selection['source_price_unit'] ?? '')) !== $conversion['from_unit']
@@ -197,7 +205,7 @@ class ResolveRegionalPrice
     private function find(int $priceId): ?EstimateResourcePrice
     {
         return EstimateResourcePrice::query()
-            ->with('datasetVersion')
+            ->with(['datasetVersion', 'regionalPriceVersion'])
             ->whereKey($priceId)
             ->first();
     }
@@ -211,10 +219,15 @@ class ResolveRegionalPrice
             return null;
         }
 
+        $regionalPriceVersion = $price->relationLoaded('regionalPriceVersion')
+            ? $price->regionalPriceVersion
+            : null;
+
         return [
             ...$price->getAttributes(),
             'source_type' => $price->datasetVersion?->source_type?->value ?? 'regional_catalog',
             'dataset_version' => $price->datasetVersion?->version_key,
+            'regional_price_version' => $regionalPriceVersion?->version_key,
             'dataset_status' => $price->datasetVersion?->status?->value ?? $price->datasetVersion?->status,
             'currency' => is_array($price->raw_payload) ? ($price->raw_payload['currency'] ?? 'RUB') : 'RUB',
         ];

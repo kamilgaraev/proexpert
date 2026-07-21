@@ -188,6 +188,7 @@ final readonly class AcceptedNormativeDecisionData
                 'regional_child_median:v1',
                 'fsbc_base_child_median:v1',
                 'fsnb_base_child_median:v1',
+                'regional_residential_converted_child_median:v1',
                 'regional_child_hard_attributes_median:v1',
                 'fsbc_base_child_hard_attributes_median:v1',
                 'fsnb_base_child_hard_attributes_median:v1',

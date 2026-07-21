@@ -1433,6 +1433,52 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
+    public function converted_regional_residential_resource_row_preserves_tatarstan_price_provenance(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101,
+            'norm_resource_id' => 7001,
+            'construction_resource_id' => null,
+            'price_construction_resource_id' => 502,
+            'price_id' => 9001,
+            'resource_type' => 'material',
+            'resource_code' => '12.2.05.02',
+            'price_resource_code' => '12.2.05.02-0006',
+            'resource_name' => 'Плиты теплоизоляционные по проекту',
+            'price_resource_name' => 'Плиты теплоизоляционные минераловатные',
+            'unit' => 'м2',
+            'price_unit' => 'м2',
+            'quantity' => '100.000000',
+            'unit_price' => '1415.600000',
+            'regional_price_version_id' => 150,
+            'regional_price_version_key' => '2026-q2-ru-ta-r1',
+            'price_dataset_source_type' => 'fgiscs',
+            'price_dataset_version' => '2026-q2',
+            'raw_source_tag' => 'AbstractResource',
+            'project_resource_candidates_count' => 1,
+            'project_resource_price_policy' => 'regional_residential_converted_child_median:v1',
+            'project_resource_conversion_assumption' => 'mineral_wool_thickness_m:0.20',
+            'project_resource_source_unit_price' => 7078,
+            'project_resource_source_price_unit' => 'м3',
+            'project_resource_conversion_factor' => 0.20,
+        ]);
+
+        self::assertSame([
+            'group_code' => '12.2.05.02',
+            'selected_resource_code' => '12.2.05.02-0006',
+            'selected_resource_name' => 'Плиты теплоизоляционные минераловатные',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => '2026-q2-ru-ta-r1',
+            'policy' => 'regional_residential_converted_child_median:v1',
+            'candidates_count' => 1,
+            'conversion_assumption' => 'mineral_wool_thickness_m:0.20',
+            'source_unit_price' => '7078',
+            'source_price_unit' => 'м3',
+            'conversion_factor' => '0.2',
+        ], $mapped->resource['project_resource_selection']);
+    }
+
+    #[Test]
     public function abstract_resource_row_rejects_policy_that_does_not_match_price_source(): void
     {
         $this->expectException(InvalidArgumentException::class);

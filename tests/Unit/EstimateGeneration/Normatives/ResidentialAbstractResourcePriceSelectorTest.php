@@ -71,6 +71,36 @@ final class ResidentialAbstractResourcePriceSelectorTest extends TestCase
     }
 
     #[Test]
+    public function converts_regional_mineral_wool_volume_price_to_area_using_explicit_residential_thickness(): void
+    {
+        $candidate = (object) [
+            'price_resource_code' => '12.2.05.02-0006',
+            'price_resource_name' => 'Плиты теплоизоляционные минераловатные',
+            'price_unit' => 'м3',
+            'base_price' => 7078,
+            'unit_price' => 7078,
+            'price_id' => 17,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => 150,
+            'price_dataset_source_type' => 'fgiscs',
+        ];
+
+        $selection = (new ResidentialAbstractResourcePriceSelector)->select(
+            '12-01-013-07',
+            '12.2.05.02',
+            [$candidate],
+            [4],
+        );
+
+        self::assertNotNull($selection);
+        self::assertSame(1415.6, $selection['row']->unit_price);
+        self::assertSame('м2', $selection['row']->price_unit);
+        self::assertSame('regional_residential_converted_child_median:v1', $selection['policy']);
+        self::assertSame(7078.0, $selection['row']->project_resource_source_unit_price);
+        self::assertSame(0.20, $selection['row']->project_resource_conversion_factor);
+    }
+
+    #[Test]
     public function conversion_requires_the_exact_norm_and_semantically_matching_resource_name(): void
     {
         $candidate = (object) [

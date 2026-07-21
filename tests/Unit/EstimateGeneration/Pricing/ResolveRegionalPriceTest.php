@@ -112,6 +112,33 @@ final class ResolveRegionalPriceTest extends TestCase
     }
 
     #[Test]
+    public function verified_residential_conversion_uses_the_active_regional_material_price(): void
+    {
+        $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [
+            'id' => $priceId,
+            'resource_code' => '12.2.05.02-0006',
+            'unit' => 'м3',
+            'dataset_version_id' => 6,
+            'dataset_version' => '2026-q2-ru-ta-r1',
+            'regional_price_version' => '2026-q2-ru-ta-r1',
+            'regional_price_version_id' => 11,
+            'region_id' => 16,
+            'price_zone_id' => 3,
+            'period_id' => 8,
+            'base_price' => '7078.0000',
+            'source_type' => 'fgiscs',
+        ]);
+
+        $snapshot = $resolver->handle($this->regionalConvertedResource(), $this->context());
+
+        self::assertSame('1415.6000', $snapshot->baseAmount);
+        self::assertSame('2831.20', $snapshot->finalAmount);
+        self::assertSame('regional_catalog_converted', $snapshot->coefficients['price_kind']);
+        self::assertSame('7078.0000', $snapshot->coefficients['source_unit_price']);
+        self::assertSame('0.20', $snapshot->coefficients['conversion_factor']);
+    }
+
+    #[Test]
     public function residential_conversion_rejects_a_tampered_factor_even_when_the_price_id_exists(): void
     {
         $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [
@@ -418,6 +445,26 @@ final class ResolveRegionalPriceTest extends TestCase
                 'project_resource_selection' => $selection,
             ],
         ];
+    }
+
+    private function regionalConvertedResource(): array
+    {
+        $resource = $this->convertedResource();
+        $selection = [
+            ...$resource['project_resource_selection'],
+            'selected_resource_code' => '12.2.05.02-0006',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => '2026-q2-ru-ta-r1',
+            'policy' => 'regional_residential_converted_child_median:v1',
+            'source_unit_price' => '7078',
+        ];
+
+        $resource['price_unit'] = 'м2';
+        $resource['unit_price'] = '1415.6';
+        $resource['project_resource_selection'] = $selection;
+        $resource['normative_ref']['project_resource_selection'] = $selection;
+
+        return $resource;
     }
 
     private function context(int $regionId = 16): array
