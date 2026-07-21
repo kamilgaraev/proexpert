@@ -93,23 +93,6 @@ SQL;
     public static function canonicalCoreSql(): string
     {
         return sprintf(<<<'SQL'
-DO $canonical_owners$
-DECLARE function_name text;
-BEGIN
-    ALTER TABLE immutable_audit_events OWNER TO CURRENT_USER;
-    ALTER SEQUENCE immutable_audit_sequence OWNER TO CURRENT_USER;
-    FOREACH function_name IN ARRAY ARRAY[
-        'immutable_audit_allocate_sequence',
-        'immutable_audit_sync_sequence_after_insert',
-        'immutable_audit_writer_guard',
-        'immutable_audit_prevent_mutation'
-    ] LOOP
-        IF to_regprocedure(format('%%I.%%I()', current_schema(), function_name)) IS NOT NULL THEN
-            EXECUTE format('ALTER FUNCTION %%I.%%I() OWNER TO CURRENT_USER', current_schema(), function_name);
-        END IF;
-    END LOOP;
-END
-$canonical_owners$;
 CREATE OR REPLACE FUNCTION immutable_audit_allocate_sequence() RETURNS bigint
 LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SECURITY INVOKER PARALLEL UNSAFE
 SET search_path = pg_catalog, public AS $function$
