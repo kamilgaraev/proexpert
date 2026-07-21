@@ -210,6 +210,25 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
     }
 
     #[Test]
+    public function pinned_regional_resource_children_are_accepted_only_for_matching_normative_groups(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_000400_accept_pinned_regional_resource_children.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            'eg_expected_package_item_price_v7',
+            'semantic_project_resource:v7',
+            "nr.resource_code ~ '^[0-9]{2}",
+            "rp.resource_code !~ ('^'||replace(nr.resource_code, '.', '\\.')||'-[0-9]{4}$')",
+            "persisted_resource.value->'normative_ref'->>'price_id' = rp.id::text",
+            'public.eg_expected_package_item_price_closed_v7(p_item_id)',
+            'estimate_generation.pinned_resource_child_rollback_blocked',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
+    #[Test]
     public function supplementary_project_material_is_database_priced_from_an_immutable_versioned_rule(): void
     {
         $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000100_finalize_supplementary_project_material_prices.php');

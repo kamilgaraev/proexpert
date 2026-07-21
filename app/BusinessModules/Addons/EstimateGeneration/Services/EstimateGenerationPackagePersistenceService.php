@@ -495,9 +495,8 @@ class EstimateGenerationPackagePersistenceService
             ->where(function ($query) use ($item): void {
                 $query->where('resources.estimate_norm_id', '<>', $item->estimate_norm_id)
                     ->orWhereRaw(
-                        "CASE WHEN LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) = 'abstractresource' ".
-                        "THEN resources.resource_code !~ '^[0-9]{2}\\.[0-9]\\.[0-9]{2}\\.[0-9]{2}$' ".
-                        "OR prices.resource_code !~ ('^'||replace(resources.resource_code, '.', '\\\\.')||'-[0-9]{4}$') ".
+                        "CASE WHEN resources.resource_code ~ '^[0-9]{2}\\.[0-9]\\.[0-9]{2}\\.[0-9]{2}$' ".
+                        "THEN prices.resource_code !~ ('^'||replace(resources.resource_code, '.', '\\\\.')||'-[0-9]{4}$') ".
                         'ELSE prices.resource_code IS DISTINCT FROM resources.resource_code END',
                     )
                     ->orWhere('prices.region_id', '<>', $item->region_id)
