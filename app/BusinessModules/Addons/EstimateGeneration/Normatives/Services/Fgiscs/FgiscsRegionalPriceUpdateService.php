@@ -20,6 +20,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateReso
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\LaborPriceSpreadsheetParser;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
 
@@ -115,6 +116,14 @@ class FgiscsRegionalPriceUpdateService
                     array_push($results, ...$this->syncPriceZone($bucket, $catalog['region'], $priceZone, $periodId, $latestOnly, $allPeriods, $force, $progress));
                 }
             } catch (Throwable $exception) {
+                Log::error('[EstimateGeneration] FGIS CS worker salary regional sync failed.', [
+                    'subject_id' => $subject['id'],
+                    'region' => $subject['name'],
+                    'exception_class' => $exception::class,
+                    'exception_code' => $exception->getCode(),
+                    'database_column' => $this->databaseColumn($exception),
+                ]);
+
                 $results[] = [
                     'status' => RegionalPriceStatus::FAILED->value,
                     'subject_id' => $subject['id'],
@@ -125,6 +134,15 @@ class FgiscsRegionalPriceUpdateService
         }
 
         return $results;
+    }
+
+    private function databaseColumn(Throwable $exception): ?string
+    {
+        $message = $exception->getPrevious()?->getMessage() ?? '';
+
+        return preg_match('/column "([^"]+)"/', $message, $matches) === 1
+            ? $matches[1]
+            : null;
     }
 
     /**
