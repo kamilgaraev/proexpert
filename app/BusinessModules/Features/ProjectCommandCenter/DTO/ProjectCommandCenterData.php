@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ProjectCommandCenter\DTO;
 
+use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Models\Project;
 use BackedEnum;
 use DateTimeInterface;
@@ -23,6 +24,7 @@ final readonly class ProjectCommandCenterData
 
     public static function empty(
         Project $project,
+        ProjectContext $projectContext,
         string $period,
         ?string $dateFrom,
         ?string $dateTo,
@@ -43,7 +45,7 @@ final readonly class ProjectCommandCenterData
             ],
             generatedAt: $generatedAt,
             problems: [],
-            finance: [],
+            finance: self::canViewFinances($projectContext) ? [] : ['available' => false],
             delivery: [],
             analytics: [],
         );
@@ -74,5 +76,11 @@ final readonly class ProjectCommandCenterData
     private static function normalizeEnum(mixed $value): mixed
     {
         return $value instanceof BackedEnum ? $value->value : $value;
+    }
+
+    private static function canViewFinances(ProjectContext $projectContext): bool
+    {
+        return $projectContext->roleConfig->canViewFinances
+            || $projectContext->hasPermission('view_own_finances');
     }
 }

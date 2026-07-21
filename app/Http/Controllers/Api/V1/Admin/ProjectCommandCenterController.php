@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectCommandCenterService;
+use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
@@ -32,14 +33,14 @@ final class ProjectCommandCenterController extends Controller
             $validated = $request->validate([
                 'project_id' => ['required', 'integer'],
                 'period' => ['sometimes', 'string', Rule::in(['month', 'quarter', 'project', 'custom'])],
-                'date_from' => ['nullable', 'date_format:Y-m-d', 'required_if:period,custom'],
-                'date_to' => ['nullable', 'date_format:Y-m-d', 'required_if:period,custom', 'after_or_equal:date_from'],
+                'date_from' => ['prohibited_unless:period,custom', 'nullable', 'date_format:Y-m-d', 'required_if:period,custom'],
+                'date_to' => ['prohibited_unless:period,custom', 'nullable', 'date_format:Y-m-d', 'required_if:period,custom', 'after_or_equal:date_from'],
             ]);
 
             $project = Project::query()->find($validated['project_id']);
 
             if (!$project instanceof Project) {
-                return AdminResponse::error(trans_message('project.not_found_or_access_denied'), Response::HTTP_NOT_FOUND);
+                return $this->projectNotFoundResponse();
             }
 
             $user = Auth::user();
@@ -47,12 +48,13 @@ final class ProjectCommandCenterController extends Controller
                 ? $this->projectAccessService->getProjectContext($project, $user)
                 : null;
 
-            if ($projectContext === null) {
-                return AdminResponse::error(trans_message('dashboard.access_denied'), Response::HTTP_FORBIDDEN);
+            if (!$projectContext instanceof ProjectContext) {
+                return $this->projectNotFoundResponse();
             }
 
             $data = $this->commandCenterService->build(
                 project: $project,
+                projectContext: $projectContext,
                 period: $validated['period'] ?? 'project',
                 dateFrom: $validated['date_from'] ?? null,
                 dateTo: $validated['date_to'] ?? null,
@@ -70,5 +72,10 @@ final class ProjectCommandCenterController extends Controller
 
             return AdminResponse::error(trans_message('project.dashboard_fetch_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private function projectNotFoundResponse(): JsonResponse
+    {
+        return AdminResponse::error(trans_message('project.not_found_or_access_denied'), Response::HTTP_NOT_FOUND);
     }
 }
