@@ -62,6 +62,20 @@ final class ProjectFinanceHealthBuilderTest extends TestCase
         self::assertSame(700.0, $result['cash_flow']['projections'][0]['incoming']);
     }
 
+    public function test_it_keeps_cash_flow_available_when_only_dated_documents_are_beyond_the_horizon(): void
+    {
+        $result = $this->builder()->fromFacts([
+            'metrics' => ['bac' => 1_000, 'ac' => 500, 'eac' => 1_100],
+            'payments' => [
+                ['direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-12-01'],
+            ],
+        ], CarbonImmutable::parse('2026-07-21'))->toArray();
+
+        self::assertTrue($result['cash_flow']['available']);
+        self::assertSame(700.0, $result['cash_flow']['accounts_receivable']);
+        self::assertSame(0.0, $result['cash_flow']['projections'][2]['net']);
+    }
+
     public function test_it_marks_missing_actual_costs_explicitly(): void
     {
         $result = $this->builder()->fromFacts([

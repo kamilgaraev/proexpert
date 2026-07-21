@@ -150,12 +150,12 @@ final class ProjectFinanceHealthBuilder
 
             $dueAt = CarbonImmutable::parse((string) $payment['due_at'])->startOfDay();
             $days = max(0, $asOf->startOfDay()->diffInDays($dueAt, false));
+            $datedPayments++;
             $bucket = $days <= 30 ? 30 : ($days <= 60 ? 60 : ($days <= 90 ? 90 : null));
             if ($bucket === null) {
                 continue;
             }
 
-            $datedPayments++;
             $buckets[$bucket][$payment['direction']] += (float) $payment['amount'];
         }
 
