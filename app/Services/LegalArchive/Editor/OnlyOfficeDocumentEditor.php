@@ -60,6 +60,7 @@ final class OnlyOfficeDocumentEditor implements LegalDocumentEditor
             'documentType' => $documentType,
             'editorConfig' => [
                 ...($context->callbackUrl === '' ? [] : ['callbackUrl' => $context->callbackUrl]),
+                'lang' => 'ru',
                 'mode' => $context->mode === 'view' ? 'view' : 'edit',
                 'user' => ['id' => (string) $context->actorId, 'name' => $actorName],
             ],
