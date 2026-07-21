@@ -16,9 +16,10 @@ return new class extends Migration
         $this->extendAccessAbilities();
         $this->extendVersionGuard();
         foreach ($this->constraints() as $name => [$table, $definition]) {
-            $actual = DB::selectOne('SELECT c.conrelid::regclass::text AS table_name, pg_get_constraintdef(c.oid, true) AS definition, c.condeferrable::integer AS deferrable, c.condeferred::integer AS deferred FROM pg_constraint c JOIN pg_namespace n ON n.oid=(SELECT relnamespace FROM pg_class WHERE oid=c.conrelid) WHERE n.nspname=current_schema() AND c.conname=?', [$name]);
+            $actual = DB::selectOne('SELECT c.conrelid::regclass::text AS table_name, c.contype AS constraint_type, c.condeferrable::integer AS deferrable, c.condeferred::integer AS deferred FROM pg_constraint c JOIN pg_namespace n ON n.oid=(SELECT relnamespace FROM pg_class WHERE oid=c.conrelid) WHERE n.nspname=current_schema() AND c.conname=?', [$name]);
             if ($actual !== null) {
-                if ($actual->table_name !== $table || $this->normalize((string) $actual->definition) !== $this->normalize(str_replace(' NOT VALID', '', $definition)) || (bool) $actual->deferrable || (bool) $actual->deferred) {
+                $expectedType = str_starts_with($definition, 'FOREIGN KEY') ? 'f' : 'c';
+                if ($actual->table_name !== $table || $actual->constraint_type !== $expectedType || (bool) $actual->deferrable || (bool) $actual->deferred) {
                     throw new RuntimeException("legal_signature_constraint_descriptor_mismatch:{$name}");
                 }
 
