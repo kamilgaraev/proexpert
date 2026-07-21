@@ -27,7 +27,7 @@ WHERE namespace.nspname = current_schema() AND c.conname = ?
 SQL,
                 [$expected['name']],
             );
-            if ($constraint === null || ! LegalWorkflowPostgresConstraints::matches($constraint, $expected)) {
+            if ($constraint === null || ! LegalWorkflowPostgresConstraints::matchesValidatedDescriptor($constraint, $expected)) {
                 throw new RuntimeException("legal_workflow_constraint_descriptor_mismatch:{$expected['name']}");
             }
             if (! (bool) $constraint->convalidated) {

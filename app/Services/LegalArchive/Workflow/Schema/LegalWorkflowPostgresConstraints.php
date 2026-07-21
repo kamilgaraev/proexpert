@@ -58,6 +58,15 @@ final class LegalWorkflowPostgresConstraints
             && self::normalize($actual->definition) === self::normalize($expected['definition']);
     }
 
+    /** @param array{table: string, name: string, definition: string, type: string, deferrable: bool, deferred: bool} $expected */
+    public static function matchesValidatedDescriptor(object $actual, array $expected): bool
+    {
+        return $actual->table_name === $expected['table']
+            && $actual->contype === $expected['type']
+            && (bool) $actual->condeferrable === $expected['deferrable']
+            && (bool) $actual->condeferred === $expected['deferred'];
+    }
+
     private static function normalize(mixed $definition): string
     {
         $normalized = strtolower((string) $definition);
