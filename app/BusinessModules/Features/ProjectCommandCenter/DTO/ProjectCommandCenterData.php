@@ -77,6 +77,32 @@ final readonly class ProjectCommandCenterData
         );
     }
 
+    public function withFinance(array $finance): self
+    {
+        return new self(
+            project: $this->project,
+            period: $this->period,
+            generatedAt: $this->generatedAt,
+            problems: $this->problems,
+            finance: $finance,
+            delivery: $this->delivery,
+            analytics: $this->analytics,
+        );
+    }
+
+    public function withDelivery(array $delivery): self
+    {
+        return new self(
+            project: $this->project,
+            period: $this->period,
+            generatedAt: $this->generatedAt,
+            problems: $this->problems,
+            finance: $this->finance,
+            delivery: $delivery,
+            analytics: $this->analytics,
+        );
+    }
+
     private static function normalizeDate(mixed $date): ?string
     {
         if ($date instanceof DateTimeInterface) {

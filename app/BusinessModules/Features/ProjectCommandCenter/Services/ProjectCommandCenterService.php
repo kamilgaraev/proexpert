@@ -7,11 +7,14 @@ namespace App\BusinessModules\Features\ProjectCommandCenter\Services;
 use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectCommandCenterData;
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Models\Project;
+use Carbon\CarbonImmutable;
 
 final class ProjectCommandCenterService
 {
     public function __construct(
         private readonly ProjectProblemCollector $problemCollector,
+        private readonly ProjectFinanceHealthBuilder $financeHealthBuilder,
+        private readonly ProjectDeliveryBuilder $deliveryBuilder,
     ) {
     }
 
@@ -22,7 +25,7 @@ final class ProjectCommandCenterService
         ?string $dateFrom,
         ?string $dateTo,
     ): ProjectCommandCenterData {
-        $generatedAt = now();
+        $generatedAt = CarbonImmutable::now();
         $data = ProjectCommandCenterData::empty(
             project: $project,
             projectContext: $projectContext,
@@ -32,10 +35,15 @@ final class ProjectCommandCenterService
             generatedAt: $generatedAt,
         );
 
-        return $data->withProblems($this->problemCollector->collect(
+        $problems = $this->problemCollector->collect(
             project: $project,
             projectContext: $projectContext,
             now: $generatedAt,
-        ));
+        );
+
+        return $data
+            ->withProblems($problems)
+            ->withFinance($this->financeHealthBuilder->build($project, $projectContext, $generatedAt)->toArray())
+            ->withDelivery($this->deliveryBuilder->build($project, $projectContext, $generatedAt, $problems)->toArray());
     }
 }
