@@ -75,7 +75,7 @@ return new class extends Migration
         $sql = str_replace([' concurrently ', ';'], [' ', ''], $sql);
         $schema = strtolower((string) DB::selectOne('SELECT current_schema() AS name')->name);
         $sql = str_replace([$schema.'.', '"'.$schema.'".'], '', $sql);
-        $sql = (string) preg_replace('/::[a-z_ ]+(?:\[\])?/', '', $sql);
+        $sql = (string) preg_replace('/::(?:"[^"]+"\.)*"?[a-z_]+"?(?:\s+"?[a-z_]+"?)*(?:\[\])?/', '', $sql);
         $sql = str_replace(['"', '(', ')'], '', $sql);
 
         return (string) preg_replace('/\s+/', ' ', trim($sql));
