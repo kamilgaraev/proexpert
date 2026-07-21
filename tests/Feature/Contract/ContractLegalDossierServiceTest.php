@@ -9,6 +9,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentLink;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Requests\Api\V1\Admin\Contract\ListContractLegalDossierCandidatesRequest;
 use App\Models\Contract;
+use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\Supplier;
 use App\Models\User;
@@ -51,7 +52,10 @@ final class ContractLegalDossierServiceTest extends TestCase
             $table->unsignedBigInteger('project_id');
             $table->string('number');
             $table->string('status')->default('draft');
+            $table->unsignedBigInteger('contractor_id')->nullable();
             $table->unsignedBigInteger('supplier_id')->nullable();
+            $table->string('contract_category')->nullable();
+            $table->string('work_type_category')->nullable();
             $table->string('subject')->nullable();
             $table->string('payment_terms')->nullable();
             $table->text('notes')->nullable();
@@ -99,6 +103,13 @@ final class ContractLegalDossierServiceTest extends TestCase
             $table->softDeletes();
         });
         $this->database->schema()->create('suppliers', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->string('name');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+        $this->database->schema()->create('contractors', static function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('organization_id');
             $table->string('name');
@@ -200,6 +211,54 @@ final class ContractLegalDossierServiceTest extends TestCase
         $result = $this->service($creator)->create($this->actor(), 7, 11, (int) $contract->id, [
             'title' => 'Договор поставки',
             'idempotency_key' => 'f48e2af3-3851-4c5a-b5a2-3373677f9a46',
+        ]);
+
+        self::assertSame('created', $result->operationResult);
+        self::assertSame((int) $result->document->id, (int) $contract->refresh()->legal_archive_document_id);
+    }
+
+    public function test_create_derives_supply_profile_for_external_procurement_contract(): void
+    {
+        Organization::query()->create(['id' => 7, 'name' => 'Заказчик МОСТ']);
+        Contractor::query()->create(['id' => 56, 'organization_id' => 7, 'name' => 'Внешний поставщик МОСТ']);
+        $contract = $this->contract([
+            'contractor_id' => 56,
+            'contract_category' => 'procurement',
+            'subject' => 'Поставка материалов',
+            'payment_terms' => 'Поставка в течение 10 дней после оплаты',
+            'base_amount' => 1000,
+            'total_amount' => 1250,
+        ]);
+        $creator = Mockery::mock(ContractDossierDocumentCreator::class);
+        $creator->shouldReceive('create')->once()->withArgs(function (int $organizationId, int $actorId, array $data): bool {
+            self::assertSame(7, $organizationId);
+            self::assertSame(3, $actorId);
+            self::assertSame('contract.supply', $data['type_profile_code']);
+            self::assertSame([
+                'subject' => 'Поставка материалов',
+                'buyer' => 'Заказчик МОСТ',
+                'supplier' => 'Внешний поставщик МОСТ',
+                'price' => 1250.0,
+                'delivery_terms' => 'Поставка в течение 10 дней после оплаты',
+            ], $data['metadata']);
+
+            return true;
+        })->andReturnUsing(function () use ($contract): LegalArchiveDocument {
+            return LegalArchiveDocument::query()->create([
+                'organization_id' => 7,
+                'primary_project_id' => 11,
+                'title' => 'Договор поставки',
+                'document_type' => 'contract',
+                'type_profile_code' => 'contract.supply',
+                'source_type' => 'contract',
+                'source_id' => (string) $contract->id,
+                'source_idempotency_key' => 'e1ba7a5d-0cac-48b6-a40a-3f17251196a1',
+            ]);
+        });
+
+        $result = $this->service($creator)->create($this->actor(), 7, 11, (int) $contract->id, [
+            'title' => 'Договор поставки',
+            'idempotency_key' => 'e1ba7a5d-0cac-48b6-a40a-3f17251196a1',
         ]);
 
         self::assertSame('created', $result->operationResult);

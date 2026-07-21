@@ -6,6 +6,7 @@ namespace App\Services\Contract;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentLink;
+use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
@@ -255,6 +256,7 @@ final class ContractLegalDossierService
             ->with([
                 'organization:id,name,legal_name',
                 'supplier:id,organization_id,name',
+                'contractor:id,organization_id,name',
             ])
             ->where('organization_id', $organizationId)
             ->where('project_id', $projectId)
@@ -364,7 +366,11 @@ final class ContractLegalDossierService
 
     private function documentProfileCode(Contract $contract): string
     {
-        return $contract->supplier_id !== null ? 'contract.supply' : 'contract.work';
+        return $contract->supplier_id !== null
+            || $contract->contract_category === 'procurement'
+            || $contract->work_type_category === ContractWorkTypeCategoryEnum::SUPPLY
+            ? 'contract.supply'
+            : 'contract.work';
     }
 
     /** @param array<string, mixed> $data @return array<string, mixed> */
@@ -386,8 +392,8 @@ final class ContractLegalDossierService
     {
         $subject = $this->firstFilledString($contract->subject);
         $buyer = $this->firstFilledString($contract->organization?->legal_name, $contract->organization?->name);
-        $supplier = $this->firstFilledString($contract->supplier?->name);
-        $deliveryTerms = $this->firstFilledString($contract->payment_terms, $contract->notes);
+        $supplier = $this->firstFilledString($contract->supplier?->name, $contract->contractor?->name);
+        $deliveryTerms = $this->firstFilledString($contract->payment_terms);
         $price = $contract->total_amount ?? $contract->base_amount;
         if (
             $subject === null

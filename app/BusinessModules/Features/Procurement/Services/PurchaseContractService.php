@@ -87,6 +87,9 @@ class PurchaseContractService
                 idempotencyKey: 'purchase-order:'.$order->id,
                 documentTitle: 'Договор поставки №'.$contractNumber,
                 profileCode: 'contract.supply',
+                documentMetadata: [
+                    'delivery_terms' => $order->delivery_date?->toDateString(),
+                ],
                 sourceLinks: [[
                     'link_type' => 'purchase_order',
                     'linked_type' => 'purchase_order',
