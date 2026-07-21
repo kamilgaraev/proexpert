@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateSt
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -45,6 +46,39 @@ final class RetryEstimateGenerationSessionTest extends TestCase
         self::assertSame(4, $result->state_version);
         self::assertSame('attempt-new', $result->input_payload['generation_attempt_id']);
         self::assertSame([[71, 4, 'attempt-new']], $dispatcher->generation);
+    }
+
+    #[Test]
+    public function restart_refreshes_a_superseded_regional_price_version(): void
+    {
+        $session = $this->generating();
+        $session->input_payload = [
+            'generation_attempt_id' => 'attempt-old',
+            'regional_context' => [
+                'estimate_regional_price_version_id' => 149,
+                'version_key' => '2026-q2-ru-ta',
+                'normative_dataset_version' => 'fsnb-2022',
+            ],
+        ];
+        [$action] = $this->action($session, new class extends EstimateGenerationRegionalContextResolver {
+            public function __construct() {}
+
+            public function resolve(array $input): array
+            {
+                return [
+                    'estimate_regional_price_version_id' => 150,
+                    'version_key' => '2026-q2-ru-ta-r1',
+                    'status' => 'active',
+                ];
+            }
+        });
+
+        $result = $action->handle($this->command());
+
+        self::assertSame(150, $result->input_payload['regional_context']['estimate_regional_price_version_id']);
+        self::assertSame('2026-q2-ru-ta-r1', $result->input_payload['regional_context']['version_key']);
+        self::assertSame('active', $result->input_payload['regional_context']['status']);
+        self::assertSame('fsnb-2022', $result->input_payload['regional_context']['normative_dataset_version']);
     }
 
     #[Test]
@@ -222,7 +256,7 @@ final class RetryEstimateGenerationSessionTest extends TestCase
     }
 
     /** @return array{RetryEstimateGenerationSession, RetrySessionRepositoryFake, RetryDispatcherFake} */
-    private function action(EstimateGenerationSession $session): array
+    private function action(EstimateGenerationSession $session, ?EstimateGenerationRegionalContextResolver $regionalContextResolver = null): array
     {
         $store = new RetrySessionStateStore($session);
         $repository = new RetrySessionRepositoryFake($session);
@@ -233,6 +267,7 @@ final class RetryEstimateGenerationSessionTest extends TestCase
                 $repository,
                 new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, $store),
                 $dispatcher,
+                $regionalContextResolver,
                 static fn (): string => 'attempt-new',
             ),
             $repository,

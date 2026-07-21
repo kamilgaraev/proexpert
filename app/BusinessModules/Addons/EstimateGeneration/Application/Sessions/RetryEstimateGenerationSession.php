@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenera
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use Closure;
 use Illuminate\Support\Str;
 
@@ -21,6 +22,7 @@ final class RetryEstimateGenerationSession
         private RetryableEstimateGenerationSessionRepository $repository,
         private EstimateGenerationWorkflow $workflow,
         private EstimateGenerationRetryDispatcher $dispatcher,
+        private ?EstimateGenerationRegionalContextResolver $regionalContextResolver = null,
         ?Closure $attemptIdFactory = null,
     ) {
         $this->attemptIdFactory = $attemptIdFactory ?? static fn (): string => (string) Str::uuid();
@@ -163,6 +165,7 @@ final class RetryEstimateGenerationSession
             'failure_code' => null,
             'input_payload' => [
                 ...($session->input_payload ?? []),
+                ...$this->refreshedRegionalContext($session),
                 'generation_attempt_id' => $attemptId,
                 'generation_requested' => false,
             ],
@@ -182,6 +185,7 @@ final class RetryEstimateGenerationSession
             'failure_code' => null,
             'input_payload' => [
                 ...($session->input_payload ?? []),
+                ...$this->refreshedRegionalContext($session),
                 'generation_attempt_id' => $attemptId,
                 'generation_requested' => false,
             ],
@@ -201,6 +205,7 @@ final class RetryEstimateGenerationSession
             'failure_code' => null,
             'input_payload' => [
                 ...($session->input_payload ?? []),
+                ...$this->refreshedRegionalContext($session),
                 'generation_attempt_id' => $attemptId,
                 'generation_requested' => false,
             ],
@@ -208,6 +213,22 @@ final class RetryEstimateGenerationSession
         $this->dispatcher->dispatchGeneration((int) $session->getKey(), (int) $session->state_version, $attemptId);
 
         return $session;
+    }
+
+    private function refreshedRegionalContext(EstimateGenerationSession $session): array
+    {
+        $regionalContext = $session->input_payload['regional_context'] ?? null;
+
+        if (! is_array($regionalContext) || $this->regionalContextResolver === null) {
+            return [];
+        }
+
+        return [
+            'regional_context' => [
+                ...$regionalContext,
+                ...$this->regionalContextResolver->resolve($regionalContext),
+            ],
+        ];
     }
 
     private function retryApply(EstimateGenerationSession $session): EstimateGenerationSession
