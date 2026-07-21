@@ -10,6 +10,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Services\PurchaseContractService;
 use App\DTOs\Contract\ContractDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
+use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\Contract\ContractAuditedMutationService;
@@ -50,6 +51,7 @@ final class ProcurementContractConcurrencyTest extends TestCase
         $schema = $this->database->schema();
         $schema->create('contracts', static function (Blueprint $table): void {
             $table->id(); $table->unsignedBigInteger('organization_id'); $table->string('number'); $table->string('status')->default('draft');
+            $table->string('gp_calculation_type');
             $table->unsignedBigInteger('legal_archive_document_id')->nullable()->unique(); $table->string('dossier_creation_key', 191)->nullable();
             $table->timestamps(); $table->softDeletes(); $table->unique(['organization_id', 'dossier_creation_key']);
         });
@@ -143,10 +145,14 @@ final class ProcurementContractConcurrencyTest extends TestCase
             ->once()
             ->withArgs(static function (mixed ...$arguments): bool {
                 return $arguments[1] instanceof ContractDTO
-                    && $arguments[1]->contract_side_type === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER;
+                    && $arguments[1]->contract_side_type === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER
+                    && $arguments[1]->gp_calculation_type === GpCalculationTypeEnum::PERCENTAGE;
             })
-            ->andReturnUsing(static fn (): Contract => Contract::query()->create([
-                'organization_id' => 7, 'number' => 'PO-41', 'dossier_creation_key' => 'purchase-order:41',
+            ->andReturnUsing(static fn (int $organizationId, ContractDTO $dto): Contract => Contract::query()->create([
+                'organization_id' => $organizationId,
+                'number' => 'PO-41',
+                'gp_calculation_type' => $dto->gp_calculation_type?->value,
+                'dossier_creation_key' => 'purchase-order:41',
             ]));
         $dossiers = new ContractDossierCreationService(
             $this->database->getConnection(),
@@ -167,6 +173,7 @@ final class ProcurementContractConcurrencyTest extends TestCase
         self::assertSame($first->id, $second->id);
         self::assertSame($first->id, $order->fresh()->contract_id);
         self::assertSame(41, $first->legal_archive_document_id);
+        self::assertSame('percentage', $this->database->table('contracts')->where('id', $first->id)->value('gp_calculation_type'));
         self::assertSame(1, $this->database->table('contracts')->count());
         self::assertSame(1, $this->database->table('contract_dossier_sources')->count());
     }
@@ -202,10 +209,14 @@ final class ProcurementContractConcurrencyTest extends TestCase
                 return $arguments[1] instanceof ContractDTO
                     && $arguments[1]->contract_side_type === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR
                     && $arguments[1]->contractor_id !== null
-                    && $arguments[1]->supplier_id === null;
+                    && $arguments[1]->supplier_id === null
+                    && $arguments[1]->gp_calculation_type === GpCalculationTypeEnum::PERCENTAGE;
             })
-            ->andReturnUsing(static fn (): Contract => Contract::query()->create([
-                'organization_id' => 7, 'number' => 'PO-42', 'dossier_creation_key' => 'purchase-order:42',
+            ->andReturnUsing(static fn (int $organizationId, ContractDTO $dto): Contract => Contract::query()->create([
+                'organization_id' => $organizationId,
+                'number' => 'PO-42',
+                'gp_calculation_type' => $dto->gp_calculation_type?->value,
+                'dossier_creation_key' => 'purchase-order:42',
             ]));
         $dossiers = new ContractDossierCreationService(
             $this->database->getConnection(),
@@ -226,6 +237,7 @@ final class ProcurementContractConcurrencyTest extends TestCase
         self::assertSame($first->id, $second->id);
         self::assertSame($first->id, $order->fresh()->contract_id);
         self::assertSame(42, $first->legal_archive_document_id);
+        self::assertSame('percentage', $this->database->table('contracts')->where('id', $first->id)->value('gp_calculation_type'));
         self::assertSame(1, $this->database->table('contracts')->count());
         self::assertSame(1, $this->database->table('contract_dossier_sources')->count());
     }

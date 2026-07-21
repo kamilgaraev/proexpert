@@ -9,6 +9,7 @@ use App\DTOs\Contract\ContractDossierCreationInput;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
+use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\User;
@@ -234,7 +235,7 @@ class PurchaseContractService
             base_amount: (float) $data['total_amount'],
             total_amount: (float) $data['total_amount'],
             gp_percentage: null,
-            gp_calculation_type: null,
+            gp_calculation_type: GpCalculationTypeEnum::PERCENTAGE,
             gp_coefficient: null,
             warranty_retention_calculation_type: null,
             warranty_retention_percentage: null,
