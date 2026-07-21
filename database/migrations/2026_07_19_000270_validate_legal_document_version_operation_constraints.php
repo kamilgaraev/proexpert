@@ -17,6 +17,13 @@ return new class extends Migration
         foreach (LegalDocumentVersionOperationPostgresSchema::constraints() as $expected) {
             $actual = $this->constraint($expected['name']);
             if ($actual === null || ! LegalDocumentVersionOperationPostgresSchema::constraintMatches($actual, $expected)) {
+                if ($actual !== null && $expected['name'] === 'legal_archive_version_operations_state_check') {
+                    DB::statement("ALTER TABLE {$expected['table']} DROP CONSTRAINT {$expected['name']}");
+                    DB::statement("ALTER TABLE {$expected['table']} ADD CONSTRAINT {$expected['name']} {$expected['definition']} NOT VALID");
+                    $actual = $this->constraint($expected['name']);
+                }
+            }
+            if ($actual === null || ! LegalDocumentVersionOperationPostgresSchema::constraintMatches($actual, $expected)) {
                 throw new RuntimeException("legal_archive_version_operation_constraint_descriptor_mismatch:{$expected['name']}");
             }
             if (! (bool) $actual->convalidated) {
