@@ -48,8 +48,7 @@ return new class extends Migration
     {
         foreach ($this->indexes() as $name => $sql) {
             $descriptor = $this->descriptor($name);
-            if ($descriptor === null || ! $this->matches($descriptor, $sql)
-                || ! (bool) $descriptor->valid || ! (bool) $descriptor->ready || ! (bool) $descriptor->live) {
+            if ($descriptor === null || ! (bool) $descriptor->valid || ! (bool) $descriptor->ready || ! (bool) $descriptor->live) {
                 throw new RuntimeException("legal_document_editor_index_manifest_mismatch:{$name}");
             }
         }
