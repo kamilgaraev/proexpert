@@ -306,85 +306,26 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
 
             return null;
         }
+        $abstractDefinitions = $this->database->table('estimate_norm_resources')
+            ->whereIn('estimate_norm_id', $ids)
+            ->where('quantity', '>', 0)
+            ->where('resource_type', '<>', 'summary')
+            ->whereRaw("LOWER(COALESCE(raw_payload->>'source_tag', '')) = 'abstractresource'")
+            ->orderBy('estimate_norm_id')
+            ->orderBy('id')
+            ->get(['id', 'estimate_norm_id', 'construction_resource_id', 'resource_code', 'resource_name', 'unit', 'quantity', 'resource_type']);
         $this->progress($progress, 'abstract_resource_rows_started', ['norms_count' => $norms->count()]);
-        $abstractResourceRows = $this->database->table('estimate_norm_resources as resources')
-            ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
-                $join->where(function ($resourceGroup): void {
-                    $resourceGroup->whereRaw("prices.resource_code LIKE (resources.resource_code || '-____')");
-                    foreach ($this->residentialAbstractResourcePriceSelector->supportedCandidateGroups() as $group) {
-                        if ($group['candidate_group_code'] === $group['group_code']) {
-                            continue;
-                        }
-                        $resourceGroup->orWhere(function ($mappedGroup) use ($group): void {
-                            $mappedGroup->where('resources.resource_code', $group['group_code'])
-                                ->where('prices.resource_code', 'like', $group['candidate_group_code'].'-____');
-                        });
-                    }
-                })
-                    ->whereRaw("RIGHT(prices.resource_code, 4) ~ '^[0-9]{4}$'")
-                    ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
-                        $priceContext->where(function ($regional) use ($requested): void {
-                            $regional->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
-                                ->where('prices.region_id', $requested->regionId)
-                                ->where('prices.price_zone_id', $requested->priceZoneId)
-                                ->where('prices.period_id', $requested->periodId);
-                        })->orWhere(function ($base) use ($basePriceDatasetIds): void {
-                            $base->whereIn('prices.dataset_version_id', $basePriceDatasetIds)
-                                ->whereNull('prices.regional_price_version_id');
-                        });
-                    });
-            })
-            ->leftJoin('estimate_dataset_versions as price_datasets', 'price_datasets.id', '=', 'prices.dataset_version_id')
-            ->leftJoin('estimate_regional_price_versions as price_regional_versions', 'price_regional_versions.id', '=', 'prices.regional_price_version_id')
-            ->whereIn('resources.estimate_norm_id', $ids)
-            ->where('resources.quantity', '>', 0)
-            ->where('resources.resource_type', '<>', 'summary')
-            ->whereRaw("LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) = 'abstractresource'")
-            ->whereRaw("resources.resource_code ~ '^[0-9]{2}\\.[0-9]\\.[0-9]{2}\\.[0-9]{2}$'")
-            ->where('prices.base_price', '>', 0)
-            ->whereRaw("resources.resource_type IN ('labor', 'machine_labor') OR COALESCE(prices.source_price_kind, '') <> 'regional_worker_salary'")
-            ->where(function ($compatibleUnit): void {
-                $compatibleUnit->whereRaw('prices.unit IS NOT DISTINCT FROM resources.unit')
-                    ->orWhereRaw(
-                        "LOWER(REGEXP_REPLACE(COALESCE(prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(resources.unit, ''), '[[:space:].,-]+', '', 'g'))"
-                    )
-                    ->orWhereExists(function ($conversion): void {
-                        $conversion->selectRaw('1')
-                            ->from('estimate_generation_unit_conversions as abstract_conversions')
-                            ->whereColumn('abstract_conversions.from_unit', 'resources.unit')
-                            ->whereColumn('abstract_conversions.to_unit', 'prices.unit')
-                            ->where('abstract_conversions.version', 1)
-                            ->where('abstract_conversions.is_active', true)
-                            ->where('abstract_conversions.factor', '>', 0);
-                    })
-                    ->orWhere(function ($residentialConversion): void {
-                        foreach ($this->residentialAbstractResourcePriceSelector->supportedUnitPairs() as $index => $pair) {
-                            $method = $index === 0 ? 'where' : 'orWhere';
-                            $residentialConversion->{$method}(function ($supported) use ($pair): void {
-                                $supported->where('resources.resource_code', $pair['group_code'])
-                                    ->where('prices.unit', $pair['from_unit']);
-                            });
-                        }
-                    });
-            })
-            ->orderBy('resources.estimate_norm_id')
-            ->orderBy('resources.id')
-            ->orderBy('prices.base_price')
-            ->orderBy('prices.resource_code')
-            ->orderBy('prices.id')
-            ->limit(10_001)
-            ->get([
-                'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
-                'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
-                'prices.id as price_id', 'prices.dataset_version_id', 'prices.construction_resource_id as price_construction_resource_id',
-                'prices.resource_code as price_resource_code', 'prices.resource_name as price_resource_name',
-                'prices.price_type', 'prices.source_price_kind', 'prices.unit as price_unit', 'prices.base_price as unit_price',
-                'prices.base_price', 'prices.regional_price_version_id',
-                'price_regional_versions.version_key as regional_price_version_key',
-                'price_datasets.source_type as price_dataset_source_type',
-                'price_datasets.version_key as price_dataset_version',
-                $this->database->raw("'AbstractResource' AS raw_source_tag"),
-            ]);
+        $abstractResourceRows = collect();
+        foreach ($abstractDefinitions as $definition) {
+            $abstractResourceRows = $abstractResourceRows->concat($this->abstractPriceRowsForDefinition(
+                $definition,
+                $requested,
+                $basePriceDatasetIds,
+            ));
+            if ($abstractResourceRows->count() > 10_000) {
+                break;
+            }
+        }
         $this->progress($progress, 'abstract_resource_rows_loaded', ['abstract_resource_rows_count' => $abstractResourceRows->count()]);
         if ($resourceRows->count() + $abstractResourceRows->count() > 10_000) {
             $this->telemetry('resources_limit_exceeded', [
@@ -442,14 +383,6 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             }
             $selectedAbstractRows->push($selection['row']);
         }
-        $abstractDefinitions = $this->database->table('estimate_norm_resources')
-            ->whereIn('estimate_norm_id', $ids)
-            ->where('quantity', '>', 0)
-            ->where('resource_type', '<>', 'summary')
-            ->whereRaw("LOWER(COALESCE(raw_payload->>'source_tag', '')) = 'abstractresource'")
-            ->orderBy('estimate_norm_id')
-            ->orderBy('id')
-            ->get(['id', 'estimate_norm_id', 'construction_resource_id', 'resource_code', 'resource_name', 'unit', 'quantity', 'resource_type']);
         $unresolvedAbstractDefinitions = $abstractDefinitions->reject(static fn (object $row): bool => $selectedAbstractRows->contains(
             static fn (object $selected): bool => (int) $selected->norm_resource_id === (int) $row->id,
         ));
@@ -1024,6 +957,81 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             'section' => (string) $candidate->section_code,
             ...($coverage[(int) $candidate->id] ?? []),
         ])->all();
+    }
+
+    /** @param array<int, int> $basePriceDatasetIds */
+    private function abstractPriceRowsForDefinition(
+        object $definition,
+        NormativeContextPinData $requested,
+        array $basePriceDatasetIds,
+    ): \Illuminate\Support\Collection {
+        $groupCode = trim((string) $definition->resource_code);
+        $candidateGroups = [$groupCode];
+        foreach ($this->residentialAbstractResourcePriceSelector->supportedCandidateGroups() as $group) {
+            if ($group['group_code'] === $groupCode) {
+                $candidateGroups[] = $group['candidate_group_code'];
+            }
+        }
+        $candidateGroups = array_values(array_unique($candidateGroups));
+        $resourceType = (string) $definition->resource_type;
+        $resourceUnit = (string) $definition->unit;
+        $rows = $this->database->table('estimate_resource_prices as prices')
+            ->leftJoin('estimate_dataset_versions as price_datasets', 'price_datasets.id', '=', 'prices.dataset_version_id')
+            ->leftJoin('estimate_regional_price_versions as price_regional_versions', 'price_regional_versions.id', '=', 'prices.regional_price_version_id')
+            ->where(function ($codes) use ($candidateGroups): void {
+                foreach ($candidateGroups as $index => $code) {
+                    $method = $index === 0 ? 'where' : 'orWhere';
+                    $codes->{$method}('prices.resource_code', 'like', $code.'-____');
+                }
+            })
+            ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
+                $priceContext->where(function ($regional) use ($requested): void {
+                    $regional->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                        ->where('prices.region_id', $requested->regionId)
+                        ->where('prices.price_zone_id', $requested->priceZoneId)
+                        ->where('prices.period_id', $requested->periodId);
+                })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                    $base->whereIn('prices.dataset_version_id', $basePriceDatasetIds)
+                        ->whereNull('prices.regional_price_version_id');
+                });
+            })
+            ->where('prices.base_price', '>', 0)
+            ->when(! in_array($resourceType, ['labor', 'machine_labor'], true), static fn ($query) => $query->whereRaw("COALESCE(prices.source_price_kind, '') <> 'regional_worker_salary'"))
+            ->where(function ($units) use ($resourceUnit, $groupCode): void {
+                $units->where('prices.unit', $resourceUnit)
+                    ->orWhereRaw("LOWER(REGEXP_REPLACE(COALESCE(prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(?, '[[:space:].,-]+', '', 'g'))", [$resourceUnit])
+                    ->orWhereExists(function ($conversion) use ($resourceUnit): void {
+                        $conversion->selectRaw('1')->from('estimate_generation_unit_conversions as conversions')
+                            ->where('conversions.from_unit', $resourceUnit)->whereColumn('conversions.to_unit', 'prices.unit')
+                            ->where('conversions.version', 1)->where('conversions.is_active', true)->where('conversions.factor', '>', 0);
+                    });
+                foreach ($this->residentialAbstractResourcePriceSelector->supportedUnitPairs() as $pair) {
+                    if ($pair['group_code'] === $groupCode) {
+                        $units->orWhere('prices.unit', $pair['from_unit']);
+                    }
+                }
+            })
+            ->orderBy('prices.base_price')->orderBy('prices.resource_code')->orderBy('prices.id')->limit(500)
+            ->get([
+                'prices.id as price_id', 'prices.dataset_version_id', 'prices.construction_resource_id as price_construction_resource_id',
+                'prices.resource_code as price_resource_code', 'prices.resource_name as price_resource_name', 'prices.price_type',
+                'prices.source_price_kind', 'prices.unit as price_unit', 'prices.base_price as unit_price', 'prices.base_price',
+                'prices.regional_price_version_id', 'price_regional_versions.version_key as regional_price_version_key',
+                'price_datasets.source_type as price_dataset_source_type', 'price_datasets.version_key as price_dataset_version',
+            ]);
+        foreach ($rows as $row) {
+            $row->norm_resource_id = (int) $definition->id;
+            $row->estimate_norm_id = (int) $definition->estimate_norm_id;
+            $row->construction_resource_id = $definition->construction_resource_id;
+            $row->resource_code = $groupCode;
+            $row->resource_name = (string) $definition->resource_name;
+            $row->unit = $resourceUnit;
+            $row->quantity = $definition->quantity;
+            $row->resource_type = $resourceType;
+            $row->raw_source_tag = 'AbstractResource';
+        }
+
+        return $rows;
     }
 
     private function telemetry(string $phase, array $context): void
