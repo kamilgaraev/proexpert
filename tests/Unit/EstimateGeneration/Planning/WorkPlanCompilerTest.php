@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedWorkPlannerR
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlannerResponseData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
@@ -69,6 +70,15 @@ final class WorkPlanCompilerTest extends TestCase
 
         self::assertNotContains('lighting.lines', array_column($electricalItems, 'quantity_formula'));
         self::assertSame(['lighting.lines', 'lighting.fixtures'], array_column($lightingItems, 'quantity_formula'));
+        $lightingLine = current(array_filter(
+            $lightingItems,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'lighting.lines',
+        ));
+        $scenario = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog)
+            ->issue('lighting.lines', 'residential');
+
+        self::assertIsArray($scenario);
+        self::assertSame($scenario, $lightingLine['specialization_scenario'] ?? null);
     }
 
     public function test_quantity_coverage_warnings_are_attached_only_to_the_affected_packages(): void
@@ -206,6 +216,46 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertNull($item['normative_rate_code']);
         self::assertSame('concreting', $item['work_intent']['action']);
         self::assertArrayNotHasKey('norm_id', $item);
+    }
+
+    public function test_recorded_intent_keeps_the_catalog_signed_scenario_for_later_normative_matching(): void
+    {
+        $decomposition = $this->createMock(EstimateDecompositionService::class);
+        $decomposition->method('decomposePackagePlan')->willReturn([[
+            'key' => 'walls',
+            'title' => 'Стены',
+            'scope_type' => 'walls',
+            'sections' => [['key' => 'walls', 'title' => 'Стены', 'source_refs' => []]],
+        ]]);
+        $source = new WorkPlannerResponseData([[
+            'section_key' => 'walls',
+            'scope_type' => 'walls',
+            'work_intents' => [[
+                'intent_key' => 'walls-lintels',
+                'name' => 'Устройство перемычек',
+                'category' => 'walls',
+                'unit' => 'шт',
+                'quantity' => '8',
+                'quantity_key' => 'walls.lintels',
+                'quantity_source_refs' => ['doc:1'],
+                'confidence' => 0.91,
+            ]],
+        ]]);
+        $compiler = new WorkPlanCompiler(
+            new PackagePlannerService,
+            $decomposition,
+            new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService),
+            new NormativeContextPinResolver,
+        );
+
+        $payload = $compiler->compile([
+            'object' => ['object_type' => 'house', 'area' => 180],
+            'regional_context' => [],
+            'planning_signals' => ['generation_mode' => 'ai_assisted'],
+        ], $source, true);
+
+        $item = $payload['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('07-01-021-01', $item['specialization_scenario']['normative_rate_code'] ?? null);
     }
 
     public function test_normative_pin_is_resolved_from_final_canonical_work_item_units(): void

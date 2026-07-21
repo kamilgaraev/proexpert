@@ -42,6 +42,10 @@ final readonly class WorkPlanCompiler
             }
         }
         $localEstimates = $this->deduplicateSignedScenarioItems($localEstimates);
+        $objectType = is_string($profile->toArray()['object_type'] ?? null)
+            ? $profile->toArray()['object_type']
+            : null;
+        $localEstimates = $this->materializeSignedScenarios($localEstimates, $objectType);
 
         $regionalContext = is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : [];
 
@@ -56,9 +60,7 @@ final readonly class WorkPlanCompiler
                 : $this->resolveNormativeContextPin(
                     $regionalContext,
                     $localEstimates,
-                    is_string($profile->toArray()['object_type'] ?? null)
-                        ? $profile->toArray()['object_type']
-                        : null,
+                    $objectType,
                 ),
             'local_estimates' => $localEstimates,
         ];
@@ -104,6 +106,34 @@ final readonly class WorkPlanCompiler
                         return $scenarioKey === '' || ($owners[$scenarioKey] ?? $packageKey) === $packageKey;
                     },
                 ));
+            }
+        }
+
+        return $localEstimates;
+    }
+
+    /** @param list<array<string, mixed>> $localEstimates
+     * @return list<array<string, mixed>>
+     */
+    private function materializeSignedScenarios(array $localEstimates, ?string $objectType): array
+    {
+        foreach ($localEstimates as $localIndex => $localEstimate) {
+            foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
+                foreach ($section['work_items'] ?? [] as $itemIndex => $item) {
+                    if (! is_array($item)) {
+                        continue;
+                    }
+
+                    $scenario = $this->resolvedMaterialScenario($item, $objectType);
+                    if ($scenario === null) {
+                        continue;
+                    }
+
+                    $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = [
+                        ...$item,
+                        'specialization_scenario' => $scenario,
+                    ];
+                }
             }
         }
 
