@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 final readonly class EloquentNormativeContextPinSource implements ProgressAwareNormativeContextPinSource
 {
     private const CANDIDATE_POOL_LIMIT = 300;
+    private const MAX_FINAL_RESOURCE_ROWS = 10_000;
 
     public function __construct(
         private Connection $database,
@@ -72,6 +73,7 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
         ], static fn (int $id): bool => $id > 0)));
         $this->progress($progress, 'base_price_datasets_resolved', ['intents_count' => count($intents)]);
         $norms = collect();
+        $rankedNormIdsByIntent = [];
         $poolCandidatesCount = 0;
         foreach ($intents as $intentIndex => $intent) {
             $search = mb_strtolower(trim((string) ($intent['search_text'] ?? '')));
@@ -154,6 +156,7 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                 'candidate_count' => $query->count(),
             ]);
             if ($query->isEmpty()) {
+                $rankedNormIdsByIntent[$intentIndex] = [];
                 $this->telemetryPrePriceCandidates(
                     $requested,
                     $basePriceDatasetIds,
@@ -176,8 +179,13 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             $poolCandidatesCount += $query->count();
             $selectedForIntent = $this->ranker->select($query->all(), [$intent]);
             if ($selectedForIntent !== null) {
+                $rankedNormIdsByIntent[$intentIndex] = array_values(array_filter(
+                    array_map(static fn (object $candidate): int => (int) $candidate->id, $selectedForIntent),
+                    static fn (int $id): bool => $id > 0,
+                ));
                 $norms = $norms->concat($selectedForIntent);
             } else {
+                $rankedNormIdsByIntent[$intentIndex] = [];
                 $this->telemetryPrePriceCandidates(
                     $requested,
                     $basePriceDatasetIds,
@@ -222,6 +230,32 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             ->get(['estimate_norm_id', $this->database->raw('COUNT(*) AS resource_count')])
             ->mapWithKeys(static fn (object $row): array => [(int) $row->estimate_norm_id => (int) $row->resource_count])
             ->all();
+        $processableNormIds = array_values(array_filter($ids, function (int $id) use ($expectedResourceCounts): bool {
+            $resourceCount = (int) ($expectedResourceCounts[$id] ?? 0);
+
+            if ($resourceCount > self::MAX_FINAL_RESOURCE_ROWS) {
+                $this->telemetry('candidate_bundle_rejected', [
+                    'norm_id' => $id,
+                    'reason' => 'resource_bundle_over_limit',
+                    'expected_resource_rows_count' => $resourceCount,
+                    'resource_limit' => self::MAX_FINAL_RESOURCE_ROWS,
+                ]);
+
+                return false;
+            }
+
+            return $resourceCount > 0;
+        }));
+        if ($processableNormIds === []) {
+            $this->telemetry('candidate_bundles_rejected', [
+                'selected_count' => $norms->count(),
+                'reason' => 'no_candidate_bundle_within_resource_limit',
+            ]);
+
+            return null;
+        }
+        $norms = $norms->filter(static fn (object $norm): bool => in_array((int) $norm->id, $processableNormIds, true))->values();
+        $ids = $processableNormIds;
         $basePricePlaceholders = implode(', ', array_fill(0, count($basePriceDatasetIds), '?'));
         $normalizedCandidateUnitSql = "LOWER(REGEXP_REPLACE(COALESCE(candidate_prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(resources.unit, ''), '[[:space:].,-]+', '', 'g'))";
         $this->progress($progress, 'resource_rows_started', ['norms_count' => $norms->count()]);
@@ -285,7 +319,6 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                 ],
             )
             ->orderBy('resources.estimate_norm_id')->orderBy('resources.id')
-            ->limit(10_001)
             ->get([
                 'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
                 'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
@@ -297,15 +330,6 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                 'price_datasets.version_key as price_dataset_version',
             ]);
         $this->progress($progress, 'resource_rows_loaded', ['resource_rows_count' => $resourceRows->count()]);
-        if ($resourceRows->count() > 10_000) {
-            $this->telemetry('resources_limit_exceeded', [
-                'selected_count' => $norms->count(),
-                'resource_rows_count' => $resourceRows->count(),
-                'abstract_resource_rows_count' => 0,
-            ]);
-
-            return null;
-        }
         $abstractDefinitions = $this->database->table('estimate_norm_resources')
             ->whereIn('estimate_norm_id', $ids)
             ->where('quantity', '>', 0)
@@ -330,14 +354,6 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             }
         }
         $this->progress($progress, 'abstract_resource_rows_loaded', ['abstract_resource_rows_count' => $selectedAbstractRows->count()]);
-        if ($resourceRows->count() + $selectedAbstractRows->count() > 10_000) {
-            $this->telemetry('resources_limit_exceeded', [
-                'selected_count' => $norms->count(),
-                'resource_rows_count' => $resourceRows->count() + $selectedAbstractRows->count(),
-            ]);
-
-            return null;
-        }
         $unresolvedAbstractDefinitions = $abstractDefinitions->reject(static fn (object $row): bool => $selectedAbstractRows->contains(
             static fn (object $selected): bool => (int) $selected->norm_resource_id === (int) $row->id,
         ));
@@ -593,8 +609,10 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                 'coverage_details' => array_slice($coverageDetails, 0, 30),
             ]);
         }
-        $candidates = [];
+        $candidatesByNormId = [];
+        $candidateResourceCounts = [];
         foreach ($norms as $norm) {
+            $normId = (int) $norm->id;
             $groups = $resources[(int) $norm->id] ?? [];
             $groups = [
                 'materials' => $groups['materials'] ?? [], 'labor' => $groups['labor'] ?? [],
@@ -603,14 +621,25 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             $selectedAbstractCount = (int) ($selectedAbstractCounts[(int) $norm->id] ?? 0);
             $unpricedAbstractCount = count($unpricedAbstractResources[(int) $norm->id] ?? []);
             $pricedExpectedCount = (int) ($expectedResourceCounts[(int) $norm->id] ?? 0) - $unpricedAbstractCount;
-            if ($pricedExpectedCount < $selectedAbstractCount
+            if ($unpricedAbstractCount > 0
+                || $pricedExpectedCount < $selectedAbstractCount
                 || ! $this->resourceCoverage->complete($pricedExpectedCount, $groups)) {
+                $this->telemetry('candidate_bundle_rejected', [
+                    'norm_id' => $normId,
+                    'reason' => $unpricedAbstractCount > 0
+                        ? 'abstract_resource_price_missing'
+                        : 'resource_price_coverage_incomplete',
+                    'expected_resource_rows_count' => (int) ($expectedResourceCounts[$normId] ?? 0),
+                    'selected_abstract_rows_count' => $selectedAbstractCount,
+                    'unpriced_abstract_rows_count' => $unpricedAbstractCount,
+                ]);
+
                 continue;
             }
             $composition = is_array($norm->work_composition)
                 ? $norm->work_composition
                 : json_decode((string) $norm->work_composition, true);
-            $candidates[] = [
+            $candidatesByNormId[$normId] = [
                 'candidate_id' => (string) $norm->id, 'normative_id' => (int) $norm->id,
                 'dataset_id' => $requested->datasetId, 'dataset_version' => $requested->datasetVersion,
                 'dataset_status' => 'parsed', 'code' => (string) $norm->code, 'name' => (string) $norm->name,
@@ -627,17 +656,85 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                 'work_composition' => is_array($composition) ? array_values($composition) : [],
                 'resources' => $groups,
             ];
+            $candidateResourceCounts[$normId] = array_sum(array_map(
+                static fn (array $group): int => count($group),
+                $groups,
+            ));
         }
-        if ($candidates === []) {
+        if ($candidatesByNormId === []) {
             $this->telemetry('priced_candidates_empty', ['selected_count' => $norms->count(), 'resource_rows_count' => $resourceRows->count()]);
 
+            return null;
+        }
+        $admittedNormIds = [];
+        $admittedResourceRowsCount = 0;
+        foreach ($rankedNormIdsByIntent as $intentIndex => $rankedNormIds) {
+            $admittedForIntent = false;
+            foreach ($rankedNormIds as $normId) {
+                if (! isset($candidatesByNormId[$normId])) {
+                    continue;
+                }
+                if (isset($admittedNormIds[$normId])) {
+                    $admittedForIntent = true;
+
+                    break;
+                }
+                $candidateResourceCount = $candidateResourceCounts[$normId] ?? 0;
+                if ($candidateResourceCount < 1
+                    || $admittedResourceRowsCount + $candidateResourceCount > self::MAX_FINAL_RESOURCE_ROWS) {
+                    $this->telemetry('candidate_bundle_rejected', [
+                        'norm_id' => $normId,
+                        'intent_index' => $intentIndex + 1,
+                        'reason' => 'final_resource_budget_exceeded',
+                        'candidate_resource_rows_count' => $candidateResourceCount,
+                        'admitted_resource_rows_count' => $admittedResourceRowsCount,
+                        'resource_limit' => self::MAX_FINAL_RESOURCE_ROWS,
+                    ]);
+
+                    continue;
+                }
+                $admittedNormIds[$normId] = true;
+                $admittedResourceRowsCount += $candidateResourceCount;
+                $admittedForIntent = true;
+
+                break;
+            }
+            if (! $admittedForIntent) {
+                $this->telemetry('candidate_bundle_rejected', [
+                    'intent_index' => $intentIndex + 1,
+                    'reason' => 'no_complete_candidate_for_intent',
+                    'ranked_norm_ids' => $rankedNormIds,
+                ]);
+
+                return null;
+            }
+        }
+        foreach ($rankedNormIdsByIntent as $rankedNormIds) {
+            foreach ($rankedNormIds as $normId) {
+                if (isset($admittedNormIds[$normId]) || ! isset($candidatesByNormId[$normId])) {
+                    continue;
+                }
+                $candidateResourceCount = $candidateResourceCounts[$normId] ?? 0;
+                if ($candidateResourceCount < 1
+                    || $admittedResourceRowsCount + $candidateResourceCount > self::MAX_FINAL_RESOURCE_ROWS) {
+                    continue;
+                }
+                $admittedNormIds[$normId] = true;
+                $admittedResourceRowsCount += $candidateResourceCount;
+            }
+        }
+        $candidates = array_values(array_filter(
+            $candidatesByNormId,
+            static fn (array $candidate): bool => isset($admittedNormIds[(int) $candidate['normative_id']]),
+        ));
+        if ($candidates === []) {
             return null;
         }
         $this->progress($progress, 'pin_candidates_built', ['candidate_count' => count($candidates)]);
         $this->progress($progress, 'supplementary_materials_started', ['intents_count' => count($intents)]);
         $supplementaryMaterials = $this->supplementaryMaterials($requested, $basePriceDatasetIds, $intents);
         $this->progress($progress, 'supplementary_materials_loaded', ['supplementary_materials_count' => count($supplementaryMaterials)]);
-        $this->telemetry('approved', ['intents_count' => count($intents), 'selected_count' => $norms->count(), 'resource_rows_count' => $resourceRows->count(), 'candidates_count' => count($candidates), 'supplementary_materials_count' => count($supplementaryMaterials)]);
+        $this->telemetry('approved', ['intents_count' => count($intents), 'selected_count' => $norms->count(), 'resource_rows_count' => $admittedResourceRowsCount, 'candidates_count' => count($candidates), 'supplementary_materials_count' => count($supplementaryMaterials)]);
         $canonical = json_encode(
             ['catalog_candidates' => $candidates, 'supplementary_materials' => $supplementaryMaterials],
             JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION,
