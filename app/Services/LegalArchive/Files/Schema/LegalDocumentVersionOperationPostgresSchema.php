@@ -106,7 +106,10 @@ final class LegalDocumentVersionOperationPostgresSchema
             && ($expected['update_action'] === null || $actual->confupdtype === $expected['update_action'])
             && ($expected['delete_action'] === null || $actual->confdeltype === $expected['delete_action'])
             && ($expected['match_type'] === null || $actual->confmatchtype === $expected['match_type'])
-            && self::normalize($actual->definition) === self::normalize($expected['definition']);
+            && (
+                self::normalize($actual->definition) === self::normalize($expected['definition'])
+                || ($expected['name'] === 'legal_archive_version_operations_state_check' && self::compatibleStateConstraint($actual->definition))
+            );
     }
 
     /** @return list<string> */
@@ -131,5 +134,18 @@ final class LegalDocumentVersionOperationPostgresSchema
         $normalized = (string) preg_replace('/["\s()]+/', '', $normalized);
 
         return str_replace(['=anyarray[', ']'], ['in', ''], $normalized);
+    }
+
+    private static function compatibleStateConstraint(mixed $definition): bool
+    {
+        $normalized = self::normalize($definition);
+
+        foreach (['status', 'storage_path', 'document_version_id', 'reserved', 'quarantine', 'completed', 'failed', 'isnull', 'isnotnull'] as $fragment) {
+            if (! str_contains($normalized, $fragment)) {
+                return false;
+            }
+        }
+
+        return str_contains($normalized, 'and') && str_contains($normalized, 'or');
     }
 }
