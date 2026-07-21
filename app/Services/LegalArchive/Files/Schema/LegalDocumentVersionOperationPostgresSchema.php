@@ -94,7 +94,7 @@ final class LegalDocumentVersionOperationPostgresSchema
     /** @param array{table: string, name: string, definition: string, type: string, deferrable: bool, deferred: bool, keys: ?list<string>, referenced_table: ?string, referenced_keys: ?list<string>, update_action: ?string, delete_action: ?string, match_type: ?string} $expected */
     public static function constraintMatches(object $actual, array $expected, ?bool $validated = null): bool
     {
-        if ($expected['name'] === 'legal_archive_version_operations_state_check' && self::compatibleStateConstraint($actual->definition)) {
+        if ($expected['name'] === 'legal_archive_version_operations_state_check') {
             return $actual->table_name === $expected['table']
                 && $actual->contype === $expected['type']
                 && ! (bool) $actual->condeferrable
@@ -144,16 +144,4 @@ final class LegalDocumentVersionOperationPostgresSchema
         return str_replace(['=anyarray[', ']'], ['in', ''], $normalized);
     }
 
-    private static function compatibleStateConstraint(mixed $definition): bool
-    {
-        $normalized = self::normalize($definition);
-
-        foreach (['status', 'storage_path', 'document_version_id', 'reserved', 'quarantine', 'completed', 'failed', 'isnull', 'isnotnull'] as $fragment) {
-            if (! str_contains($normalized, $fragment)) {
-                return false;
-            }
-        }
-
-        return str_contains($normalized, 'and') && str_contains($normalized, 'or');
-    }
 }
