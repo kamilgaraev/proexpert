@@ -9,12 +9,18 @@ use InvalidArgumentException;
 
 final readonly class ProjectProblemItem
 {
-    private const ROUTES = [
+    private const ACTION_ROUTES = [
         'safety' => '/safety-management',
         'schedule' => '/projects/{project_id}/schedules',
         'completed_work' => '/workflow/completed-works',
-        'materials' => '/materials',
-        'quality' => '/quality-control/defects',
+    ];
+
+    private const ACTION_MODULES = [
+        'safety',
+        'schedule',
+        'completed_work',
+        'materials',
+        'quality',
     ];
 
     /**
@@ -32,7 +38,7 @@ final readonly class ProjectProblemItem
         public DateTimeInterface $detectedAt,
         public string $actionModule,
     ) {
-        if (! array_key_exists($actionModule, self::ROUTES)) {
+        if (! in_array($actionModule, self::ACTION_MODULES, true)) {
             throw new InvalidArgumentException('Неизвестный модуль действия проблемы.');
         }
     }
@@ -82,6 +88,8 @@ final readonly class ProjectProblemItem
     /** @return array<string, mixed> */
     public function toArray(int $projectId): array
     {
+        $actionRoute = self::ACTION_ROUTES[$this->actionModule] ?? null;
+
         return [
             'id' => $this->id,
             'severity' => $this->severity,
@@ -92,8 +100,8 @@ final readonly class ProjectProblemItem
             'amount' => $this->amount,
             'due_at' => $this->dueAt?->format(DATE_ATOM),
             'detected_at' => $this->detectedAt->format(DATE_ATOM),
-            'action' => [
-                'route' => str_replace('{project_id}', (string) $projectId, self::ROUTES[$this->actionModule]),
+            'action' => $actionRoute === null ? null : [
+                'route' => str_replace('{project_id}', (string) $projectId, $actionRoute),
                 'query' => ['project_id' => $projectId],
             ],
         ];

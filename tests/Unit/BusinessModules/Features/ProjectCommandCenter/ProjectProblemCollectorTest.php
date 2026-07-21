@@ -27,16 +27,25 @@ final class ProjectProblemCollectorTest extends TestCase
                 $this->problem('schedule-task-7', 'warning', 'schedule', 'schedule', 20000.0, '2026-07-18', '2026-07-20'),
                 $this->problem('completed-work-5', 'warning', 'completed_work', 'completed_work', 80000.0, null, '2026-07-20'),
                 $this->problem('material-8', 'warning', 'materials', 'materials', 10000.0, null, '2026-07-18'),
+                $this->problem('quality-defect-4', 'warning', 'quality', 'quality', null, null, '2026-07-17'),
             ]),
         ]);
 
         $result = $collector->collect($this->project(), $this->context(), new DateTimeImmutable('2026-07-21T12:00:00+03:00'));
 
-        self::assertSame(['safety-violation-3', 'schedule-task-7', 'completed-work-5', 'material-8'], array_column($result['items'], 'id'));
-        self::assertSame(['total' => 4, 'critical' => 1, 'risk' => 3, 'attention' => 0], $result['summary']);
+        self::assertSame(['safety-violation-3', 'schedule-task-7', 'completed-work-5', 'material-8', 'quality-defect-4'], array_column($result['items'], 'id'));
+        self::assertSame(['total' => 5, 'critical' => 1, 'risk' => 4, 'attention' => 0], $result['summary']);
         self::assertSame('/safety-management', $result['items'][0]['action']['route']);
         self::assertSame(['project_id' => 42], $result['items'][0]['action']['query']);
         self::assertArrayNotHasKey('url', $result['items'][0]['action']);
+        self::assertSame('/projects/42/schedules', $result['items'][1]['action']['route']);
+        self::assertSame(['project_id' => 42], $result['items'][1]['action']['query']);
+        self::assertSame('/workflow/completed-works', $result['items'][2]['action']['route']);
+        self::assertSame(['project_id' => 42], $result['items'][2]['action']['query']);
+        self::assertNull($result['items'][3]['action']);
+        self::assertNull($result['items'][4]['action']);
+        self::assertStringNotContainsString('/materials', json_encode($result['items'], JSON_THROW_ON_ERROR));
+        self::assertStringNotContainsString('/quality-control/defects', json_encode($result['items'], JSON_THROW_ON_ERROR));
     }
 
     public function test_it_omits_unavailable_and_unauthorised_sources(): void
