@@ -302,7 +302,6 @@ class UpdateContractRequest extends FormRequest
             'subcontract_amount',
             'planned_advance_amount',
             'actual_advance_amount',
-            'status',
             'start_date',
             'end_date',
             'notes',
