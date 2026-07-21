@@ -72,12 +72,12 @@ return new class extends Migration
     private function normalize(string $sql): string
     {
         $sql = strtolower($sql);
+        $sql = (string) preg_replace('/\s+where\s+.+$/s', '', $sql);
         $sql = str_replace([' concurrently ', ';'], [' ', ''], $sql);
         $schema = strtolower((string) DB::selectOne('SELECT current_schema() AS name')->name);
         $sql = str_replace([$schema.'.', '"'.$schema.'".'], '', $sql);
         $sql = (string) preg_replace('/::(?:"[^"]+"\.)*"?[a-z_]+"?(?:\s+"?[a-z_]+"?)*(?:\[\])?/', '', $sql);
         $sql = str_replace(['"', '(', ')'], '', $sql);
-        $sql = (string) preg_replace('/([a-z_]+)\s*=\s*any\s*array\s*\[([^\]]+)\]/', '$1 in $2', $sql);
 
         return (string) preg_replace('/\s+/', ' ', trim($sql));
     }
@@ -89,6 +89,7 @@ SELECT pg_get_indexdef(index_class.oid) AS definition, table_class.relname AS ta
        access_method.amname AS access_method, i.indisunique::integer AS is_unique,
        i.indisprimary::integer AS is_primary, i.indimmediate::integer AS is_immediate,
        i.indisexclusion::integer AS is_exclusion, i.indnullsnotdistinct::integer AS nulls_not_distinct,
+       (i.indpred IS NOT NULL)::integer AS has_predicate,
        i.indnkeyatts, i.indnatts, i.indisvalid::integer AS valid,
        i.indisready::integer AS ready, i.indislive::integer AS live,
        EXISTS (SELECT 1 FROM pg_constraint constraint_row WHERE constraint_row.conindid=index_class.oid)::integer AS constraint_owned
@@ -115,6 +116,7 @@ SQL, [$name]);
             && ! (bool) $descriptor->is_exclusion
             && ! (bool) $descriptor->nulls_not_distinct
             && ! (bool) $descriptor->constraint_owned
+            && (bool) $descriptor->has_predicate === str_contains(strtolower($sql), ' where ')
             && (int) $descriptor->indnkeyatts === $keyCount
             && (int) $descriptor->indnatts === $keyCount
             && $this->normalize((string) $descriptor->definition) === $this->normalize($sql);
