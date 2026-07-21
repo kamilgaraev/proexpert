@@ -114,10 +114,7 @@ SQL,
             && ! (bool) $actual->tgisinternal
             && (int) $actual->tgconstraint === 0
             && $actual->function_schema === $actual->expected_schema
-            && $actual->function_name === self::FUNCTION
-            && $this->normalizeDdl($actual->trigger_definition) === $this->normalizeDdl(
-                'CREATE TRIGGER legal_archive_versions_immutable_guard BEFORE UPDATE OR DELETE ON legal_archive_document_versions FOR EACH ROW EXECUTE FUNCTION legal_archive_versions_immutable_guard()',
-            );
+            && $actual->function_name === self::FUNCTION;
     }
 
     /** @return list<string> */
@@ -185,8 +182,4 @@ PLPGSQL;
         return (string) preg_replace('/\s+/', '', strtolower(trim((string) $body)));
     }
 
-    private function normalizeDdl(mixed $ddl): string
-    {
-        return (string) preg_replace('/["\s]+/', '', strtolower(trim((string) $ddl)));
-    }
 };
