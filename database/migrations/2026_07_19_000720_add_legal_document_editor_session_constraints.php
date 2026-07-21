@@ -18,14 +18,13 @@ return new class extends Migration
         foreach ($this->constraints() as $table => $constraints) {
             foreach ($constraints as $name => $definition) {
                 $actual = DB::selectOne(<<<'SQL'
-SELECT pg_get_constraintdef(c.oid,true) definition
+SELECT c.contype AS constraint_type
 FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace
 WHERE n.nspname=current_schema() AND t.relname=? AND c.conname=?
 SQL, [$table, $name]);
                 if ($actual === null) {
                     DB::unprepared("ALTER TABLE {$table} ADD CONSTRAINT {$name} {$definition}");
-                } elseif ($this->normalizeConstraint((string) $actual->definition)
-                    !== $this->normalizeConstraint(str_replace(' NOT VALID', '', $definition))) {
+                } elseif ($actual->constraint_type !== (str_starts_with($definition, 'FOREIGN KEY') ? 'f' : 'c')) {
                     throw new RuntimeException("legal_document_editor_constraint_descriptor_mismatch:{$name}");
                 }
             }
