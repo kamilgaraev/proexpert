@@ -211,7 +211,7 @@ use Illuminate\Support\ServiceProvider;
 
 class EstimateGenerationServiceProvider extends ServiceProvider
 {
-    public const MINIMUM_PIPELINE_LEASE_SECONDS = 2100;
+    public const MINIMUM_PIPELINE_LEASE_SECONDS = 2250;
 
     public function register(): void
     {

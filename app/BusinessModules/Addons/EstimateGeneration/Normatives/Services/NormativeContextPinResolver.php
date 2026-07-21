@@ -14,7 +14,7 @@ class NormativeContextPinResolver
         private readonly ?ConnectionInterface $database = null,
     ) {}
 
-    public function resolve(array $regionalContext, array $workIntents = []): array
+    public function resolve(array $regionalContext, array $workIntents = [], ?callable $progress = null): array
     {
         $date = $this->date($regionalContext);
         $values = [
@@ -52,7 +52,9 @@ class NormativeContextPinResolver
         if ($intents === []) {
             return ['status' => 'review_required', 'blocking_issues' => ['normative_work_intents_not_pinned']];
         }
-        $approved = $this->source?->resolveForIntents($requested, $intents);
+        $approved = $this->source instanceof ProgressAwareNormativeContextPinSource
+            ? $this->source->resolveForIntentsWithProgress($requested, $intents, $progress ?? static fn (): null => null)
+            : $this->source?->resolveForIntents($requested, $intents);
         if ($approved === null || $approved->catalogCandidates === [] || $approved->catalogContentHash === null) {
             return ['status' => 'review_required', 'blocking_issues' => ['normative_resource_context_not_approved']];
         }

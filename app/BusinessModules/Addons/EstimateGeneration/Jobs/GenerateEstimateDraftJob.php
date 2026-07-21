@@ -32,7 +32,7 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public int $maxExceptions = 3;
 
-    public int $timeout = 1800;
+    public int $timeout = 2100;
 
     public array $backoff = [60, 180];
 

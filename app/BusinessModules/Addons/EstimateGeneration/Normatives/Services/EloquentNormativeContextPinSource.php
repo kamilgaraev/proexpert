@@ -8,7 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeS
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\Log;
 
-final readonly class EloquentNormativeContextPinSource implements NormativeContextPinSource
+final readonly class EloquentNormativeContextPinSource implements ProgressAwareNormativeContextPinSource
 {
     private const CANDIDATE_POOL_LIMIT = 300;
 
@@ -27,6 +27,15 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
     ) {}
 
     public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
+    {
+        return $this->resolveForIntentsWithProgress($requested, $intents, static fn (): null => null);
+    }
+
+    public function resolveForIntentsWithProgress(
+        NormativeContextPinData $requested,
+        array $intents,
+        callable $progress,
+    ): ?NormativeContextPinData
     {
         $dataset = $this->database->table('estimate_dataset_versions')
             ->where('id', $requested->datasetId)
@@ -53,6 +62,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
 
             return null;
         }
+        $this->progress($progress, 'identity_checked', ['intents_count' => count($intents)]);
         $fsbcBasePriceDatasetId = $this->latestPriceDatasetId('fsbc', true);
         $fgisLaborPriceDatasetId = $this->latestPriceDatasetId('fgis_labor_prices', false);
         $basePriceDatasetIds = array_values(array_unique(array_filter([
@@ -60,9 +70,10 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             $fsbcBasePriceDatasetId,
             $requested->datasetId,
         ], static fn (int $id): bool => $id > 0)));
+        $this->progress($progress, 'base_price_datasets_resolved', ['intents_count' => count($intents)]);
         $norms = collect();
         $poolCandidatesCount = 0;
-        foreach ($intents as $intent) {
+        foreach ($intents as $intentIndex => $intent) {
             $search = mb_strtolower(trim((string) ($intent['search_text'] ?? '')));
             $unit = trim((string) ($intent['unit'] ?? ''));
             $code = mb_strtolower(trim((string) ($intent['code'] ?? '')));
@@ -137,6 +148,11 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 ->orderBy('norms.id')
                 ->limit(self::CANDIDATE_POOL_LIMIT)
                 ->get();
+            $this->progress($progress, 'intent_lookup_completed', [
+                'intent_index' => $intentIndex + 1,
+                'intents_count' => count($intents),
+                'candidate_count' => $query->count(),
+            ]);
             if ($query->isEmpty()) {
                 $this->telemetryPrePriceCandidates(
                     $requested,
@@ -187,6 +203,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             }
         }
         $norms = $norms->unique('id')->values();
+        $this->progress($progress, 'norms_selected', ['norms_count' => $norms->count()]);
         if ($norms->isEmpty()) {
             $this->telemetry('norms_rejected', [
                 'intents_count' => count($intents),
@@ -207,6 +224,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->all();
         $basePricePlaceholders = implode(', ', array_fill(0, count($basePriceDatasetIds), '?'));
         $normalizedCandidateUnitSql = "LOWER(REGEXP_REPLACE(COALESCE(candidate_prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(resources.unit, ''), '[[:space:].,-]+', '', 'g'))";
+        $this->progress($progress, 'resource_rows_started', ['norms_count' => $norms->count()]);
         $resourceRows = $this->database->table('estimate_norm_resources as resources')
             ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
                 $join->on('prices.resource_code', '=', 'resources.resource_code')
@@ -229,6 +247,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->where('resources.resource_type', '<>', 'summary')
             ->whereRaw("LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) <> 'abstractresource'")
             ->where('prices.base_price', '>', 0)
+            ->whereRaw("resources.resource_type IN ('labor', 'machine_labor') OR COALESCE(prices.source_price_kind, '') <> 'regional_worker_salary'")
             ->whereRaw(
                 'prices.id = (SELECT candidate_prices.id FROM estimate_resource_prices AS candidate_prices
                     WHERE candidate_prices.resource_code = resources.resource_code
@@ -237,6 +256,8 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                         AND candidate_prices.period_id = ?)
                         OR (candidate_prices.dataset_version_id IN ('.$basePricePlaceholders.') AND candidate_prices.regional_price_version_id IS NULL))
                       AND candidate_prices.base_price > 0
+                      AND (resources.resource_type IN (\'labor\', \'machine_labor\')
+                        OR COALESCE(candidate_prices.source_price_kind, \'\') <> \'regional_worker_salary\')
                       AND (candidate_prices.unit IS NOT DISTINCT FROM resources.unit
                         OR '.$normalizedCandidateUnitSql.'
                         OR EXISTS (
@@ -275,6 +296,8 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'price_datasets.source_type as price_dataset_source_type',
                 'price_datasets.version_key as price_dataset_version',
             ]);
+        $this->progress($progress, 'resource_rows_loaded', ['resource_rows_count' => $resourceRows->count()]);
+        $this->progress($progress, 'abstract_resource_rows_started', ['norms_count' => $norms->count()]);
         $abstractResourceRows = $this->database->table('estimate_norm_resources as resources')
             ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
                 $join->where(function ($resourceGroup): void {
@@ -310,6 +333,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->whereRaw("LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) = 'abstractresource'")
             ->whereRaw("resources.resource_code ~ '^[0-9]{2}\\.[0-9]\\.[0-9]{2}\\.[0-9]{2}$'")
             ->where('prices.base_price', '>', 0)
+            ->whereRaw("resources.resource_type IN ('labor', 'machine_labor') OR COALESCE(prices.source_price_kind, '') <> 'regional_worker_salary'")
             ->where(function ($compatibleUnit): void {
                 $compatibleUnit->whereRaw('prices.unit IS NOT DISTINCT FROM resources.unit')
                     ->orWhereRaw(
@@ -352,6 +376,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'price_datasets.version_key as price_dataset_version',
                 $this->database->raw("'AbstractResource' AS raw_source_tag"),
             ]);
+        $this->progress($progress, 'abstract_resource_rows_loaded', ['abstract_resource_rows_count' => $abstractResourceRows->count()]);
         if ($resourceRows->count() + $abstractResourceRows->count() > 10_000) {
             $this->telemetry('resources_limit_exceeded', [
                 'selected_count' => $norms->count(),
@@ -556,6 +581,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'semantic_project_datasets.source_type as price_dataset_source_type',
                 'semantic_project_datasets.version_key as price_dataset_version',
             ]);
+        $this->progress($progress, 'semantic_price_rows_loaded', ['resource_rows_count' => $semanticProjectPrices->count()]);
         if ($semanticProjectPrices->count() <= 5_000) {
             foreach ($unresolvedAbstractDefinitions as $definition) {
                 $norm = $normsById->get((int) $definition->estimate_norm_id);
@@ -710,7 +736,10 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
 
             return null;
         }
+        $this->progress($progress, 'pin_candidates_built', ['candidate_count' => count($candidates)]);
+        $this->progress($progress, 'supplementary_materials_started', ['intents_count' => count($intents)]);
         $supplementaryMaterials = $this->supplementaryMaterials($requested, $basePriceDatasetIds, $intents);
+        $this->progress($progress, 'supplementary_materials_loaded', ['supplementary_materials_count' => count($supplementaryMaterials)]);
         $this->telemetry('approved', ['intents_count' => count($intents), 'selected_count' => $norms->count(), 'resource_rows_count' => $resourceRows->count(), 'candidates_count' => count($candidates), 'supplementary_materials_count' => count($supplementaryMaterials)]);
         $canonical = json_encode(
             ['catalog_candidates' => $candidates, 'supplementary_materials' => $supplementaryMaterials],
@@ -993,6 +1022,12 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         if (Log::getFacadeRoot() !== null) {
             Log::info('estimate_generation.normative_pin_source', ['phase' => $phase, ...$context]);
         }
+    }
+
+    /** @param callable(string, array<string, int>): void $progress @param array<string, int> $metadata */
+    private function progress(callable $progress, string $phase, array $metadata = []): void
+    {
+        $progress($phase, $metadata);
     }
 
     private function latestPriceDatasetId(string $sourceType, bool $baseOnly): int

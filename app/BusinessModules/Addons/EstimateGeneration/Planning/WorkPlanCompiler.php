@@ -114,11 +114,13 @@ final readonly class WorkPlanCompiler
         array $regionalContext,
         array $localEstimates,
         ?string $objectType = null,
+        ?callable $progress = null,
     ): array {
-        return $this->normativePins->resolve(
-            $regionalContext,
-            $this->normativeIntents($localEstimates, $objectType),
-        );
+        $intents = $this->normativeIntents($localEstimates, $objectType);
+
+        return $progress === null
+            ? $this->normativePins->resolve($regionalContext, $intents)
+            : $this->normativePins->resolve($regionalContext, $intents, $progress);
     }
 
     /** @param array<string, mixed> $intent

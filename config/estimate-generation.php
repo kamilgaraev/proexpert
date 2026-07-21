@@ -154,7 +154,7 @@ return [
     ],
     'generation' => [
         'max_draft_jobs_per_minute' => (int) env('ESTIMATE_GENERATION_MAX_DRAFT_JOBS_PER_MINUTE', 3),
-        'pipeline_lease_seconds' => (int) env('ESTIMATE_GENERATION_PIPELINE_LEASE_SECONDS', 2100),
+        'pipeline_lease_seconds' => (int) env('ESTIMATE_GENERATION_PIPELINE_LEASE_SECONDS', 2250),
     ],
     'ai_budget' => [
         'reconciliation_batch' => (int) env('ESTIMATE_GENERATION_AI_BUDGET_RECONCILIATION_BATCH', 100),

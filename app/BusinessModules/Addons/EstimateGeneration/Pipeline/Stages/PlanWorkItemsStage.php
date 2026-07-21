@@ -138,6 +138,17 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 is_string($payload['object_profile']['object_type'] ?? null)
                     ? $payload['object_profile']['object_type']
                     : null,
+                function (string $phase, array $metadata = []) use ($context, $heartbeat): void {
+                    $this->renewAfterProgress($heartbeat);
+                    if ($this->canLog()) {
+                        Log::info('estimate_generation.normative_context_pin_progress', [
+                            'session_id' => $context->sessionId,
+                            'project_id' => $context->projectId,
+                            'phase' => $phase,
+                            ...$this->boundedProgressMetadata($metadata),
+                        ]);
+                    }
+                },
             );
             $pinCompleted = true;
         } finally {
@@ -316,5 +327,19 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 'phase' => $phase,
             ]);
         }
+    }
+
+    /** @param array<string, mixed> $metadata @return array<string, int> */
+    private function boundedProgressMetadata(array $metadata): array
+    {
+        $allowed = ['intents_count', 'intent_index', 'candidate_count', 'norms_count', 'resource_rows_count', 'abstract_resource_rows_count', 'requirements_count', 'supplementary_materials_count'];
+        $result = [];
+        foreach ($allowed as $key) {
+            if (is_int($metadata[$key] ?? null)) {
+                $result[$key] = max(0, min($metadata[$key], 100_000));
+            }
+        }
+
+        return $result;
     }
 }
