@@ -114,6 +114,19 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         continue;
                     }
                     $intent = $this->intentFactory->intent($workItem, $decisionContext, $datasetVersion);
+                    if ($this->canLog() && ($workItem['key'] ?? null) === 'walls-norm-intent-3') {
+                        $metadata = is_array($workItem['metadata'] ?? null) ? $workItem['metadata'] : [];
+                        Log::info('estimate_generation.normative_lintel_intent_boundary', [
+                            'session_id' => $context->sessionId,
+                            'project_id' => $context->projectId,
+                            'object_type' => $decisionContext['object_type'],
+                            'top_level_scenario_present' => is_array($workItem['specialization_scenario'] ?? null),
+                            'metadata_scenario_present' => is_array($metadata['specialization_scenario'] ?? null),
+                            'material_scenario_work_key' => $metadata['material_scenario_work_key'] ?? null,
+                            'quantity_key' => $metadata['quantity_key'] ?? null,
+                            'requested_normative_code' => $intent->requestedNormativeCode,
+                        ]);
+                    }
                     $decision = $this->intentFactory->decision($workItem, $decisionContext);
                     $catalogCandidates = is_array($pin['catalog_candidates'] ?? null) ? $pin['catalog_candidates'] : [];
                     $pinnedCandidates = $this->pinnedCandidates->forWorkItem(
