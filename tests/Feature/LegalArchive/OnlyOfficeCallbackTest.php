@@ -26,6 +26,18 @@ final class OnlyOfficeCallbackTest extends TestCase
         self::assertStringContainsString('finally', $service);
     }
 
+    public function test_callback_rejection_logs_a_safe_diagnostic_code_without_tokens(): void
+    {
+        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalDocumentEditorController.php');
+
+        self::assertIsString($controller);
+        self::assertStringContainsString("'error_code' =>", $controller);
+        self::assertStringContainsString("'callback_status' =>", $controller);
+        self::assertStringContainsString("'document_key_hash' =>", $controller);
+        $logContext = substr($controller, (int) strpos($controller, "Log::warning('legal_archive.editor.callback_rejected'"), 1200);
+        self::assertStringNotContainsString("'token' =>", $logContext);
+    }
+
     public function test_routes_have_separate_preview_download_and_editor_permissions(): void
     {
         $routes = file_get_contents(__DIR__.'/../../../routes/api/v1/admin/legal_archive.php');

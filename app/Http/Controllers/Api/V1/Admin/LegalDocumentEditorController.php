@@ -7,6 +7,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Services\LegalArchive\Editor\EditorCallbackInput;
 use App\Services\LegalArchive\Editor\LegalDocumentEditorSessionService;
+use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -45,9 +46,15 @@ final class LegalDocumentEditorController extends Controller
 
             return new JsonResponse(['error' => 0]);
         } catch (Throwable $error) {
+            $message = $error instanceof DomainException ? $error->getMessage() : '';
             Log::warning('legal_archive.editor.callback_rejected', [
                 'session_id_hash' => hash('sha256', $session),
                 'error_class' => $error::class,
+                'error_code' => str_starts_with($message, 'legal_document_editor_') ? $message : null,
+                'callback_status' => is_numeric($request->input('status')) ? (int) $request->input('status') : null,
+                'document_key_hash' => is_string($request->input('key'))
+                    ? hash('sha256', (string) $request->input('key'))
+                    : null,
             ]);
 
             return new JsonResponse(['error' => 1]);
