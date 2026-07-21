@@ -40,4 +40,30 @@ final class DraftReadinessProjectorTest extends TestCase
         self::assertSame('review_required', $projected['quality_summary']['status']);
         self::assertContains('required_scope_unresolved', $projected['quality_summary']['critical_flags']);
     }
+
+    #[Test]
+    public function it_persists_direct_cost_boundary_without_treating_zero_overhead_as_calculated(): void
+    {
+        $projected = (new DraftReadinessProjector)->project([
+            'object_profile' => ['object_type' => 'house', 'floors' => 2],
+            'package_plan' => ['packages' => [[
+                'key' => 'heating',
+                'title' => 'heating',
+                'coverage_required' => true,
+            ]]],
+            'local_estimates' => [[
+                'key' => 'heating',
+                'sections' => [['work_items' => [[
+                    'item_type' => 'priced_work',
+                    'total_cost' => 1200.0,
+                    'metadata' => ['composition_work_key' => 'heating.unit'],
+                ]]]],
+            ]],
+        ]);
+
+        self::assertSame(1200.0, $projected['budget_scope']['direct_costs']);
+        self::assertSame('not_calculated', $projected['budget_scope']['overhead']['status']);
+        self::assertNull($projected['budget_scope']['overhead']['amount']);
+        self::assertSame('confirmed_scope_only', $projected['budget_scope']['claim']);
+    }
 }
