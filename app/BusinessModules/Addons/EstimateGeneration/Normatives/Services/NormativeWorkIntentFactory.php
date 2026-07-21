@@ -43,13 +43,11 @@ final class NormativeWorkIntentFactory
             $recorded['specialization_evidence'] ?? $item['specialization_evidence'] ?? [],
             $evidence,
         );
-        $specializationScenario = $specializationEvidence === []
-            ? $this->specializationScenario(
-                $item['specialization_scenario'] ?? $recorded['specialization_scenario'] ?? null,
-                $quantityKey,
-                $objectType,
-            )
-            : null;
+        $specializationScenario = $this->specializationScenario(
+            $item['specialization_scenario'] ?? $recorded['specialization_scenario'] ?? null,
+            $quantityKey,
+            $objectType,
+        );
         if (is_string($specializationScenario['intent_action'] ?? null)
             && trim($specializationScenario['intent_action']) !== '') {
             $classified['action'] = trim($specializationScenario['intent_action']);

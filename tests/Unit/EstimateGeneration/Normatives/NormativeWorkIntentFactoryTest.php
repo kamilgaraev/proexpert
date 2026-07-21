@@ -154,6 +154,43 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         ]], $intent->specializationEvidence);
     }
 
+    public function test_documented_specialization_keeps_its_signed_residential_scenario(): void
+    {
+        $catalog = new ResidentialMaterialScenarioCatalog;
+        $scenario = $catalog->issue('walls.lintels', 'residential');
+        self::assertIsArray($scenario);
+
+        $intent = (new NormativeWorkIntentFactory(
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
+            null,
+            $catalog,
+        ))->intent([
+            'key' => 'walls-lintels',
+            'name' => 'Монтаж железобетонных перемычек',
+            'unit' => 'шт',
+            'metadata' => ['quantity_key' => 'walls.lintels'],
+            'specialization_scenario' => $scenario,
+            'work_intent' => [
+                'scope' => 'walls',
+                'specialization_evidence' => [[
+                    'text' => 'Железобетонные перемычки по проекту',
+                    'source' => 'document',
+                    'evidence_refs' => ['doc:1'],
+                ]],
+            ],
+        ], [
+            'organization_id' => 1,
+            'project_id' => 89,
+            'session_id' => 58,
+            'object_type' => 'house',
+            'applicability_date' => '2026-07-17',
+            'source_refs' => ['doc:1'],
+        ], 'fsnb-2026.1');
+
+        self::assertSame('07-01-021-01', $intent->specializationScenario['normative_rate_code'] ?? null);
+        self::assertCount(1, $intent->specializationEvidence);
+    }
+
     public function test_only_catalog_signed_scenario_reaches_normative_intent(): void
     {
         $catalog = new ResidentialMaterialScenarioCatalog;
@@ -336,7 +373,7 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         self::assertSame(['07'], $intent->normativeSections);
     }
 
-    public function test_trusted_specialization_evidence_suppresses_preliminary_scenario(): void
+    public function test_trusted_specialization_evidence_is_retained_with_the_signed_scenario(): void
     {
         $catalog = new ResidentialMaterialScenarioCatalog;
         $factory = new NormativeWorkIntentFactory(
@@ -369,7 +406,7 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         ], 'fsnb-2026.1');
 
         self::assertSame('Ведомость отделки: линолеум', $intent->specializationEvidence[0]['text'] ?? null);
-        self::assertNull($intent->specializationScenario);
+        self::assertSame('residential_preliminary_common:v19', $intent->specializationScenario['scenario_id'] ?? null);
     }
 
     public function test_structured_source_reference_preserves_matching_specialization_evidence(): void
