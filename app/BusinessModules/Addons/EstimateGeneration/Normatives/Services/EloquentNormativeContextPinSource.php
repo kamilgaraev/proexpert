@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 final readonly class EloquentNormativeContextPinSource implements ProgressAwareNormativeContextPinSource
 {
     private const CANDIDATE_POOL_LIMIT = 300;
+
     private const MAX_FINAL_RESOURCE_ROWS = 10_000;
 
     public function __construct(
@@ -36,8 +37,7 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
         NormativeContextPinData $requested,
         array $intents,
         callable $progress,
-    ): ?NormativeContextPinData
-    {
+    ): ?NormativeContextPinData {
         $dataset = $this->database->table('estimate_dataset_versions')
             ->where('id', $requested->datasetId)
             ->where('source_type', 'fsnb_2022')
@@ -268,30 +268,38 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
         $basePricePlaceholders = implode(', ', array_fill(0, count($basePriceDatasetIds), '?'));
         $normalizedCandidateUnitSql = "LOWER(REGEXP_REPLACE(COALESCE(candidate_prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(resources.unit, ''), '[[:space:].,-]+', '', 'g'))";
         $this->progress($progress, 'resource_rows_started', ['norms_count' => $norms->count()]);
-        $normalResourceRowsQuery = $this->database->table('estimate_norm_resources as resources')
-            ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
-                $join->on('prices.resource_code', '=', 'resources.resource_code')
-                    ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
-                        $priceContext->where(function ($regional) use ($requested): void {
-                            $regional->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
-                                ->where('prices.region_id', $requested->regionId)
-                                ->where('prices.price_zone_id', $requested->priceZoneId)
-                                ->where('prices.period_id', $requested->periodId);
-                        })->orWhere(function ($base) use ($basePriceDatasetIds): void {
-                            $base->whereIn('prices.dataset_version_id', $basePriceDatasetIds)
-                                ->whereNull('prices.regional_price_version_id');
+        $normalResourceRowsQuery = function (int $normId) use (
+            $requested,
+            $basePriceDatasetIds,
+            $basePricePlaceholders,
+            $normalizedCandidateUnitSql,
+            $fgisLaborPriceDatasetId,
+            $fsbcBasePriceDatasetId,
+        ) {
+            return $this->database->table('estimate_norm_resources as resources')
+                ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
+                    $join->on('prices.resource_code', '=', 'resources.resource_code')
+                        ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
+                            $priceContext->where(function ($regional) use ($requested): void {
+                                $regional->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                                    ->where('prices.region_id', $requested->regionId)
+                                    ->where('prices.price_zone_id', $requested->priceZoneId)
+                                    ->where('prices.period_id', $requested->periodId);
+                            })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                                $base->whereIn('prices.dataset_version_id', $basePriceDatasetIds)
+                                    ->whereNull('prices.regional_price_version_id');
+                            });
                         });
-                    });
-            })
-            ->leftJoin('estimate_dataset_versions as price_datasets', 'price_datasets.id', '=', 'prices.dataset_version_id')
-            ->leftJoin('estimate_regional_price_versions as price_regional_versions', 'price_regional_versions.id', '=', 'prices.regional_price_version_id')
-            ->where('resources.quantity', '>', 0)
-            ->where('resources.resource_type', '<>', 'summary')
-            ->whereRaw("LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) <> 'abstractresource'")
-            ->where('prices.base_price', '>', 0)
-            ->whereRaw("resources.resource_type IN ('labor', 'machine_labor') OR COALESCE(prices.source_price_kind, '') <> 'regional_worker_salary'")
-            ->whereRaw(
-                'prices.id = (SELECT candidate_prices.id FROM estimate_resource_prices AS candidate_prices
+                })
+                ->leftJoin('estimate_dataset_versions as price_datasets', 'price_datasets.id', '=', 'prices.dataset_version_id')
+                ->leftJoin('estimate_regional_price_versions as price_regional_versions', 'price_regional_versions.id', '=', 'prices.regional_price_version_id')
+                ->where('resources.quantity', '>', 0)
+                ->where('resources.resource_type', '<>', 'summary')
+                ->whereRaw("LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) <> 'abstractresource'")
+                ->where('prices.base_price', '>', 0)
+                ->whereRaw("resources.resource_type IN ('labor', 'machine_labor') OR COALESCE(prices.source_price_kind, '') <> 'regional_worker_salary'")
+                ->whereRaw(
+                    'prices.id = (SELECT candidate_prices.id FROM estimate_resource_prices AS candidate_prices
                     WHERE candidate_prices.resource_code = resources.resource_code
                       AND ((candidate_prices.regional_price_version_id = ?
                         AND candidate_prices.region_id = ? AND candidate_prices.price_zone_id = ?
@@ -315,27 +323,29 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                       CASE WHEN candidate_prices.dataset_version_id = ? THEN 0 ELSE 1 END,
                       CASE WHEN candidate_prices.unit IS NOT DISTINCT FROM resources.unit THEN 0 ELSE 1 END, candidate_prices.id
                     LIMIT 1)',
-                [
-                    $requested->regionalPriceVersionId,
-                    $requested->regionId,
-                    $requested->priceZoneId,
-                    $requested->periodId,
-                    ...$basePriceDatasetIds,
-                    $requested->regionalPriceVersionId,
-                    $fgisLaborPriceDatasetId,
-                    $fsbcBasePriceDatasetId,
-                ],
-            );
+                    [
+                        $requested->regionalPriceVersionId,
+                        $requested->regionId,
+                        $requested->priceZoneId,
+                        $requested->periodId,
+                        ...$basePriceDatasetIds,
+                        $requested->regionalPriceVersionId,
+                        $fgisLaborPriceDatasetId,
+                        $fsbcBasePriceDatasetId,
+                    ],
+                )
+                ->where('resources.estimate_norm_id', '=', $normId);
+        };
         $resourceRowColumns = [
-                'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
-                'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
-                'prices.id as price_id', 'prices.construction_resource_id as price_construction_resource_id',
-                'prices.resource_code as price_resource_code', 'prices.price_type', 'prices.unit as price_unit',
-                'prices.base_price as unit_price', 'prices.regional_price_version_id',
-                'price_regional_versions.version_key as regional_price_version_key',
-                'price_datasets.source_type as price_dataset_source_type',
-                'price_datasets.version_key as price_dataset_version',
-            ];
+            'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
+            'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
+            'prices.id as price_id', 'prices.construction_resource_id as price_construction_resource_id',
+            'prices.resource_code as price_resource_code', 'prices.price_type', 'prices.unit as price_unit',
+            'prices.base_price as unit_price', 'prices.regional_price_version_id',
+            'price_regional_versions.version_key as regional_price_version_key',
+            'price_datasets.source_type as price_dataset_source_type',
+            'price_datasets.version_key as price_dataset_version',
+        ];
         $resourceRows = collect();
         $admittedNormalNormIds = [];
         $reservedResourceRowsCount = 0;
@@ -365,8 +375,7 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
 
                     continue;
                 }
-                $candidateRows = (clone $normalResourceRowsQuery)
-                    ->where('resources.estimate_norm_id', $normId)
+                $candidateRows = $normalResourceRowsQuery($normId)
                     ->orderBy('resources.id')
                     ->get($resourceRowColumns);
                 $this->progress($progress, 'candidate_normal_resource_rows_loaded', [
