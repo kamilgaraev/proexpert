@@ -261,6 +261,14 @@ final class RetryEstimateGenerationSessionTest extends TestCase
         $store = new RetrySessionStateStore($session);
         $repository = new RetrySessionRepositoryFake($session);
         $dispatcher = new RetryDispatcherFake;
+        $regionalContextResolver ??= new class extends EstimateGenerationRegionalContextResolver {
+            public function __construct() {}
+
+            public function resolve(array $input): array
+            {
+                return $input;
+            }
+        };
 
         return [
             new RetryEstimateGenerationSession(

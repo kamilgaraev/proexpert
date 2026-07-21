@@ -22,7 +22,7 @@ final class RetryEstimateGenerationSession
         private RetryableEstimateGenerationSessionRepository $repository,
         private EstimateGenerationWorkflow $workflow,
         private EstimateGenerationRetryDispatcher $dispatcher,
-        private ?EstimateGenerationRegionalContextResolver $regionalContextResolver = null,
+        private EstimateGenerationRegionalContextResolver $regionalContextResolver,
         ?Closure $attemptIdFactory = null,
     ) {
         $this->attemptIdFactory = $attemptIdFactory ?? static fn (): string => (string) Str::uuid();
@@ -219,7 +219,7 @@ final class RetryEstimateGenerationSession
     {
         $regionalContext = $session->input_payload['regional_context'] ?? null;
 
-        if (! is_array($regionalContext) || $this->regionalContextResolver === null) {
+        if (! is_array($regionalContext)) {
             return [];
         }
 
