@@ -99,6 +99,9 @@ final class NormativeWorkItemPlannerService
         int $index
     ): ?array {
         $definition = $this->withResidentialMaterialScenario($definition, $analysis);
+        if (! $this->allowsRoofCompositionPricing($definition, $analysis)) {
+            return null;
+        }
         $quantity = $this->quantityForDefinition($definition, $analysis, $quantityModel);
 
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
@@ -181,6 +184,24 @@ final class NormativeWorkItemPlannerService
             normativeRateCode: isset($definition['normative_rate_code']) ? (string) $definition['normative_rate_code'] : null,
             operations: $definition['operations'] ?? $this->operationBank((string) $definition['category'])
         );
+    }
+
+    /** @param array<string, mixed> $definition */
+    private function allowsRoofCompositionPricing(array $definition, array $analysis): bool
+    {
+        $workItemKey = $this->materialScenarioWorkItemKey($definition);
+        if (! in_array($workItemKey, [
+            'roof.rafters',
+            'roof.insulation',
+            'roof.vapor_barrier',
+            'roof.membrane',
+            'roof.battens',
+            'roof.gutter',
+        ], true)) {
+            return true;
+        }
+
+        return $this->trustedSpecializationEvidence($analysis, $workItemKey) !== [];
     }
 
     /**

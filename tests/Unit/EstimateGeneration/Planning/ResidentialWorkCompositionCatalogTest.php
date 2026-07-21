@@ -11,7 +11,7 @@ use PHPUnit\Framework\TestCase;
 final class ResidentialWorkCompositionCatalogTest extends TestCase
 {
     #[Test]
-    public function two_storey_pitched_house_has_required_technological_components_without_commercial_templates(): void
+    public function two_storey_pitched_house_requires_only_documented_roof_composition_components(): void
     {
         $requirements = (new ResidentialWorkCompositionCatalog)->requirements([
             'object_profile' => [
@@ -27,13 +27,7 @@ final class ResidentialWorkCompositionCatalogTest extends TestCase
             ['stairs.flights', 'stairs.landings', 'stairs.railings'],
             $requirements['stairs'],
         );
-        self::assertSame(
-            [
-                'roof.rafters', 'roof.vapor_barrier', 'roof.insulation',
-                'roof.membrane', 'roof.battens', 'roof.covering', 'roof.gutter',
-            ],
-            $requirements['roof'],
-        );
+        self::assertSame(['roof.covering'], $requirements['roof']);
         self::assertContains('sanitary.showers', $requirements['plumbing']);
         self::assertContains('sanitary.toilets', $requirements['plumbing']);
         self::assertContains('sanitary.washbasins', $requirements['plumbing']);

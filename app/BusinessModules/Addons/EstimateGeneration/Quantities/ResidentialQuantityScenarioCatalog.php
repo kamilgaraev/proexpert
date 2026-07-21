@@ -13,9 +13,9 @@ use Brick\Math\RoundingMode;
 
 final class ResidentialQuantityScenarioCatalog
 {
-    public const VERSION = '3.3.0';
+    public const VERSION = '3.4.0';
 
-    public const SCENARIO_ID = 'residential_preliminary_scenario:v16';
+    public const SCENARIO_ID = 'residential_preliminary_scenario:v17';
 
     private const UNITS = [
         'electrical.grounding' => 'm',
@@ -125,28 +125,9 @@ final class ResidentialQuantityScenarioCatalog
                     ['pitched_roof_area_factor:1.35'],
                 );
                 $quantities['roof.area'] = $roofArea;
-                foreach (['roof.vapor_barrier', 'roof.membrane', 'roof.battens'] as $roofLayer) {
-                    $quantities[$roofLayer] = $this->scaled(
-                        $roofLayer,
-                        'm2',
-                        $roofArea,
-                        '1.00',
-                        ['pitched_roof_layer_area_equal_documented_roof_area'],
-                    );
+                foreach (['roof.rafters', 'roof.vapor_barrier', 'roof.membrane', 'roof.battens', 'roof.gutter'] as $roofPart) {
+                    $omissions[] = $this->omission($roofPart, 'roof_composition_evidence_missing');
                 }
-                $quantities['roof.rafters'] = $this->scaled(
-                    'roof.rafters',
-                    'm3',
-                    $roofArea,
-                    '0.04',
-                    ['preliminary_rafter_timber_volume_m3_per_roof_m2:0.04'],
-                );
-                $quantities['roof.gutter'] = $this->equivalentPerimeter(
-                    'roof.gutter',
-                    $firstFloorArea,
-                    '1.10',
-                    ['equivalent_rectangular_footprint', 'roof_eaves_perimeter_factor:1.10'],
-                );
             } else {
                 $quantities['roof.flat_area'] = $this->scaled(
                     'roof.flat_area',

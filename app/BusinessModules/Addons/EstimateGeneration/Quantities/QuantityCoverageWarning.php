@@ -27,6 +27,7 @@ final class QuantityCoverageWarning
         'site_geodetic_inputs_missing',
         'site_preparation_scope_missing',
         'roof_drainage_takeoff_missing',
+        'roof_composition_evidence_missing',
         'roof_geometry_takeoff_missing',
         'roof_structure_geometry_missing',
         'sewerage_design_takeoff_missing',

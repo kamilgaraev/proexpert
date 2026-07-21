@@ -122,6 +122,52 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
     }
 
     #[Test]
+    public function pitched_roof_geometry_without_composition_evidence_prices_only_the_covering(): void
+    {
+        $analysis = [
+            'object' => ['object_type' => 'house', 'roof_type' => 'pitched'],
+            'document_context' => ['canonical_building_quantities' => [
+                $this->currentScenarioQuantity('roof.area', 'm2', '152.955000')->toArray(),
+            ]],
+        ];
+        $estimate = $this->estimate('roof', 'roof');
+
+        $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+
+        self::assertSame(['roof.covering'], array_values(array_unique(array_map(
+            static fn (array $item): string => (string) ($item['metadata']['composition_work_key'] ?? ''),
+            $items,
+        ))));
+    }
+
+    #[Test]
+    public function pitched_roof_insulation_is_priced_when_its_material_is_documented(): void
+    {
+        $analysis = [
+            'object' => ['object_type' => 'house', 'roof_type' => 'pitched'],
+            'material_evidence' => [
+                'roof.insulation' => [[
+                    'source' => 'document',
+                    'text' => 'Утепление скатной кровли минераловатными плитами.',
+                    'evidence_refs' => ['roof-specification:12'],
+                ]],
+            ],
+            'document_context' => ['canonical_building_quantities' => [
+                $this->currentScenarioQuantity('roof.area', 'm2', '152.955000')->toArray(),
+            ]],
+        ];
+        $estimate = $this->estimate('roof', 'roof');
+
+        $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
+        $compositionKeys = array_values(array_unique(array_map(
+            static fn (array $item): string => (string) ($item['metadata']['composition_work_key'] ?? ''),
+            $items,
+        )));
+
+        self::assertSame(['roof.insulation', 'roof.covering'], $compositionKeys);
+    }
+
+    #[Test]
     public function preliminary_house_items_use_semantically_verified_norms_with_compatible_units(): void
     {
         foreach ([
@@ -609,17 +655,12 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
     }
 
     #[Test]
-    public function current_pitched_roof_scenario_exposes_the_complete_normable_roof_assembly(): void
+    public function current_pitched_roof_scenario_does_not_promote_unverified_composition_to_priced_work(): void
     {
         $analysis = [
             'object' => ['object_type' => 'house', 'roof_type' => 'pitched'],
             'document_context' => ['canonical_building_quantities' => [
-                $this->currentScenarioQuantity('roof.rafters', 'm3', '6.118200')->toArray(),
                 $this->currentScenarioQuantity('roof.area', 'm2', '152.955000')->toArray(),
-                $this->currentScenarioQuantity('roof.vapor_barrier', 'm2', '152.955000')->toArray(),
-                $this->currentScenarioQuantity('roof.membrane', 'm2', '152.955000')->toArray(),
-                $this->currentScenarioQuantity('roof.battens', 'm2', '152.955000')->toArray(),
-                $this->currentScenarioQuantity('roof.gutter', 'm', '46.834688')->toArray(),
             ]],
         ];
         $estimate = $this->estimate('roof', 'roof');
@@ -627,17 +668,11 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
         $items = $this->planner()->build($estimate, $estimate['sections'][0], $analysis);
 
         self::assertSame(
-            [
-                'roof.rafters', 'roof.vapor_barrier', 'roof.area',
-                'roof.membrane', 'roof.battens', 'roof.area', 'roof.gutter',
-            ],
+            ['roof.area'],
             array_column($items, 'quantity_formula'),
         );
         self::assertSame(
-            [
-                'roof.rafters', 'roof.vapor_barrier', 'roof.insulation',
-                'roof.membrane', 'roof.battens', 'roof.covering', 'roof.gutter',
-            ],
+            ['roof.covering'],
             array_map(
                 static fn (array $item): string => (string) (
                     $item['metadata']['material_scenario_work_key']
@@ -647,42 +682,8 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
             ),
         );
         self::assertSame(
-            [
-                '10-01-002-01', '12-01-015-03', '12-01-013-07',
-                '12-01-015-03', '12-01-034-02', '12-01-023-01', null,
-            ],
+            ['12-01-023-01'],
             array_column($items, 'normative_rate_code'),
-        );
-        $materialMessages = [
-            'Предварительно принята однослойная пароизоляция скатной кровли. Тип материала нужно уточнить по проекту.',
-            'Предварительно принята подкровельная гидроизоляционная диффузионная мембрана. Для монтажа использована расценка укладки одного прокладочного листового слоя с заменой материала ресурса на мембрану; тип материала нужно уточнить по проекту.',
-            'Предварительно принята деревянная обрешетка скатной кровли. Сечение и шаг нужно уточнить по проекту.',
-        ];
-        self::assertSame(
-            $materialMessages,
-            array_values(array_map(
-                static fn (array $item): ?string => $item['metadata']['material_assumption']['message'] ?? null,
-                array_filter(
-                    $items,
-                    static fn (array $item): bool => in_array(
-                        $item['quantity_formula'],
-                        ['roof.vapor_barrier', 'roof.membrane', 'roof.battens'],
-                        true,
-                    ),
-                ),
-            )),
-        );
-        $translations = require dirname(__DIR__, 3).'/lang/ru/estimate_generation.php';
-        self::assertSame(
-            $materialMessages,
-            array_map(
-                static fn (string $key): string => $translations['material_scenarios'][$key],
-                [
-                    'pitched_roof_single_layer_vapor_barrier',
-                    'pitched_roof_diffusion_membrane',
-                    'pitched_roof_timber_battens',
-                ],
-            ),
         );
     }
 
