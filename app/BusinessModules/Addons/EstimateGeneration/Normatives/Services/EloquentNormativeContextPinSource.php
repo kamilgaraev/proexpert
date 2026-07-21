@@ -297,6 +297,15 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                 'price_datasets.version_key as price_dataset_version',
             ]);
         $this->progress($progress, 'resource_rows_loaded', ['resource_rows_count' => $resourceRows->count()]);
+        if ($resourceRows->count() > 10_000) {
+            $this->telemetry('resources_limit_exceeded', [
+                'selected_count' => $norms->count(),
+                'resource_rows_count' => $resourceRows->count(),
+                'abstract_resource_rows_count' => 0,
+            ]);
+
+            return null;
+        }
         $this->progress($progress, 'abstract_resource_rows_started', ['norms_count' => $norms->count()]);
         $abstractResourceRows = $this->database->table('estimate_norm_resources as resources')
             ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
