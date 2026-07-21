@@ -13,10 +13,12 @@ use App\Models\Project;
 use Closure;
 use DateTimeInterface;
 use Illuminate\Http\Request;
+use App\Modules\Core\AccessController;
 
 final class SafetyViolationProblemSource implements ProjectProblemSource
 {
     public function __construct(
+        private readonly AccessController $accessController,
         private readonly ?Closure $violations = null,
         private readonly ?Closure $surface = null,
     ) {
@@ -24,7 +26,17 @@ final class SafetyViolationProblemSource implements ProjectProblemSource
 
     public function isAvailable(ProjectContext $projectContext): bool
     {
-        return $projectContext->hasPermission('safety-management.view');
+        if (! $projectContext->hasPermission('safety-management.view')) {
+            return false;
+        }
+
+        foreach (['safety-management', 'project-management', 'file-management'] as $moduleSlug) {
+            if (! $this->accessController->hasModuleAccess($projectContext->organizationId, $moduleSlug)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public function collect(Project $project, ProjectContext $projectContext): iterable

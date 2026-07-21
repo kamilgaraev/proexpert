@@ -13,6 +13,7 @@ use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Domain\Project\ValueObjects\ProjectRoleConfig;
 use App\Enums\ProjectOrganizationRole;
 use App\Models\Project;
+use App\Modules\Core\AccessController;
 use DateTimeImmutable;
 use PHPUnit\Framework\TestCase;
 
@@ -76,8 +77,17 @@ final class ProjectProblemCollectorTest extends TestCase
             'created_at' => new DateTimeImmutable('2026-07-19T10:00:00+03:00'),
         ]);
         $violation->setAttribute('id', 18);
+        $captured = [];
         $source = new SafetyViolationProblemSource(
-            violations: static fn (): array => [$violation],
+            accessController: $this->activeSafetyModules(),
+            violations: static function (Project $project, ProjectContext $projectContext) use ($violation, &$captured): array {
+                $captured = [
+                    'project_id' => $project->getKey(),
+                    'organization_id' => $projectContext->organizationId,
+                ];
+
+                return [$violation];
+            },
             surface: static fn (): array => [
                 'problem_flags' => [[
                     'severity' => 'critical',
@@ -96,6 +106,21 @@ final class ProjectProblemCollectorTest extends TestCase
         self::assertSame('safety-violation-18', $result['items'][0]['id']);
         self::assertSame('/safety/violations', $result['items'][0]['action']['route']);
         self::assertSame(['project_id' => 42], $result['items'][0]['action']['query']);
+        self::assertSame(['project_id' => 42, 'organization_id' => 7], $captured);
+    }
+
+    public function test_safety_source_requires_all_active_module_dependencies(): void
+    {
+        $source = new SafetyViolationProblemSource(
+            new class extends AccessController {
+                public function hasModuleAccess(int $organizationId, string $moduleSlug): bool
+                {
+                    return $organizationId === 7 && $moduleSlug !== 'file-management';
+                }
+            },
+        );
+
+        self::assertFalse($source->isAvailable($this->context(['safety-management.view'])));
     }
 
     private function problem(
@@ -147,6 +172,20 @@ final class ProjectProblemCollectorTest extends TestCase
             roleConfig: new ProjectRoleConfig($role, $permissions, false, true, false, false, false, 'Роль'),
             isOwner: false,
         );
+    }
+
+    private function activeSafetyModules(): AccessController
+    {
+        return new class extends AccessController {
+            public function hasModuleAccess(int $organizationId, string $moduleSlug): bool
+            {
+                return $organizationId === 7 && in_array($moduleSlug, [
+                    'safety-management',
+                    'project-management',
+                    'file-management',
+                ], true);
+            }
+        };
     }
 }
 
