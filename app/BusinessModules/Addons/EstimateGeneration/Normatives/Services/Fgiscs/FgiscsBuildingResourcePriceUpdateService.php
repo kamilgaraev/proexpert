@@ -99,6 +99,7 @@ class FgiscsBuildingResourcePriceUpdateService
                     'region' => $subject['name'],
                     'exception_class' => $exception::class,
                     'exception_code' => $exception->getCode(),
+                    'database_column' => $this->databaseColumn($exception),
                 ]);
 
                 $results[] = [
@@ -111,6 +112,15 @@ class FgiscsBuildingResourcePriceUpdateService
         }
 
         return $results;
+    }
+
+    private function databaseColumn(Throwable $exception): ?string
+    {
+        $message = $exception->getPrevious()?->getMessage() ?? '';
+
+        return preg_match('/column "([^"]+)"/', $message, $matches) === 1
+            ? $matches[1]
+            : null;
     }
 
     /**
