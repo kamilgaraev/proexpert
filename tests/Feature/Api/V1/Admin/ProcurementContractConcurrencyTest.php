@@ -8,6 +8,8 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Services\PurchaseContractService;
+use App\DTOs\Contract\ContractDTO;
+use App\Enums\Contract\ContractSideTypeEnum;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\Contract\ContractAuditedMutationService;
@@ -83,6 +85,28 @@ final class ProcurementContractConcurrencyTest extends TestCase
         });
         $schema->create('contractors', static function (Blueprint $table): void {
             $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->string('name');
+            $table->string('inn')->nullable();
+            $table->string('email')->nullable();
+            $table->string('contact_person')->nullable();
+            $table->string('phone')->nullable();
+            $table->string('legal_address')->nullable();
+            $table->string('contractor_type')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
+        });
+        $schema->create('external_supplier_contacts', static function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->string('name');
+            $table->string('contact_person')->nullable();
+            $table->string('phone')->nullable();
+            $table->string('email')->nullable();
+            $table->string('tax_number')->nullable();
+            $table->string('address')->nullable();
+            $table->timestamps();
+            $table->softDeletes();
         });
         $schema->create('projects', static function (Blueprint $table): void {
             $table->id();
@@ -98,12 +122,13 @@ final class ProcurementContractConcurrencyTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_stale_purchase_order_callers_are_serialized_by_the_real_order_adapter(): void
+    public function test_supplier_purchase_order_uses_supply_side_type_and_replays_single_dossier(): void
     {
         $this->database->table('legal_archive_documents')->insert(['id' => 41, 'organization_id' => 7]);
         $this->database->table('organizations')->insert(['id' => 7]);
         $order = PurchaseOrder::query()->create([
             'organization_id' => 7,
+            'supplier_id' => 5,
             'order_number' => 'PO-41',
             'status' => PurchaseOrderStatusEnum::CONFIRMED,
             'total_amount' => 1.0,
@@ -114,9 +139,15 @@ final class ProcurementContractConcurrencyTest extends TestCase
         $documents = Mockery::mock(ContractDossierDocumentCreator::class);
         $documents->shouldReceive('create')->once()->andReturn($document);
         $contracts = Mockery::mock(ContractSideMutationService::class);
-        $contracts->shouldReceive('create')->once()->andReturnUsing(static fn (): Contract => Contract::query()->create([
-            'organization_id' => 7, 'number' => 'PO-41', 'dossier_creation_key' => 'purchase-order:41',
-        ]));
+        $contracts->shouldReceive('create')
+            ->once()
+            ->withArgs(static function (mixed ...$arguments): bool {
+                return $arguments[1] instanceof ContractDTO
+                    && $arguments[1]->contract_side_type === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER;
+            })
+            ->andReturnUsing(static fn (): Contract => Contract::query()->create([
+                'organization_id' => 7, 'number' => 'PO-41', 'dossier_creation_key' => 'purchase-order:41',
+            ]));
         $dossiers = new ContractDossierCreationService(
             $this->database->getConnection(),
             $contracts,
@@ -136,6 +167,65 @@ final class ProcurementContractConcurrencyTest extends TestCase
         self::assertSame($first->id, $second->id);
         self::assertSame($first->id, $order->fresh()->contract_id);
         self::assertSame(41, $first->legal_archive_document_id);
+        self::assertSame(1, $this->database->table('contracts')->count());
+        self::assertSame(1, $this->database->table('contract_dossier_sources')->count());
+    }
+
+    public function test_external_supplier_order_uses_contractor_side_type_and_replays_single_dossier(): void
+    {
+        $this->database->table('legal_archive_documents')->insert(['id' => 42, 'organization_id' => 7]);
+        $this->database->table('organizations')->insert(['id' => 7]);
+        $this->database->table('external_supplier_contacts')->insert([
+            'id' => 9,
+            'organization_id' => 7,
+            'name' => 'Внешний поставщик',
+            'tax_number' => '7701234567',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $order = PurchaseOrder::query()->create([
+            'organization_id' => 7,
+            'external_supplier_contact_id' => 9,
+            'order_number' => 'PO-42',
+            'status' => PurchaseOrderStatusEnum::CONFIRMED,
+            'total_amount' => 1.0,
+        ]);
+        $staleCaller = PurchaseOrder::query()->findOrFail($order->id);
+        $document = new LegalArchiveDocument;
+        $document->forceFill(['id' => 42, 'organization_id' => 7]);
+        $documents = Mockery::mock(ContractDossierDocumentCreator::class);
+        $documents->shouldReceive('create')->once()->andReturn($document);
+        $contracts = Mockery::mock(ContractSideMutationService::class);
+        $contracts->shouldReceive('create')
+            ->once()
+            ->withArgs(static function (mixed ...$arguments): bool {
+                return $arguments[1] instanceof ContractDTO
+                    && $arguments[1]->contract_side_type === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR
+                    && $arguments[1]->contractor_id !== null
+                    && $arguments[1]->supplier_id === null;
+            })
+            ->andReturnUsing(static fn (): Contract => Contract::query()->create([
+                'organization_id' => 7, 'number' => 'PO-42', 'dossier_creation_key' => 'purchase-order:42',
+            ]));
+        $dossiers = new ContractDossierCreationService(
+            $this->database->getConnection(),
+            $contracts,
+            new ContractAuditedMutationService(Mockery::mock(LegalDocumentAudit::class)->shouldIgnoreMissing(), $this->database->getConnection()),
+            $documents,
+        );
+        $actor = new User;
+        $actor->forceFill(['id' => 3, 'current_organization_id' => 7]);
+        Auth::shouldReceive('user')->once()->andReturn($actor);
+        $mutations = Mockery::mock(ContractAuditedMutationService::class);
+        $service = Mockery::mock(PurchaseContractService::class, [$mutations, $dossiers])->makePartial();
+        $service->shouldReceive('validateProcurementContractCreation')->once()->andReturnNull();
+
+        $first = $service->createFromOrder($order);
+        $second = $service->createFromOrder($staleCaller);
+
+        self::assertSame($first->id, $second->id);
+        self::assertSame($first->id, $order->fresh()->contract_id);
+        self::assertSame(42, $first->legal_archive_document_id);
         self::assertSame(1, $this->database->table('contracts')->count());
         self::assertSame(1, $this->database->table('contract_dossier_sources')->count());
     }

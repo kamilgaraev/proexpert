@@ -648,6 +648,11 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
             public function authorize(User $user, LegalArchiveDocument $document, string $ability): void {}
 
             public function authorizePermission(User $user, LegalArchiveDocument $document, string $permission): void {}
+
+            public function scopeAccessibleQuery(\Illuminate\Database\Eloquent\Builder $query, User $user, int $organizationId, string $ability = 'view'): \Illuminate\Database\Eloquent\Builder
+            {
+                return $query;
+            }
         };
         $audit = new class implements LegalDocumentAudit
         {

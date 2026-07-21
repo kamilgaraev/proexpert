@@ -121,6 +121,15 @@ final class LegalDocumentProfileRegistry
         );
     }
 
+    /** @return list<string> */
+    public function standardCodesForCategory(string $category): array
+    {
+        return array_values(array_keys(array_filter(
+            $this->standardProfiles,
+            static fn (array $profile): bool => (string) ($profile['category'] ?? '') === $category,
+        )));
+    }
+
     /**
      * @param  list<string>  $codes
      * @return array<string, LegalDocumentProfile>

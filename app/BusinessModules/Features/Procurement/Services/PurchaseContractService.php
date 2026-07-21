@@ -6,6 +6,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\DTOs\Contract\ContractDTO;
 use App\DTOs\Contract\ContractDossierCreationInput;
+use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Models\Contract;
@@ -248,6 +249,9 @@ class PurchaseContractService
             is_fixed_amount: true,
             supplier_id: isset($data['supplier_id']) ? (int) $data['supplier_id'] : null,
             contract_category: 'procurement',
+            contract_side_type: ! empty($data['supplier_id'])
+                ? ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER
+                : ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
         );
     }
 
