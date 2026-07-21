@@ -192,6 +192,24 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
     }
 
     #[Test]
+    public function semantic_resource_payload_is_cast_to_jsonb_before_merging_resource_groups(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_000300_cast_semantic_resource_payload_to_jsonb.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            'eg_expected_package_item_price_v6',
+            'semantic_project_resource:v6',
+            "str_replace('item.resources->', '(item.resources::jsonb)->'",
+            '$payloadCastCount !== 4',
+            'public.eg_expected_package_item_price_closed_v6(p_item_id)',
+            'estimate_generation.semantic_resource_payload_rollback_blocked',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
+    #[Test]
     public function supplementary_project_material_is_database_priced_from_an_immutable_versioned_rule(): void
     {
         $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000100_finalize_supplementary_project_material_prices.php');
