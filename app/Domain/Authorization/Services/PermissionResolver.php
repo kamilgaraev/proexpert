@@ -589,6 +589,7 @@ class PermissionResolver
         iterable $userIds = []
     ): void {
         $scopeKeys = ['global'];
+        $roleRevision = Cache::get('authorization_roles_revision', 0);
 
         if ($organizationId !== null) {
             $scopeKeys[] = (string) $organizationId;
@@ -598,8 +599,8 @@ class PermissionResolver
             Cache::forget("custom_role_{$roleSlug}_{$scopeKey}");
             Cache::forget("system_perms_{$roleType}_{$roleSlug}_{$scopeKey}");
             Cache::forget("module_perms_{$roleType}_{$roleSlug}_{$scopeKey}");
-            Cache::forget('system_perms_'.self::CACHE_SCHEMA_VERSION."_{$roleType}_{$roleSlug}_{$scopeKey}");
-            Cache::forget('module_perms_'.self::CACHE_SCHEMA_VERSION."_{$roleType}_{$roleSlug}_{$scopeKey}");
+            Cache::forget('system_perms_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$roleType}_{$roleSlug}_{$scopeKey}");
+            Cache::forget('module_perms_'.self::CACHE_SCHEMA_VERSION."_r{$roleRevision}_{$roleType}_{$roleSlug}_{$scopeKey}");
         }
 
         foreach ($userIds as $userId) {

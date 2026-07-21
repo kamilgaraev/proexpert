@@ -17,7 +17,7 @@ final class AuthorizationRoleCacheRevisionTest extends TestCase
         self::assertIsString($scanner);
         self::assertIsString($resolver);
         self::assertStringContainsString("Cache::increment(self::CACHE_REVISION_KEY);", $scanner);
-        self::assertSame(3, substr_count($resolver, "Cache::get('authorization_roles_revision', 0)"));
+        self::assertSame(4, substr_count($resolver, "Cache::get('authorization_roles_revision', 0)"));
         self::assertStringContainsString('_r{$roleRevision}_', $resolver);
     }
 }
