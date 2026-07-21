@@ -68,12 +68,19 @@ final class ProjectFinanceHealthBuilderTest extends TestCase
             'metrics' => ['bac' => 1_000, 'ac' => 500, 'eac' => 1_100],
             'payments' => [
                 ['direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-12-01'],
+                ['direction' => 'outgoing', 'amount' => 250, 'due_at' => '2026-12-01'],
             ],
         ], CarbonImmutable::parse('2026-07-21'))->toArray();
 
         self::assertTrue($result['cash_flow']['available']);
         self::assertSame(700.0, $result['cash_flow']['accounts_receivable']);
-        self::assertSame(0.0, $result['cash_flow']['projections'][2]['net']);
+        self::assertSame(250.0, $result['cash_flow']['accounts_payable']);
+
+        foreach ($result['cash_flow']['projections'] as $projection) {
+            self::assertSame(0.0, $projection['incoming']);
+            self::assertSame(0.0, $projection['outgoing']);
+            self::assertSame(0.0, $projection['net']);
+        }
     }
 
     public function test_it_marks_missing_actual_costs_explicitly(): void
