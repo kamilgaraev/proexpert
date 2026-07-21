@@ -96,7 +96,7 @@ final class ProjectCommandCenterDataTest extends TestCase
 
     public function test_it_preserves_the_truthful_analytics_contract(): void
     {
-        $project = new Project(['name' => 'РЎС‚СЂРѕРёС‚РµР»СЊРЅР°СЏ РїР»РѕС‰Р°РґРєР°']);
+        $project = new Project(['name' => 'Строительная площадка']);
         $project->setAttribute('id', 42);
 
         $data = ProjectCommandCenterData::empty(
