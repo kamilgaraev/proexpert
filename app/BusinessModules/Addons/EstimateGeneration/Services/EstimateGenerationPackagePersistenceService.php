@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -429,7 +430,18 @@ class EstimateGenerationPackagePersistenceService
         }
         $this->reportPricingInputCardinalityMismatch($item, $pricing['inputs'], $workItem);
         $this->reportPricingInputContractMismatch($item);
-        DB::select('SELECT public.eg_finalize_package_item_price(?)', [$item->id]);
+        try {
+            DB::select('SELECT public.eg_finalize_package_item_price(?)', [$item->id]);
+        } catch (QueryException $exception) {
+            Log::warning('estimate_generation.pricing_finalization_rejected', [
+                'package_item_id' => $item->id,
+                'estimate_norm_id' => $item->estimate_norm_id,
+                'logical_key' => $item->logical_key,
+                'message' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
     }
 
     /** @param list<array<string, int|null>> $inputs @param array<string, mixed> $workItem */
