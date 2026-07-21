@@ -175,6 +175,67 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertContains('safe_normative_analog', $item['validation_flags']);
     }
 
+    public function test_automatic_enrichment_does_not_replace_an_already_matched_norm_or_its_resources(): void
+    {
+        $workItem = [
+            'key' => 'foundation.backfill',
+            'name' => 'Обратная засыпка пазух',
+            'unit' => 'м3',
+            'quantity' => 10.0,
+            'pricing_status' => 'calculated',
+            'normative_rate_code' => '01-01-033-01',
+            'normative_match' => ['status' => 'matched', 'code' => '01-01-033-01'],
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [[
+                'code' => '91.01.01-001',
+                'name' => 'Сохраненный ресурс нормы',
+                'quantity' => 1.0,
+            ]],
+            'other_resources' => [],
+        ];
+        $service = new ResourceAssemblyService(
+            new class extends EstimateNormativeMatcher
+            {
+                public function __construct() {}
+
+                public function matchWorkItem(array $workItem, array $context = [], int $limit = 5): ?array
+                {
+                    throw new \RuntimeException('Принятая норма не должна пересобираться автоматически.');
+                }
+            },
+            new NormativeMatchDecisionService,
+            new NormativeCandidatePresenter,
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
+        );
+
+        $item = $service->enrich([$workItem], ['scope_type' => 'earthworks'])[0];
+
+        $this->assertSame('01-01-033-01', $item['normative_rate_code']);
+        $this->assertSame('Сохраненный ресурс нормы', $item['machinery'][0]['name']);
+    }
+
+    public function test_generic_title_policy_does_not_clear_a_matched_norm(): void
+    {
+        $workItem = [
+            'name' => 'Строительные работы',
+            'normative_match' => ['status' => 'matched', 'code' => '01-01-033-01'],
+            'materials' => [[
+                'name' => 'Сохраненный ресурс нормы',
+                'quantity' => 1.0,
+            ]],
+            'labor' => [],
+            'machinery' => [],
+            'other_resources' => [],
+            'total_cost' => 100.0,
+        ];
+
+        $policy = new EstimateGenerationNoAirWorkItemPolicy;
+
+        $this->assertFalse($policy->requiresReview($workItem));
+        self::assertSame('Сохраненный ресурс нормы', $policy->markRequiresReview($workItem)['materials'][0]['name']);
+    }
+
     public function test_quantity_review_item_is_not_matched_or_priced_before_quantity_confirmation(): void
     {
         $workItem = [

@@ -241,7 +241,7 @@ final class FinalizedPackageDraftProjector
             'materials' => $resourceProjection['materials'],
             'labor' => $resourceProjection['labor'],
             'machinery' => $resourceProjection['machinery'],
-            'other_resources' => [],
+            'other_resources' => $resourceProjection['other_resources'],
             'materials_cost' => $this->resourceTotal($resourceProjection['materials']),
             'labor_cost' => $this->resourceTotal($resourceProjection['labor']),
             'machinery_cost' => $this->resourceTotal($resourceProjection['machinery']),
@@ -259,7 +259,7 @@ final class FinalizedPackageDraftProjector
         ]);
     }
 
-    /** @return array{materials: list<array<string, mixed>>, labor: list<array<string, mixed>>, machinery: list<array<string, mixed>>} */
+    /** @return array{materials: list<array<string, mixed>>, labor: list<array<string, mixed>>, machinery: list<array<string, mixed>>, other_resources: list<array<string, mixed>>} */
     private function projectResources(EstimateGenerationPackageItem $item): array
     {
         $snapshot = is_array($item->price_snapshot) ? $item->price_snapshot : [];
@@ -450,7 +450,7 @@ final class FinalizedPackageDraftProjector
         }
 
         $resources = $this->allocateRoundingDifference($resources, $itemTotal);
-        $projected = ['materials' => [], 'labor' => [], 'machinery' => []];
+        $projected = ['materials' => [], 'labor' => [], 'machinery' => [], 'other_resources' => []];
         foreach ($resources as $entry) {
             $projected[$entry['group']][] = $entry['resource'];
         }
@@ -603,9 +603,10 @@ final class FinalizedPackageDraftProjector
     private function resourceGroup(string $resourceType): string
     {
         return match ($resourceType) {
-            'material', 'equipment', 'abstract', 'other' => 'materials',
+            'material', 'equipment', 'abstract' => 'materials',
             'labor', 'machine_labor' => 'labor',
             'machine', 'machinery' => 'machinery',
+            'other' => 'other_resources',
             default => throw new \DomainException('Finalized resource type is unsupported.'),
         };
     }

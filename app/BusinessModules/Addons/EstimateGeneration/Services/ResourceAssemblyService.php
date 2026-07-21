@@ -72,6 +72,16 @@ class ResourceAssemblyService
         $matchCache = [];
 
         foreach ($workItems as $index => &$workItem) {
+            if ($this->hasMatchedNormativeDecision($workItem)) {
+                $processed = $index + 1;
+
+                if ($progressCallback !== null && ($processed % self::PROGRESS_STEP === 0 || $processed === $total)) {
+                    $progressCallback($processed, $total);
+                }
+
+                continue;
+            }
+
             if ($this->isQuantityReviewItem($workItem)) {
                 $workItem = $this->clearQuantityReviewPricing($workItem);
                 $processed = $index + 1;
@@ -164,6 +174,13 @@ class ResourceAssemblyService
     private function isPricedItem(array $workItem): bool
     {
         return ! in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note', 'quantity_review'], true);
+    }
+
+    /** @param  array<string, mixed>  $workItem */
+    private function hasMatchedNormativeDecision(array $workItem): bool
+    {
+        return is_array($workItem['normative_match'] ?? null)
+            && ($workItem['normative_match']['status'] ?? null) === 'matched';
     }
 
     /**

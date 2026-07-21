@@ -600,7 +600,6 @@ class EstimateNormativeMatcher
             ->where('estimate_norm_id', $norm->id)
             ->where('resource_type', '<>', EstimateResourceType::SUMMARY->value)
             ->orderBy('id')
-            ->limit(120)
             ->get();
 
         $regionalPriceVersionId = $this->regionalPriceVersionIdFromContext($context);

@@ -156,6 +156,28 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
     }
 
     #[Test]
+    public function it_preserves_other_resources_from_a_finalized_norm(): void
+    {
+        $item = $this->finalizedItem();
+        $snapshot = $item->price_snapshot;
+        $snapshot['coefficients']['resource_evidence'][0]['resource_type'] = 'other';
+        $snapshot['coefficients']['provenance']['resources'][0]['resource_type'] = 'other';
+        $resources = $item->resources;
+        $resources['other'] = $resources['labor'];
+        $resources['labor'] = [];
+        $this->replaceRawAttributes($item, [
+            'price_snapshot' => $snapshot,
+            'resources' => $resources,
+        ]);
+
+        $projected = (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$item]);
+        $workItem = $projected['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertCount(1, $workItem['other_resources']);
+        self::assertSame('finalized_normative_resource', $workItem['other_resources'][0]['quantity_basis']);
+    }
+
+    #[Test]
     public function it_replays_database_rounding_for_base_and_supplementary_material_totals_separately(): void
     {
         $item = $this->finalizedItem();
