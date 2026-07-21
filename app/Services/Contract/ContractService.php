@@ -598,10 +598,10 @@ class ContractService
         $completedContracts = $statusCounts['completed'] ?? 0;
         $cancelledContracts = $statusCounts['cancelled'] ?? 0;
 
-        $baseSum = $financialData->base_sum ?? 0;
-        $totalAmountWithGp = $financialData->total_with_gp ?? 0;
-        $totalPlannedAdvance = $financialData->total_planned_advance ?? 0;
-        $totalActualAdvance = $financialData->total_actual_advance ?? 0;
+        $baseSum = (float) ($financialData->base_sum ?? 0);
+        $totalAmountWithGp = (float) ($financialData->total_with_gp ?? 0);
+        $totalPlannedAdvance = (float) ($financialData->total_planned_advance ?? 0);
+        $totalActualAdvance = (float) ($financialData->total_actual_advance ?? 0);
 
         $performedAmountQuery = DB::table('contract_performance_acts')
             ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
