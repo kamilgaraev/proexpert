@@ -18,7 +18,11 @@ return new class extends Migration
         foreach ($this->indexes() as $name => $sql) {
             $descriptor = $this->descriptor($name);
             if ($descriptor !== null && ! $this->matches($descriptor, $sql)) {
-                throw new RuntimeException("legal_document_editor_index_descriptor_mismatch:{$name}");
+                if ((bool) $descriptor->constraint_owned || (bool) $descriptor->is_primary) {
+                    throw new RuntimeException("legal_document_editor_index_descriptor_mismatch:{$name}");
+                }
+                DB::statement("DROP INDEX CONCURRENTLY IF EXISTS {$name}");
+                $descriptor = null;
             }
             if ($descriptor !== null && (! (bool) $descriptor->valid || ! (bool) $descriptor->ready || ! (bool) $descriptor->live)) {
                 DB::statement("DROP INDEX CONCURRENTLY IF EXISTS {$name}");
@@ -102,6 +106,7 @@ SELECT pg_get_indexdef(ic.oid) definition, tc.relname table_name, am.amname acce
  i.indisunique::integer is_unique, i.indisprimary::integer is_primary,
  i.indimmediate::integer is_immediate, i.indisexclusion::integer is_exclusion,
  COALESCE((to_jsonb(i)->>'indnullsnotdistinct')::boolean,false)::integer nulls_not_distinct, i.indnkeyatts, i.indnatts,
+ (i.indpred IS NOT NULL)::integer has_predicate,
  i.indisvalid::integer valid, i.indisready::integer ready, i.indislive::integer live,
  EXISTS(SELECT 1 FROM pg_constraint c WHERE c.conindid=ic.oid)::integer constraint_owned
 FROM pg_class ic JOIN pg_namespace n ON n.oid=ic.relnamespace
@@ -121,7 +126,7 @@ SQL, [$name]);
             && ! (bool) $descriptor->is_exclusion && ! (bool) $descriptor->nulls_not_distinct
             && ! (bool) $descriptor->constraint_owned && (int) $descriptor->indnkeyatts === $keys
             && (int) $descriptor->indnatts === $keys
-            && $this->normalize((string) $descriptor->definition) === $this->normalize($sql);
+            && (bool) $descriptor->has_predicate === str_contains(strtolower($sql), ' where ');
     }
 
     private function normalize(string $sql): string
