@@ -14,6 +14,7 @@ final class FinalizedPackageDraftProjector
 {
     private const ALLOWED_FORMULA_VERSIONS = [
         'project_resource:v3',
+        'semantic_project_resource:v7',
         'supplementary_project_material:v4',
     ];
 
