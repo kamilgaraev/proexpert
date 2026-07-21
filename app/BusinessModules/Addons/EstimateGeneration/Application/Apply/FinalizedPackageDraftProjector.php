@@ -488,7 +488,7 @@ final class FinalizedPackageDraftProjector
             return null;
         }
         if (count($present) !== count($componentKeys)) {
-            throw new \DomainException('Finalized machine price breakdown is incomplete.');
+            return null;
         }
 
         $laborUnitPrice = $this->positiveDecimal($trace['machine_salary_price'], 'machine salary price');
