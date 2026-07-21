@@ -93,7 +93,7 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
         $item = $this->finalizedItem();
         $snapshot = $item->price_snapshot;
         $snapshot['final_amount'] = '549.50';
-        $snapshot['coefficients']['pricing_formula_version'] = 'semantic_project_resource:v7';
+        $snapshot['coefficients']['pricing_formula_version'] = 'semantic_project_resource:v8';
         $snapshot['coefficients']['resource_evidence'] = [[
             'norm_resource_id' => 701,
             'norm_id' => 101,
