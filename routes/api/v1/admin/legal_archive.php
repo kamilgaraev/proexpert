@@ -67,6 +67,9 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
         ->middleware('authorize:legal_archive.files.view')->whereNumber('documentVersion')->whereNumber('otherDocumentVersion')->name('document-file-versions.compare');
     Route::post('document-file-versions/{documentVersion}/editor/session', [LegalArchiveFileController::class, 'editorSession'])
         ->middleware('authorize:legal_archive.view')->whereNumber('documentVersion')->name('document-file-versions.editor.session');
+    Route::post('documents/{legalDocument}/editor/blank-session', [LegalArchiveFileController::class, 'startBlankEditorSession'])
+        ->middleware(['authorize:legal_archive.files.upload', 'authorize:legal_archive.versions.create', 'authorize:legal_archive.editor.edit'])
+        ->whereNumber('legalDocument')->name('documents.editor.blank-session');
 
     Route::post('documents/{legalDocument}/workflow/submit', [LegalArchiveWorkflowController::class, 'submit'])
         ->middleware('authorize:legal_archive.workflow.submit')->whereNumber('legalDocument')->name('workflow.submit');
