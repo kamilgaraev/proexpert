@@ -9,16 +9,11 @@ use Carbon\CarbonImmutable;
 final class ProjectAnalyticsBuilder
 {
     /**
-     * Builds visual datasets only from facts already resolved for the command center.
-     * This prevents a chart from silently using a wider project or organisation scope.
+     * Builds only datasets supported by the resolved command-center facts.
+     * Historical risk and schedule snapshots are intentionally unavailable until their sources exist.
      */
     public function fromFacts(
         array $finance,
-        array $delivery,
-        array $problems,
-        string $period,
-        ?string $dateFrom,
-        ?string $dateTo,
         CarbonImmutable $asOf,
     ): array {
         $financialReason = (string) ($finance['reason_key'] ?? 'project_command_center.finance.access_restricted');
@@ -31,11 +26,11 @@ final class ProjectAnalyticsBuilder
             'cash_flow' => $canViewFinance
                 ? $this->cashFlow($finance)
                 : $this->unavailable($financialReason),
-            'risk_trend' => $this->riskTrend($problems, $period, $dateFrom, $dateTo),
-            'cost_breakdown' => $canViewFinance
-                ? $this->costBreakdown($finance)
+            'risk_trend' => $this->unavailable('project_command_center.analytics.risk_trend_history_unavailable'),
+            'cost_outlook' => $canViewFinance
+                ? $this->costOutlook($finance)
                 : $this->unavailable($financialReason),
-            'work_progress' => $this->workProgress($delivery, $asOf),
+            'work_progress' => $this->unavailable('project_command_center.analytics.work_progress_history_unavailable'),
         ];
     }
 
@@ -96,43 +91,7 @@ final class ProjectAnalyticsBuilder
         ];
     }
 
-    private function riskTrend(array $problems, string $period, ?string $dateFrom, ?string $dateTo): array
-    {
-        $from = $period === 'custom' && $dateFrom !== null ? CarbonImmutable::parse($dateFrom)->startOfDay() : null;
-        $to = $period === 'custom' && $dateTo !== null ? CarbonImmutable::parse($dateTo)->endOfDay() : null;
-        $byDate = [];
-
-        foreach ($problems['items'] ?? [] as $problem) {
-            if (! is_array($problem) || empty($problem['detected_at'])) {
-                continue;
-            }
-
-            $detectedAt = CarbonImmutable::parse((string) $problem['detected_at']);
-            if (($from !== null && $detectedAt->lt($from)) || ($to !== null && $detectedAt->gt($to))) {
-                continue;
-            }
-
-            $date = $detectedAt->toDateString();
-            $byDate[$date] ??= ['critical' => 0, 'risk' => 0, 'attention' => 0];
-            $severity = (string) ($problem['severity'] ?? 'attention');
-            $byDate[$date][array_key_exists($severity, $byDate[$date]) ? $severity : 'attention']++;
-        }
-
-        ksort($byDate);
-
-        return [
-            'available' => true,
-            'reason_key' => null,
-            'labels' => array_keys($byDate),
-            'series' => [
-                'critical' => array_column($byDate, 'critical'),
-                'risk' => array_column($byDate, 'risk'),
-                'attention' => array_column($byDate, 'attention'),
-            ],
-        ];
-    }
-
-    private function costBreakdown(array $finance): array
+    private function costOutlook(array $finance): array
     {
         $evm = $finance['evm'] ?? [];
         $actualCost = $this->number($evm['actual_cost'] ?? null);
@@ -144,32 +103,9 @@ final class ProjectAnalyticsBuilder
         return [
             'available' => true,
             'reason_key' => null,
+            'title_key' => 'project_command_center.analytics.cost_outlook',
             'labels' => ['actual_cost', 'forecast_remaining_cost'],
             'series' => ['amount' => [$actualCost, round(max(0, $forecastCost - $actualCost), 2)]],
-        ];
-    }
-
-    private function workProgress(array $delivery, CarbonImmutable $asOf): array
-    {
-        if (($delivery['available'] ?? false) !== true) {
-            return $this->unavailable((string) ($delivery['reason_key'] ?? 'project_command_center.delivery.schedule_unavailable'));
-        }
-
-        $progress = $this->number($delivery['progress_percent'] ?? null);
-        if ($progress === null) {
-            return [
-                'available' => true,
-                'reason_key' => null,
-                'labels' => [],
-                'series' => ['actual' => []],
-            ];
-        }
-
-        return [
-            'available' => true,
-            'reason_key' => null,
-            'labels' => [$asOf->toDateString()],
-            'series' => ['actual' => [$progress]],
         ];
     }
 

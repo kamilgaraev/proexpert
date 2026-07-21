@@ -94,6 +94,36 @@ final class ProjectCommandCenterDataTest extends TestCase
         self::assertSame([], $data->toArray()['finance']);
     }
 
+    public function test_it_preserves_the_truthful_analytics_contract(): void
+    {
+        $project = new Project(['name' => 'РЎС‚СЂРѕРёС‚РµР»СЊРЅР°СЏ РїР»РѕС‰Р°РґРєР°']);
+        $project->setAttribute('id', 42);
+
+        $data = ProjectCommandCenterData::empty(
+            project: $project,
+            projectContext: $this->projectContext(ProjectOrganizationRole::OWNER, true),
+            period: 'project',
+            dateFrom: null,
+            dateTo: null,
+            generatedAt: new DateTimeImmutable('2026-07-21T12:00:00+03:00'),
+        )->withAnalytics([
+            'risk_trend' => [
+                'available' => false,
+                'reason_key' => 'project_command_center.analytics.risk_trend_history_unavailable',
+            ],
+            'cost_outlook' => [
+                'available' => true,
+                'title_key' => 'project_command_center.analytics.cost_outlook',
+                'labels' => ['actual_cost', 'forecast_remaining_cost'],
+                'series' => ['amount' => [400.0, 800.0]],
+            ],
+        ]);
+
+        self::assertArrayHasKey('cost_outlook', $data->toArray()['analytics']);
+        self::assertArrayNotHasKey('cost_breakdown', $data->toArray()['analytics']);
+        self::assertFalse($data->toArray()['analytics']['risk_trend']['available']);
+    }
+
     private function projectContext(
         ProjectOrganizationRole $role,
         bool $canViewFinances,

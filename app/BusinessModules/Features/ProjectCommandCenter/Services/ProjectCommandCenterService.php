@@ -51,11 +51,6 @@ final class ProjectCommandCenterService
             ->withDelivery($delivery)
             ->withAnalytics($this->analyticsBuilder->fromFacts(
                 finance: $finance,
-                delivery: $delivery,
-                problems: $problems,
-                period: $period,
-                dateFrom: $dateFrom,
-                dateTo: $dateTo,
                 asOf: $generatedAt,
             ));
     }
