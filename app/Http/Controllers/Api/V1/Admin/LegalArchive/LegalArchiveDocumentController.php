@@ -12,6 +12,7 @@ use App\Http\Requests\Api\V1\Admin\LegalArchive\StoreLegalArchiveDocumentRequest
 use App\Http\Requests\Api\V1\Admin\LegalArchive\UpdateLegalArchiveDocumentRequest;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentResource;
 use App\Http\Responses\AdminResponse;
+use App\Models\Contract;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Files\LegalDocumentFileRejected;
 use App\Services\LegalArchive\Files\LegalDocumentScanFailed;
@@ -199,6 +200,35 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             ), $found);
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'document_show', ['document_id' => $legalDocument]);
+        }
+    }
+
+    public function showForContract(Request $request, int $project, int $contract, string $legalDocument): JsonResponse
+    {
+        try {
+            $organizationId = $this->organizationId($request);
+            $linkedContract = Contract::query()->whereKey($contract)->where('project_id', $project)
+                ->where('organization_id', $organizationId)->first();
+
+            if ($linkedContract === null || (int) $linkedContract->legal_archive_document_id !== (int) $legalDocument) {
+                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
+
+            $found = $this->registry->findForAuthorization((int) $legalDocument);
+            if ($found === null || (int) $found->organization_id !== $organizationId || (int) $found->primary_project_id !== $project) {
+                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
+
+            return $this->etag(AdminResponse::success(
+                new LegalArchiveDocumentResource($found),
+                trans_message('legal_archive.messages.document_loaded'),
+            ), $found);
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'contract_document_show', [
+                'project_id' => $project,
+                'contract_id' => $contract,
+                'document_id' => $legalDocument,
+            ]);
         }
     }
 
