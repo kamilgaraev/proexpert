@@ -40,7 +40,7 @@ SQL,
 
                 continue;
             }
-            DB::statement("ALTER TABLE {$table} ADD CONSTRAINT {$name} {$definition}");
+            DB::unprepared("ALTER TABLE {$table} ADD CONSTRAINT {$name} {$definition}");
         }
         $this->installImmutableGuards();
         $this->assertOwnerPrincipalTriggerDescriptor();
