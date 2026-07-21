@@ -19,8 +19,15 @@ final readonly class ShadowArbiterCoordinator
     {
         $context = $this->contexts->make($draft, $operation);
         $status = 'reviewed';
+        $tokens = [];
         try {
-            $verdict = $this->validator->validate($this->arbiter->review($context), $context);
+            $raw = $this->arbiter->review($context);
+            $verdict = $this->validator->validate($raw, $context);
+            foreach (['input_tokens', 'output_tokens'] as $key) {
+                if (is_int($raw[$key] ?? null) && $raw[$key] >= 0 && $raw[$key] <= 1_000_000) {
+                    $tokens[$key] = $raw[$key];
+                }
+            }
         } catch (Throwable) {
             $status = 'unavailable';
             $verdict = new ArbiterVerdict('human_review', []);
@@ -34,6 +41,7 @@ final readonly class ShadowArbiterCoordinator
             'prompt_version' => $this->arbiter->promptVersion(),
             'model' => $this->arbiter->model(),
             'findings' => $verdict->findings,
+            ...$tokens,
         ];
 
         return $draft;

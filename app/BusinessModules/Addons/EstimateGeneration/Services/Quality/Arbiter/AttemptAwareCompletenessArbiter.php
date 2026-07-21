@@ -13,6 +13,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireException;
 use InvalidArgumentException;
+use Illuminate\Support\Facades\Log;
+use RuntimeException;
 use Throwable;
 
 final readonly class AttemptAwareCompletenessArbiter implements CompletenessArbiter
@@ -57,7 +59,8 @@ final readonly class AttemptAwareCompletenessArbiter implements CompletenessArbi
         }
         unset($context['operation']);
         $payload = json_encode($context, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
-        if (strlen($payload) > $this->maxInputTokens * 4) {
+        $systemPrompt = $this->systemPrompt();
+        if ($this->conservativeInputTokenCount($systemPrompt, $payload) > $this->maxInputTokens) {
             throw new InvalidArgumentException('Completeness arbiter input exceeds the configured token limit.');
         }
         $correlationId = AiOperationContext::deterministicId('completeness|'.json_encode([
@@ -102,7 +105,7 @@ final readonly class AttemptAwareCompletenessArbiter implements CompletenessArbi
             }
             $wireClaimed = true;
             $response = $this->wire->call($this->configuredModel, [
-                ['role' => 'system', 'content' => $this->systemPrompt()],
+                ['role' => 'system', 'content' => $systemPrompt],
                 ['role' => 'user', 'content' => $payload],
             ], [
                 'profile' => 'json',
@@ -151,6 +154,11 @@ final readonly class AttemptAwareCompletenessArbiter implements CompletenessArbi
         return trim((string) ($matches['json'] ?? ''));
     }
 
+    private function conservativeInputTokenCount(string $systemPrompt, string $payload): int
+    {
+        return strlen($systemPrompt) + strlen($payload) + 16;
+    }
+
     /** @param array<string, mixed> $response */
     private function record(AiOperationContext $context, string $status, ?int $httpCode, array $response, int $started, AiPriceSnapshot $price): void
     {
@@ -171,7 +179,16 @@ final readonly class AttemptAwareCompletenessArbiter implements CompletenessArbi
                 httpCode: $httpCode,
                 priceSnapshot: $price,
             ));
-        } catch (Throwable) {
+        } catch (Throwable $exception) {
+            try {
+                Log::error('[EstimateGeneration] Completeness arbiter usage recording failed', [
+                    'attempt_id' => $context->attemptId,
+                    'exception_class' => $exception::class,
+                ]);
+            } catch (Throwable) {
+            }
+
+            throw new RuntimeException('usage_recording_failed', previous: $exception);
         }
     }
 }

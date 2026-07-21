@@ -41,6 +41,8 @@ final class ShadowArbiterCoordinatorTest extends TestCase
             {
                 return [
                     'outcome' => 'targeted_rebuild',
+                    'input_tokens' => 123,
+                    'output_tokens' => 45,
                     'findings' => [[
                         'scope_key' => 'heating',
                         'package_keys' => ['heating'],
@@ -73,6 +75,8 @@ final class ShadowArbiterCoordinatorTest extends TestCase
         self::assertSame('targeted_rebuild', $reviewed['arbiter_review']['outcome']);
         self::assertSame('openai/gpt-5-mini', $reviewed['arbiter_review']['model']);
         self::assertSame('completeness-arbiter:v1', $reviewed['arbiter_review']['prompt_version']);
+        self::assertSame(123, $reviewed['arbiter_review']['input_tokens']);
+        self::assertSame(45, $reviewed['arbiter_review']['output_tokens']);
         self::assertArrayNotHasKey('context', $reviewed['arbiter_review']);
     }
 }

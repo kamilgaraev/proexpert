@@ -48,12 +48,36 @@ final class ArbiterVerdictValidatorTest extends TestCase
         self::assertArrayNotHasKey('reason', $verdict->findings[0]);
     }
 
+    #[Test]
+    public function it_rejects_a_rebuild_without_an_existing_package_for_the_scope(): void
+    {
+        $verdict = (new ArbiterVerdictValidator)->validate([
+            'outcome' => 'targeted_rebuild',
+            'findings' => [[
+                'scope_key' => 'heating',
+                'package_keys' => [],
+                'evidence_refs' => ['evidence:1'],
+                'action' => 'rebuild',
+                'reason_code' => 'missing_component',
+            ]],
+        ], [
+            'scope_keys' => ['heating'],
+            'package_keys' => [],
+            'scope_packages' => ['heating' => []],
+            'evidence_refs' => ['evidence:1'],
+        ]);
+
+        self::assertSame('human_review', $verdict->outcome);
+        self::assertSame('invalid_reference', $verdict->findings[0]['reason_code']);
+    }
+
     /** @return array<string, mixed> */
     private function context(): array
     {
         return [
             'scope_keys' => ['heating'],
             'package_keys' => ['heating'],
+            'scope_packages' => ['heating' => ['heating']],
             'evidence_refs' => ['evidence:1'],
         ];
     }

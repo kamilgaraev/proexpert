@@ -34,6 +34,11 @@ final class ArbiterVerdictValidator
                 || array_diff($evidenceRefs, (array) ($context['evidence_refs'] ?? [])) !== []) {
                 return $this->humanReview($context, 'invalid_reference', $scopeKey);
             }
+            $scopePackageMap = is_array($context['scope_packages'] ?? null) ? $context['scope_packages'] : [];
+            $scopePackages = $this->references($scopePackageMap[$scopeKey] ?? []);
+            if ($action === 'rebuild' && ($packageKeys === [] || array_diff($packageKeys, $scopePackages) !== [])) {
+                return $this->humanReview($context, 'invalid_reference', $scopeKey);
+            }
             if ($action === 'rebuild' && $evidenceRefs === []) {
                 return $this->humanReview($context, 'evidence_required', $scopeKey);
             }
