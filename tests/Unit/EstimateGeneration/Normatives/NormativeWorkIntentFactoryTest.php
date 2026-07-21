@@ -192,6 +192,36 @@ final class NormativeWorkIntentFactoryTest extends TestCase
         self::assertCount(1, $intent->specializationEvidence);
     }
 
+    public function test_signed_scenario_from_planner_metadata_pins_the_normative_code(): void
+    {
+        $catalog = new ResidentialMaterialScenarioCatalog;
+        $scenario = $catalog->issue('walls.lintels', 'residential');
+        self::assertIsArray($scenario);
+
+        $intent = (new NormativeWorkIntentFactory(
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
+            null,
+            $catalog,
+        ))->intent([
+            'key' => 'walls-norm-intent-3',
+            'name' => 'Устройство перемычек',
+            'unit' => 'шт',
+            'metadata' => [
+                'material_scenario_work_key' => 'walls.lintels',
+                'specialization_scenario' => $scenario,
+            ],
+        ], [
+            'organization_id' => 1,
+            'project_id' => 89,
+            'session_id' => 58,
+            'object_type' => 'house',
+            'applicability_date' => '2026-07-21',
+            'source_refs' => ['doc:1'],
+        ], 'fsnb-2026.1');
+
+        self::assertSame('07-01-021-01', $intent->requestedNormativeCode);
+    }
+
     public function test_only_catalog_signed_scenario_reaches_normative_intent(): void
     {
         $catalog = new ResidentialMaterialScenarioCatalog;

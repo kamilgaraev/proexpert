@@ -43,8 +43,12 @@ final class NormativeWorkIntentFactory
             $recorded['specialization_evidence'] ?? $item['specialization_evidence'] ?? [],
             $evidence,
         );
+        $metadata = is_array($item['metadata'] ?? null) ? $item['metadata'] : [];
         $specializationScenario = $this->specializationScenario(
-            $item['specialization_scenario'] ?? $recorded['specialization_scenario'] ?? null,
+            $item['specialization_scenario']
+                ?? $metadata['specialization_scenario']
+                ?? $recorded['specialization_scenario']
+                ?? null,
             $quantityKey,
             $objectType,
         );
