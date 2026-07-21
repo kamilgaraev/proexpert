@@ -375,6 +375,14 @@ SQL, [$name]);
     /** @param array<string,mixed> $descriptor */
     private function descriptorHash(array $descriptor): string
     {
+        unset(
+            $descriptor['owner_matches_relation'],
+            $descriptor['owner_identity'],
+            $descriptor['relation_owner_identity'],
+            $descriptor['acl'],
+            $descriptor['public_execute'],
+        );
+
         return hash('sha256', json_encode($descriptor, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
     }
 
