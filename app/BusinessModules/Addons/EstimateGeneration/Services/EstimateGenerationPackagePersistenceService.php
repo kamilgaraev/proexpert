@@ -528,7 +528,7 @@ class EstimateGenerationPackagePersistenceService
                     'period_id' => $item->period_id,
                     'regional_price_version_id' => $item->regional_price_version_id,
                 ],
-                'inputs' => $mismatches,
+                'inputs' => $mismatches->map(static fn (object $input): array => (array) $input)->all(),
             ]);
         }
     }
