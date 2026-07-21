@@ -73,9 +73,31 @@ final class ProjectCommandCenterDataTest extends TestCase
         self::assertSame(['available' => false], $data->toArray()['finance']);
     }
 
+    public function test_it_allows_own_finances_permission_without_global_finance_access(): void
+    {
+        $project = new Project(['name' => 'Строительная площадка']);
+        $project->setAttribute('id', 42);
+
+        $data = ProjectCommandCenterData::empty(
+            project: $project,
+            projectContext: $this->projectContext(
+                role: ProjectOrganizationRole::SUBCONTRACTOR,
+                canViewFinances: false,
+                permissions: ['view_own_finances'],
+            ),
+            period: 'project',
+            dateFrom: null,
+            dateTo: null,
+            generatedAt: new DateTimeImmutable('2026-07-21T12:00:00+03:00'),
+        );
+
+        self::assertSame([], $data->toArray()['finance']);
+    }
+
     private function projectContext(
         ProjectOrganizationRole $role,
         bool $canViewFinances,
+        array $permissions = [],
     ): ProjectContext {
         return new ProjectContext(
             projectId: 42,
@@ -85,7 +107,7 @@ final class ProjectCommandCenterDataTest extends TestCase
             role: $role,
             roleConfig: new ProjectRoleConfig(
                 role: $role,
-                permissions: [],
+                permissions: $permissions,
                 canManageContracts: false,
                 canViewFinances: $canViewFinances,
                 canManageWorks: false,

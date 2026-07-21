@@ -10,6 +10,11 @@ use App\Models\Project;
 
 final class ProjectCommandCenterService
 {
+    public function __construct(
+        private readonly ?ProjectProblemCollector $problemCollector = null,
+    ) {
+    }
+
     public function build(
         Project $project,
         ProjectContext $projectContext,
@@ -17,13 +22,20 @@ final class ProjectCommandCenterService
         ?string $dateFrom,
         ?string $dateTo,
     ): ProjectCommandCenterData {
-        return ProjectCommandCenterData::empty(
+        $generatedAt = now();
+        $data = ProjectCommandCenterData::empty(
             project: $project,
             projectContext: $projectContext,
             period: $period,
             dateFrom: $dateFrom,
             dateTo: $dateTo,
-            generatedAt: now(),
+            generatedAt: $generatedAt,
         );
+
+        return $data->withProblems(($this->problemCollector ?? new ProjectProblemCollector())->collect(
+            project: $project,
+            projectContext: $projectContext,
+            now: $generatedAt,
+        ));
     }
 }
