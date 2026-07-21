@@ -71,14 +71,16 @@ final readonly class ResidentialAbstractResourcePriceSelector
         $selected->project_resource_conversion_assumption = $conversion['assumption'];
 
         $isRegionalSelection = (int) ($selected->regional_price_version_id ?? 0) > 0;
-        $policy = $conversion['candidate_group_code'] === $groupCode
-            ? ($isRegionalSelection
+        $policy = $isRegionalSelection
+            ? ($conversion['candidate_group_code'] === $groupCode
                 ? 'regional_residential_converted_child_median:v1'
-                : (string) $selected->price_dataset_source_type.'_residential_converted_child_median:v1')
-            : match ((string) $selected->price_dataset_source_type) {
-                'fsbc' => 'fsbc_semantic_hard_attributes_median:v4',
-                'fsnb_2022' => 'fsnb_semantic_hard_attributes_median:v4',
-            };
+                : 'regional_semantic_hard_attributes_median:v4')
+            : ($conversion['candidate_group_code'] === $groupCode
+                ? (string) $selected->price_dataset_source_type.'_residential_converted_child_median:v1'
+                : match ((string) $selected->price_dataset_source_type) {
+                    'fsbc' => 'fsbc_semantic_hard_attributes_median:v4',
+                    'fsnb_2022' => 'fsnb_semantic_hard_attributes_median:v4',
+                });
 
         return [
             'row' => $selected,
