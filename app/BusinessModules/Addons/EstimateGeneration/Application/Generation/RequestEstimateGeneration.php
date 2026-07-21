@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use Illuminate\Support\Str;
 
@@ -24,6 +25,7 @@ final class RequestEstimateGeneration
         private AdvanceEstimateGeneration $advance,
         private DocumentGenerationReadinessService $readiness,
         private EloquentSessionBuildingModelBridge $buildingModels,
+        private EstimateGenerationRegionalContextResolver $regionalContextResolver,
     ) {}
 
     public function handle(EstimateGenerationSession $session, int $expectedVersion, ?string $requestedMode): SessionActionResult
@@ -56,6 +58,8 @@ final class RequestEstimateGeneration
             }
         }
 
+        $session = $this->refreshRegionalContext($session);
+
         $readiness = $this->readiness->evaluate($session->load('documents'));
         if (! $readiness['can_generate']) {
             if ($this->canWait($session, $readiness['summary'])) {
@@ -87,6 +91,37 @@ final class RequestEstimateGeneration
             ->afterCommit();
 
         return new SessionActionResult($session, true, 'estimate_generation.generation_queued', 202);
+    }
+
+    private function refreshRegionalContext(EstimateGenerationSession $session): EstimateGenerationSession
+    {
+        $regionalContext = $session->input_payload['regional_context'] ?? null;
+
+        if (! is_array($regionalContext)) {
+            return $session;
+        }
+
+        $refreshedContext = [
+            ...$regionalContext,
+            ...$this->regionalContextResolver->resolve($regionalContext),
+        ];
+
+        if ($refreshedContext === $regionalContext) {
+            return $session;
+        }
+
+        return $this->advance->update($session, [
+            EstimateGenerationStatus::Draft,
+            EstimateGenerationStatus::ProcessingDocuments,
+            EstimateGenerationStatus::ReadyToGenerate,
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+            EstimateGenerationStatus::Cancelled,
+            EstimateGenerationStatus::Applied,
+        ], ['input_payload' => [
+            ...($session->input_payload ?? []),
+            'regional_context' => $refreshedContext,
+        ]]);
     }
 
     /** @param array<string, mixed> $summary */
