@@ -264,9 +264,22 @@ jobs:
             upsert_env MOST_RELEASE_SHA "${RELEASE_SHA}"
             upsert_env SENTRY_RELEASE "prohelper@${RELEASE_SHA}"
             upsert_env REVERB_APP_KEY "${REVERB_APP_KEY}"
+            upsert_env LEGAL_ARCHIVE_SCANNER clamav
             remove_env_key LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED
 
             ensure_immutable_audit_writer_secret
+            docker compose pull clamav
+            docker compose up -d clamav
+            for attempt in $(seq 1 72); do
+              if docker compose exec -T clamav clamdscan --ping 1; then
+                break
+              fi
+              if [ "${attempt}" -eq 72 ]; then
+                echo 'ClamAV did not become ready; refusing deployment'
+                exit 1
+              fi
+              sleep 5
+            done
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps geometry-worker /usr/local/bin/geometry-runtime-smoke
 
             trap deployment_failed ERR
@@ -294,6 +307,7 @@ jobs:
               if docker compose exec -T api curl -fsS http://localhost:8000/ready >/dev/null \
                 && docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null \
                 && docker compose exec -T websockets php -r 'exit(@fsockopen("127.0.0.1", 8080) ? 0 : 1);' \
+                && docker compose exec -T clamav clamdscan --ping 1 \
                 && docker compose exec -T geometry-worker /usr/local/bin/geometry-runtime-smoke; then
                 systemctl start nginx
                 systemctl is-active --quiet nginx

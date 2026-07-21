@@ -98,9 +98,21 @@ class AppServiceProvider extends ServiceProvider
 
         $this->app->bind(
             \App\Services\LegalArchive\Files\LegalDocumentScanner::class,
-            $this->app->environment('testing')
-                ? \App\Services\LegalArchive\Files\TestingLegalDocumentScanner::class
-                : \App\Services\LegalArchive\Files\FailClosedLegalDocumentScanner::class,
+            function ($app) {
+                if ($app->environment('testing')) {
+                    return new \App\Services\LegalArchive\Files\TestingLegalDocumentScanner;
+                }
+
+                if ((string) config('file-uploads.legal_archive.scanner', 'fail_closed') !== 'clamav') {
+                    return new \App\Services\LegalArchive\Files\FailClosedLegalDocumentScanner;
+                }
+
+                return new \App\Services\LegalArchive\Files\ClamAvLegalDocumentScanner(
+                    (string) config('file-uploads.legal_archive.clamav.host', 'clamav'),
+                    (int) config('file-uploads.legal_archive.clamav.port', 3310),
+                    (float) config('file-uploads.legal_archive.clamav.timeout_seconds', 30),
+                );
+            },
         );
         $this->app->bind(
             \App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class,
