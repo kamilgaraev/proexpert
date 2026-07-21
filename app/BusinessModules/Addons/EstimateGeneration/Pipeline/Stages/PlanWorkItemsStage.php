@@ -67,7 +67,9 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             );
         }
         $baselinePayload = $this->compiler->compile($analysis, null, true);
+        $this->logProgress($context, 'baseline_compiled');
         $advice = $this->compositionAdvisor->advise($analysis, $baselinePayload, $context);
+        $this->logProgress($context, 'composition_advised');
         [$analysis, $quantities] = $this->materializeScopeDecisionQuantities(
             $analysis,
             $quantities,
@@ -84,6 +86,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
         $payload = $this->compiler->compile($analysis, null, true);
         $payload = $this->compositionReconciler->reconcile($payload, $advice, $baselinePayload);
+        $this->logProgress($context, 'composition_reconciled');
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
@@ -99,6 +102,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 }
             }
         }
+        $this->logProgress($context, 'quantity_evidence_materialized');
         $regionalContext = is_array($payload['regional_context'] ?? null) ? $payload['regional_context'] : [];
         $payload['normative_context_pin'] = $this->compiler->resolveNormativeContextPin(
             $regionalContext,
@@ -107,6 +111,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 ? $payload['object_profile']['object_type']
                 : null,
         );
+        $this->logProgress($context, 'normative_context_pinned');
         if ($this->canLog()) {
             Log::info('estimate_generation.quantity_evidence_plan_outcomes', [
                 'session_id' => $context->sessionId,
@@ -253,5 +258,16 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         $application = Log::getFacadeApplication();
 
         return $application !== null && $application->bound('log') && $application->bound('config');
+    }
+
+    private function logProgress(PipelineContext $context, string $phase): void
+    {
+        if ($this->canLog()) {
+            Log::info('estimate_generation.plan_work_items_progress', [
+                'session_id' => $context->sessionId,
+                'project_id' => $context->projectId,
+                'phase' => $phase,
+            ]);
+        }
     }
 }
