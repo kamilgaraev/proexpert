@@ -193,6 +193,9 @@
     ],
     "handover-acceptance": [
       "*"
+    ],
+    "legal-archive": [
+      "*"
     ]
   },
   "interface_access": [
