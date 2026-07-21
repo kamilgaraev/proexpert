@@ -6,13 +6,13 @@ namespace App\BusinessModules\Core\ImmutableAudit\Support;
 
 final class ImmutableAuditInvariantDefinitions
 {
-    public const ALLOCATOR_FUNCTION = 'most_immutable_audit_allocate_sequence_v2';
+    public const ALLOCATOR_FUNCTION = 'most_immutable_audit_allocate_sequence_v3';
 
-    public const SEQUENCE_SYNC_FUNCTION = 'most_immutable_audit_sync_sequence_after_insert_v2';
+    public const SEQUENCE_SYNC_FUNCTION = 'most_immutable_audit_sync_sequence_after_insert_v3';
 
-    public const WRITER_GUARD_FUNCTION = 'most_immutable_audit_writer_guard_v2';
+    public const WRITER_GUARD_FUNCTION = 'most_immutable_audit_writer_guard_v3';
 
-    public const APPEND_ONLY_FUNCTION = 'most_immutable_audit_prevent_mutation_v2';
+    public const APPEND_ONLY_FUNCTION = 'most_immutable_audit_prevent_mutation_v3';
 
     public const SEQUENCE_CREATE_SQL = 'CREATE SEQUENCE IF NOT EXISTS immutable_audit_sequence AS bigint INCREMENT BY 1 MINVALUE 1 NO MAXVALUE START WITH 1 CACHE 1 NO CYCLE';
 
@@ -101,80 +101,32 @@ SQL;
     public static function canonicalCoreSql(): string
     {
         return sprintf(<<<'SQL'
-CREATE OR REPLACE FUNCTION most_immutable_audit_allocate_sequence_v2() RETURNS bigint
+CREATE OR REPLACE FUNCTION most_immutable_audit_allocate_sequence_v3() RETURNS bigint
 LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SECURITY INVOKER PARALLEL UNSAFE
 SET search_path = pg_catalog, public AS $function$
 %s
 $function$;
-CREATE OR REPLACE FUNCTION most_immutable_audit_sync_sequence_after_insert_v2() RETURNS trigger
+CREATE OR REPLACE FUNCTION most_immutable_audit_sync_sequence_after_insert_v3() RETURNS trigger
 LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SECURITY INVOKER PARALLEL UNSAFE
 SET search_path = pg_catalog, public AS $function$
 %s
 $function$;
-CREATE OR REPLACE FUNCTION most_immutable_audit_writer_guard_v2() RETURNS trigger
+CREATE OR REPLACE FUNCTION most_immutable_audit_writer_guard_v3() RETURNS trigger
 LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SECURITY INVOKER PARALLEL UNSAFE
 SET search_path = pg_catalog, public AS $function$
 %s
 $function$;
-CREATE OR REPLACE FUNCTION most_immutable_audit_prevent_mutation_v2() RETURNS trigger
+CREATE OR REPLACE FUNCTION most_immutable_audit_prevent_mutation_v3() RETURNS trigger
 LANGUAGE plpgsql VOLATILE CALLED ON NULL INPUT SECURITY INVOKER PARALLEL UNSAFE
 SET search_path = pg_catalog, public AS $function$
 %s
 $function$;
-ALTER FUNCTION most_immutable_audit_allocate_sequence_v2() SECURITY INVOKER CALLED ON NULL INPUT NOT LEAKPROOF PARALLEL UNSAFE;
-ALTER FUNCTION most_immutable_audit_sync_sequence_after_insert_v2() SECURITY INVOKER CALLED ON NULL INPUT NOT LEAKPROOF PARALLEL UNSAFE;
-ALTER FUNCTION most_immutable_audit_writer_guard_v2() SECURITY INVOKER CALLED ON NULL INPUT NOT LEAKPROOF PARALLEL UNSAFE;
-ALTER FUNCTION most_immutable_audit_prevent_mutation_v2() SECURITY INVOKER CALLED ON NULL INPUT NOT LEAKPROOF PARALLEL UNSAFE;
-ALTER FUNCTION most_immutable_audit_allocate_sequence_v2() COST 100;
-ALTER FUNCTION most_immutable_audit_sync_sequence_after_insert_v2() COST 100;
-ALTER FUNCTION most_immutable_audit_writer_guard_v2() COST 100;
-ALTER FUNCTION most_immutable_audit_prevent_mutation_v2() COST 100;
-ALTER FUNCTION most_immutable_audit_allocate_sequence_v2() RESET ALL;
-ALTER FUNCTION most_immutable_audit_sync_sequence_after_insert_v2() RESET ALL;
-ALTER FUNCTION most_immutable_audit_writer_guard_v2() RESET ALL;
-ALTER FUNCTION most_immutable_audit_prevent_mutation_v2() RESET ALL;
-ALTER FUNCTION most_immutable_audit_allocate_sequence_v2() SET search_path = pg_catalog, public;
-ALTER FUNCTION most_immutable_audit_sync_sequence_after_insert_v2() SET search_path = pg_catalog, public;
-ALTER FUNCTION most_immutable_audit_writer_guard_v2() SET search_path = pg_catalog, public;
-ALTER FUNCTION most_immutable_audit_prevent_mutation_v2() SET search_path = pg_catalog, public;
-DO $acl$
-DECLARE function_name text;
-DECLARE grantee record;
-BEGIN
-    FOREACH function_name IN ARRAY ARRAY[
-        'most_immutable_audit_allocate_sequence_v2',
-        'most_immutable_audit_sync_sequence_after_insert_v2',
-        'most_immutable_audit_writer_guard_v2',
-        'most_immutable_audit_prevent_mutation_v2'
-    ] LOOP
-        FOR grantee IN
-            SELECT DISTINCT expanded.grantee, pg_get_userbyid(expanded.grantee) AS role_name
-            FROM pg_proc proc
-            CROSS JOIN LATERAL aclexplode(COALESCE(proc.proacl, acldefault('f', proc.proowner))) expanded
-            WHERE proc.oid = to_regprocedure(format('%%I.%%I()', current_schema(), function_name))
-              AND expanded.grantee <> 0
-        LOOP
-            EXECUTE format(
-                'REVOKE ALL PRIVILEGES ON FUNCTION %%I.%%I() FROM %%I CASCADE',
-                current_schema(),
-                function_name,
-                grantee.role_name
-            );
-        END LOOP;
-        EXECUTE format(
-            'REVOKE ALL PRIVILEGES ON FUNCTION %%I.%%I() FROM PUBLIC CASCADE',
-            current_schema(),
-            function_name
-        );
-    END LOOP;
-END
-$acl$;
 DROP TRIGGER IF EXISTS immutable_audit_writer_guard ON immutable_audit_events;
-CREATE TRIGGER immutable_audit_writer_guard BEFORE INSERT ON immutable_audit_events FOR EACH ROW EXECUTE FUNCTION most_immutable_audit_writer_guard_v2();
+CREATE TRIGGER immutable_audit_writer_guard BEFORE INSERT ON immutable_audit_events FOR EACH ROW EXECUTE FUNCTION most_immutable_audit_writer_guard_v3();
 DROP TRIGGER IF EXISTS immutable_audit_events_append_only ON immutable_audit_events;
-CREATE TRIGGER immutable_audit_events_append_only BEFORE UPDATE OR DELETE ON immutable_audit_events FOR EACH ROW EXECUTE FUNCTION most_immutable_audit_prevent_mutation_v2();
+CREATE TRIGGER immutable_audit_events_append_only BEFORE UPDATE OR DELETE ON immutable_audit_events FOR EACH ROW EXECUTE FUNCTION most_immutable_audit_prevent_mutation_v3();
 DROP TRIGGER IF EXISTS immutable_audit_sequence_sync ON immutable_audit_events;
-CREATE TRIGGER immutable_audit_sequence_sync AFTER INSERT ON immutable_audit_events FOR EACH ROW EXECUTE FUNCTION most_immutable_audit_sync_sequence_after_insert_v2();
+CREATE TRIGGER immutable_audit_sequence_sync AFTER INSERT ON immutable_audit_events FOR EACH ROW EXECUTE FUNCTION most_immutable_audit_sync_sequence_after_insert_v3();
 SQL, self::ALLOCATOR_BODY, self::SEQUENCE_SYNC_BODY, self::WRITER_GUARD_BODY, self::APPEND_ONLY_BODY);
     }
 
