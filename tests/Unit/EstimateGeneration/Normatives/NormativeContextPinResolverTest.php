@@ -846,7 +846,8 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("->where('resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('resources.resource_type', '<>', 'summary')", $source);
         self::assertStringContainsString('$normalResourceRowsQuery = function (int $normId)', $source);
-        self::assertStringContainsString("->where('resources.estimate_norm_id', '=', \$normId)", $source);
+        self::assertStringContainsString("->where('scoped_resources.estimate_norm_id', '=', \$normId)", $source);
+        self::assertStringContainsString("->on('scoped_resources.id', '=', 'resources.id')", $source);
         self::assertStringNotContainsString('(clone $normalResourceRowsQuery)', $source);
         self::assertStringContainsString("->where('quantity', '>', 0)", $source);
         self::assertStringContainsString('$this->ranker->select($query->all(), [$intent])', $source);

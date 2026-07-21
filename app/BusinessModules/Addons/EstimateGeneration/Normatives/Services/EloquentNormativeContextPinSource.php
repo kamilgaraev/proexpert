@@ -277,6 +277,15 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
             $fsbcBasePriceDatasetId,
         ) {
             return $this->database->table('estimate_norm_resources as resources')
+                ->joinSub(
+                    $this->database->table('estimate_norm_resources as scoped_resources')
+                        ->select('scoped_resources.id')
+                        ->where('scoped_resources.estimate_norm_id', '=', $normId),
+                    'scoped_resources',
+                    static function ($join): void {
+                        $join->on('scoped_resources.id', '=', 'resources.id');
+                    },
+                )
                 ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
                     $join->on('prices.resource_code', '=', 'resources.resource_code')
                         ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
@@ -333,8 +342,7 @@ final readonly class EloquentNormativeContextPinSource implements ProgressAwareN
                         $fgisLaborPriceDatasetId,
                         $fsbcBasePriceDatasetId,
                     ],
-                )
-                ->where('resources.estimate_norm_id', '=', $normId);
+                );
         };
         $resourceRowColumns = [
             'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
