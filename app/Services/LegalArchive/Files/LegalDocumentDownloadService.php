@@ -6,6 +6,7 @@ namespace App\Services\LegalArchive\Files;
 
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
+use App\Models\Contract;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
@@ -29,6 +30,27 @@ final class LegalDocumentDownloadService
 
     public function temporaryUrl(LegalArchiveDocumentVersion $version, User $actor, string $purpose, ?int $ttlMinutes = null): string
     {
+        return $this->issueTemporaryUrl($version, $actor, $purpose, $ttlMinutes, function (LegalArchiveDocument $document) use ($actor, $purpose): void {
+            $this->access->authorize($actor, $document, $purpose === 'download' ? 'download' : 'view');
+        });
+    }
+
+    public function temporaryUrlForContract(LegalArchiveDocumentVersion $version, User $actor, Contract $contract, string $purpose, ?int $ttlMinutes = null): string
+    {
+        if ((int) $version->organization_id !== (int) $contract->organization_id
+            || (int) $version->document_id !== (int) $contract->legal_archive_document_id) {
+            throw new AuthorizationException($this->message('file_access_denied'));
+        }
+
+        return $this->issueTemporaryUrl($version, $actor, $purpose, $ttlMinutes, static function (LegalArchiveDocument $document) use ($contract): void {
+            if ((int) $document->id !== (int) $contract->legal_archive_document_id) {
+                throw new AuthorizationException('legal_contract_document_mismatch');
+            }
+        });
+    }
+
+    private function issueTemporaryUrl(LegalArchiveDocumentVersion $version, User $actor, string $purpose, ?int $ttlMinutes, callable $authorize): string
+    {
         $organizationId = (int) $version->organization_id;
 
         try {
@@ -37,7 +59,7 @@ final class LegalDocumentDownloadService
             if (! $document instanceof LegalArchiveDocument) {
                 throw new AuthorizationException($this->message('file_access_denied'));
             }
-            $this->access->authorize($actor, $document, $purpose === 'download' ? 'download' : 'view');
+            $authorize($document);
         } catch (AuthorizationException $exception) {
             $this->logger->warning('legal_archive.file_access_denied', [
                 'actor_id' => $actor->id,

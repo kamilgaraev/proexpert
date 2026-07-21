@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\Admin\Contract\ContractStateEventController;
 use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Controllers\Api\V1\Admin\ContractFromEstimateController;
 use App\Http\Controllers\Api\V1\Admin\LegalArchive\LegalArchiveDocumentController;
+use App\Http\Controllers\Api\V1\Admin\LegalArchive\LegalArchiveFileController;
 use App\Http\Controllers\Api\V1\Admin\MaterialAnalyticsController;
 // ContractPaymentController удален - используйте модуль Payments
 use App\Http\Controllers\Api\V1\Admin\ProjectContextController;
@@ -64,6 +65,9 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::get('/{contract}/documents/{legalDocument}', [LegalArchiveDocumentController::class, 'showForContract'])
             ->middleware('authorize:contracts.view,project,project')
             ->whereNumber('legalDocument');
+        Route::get('/{contract}/documents/{legalDocument}/versions/{documentVersion}/{purpose}', [LegalArchiveFileController::class, 'contractFileUrl'])
+            ->middleware('authorize:contracts.view,project,project')
+            ->whereNumber('legalDocument')->whereNumber('documentVersion')->whereIn('purpose', ['preview', 'download']);
         Route::match(['put', 'patch'], '/{contract}', [ContractController::class, 'update'])
             ->middleware('authorize:contracts.edit,project,project');
         Route::delete('/{contract}', [ContractController::class, 'destroyForProject'])
