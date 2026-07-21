@@ -80,6 +80,9 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::post('/{contract}/documents/{legalDocument}/editor/blank-session', [LegalArchiveFileController::class, 'startContractBlankEditorSession'])
             ->middleware(['authorize:contracts.edit,project,project', 'authorize:legal_archive.files.upload', 'authorize:legal_archive.versions.create', 'authorize:legal_archive.editor.edit'])
             ->whereNumber('legalDocument');
+        Route::post('/{contract}/documents/{legalDocument}/versions/{documentVersion}/editor/session', [LegalArchiveFileController::class, 'contractEditorSession'])
+            ->middleware(['authorize:contracts.edit,project,project', 'authorize:legal_archive.editor.edit'])
+            ->whereNumber('legalDocument')->whereNumber('documentVersion');
         Route::match(['put', 'patch'], '/{contract}', [ContractController::class, 'update'])
             ->middleware('authorize:contracts.edit,project,project');
         Route::delete('/{contract}', [ContractController::class, 'destroyForProject'])

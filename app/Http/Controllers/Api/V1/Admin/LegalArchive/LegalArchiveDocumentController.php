@@ -14,6 +14,7 @@ use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
+use App\Services\LegalArchive\Editor\LegalDocumentEditorAvailability;
 use App\Services\LegalArchive\Files\LegalDocumentFileRejected;
 use App\Services\LegalArchive\Files\LegalDocumentScanFailed;
 use App\Services\LegalArchive\LegalArchiveLifecycleService;
@@ -34,6 +35,7 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
         private readonly LegalArchiveRegistryService $registry,
         private readonly LegalDocumentAuthorizer $access,
         private readonly LegalWorkflowActionResolver $actions,
+        private readonly LegalDocumentEditorAvailability $editorAvailability,
         private readonly LegalArchiveLifecycleService $lifecycle,
         private readonly LegalDocumentCreateFailureReporter $createFailureReporter,
     ) {}
@@ -202,6 +204,10 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                 'api_workflow_summary',
                 $summary->toArray()['workflow_summary'],
             );
+            $found->setAttribute(
+                'api_editor_current_version_editable',
+                $this->editorAvailability->currentVersionEditable($found),
+            );
 
             return $this->etag(AdminResponse::success(
                 new LegalArchiveDocumentResource($found),
@@ -227,6 +233,10 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             if ($found === null || (int) $found->organization_id !== $organizationId || (int) $found->primary_project_id !== $project) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
+            $found->setAttribute(
+                'api_editor_current_version_editable',
+                $this->editorAvailability->currentVersionEditable($found),
+            );
 
             return $this->etag(AdminResponse::success(
                 new LegalArchiveDocumentResource($found),

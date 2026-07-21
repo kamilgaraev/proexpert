@@ -81,6 +81,7 @@ final class LegalArchiveDocumentResource extends JsonResource
             'editor' => [
                 'enabled' => (bool) config('legal-document-editor.enabled', false)
                     && (string) config('legal-document-editor.driver', 'onlyoffice') === 'onlyoffice',
+                'current_version_editable' => (bool) $this->resource->getAttribute('api_editor_current_version_editable'),
             ],
             'current_version' => new LegalArchiveDocumentVersionResource($this->whenLoaded('currentVersion')),
             'current_primary_version' => new LegalArchiveDocumentVersionResource($this->whenLoaded('currentVersion')),
