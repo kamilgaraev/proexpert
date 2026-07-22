@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterRemediationCoordinator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterRemediationState;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterReviewContextFactory;
 use DomainException;
 use InvalidArgumentException;
 
@@ -23,6 +24,7 @@ final readonly class CommitTargetedPackageRebuild
         private ArbiterRemediationCoordinator $remediation,
         private SessionBaseInputVersionResolver $baseInputVersions,
         private TargetedPackageReviewUpdater $advance,
+        private ArbiterReviewContextFactory $contexts = new ArbiterReviewContextFactory,
     ) {}
 
     /** @param array<string, mixed> $reviewedDraft */
@@ -162,6 +164,7 @@ final readonly class CommitTargetedPackageRebuild
         TargetedPackagePatchResult $result,
         array $reviewedDraft,
     ): string {
+        $this->packagesByKey($reviewedDraft);
         $withoutReview = $reviewedDraft;
         unset($withoutReview['arbiter_review']);
         $patchedWithoutReview = $result->draft;
@@ -170,11 +173,13 @@ final readonly class CommitTargetedPackageRebuild
 
         $review = $reviewedDraft['arbiter_review'] ?? null;
         $remediation = is_array($review) ? $review['remediation'] ?? null : null;
+        $expectedInputHash = $this->contexts->make($result->draft)['input_hash'] ?? null;
         if (! is_array($review)
             || ($review['mode'] ?? null) !== 'shadow'
             || ($review['status'] ?? null) !== 'reviewed'
             || ! is_string($review['input_hash'] ?? null)
-            || ! hash_equals($review['input_hash'], $command->arbiterInputHash)
+            || ! is_string($expectedInputHash)
+            || ! hash_equals($review['input_hash'], $expectedInputHash)
             || ! is_array($remediation)) {
             throw new DomainException('Second arbiter review is invalid.');
         }
@@ -222,37 +227,47 @@ final readonly class CommitTargetedPackageRebuild
     /** @param array<string, mixed> $draft @return array<string, mixed> */
     private function targetPackage(array $draft, string $packageKey): array
     {
-        $matches = [];
-        foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
-            if (! is_array($localEstimate) || ! is_string($localEstimate['key'] ?? null)) {
-                throw new DomainException('Targeted package draft is invalid.');
-            }
-            if (hash_equals($localEstimate['key'], $packageKey)) {
-                $matches[] = $localEstimate;
-            }
-        }
-        if (count($matches) !== 1) {
+        $packages = $this->packagesByKey($draft);
+        if (! isset($packages[$packageKey])) {
             throw new DomainException('Targeted package must exist exactly once.');
         }
 
-        return $matches[0];
+        return $packages[$packageKey];
     }
 
     /** @param array<string, mixed> $draft @return array<string, string> */
     private function nonTargetFingerprints(array $draft, string $targetPackageKey): array
     {
         $fingerprints = [];
-        foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
-            if (! is_array($localEstimate) || ! is_string($localEstimate['key'] ?? null)) {
-                throw new DomainException('Targeted package draft is invalid.');
-            }
-            if (! hash_equals($localEstimate['key'], $targetPackageKey)) {
-                $fingerprints[$localEstimate['key']] = $this->fingerprint($localEstimate);
+        foreach ($this->packagesByKey($draft) as $packageKey => $localEstimate) {
+            if (! hash_equals($packageKey, $targetPackageKey)) {
+                $fingerprints[$packageKey] = $this->fingerprint($localEstimate);
             }
         }
         ksort($fingerprints, SORT_STRING);
 
         return $fingerprints;
+    }
+
+    /** @param array<string, mixed> $draft @return array<string, array<string, mixed>> */
+    private function packagesByKey(array $draft): array
+    {
+        $localEstimates = $draft['local_estimates'] ?? null;
+        if (! is_array($localEstimates) || ! array_is_list($localEstimates) || $localEstimates === []) {
+            throw new DomainException('Targeted package draft is invalid.');
+        }
+        $packages = [];
+        foreach ($localEstimates as $localEstimate) {
+            $packageKey = is_array($localEstimate) ? $localEstimate['key'] ?? null : null;
+            if (! is_string($packageKey)
+                || preg_match('/\A[A-Za-z0-9:._-]{1,120}\z/', $packageKey) !== 1
+                || isset($packages[$packageKey])) {
+                throw new DomainException('Targeted package draft is invalid.');
+            }
+            $packages[$packageKey] = $localEstimate;
+        }
+
+        return $packages;
     }
 
     /** @param array<string, mixed> $left @param array<string, mixed> $right */
@@ -304,12 +319,14 @@ final readonly class CommitTargetedPackageRebuild
             'arbiter_input_hash' => $command->arbiterInputHash,
             'package_key' => $command->packageKey,
             'verdict' => ['outcome' => $command->verdict->outcome, 'findings' => $command->verdict->findings],
+            'command_draft' => $this->normalizeDatabaseNumbers($command->draft),
             'patch' => [
                 'target_before' => $result->targetBeforeFingerprint,
                 'target_after' => $result->targetAfterFingerprint,
                 'non_target_fingerprints' => $result->nonTargetFingerprints,
             ],
-            'reviewed_arbiter_review' => $reviewedDraft['arbiter_review'] ?? null,
+            'result_draft' => $this->normalizeDatabaseNumbers($result->draft),
+            'reviewed_draft' => $this->normalizeDatabaseNumbers($reviewedDraft),
         ]));
     }
 }

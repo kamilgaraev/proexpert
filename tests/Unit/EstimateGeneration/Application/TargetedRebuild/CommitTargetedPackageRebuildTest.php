@@ -17,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterRemediationCoordinator;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterReviewContextFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterVerdict;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -55,6 +56,33 @@ final class CommitTargetedPackageRebuildTest extends TestCase
         self::assertFalse($result->replayed);
         self::assertSame('reviewed', $storage->session->draft_payload['arbiter_review']['remediation']['phase']);
         self::assertSame('passed', $storage->session->draft_payload['arbiter_review']['outcome']);
+    }
+
+    #[Test]
+    public function it_accepts_the_second_review_hash_computed_from_the_rebuilt_package(): void
+    {
+        $patch = $this->patchResult();
+        $secondInputHash = $this->secondReviewInputHash($patch->draft);
+        self::assertNotSame('sha256:'.str_repeat('b', 64), $secondInputHash);
+
+        $result = $this->commit(
+            new InMemoryTargetedPackageCommitStore($this->session()),
+            new RecordingTargetedPackageDraftWriter,
+        )->commit($this->command(), $patch, $this->reviewedDraftWithInputHash('passed', $secondInputHash));
+
+        self::assertFalse($result->replayed);
+    }
+
+    #[Test]
+    public function it_rejects_the_original_review_hash_after_the_target_package_changed(): void
+    {
+        $this->expectException(\DomainException::class);
+        $this->commit(new InMemoryTargetedPackageCommitStore($this->session()), new RecordingTargetedPackageDraftWriter)
+            ->commit(
+                $this->command(),
+                $this->patchResult(),
+                $this->reviewedDraftWithInputHash('passed', 'sha256:'.str_repeat('b', 64)),
+            );
     }
 
     #[Test]
@@ -156,6 +184,36 @@ final class CommitTargetedPackageRebuildTest extends TestCase
     }
 
     #[Test]
+    public function it_rejects_duplicate_non_target_package_keys_before_the_writer_is_called(): void
+    {
+        $patch = $this->patchResult();
+        $duplicatedDraft = $patch->draft;
+        $duplicatedDraft['local_estimates'][] = $duplicatedDraft['local_estimates'][0];
+        $duplicated = new TargetedPackagePatchResult(
+            $duplicatedDraft,
+            $patch->packageKey,
+            $patch->targetBeforeFingerprint,
+            $patch->targetAfterFingerprint,
+            $patch->nonTargetFingerprints,
+        );
+        $reviewed = (new ArbiterRemediationCoordinator)->resolveAfterRebuild(
+            $duplicatedDraft,
+            new ArbiterVerdict('passed', []),
+        );
+        $reviewed['arbiter_review']['input_hash'] = $this->secondReviewInputHash($duplicatedDraft);
+        $writer = new RecordingTargetedPackageDraftWriter;
+
+        try {
+            $this->commit(new InMemoryTargetedPackageCommitStore($this->session()), $writer)
+                ->commit($this->command(), $duplicated, $reviewed);
+            self::fail('Duplicate package keys must be rejected before the package writer.');
+        } catch (\DomainException) {
+        }
+
+        self::assertSame([], $writer->syncedPackageKeys);
+    }
+
+    #[Test]
     public function it_rejects_a_replayed_operation_id_with_different_review_content(): void
     {
         $storage = new InMemoryTargetedPackageCommitStore($this->session());
@@ -164,6 +222,26 @@ final class CommitTargetedPackageRebuildTest extends TestCase
 
         $this->expectException(\InvalidArgumentException::class);
         $commit->commit($this->command(), $this->patchResult(), $this->reviewedDraft('confirmed_scope_only'));
+    }
+
+    #[Test]
+    public function it_rejects_a_replayed_operation_id_with_changed_reviewed_package_content(): void
+    {
+        $storage = new InMemoryTargetedPackageCommitStore($this->session());
+        $writer = new RecordingTargetedPackageDraftWriter;
+        $commit = $this->commit($storage, $writer);
+        $commit->commit($this->command(), $this->patchResult(), $this->reviewedDraft('passed'));
+
+        $alteredReviewedDraft = $this->reviewedDraft('passed');
+        $alteredReviewedDraft['local_estimates'][0]['sections'][0]['work_items'][0]['total_cost'] = 9999.0;
+
+        try {
+            $commit->commit($this->command(), $this->patchResult(), $alteredReviewedDraft);
+            self::fail('A changed replay must be rejected before the package writer.');
+        } catch (\InvalidArgumentException) {
+        }
+
+        self::assertSame(['heating'], $writer->syncedPackageKeys);
     }
 
     #[Test]
@@ -247,10 +325,28 @@ final class CommitTargetedPackageRebuildTest extends TestCase
     /** @return array<string, mixed> */
     private function reviewedDraft(string $outcome): array
     {
-        return (new ArbiterRemediationCoordinator)->resolveAfterRebuild(
+        return $this->reviewedDraftWithInputHash(
+            $outcome,
+            $this->secondReviewInputHash($this->patchResult()->draft),
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function reviewedDraftWithInputHash(string $outcome, string $inputHash): array
+    {
+        $reviewed = (new ArbiterRemediationCoordinator)->resolveAfterRebuild(
             $this->patchResult()->draft,
             new ArbiterVerdict($outcome, []),
         );
+        $reviewed['arbiter_review']['input_hash'] = $inputHash;
+
+        return $reviewed;
+    }
+
+    /** @param array<string, mixed> $draft */
+    private function secondReviewInputHash(array $draft): string
+    {
+        return (new ArbiterReviewContextFactory)->make($draft)['input_hash'];
     }
 
     private function session(int $stateVersion = 7): EstimateGenerationSession
