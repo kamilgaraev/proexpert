@@ -108,6 +108,9 @@ final class EstimateScopeMetadataProjector
                 $result[$key] = $review[$key];
             }
         }
+        if (! isset($result['mode'], $result['status'], $result['outcome'])) {
+            return [];
+        }
         if (is_string($review['input_hash'] ?? null) && preg_match('/^sha256:[0-9a-f]{64}$/', $review['input_hash']) === 1) {
             $result['input_hash'] = $review['input_hash'];
         }

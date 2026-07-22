@@ -12,12 +12,26 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersiste
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateScopeMetadataProjector;
 use App\Models\Estimate;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class GeneratedEstimateScopeMetadataTest extends TestCase
 {
+    #[Test]
+    public function it_omits_an_incomplete_arbiter_review_from_user_safe_metadata(): void
+    {
+        $metadata = (new EstimateScopeMetadataProjector)->project([
+            'arbiter_review' => [
+                'status' => 'reviewed',
+                'raw_prompt' => 'Secret description from a document',
+            ],
+        ], []);
+
+        self::assertSame([], $metadata['arbiter_review']);
+    }
+
     #[Test]
     public function it_keeps_direct_costs_and_persists_the_scope_boundary_separately(): void
     {
