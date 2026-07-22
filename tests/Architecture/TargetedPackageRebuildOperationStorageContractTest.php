@@ -56,5 +56,17 @@ final class TargetedPackageRebuildOperationStorageContractTest extends TestCase
         self::assertStringNotContainsString(' ?& ', $migration);
         self::assertStringNotContainsString(" ? 'key'", $migration);
         self::assertStringNotContainsString(" ? 'sections'", $migration);
+        self::assertMatchesRegularExpression(
+            "/result_delta - ARRAY\\['target_package','target_before_fingerprint','target_after_fingerprint','non_target_fingerprints'\\]::text\\[\\]/",
+            $migration,
+        );
+        self::assertMatchesRegularExpression(
+            "/result_delta->'target_package' - ARRAY\\['key','sections'\\]::text\\[\\]/",
+            $migration,
+        );
+        self::assertMatchesRegularExpression(
+            "/safe_arbiter_review - ARRAY\\['mode','status','outcome','input_hash','schema_version','prompt_version','model','findings','cycle','remediation','input_tokens','output_tokens'\\]::text\\[\\]/",
+            $migration,
+        );
     }
 }

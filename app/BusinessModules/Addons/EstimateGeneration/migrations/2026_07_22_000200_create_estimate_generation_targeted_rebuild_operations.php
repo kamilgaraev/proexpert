@@ -60,9 +60,9 @@ return new class extends Migration
                         AND jsonb_path_exists(result_delta, '$.target_before_fingerprint')
                         AND jsonb_path_exists(result_delta, '$.target_after_fingerprint')
                         AND jsonb_path_exists(result_delta, '$.non_target_fingerprints')
-                        AND (result_delta - ARRAY['target_package','target_before_fingerprint','target_after_fingerprint','non_target_fingerprints']) = '{}'::jsonb
+                        AND (result_delta - ARRAY['target_package','target_before_fingerprint','target_after_fingerprint','non_target_fingerprints']::text[]) = '{}'::jsonb
                         AND jsonb_typeof(result_delta->'target_package') = 'object'
-                        AND (result_delta->'target_package' - ARRAY['key','sections']) = '{}'::jsonb
+                        AND (result_delta->'target_package' - ARRAY['key','sections']::text[]) = '{}'::jsonb
                         AND jsonb_path_exists(result_delta->'target_package', '$.key')
                         AND result_delta->'target_package'->>'key' ~ '^[A-Za-z0-9:._-]{1,120}$'
                         AND (NOT jsonb_path_exists(result_delta->'target_package', '$.sections') OR jsonb_typeof(result_delta->'target_package'->'sections') = 'array')
@@ -81,7 +81,7 @@ return new class extends Migration
                         AND jsonb_path_exists(safe_arbiter_review, '$.prompt_version')
                         AND jsonb_path_exists(safe_arbiter_review, '$.model')
                         AND jsonb_path_exists(safe_arbiter_review, '$.findings')
-                        AND (safe_arbiter_review - ARRAY['mode','status','outcome','input_hash','schema_version','prompt_version','model','findings','cycle','remediation','input_tokens','output_tokens']) = '{}'::jsonb
+                        AND (safe_arbiter_review - ARRAY['mode','status','outcome','input_hash','schema_version','prompt_version','model','findings','cycle','remediation','input_tokens','output_tokens']::text[]) = '{}'::jsonb
                         AND safe_arbiter_review->>'mode' = 'shadow'
                         AND ((safe_arbiter_review->>'status' = 'reviewed' AND safe_arbiter_review->>'outcome' IN ('passed','confirmed_scope_only','human_review')) OR (safe_arbiter_review->>'status' = 'unavailable' AND safe_arbiter_review->>'outcome' = 'human_review'))
                         AND safe_arbiter_review->>'input_hash' ~ '^sha256:[a-f0-9]{64}$'
