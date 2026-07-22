@@ -560,19 +560,62 @@ final readonly class TargetedPackageRebuilder
     /** @param array<string, mixed> $resource */
     private function resourceIdentity(array $resource): ?string
     {
-        foreach (['key', 'code'] as $field) {
-            $value = $resource[$field] ?? null;
-            if (is_string($value) && preg_match('/\A[A-Za-z0-9:._-]{1,120}\z/', $value) === 1) {
-                return $field.':'.$value;
-            }
+        $identity = [];
+        if (! $this->appendTextIdentity($identity, 'key', $resource['key'] ?? null)
+            || ! $this->appendTextIdentity($identity, 'code', $resource['code'] ?? null)
+            || ! $this->appendNumericIdentity($identity, 'resource_id', $resource['resource_id'] ?? null)
+            || ! $this->appendNumericIdentity($identity, 'linked_resource_id', $resource['linked_resource_id'] ?? null)
+            || ! $this->appendNumericIdentity($identity, 'norm_resource_id', $resource['norm_resource_id'] ?? null)
+            || ! $this->appendNumericIdentity($identity, 'price_id', $resource['price_id'] ?? null)) {
+            return null;
         }
         $normativeReference = $resource['normative_ref'] ?? null;
-        $resourceCode = is_array($normativeReference) ? $normativeReference['resource_code'] ?? null : null;
-        if (is_string($resourceCode) && preg_match('/\A[A-Za-z0-9:._-]{1,120}\z/', $resourceCode) === 1) {
-            return 'normative_ref.resource_code:'.$resourceCode;
+        if ($normativeReference !== null && ! is_array($normativeReference)) {
+            return null;
+        }
+        if (is_array($normativeReference)
+            && (! $this->appendTextIdentity($identity, 'normative_ref.resource_code', $normativeReference['resource_code'] ?? null)
+                || ! $this->appendNumericIdentity($identity, 'normative_ref.resource_id', $normativeReference['resource_id'] ?? null)
+                || ! $this->appendNumericIdentity($identity, 'normative_ref.norm_resource_id', $normativeReference['norm_resource_id'] ?? null)
+                || ! $this->appendNumericIdentity($identity, 'normative_ref.price_id', $normativeReference['price_id'] ?? null))) {
+            return null;
         }
 
-        return null;
+        return $identity === [] ? null : CanonicalPipelineJson::encode($identity);
+    }
+
+    /** @param array<string, string> $identity */
+    private function appendTextIdentity(array &$identity, string $field, mixed $value): bool
+    {
+        if ($value === null) {
+            return true;
+        }
+        if (! is_string($value) || trim($value) === '') {
+            return false;
+        }
+        $identity[$field] = trim($value);
+
+        return true;
+    }
+
+    /** @param array<string, string> $identity */
+    private function appendNumericIdentity(array &$identity, string $field, mixed $value): bool
+    {
+        if ($value === null) {
+            return true;
+        }
+        if (is_int($value) && $value > 0) {
+            $identity[$field] = (string) $value;
+
+            return true;
+        }
+        if (is_string($value) && ctype_digit($value) && (int) $value > 0) {
+            $identity[$field] = (string) (int) $value;
+
+            return true;
+        }
+
+        return false;
     }
 
     private function isSha256(string $value): bool

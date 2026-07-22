@@ -294,6 +294,109 @@ final class TargetedPackageRebuilderTest extends TestCase
         self::assertSame('21.1.06.09-0152', $result->draft['local_estimates'][1]['sections'][0]['work_items'][0]['materials'][0]['code']);
     }
 
+    public function test_it_rejects_a_pricing_substitution_of_a_norm_resource_code_with_the_same_resource_key(): void
+    {
+        $draft = $this->draft();
+        $resources = $this->createMock(ResourceAssemblyService::class);
+        $pricing = $this->createMock(EstimatePricingService::class);
+        $resources->expects(self::once())
+            ->method('enrich')
+            ->willReturnCallback(static fn (array $workItems): array => [[
+                ...$workItems[0],
+                'materials' => [[
+                    'key' => 'norm-resource-1',
+                    'code' => '01.1.01.01-0001',
+                    'normative_ref' => [
+                        'resource_code' => '01.1.01.01-0001',
+                        'resource_id' => 7,
+                        'price_id' => 20,
+                    ],
+                ]],
+            ]]);
+        $pricing->expects(self::once())
+            ->method('price')
+            ->willReturnCallback(static fn (array $workItems): array => [[
+                ...$workItems[0],
+                'materials' => [[
+                    ...$workItems[0]['materials'][0],
+                    'code' => '01.1.01.01-9999',
+                    'normative_ref' => [
+                        ...$workItems[0]['materials'][0]['normative_ref'],
+                        'resource_code' => '01.1.01.01-9999',
+                    ],
+                ]],
+            ]]);
+
+        $this->expectException(TargetedPackageEvidenceRequired::class);
+
+        (new TargetedPackageRebuilder($resources, $pricing))->rebuild($this->command($draft));
+    }
+
+    public function test_it_rejects_a_pricing_substitution_of_an_appended_project_material_code_with_the_same_resource_key(): void
+    {
+        $catalog = new ResidentialProjectMaterialCatalog;
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('electrical.power_lines', 'residential');
+        self::assertIsArray($scenario);
+        $requirement = $catalog->requirementForIntent(['specialization_scenario' => $scenario]);
+        self::assertIsArray($requirement);
+        $resource = $catalog->resourceFromPriceRow($requirement, (object) [
+            'price_id' => 41,
+            'construction_resource_id' => 9,
+            'resource_code' => '21.1.06.09-0152',
+            'resource_name' => 'Cable',
+            'unit' => '1000 м',
+            'base_price' => '72000',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => 'region-16-q2-2026',
+        ]);
+        self::assertIsArray($resource);
+        $draft = $this->draft();
+        $workItem = &$draft['local_estimates'][1]['sections'][0]['work_items'][0];
+        $workItem['key'] = 'electrical.power_lines';
+        $workItem['name'] = 'Cable installation';
+        $workItem['normative_rate_code'] = $scenario['normative_rate_code'];
+        $workItem['specialization_scenario'] = $scenario;
+        $workItem['materials'] = [];
+        $workItem['labor'] = [];
+        $workItem['machinery'] = [];
+        $workItem['other_resources'] = [];
+        $workItem['quantity_evidence']['evidence_ids'] = ['evidence:electrical.power_lines'];
+        unset($workItem);
+        $draft['supplementary_materials'] = [[
+            'work_item_key' => 'electrical.power_lines',
+            'requirement' => $requirement,
+            'status' => 'priced',
+            'resource' => $resource,
+        ]];
+        $resources = $this->createMock(ResourceAssemblyService::class);
+        $pricing = $this->createMock(EstimatePricingService::class);
+        $resources->expects(self::once())
+            ->method('enrich')
+            ->willReturnCallback(static fn (array $workItems): array => $workItems);
+        $pricing->expects(self::once())
+            ->method('price')
+            ->willReturnCallback(static fn (array $workItems): array => [[
+                ...$workItems[0],
+                'materials' => [[
+                    ...$workItems[0]['materials'][0],
+                    'code' => '21.1.06.09-9999',
+                    'normative_ref' => [
+                        ...$workItems[0]['materials'][0]['normative_ref'],
+                        'resource_code' => '21.1.06.09-9999',
+                    ],
+                ]],
+            ]]);
+
+        $this->expectException(TargetedPackageEvidenceRequired::class);
+
+        (new TargetedPackageRebuilder(
+            $resources,
+            $pricing,
+            new TargetedPackageDraftPatcher,
+            new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\AssembleMatchedResources($catalog),
+        ))->rebuild($this->command($draft));
+    }
+
     public function test_production_files_do_not_reference_the_full_generation_pipeline(): void
     {
         $forbidden = [
