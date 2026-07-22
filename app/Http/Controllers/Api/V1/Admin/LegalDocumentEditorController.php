@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Services\LegalArchive\Editor\EditorCallbackInput;
 use App\Services\LegalArchive\Editor\LegalDocumentEditorSessionService;
 use DomainException;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -46,11 +47,10 @@ final class LegalDocumentEditorController extends Controller
 
             return new JsonResponse(['error' => 0]);
         } catch (Throwable $error) {
-            $message = $error instanceof DomainException ? $error->getMessage() : '';
             Log::warning('legal_archive.editor.callback_rejected', [
                 'session_id_hash' => hash('sha256', $session),
                 'error_class' => $error::class,
-                'error_code' => str_starts_with($message, 'legal_document_editor_') ? $message : null,
+                'error_code' => $this->diagnosticCode($error),
                 'callback_status' => is_numeric($request->input('status')) ? (int) $request->input('status') : null,
                 'document_key_hash' => is_string($request->input('key'))
                     ? hash('sha256', (string) $request->input('key'))
@@ -59,5 +59,17 @@ final class LegalDocumentEditorController extends Controller
 
             return new JsonResponse(['error' => 1]);
         }
+    }
+
+    private function diagnosticCode(Throwable $error): ?string
+    {
+        $message = $error instanceof DomainException
+            ? $error->getMessage()
+            : ($error instanceof QueryException ? (string) $error->getPrevious()?->getMessage() : '');
+        if (preg_match('/\b(legal_document_editor_[a-z0-9_]+)\b/', $message, $matches) !== 1) {
+            return null;
+        }
+
+        return $matches[1];
     }
 }
