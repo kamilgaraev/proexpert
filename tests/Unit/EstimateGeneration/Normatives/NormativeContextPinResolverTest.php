@@ -812,7 +812,7 @@ final class NormativeContextPinResolverTest extends TestCase
         ]]);
 
         self::assertSame('review_required', $pin['status']);
-        self::assertNull($pin['catalog_candidates']);
+        self::assertArrayNotHasKey('catalog_candidates', $pin);
     }
 
     #[Test]
