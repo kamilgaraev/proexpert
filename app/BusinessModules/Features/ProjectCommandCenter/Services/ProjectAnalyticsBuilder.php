@@ -36,9 +36,9 @@ final class ProjectAnalyticsBuilder
         ];
     }
 
-    private function planVsFact(array $finance, CarbonImmutable $asOf, ProjectCommandCenterPeriod $period): array
+    private function planVsFact(array $finance, CarbonImmutable $asOf, ?ProjectCommandCenterPeriod $period): array
     {
-        if ($period?->hasRange()) {
+        if ($period !== null && $period->preset !== 'project') {
             return $this->unavailable('project_command_center.analytics.plan_vs_fact_history_unavailable');
         }
         $evm = $finance['evm'] ?? [];
@@ -96,9 +96,9 @@ final class ProjectAnalyticsBuilder
         ];
     }
 
-    private function costOutlook(array $finance, ProjectCommandCenterPeriod $period): array
+    private function costOutlook(array $finance, ?ProjectCommandCenterPeriod $period): array
     {
-        if ($period?->hasRange()) {
+        if ($period !== null && $period->preset !== 'project') {
             return $this->unavailable('project_command_center.analytics.cost_outlook_history_unavailable');
         }
         $evm = $finance['evm'] ?? [];

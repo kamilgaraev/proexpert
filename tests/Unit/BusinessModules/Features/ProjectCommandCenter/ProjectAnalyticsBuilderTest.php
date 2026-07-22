@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\BusinessModules\Features\ProjectCommandCenter;
 
 use App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectAnalyticsBuilder;
+use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectCommandCenterPeriod;
 use Carbon\CarbonImmutable;
 use PHPUnit\Framework\TestCase;
 
@@ -86,5 +87,48 @@ final class ProjectAnalyticsBuilderTest extends TestCase
         foreach (['risk_trend', 'work_progress'] as $dataset) {
             self::assertFalse($analytics[$dataset]['available']);
         }
+    }
+
+    public function test_it_keeps_project_finance_analytics_available_when_project_period_has_bounds(): void
+    {
+        $builder = new ProjectAnalyticsBuilder();
+        $finance = [
+            'available' => true,
+            'evm' => [
+                'available' => true,
+                'plan_total_cost' => 1_000.0,
+                'actual_cost' => 400.0,
+                'forecast_total_cost' => 1_200.0,
+            ],
+        ];
+        $asOf = CarbonImmutable::parse('2026-07-21T12:00:00+03:00');
+
+        $projectAnalytics = $builder->fromFacts(
+            finance: $finance,
+            asOf: $asOf,
+            period: new ProjectCommandCenterPeriod(
+                preset: 'project',
+                from: CarbonImmutable::parse('2026-01-01'),
+                to: CarbonImmutable::parse('2026-12-31'),
+            ),
+        );
+        $monthAnalytics = $builder->fromFacts(
+            finance: $finance,
+            asOf: $asOf,
+            period: new ProjectCommandCenterPeriod(
+                preset: 'month',
+                from: CarbonImmutable::parse('2026-07-01'),
+                to: CarbonImmutable::parse('2026-07-31'),
+            ),
+        );
+
+        self::assertTrue($projectAnalytics['plan_vs_fact']['available']);
+        self::assertNotEmpty($projectAnalytics['plan_vs_fact']['series']['plan']);
+        self::assertTrue($projectAnalytics['cost_outlook']['available']);
+        self::assertNotEmpty($projectAnalytics['cost_outlook']['series']['amount']);
+        self::assertFalse($monthAnalytics['plan_vs_fact']['available']);
+        self::assertSame('project_command_center.analytics.plan_vs_fact_history_unavailable', $monthAnalytics['plan_vs_fact']['reason_key']);
+        self::assertFalse($monthAnalytics['cost_outlook']['available']);
+        self::assertSame('project_command_center.analytics.cost_outlook_history_unavailable', $monthAnalytics['cost_outlook']['reason_key']);
     }
 }
