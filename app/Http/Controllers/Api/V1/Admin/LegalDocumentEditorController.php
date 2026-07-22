@@ -77,6 +77,10 @@ final class LegalDocumentEditorController extends Controller
                 && preg_match('/constraint "([a-z][a-z0-9_]{0,127})"/', $message, $constraint) === 1) {
                 return 'constraint_'.$constraint[1];
             }
+            if ($error instanceof QueryException
+                && preg_match('/\b(?i:insert\s+into|update|delete\s+from)\s+(?:"([a-z][a-z0-9_]{0,127})"|([a-z][a-z0-9_]{0,127})(?![A-Za-z0-9_$]))/', $error->getSql(), $table) === 1) {
+                return 'query_'.($table[1] !== '' ? $table[1] : $table[2]);
+            }
 
             return null;
         }

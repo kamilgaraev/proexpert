@@ -52,6 +52,42 @@ final class LegalDocumentEditorCallbackDiagnosticTest extends TestCase
         );
 
         self::assertSame('constraint_legal_editor_saves_saved_version_unique', $method->invoke($controller, $constraintError));
+
+        $unknownTableError = new QueryException(
+            'pgsql',
+            'update "legal_document_editor_saves" set "state" = ?',
+            [],
+            new PDOException('ERROR: database operation failed'),
+        );
+
+        self::assertSame('query_legal_document_editor_saves', $method->invoke($controller, $unknownTableError));
+
+        $mixedCaseTableError = new QueryException(
+            'pgsql',
+            'update "Legal_Document_Editor_Saves" set "state" = ?',
+            [],
+            new PDOException('ERROR: database operation failed'),
+        );
+
+        self::assertNull($method->invoke($controller, $mixedCaseTableError));
+
+        $tablePrefixError = new QueryException(
+            'pgsql',
+            'update legal_document_editor_savesX set "state" = ?',
+            [],
+            new PDOException('ERROR: database operation failed'),
+        );
+
+        self::assertNull($method->invoke($controller, $tablePrefixError));
+
+        $dollarSuffixTableError = new QueryException(
+            'pgsql',
+            'update legal_document_editor_saves$shadow set "state" = ?',
+            [],
+            new PDOException('ERROR: database operation failed'),
+        );
+
+        self::assertNull($method->invoke($controller, $dollarSuffixTableError));
         self::assertNull($method->invoke($controller, new RuntimeException('database unavailable')));
     }
 }
