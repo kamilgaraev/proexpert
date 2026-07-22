@@ -41,6 +41,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\LaravelEstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\EloquentTargetedPackageRebuildOperationStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildJobScheduler;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationService;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkGate;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
@@ -76,6 +81,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceDocumentSourc
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\DeliverEstimateGenerationFinalizationsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\LaravelTargetedPackageRebuildJobScheduler;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
@@ -265,6 +271,20 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             },
         );
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ShadowArbiterCoordinator::class);
+        $this->app->singleton(TargetedPackageRebuildOperationStore::class, EloquentTargetedPackageRebuildOperationStore::class);
+        $this->app->singleton(TargetedPackageRebuildJobScheduler::class, LaravelTargetedPackageRebuildJobScheduler::class);
+        $this->app->singleton(TargetedPackageRebuildOperationFactory::class);
+        $this->app->singleton(TargetedPackageRebuildOperationService::class, static function ($app): TargetedPackageRebuildOperationService {
+            $settings = config('estimate-generation.completeness_arbiter');
+            $settings = is_array($settings) ? $settings : [];
+
+            return new TargetedPackageRebuildOperationService(
+                $app->make(TargetedPackageRebuildOperationStore::class),
+                $app->make(TargetedPackageRebuildOperationFactory::class),
+                $app->make(TargetedPackageRebuildJobScheduler::class),
+                ($settings['active_targeted_rebuild_enabled'] ?? false) === true,
+            );
+        });
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Planning\WorkCompositionLlmClient::class,
             \App\BusinessModules\Addons\EstimateGeneration\Planning\AttemptAwareWorkCompositionLlmClient::class,

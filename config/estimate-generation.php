@@ -115,6 +115,7 @@ return [
     ],
     'completeness_arbiter' => [
         'enabled' => (bool) env('ESTIMATE_COMPLETENESS_ARBITER_ENABLED', false),
+        'active_targeted_rebuild_enabled' => (bool) env('ESTIMATE_TARGETED_REBUILD_ENABLED', false),
         'model' => $envValue('ESTIMATE_COMPLETENESS_ARBITER_MODEL', 'openai/gpt-5-mini'),
         'prompt_version' => 'completeness-arbiter:v1',
         'schema_version' => 'completeness-arbiter:v1',
