@@ -580,17 +580,17 @@ final class LegalDocumentFileService
                 $this->assertCurrentVersionRotationAllowed($document, $operationInput->metadata['editor_session_id'] ?? null);
             }
             $this->authorizeDatabaseMutation();
+            $attempt->assertOwned($document);
             if ($makeCurrent && $hasCurrent) {
                 $this->setFencedVersionCurrent($document, (int) $file->current_version_id, false, $attempt);
             }
-            $attempt->assertOwned($document);
             LegalArchiveDocumentVersion::technicalMutation(function () use ($locked, $makeCurrent): void {
                 $locked->processing_status = 'ready';
                 $locked->is_current = $makeCurrent;
                 $locked->save();
             });
             if ($makeCurrent) {
-                $this->setFencedCurrentPointers($document, $file, (int) $locked->id, $attempt);
+                $this->setFencedCurrentPointers($document, $file, (int) $locked->id);
             }
             $attempt->assertOwned($document);
             $this->database()->table('legal_archive_document_version_operations')->where('id', $operationId)->update([
@@ -802,12 +802,9 @@ final class LegalDocumentFileService
         LegalArchiveDocument $document,
         LegalArchiveDocumentFile $file,
         int $versionId,
-        LegalDocumentVersionAttempt $attempt,
     ): void {
-        $attempt->assertOwned($document);
         $file->forceFill(['current_version_id' => $versionId])->save();
         if ($file->role === 'primary') {
-            $attempt->assertOwned($document);
             $document->forceFill(['current_primary_version_id' => $versionId])->save();
         }
     }
