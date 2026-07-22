@@ -443,9 +443,58 @@ git add app/BusinessModules/Addons/EstimateGeneration/Application/TargetedRebuil
 git commit -m "feat[lk]: ограничена публикация доработки AI-сметы"
 ```
 
+### Task 5: Долговечная операция и отключённый по умолчанию активный контур
+
+**Цель:** после публикации исходной AI-сметы арбитр может ровно один раз направить один подтверждённый пакет на изолированную доработку. Контур включается только явным флагом; до включения он не ставит задачу, не обращается к ИИ и не меняет смету.
+
+**Файлы:**
+
+- Создать migration для `estimate_generation_targeted_rebuild_operations` (создать, но не запускать).
+- Создать модель, repository/store и DTO операции в `Application/TargetedRebuild`.
+- Создать `RunTargetedPackageRebuildJob` и `TargetedPackageRebuildOperationService`.
+- Изменить: `config/estimate-generation.php`, service provider и `Pipeline/PublishValidatedDraft.php`.
+- Тесты: Unit для store/service/job, Feature/Architecture для post-commit trigger и запрета полной пересборки.
+
+**Долговечное состояние:**
+
+Операция содержит UUID `operation_id`, уникальный idempotency key (`session + state_version + source_input_version + root_input_hash + package_key`), tenant IDs, ожидаемую версию сессии, отпечаток исходного draft, ключ единственного пакета, входные хеши и status `queued|running|reviewed|committed|human_review|stale|cancelled`. Для взаимного исключения — lease token/expiry и счётчик попыток. После второй проверки сохраняется только дельта результата: rebuilt target package, его отпечатки, fingerprints нецелевых пакетов и безопасный `arbiter_review`; полный документный контекст и prompt не дублируются.
+
+- [ ] **Шаг 1: RED-контракты storage и job.**
+
+Покрыть тестами создание одной операции из опубликованного shadow-cycle с ровно одним package key; повторный запрос возвращает ту же операцию; несколько пакетов, отключённый флаг, неподтверждённое evidence, устаревшая/применённая/отменённая сессия не создают операцию. Проверить миграцию на уникальный индекс, tenant-bound foreign key, строгие CHECK-ограничения UUID/hash/status/package key и индекс claim/recovery.
+
+- [ ] **Шаг 2: Реализовать post-commit trigger.**
+
+`PublishValidatedDraft` вызывает только `TargetedPackageRebuildOperationService::scheduleAfterPublishedDraft()` после успешных `syncFromDraft()` и `generationCompleted()`. Service создаёт operation в той же транзакции и отправляет `RunTargetedPackageRebuildJob` через `->afterCommit()` на уже обслуживаемую очередь `redis_estimate_generation/estimate-generation`. Запрещены `GenerateEstimateDraftJob`, `RebuildGeneratedSection`, `DraftPipelineEntrypoint`, `PublishValidatedDraft` из job и `syncFromDraft`.
+
+- [ ] **Шаг 3: Реализовать job без внешних вызовов в транзакции.**
+
+Job получает только operation UUID. Он кратко claim-ит lease, повторно проверяет сессию/флаг/idempotency, материализует `markAttempted()` только в памяти, запускает `TargetedPackageRebuilder`, а затем второй `ShadowArbiterCoordinator::review()` вне транзакции. Для budget/usage берёт сохранённый UUID как `ArbiterOperationContext::checkpointClaimToken`, `source_input_version` и ordinal 1, поэтому повтор job не делает второй wire-вызов. При evidence failure, unavailable arbiter, повторном wire, cancel или stale state операция завершается `human_review|cancelled|stale`; пакет не пишется.
+
+- [ ] **Шаг 4: Сохранить результат и выполнить единственный commit.**
+
+После второй проверки service сохраняет только дельту и меняет status на `reviewed`; повтор/recovery восстанавливает draft из текущей сессии и дельты без нового LLM-вызова, затем передаёт его в `CommitTargetedPackageRebuild`. Успех — `committed`; исход `human_review` сохраняет только safe review metadata; любое расхождение хешей — `stale`. Commit повторно остаётся единственной точкой изменения package rows.
+
+- [ ] **Шаг 5: GREEN-проверки, static analysis и независимое ревью.**
+
+```powershell
+vendor\bin\phpunit tests\Unit\EstimateGeneration\Application\TargetedRebuild tests\Feature\EstimateGeneration\TargetedPackageRebuild* tests\Architecture\TargetedEstimateRebuildBoundaryTest.php
+vendor\bin\phpstan analyse app\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild app\BusinessModules\Addons\EstimateGeneration\Jobs\RunTargetedPackageRebuildJob.php app\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishValidatedDraft.php --memory-limit=1G --no-progress
+git diff --check
+```
+
+Миграции, DB-команды, реальная очередь и внешние провайдеры локально не запускаются. Отдельная очередь не создаётся до обновления Horizon/deploy конфигурации.
+
+- [ ] **Шаг 6: Коммит.**
+
+```powershell
+git add app/BusinessModules/Addons/EstimateGeneration config/estimate-generation.php tests
+git commit -m "feat[lk]: добавлен контур доработки AI-сметы"
+```
+
 ## Самопроверка плана
 
-**Покрытие спецификации:** Task 1 создаёт проверяемую copy-on-write границу. Task 2 не даёт потерять исходный цикл после второй проверки. Task 3 повторно строит только подтверждённый пакет и сохраняет ресурсы нормы. Task 4 делает точечную транзакционную запись, сохраняет свежесть review-summary и запрещает прежнюю массовую ветку кодом и тестом.
+**Покрытие спецификации:** Task 1 создаёт проверяемую copy-on-write границу. Task 2 не даёт потерять исходный цикл после второй проверки. Task 3 повторно строит только подтверждённый пакет и сохраняет ресурсы нормы. Task 4 делает точечную транзакционную запись, сохраняет свежесть review-summary и запрещает прежнюю массовую ветку кодом и тестом. Task 5 добавляет долговечную операцию, post-commit trigger, usage-safe второй review и recovery без активного контура по умолчанию.
 
 **Проверка на заглушки:** у каждого этапа указаны точные файлы, интерфейсы, RED/GREEN-команды и коммит. Автоматическая доработка не разрешена до завершения всех четырёх этапов.
 
