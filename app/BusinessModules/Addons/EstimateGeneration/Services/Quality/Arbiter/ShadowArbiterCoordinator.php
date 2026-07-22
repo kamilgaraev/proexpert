@@ -22,12 +22,18 @@ final readonly class ShadowArbiterCoordinator
             && is_array($draft['arbiter_review']['cycle'] ?? null)
             ? $draft['arbiter_review']['cycle']
             : null;
+        $previousRemediation = is_array($draft['arbiter_review'] ?? null)
+            && is_array($draft['arbiter_review']['remediation'] ?? null)
+            ? $draft['arbiter_review']['remediation']
+            : null;
         $context = $this->contexts->make($draft, $operation);
         $status = 'reviewed';
         $tokens = [];
+        $hasValidVerdict = false;
         try {
             $raw = $this->arbiter->review($context);
             $verdict = $this->validator->validate($raw, $context);
+            $hasValidVerdict = true;
             foreach (['input_tokens', 'output_tokens'] as $key) {
                 if (is_int($raw[$key] ?? null) && $raw[$key] >= 0 && $raw[$key] <= 1_000_000) {
                     $tokens[$key] = $raw[$key];
@@ -48,10 +54,32 @@ final readonly class ShadowArbiterCoordinator
             'findings' => $verdict->findings,
             ...$tokens,
         ];
-        if ($verdict->outcome === 'targeted_rebuild' && $previousCycle !== null) {
+        if ($previousCycle !== null) {
             $draft['arbiter_review']['cycle'] = $previousCycle;
+        }
+        if ($previousRemediation !== null) {
+            $draft['arbiter_review']['remediation'] = $previousRemediation;
+        }
+        if ($hasValidVerdict && $this->hasAttemptedRemediation($previousRemediation)) {
+            return $this->remediation->resolveAfterRebuild($draft, $verdict);
         }
 
         return $this->remediation->recordShadowCycle($draft, $verdict, $context['input_hash']);
+    }
+
+    /** @param array<string, mixed>|null $remediation */
+    private function hasAttemptedRemediation(?array $remediation): bool
+    {
+        if ($remediation === null) {
+            return false;
+        }
+
+        try {
+            $state = ArbiterRemediationState::fromArray($remediation);
+        } catch (Throwable) {
+            return false;
+        }
+
+        return $state->phase === 'attempted' && $state->rebuildAttempted;
     }
 }

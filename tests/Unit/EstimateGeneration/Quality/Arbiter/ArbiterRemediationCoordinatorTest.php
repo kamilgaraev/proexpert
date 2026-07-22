@@ -63,6 +63,89 @@ final class ArbiterRemediationCoordinatorTest extends TestCase
     }
 
     #[Test]
+    public function it_marks_a_verified_recommendation_as_attempted_without_changing_the_cycle_or_local_estimates(): void
+    {
+        $coordinator = new ArbiterRemediationCoordinator;
+        $draft = $this->draft();
+        $recommended = $coordinator->recordShadowCycle(
+            $draft,
+            $this->targetedRebuildVerdict(),
+            $this->inputHash(),
+        );
+
+        $attempted = $coordinator->markAttempted($recommended, $this->inputHash());
+
+        self::assertSame($draft['local_estimates'], $attempted['local_estimates']);
+        self::assertSame($recommended['arbiter_review']['cycle'], $attempted['arbiter_review']['cycle']);
+        self::assertSame([
+            'root_input_hash' => $this->inputHash(),
+            'target_package_keys' => ['heating', 'ventilation'],
+            'rebuild_attempted' => true,
+            'phase' => 'attempted',
+            'review_outcome' => null,
+        ], $attempted['arbiter_review']['remediation']);
+    }
+
+    #[Test]
+    public function it_routes_a_stale_root_cycle_to_human_review_without_remediation_or_local_estimate_changes(): void
+    {
+        $coordinator = new ArbiterRemediationCoordinator;
+        $draft = $this->draft();
+        $recommended = $coordinator->recordShadowCycle(
+            $draft,
+            $this->targetedRebuildVerdict(),
+            $this->inputHash(),
+        );
+        $otherHash = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+        $reviewed = $coordinator->markAttempted($recommended, $otherHash);
+
+        self::assertSame($draft['local_estimates'], $reviewed['local_estimates']);
+        self::assertSame('human_review', $reviewed['arbiter_review']['outcome']);
+        self::assertSame([], $reviewed['arbiter_review']['cycle']['target_package_keys']);
+        self::assertArrayNotHasKey('remediation', $reviewed['arbiter_review']);
+    }
+
+    #[Test]
+    public function it_resolves_an_attempted_remediation_as_passed_without_changing_the_root_or_targets(): void
+    {
+        $coordinator = new ArbiterRemediationCoordinator;
+        $attempted = $coordinator->markAttempted(
+            $coordinator->recordShadowCycle($this->draft(), $this->targetedRebuildVerdict(), $this->inputHash()),
+            $this->inputHash(),
+        );
+
+        $resolved = $coordinator->resolveAfterRebuild($attempted, new ArbiterVerdict('passed', []));
+
+        self::assertSame('passed', $resolved['arbiter_review']['outcome']);
+        self::assertSame([
+            'root_input_hash' => $this->inputHash(),
+            'target_package_keys' => ['heating', 'ventilation'],
+            'rebuild_attempted' => true,
+            'phase' => 'reviewed',
+            'review_outcome' => 'passed',
+        ], $resolved['arbiter_review']['remediation']);
+    }
+
+    #[Test]
+    public function it_routes_a_second_targeted_verdict_to_human_review_without_changing_local_estimates(): void
+    {
+        $coordinator = new ArbiterRemediationCoordinator;
+        $draft = $this->draft();
+        $attempted = $coordinator->markAttempted(
+            $coordinator->recordShadowCycle($draft, $this->targetedRebuildVerdict(), $this->inputHash()),
+            $this->inputHash(),
+        );
+
+        $resolved = $coordinator->resolveAfterRebuild($attempted, $this->targetedRebuildVerdict());
+
+        self::assertSame($draft['local_estimates'], $resolved['local_estimates']);
+        self::assertSame('human_review', $resolved['arbiter_review']['outcome']);
+        self::assertSame('reviewed', $resolved['arbiter_review']['remediation']['phase']);
+        self::assertSame('human_review', $resolved['arbiter_review']['remediation']['review_outcome']);
+    }
+
+    #[Test]
     #[DataProvider('invalidTargetedRebuildVerdicts')]
     public function it_requires_evidence_and_known_packages_without_changing_local_estimates(ArbiterVerdict $verdict): void
     {

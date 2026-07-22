@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Quality\Arbiter;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterRemediationCoordinator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterReviewContextFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterVerdictValidator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\CompletenessArbiter;
@@ -79,5 +80,91 @@ final class ShadowArbiterCoordinatorTest extends TestCase
         self::assertSame(123, $reviewed['arbiter_review']['input_tokens']);
         self::assertSame(45, $reviewed['arbiter_review']['output_tokens']);
         self::assertArrayNotHasKey('context', $reviewed['arbiter_review']);
+    }
+
+    #[Test]
+    public function it_routes_a_targeted_verdict_after_an_attempted_remediation_to_human_review(): void
+    {
+        $draft = $this->heatingDraft();
+        $contexts = new ArbiterReviewContextFactory;
+        $inputHash = $contexts->make($draft)['input_hash'];
+        $remediation = new ArbiterRemediationCoordinator;
+        $attempted = $remediation->markAttempted(
+            $remediation->recordShadowCycle($draft, $this->targetedVerdict(), $inputHash),
+            $inputHash,
+        );
+
+        $reviewed = (new ShadowArbiterCoordinator(
+            $this->targetedArbiter(),
+            $contexts,
+            new ArbiterVerdictValidator,
+        ))->review($attempted);
+
+        self::assertSame($draft['local_estimates'], $reviewed['local_estimates']);
+        self::assertSame('human_review', $reviewed['arbiter_review']['outcome']);
+        self::assertSame('reviewed', $reviewed['arbiter_review']['remediation']['phase']);
+        self::assertSame('human_review', $reviewed['arbiter_review']['remediation']['review_outcome']);
+        self::assertSame(['heating'], $reviewed['arbiter_review']['cycle']['target_package_keys']);
+    }
+
+    /** @return array<string, mixed> */
+    private function heatingDraft(): array
+    {
+        return [
+            'source_input_version' => 'input-v1',
+            'completeness' => [
+                'status' => 'confirmed_scope_only',
+                'scopes' => [[
+                    'key' => 'heating',
+                    'state' => 'unresolved',
+                    'evidence_refs' => ['evidence:1'],
+                ]],
+            ],
+            'local_estimates' => [[
+                'key' => 'heating',
+                'sections' => [['work_items' => [[
+                    'name' => 'Unchanged work item',
+                ]]]],
+            ]],
+        ];
+    }
+
+    private function targetedVerdict(): \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterVerdict
+    {
+        return new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterVerdict('targeted_rebuild', [[
+            'action' => 'rebuild',
+            'package_keys' => ['heating'],
+            'evidence_refs' => ['evidence:1'],
+        ]]);
+    }
+
+    private function targetedArbiter(): CompletenessArbiter
+    {
+        return new class implements CompletenessArbiter
+        {
+            public function review(array $context): array
+            {
+                return [
+                    'outcome' => 'targeted_rebuild',
+                    'findings' => [[
+                        'scope_key' => 'heating',
+                        'package_keys' => ['heating'],
+                        'evidence_refs' => ['evidence:1'],
+                        'action' => 'rebuild',
+                        'reason_code' => 'missing_component',
+                    ]],
+                ];
+            }
+
+            public function model(): string
+            {
+                return 'openai/gpt-5-mini';
+            }
+
+            public function promptVersion(): string
+            {
+                return 'completeness-arbiter:v1';
+            }
+        };
     }
 }
