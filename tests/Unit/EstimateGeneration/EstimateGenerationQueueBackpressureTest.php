@@ -29,13 +29,16 @@ final class EstimateGenerationQueueBackpressureTest extends TestCase
     {
         $jobSource = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Jobs/GenerateEstimateDraftJob.php'));
         $runnerSource = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Application/Generation/RunEstimateGenerationDraft.php'));
+        $recoverySource = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Application/Generation/RecoverEstimateGenerationPipelines.php'));
 
         self::assertIsString($jobSource);
         self::assertIsString($runnerSource);
+        self::assertIsString($recoverySource);
         self::assertStringContainsString('private readonly bool $throttleEntry = true,', $jobSource);
         self::assertStringContainsString('if ($this->throttleEntry) {', $jobSource);
         self::assertStringContainsString("new RateLimited('estimate-generation-drafts')", $jobSource);
         self::assertStringContainsString('$snapshot->nextEvent(),'."\n".'            false,', $runnerSource);
+        self::assertStringContainsString("FailureExecutionSnapshot::capture(\$session, 'recover_generation_pipeline', \$attempt),"."\n".'                false,', $recoverySource);
     }
 
     public function test_document_dispatcher_and_unit_job_have_separate_backpressure(): void

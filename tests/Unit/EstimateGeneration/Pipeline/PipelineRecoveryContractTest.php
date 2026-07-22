@@ -20,7 +20,9 @@ final class PipelineRecoveryContractTest extends TestCase
         self::assertNotNull($constructor);
         $types = array_map(static fn ($parameter): string => (string) $parameter->getType(), $constructor->getParameters());
 
-        self::assertSame(['int', 'int', 'string', FailureExecutionSnapshot::class], $types);
+        self::assertSame(['int', 'int', 'string', FailureExecutionSnapshot::class, 'bool'], $types);
+        self::assertTrue($constructor->getParameters()[4]->isDefaultValueAvailable());
+        self::assertTrue($constructor->getParameters()[4]->getDefaultValue());
 
         $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration';
         $job = file_get_contents($root.'/Jobs/GenerateEstimateDraftJob.php');
