@@ -41,15 +41,20 @@ final class TargetedPackageRebuildOperationStorageContractTest extends TestCase
     }
 
     #[Test]
-    public function it_executes_postgres_json_key_constraints_without_parameter_binding(): void
+    public function it_executes_postgres_json_key_constraints_without_question_mark_operators(): void
     {
         $migration = (string) file_get_contents(
             dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_22_000200_create_estimate_generation_targeted_rebuild_operations.php',
         );
 
         self::assertMatchesRegularExpression(
-            "/DB::unprepared\\(<<<'SQL'\\R\\s*ALTER TABLE public\\.estimate_generation_targeted_rebuild_operations\\R\\s*ADD CONSTRAINT eg_targeted_rebuild_result_ck CHECK \\(/",
+            "/DB::statement\\(<<<'SQL'\\R\\s*ALTER TABLE public\\.estimate_generation_targeted_rebuild_operations\\R\\s*ADD CONSTRAINT eg_targeted_rebuild_result_ck CHECK \\(/",
             $migration,
         );
+        self::assertStringContainsString("jsonb_path_exists(result_delta, '$.target_package')", $migration);
+        self::assertStringContainsString("jsonb_path_exists(safe_arbiter_review, '$.findings')", $migration);
+        self::assertStringNotContainsString(' ?& ', $migration);
+        self::assertStringNotContainsString(" ? 'key'", $migration);
+        self::assertStringNotContainsString(" ? 'sections'", $migration);
     }
 }
