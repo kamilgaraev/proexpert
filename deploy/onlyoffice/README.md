@@ -21,6 +21,7 @@ LEGAL_DOCUMENT_EDITOR_DRIVER=onlyoffice
 LEGAL_DOCUMENT_EDITOR_URL=https://office.<ваш-домен>
 LEGAL_DOCUMENT_EDITOR_JWT_SECRET=<тот же ONLYOFFICE_JWT_SECRET>
 LEGAL_DOCUMENT_EDITOR_CALLBACK_BASE_URL=https://api.<ваш-домен>
+LEGAL_DOCUMENT_EDITOR_DOWNLOAD_ALLOWED_HOSTS=office.<ваш-домен>
 ```
 
 Затем выполните обычный backend-deploy из `main`. Не передавайте JWT в браузерные логи, git или переписку.

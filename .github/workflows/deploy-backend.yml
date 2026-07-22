@@ -197,7 +197,23 @@ jobs:
             }
 
             apply_onlyoffice_callback_transport() {
-              local callback_base_url callback_host root_env_file
+              local backend_enabled callback_base_url callback_host editor_enabled_lines editor_url editor_host allowed_hosts root_env_file
+              editor_enabled_lines="$(grep -c '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env || true)"
+              if [ "${editor_enabled_lines}" -ne 1 ]; then
+                echo 'OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment'
+                return 1
+              fi
+              backend_enabled="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env | cut -d= -f2- || true)"
+              backend_enabled="$(printf '%s' "${backend_enabled}" | sed -E "s/^['\"]//; s/['\"]$//; s/^[[:space:]]+//; s/[[:space:]]+$//")"
+              backend_enabled="$(printf '%s' "${backend_enabled}" | tr '[:upper:]' '[:lower:]')"
+              case "${backend_enabled}" in
+                '1'|'true'|'on'|'yes') ;;
+                '0'|'false'|'off'|'no'|'') return 0 ;;
+                *)
+                  echo 'OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment'
+                  return 1
+                  ;;
+              esac
               callback_base_url="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_CALLBACK_BASE_URL=' .env | cut -d= -f2- || true)"
               if [ -z "${callback_base_url}" ]; then
                 callback_base_url="$(grep -m1 '^APP_URL=' .env | cut -d= -f2- || true)"
@@ -213,6 +229,25 @@ jobs:
                 echo 'OnlyOffice callback URL must contain a DNS hostname without a port; refusing deployment'
                 return 1
               fi
+
+              editor_url="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_URL=' .env | cut -d= -f2- || true)"
+              editor_url="$(printf '%s' "${editor_url}" | sed -E "s/^['\"]//; s/['\"]$//")"
+              if [[ "${editor_url}" != https://* ]]; then
+                echo 'OnlyOffice editor URL must use HTTPS; refusing deployment'
+                return 1
+              fi
+              editor_host="${editor_url#https://}"
+              editor_host="${editor_host%%/*}"
+              if [[ ! "${editor_host}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
+                echo 'OnlyOffice editor URL must contain a DNS hostname without a port; refusing deployment'
+                return 1
+              fi
+              allowed_hosts="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_DOWNLOAD_ALLOWED_HOSTS=' .env | cut -d= -f2- || true)"
+              allowed_hosts="$(printf '%s' "${allowed_hosts}" | sed -E "s/^['\"]//; s/['\"]$//" | tr -d '[:space:]')"
+              case ",${allowed_hosts}," in
+                *,"${editor_host}",*) ;;
+                *) upsert_env LEGAL_DOCUMENT_EDITOR_DOWNLOAD_ALLOWED_HOSTS "${allowed_hosts:+${allowed_hosts},}${editor_host}" ;;
+              esac
 
               root_env_file="${ENV_FILE}"
               ENV_FILE="deploy/onlyoffice/.env"
@@ -367,7 +402,7 @@ jobs:
 
             ensure_immutable_audit_writer_secret
             ensure_onlyoffice_jwt_secret_alignment
-            if ! git diff --quiet "${PREVIOUS_RELEASE_SHA}" "${RELEASE_SHA}" -- deploy/onlyoffice; then
+            if ! git diff --quiet "${PREVIOUS_RELEASE_SHA}" "${RELEASE_SHA}" -- deploy/onlyoffice .github/workflows/deploy-backend.yml; then
               apply_onlyoffice_callback_transport
             fi
             docker compose pull clamav
