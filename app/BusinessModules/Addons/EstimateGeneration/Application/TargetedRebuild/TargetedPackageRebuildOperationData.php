@@ -95,7 +95,7 @@ final readonly class TargetedPackageRebuildOperationData
 
     public function withLease(string $leaseToken, DateTimeImmutable $leaseExpiresAt): self
     {
-        if (! in_array($this->status, ['queued', 'reviewed'], true)) {
+        if ($this->status !== 'queued') {
             throw new LogicException('Targeted rebuild operation cannot be claimed from its current state.');
         }
 
@@ -126,6 +126,7 @@ final readonly class TargetedPackageRebuildOperationData
     public function withReviewed(array $resultDelta, array $safeArbiterReview): self
     {
         if ($this->status !== 'running' || $this->leaseToken === null || $this->leaseExpiresAt === null || $this->attemptCount < 1
+            || ($safeArbiterReview['status'] ?? null) !== 'reviewed'
             || ! in_array($safeArbiterReview['outcome'] ?? null, ['passed', 'confirmed_scope_only'], true)
             || ! $this->validResultDelta($resultDelta) || ! $this->validSafeReview($safeArbiterReview)) {
             throw new InvalidArgumentException('Invalid targeted rebuild review result.');
@@ -158,6 +159,15 @@ final readonly class TargetedPackageRebuildOperationData
         }
 
         return $this->terminal('committed');
+    }
+
+    public function commitRecovery(): TargetedPackageRebuildCommitRecovery
+    {
+        if ($this->status !== 'reviewed') {
+            throw new LogicException('Targeted rebuild operation must be reviewed before commit recovery.');
+        }
+
+        return TargetedPackageRebuildCommitRecovery::fromReviewedOperation($this);
     }
 
     /** @param array<string, mixed> $safeArbiterReview */
@@ -278,6 +288,9 @@ final readonly class TargetedPackageRebuildOperationData
             || ! $this->validFindings($review['findings'])) {
             return false;
         }
+        if (($review['status'] === 'unavailable') !== ($review['outcome'] === 'human_review')) {
+            return false;
+        }
         foreach (['input_tokens', 'output_tokens'] as $key) {
             if (array_key_exists($key, $review) && (! is_int($review[$key]) || $review[$key] < 0 || $review[$key] > 1_000_000)) {
                 return false;
@@ -314,7 +327,7 @@ final readonly class TargetedPackageRebuildOperationData
 
         return match ($this->status) {
             'queued' => $this->attemptCount === 0 && ! $hasLease && ! $hasResult && ! $hasReview,
-            'running' => $this->attemptCount >= 1 && $hasLease && ($hasResult === $hasReview),
+            'running' => $this->attemptCount >= 1 && $hasLease && ! $hasResult && ! $hasReview,
             'reviewed', 'committed' => $this->attemptCount >= 1 && ! $hasLease && $hasResult && $hasReview,
             'human_review' => $this->attemptCount >= 1 && ! $hasLease && $hasReview,
             'stale', 'cancelled' => ! $hasLease && ($hasResult === $hasReview),

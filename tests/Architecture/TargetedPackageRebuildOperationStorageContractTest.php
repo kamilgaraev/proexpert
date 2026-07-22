@@ -25,8 +25,10 @@ final class TargetedPackageRebuildOperationStorageContractTest extends TestCase
         self::assertStringContainsString('eg_targeted_rebuild_identifier_ck', $migration);
         self::assertStringContainsString('eg_targeted_rebuild_lease_ck', $migration);
         self::assertStringContainsString('eg_targeted_rebuild_lifecycle_ck', $migration);
+        self::assertStringContainsString("status = 'running' AND attempt_count >= 1 AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND result_delta = '{}'::jsonb AND safe_arbiter_review = '{}'::jsonb", $migration);
         self::assertStringContainsString("jsonb_typeof(result_delta->'target_package') = 'object'", $migration);
         self::assertStringContainsString("jsonb_typeof(safe_arbiter_review->'findings') = 'array'", $migration);
+        self::assertStringContainsString("safe_arbiter_review->>'status' = 'unavailable' AND safe_arbiter_review->>'outcome' = 'human_review'", $migration);
         self::assertStringContainsString("jsonb_path_exists(result_delta, '$.**.draft_payload')", $migration);
         self::assertStringContainsString("jsonb_path_exists(safe_arbiter_review, '$.**.prompt_payload')", $migration);
         self::assertStringContainsString('eg_targeted_rebuild_claim_recovery_idx', $migration);

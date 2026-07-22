@@ -109,6 +109,35 @@ final class TargetedPackageRebuildOperationDataTest extends TestCase
     }
 
     #[Test]
+    public function it_refuses_to_reopen_a_reviewed_operation_for_a_second_lease(): void
+    {
+        $reviewed = $this->queued()
+            ->withLease('018f809a-e85e-7382-b419-00f5a7d7ab59', new \DateTimeImmutable('2026-07-22T12:30:00+00:00'))
+            ->withReviewed($this->resultDelta(), $this->safeReview());
+
+        $this->expectException(\LogicException::class);
+        $reviewed->withLease(
+            '018f809a-e85e-7382-b419-00f5a7d7ab59',
+            new \DateTimeImmutable('2026-07-22T12:45:00+00:00'),
+        );
+    }
+
+    #[Test]
+    public function it_exposes_reviewed_recovery_only_as_a_commit_input_without_changing_the_review_state(): void
+    {
+        $reviewed = $this->queued()
+            ->withLease('018f809a-e85e-7382-b419-00f5a7d7ab59', new \DateTimeImmutable('2026-07-22T12:30:00+00:00'))
+            ->withReviewed($this->resultDelta(), $this->safeReview());
+
+        $recovery = $reviewed->commitRecovery();
+
+        self::assertSame('reviewed', $reviewed->status);
+        self::assertSame('018f809a-e85e-7382-b419-00f5a7d7ab59', $recovery->operationId);
+        self::assertSame('roof', $recovery->packageKey);
+        self::assertSame('roof', $recovery->resultDelta['target_package']['key']);
+    }
+
+    #[Test]
     public function it_refuses_to_commit_before_the_reviewed_state_is_durable(): void
     {
         $this->expectException(\LogicException::class);
@@ -167,6 +196,20 @@ final class TargetedPackageRebuildOperationDataTest extends TestCase
 
         $this->expectException(\InvalidArgumentException::class);
         $claimed->withReviewed($unsafeResult, $this->safeReview());
+    }
+
+    #[Test]
+    public function it_refuses_an_unavailable_review_as_a_passing_rebuild_result(): void
+    {
+        $claimed = $this->queued()->withLease(
+            '018f809a-e85e-7382-b419-00f5a7d7ab59',
+            new \DateTimeImmutable('2026-07-22T12:30:00+00:00'),
+        );
+        $unavailable = $this->safeReview();
+        $unavailable['status'] = 'unavailable';
+
+        $this->expectException(\InvalidArgumentException::class);
+        $claimed->withReviewed($this->resultDelta(), $unavailable);
     }
 
     private function queued(): \App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationData

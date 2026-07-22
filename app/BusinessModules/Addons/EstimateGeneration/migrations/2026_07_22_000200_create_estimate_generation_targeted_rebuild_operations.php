@@ -73,8 +73,7 @@ return new class extends Migration
                         safe_arbiter_review ?& ARRAY['mode','status','outcome','input_hash','schema_version','prompt_version','model','findings']
                         AND (safe_arbiter_review - ARRAY['mode','status','outcome','input_hash','schema_version','prompt_version','model','findings','cycle','remediation','input_tokens','output_tokens']) = '{}'::jsonb
                         AND safe_arbiter_review->>'mode' = 'shadow'
-                        AND safe_arbiter_review->>'status' IN ('reviewed','unavailable')
-                        AND safe_arbiter_review->>'outcome' IN ('passed','confirmed_scope_only','human_review')
+                        AND ((safe_arbiter_review->>'status' = 'reviewed' AND safe_arbiter_review->>'outcome' IN ('passed','confirmed_scope_only','human_review')) OR (safe_arbiter_review->>'status' = 'unavailable' AND safe_arbiter_review->>'outcome' = 'human_review'))
                         AND safe_arbiter_review->>'input_hash' ~ '^sha256:[a-f0-9]{64}$'
                         AND jsonb_typeof(safe_arbiter_review->'findings') = 'array'
                     )
@@ -96,7 +95,7 @@ return new class extends Migration
             ADD CONSTRAINT eg_targeted_rebuild_lifecycle_ck CHECK (
                 attempt_count BETWEEN 0 AND 1000 AND (
                     (status = 'queued' AND attempt_count = 0 AND lease_token IS NULL AND lease_expires_at IS NULL AND result_delta = '{}'::jsonb AND safe_arbiter_review = '{}'::jsonb AND reviewed_at IS NULL AND finished_at IS NULL)
-                    OR (status = 'running' AND attempt_count >= 1 AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND finished_at IS NULL AND ((result_delta = '{}'::jsonb AND safe_arbiter_review = '{}'::jsonb AND reviewed_at IS NULL) OR (result_delta <> '{}'::jsonb AND safe_arbiter_review <> '{}'::jsonb AND reviewed_at IS NOT NULL)))
+                    OR (status = 'running' AND attempt_count >= 1 AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND result_delta = '{}'::jsonb AND safe_arbiter_review = '{}'::jsonb AND reviewed_at IS NULL AND finished_at IS NULL)
                     OR (status = 'reviewed' AND attempt_count >= 1 AND lease_token IS NULL AND lease_expires_at IS NULL AND result_delta <> '{}'::jsonb AND safe_arbiter_review <> '{}'::jsonb AND reviewed_at IS NOT NULL AND finished_at IS NULL)
                     OR (status = 'committed' AND attempt_count >= 1 AND lease_token IS NULL AND lease_expires_at IS NULL AND result_delta <> '{}'::jsonb AND safe_arbiter_review <> '{}'::jsonb AND reviewed_at IS NOT NULL AND finished_at IS NOT NULL)
                     OR (status = 'human_review' AND attempt_count >= 1 AND lease_token IS NULL AND lease_expires_at IS NULL AND safe_arbiter_review <> '{}'::jsonb AND finished_at IS NOT NULL AND ((result_delta = '{}'::jsonb AND reviewed_at IS NULL) OR (result_delta <> '{}'::jsonb AND reviewed_at IS NOT NULL)))
