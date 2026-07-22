@@ -27,6 +27,14 @@ final class LegalDocumentEditorCallbackDiagnosticTest extends TestCase
             'legal_document_editor_session_generation_unbacked',
             $method->invoke($controller, $databaseError),
         );
+        $sqlStateError = new QueryException(
+            'pgsql',
+            'update legal_document_editor_saves set state = ?',
+            [],
+            new PDOException('ERROR: duplicate key', 23505),
+        );
+
+        self::assertSame('sqlstate_23505', $method->invoke($controller, $sqlStateError));
         self::assertNull($method->invoke($controller, new RuntimeException('database unavailable')));
     }
 }
