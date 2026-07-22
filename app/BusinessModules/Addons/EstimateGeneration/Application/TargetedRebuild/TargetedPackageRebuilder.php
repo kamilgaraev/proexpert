@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\AssembleMatchedResources;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
@@ -53,11 +54,15 @@ final readonly class TargetedPackageRebuilder
             ]);
             $matchedWorkItems = $this->matchedWorkItems($matched);
             $this->assertUnchangedWorkItemTopology($workItems, $matchedWorkItems);
-            $this->assertResourceComposition($resourceComposition, $matchedWorkItems);
+            $assembledResourceComposition = $this->assertAssemblyResourceComposition(
+                $resourceComposition,
+                $matchedWorkItems,
+                $supplementaryMaterials,
+            );
 
             $priced = $this->pricing->price($matchedWorkItems, $regionalContext, $context);
             $this->assertUnchangedWorkItemTopology($workItems, $priced);
-            $this->assertResourceComposition($resourceComposition, $priced);
+            $this->assertResourceComposition($assembledResourceComposition, $priced);
             $candidate['sections'][$sectionIndex]['work_items'] = $priced;
         }
 
@@ -80,8 +85,14 @@ final readonly class TargetedPackageRebuilder
 
         $review = $command->draft['arbiter_review'] ?? null;
         if (! is_array($review)
-            || ($review['outcome'] ?? null) !== 'targeted_rebuild'
-            || ! $this->findingsTargetPackageWithEvidence($review['findings'] ?? null, $command->packageKey)) {
+            || ($review['mode'] ?? null) !== 'shadow'
+            || ($review['status'] ?? null) !== 'reviewed'
+            || ! is_string($review['input_hash'] ?? null)
+            || ! hash_equals($review['input_hash'], $command->arbiterInputHash)
+            || ! is_string($review['outcome'] ?? null)
+            || ! hash_equals($review['outcome'], $command->verdict->outcome)
+            || ! $this->findingsTargetPackageWithEvidence($review['findings'] ?? null, $command->packageKey)
+            || ! $this->sameValidatedFindings($review['findings'], $command->verdict->findings)) {
             $this->evidenceRequired();
         }
         $cycle = $this->reviewCycle($review);
@@ -266,6 +277,15 @@ final readonly class TargetedPackageRebuilder
                 && $this->validReferences($finding['evidence_refs']) !== null);
     }
 
+    /** @param list<array<string, mixed>> $reviewFindings @param list<array<string, mixed>> $commandFindings */
+    private function sameValidatedFindings(array $reviewFindings, array $commandFindings): bool
+    {
+        return hash_equals(
+            CanonicalPipelineJson::encode($reviewFindings),
+            CanonicalPipelineJson::encode($commandFindings),
+        );
+    }
+
     /** @param array<string, mixed> $workItem */
     private function isPricedWorkItem(array $workItem): bool
     {
@@ -419,6 +439,122 @@ final readonly class TargetedPackageRebuilder
         if ($expected !== $this->resourceComposition($workItems)) {
             $this->evidenceRequired();
         }
+    }
+
+    /**
+     * @param list<array{materials: list<string>, labor: list<string>, machinery: list<string>, other_resources: list<string>}> $baseline
+     * @param list<array<string, mixed>> $workItems
+     * @param list<mixed> $supplementaryMaterials
+     * @return list<array{materials: list<string>, labor: list<string>, machinery: list<string>, other_resources: list<string>}>
+     */
+    private function assertAssemblyResourceComposition(array $baseline, array $workItems, array $supplementaryMaterials): array
+    {
+        $assembled = $this->resourceComposition($workItems);
+        if (count($baseline) !== count($assembled)) {
+            $this->evidenceRequired();
+        }
+        foreach ($baseline as $workItemIndex => $baselineGroups) {
+            $assembledGroups = $assembled[$workItemIndex] ?? null;
+            $workItem = $workItems[$workItemIndex] ?? null;
+            if (! is_array($assembledGroups) || ! is_array($workItem)) {
+                $this->evidenceRequired();
+            }
+            foreach (['labor', 'machinery', 'other_resources'] as $group) {
+                if ($baselineGroups[$group] !== $assembledGroups[$group]) {
+                    $this->evidenceRequired();
+                }
+            }
+            $baselineMaterials = $baselineGroups['materials'];
+            $assembledMaterials = $assembledGroups['materials'];
+            if (array_slice($assembledMaterials, 0, count($baselineMaterials)) !== $baselineMaterials) {
+                $this->evidenceRequired();
+            }
+            foreach (array_keys(array_slice($assembledMaterials, count($baselineMaterials))) as $offset) {
+                $materialIndex = count($baselineMaterials) + $offset;
+                $material = $workItem['materials'][$materialIndex] ?? null;
+                if (! is_array($material) || ! $this->isApprovedSupplementaryMaterial($workItem, $material, $supplementaryMaterials)) {
+                    $this->evidenceRequired();
+                }
+            }
+        }
+
+        return $assembled;
+    }
+
+    /** @param array<string, mixed> $workItem @param array<string, mixed> $material @param list<mixed> $supplementaryMaterials */
+    private function isApprovedSupplementaryMaterial(array $workItem, array $material, array $supplementaryMaterials): bool
+    {
+        $workItemKey = $workItem['key'] ?? null;
+        $resourceCode = $material['code'] ?? null;
+        $selection = $material['project_material_selection'] ?? null;
+        $normativeReference = $material['normative_ref'] ?? null;
+        $referenceCode = is_array($normativeReference) ? $normativeReference['resource_code'] ?? null : null;
+        $referenceSelection = is_array($normativeReference) ? $normativeReference['project_material_selection'] ?? null : null;
+        if (! is_string($workItemKey)
+            || ! is_string($resourceCode)
+            || ! is_array($selection)
+            || ! is_string($referenceCode)
+            || ! hash_equals($resourceCode, $referenceCode)
+            || ! is_array($referenceSelection)
+            || ! $this->sameSelection($selection, $referenceSelection)
+            || ! $this->isValidProjectMaterialSelection($selection, $workItemKey, $resourceCode)) {
+            return false;
+        }
+
+        foreach ($supplementaryMaterials as $supplementaryMaterial) {
+            $candidateResource = is_array($supplementaryMaterial) ? $supplementaryMaterial['resource'] ?? null : null;
+            $candidateSelection = is_array($candidateResource) ? $candidateResource['project_material_requirement'] ?? null : null;
+            $candidateCode = is_array($candidateResource) ? $candidateResource['code'] ?? null : null;
+            if (! is_array($supplementaryMaterial)
+                || ($supplementaryMaterial['status'] ?? null) !== 'priced'
+                || ! is_string($supplementaryMaterial['work_item_key'] ?? null)
+                || ! hash_equals($supplementaryMaterial['work_item_key'], $workItemKey)
+                || ! is_string($candidateCode)
+                || ! hash_equals($candidateCode, $resourceCode)
+                || ! is_array($candidateSelection)
+                || ! $this->sameSelection($selection, $candidateSelection)) {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /** @param array<string, mixed> $selection */
+    private function isValidProjectMaterialSelection(array $selection, string $workItemKey, string $resourceCode): bool
+    {
+        foreach (['version', 'work_item_key', 'assumption_code', 'source_unit_price', 'source_price_unit', 'price_conversion_factor', 'preferred_resource_code', 'selection_policy', 'candidate_pool_version'] as $key) {
+            if (! is_string($selection[$key] ?? null) || trim($selection[$key]) === '') {
+                return false;
+            }
+        }
+        if (! hash_equals($selection['work_item_key'], $workItemKey)
+            || ! hash_equals($selection['preferred_resource_code'], $resourceCode)
+            || ! is_numeric($selection['source_unit_price'])
+            || (float) $selection['source_unit_price'] <= 0
+            || ! is_numeric($selection['price_conversion_factor'])
+            || (float) $selection['price_conversion_factor'] <= 0) {
+            return false;
+        }
+        $candidatePriceIds = $selection['candidate_resource_price_ids'] ?? null;
+        if (! is_array($candidatePriceIds) || ! array_is_list($candidatePriceIds) || $candidatePriceIds === []) {
+            return false;
+        }
+        foreach ($candidatePriceIds as $candidatePriceId) {
+            if (! is_int($candidatePriceId) || $candidatePriceId <= 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $left @param array<string, mixed> $right */
+    private function sameSelection(array $left, array $right): bool
+    {
+        return hash_equals(CanonicalPipelineJson::encode($left), CanonicalPipelineJson::encode($right));
     }
 
     /** @param array<string, mixed> $resource */
