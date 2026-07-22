@@ -12,11 +12,16 @@ final readonly class ShadowArbiterCoordinator
         private CompletenessArbiter $arbiter,
         private ArbiterReviewContextFactory $contexts = new ArbiterReviewContextFactory,
         private ArbiterVerdictValidator $validator = new ArbiterVerdictValidator,
+        private ArbiterRemediationCoordinator $remediation = new ArbiterRemediationCoordinator,
     ) {}
 
     /** @return array<string, mixed> */
     public function review(array $draft, ?ArbiterOperationContext $operation = null): array
     {
+        $previousCycle = is_array($draft['arbiter_review'] ?? null)
+            && is_array($draft['arbiter_review']['cycle'] ?? null)
+            ? $draft['arbiter_review']['cycle']
+            : null;
         $context = $this->contexts->make($draft, $operation);
         $status = 'reviewed';
         $tokens = [];
@@ -43,7 +48,10 @@ final readonly class ShadowArbiterCoordinator
             'findings' => $verdict->findings,
             ...$tokens,
         ];
+        if ($verdict->outcome === 'targeted_rebuild' && $previousCycle !== null) {
+            $draft['arbiter_review']['cycle'] = $previousCycle;
+        }
 
-        return $draft;
+        return $this->remediation->recordShadowCycle($draft, $verdict, $context['input_hash']);
     }
 }

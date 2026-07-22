@@ -71,6 +71,7 @@ final class ShadowArbiterCoordinatorTest extends TestCase
         ))->review($draft);
 
         self::assertSame($draft['local_estimates'], $reviewed['local_estimates']);
+        self::assertSame((new ArbiterReviewContextFactory)->make($draft)['input_hash'], $reviewed['arbiter_review']['cycle']['input_hash']);
         self::assertSame('shadow', $reviewed['arbiter_review']['mode']);
         self::assertSame('targeted_rebuild', $reviewed['arbiter_review']['outcome']);
         self::assertSame('openai/gpt-5-mini', $reviewed['arbiter_review']['model']);
