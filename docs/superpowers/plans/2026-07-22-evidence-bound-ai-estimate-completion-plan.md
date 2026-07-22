@@ -379,3 +379,9 @@ Check only via UI: session №58 and estimate №414 remain unchanged; no ordina
 - Task 1 excludes fabricated quantities; Task 2 makes candidate selection reproducible; Task 3 makes a missing candidate an explicit boundary; Task 4 keeps the API safe; Task 5 gives transparent UX; Task 6 verifies session №59 without applying it.
 - The shared names are `work_item_key`, `candidate_ids_by_work_item`, `normative_candidate_missing`, `gaps`, and `confirmed_scope_only`.
 - The plan does not contain migrations, database commands, frontend build, contract changes, or contract-module files.
+
+## Дополнение: явный источник цен для пересборки
+
+- [x] На шаге «Объект» существующей AI-сессии добавить выбор региона и действующего периода цен без автоматического подбора.
+- [x] Передавать выбранный идентификатор только в штатное действие пересборки; сервер повторно проверяет его действительность и сохраняет полный контекст.
+- [x] Проверить преобразование источника, запрос и интерфейс целевыми тестами; после поставки пересобрать только сессию №59 через интерфейс.
