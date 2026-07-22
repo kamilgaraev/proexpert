@@ -73,6 +73,10 @@ final class LegalDocumentEditorController extends Controller
             if (preg_match('/^\d{5}$/', $sqlState) === 1) {
                 return 'sqlstate_'.$sqlState;
             }
+            if ($error instanceof QueryException
+                && preg_match('/constraint "([a-z][a-z0-9_]{0,127})"/', $message, $constraint) === 1) {
+                return 'constraint_'.$constraint[1];
+            }
 
             return null;
         }
