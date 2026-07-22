@@ -79,6 +79,27 @@ final class OnlyOfficeConfigTest extends TestCase
         ));
     }
 
+    public function test_callback_token_accepts_onlyoffice_outbox_payload_claims(): void
+    {
+        $editor = new OnlyOfficeDocumentEditor([
+            'enabled' => true, 'url' => 'https://office.example.test', 'jwt_secret' => str_repeat('s', 48),
+        ]);
+        $token = \App\Services\LegalArchive\Editor\OnlyOfficeJwt::encode([
+            'payload' => [
+                'key' => 'document-key',
+                'status' => 2,
+                'url' => 'https://office.example.test/result.docx',
+            ],
+            'exp' => time() + 60,
+        ], str_repeat('s', 48));
+
+        $editor->verifyCallbackToken($token, new \App\Services\LegalArchive\Editor\EditorCallbackInput(
+            'session', 'document-key', 2, 'https://office.example.test/result.docx', 'replay', $token,
+        ));
+
+        self::assertTrue(true);
+    }
+
     public function test_view_and_review_modes_have_server_enforced_permissions(): void
     {
         $editor = new OnlyOfficeDocumentEditor([

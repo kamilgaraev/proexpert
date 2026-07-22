@@ -196,6 +196,40 @@ jobs:
               unset backend_secret onlyoffice_secret onlyoffice_runtime_secret
             }
 
+            ensure_onlyoffice_api_runtime_jwt_secret_alignment() {
+              local backend_enabled api_runtime_secret editor_enabled_lines onlyoffice_runtime_secret
+              editor_enabled_lines="$(grep -c '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env || true)"
+              if [ "${editor_enabled_lines}" -ne 1 ]; then
+                echo 'OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment'
+                return 1
+              fi
+              backend_enabled="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env | cut -d= -f2- || true)"
+              backend_enabled="$(printf '%s' "${backend_enabled}" | sed -E "s/^['\"]//; s/['\"]$//; s/^[[:space:]]+//; s/[[:space:]]+$//")"
+              backend_enabled="$(printf '%s' "${backend_enabled}" | tr '[:upper:]' '[:lower:]')"
+              case "${backend_enabled}" in
+                '1'|'true'|'on'|'yes') ;;
+                '0'|'false'|'off'|'no'|'') return 0 ;;
+                *)
+                  echo 'OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment'
+                  return 1
+                  ;;
+              esac
+              if [ "$(docker inspect -f '{{.State.Running}}' prohelper-api 2>/dev/null || true)" != 'true' ] \
+                || [ "$(docker inspect -f '{{.State.Running}}' most-onlyoffice 2>/dev/null || true)" != 'true' ]; then
+                echo 'OnlyOffice JWT secrets or running containers differ; refusing deployment'
+                return 1
+              fi
+              api_runtime_secret="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' prohelper-api 2>/dev/null | awk -F= '$1=="LEGAL_DOCUMENT_EDITOR_JWT_SECRET" {sub(/^[^=]*=/, ""); print; exit}')"
+              onlyoffice_runtime_secret="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' most-onlyoffice 2>/dev/null | awk -F= '$1=="JWT_SECRET" {sub(/^[^=]*=/, ""); print; exit}')"
+              if [ -z "${api_runtime_secret}" ] || [ -z "${onlyoffice_runtime_secret}" ] \
+                || [ "${api_runtime_secret}" != "${onlyoffice_runtime_secret}" ]; then
+                unset api_runtime_secret onlyoffice_runtime_secret
+                echo 'OnlyOffice JWT secrets or running containers differ; refusing deployment'
+                return 1
+              fi
+              unset api_runtime_secret onlyoffice_runtime_secret
+            }
+
             apply_onlyoffice_callback_transport() {
               local backend_enabled callback_base_url callback_host editor_enabled_lines editor_url editor_host allowed_hosts root_env_file
               editor_enabled_lines="$(grep -c '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env || true)"
@@ -439,6 +473,7 @@ jobs:
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true api php artisan immutable-audit:repair-invariants --confirm-repair
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan immutable-audit:writer-readiness
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
+            ensure_onlyoffice_api_runtime_jwt_secret_alignment
 
             for attempt in $(seq 1 24); do
               if docker compose exec -T api curl -fsS http://localhost:8000/ready >/dev/null \

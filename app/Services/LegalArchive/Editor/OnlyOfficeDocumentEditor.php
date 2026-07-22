@@ -85,13 +85,17 @@ final class OnlyOfficeDocumentEditor implements LegalDocumentEditor
         if (isset($claims['exp']) && (int) $claims['exp'] < time()) {
             throw new DomainException('legal_document_editor_callback_unauthenticated');
         }
-        $key = $claims['key'] ?? $claims['document']['key'] ?? null;
+        $callbackClaims = array_key_exists('payload', $claims) ? $claims['payload'] : $claims;
+        if (! is_array($callbackClaims)) {
+            throw new DomainException('legal_document_editor_callback_unauthenticated');
+        }
+        $key = $callbackClaims['key'] ?? null;
         if (! is_string($key) || ! hash_equals($input->documentKey, $key)) {
             throw new DomainException('legal_document_editor_callback_unauthenticated');
         }
-        if (! isset($claims['status']) || (int) $claims['status'] !== $input->status
-            || ($input->requiresSave() && (! isset($claims['url']) || (string) $claims['url'] !== (string) $input->downloadUrl))
-            || (isset($claims['url']) && (string) $claims['url'] !== (string) $input->downloadUrl)) {
+        if (! isset($callbackClaims['status']) || (int) $callbackClaims['status'] !== $input->status
+            || ($input->requiresSave() && (! isset($callbackClaims['url']) || (string) $callbackClaims['url'] !== (string) $input->downloadUrl))
+            || (isset($callbackClaims['url']) && (string) $callbackClaims['url'] !== (string) $input->downloadUrl)) {
             throw new DomainException('legal_document_editor_callback_unauthenticated');
         }
     }
