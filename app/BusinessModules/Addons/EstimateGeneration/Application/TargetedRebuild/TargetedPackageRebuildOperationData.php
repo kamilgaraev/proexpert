@@ -413,7 +413,7 @@ final readonly class TargetedPackageRebuildOperationData
             || ! $this->isPackageKey($workItem['key'])) {
             return false;
         }
-        $allowed = ['key', 'item_type', 'name', 'unit', 'quantity', 'materials', 'labor', 'machinery', 'other_resources', 'materials_cost', 'labor_cost', 'machinery_cost', 'total_cost', 'pricing_status', 'pricing_blocker', 'validation_flags', 'normative_match'];
+        $allowed = ['key', 'item_type', 'name', 'unit', 'quantity', 'quantity_evidence', 'materials', 'labor', 'machinery', 'other_resources', 'materials_cost', 'labor_cost', 'machinery_cost', 'total_cost', 'pricing_status', 'pricing_blocker', 'validation_flags', 'normative_match'];
         if (array_diff(array_keys($workItem), $allowed) !== []) {
             return false;
         }
@@ -430,6 +430,9 @@ final readonly class TargetedPackageRebuildOperationData
         if (array_key_exists('validation_flags', $workItem) && ! $this->validScalarList($workItem['validation_flags'])) {
             return false;
         }
+        if (array_key_exists('quantity_evidence', $workItem) && ! $this->validQuantityEvidence($workItem['quantity_evidence'])) {
+            return false;
+        }
         foreach (['item_type', 'name', 'unit', 'quantity', 'materials_cost', 'labor_cost', 'machinery_cost', 'total_cost', 'pricing_status', 'pricing_blocker'] as $key) {
             if (array_key_exists($key, $workItem) && ! $this->validScalar($workItem[$key])) {
                 return false;
@@ -437,6 +440,19 @@ final readonly class TargetedPackageRebuildOperationData
         }
 
         return $this->containsForbiddenKey($workItem) === false;
+    }
+
+    private function validQuantityEvidence(mixed $evidence): bool
+    {
+        if (! is_array($evidence)
+            || ! $this->hasExactKeys($evidence, ['evidence_ids', 'review_blockers'])
+            || ! $this->validReferences($evidence['evidence_ids'])
+            || $evidence['evidence_ids'] === []
+            || $evidence['review_blockers'] !== []) {
+            return false;
+        }
+
+        return $this->containsForbiddenKey($evidence) === false;
     }
 
     /** @param array<int, mixed> $resources */

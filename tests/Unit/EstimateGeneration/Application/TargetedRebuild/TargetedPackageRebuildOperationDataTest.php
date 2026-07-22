@@ -76,6 +76,49 @@ final class TargetedPackageRebuildOperationDataTest extends TestCase
     }
 
     #[Test]
+    public function it_keeps_evidence_bounded_quantities_in_the_compact_reviewed_delta(): void
+    {
+        $resultDelta = $this->evidenceBoundedResultDelta();
+
+        $reviewed = $this->queued()
+            ->withLease('018f809a-e85e-7382-b419-00f5a7d7ab59', new \DateTimeImmutable('2026-07-22T12:30:00+00:00'))
+            ->withReviewed($resultDelta, $this->safeReview());
+
+        self::assertSame('reviewed', $reviewed->status);
+        self::assertSame(['evidence:roof-work'], $reviewed->resultDelta['target_package']['sections'][0]['work_items'][0]['quantity_evidence']['evidence_ids']);
+    }
+
+    #[Test]
+    public function it_rejects_raw_context_nested_in_quantity_evidence(): void
+    {
+        $resultDelta = $this->evidenceBoundedResultDelta();
+        $resultDelta['target_package']['sections'][0]['work_items'][0]['quantity_evidence']['context'] = [
+            'raw_response' => 'must-not-persist',
+        ];
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->queued()
+            ->withLease('018f809a-e85e-7382-b419-00f5a7d7ab59', new \DateTimeImmutable('2026-07-22T12:30:00+00:00'))
+            ->withReviewed($resultDelta, $this->safeReview());
+    }
+
+    #[Test]
+    public function it_rejects_a_reviewed_delta_when_quantity_evidence_still_has_review_blockers(): void
+    {
+        $resultDelta = $this->evidenceBoundedResultDelta();
+        $resultDelta['target_package']['sections'][0]['work_items'][0]['quantity_evidence']['review_blockers'] = [
+            'estimated_quantity_unconfirmed',
+        ];
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->queued()
+            ->withLease('018f809a-e85e-7382-b419-00f5a7d7ab59', new \DateTimeImmutable('2026-07-22T12:30:00+00:00'))
+            ->withReviewed($resultDelta, $this->safeReview());
+    }
+
+    #[Test]
     public function it_rejects_a_review_transition_without_a_valid_running_claim(): void
     {
         $this->expectException(\InvalidArgumentException::class);
@@ -237,6 +280,25 @@ final class TargetedPackageRebuildOperationDataTest extends TestCase
             'target_after_fingerprint' => 'sha256:'.str_repeat('e', 64),
             'non_target_fingerprints' => ['walls' => 'sha256:'.str_repeat('f', 64)],
         ];
+    }
+
+    /** @return array<string, mixed> */
+    private function evidenceBoundedResultDelta(): array
+    {
+        $resultDelta = $this->resultDelta();
+        $resultDelta['target_package']['sections'] = [[
+            'key' => 'roof-section',
+            'work_items' => [[
+                'key' => 'roof-work',
+                'quantity' => 24.5,
+                'quantity_evidence' => [
+                    'evidence_ids' => ['evidence:roof-work'],
+                    'review_blockers' => [],
+                ],
+            ]],
+        ]];
+
+        return $resultDelta;
     }
 
     /** @return array<string, mixed> */
