@@ -39,6 +39,12 @@ Schedule::command('legal-archive:recover-notification-deliveries --limit=100')
     ->withoutOverlapping(5)
     ->onOneServer();
 
+Schedule::command('legal-archive:reconcile --limit=100')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(60)
+    ->onOneServer()
+    ->runInBackground();
+
 Schedule::job(new MonitorLegalDocumentOutboxDeadLetters)
     ->everyFiveMinutes()
     ->withoutOverlapping(10)

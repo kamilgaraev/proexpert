@@ -13,6 +13,7 @@ use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\SupplementaryAgreement;
 use App\Services\Contract\ContractDossierDocumentCreator;
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
@@ -33,9 +34,10 @@ final class LegalDocumentReconciliationService
         'executive_documentation',
     ];
 
-    public function __construct(private readonly ContractDossierDocumentCreator $documents)
-    {
-    }
+    public function __construct(
+        private readonly ConnectionInterface $connection,
+        private readonly ContractDossierDocumentCreator $documents,
+    ) {}
 
     /** @return array{candidates:int, linked:int, problem_flags:int, skipped:int, sources:array<string, int>} */
     public function reconcile(?int $organizationId, ?string $source, int $limit, bool $dryRun): array
@@ -97,13 +99,21 @@ final class LegalDocumentReconciliationService
                             $summary['sources'][$namedSource]++;
                             $summary['problem_flags']++;
                             if (! $dryRun) {
-                                $document = $this->documents->create($organizationId, null, $this->createPayload($entity, $sourceType));
-                                $summary['linked']++;
+                                if ($entity instanceof Contract) {
+                                    $this->createAndLinkContract($entity, $organizationId, $sourceType, $summary);
+                                } else {
+                                    $document = $this->documents->create($organizationId, null, $this->createPayload($entity, $sourceType));
+                                    $summary['linked']++;
+                                }
                             }
                         } elseif ($needsLinkRepair) {
                             $summary['candidates']++;
                             $summary['sources'][$namedSource]++;
-                            $this->linkContract($entity, $document, $dryRun, $summary);
+                            if ($entity instanceof Contract && ! $dryRun) {
+                                $this->createAndLinkContract($entity, $organizationId, $sourceType, $summary);
+                            } else {
+                                $summary['skipped']++;
+                            }
                         } else {
                             $summary['skipped']++;
                         }
@@ -180,6 +190,54 @@ final class LegalDocumentReconciliationService
         ];
     }
 
+    /** @param array{linked:int, skipped:int} $summary */
+    private function createAndLinkContract(
+        Contract $contract,
+        int $organizationId,
+        string $sourceType,
+        array &$summary,
+    ): void {
+        $this->connection->transaction(function () use ($contract, $organizationId, $sourceType, &$summary): void {
+            $lockedContract = Contract::query()
+                ->where('organization_id', $organizationId)
+                ->whereKey((int) $contract->getKey())
+                ->lockForUpdate()
+                ->first();
+            if (! $lockedContract instanceof Contract) {
+                $summary['skipped']++;
+
+                return;
+            }
+            if ((int) $lockedContract->legal_archive_document_id > 0) {
+                $summary['skipped']++;
+
+                return;
+            }
+
+            $document = LegalArchiveDocument::query()
+                ->withTrashed()
+                ->where('organization_id', $organizationId)
+                ->where('source_type', $sourceType)
+                ->where('source_id', (string) $lockedContract->getKey())
+                ->lockForUpdate()
+                ->first();
+            if ($document instanceof LegalArchiveDocument && $document->trashed()) {
+                $summary['skipped']++;
+
+                return;
+            }
+            if (! $document instanceof LegalArchiveDocument) {
+                $document = $this->documents->create(
+                    $organizationId,
+                    null,
+                    $this->createPayload($lockedContract, $sourceType),
+                );
+            }
+
+            $this->linkContract($lockedContract, $document, false, $summary);
+        });
+    }
+
     private function sourceQuery(string $source, ?int $organizationId): Builder
     {
         return match ($source) {
@@ -215,13 +273,10 @@ final class LegalDocumentReconciliationService
                     ->whereRaw('dossier.source_id = CAST(contracts.id AS text)');
             })
             ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('contracts.organization_id', $organizationId))
-            ->where(function (Builder $query): void {
-                $query->whereNull('contracts.legal_archive_document_id')
-                    ->orWhereColumn('contracts.legal_archive_document_id', '!=', 'dossier.id');
-            })
+            ->whereNull('contracts.legal_archive_document_id')
             ->orderBy('contracts.id')
             ->limit($limit)
-            ->get(['contracts.*', 'dossier.id as reconciliation_document_id'])
+            ->get(['contracts.*'])
             ->each(function (Contract $contract) use ($dryRun, &$summary): void {
                 $summary['candidates']++;
                 $summary['sources']['contracts']++;
@@ -229,8 +284,7 @@ final class LegalDocumentReconciliationService
                     return;
                 }
 
-                $contract->forceFill(['legal_archive_document_id' => (int) $contract->getAttribute('reconciliation_document_id')])->save();
-                $summary['linked']++;
+                $this->createAndLinkContract($contract, (int) $contract->organization_id, 'contract', $summary);
             });
     }
 
@@ -315,9 +369,19 @@ final class LegalDocumentReconciliationService
     /** @param array{linked:int, skipped:int} $summary */
     private function linkContract(Model $entity, LegalArchiveDocument $document, bool $dryRun, array &$summary): void
     {
-        if ($entity instanceof Contract
-            && (int) $entity->legal_archive_document_id !== (int) $document->id
-            && ! $dryRun) {
+        if (! $entity instanceof Contract || $dryRun) {
+            $summary['skipped']++;
+
+            return;
+        }
+
+        $boundDocumentId = (int) $entity->legal_archive_document_id;
+        if ($boundDocumentId > 0 && $boundDocumentId !== (int) $document->id) {
+            $summary['skipped']++;
+
+            return;
+        }
+        if ($boundDocumentId !== (int) $document->id) {
             $entity->forceFill(['legal_archive_document_id' => $document->id])->save();
             $summary['linked']++;
 
