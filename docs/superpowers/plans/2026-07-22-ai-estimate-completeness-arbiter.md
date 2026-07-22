@@ -322,7 +322,7 @@ git add config/estimate-generation.php app/BusinessModules/Addons/EstimateGenera
 git commit -m "feat[lk]: добавлен теневой арбитр AI-сметы"
 ```
 
-### Task 4: One-cycle targeted remediation protocol
+### Task 4: Безопасная основа для выборочной доработки
 
 **Files:**
 
@@ -383,7 +383,9 @@ $rebuilt = $this->rebuilder->rebuild($draft, $verdict->packageKeys());
 return $this->repeatArbitration($rebuilt, $hash);
 ```
 
-The rebuilder adapter is the existing package-generation revision path, never the whole-draft generation entry point. `PublishValidatedDraft` invokes it before finalized-draft recording; exceptions leave the preceding valid checkpoint unchanged and emit sanitized audit data.
+До появления отдельного конвейера `TargetedPackageRebuilder` этот этап не вызывает существующий `RebuildGeneratedSection`: он ставит в очередь полный `GenerateEstimateDraftJob` и поэтому не соответствует требованию выборочной доработки. В теневом режиме вердикт `targeted_rebuild` только фиксируется в аудите и отображается пользователю; автоматическая пересборка не запускается.
+
+Реализацию `TargetedPackageRebuilder` можно включать только после контрактных тестов, которые доказывают: в пересчёт передаются лишь проверенные ключи пакетов, неизменённые пакеты сохраняют тот же хеш содержимого, а полный `GenerateEstimateDraftJob` не ставится в очередь. Исключения оставляют предыдущую валидную контрольную точку без изменений и сохраняют обезличенный аудит.
 
 - [ ] **Step 4: Run verification**
 
@@ -571,6 +573,12 @@ Expected: no TypeScript errors.
 git add prohelper_admin/src/types/estimate.ts prohelper_admin/src/pages/Estimates/EstimateDetailPage.tsx prohelper_admin/src/pages/Estimates/components/AiScopeBoundaryAlert.tsx prohelper_admin/src/pages/Estimates/components/AiScopeBoundaryAlert.test.tsx tests/Architecture/EstimateGenerationOrdinaryEstimateBoundaryTest.php
 git commit -m "feat[lk]: отмечается неполная AI-смета"
 ```
+
+## Уточнение безопасности выборочной пересборки
+
+Исследование существующего пути пересборки подтвердило, что `RebuildGeneratedSection` помечает раздел, но затем запускает полный `GenerateEstimateDraftJob`. Использовать его как адаптер точечной доработки нельзя: это нарушило бы зафиксированное ограничение на один контролируемый цикл и могло бы изменить подтверждённые пакеты.
+
+Поэтому первая поставка ограничивается детерминированной границей комплектности и бюджета, а также теневым вердиктом арбитра. Настоящая автоматическая доработка остаётся отдельным этапом и не будет объявлена реализованной до появления изолированного пакетного конвейера с указанными контрактными проверками.
 
 ## Self-review
 

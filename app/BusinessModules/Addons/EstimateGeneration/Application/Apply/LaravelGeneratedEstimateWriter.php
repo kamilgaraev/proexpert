@@ -7,6 +7,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateBudgetScope;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateScopeMetadataProjector;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -35,6 +37,8 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         private GeneratedEstimateNumberAllocator $numberAllocator,
         private GeneratedEstimateItemMetadataFactory $itemMetadata = new GeneratedEstimateItemMetadataFactory,
         private FinalizedPackageDraftProjector $finalizedDraftProjector = new FinalizedPackageDraftProjector,
+        private EstimateBudgetScope $budgetScope = new EstimateBudgetScope,
+        private EstimateScopeMetadataProjector $scopeMetadata = new EstimateScopeMetadataProjector,
     ) {}
 
     public function createFromSession(
@@ -65,6 +69,8 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         array $regionalContext,
         float $total,
     ): Estimate {
+        $budgetScope = $this->budgetScope->project($draft, $total);
+
         for ($attempt = 0; $attempt < self::NUMBER_CREATE_ATTEMPTS; $attempt++) {
             try {
                 $attributes = [
@@ -85,6 +91,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                         'draft_traceability' => $draft['traceability'] ?? [],
                         'quality_summary' => $draft['quality_summary'] ?? null,
                         'regional_context' => $regionalContext,
+                        'ai_scope' => $this->scopeMetadata->project($draft, $budgetScope),
                     ],
                     'total_direct_costs' => $total,
                     'total_amount' => $total,

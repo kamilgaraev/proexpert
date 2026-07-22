@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationService;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -22,6 +23,7 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         private PipelineArtifactStore $artifacts,
         private FinalizationOutbox $finalizations,
         private DraftReadinessInspector $readiness,
+        private TargetedPackageRebuildOperationService $targetedRebuilds,
     ) {}
 
     public function beforeComplete(CheckpointClaim $claim, PipelineStageResult $result, DateTimeImmutable $completedAt): void
@@ -60,13 +62,14 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         $this->packages->syncFromDraft($session, $draft, $claim->context->baseInputVersion);
         $this->packages->assertCalculatedPricesFinalized($session, $draft);
         $this->audit->recordNormativeDecisionSummary($session, $draft);
-        $this->advance->generationCompleted($session, $requiresReview, [
+        $published = $this->advance->generationCompleted($session, $requiresReview, [
             'processing_stage' => ProcessingStage::ValidateDraft->value,
             'processing_progress' => 100,
             'draft_payload' => $draft,
             'problem_flags' => $draft['problem_flags'] ?? [],
             'last_error' => null,
         ]);
+        $this->targetedRebuilds->scheduleAfterPublishedDraft($published, $draft);
         $this->finalizations->enqueue(FinalizationEvent::completed(
             $claim->context->organizationId,
             $claim->context->projectId,

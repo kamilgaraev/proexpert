@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateItemMetadataFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageDraftWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -16,7 +17,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-class EstimateGenerationPackagePersistenceService
+class EstimateGenerationPackagePersistenceService implements TargetedPackageDraftWriter
 {
     private const NORMATIVE_PRICING_FORMULA_VERSION = 'semantic_project_resource:v8';
 
@@ -58,6 +59,35 @@ class EstimateGenerationPackagePersistenceService
             }
 
             $this->retainHistoricalPackages($session, $activePackageKeys);
+        });
+    }
+
+    /** @param array<string, mixed> $localEstimate */
+    public function syncPackageFromDraft(
+        EstimateGenerationSession $session,
+        string $packageKey,
+        array $localEstimate,
+        string $sourceInputVersion,
+    ): void {
+        if (! is_string($localEstimate['key'] ?? null) || ! hash_equals($localEstimate['key'], $packageKey)) {
+            throw new \InvalidArgumentException('Targeted package key does not match its draft.');
+        }
+
+        DB::transaction(function () use ($session, $packageKey, $localEstimate, $sourceInputVersion): void {
+            $inputVersion = $this->baseInputVersions?->resolve($session);
+            if (! $this->sourceInputCurrent($sourceInputVersion, $inputVersion)) {
+                throw new \DomainException('Targeted package source input version is stale.');
+            }
+            $package = EstimateGenerationPackage::query()
+                ->where('session_id', $session->getKey())
+                ->where('key', $packageKey)
+                ->lockForUpdate()
+                ->first();
+            if (! $package instanceof EstimateGenerationPackage) {
+                throw new \DomainException('Targeted package does not exist.');
+            }
+
+            $this->syncExistingPackage($package, $localEstimate, $inputVersion, $sourceInputVersion);
         });
     }
 
@@ -254,6 +284,54 @@ class EstimateGenerationPackagePersistenceService
 
         $this->supersedeMissingItemRevisions($package, $workItems);
 
+        $this->refreshPackagePricingState($package);
+    }
+
+    /** @param array<string, mixed> $localEstimate */
+    private function syncExistingPackage(
+        EstimateGenerationPackage $package,
+        array $localEstimate,
+        string $inputVersion,
+        string $sourceInputVersion,
+    ): void {
+        $workItems = $this->estimateWorkItems($this->workItems($localEstimate));
+        $quality = $this->packageQuality($localEstimate, $workItems);
+        $itemCounters = $this->itemCounters($workItems);
+        $package->forceFill([
+            'input_version' => $inputVersion,
+            'title' => (string) ($localEstimate['title'] ?? 'Локальная смета'),
+            'scope_type' => (string) ($localEstimate['scope_type'] ?? 'custom'),
+            'status' => $this->packageStatus($quality),
+            'generation_stage' => 'quality_check',
+            'generation_progress' => 100,
+            'target_items_min' => (int) ($localEstimate['target_items_min'] ?? 0),
+            'target_items_max' => (int) ($localEstimate['target_items_max'] ?? 0),
+            'actual_items_count' => $itemCounters['total_items_count'],
+            'totals' => [
+                'total_cost' => $this->workItemsTotal($workItems),
+                ...$itemCounters,
+            ],
+            'quality_summary' => $quality,
+            'assumptions' => $localEstimate['assumptions'] ?? [],
+            'source_refs' => $localEstimate['source_refs'] ?? [],
+            'metadata' => [
+                'generated_from' => 'estimate_generation_v2',
+                'input_version' => $inputVersion,
+                'source_input_version' => $sourceInputVersion,
+                'coverage_warnings' => is_array($localEstimate['coverage_warnings'] ?? null)
+                    ? array_values(array_filter($localEstimate['coverage_warnings'], 'is_array'))
+                    : [],
+            ],
+            'finished_at' => now(),
+            'failed_at' => null,
+            'cancelled_at' => null,
+            'last_error_code' => null,
+        ])->save();
+
+        foreach ($workItems as $workIndex => $workItem) {
+            $this->appendItemRevision($package, $workItem, $workIndex);
+        }
+        $this->supersedeMissingItemRevisions($package, $workItems);
         $this->refreshPackagePricingState($package);
     }
 
