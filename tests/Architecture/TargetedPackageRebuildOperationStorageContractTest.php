@@ -29,6 +29,9 @@ final class TargetedPackageRebuildOperationStorageContractTest extends TestCase
         self::assertStringContainsString("jsonb_typeof(result_delta->'target_package') = 'object'", $migration);
         self::assertStringContainsString("jsonb_typeof(safe_arbiter_review->'findings') = 'array'", $migration);
         self::assertStringContainsString("safe_arbiter_review->>'status' = 'unavailable' AND safe_arbiter_review->>'outcome' = 'human_review'", $migration);
+        self::assertStringContainsString("status = 'reviewed' AND attempt_count >= 1 AND lease_token IS NULL AND lease_expires_at IS NULL AND result_delta <> '{}'::jsonb AND safe_arbiter_review->>'status' = 'reviewed' AND safe_arbiter_review->>'outcome' IN ('passed','confirmed_scope_only')", $migration);
+        self::assertStringContainsString("status = 'committed' AND attempt_count >= 1 AND lease_token IS NULL AND lease_expires_at IS NULL AND result_delta <> '{}'::jsonb AND safe_arbiter_review->>'status' = 'reviewed' AND safe_arbiter_review->>'outcome' IN ('passed','confirmed_scope_only')", $migration);
+        self::assertStringContainsString("status = 'human_review' AND attempt_count >= 1 AND lease_token IS NULL AND lease_expires_at IS NULL AND safe_arbiter_review->>'status' IN ('reviewed','unavailable') AND safe_arbiter_review->>'outcome' = 'human_review'", $migration);
         self::assertStringContainsString("jsonb_path_exists(result_delta, '$.**.draft_payload')", $migration);
         self::assertStringContainsString("jsonb_path_exists(safe_arbiter_review, '$.**.prompt_payload')", $migration);
         self::assertStringContainsString('eg_targeted_rebuild_claim_recovery_idx', $migration);
