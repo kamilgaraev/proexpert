@@ -131,6 +131,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                     $decision = $this->intentFactory->decision($workItem, $decisionContext);
                     $catalogCandidates = is_array($pin['catalog_candidates'] ?? null) ? $pin['catalog_candidates'] : [];
                     $candidateIdsByWorkItem = array_key_exists('candidate_ids_by_work_item', $pin)
+                        && $pin['candidate_ids_by_work_item'] !== null
                         ? (is_array($pin['candidate_ids_by_work_item']) ? $pin['candidate_ids_by_work_item'] : [])
                         : null;
                     $pinnedCandidates = $this->pinnedCandidates->forWorkItem(

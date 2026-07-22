@@ -113,7 +113,6 @@ final class PipelineStageFunctionalTest extends TestCase
             'reason' => 'normative_candidate_missing',
             'package_key' => 'roof',
         ];
-        $presentedWarning = [...$warning, 'message' => 'Работа не включена в смету.'];
         $plan = [
             'object_profile' => ['object_type' => 'house'],
             'package_plan' => [],
@@ -128,7 +127,7 @@ final class PipelineStageFunctionalTest extends TestCase
             ],
             'local_estimates' => [[
                 'key' => 'roof',
-                'coverage_warnings' => [$presentedWarning],
+                'coverage_warnings' => [],
                 'sections' => [[
                     'work_items' => [
                         [
@@ -217,7 +216,7 @@ final class PipelineStageFunctionalTest extends TestCase
         $output = $result->transientData;
 
         self::assertNotNull($output);
-        self::assertSame([$presentedWarning], $output['local_estimates'][0]['coverage_warnings']);
+        self::assertSame([$warning], $output['local_estimates'][0]['coverage_warnings']);
         $workItems = $output['local_estimates'][0]['sections'][0]['work_items'];
         self::assertSame(['roof-reference'], array_column($workItems, 'key'));
         self::assertArrayNotHasKey(1, $workItems);
@@ -227,6 +226,119 @@ final class PipelineStageFunctionalTest extends TestCase
                 || in_array('normative_not_found', $workItem['validation_flags'] ?? [], true)
                 || ($workItem['item_type'] ?? null) === 'review_note',
         )));
+    }
+
+    #[Test]
+    public function it_preserves_legacy_global_selection_when_candidate_id_map_is_explicitly_null(): void
+    {
+        $artifacts = new InMemoryPipelineArtifactStore;
+        $results = new StageResultFactory($artifacts, PipelineDefinitionGraph::standard());
+        $base = 'sha256:'.str_repeat('b', 64);
+        $attempt = '00000000-0000-4000-8000-000000000003';
+        $plan = [
+            'object_profile' => ['object_type' => 'house'],
+            'package_plan' => [],
+            'document_requirements' => [],
+            'generation_mode' => 'strict',
+            'regional_context' => [],
+            'normative_context_pin' => [
+                'dataset_version' => 'fsnb-2026.1',
+                'applicability_date' => '2026-07-13',
+                'catalog_candidates' => [],
+                'candidate_ids_by_work_item' => null,
+            ],
+            'local_estimates' => [[
+                'key' => 'roof',
+                'coverage_warnings' => [],
+                'sections' => [[
+                    'work_items' => [
+                        [
+                            'key' => 'roof-covering',
+                            'name' => 'Устройство кровельного покрытия',
+                            'unit' => 'm2',
+                            'quantity' => '10',
+                            'quantity_formula' => 'roof.covering',
+                            'item_type' => 'priced_work',
+                        ],
+                        ['key' => 'roof-reference', 'name' => 'Справочная позиция', 'item_type' => 'operation'],
+                    ],
+                ]],
+            ]],
+        ];
+        $planned = $results->make(
+            new PipelineContext(
+                1,
+                2,
+                3,
+                4,
+                $base,
+                'generating',
+                generationAttemptId: $attempt,
+                baseInputVersion: $base,
+                stage: ProcessingStage::PlanWorkItems,
+                dependencyVersions: [
+                    ProcessingStage::UnderstandObject->value => $base,
+                    ProcessingStage::ExtractQuantities->value => $base,
+                ],
+            ),
+            ProcessingStage::PlanWorkItems,
+            $plan,
+        );
+        self::assertNotNull($planned->output);
+        $context = new PipelineContext(
+            1,
+            2,
+            3,
+            5,
+            $base,
+            'generating',
+            priorOutputs: new PipelinePriorOutputs(
+                [ProcessingStage::PlanWorkItems->value => $planned->output],
+                [ProcessingStage::PlanWorkItems->value => $plan],
+            ),
+            generationAttemptId: $attempt,
+            baseInputVersion: $base,
+            stage: ProcessingStage::MatchNormatives,
+            dependencyVersions: [ProcessingStage::PlanWorkItems->value => $planned->output->version],
+        );
+        $workflow = new NormativeMatchingWorkflow(
+            new NormativeRetrievalService(
+                new class implements NormativeCandidateSource
+                {
+                    public function find(int $organizationId, int $projectId, string $datasetVersion, string $query, int $limit, ?string $semanticIndexVersion): array
+                    {
+                        throw new \LogicException('Legacy global selection must not search when the pinned catalog is empty.');
+                    }
+                },
+                new NormativeHardGate,
+                16,
+                null,
+            ),
+            new class implements NormativeCandidateRerankerInterface
+            {
+                public function rerank(WorkIntentData $workItem, NormativeCandidateDecisionContextData $context, NormativeCandidateSetData $candidateSet): NormativeRerankResultData
+                {
+                    throw new \LogicException('Legacy global selection must not rerank when the pinned catalog is empty.');
+                }
+            },
+        );
+        $result = (new MatchNormativesStage(
+            $this->createMock(ResourceAssemblyService::class),
+            $workflow,
+            new NormativeWorkIntentFactory(
+                new WorkIntentClassifier(new NormativeScopeRuleCatalog),
+                new NormativeRerankerModelSet(['openai/test-model']),
+            ),
+            $results,
+        ))->execute($context);
+        $output = $result->transientData;
+
+        self::assertNotNull($output);
+        self::assertSame([], $output['local_estimates'][0]['coverage_warnings']);
+        $workItems = $output['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertSame(['roof-covering', 'roof-reference'], array_column($workItems, 'key'));
+        self::assertSame('normative_not_found', $workItems[0]['pricing_blocker']);
+        self::assertNotContains('normative_candidate_missing', $workItems[0]['validation_flags']);
     }
 
     #[Test]

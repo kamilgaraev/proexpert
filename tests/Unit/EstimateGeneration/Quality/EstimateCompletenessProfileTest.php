@@ -71,6 +71,33 @@ final class EstimateCompletenessProfileTest extends TestCase
         ]], $profile['scopes']['roof']['gaps']);
     }
 
+    #[Test]
+    public function it_does_not_treat_uncalculated_or_review_rows_as_required_work_coverage(): void
+    {
+        $draft = $this->draft(['roof' => []], 'pitched');
+        $draft['local_estimates'][0]['sections'][0]['work_items'] = [
+            [
+                'item_type' => 'priced_work',
+                'pricing_status' => 'not_calculated',
+                'metadata' => ['composition_work_key' => 'roof.covering'],
+            ],
+            [
+                'item_type' => 'review_note',
+                'pricing_status' => 'calculated',
+                'metadata' => ['composition_work_key' => 'roof.covering'],
+            ],
+        ];
+
+        $profile = (new EstimateCompletenessProfile)->project($draft);
+
+        self::assertSame('confirmed_scope_only', $profile['status']);
+        self::assertSame(['roof.covering'], $profile['scopes']['roof']['missing_items']);
+        self::assertSame([[
+            'work_key' => 'roof.covering',
+            'reason' => 'document_takeoff_missing',
+        ]], $profile['scopes']['roof']['gaps']);
+    }
+
     /** @param array<string, list<string>> $workKeys */
     private function draft(array $workKeys, string $roofType = ''): array
     {
