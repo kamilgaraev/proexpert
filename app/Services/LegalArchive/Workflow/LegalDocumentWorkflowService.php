@@ -37,6 +37,8 @@ final class LegalDocumentWorkflowService
 
     private readonly LegalDocumentBlockingCommentGuard $blockingComments;
 
+    private readonly LegalDocumentWorkflowReadinessGuard $readiness;
+
     public function __construct(
         private readonly LegalWorkflowTemplateService $templates,
         private readonly LegalWorkflowAuthorization $authorization,
@@ -48,9 +50,14 @@ final class LegalDocumentWorkflowService
         ?LegalDocumentAggregateLock $aggregateLock = null,
         ?LegalDocumentBlockingCommentGuard $blockingComments = null,
         private readonly ?LegalDocumentNotificationPublisher $notifications = null,
+        ?LegalDocumentWorkflowReadinessGuard $readiness = null,
     ) {
         $this->aggregateLock = $aggregateLock ?? new LegalDocumentAggregateLock;
         $this->blockingComments = $blockingComments ?? new LegalDocumentBlockingCommentGuard;
+        $this->readiness = $readiness ?? new LegalDocumentWorkflowReadinessGuard(
+            new \App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry,
+            new \App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator,
+        );
     }
 
     public function submit(
@@ -112,6 +119,7 @@ final class LegalDocumentWorkflowService
 
                 $version = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, $versionId);
                 (new LegalDocumentEditGuard($this->connection))->assertWorkflowSubmissionAllowed($lockedDocument);
+                $this->readiness->assertReady($lockedDocument);
                 $this->blockingComments->assertNone($lockedDocument, (int) $version->id);
                 $this->assertSubmittableVersion($lockedDocument, $version);
                 $template = $this->templates->resolveForDocument($lockedDocument, $override->templateId);

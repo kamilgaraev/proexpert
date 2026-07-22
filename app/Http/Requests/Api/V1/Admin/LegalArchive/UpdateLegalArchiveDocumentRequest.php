@@ -14,7 +14,7 @@ final class UpdateLegalArchiveDocumentRequest extends FormRequest
 {
     protected function prepareForValidation(): void
     {
-        foreach (['metadata', 'links'] as $key) {
+        foreach (['metadata', 'structured_fields', 'links'] as $key) {
             $value = $this->input($key);
 
             if (! is_string($value)) {
@@ -60,6 +60,7 @@ final class UpdateLegalArchiveDocumentRequest extends FormRequest
             'edo_status' => ['nullable', 'string', 'max:64'],
             'one_c_status' => ['nullable', 'string', 'max:64'],
             'metadata' => ['nullable', 'array'],
+            'structured_fields' => ['nullable', 'array'],
             'links' => ['nullable', 'array', 'max:20'],
             'links.*.link_type' => ['required_with:links', 'string', Rule::in(LegalArchiveDictionary::values('link_types'))],
             'links.*.linked_type' => ['nullable', 'required_with:links.*.linked_id', 'string', Rule::in(\App\Services\LegalArchive\Sources\LegalDocumentSourceType::values())],

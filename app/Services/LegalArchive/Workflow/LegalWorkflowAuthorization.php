@@ -16,7 +16,6 @@ use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 
 final class LegalWorkflowAuthorization
 {
@@ -214,7 +213,7 @@ final class LegalWorkflowAuthorization
     private function applyExternalGrants(User $actor, Collection $documents, array $permissions, array &$result): void
     {
         if ($documents->isEmpty()
-            || ! DB::table('organization_user')
+            || ! (new UserRoleAssignment)->getConnection()->table('organization_user')
                 ->join('organizations', 'organizations.id', '=', 'organization_user.organization_id')
                 ->where('organization_user.organization_id', (int) $actor->current_organization_id)
                 ->where('organization_user.user_id', (int) $actor->id)
@@ -300,14 +299,16 @@ final class LegalWorkflowAuthorization
             return [];
         }
 
-        return DB::table('project_user')
+        return (new UserRoleAssignment)->getConnection()
+            ->table('project_user')
             ->join('projects', 'projects.id', '=', 'project_user.project_id')
             ->whereIn('project_user.user_id', $userIds)
             ->where('project_user.is_active', true)
             ->where('projects.status', 'active')
             ->whereNull('projects.deleted_at')
             ->groupBy('project_user.user_id')
-            ->pluck(DB::raw('COUNT(DISTINCT project_user.project_id)'), 'project_user.user_id')
+            ->selectRaw('project_user.user_id as user_id, COUNT(DISTINCT project_user.project_id) as project_count')
+            ->pluck('project_count', 'user_id')
             ->map(static fn (mixed $count): int => (int) $count)
             ->all();
     }

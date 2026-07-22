@@ -21,12 +21,19 @@ final readonly class LegalWorkflowActionResolver
 {
     private LegalDocumentBlockingCommentGuard $blockingComments;
 
+    private LegalDocumentWorkflowReadinessGuard $readiness;
+
     public function __construct(
         private LegalWorkflowAuthorization $authorization,
         private LegalWorkflowActorResolver $actors,
         ?LegalDocumentBlockingCommentGuard $blockingComments = null,
+        ?LegalDocumentWorkflowReadinessGuard $readiness = null,
     ) {
         $this->blockingComments = $blockingComments ?? new LegalDocumentBlockingCommentGuard;
+        $this->readiness = $readiness ?? new LegalDocumentWorkflowReadinessGuard(
+            new \App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry,
+            new \App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator,
+        );
     }
 
     public function for(User $actor, LegalArchiveDocument $document): WorkflowSummary
@@ -37,7 +44,7 @@ final readonly class LegalWorkflowActionResolver
             $permissions[$permission] = $this->authorization->can($actor, $document, $permission);
         }
 
-        return $this->summary($actor, $document, $permissions, []);
+        return $this->summary($actor, $document, $permissions, [], null, $this->readiness->blocker($document));
     }
 
     /**
@@ -50,6 +57,7 @@ final readonly class LegalWorkflowActionResolver
         array $permissions,
         array $actorAssignments,
         ?bool $hasBlockingComments = null,
+        ?string $readinessBlocker = null,
     ): WorkflowSummary {
         if (! ($permissions[LegalWorkflowPermissions::VIEW] ?? false)) {
             return $this->deniedSummary($document);
@@ -77,7 +85,7 @@ final readonly class LegalWorkflowActionResolver
 
         $details = $instance instanceof LegalWorkflowInstance && $instance->status === 'in_progress'
             ? $this->decisionActions($actor, $document, $instance, $version, $permissions, $actorAssignments, $hasBlockingComments)
-            : [$this->submitAction($actor, $document, $version, $instance, $permissions, $hasBlockingComments)];
+            : [$this->submitAction($actor, $document, $version, $instance, $permissions, $hasBlockingComments, $readinessBlocker)];
         $currentSteps = $instance instanceof LegalWorkflowInstance
             ? $instance->steps
                 ->where('status', 'active')
@@ -130,6 +138,7 @@ final readonly class LegalWorkflowActionResolver
         $permissionMaps = $this->authorization->forMany($actor, $documents, $this->permissions());
         $actorAssignments = $this->actors->forMany($actor, $documents);
         $blockingComments = $this->blockingCommentsForMany($documents, $permissionMaps);
+        $readinessBlockers = $this->readiness->blockersFor($documents);
         $summaries = [];
         foreach ($documents as $document) {
             $documentId = (int) $document->id;
@@ -139,6 +148,7 @@ final readonly class LegalWorkflowActionResolver
                 $permissionMaps[$documentId] ?? [],
                 $actorAssignments,
                 $blockingComments[$documentId] ?? false,
+                $readinessBlockers[$documentId] ?? null,
             );
         }
 
@@ -241,6 +251,7 @@ final readonly class LegalWorkflowActionResolver
         ?LegalWorkflowInstance $latest,
         array $permissions,
         ?bool $hasBlockingComments,
+        ?string $readinessBlocker,
     ): WorkflowActionDetail {
         $permission = LegalWorkflowPermissions::SUBMIT;
         $canSubmit = $permissions[$permission] ?? false;
@@ -253,6 +264,7 @@ final readonly class LegalWorkflowActionResolver
         $blockers = array_values(array_filter([
             $canSubmit ? null : $this->label('blockers.permission_denied'),
             $ready ? null : $this->label('blockers.version_not_ready'),
+            $readinessBlocker,
             $hasBlockingComments ? $this->label('blockers.open_blocking_comments') : null,
             $latest?->status === 'in_progress' ? $this->label('blockers.active_workflow_exists') : null,
             $latest instanceof LegalWorkflowInstance

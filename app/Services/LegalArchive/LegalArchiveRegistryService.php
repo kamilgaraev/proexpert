@@ -17,6 +17,8 @@ use App\Services\LegalArchive\Files\LegalDocumentVersionAttempt;
 use App\Services\LegalArchive\Files\LegalDocumentVersionLeaseLost;
 use App\Services\LegalArchive\Files\LegalDocumentVersionPersistenceFailed;
 use App\Services\LegalArchive\Files\VersionInput;
+use App\Services\LegalArchive\Editor\LegalDocumentEditGuard;
+use App\Services\LegalArchive\Profiles\LegalDocumentProfileAssignmentGuard;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileRegistry;
 use App\Services\LegalArchive\Profiles\LegalDocumentProfileValidator;
 use App\Services\LegalArchive\Sources\LegalDocumentCreateLeaseDecision;
@@ -289,10 +291,10 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
             if ((int) $document->lock_version !== $expectedLockVersion) {
                 throw LegalArchiveLockConflict::forDocument((int) $document->id, (int) $document->lock_version);
             }
+            (new LegalDocumentEditGuard(DB::connection()))->assertVersionMutationAllowed($document);
             if (array_key_exists('type_profile_code', $data)
-                && (string) $data['type_profile_code'] !== (string) $document->type_profile_code
-                && (string) $document->lifecycle_status !== 'draft') {
-                throw new \DomainException('profile_correction_not_allowed');
+                && (string) $data['type_profile_code'] !== (string) $document->type_profile_code) {
+                (new LegalDocumentProfileAssignmentGuard)->assertCanAssign($document);
             }
             $this->assertProjectBelongsToOrganization($organizationId, $data['primary_project_id'] ?? null);
             $this->sourceResolver->assertOwnedSource(
@@ -302,7 +304,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
             );
             $before = $this->auditSnapshot($document);
 
-            $payload = $this->documentPayload($organizationId, $userId, $data, true);
+            $payload = $this->documentPayload($organizationId, $userId, $data, true, $document);
             unset($payload['lock_version']);
             $payload['lock_version'] = $expectedLockVersion + 1;
             $document->update($payload);
@@ -561,6 +563,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
             'files.currentVersion',
             'files.versions',
             'latestWorkflowInstance.steps',
+            'obligations.responsible:id,name',
             'signatureRequests',
             'signatures',
         ]);
@@ -586,6 +589,11 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
                         'base_code' => $profile->baseCode,
                         'name' => $profile->label,
                         'label' => $profile->label,
+                        'schema' => $profile->schema,
+                        'required_fields' => $profile->requiredFields,
+                        'requires_signature' => $profile->requiresSignature,
+                        'allowed_signature_kinds' => $profile->allowedSignatureKinds,
+                        'workflow_template_id' => $profile->workflowTemplateId,
                     ]);
                 }
             }
@@ -609,7 +617,13 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
         });
     }
 
-    private function documentPayload(int $organizationId, ?int $userId, array $data, bool $forUpdate = false): array
+    private function documentPayload(
+        int $organizationId,
+        ?int $userId,
+        array $data,
+        bool $forUpdate = false,
+        ?LegalArchiveDocument $currentDocument = null,
+    ): array
     {
         $allowed = [
             'primary_project_id',
@@ -632,6 +646,7 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
             'source_type',
             'source_id',
             'source_idempotency_key',
+            'structured_fields',
             'metadata',
         ];
 
@@ -640,10 +655,28 @@ final class LegalArchiveRegistryService implements ContractDossierDocumentCreato
             $profile = $this->profiles->find($organizationId, (string) $data['type_profile_code']);
             $payload['type_profile_code'] = $profile->code;
             $payload['document_type'] = $profile->category;
-            $payload['metadata'] = $this->profileValidator->validate($profile, (array) ($data['metadata'] ?? []));
             if (! array_key_exists('confidentiality_level', $data)) {
                 $payload['confidentiality_level'] = $profile->confidentialityLevel;
             }
+            if (! array_key_exists('structured_fields', $data) && is_array($data['metadata'] ?? null)) {
+                $legacyFields = array_intersect_key((array) ($data['metadata'] ?? []), $profile->schema);
+                if ($legacyFields !== []) {
+                    $data['structured_fields'] = $legacyFields;
+                }
+            }
+        }
+        if (array_key_exists('structured_fields', $data)) {
+            $profileCode = (string) ($data['type_profile_code'] ?? $currentDocument?->type_profile_code ?? '');
+            $profile = $this->profiles->find($organizationId, $profileCode);
+            $structuredFields = [
+                ...(array) ($currentDocument?->structured_fields ?? []),
+                ...(array) $data['structured_fields'],
+            ];
+            $payload['structured_fields'] = $this->profileValidator->validate(
+                $profile,
+                $structuredFields,
+                enforceRequired: false,
+            );
         }
         if ($forUpdate) {
             unset($payload['source_type'], $payload['source_id'], $payload['source_idempotency_key']);

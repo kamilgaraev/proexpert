@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Admin\LegalArchive;
 
 use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\LegalArchiveDocumentIndexRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\LegalArchiveLockRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\RecoverLegalArchiveDocumentRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\StoreLegalArchiveDocumentRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\UpdateLegalArchiveDocumentRequest;
+use App\Http\Requests\Api\V1\Admin\LegalArchive\UpdateLegalDocumentObligationRequest;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
+use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Editor\LegalDocumentEditorAvailability;
 use App\Services\LegalArchive\Files\LegalDocumentFileRejected;
@@ -22,9 +25,11 @@ use App\Services\LegalArchive\LegalArchiveRegistryService;
 use App\Services\LegalArchive\LegalDocumentCreateFailed;
 use App\Services\LegalArchive\LegalDocumentCreateFailureReporter;
 use App\Services\LegalArchive\LegalDocumentCreateInProgress;
+use App\Services\LegalArchive\Obligations\LegalDocumentObligationExecutionService;
 use App\Services\LegalArchive\Workflow\LegalWorkflowActionResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Auth\Access\AuthorizationException;
 use Throwable;
 
 use function trans_message;
@@ -38,6 +43,8 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
         private readonly LegalDocumentEditorAvailability $editorAvailability,
         private readonly LegalArchiveLifecycleService $lifecycle,
         private readonly LegalDocumentCreateFailureReporter $createFailureReporter,
+        private readonly AuthorizationService $authorization,
+        private readonly LegalDocumentObligationExecutionService $obligationExecution,
     ) {}
 
     public function index(LegalArchiveDocumentIndexRequest $request): JsonResponse
@@ -233,6 +240,13 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             if ($found === null || (int) $found->organization_id !== $organizationId || (int) $found->primary_project_id !== $project) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
+            $actor = $this->actor($request);
+            $this->access->authorize($actor, $found, 'view');
+            $summary = $this->actions->forMany($actor, collect([$found]))[(int) $found->id];
+            $found->setAttribute(
+                'api_workflow_summary',
+                $summary->toArray()['workflow_summary'],
+            );
             $found->setAttribute(
                 'api_editor_current_version_editable',
                 $this->editorAvailability->currentVersionEditable($found),
@@ -257,11 +271,29 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             $found = $this->requiredDocument($request, $legalDocument);
             $actor = $this->actor($request);
             $this->access->authorizePermission($actor, $found, 'legal_archive.update');
+            $this->assertLinkedContractUpdateAllowed($actor, $found);
             $updated = $this->registry->update($found, $this->organizationId($request), (int) $actor->id, $request->validated());
 
             return $this->etag(AdminResponse::success(new LegalArchiveDocumentResource($updated), trans_message('legal_archive.messages.document_updated')), $updated);
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'document_update', ['document_id' => $legalDocument]);
+        }
+    }
+
+    private function assertLinkedContractUpdateAllowed(User $actor, \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument $document): void
+    {
+        $contracts = Contract::query()
+            ->where('organization_id', (int) $document->organization_id)
+            ->where('legal_archive_document_id', (int) $document->id)
+            ->get(['project_id']);
+
+        foreach ($contracts as $contract) {
+            if (! $this->authorization->can($actor, 'contracts.edit', [
+                'organization_id' => (int) $document->organization_id,
+                'project_id' => (int) $contract->project_id,
+            ])) {
+                throw (new AuthorizationException)->withStatus(403);
+            }
         }
     }
 
@@ -295,6 +327,25 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             return $this->etag(AdminResponse::success(new LegalArchiveDocumentResource($updated), trans_message('legal_archive.messages.document_activated')), $updated);
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'document_activate', ['document_id' => $legalDocument]);
+        }
+    }
+
+    public function updateObligation(UpdateLegalDocumentObligationRequest $request, string $legalDocument, int $obligation): JsonResponse
+    {
+        try {
+            $document = $this->requiredDocument($request, $legalDocument);
+            $actor = $this->actor($request);
+            $this->access->authorizePermission($actor, $document, 'legal_archive.update');
+            $this->assertLinkedContractUpdateAllowed($actor, $document);
+            $updated = $this->obligationExecution->update($document, $obligation, $actor, $request->validated());
+
+            return AdminResponse::success([
+                'id' => (int) $updated->id,
+                'status' => (string) $updated->status,
+                'completed_at' => $updated->completed_at?->toISOString(),
+            ], trans_message('legal_archive.messages.obligation_updated'));
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'document_obligation_update', ['document_id' => $legalDocument, 'obligation_id' => $obligation]);
         }
     }
 
