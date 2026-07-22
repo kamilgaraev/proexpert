@@ -142,7 +142,7 @@ final class ProductionReadinessGateTest extends TestCase
     public static function requiredQuantityCoverageOmissions(): iterable
     {
         yield 'heating source' => ['heating', 'heating.unit', 'heating_source_type_missing'];
-        yield 'sewer outlet' => ['sewerage', 'sewerage.outlets', 'sewer_outlet_route_missing'];
+        yield 'sewer outlet' => ['sewerage', 'sewerage.outlet_route', 'sewer_outlet_route_missing'];
     }
 
     #[Test]
