@@ -62,7 +62,7 @@ return new class extends Migration
                         AND jsonb_path_exists(result_delta, '$.non_target_fingerprints')
                         AND (result_delta - ARRAY['target_package','target_before_fingerprint','target_after_fingerprint','non_target_fingerprints']::text[]) = '{}'::jsonb
                         AND jsonb_typeof(result_delta->'target_package') = 'object'
-                        AND (result_delta->'target_package' - ARRAY['key','sections']::text[]) = '{}'::jsonb
+                        AND ((result_delta->'target_package') - ARRAY['key','sections']::text[]) = '{}'::jsonb
                         AND jsonb_path_exists(result_delta->'target_package', '$.key')
                         AND result_delta->'target_package'->>'key' ~ '^[A-Za-z0-9:._-]{1,120}$'
                         AND (NOT jsonb_path_exists(result_delta->'target_package', '$.sections') OR jsonb_typeof(result_delta->'target_package'->'sections') = 'array')

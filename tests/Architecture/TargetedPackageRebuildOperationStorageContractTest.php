@@ -41,7 +41,7 @@ final class TargetedPackageRebuildOperationStorageContractTest extends TestCase
     }
 
     #[Test]
-    public function it_executes_postgres_json_key_constraints_without_question_mark_operators(): void
+    public function it_parenthesizes_nested_jsonb_key_deletion(): void
     {
         $migration = (string) file_get_contents(
             dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_22_000200_create_estimate_generation_targeted_rebuild_operations.php',
@@ -60,10 +60,7 @@ final class TargetedPackageRebuildOperationStorageContractTest extends TestCase
             "/result_delta - ARRAY\\['target_package','target_before_fingerprint','target_after_fingerprint','non_target_fingerprints'\\]::text\\[\\]/",
             $migration,
         );
-        self::assertMatchesRegularExpression(
-            "/result_delta->'target_package' - ARRAY\\['key','sections'\\]::text\\[\\]/",
-            $migration,
-        );
+        self::assertStringContainsString("((result_delta->'target_package') - ARRAY['key','sections']::text[]) = '{}'::jsonb", $migration);
         self::assertMatchesRegularExpression(
             "/safe_arbiter_review - ARRAY\\['mode','status','outcome','input_hash','schema_version','prompt_version','model','findings','cycle','remediation','input_tokens','output_tokens'\\]::text\\[\\]/",
             $migration,
