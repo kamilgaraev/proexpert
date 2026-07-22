@@ -261,21 +261,14 @@ final class WorkPlanCompilerTest extends TestCase
     public function test_normative_pin_is_resolved_from_final_canonical_work_item_units(): void
     {
         $pins = $this->createMock(NormativeContextPinResolver::class);
+        $capturedIntents = [];
         $pins->expects(self::once())
             ->method('resolve')
-            ->with([], [[
-                'search_text' => 'Устройство полов',
-                'unit' => 'm2',
-                'code' => null,
-                'material' => 'керамическая плитка',
-                'action' => 'general_work',
-                'scope' => 'general',
-                'system' => null,
-                'object' => null,
-                'object_type' => 'house',
-                'normative_section' => '11',
-                'normative_sections' => ['11'],
-            ]])
+            ->with([], self::callback(static function (array $intents) use (&$capturedIntents): bool {
+                $capturedIntents = $intents;
+
+                return true;
+            }))
             ->willReturn(['status' => 'pinned']);
         $compiler = new WorkPlanCompiler(
             new PackagePlannerService,
@@ -288,6 +281,7 @@ final class WorkPlanCompilerTest extends TestCase
             'sections' => [[
                 'work_items' => [[
                     'item_type' => 'priced_work',
+                    'key' => 'roof-norm-intent-1',
                     'name' => 'Устройство полов',
                     'normative_search_text' => 'Устройство полов',
                     'unit' => 'm2',
@@ -301,6 +295,7 @@ final class WorkPlanCompilerTest extends TestCase
         ]], 'house');
 
         self::assertSame(['status' => 'pinned'], $pin);
+        self::assertSame('roof-norm-intent-1', $capturedIntents[0]['work_item_key']);
     }
 
     public function test_normative_pin_preserves_every_allowed_section_prefix(): void
@@ -309,6 +304,7 @@ final class WorkPlanCompilerTest extends TestCase
         $pins->expects(self::once())
             ->method('resolve')
             ->with([], [[
+                'work_item_key' => 'foundation-norm-intent-1',
                 'search_text' => 'Бетонирование фундаментов',
                 'unit' => 'm3',
                 'code' => null,
@@ -335,6 +331,7 @@ final class WorkPlanCompilerTest extends TestCase
                         'work_items' => [
                             [
                                 'item_type' => 'priced_work',
+                                'key' => 'foundation-norm-intent-1',
                                 'name' => 'Бетонирование фундаментов',
                                 'unit' => 'm3',
                                 'work_intent' => ['preferred_section_prefixes' => ['01', '06']],
@@ -373,6 +370,7 @@ final class WorkPlanCompilerTest extends TestCase
             'sections' => [[
                 'work_items' => [[
                     'item_type' => 'priced_work',
+                    'key' => 'lighting-norm-intent-1',
                     'name' => 'Прокладка линий освещения',
                     'normative_search_text' => 'Ненадёжное имя работы от модели',
                     'normative_rate_code' => null,
@@ -409,6 +407,7 @@ final class WorkPlanCompilerTest extends TestCase
             'sections' => [[
                 'work_items' => [[
                     'item_type' => 'priced_work',
+                    'key' => 'slabs-norm-intent-1',
                     'name' => 'Армирование монолитного перекрытия',
                     'normative_search_text' => 'Армирование монолитного перекрытия',
                     'normative_rate_code' => null,

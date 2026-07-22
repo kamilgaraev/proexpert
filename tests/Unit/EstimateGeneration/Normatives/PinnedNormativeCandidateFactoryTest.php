@@ -38,8 +38,32 @@ final class PinnedNormativeCandidateFactoryTest extends TestCase
         self::assertSame(['lintel'], array_map(static fn ($candidate): string => $candidate->id, $selected));
     }
 
+    public function test_work_item_candidate_map_strictly_limits_the_pinned_catalog(): void
+    {
+        $candidates = [
+            $this->candidate('roof-rate', '12-01-001-01', 'Монтаж покрытия', '12-01', 'м2'),
+            $this->candidate('roof-rate-alternative', '12-01-001-02', 'Монтаж покрытия', '12-01', 'м2'),
+        ];
+
+        $selected = (new PinnedNormativeCandidateFactory)->forWorkItem(
+            $candidates,
+            ['key' => 'roof-norm-intent-1', 'name' => 'Монтаж покрытия', 'unit' => 'м2'],
+            ['12'],
+            null,
+            ['roof-norm-intent-1' => ['roof-rate']],
+        );
+
+        self::assertSame(['roof-rate'], array_map(static fn ($item): string => $item->id, $selected));
+    }
+
     /** @return array<string, mixed> */
-    private function candidate(string $id, string $code, string $name): array
+    private function candidate(
+        string $id,
+        string $code,
+        string $name,
+        string $sectionCode = '07-01',
+        string $unit = 'шт',
+    ): array
     {
         return [
             'candidate_id' => $id,
@@ -49,8 +73,8 @@ final class PinnedNormativeCandidateFactoryTest extends TestCase
             'dataset_status' => 'active',
             'code' => $code,
             'name' => $name,
-            'unit' => 'шт',
-            'section' => ['code' => '07-01', 'name' => 'Конструкции сборные железобетонные'],
+            'unit' => $unit,
+            'section' => ['code' => $sectionCode, 'name' => 'Конструкции сборные железобетонные'],
             'retrieval_metadata' => [],
             'work_composition' => [],
         ];

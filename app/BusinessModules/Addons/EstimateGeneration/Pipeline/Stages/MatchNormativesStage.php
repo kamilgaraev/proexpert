@@ -129,11 +129,15 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                     }
                     $decision = $this->intentFactory->decision($workItem, $decisionContext);
                     $catalogCandidates = is_array($pin['catalog_candidates'] ?? null) ? $pin['catalog_candidates'] : [];
+                    $candidateIdsByWorkItem = is_array($pin['candidate_ids_by_work_item'] ?? null)
+                        ? $pin['candidate_ids_by_work_item']
+                        : [];
                     $pinnedCandidates = $this->pinnedCandidates->forWorkItem(
                         $catalogCandidates,
                         $workItem,
                         $intent->normativeSections,
                         $intent,
+                        $candidateIdsByWorkItem,
                     );
                     if ($pinnedCandidates === []) {
                         $telemetry->missingPinnedCandidate();

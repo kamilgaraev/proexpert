@@ -136,7 +136,7 @@ class NormativeContextPinResolver
         return null;
     }
 
-    /** @return list<array{search_text: string, unit: string, code?: string|null, material?: string|null, action?: string|null, scope?: string|null, system?: string|null, object?: string|null, object_type?: string|null, normative_section?: string|null, normative_sections?: list<string>}>|null */
+    /** @return list<array{work_item_key?: string, search_text: string, unit: string, code?: string|null, material?: string|null, action?: string|null, scope?: string|null, system?: string|null, object?: string|null, object_type?: string|null, normative_section?: string|null, normative_sections?: list<string>}>|null */
     private function intents(array $workIntents): ?array
     {
         $resolved = [];
@@ -146,6 +146,7 @@ class NormativeContextPinResolver
             }
             $search = trim((string) ($intent['search_text'] ?? ''));
             $unit = trim((string) ($intent['unit'] ?? ''));
+            $workItemKey = isset($intent['work_item_key']) ? trim((string) $intent['work_item_key']) : null;
             $code = isset($intent['code']) ? trim((string) $intent['code']) : null;
             $material = isset($intent['material']) ? trim((string) $intent['material']) : null;
             $action = isset($intent['action']) ? trim((string) $intent['action']) : null;
@@ -175,6 +176,7 @@ class NormativeContextPinResolver
                 || ($objectType !== null && mb_strlen($objectType) > 80)
                 || ($normativeSection !== null && mb_strlen($normativeSection) > 32)
                 || count($normativeSections) > 8
+                || ($workItemKey !== null && preg_match('/^[A-Za-z0-9:._-]{1,120}$/D', $workItemKey) !== 1)
                 || array_filter($normativeSections, static fn (string $section): bool => mb_strlen($section) > 32) !== []) {
                 continue;
             }
@@ -183,8 +185,12 @@ class NormativeContextPinResolver
                 (string) $system, (string) $object, implode(',', $normativeSections),
                 (string) $objectType,
                 hash('sha256', json_encode([$specializationScenario, $specializationEvidence], JSON_THROW_ON_ERROR)),
+                (string) $workItemKey,
             ]));
             $resolved[$key] = ['search_text' => $search, 'unit' => $unit, 'code' => $code];
+            if ($workItemKey !== null) {
+                $resolved[$key]['work_item_key'] = $workItemKey;
+            }
             foreach (['material' => $material, 'action' => $action, 'scope' => $scope, 'system' => $system, 'object' => $object, 'object_type' => $objectType] as $field => $value) {
                 if ($value !== null && $value !== '') {
                     $resolved[$key][$field] = $value;

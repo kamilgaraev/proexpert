@@ -187,7 +187,7 @@ final readonly class WorkPlanCompiler
         ];
     }
 
-    /** @return list<array{search_text: string, unit: string, code: string|null, material?: string, action: string, scope: string, system: string|null, object: string|null, object_type?: string, normative_section: string|null, normative_sections: list<string>}> */
+    /** @return list<array{work_item_key: string, search_text: string, unit: string, code: string|null, material?: string, action: string, scope: string, system: string|null, object: string|null, object_type?: string, normative_section: string|null, normative_sections: list<string>}> */
     private function normativeIntents(array $localEstimates, ?string $objectType = null): array
     {
         $intents = [];
@@ -196,6 +196,10 @@ final readonly class WorkPlanCompiler
             foreach ($localEstimate['sections'] ?? [] as $section) {
                 foreach ($section['work_items'] ?? [] as $item) {
                     if (! is_array($item) || in_array((string) ($item['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note', 'quantity_review'], true)) {
+                        continue;
+                    }
+                    $workItemKey = (string) ($item['key'] ?? '');
+                    if ($workItemKey === '') {
                         continue;
                     }
                     $recordedIntent = is_array($item['work_intent'] ?? null) ? $item['work_intent'] : null;
@@ -219,6 +223,7 @@ final readonly class WorkPlanCompiler
                     $normativeSection = count($normativeSections) === 1 ? $normativeSections[0] : null;
                     $material = $this->intentString($recordedIntent, 'material') ?? $classified->material;
                     $resolvedIntent = [
+                        'work_item_key' => $workItemKey,
                         'search_text' => $this->intentString($scenario, 'normative_search_text')
                             ?? (string) ($item['normative_search_text'] ?? $item['name'] ?? ''),
                         'unit' => (string) ($item['unit'] ?? ''),
