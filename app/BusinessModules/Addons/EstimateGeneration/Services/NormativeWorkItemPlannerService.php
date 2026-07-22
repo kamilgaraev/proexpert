@@ -1321,26 +1321,6 @@ final class NormativeWorkItemPlannerService
 
     /**
      * @param  array<string, mixed>  $analysis
-     * @param  array<int, string>  $needles
-     */
-    private function analysisMentionsAny(array $analysis, array $needles): bool
-    {
-        $text = mb_strtolower(implode(' ', $this->documentTextFragments(
-            $analysis,
-            is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : []
-        )));
-
-        foreach ($needles as $needle) {
-            if ($needle !== '' && str_contains($text, mb_strtolower($needle))) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * @param  array<string, mixed>  $analysis
      * @return array{quantities: array<string, array<string, mixed>>, features: array<string, mixed>}
      */
     private function documentQuantityModel(array $analysis): array
