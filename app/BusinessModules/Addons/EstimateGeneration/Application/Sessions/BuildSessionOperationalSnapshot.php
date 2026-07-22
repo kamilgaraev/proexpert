@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\OperationalUsage
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DocumentReadinessClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessEvaluator;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateScopeMetadataProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\OperationalReadinessInputFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReadinessResult;
 use Carbon\CarbonImmutable;
@@ -118,6 +119,9 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
                 ->selectRaw("COALESCE(draft_payload #>> '{quality_summary,status}', '') AS quality_status")
                 ->selectRaw("COALESCE(draft_payload #>> '{quality_summary,level}', '') AS quality_level")
                 ->selectRaw("COALESCE(draft_payload #> '{readiness_summary,blocking_issues}', '[]'::jsonb) AS draft_blocking_issues")
+                ->selectRaw("COALESCE(draft_payload #> '{completeness}', '{}'::jsonb) AS scope_completeness")
+                ->selectRaw("COALESCE(draft_payload #> '{budget_scope}', '{}'::jsonb) AS scope_budget")
+                ->selectRaw("COALESCE(draft_payload #> '{arbiter_review}', '{}'::jsonb) AS scope_arbiter_review")
                 ->selectRaw($this->jsonInteger('quality_total_work_items', '{quality_summary,total_work_items}'))
                 ->selectRaw($this->jsonInteger('quality_priced_work_items', '{quality_summary,priced_work_items}'))
                 ->selectRaw($this->jsonInteger('quality_operation_work_items', '{quality_summary,operation_work_items}'))
@@ -421,6 +425,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
                 'quality_level' => (string) ($session['quality_level'] ?? ''),
                 'warnings' => count($readiness['warnings']),
             ],
+            scopeSummary: $this->scopeSummary($session),
             usageSummary: OperationalUsageSummary::fromAggregate($usage),
             failureSummary: [
                 'active' => $this->number($failures, 'active'),
@@ -432,6 +437,18 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             ],
             objectInput: $base->objectInput,
         );
+    }
+
+    /** @return array<string, mixed> */
+    private function scopeSummary(array $session): array
+    {
+        $draft = [
+            'completeness' => $this->json($session['scope_completeness'] ?? []),
+            'budget_scope' => $this->json($session['scope_budget'] ?? []),
+            'arbiter_review' => $this->json($session['scope_arbiter_review'] ?? []),
+        ];
+
+        return (new EstimateScopeMetadataProjector)->project($draft, $draft['budget_scope']);
     }
 
     private function withPersistedBlockingIssues(ReadinessResult $readiness, array $session): ReadinessResult
