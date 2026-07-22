@@ -233,7 +233,6 @@ git commit -m "feat[lk]: ограничен цикл доработки паке
 ```php
 final readonly class TargetedPackageRebuildCommand
 {
-    /** @param list<array<string, mixed>> $approvedFindings */
     public function __construct(
         public int $sessionId,
         public int $organizationId,
@@ -243,7 +242,8 @@ final readonly class TargetedPackageRebuildCommand
         public string $operationId,
         public string $arbiterInputHash,
         public string $packageKey,
-        public array $approvedFindings,
+        public ArbiterVerdict $verdict,
+        public string $sessionStatus,
         public array $draft,
     ) {}
 }
@@ -285,10 +285,10 @@ public function it_refuses_missing_evidence_before_norm_matching_or_price_calcul
 
 Исполнитель обязан:
 
-1. Сверить `source_input_version`, ключ пакета, `arbiter_review.cycle.input_hash` и все `approvedFindings` с существующим `ArbiterVerdictValidator`.
-2. Сформировать кандидат только для `packageKey` из уже подтверждённых `quantity_evidence`, разрешённых scope decision и текущего regional context; если хотя бы один создаваемый work item не имеет такого основания, выбросить `TargetedPackageEvidenceRequired`.
-3. Передать список секций только кандидата в существующие `ResourceAssemblyService` и `EstimatePricingService`; список любого другого пакета в эти сервисы не передавать.
-4. Заменить кандидат через `TargetedPackageDraftPatcher` и сформировать только безопасные верхнеуровневые агрегаты (`normative_matching`, `budget_scope`, `completeness`) отдельным проектором, не обходящим и не меняющим `local_estimates`.
+1. Сверить `source_input_version`, ключ пакета, `arbiter_review.cycle.input_hash`, `arbiter_review.remediation` в фазе `attempted` и уже проверенный `ArbiterVerdict` из команды.
+2. Извлечь только существующий пакет `packageKey`. Исполнитель не создаёт, не удаляет и не меняет состав work item: отсутствующий компонент остаётся основанием для ручной проверки, а не поводом выдумать объём.
+3. Передать только work items этого пакета в `ResourceAssemblyService::enrich()`, затем в `AssembleMatchedResources` с synthetic single-package payload и в `EstimatePricingService::price()` с узким `PipelineContext`, построенным из идентификаторов команды. Каждый обрабатываемый work item должен иметь принятую quantity evidence без review blockers; иначе бросить `TargetedPackageEvidenceRequired` до выбора нормы или цены.
+4. Заменить кандидат через `TargetedPackageDraftPatcher` и сформировать только безопасные верхнеуровневые агрегаты (`normative_matching`, `budget_scope`, `completeness`) отдельным проектором, не обходящим и не меняющим `local_estimates`. Нормировщик переносит полный состав ресурсов нормы; исполнитель не фильтрует ни один ресурс.
 
 Не вызывать `PlanWorkItemsStage`, `EstimateValidationService::validate`, `BuildDraftStage`, `ValidateDraftStage` или full-pipeline persistence.
 
