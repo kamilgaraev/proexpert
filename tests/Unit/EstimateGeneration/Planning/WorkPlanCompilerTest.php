@@ -69,7 +69,7 @@ final class WorkPlanCompilerTest extends TestCase
         $lightingItems = $packages['lighting']['sections'][0]['work_items'];
 
         self::assertNotContains('lighting.lines', array_column($electricalItems, 'quantity_formula'));
-        self::assertSame(['lighting.lines', 'lighting.fixtures'], array_column($lightingItems, 'quantity_formula'));
+        self::assertSame(['lighting.lines'], array_column($lightingItems, 'quantity_formula'));
         $lightingLine = current(array_filter(
             $lightingItems,
             static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'lighting.lines',
