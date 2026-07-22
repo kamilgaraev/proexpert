@@ -100,6 +100,32 @@ final class ProjectFinanceHealthBuilderTest extends TestCase
         }
     }
 
+    public function test_it_keeps_historical_overdue_documents_out_of_forward_cash_flow_projection(): void
+    {
+        $historicalPeriod = ProjectCommandCenterPeriod::resolve(
+            'custom',
+            '2026-01-01',
+            '2026-01-31',
+            null,
+            null,
+            CarbonImmutable::parse('2026-07-21'),
+        );
+
+        $result = $this->builder()->fromFacts([
+            'metrics' => ['bac' => 1_000, 'ac' => 500, 'eac' => 1_100],
+            'payments' => [
+                ['direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-01-15'],
+                ['direction' => 'outgoing', 'amount' => 250, 'due_at' => '2026-08-10'],
+            ],
+        ], CarbonImmutable::parse('2026-07-21'), $historicalPeriod)->toArray();
+
+        self::assertSame('2026-07-21', $result['cash_flow']['as_of']);
+        self::assertSame(90, $result['cash_flow']['horizon_days']);
+        self::assertSame(700.0, $result['cash_flow']['overdue']['incoming']);
+        self::assertSame(0.0, $result['cash_flow']['projections'][0]['incoming']);
+        self::assertSame(-250.0, $result['cash_flow']['projections'][0]['net']);
+    }
+
     public function test_it_marks_missing_actual_costs_explicitly(): void
     {
         $result = $this->builder()->fromFacts([

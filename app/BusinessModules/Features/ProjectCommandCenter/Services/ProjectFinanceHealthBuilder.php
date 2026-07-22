@@ -30,7 +30,7 @@ final class ProjectFinanceHealthBuilder
 
         $visibleOrganizationId = $this->visibleOrganizationId($projectContext);
         $metrics = $this->evmService->calculateMetrics($project, $visibleOrganizationId);
-        $payments = $this->paymentFacts($project->getKey(), $visibleOrganizationId, $period);
+        $payments = $this->paymentFacts($project->getKey(), $visibleOrganizationId);
         $contractedRevenue = $this->contractedRevenue($project, $projectContext, $visibleOrganizationId);
 
         return $this->fromFacts([
@@ -121,7 +121,7 @@ final class ProjectFinanceHealthBuilder
         );
     }
 
-    private function paymentFacts(int $projectId, ?int $visibleOrganizationId, ProjectCommandCenterPeriod $period): array
+    private function paymentFacts(int $projectId, ?int $visibleOrganizationId): array
     {
         $query = DB::table('payment_documents')
             ->where('project_id', $projectId)
@@ -132,10 +132,6 @@ final class ProjectFinanceHealthBuilder
 
         if ($visibleOrganizationId !== null) {
             $query->where('organization_id', $visibleOrganizationId);
-        }
-
-        if ($period->hasRange()) {
-            $query->whereBetween('due_date', [$period->from->toDateString(), $period->to->toDateString()]);
         }
 
         return $query->get()
@@ -150,6 +146,7 @@ final class ProjectFinanceHealthBuilder
     private function cashFlow(array $payments, CarbonImmutable $asOf): array
     {
         $buckets = [30 => ['incoming' => 0.0, 'outgoing' => 0.0], 60 => ['incoming' => 0.0, 'outgoing' => 0.0], 90 => ['incoming' => 0.0, 'outgoing' => 0.0]];
+        $overdue = ['incoming' => 0.0, 'outgoing' => 0.0];
         $datedPayments = 0;
         $receivable = 0.0;
         $payable = 0.0;
@@ -170,8 +167,14 @@ final class ProjectFinanceHealthBuilder
             }
 
             $dueAt = CarbonImmutable::parse((string) $payment['due_at'])->startOfDay();
-            $days = max(0, $asOf->startOfDay()->diffInDays($dueAt, false));
+            $days = $asOf->startOfDay()->diffInDays($dueAt, false);
             $datedPayments++;
+
+            if ($days < 1) {
+                $overdue[$payment['direction']] += (float) $payment['amount'];
+                continue;
+            }
+
             $bucket = $days <= 30 ? 30 : ($days <= 60 ? 60 : ($days <= 90 ? 90 : null));
             if ($bucket === null) {
                 continue;
@@ -186,6 +189,12 @@ final class ProjectFinanceHealthBuilder
                 'reason_key' => 'project_command_center.finance.payment_schedule_unavailable',
                 'accounts_receivable' => round($receivable, 2),
                 'accounts_payable' => round($payable, 2),
+                'as_of' => $asOf->toDateString(),
+                'horizon_days' => 90,
+                'overdue' => [
+                    'incoming' => round($overdue['incoming'], 2),
+                    'outgoing' => round($overdue['outgoing'], 2),
+                ],
                 'projections' => [],
             ];
         }
@@ -205,6 +214,12 @@ final class ProjectFinanceHealthBuilder
             'reason_key' => null,
             'accounts_receivable' => round($receivable, 2),
             'accounts_payable' => round($payable, 2),
+            'as_of' => $asOf->toDateString(),
+            'horizon_days' => 90,
+            'overdue' => [
+                'incoming' => round($overdue['incoming'], 2),
+                'outgoing' => round($overdue['outgoing'], 2),
+            ],
             'projections' => $projections,
         ];
     }
