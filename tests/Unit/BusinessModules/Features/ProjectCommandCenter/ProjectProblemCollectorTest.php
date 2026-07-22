@@ -232,6 +232,18 @@ final class ProjectProblemCollectorTest extends TestCase
         self::assertTrue((new ProcurementProblemSource($this->activeProjectModules(['procurement'])))->isAvailable($context));
     }
 
+    public function test_procurement_user_only_sees_procurement_problem_source(): void
+    {
+        $context = $this->context(
+            [],
+            static fn (string $permission): bool => $permission === 'procurement.view',
+        );
+
+        self::assertFalse((new OverdueScheduleProblemSource($this->activeProjectModules(['schedule-management'])))->isAvailable($context));
+        self::assertFalse((new OverdueSiteRequestProblemSource($this->activeProjectModules(['site-requests'])))->isAvailable($context));
+        self::assertTrue((new ProcurementProblemSource($this->activeProjectModules(['procurement'])))->isAvailable($context));
+    }
+
     private function problem(
         string $id,
         string $flagSeverity,
@@ -268,7 +280,7 @@ final class ProjectProblemCollectorTest extends TestCase
         return $project;
     }
 
-    private function context(array $permissions = ['problems.view']): ProjectContext
+    private function context(array $permissions = ['problems.view'], ?\Closure $permissionResolver = null): ProjectContext
     {
         $role = ProjectOrganizationRole::OWNER;
 
@@ -280,6 +292,7 @@ final class ProjectProblemCollectorTest extends TestCase
             role: $role,
             roleConfig: new ProjectRoleConfig($role, $permissions, false, true, false, false, false, 'Роль'),
             isOwner: false,
+            permissionResolver: $permissionResolver,
         );
     }
 

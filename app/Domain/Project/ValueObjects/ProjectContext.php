@@ -3,6 +3,7 @@
 namespace App\Domain\Project\ValueObjects;
 
 use App\Enums\ProjectOrganizationRole;
+use Closure;
 
 class ProjectContext
 {
@@ -14,6 +15,7 @@ class ProjectContext
         public readonly ProjectOrganizationRole $role,
         public readonly ProjectRoleConfig $roleConfig,
         public readonly bool $isOwner,
+        public readonly ?Closure $permissionResolver = null,
     ) {}
     
     /**
@@ -21,7 +23,22 @@ class ProjectContext
      */
     public function hasPermission(string $permission): bool
     {
-        return $this->roleConfig->hasPermission($permission);
+        return $this->roleConfig->hasPermission($permission)
+            || ($this->permissionResolver !== null && ($this->permissionResolver)($permission));
+    }
+
+    public function withPermissionResolver(Closure $permissionResolver): self
+    {
+        return new self(
+            projectId: $this->projectId,
+            projectName: $this->projectName,
+            organizationId: $this->organizationId,
+            organizationName: $this->organizationName,
+            role: $this->role,
+            roleConfig: $this->roleConfig,
+            isOwner: $this->isOwner,
+            permissionResolver: $permissionResolver,
+        );
     }
     
     /**
