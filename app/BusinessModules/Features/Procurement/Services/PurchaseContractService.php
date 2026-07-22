@@ -6,6 +6,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\DTOs\Contract\ContractDTO;
 use App\DTOs\Contract\ContractDossierCreationInput;
+use App\DTOs\Contract\ContractDossierCreationResult;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
@@ -46,13 +47,35 @@ class PurchaseContractService
 
     public function createFromOrder(PurchaseOrder $order): Contract
     {
-        return DB::transaction(function () use ($order): Contract {
+        return $this->createDossierFromOrder($order)->contract;
+    }
+
+    public function createDossierFromOrder(PurchaseOrder $order): ContractDossierCreationResult
+    {
+        return DB::transaction(function () use ($order): ContractDossierCreationResult {
             $order = PurchaseOrder::query()
                 ->whereKey($order->id)
                 ->lockForUpdate()
                 ->firstOrFail();
             if ($order->contract_id !== null) {
-                return $order->contract()->firstOrFail();
+                $contract = $order->contract()->with([
+                    'supplier',
+                    'contractor',
+                    'project',
+                    'organization',
+                    'legalArchiveDocument',
+                ])->firstOrFail();
+                $document = $contract->legalArchiveDocument;
+
+                if (
+                    (int) $contract->organization_id !== (int) $order->organization_id
+                    || $document === null
+                    || (int) $document->organization_id !== (int) $order->organization_id
+                ) {
+                    throw new \DomainException(trans_message('procurement.purchase_orders.create_contract_error'));
+                }
+
+                return new ContractDossierCreationResult($contract, $document, true);
             }
             if (! in_array($order->status, [
                 PurchaseOrderStatusEnum::CONFIRMED,
@@ -107,7 +130,11 @@ class PurchaseContractService
                 DB::afterCommit(static fn () => event(new \App\BusinessModules\Features\Procurement\Events\PurchaseContractCreated($contract, $order)));
             }
 
-            return $contract->fresh(['supplier', 'contractor', 'project', 'organization']);
+            return new ContractDossierCreationResult(
+                $contract->fresh(['supplier', 'contractor', 'project', 'organization', 'legalArchiveDocument']) ?? $contract,
+                $result->document,
+                $result->replayed,
+            );
         });
     }
 

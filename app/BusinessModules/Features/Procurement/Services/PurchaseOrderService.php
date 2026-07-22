@@ -10,6 +10,7 @@ use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDelivery
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\DTOs\Contract\ContractDossierCreationResult;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\Models\Contract;
@@ -345,9 +346,9 @@ class PurchaseOrderService
         }
     }
 
-    public function createContractFromOrder(PurchaseOrder $order): Contract
+    public function createContractFromOrder(PurchaseOrder $order): ContractDossierCreationResult
     {
-        return app(PurchaseContractService::class)->createFromOrder($order);
+        return app(PurchaseContractService::class)->createDossierFromOrder($order);
     }
 
     public function buildReceiptDocumentPreview(
