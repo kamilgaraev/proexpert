@@ -74,4 +74,26 @@ final class OnlyOfficeProductionTransportContractTest extends TestCase
             $runtimeGuard,
         );
     }
+
+    public function test_deployment_verifies_the_running_api_secret_after_recreation(): void
+    {
+        $deployment = (string) file_get_contents(dirname(__DIR__, 3).'/.github/workflows/deploy-backend.yml');
+        $guardStart = strpos($deployment, 'ensure_onlyoffice_api_runtime_jwt_secret_alignment()');
+        $guardEnd = strpos($deployment, 'apply_onlyoffice_callback_transport()');
+        $apiStart = strpos($deployment, 'docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}');
+        $guardCall = strrpos($deployment, 'ensure_onlyoffice_api_runtime_jwt_secret_alignment');
+
+        self::assertIsInt($guardStart);
+        self::assertIsInt($guardEnd);
+        self::assertIsInt($apiStart);
+        self::assertIsInt($guardCall);
+        self::assertGreaterThan($apiStart, $guardCall);
+        $guard = substr($deployment, $guardStart, $guardEnd - $guardStart);
+
+        self::assertStringContainsString('prohelper-api', $guard);
+        self::assertStringContainsString('LEGAL_DOCUMENT_EDITOR_JWT_SECRET', $guard);
+        self::assertStringContainsString('most-onlyoffice', $guard);
+        self::assertStringContainsString('JWT_SECRET', $guard);
+        self::assertStringNotContainsString('echo "${api_runtime_secret}"', $guard);
+    }
 }
