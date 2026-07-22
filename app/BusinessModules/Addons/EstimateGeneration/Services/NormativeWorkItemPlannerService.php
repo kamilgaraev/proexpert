@@ -108,39 +108,7 @@ final class NormativeWorkItemPlannerService
         $key = $packageKey.'-norm-intent-'.($index + 1);
 
         if ($this->isPlannerFallbackQuantity($quantity)) {
-            if (! $this->shouldExposePlannerFallback($definition, $localEstimate, $analysis)) {
-                return null;
-            }
-
-            return $this->basePricedWorkItem(
-                key: $key,
-                localEstimate: $localEstimate,
-                section: $section,
-                name: (string) $definition['name'],
-                searchText: (string) ($definition['normative_search_text'] ?? $definition['name']),
-                category: (string) $definition['category'],
-                unit: (string) $quantity['unit'],
-                quantity: (float) $quantity['value'],
-                quantityFormula: (string) $definition['quantity_key'],
-                quantityBasis: (string) $quantity['basis'],
-                sourceRefs: [],
-                confidence: $this->plannedQuantityConfidence($definition, $quantity, 0.48),
-                validationFlags: [
-                    'normative_required',
-                    'document_takeoff_required',
-                    ...$this->materialScenarioFlags($definition),
-                ],
-                metadata: [
-                    'generation_source' => $definition['generation_source'] ?? 'normative_intent_catalog',
-                    'quantity_key' => $definition['quantity_key'],
-                    'quantity_source' => $quantity['source'],
-                    'package_key' => $packageKey,
-                    ...($definition['metadata'] ?? []),
-                    ...$this->quantityLearningMetadata($quantity),
-                ],
-                normativeRateCode: isset($definition['normative_rate_code']) ? (string) $definition['normative_rate_code'] : null,
-                operations: $definition['operations'] ?? $this->operationBank((string) $definition['category'])
-            );
+            return null;
         }
 
         if (($quantity['review_required'] ?? false) === true) {
@@ -1349,63 +1317,6 @@ final class NormativeWorkItemPlannerService
         return
             ($quantity['source'] ?? null) === 'planner_fallback'
             && ($quantity['source_refs'] ?? []) === [];
-    }
-
-    /**
-     * @param  array<string, mixed>  $definition
-     * @param  array<string, mixed>  $localEstimate
-     * @param  array<string, mixed>  $analysis
-     */
-    private function shouldExposePlannerFallback(array $definition, array $localEstimate, array $analysis): bool
-    {
-        $packageKey = (string) ($localEstimate['key'] ?? '');
-        $category = (string) ($definition['category'] ?? '');
-
-        if (in_array($packageKey, ['external_networks', 'siteworks', 'roads'], true)) {
-            return $this->analysisMentionsAny($analysis, match ($packageKey) {
-                'external_networks' => [
-                    'external networks',
-                    'utility',
-                    'utilities',
-                    'наружн',
-                    'сети',
-                    'подключен',
-                ],
-                'siteworks' => [
-                    'landscaping',
-                    'siteworks',
-                    'благоустрой',
-                    'озелен',
-                    'отмост',
-                    'тротуар',
-                ],
-                'roads' => [
-                    'roads',
-                    'driveway',
-                    'parking',
-                    'дорог',
-                    'проезд',
-                    'подъезд',
-                    'парков',
-                ],
-                default => [],
-            });
-        }
-
-        if (! in_array($packageKey, ['ventilation', 'fire_safety'], true) && $category !== 'ventilation') {
-            return true;
-        }
-
-        return $this->analysisMentionsAny($analysis, [
-            'ventilation',
-            'fire safety',
-            'fire alarm',
-            'smoke removal',
-            'вентиляц',
-            'пожарн',
-            'сигнализац',
-            'дымоудален',
-        ]);
     }
 
     /**
