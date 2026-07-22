@@ -164,9 +164,41 @@ final class RunTargetedPackageRebuildOperationTest extends TestCase
     }
 
     #[Test]
+    public function it_commits_when_the_second_review_hashes_the_rebuilt_draft_context(): void
+    {
+        $operation = $this->queued();
+        $operations = new InMemoryRunTargetedPackageOperationStore($operation);
+        $rebuilds = new RecordingTargetedPackageRebuildExecutor;
+        $reviews = new RecordingTargetedPackageRebuildReviewer(hashRebuiltDraft: true);
+        $commits = new RecordingTargetedPackageRebuildCommitter;
+        $handler = $this->handler(
+            $operations,
+            new InMemoryTargetedPackageRebuildSessionSource($this->snapshot()),
+            $rebuilds,
+            $reviews,
+            $commits,
+        );
+
+        $handler->handle($operation->operationId);
+
+        self::assertSame('committed', $operations->operation->status);
+        self::assertCount(1, $commits->commands);
+    }
+
+    #[Test]
     public function it_recovers_a_reviewed_delta_without_a_second_arbiter_wire_call(): void
     {
         $operation = $this->reviewed();
+        $attempted = (new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterRemediationCoordinator)
+            ->markAttempted($this->draft(), $operation->rootInputHash);
+        $rebuilt = (new TargetedPackageDraftPatcher)->replace(
+            $attempted,
+            $operation->sourceInputVersion,
+            $operation->packageKey,
+            $operation->resultDelta['target_package'],
+        );
+        self::assertNotSame($operation->rootInputHash, $operation->safeArbiterReview['input_hash']);
+        self::assertSame($operation->safeArbiterReview['input_hash'], $this->reviewInputHash($rebuilt->draft));
         $operations = new InMemoryRunTargetedPackageOperationStore($operation);
         $rebuilds = new RecordingTargetedPackageRebuildExecutor;
         $reviews = new RecordingTargetedPackageRebuildReviewer;
@@ -186,6 +218,50 @@ final class RunTargetedPackageRebuildOperationTest extends TestCase
         self::assertSame([], $reviews->contexts);
         self::assertCount(1, $commits->commands);
         self::assertSame('reviewed', $commits->reviewedDrafts[0]['arbiter_review']['remediation']['phase']);
+    }
+
+    #[Test]
+    public function it_rejects_a_reviewed_delta_when_its_second_review_hash_does_not_match_the_rebuilt_package(): void
+    {
+        $reviewed = $this->reviewed();
+        $review = $reviewed->safeArbiterReview;
+        $review['input_hash'] = 'sha256:'.str_repeat('c', 64);
+        $operation = TargetedPackageRebuildOperationData::fromPersisted(
+            operationId: $reviewed->operationId,
+            idempotencyKey: $reviewed->idempotencyKey,
+            organizationId: $reviewed->organizationId,
+            projectId: $reviewed->projectId,
+            sessionId: $reviewed->sessionId,
+            expectedStateVersion: $reviewed->expectedStateVersion,
+            sourceInputVersion: $reviewed->sourceInputVersion,
+            rootInputHash: $reviewed->rootInputHash,
+            sourceDraftFingerprint: $reviewed->sourceDraftFingerprint,
+            packageKey: $reviewed->packageKey,
+            status: $reviewed->status,
+            leaseToken: null,
+            leaseExpiresAt: null,
+            attemptCount: $reviewed->attemptCount,
+            resultDelta: $reviewed->resultDelta,
+            safeArbiterReview: $review,
+        );
+        $operations = new InMemoryRunTargetedPackageOperationStore($operation);
+        $rebuilds = new RecordingTargetedPackageRebuildExecutor;
+        $reviews = new RecordingTargetedPackageRebuildReviewer;
+        $commits = new RecordingTargetedPackageRebuildCommitter;
+        $handler = $this->handler(
+            $operations,
+            new InMemoryTargetedPackageRebuildSessionSource($this->snapshot()),
+            $rebuilds,
+            $reviews,
+            $commits,
+        );
+
+        $handler->handle($operation->operationId);
+
+        self::assertSame('stale', $operations->operation->status);
+        self::assertSame([], $rebuilds->commands);
+        self::assertSame([], $reviews->contexts);
+        self::assertSame([], $commits->commands);
     }
 
     #[Test]
@@ -291,7 +367,7 @@ final class RunTargetedPackageRebuildOperationTest extends TestCase
                     'target_after_fingerprint' => $patch->targetAfterFingerprint,
                     'non_target_fingerprints' => $patch->nonTargetFingerprints,
                 ],
-                $this->review('passed', 'reviewed'),
+                $this->review('passed', 'reviewed', $this->reviewInputHash($patch->draft)),
             );
     }
 
@@ -314,7 +390,18 @@ final class RunTargetedPackageRebuildOperationTest extends TestCase
         return [
             'source_input_version' => 'sha256:'.str_repeat('a', 64),
             'local_estimates' => [
-                ['key' => 'roof'],
+                [
+                    'key' => 'roof',
+                    'sections' => [[
+                        'key' => 'roof-section',
+                        'work_items' => [[
+                            'key' => 'roof-work',
+                            'name' => 'Roof covering',
+                            'quantity' => 24.5,
+                            'unit' => 'm2',
+                        ]],
+                    ]],
+                ],
                 ['key' => 'walls'],
             ],
             'arbiter_review' => [
@@ -344,13 +431,13 @@ final class RunTargetedPackageRebuildOperationTest extends TestCase
     }
 
     /** @return array<string, mixed> */
-    private function review(string $outcome, string $phase): array
+    private function review(string $outcome, string $phase, string $inputHash): array
     {
         return [
             'mode' => 'shadow',
             'status' => 'reviewed',
             'outcome' => $outcome,
-            'input_hash' => 'sha256:'.str_repeat('b', 64),
+            'input_hash' => $inputHash,
             'schema_version' => 'completeness-arbiter:v1',
             'prompt_version' => 'completeness-arbiter:v1',
             'model' => 'openai/gpt-5-mini',
@@ -370,6 +457,13 @@ final class RunTargetedPackageRebuildOperationTest extends TestCase
                 'review_outcome' => $outcome,
             ],
         ];
+    }
+
+    /** @param array<string, mixed> $draft */
+    private function reviewInputHash(array $draft): string
+    {
+        return (new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterReviewContextFactory)
+            ->make($draft)['input_hash'];
     }
 }
 
@@ -440,7 +534,10 @@ final class RecordingTargetedPackageRebuildReviewer implements TargetedPackageRe
     /** @var list<ArbiterOperationContext> */
     public array $contexts = [];
 
-    public function __construct(private bool $unavailable = false) {}
+    public function __construct(
+        private bool $unavailable = false,
+        private bool $hashRebuiltDraft = true,
+    ) {}
 
     /** @return array<string, mixed> */
     public function review(array $draft, ?ArbiterOperationContext $operation = null): array
@@ -450,17 +547,21 @@ final class RecordingTargetedPackageRebuildReviewer implements TargetedPackageRe
         }
         $this->contexts[] = $operation;
 
+        $inputHash = $this->hashRebuiltDraft
+            ? (new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterReviewContextFactory)->make($draft)['input_hash']
+            : 'sha256:'.str_repeat('b', 64);
         $draft['arbiter_review'] = [
             'mode' => 'shadow',
             'status' => $this->unavailable ? 'unavailable' : 'reviewed',
             'outcome' => $this->unavailable ? 'human_review' : 'passed',
-            'input_hash' => 'sha256:'.str_repeat('b', 64),
+            'input_hash' => $inputHash,
             'schema_version' => 'completeness-arbiter:v1',
             'prompt_version' => 'completeness-arbiter:v1',
             'model' => 'openai/gpt-5-mini',
             'findings' => [],
             'cycle' => [
-                'input_hash' => 'sha256:'.str_repeat('b', 64),
+                'input_hash' => (new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterReviewContextFactory)
+                    ->make($draft)['input_hash'],
                 'attempted' => false,
                 'target_package_keys' => ['roof'],
                 'status' => 'shadow_recommendation',

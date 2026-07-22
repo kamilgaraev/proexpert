@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterRemediationCoordinator;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterReviewContextFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterVerdict;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\TargetedPackageRebuildReviewer;
 use Closure;
@@ -141,7 +142,7 @@ final class RunTargetedPackageRebuildOperation implements TargetedPackageRebuild
             $this->assertRecoveredResult($operation, $result);
             $reviewedDraft = $result->draft;
             $reviewedDraft['arbiter_review'] = $operation->safeArbiterReview;
-            $this->assertReviewFence($operation, $reviewedDraft);
+            $this->assertReviewFence($result, $reviewedDraft);
         } catch (\Throwable) {
             $this->operations->save($operation->withStale());
 
@@ -269,15 +270,20 @@ final class RunTargetedPackageRebuildOperation implements TargetedPackageRebuild
     }
 
     /** @param array<string, mixed> $reviewedDraft */
-    private function assertReviewFence(TargetedPackageRebuildOperationData $operation, array $reviewedDraft): void
+    private function assertReviewFence(
+        TargetedPackagePatchResult $result,
+        array $reviewedDraft,
+    ): void
     {
         $review = $reviewedDraft['arbiter_review'] ?? null;
+        $expectedInputHash = (new ArbiterReviewContextFactory)->make($result->draft)['input_hash'] ?? null;
         if (! is_array($review)
             || ($review['mode'] ?? null) !== 'shadow'
             || ($review['status'] ?? null) !== 'reviewed'
             || ! in_array($review['outcome'] ?? null, ['passed', 'confirmed_scope_only'], true)
             || ! is_string($review['input_hash'] ?? null)
-            || ! hash_equals($operation->rootInputHash, $review['input_hash'])) {
+            || ! is_string($expectedInputHash)
+            || ! hash_equals($expectedInputHash, $review['input_hash'])) {
             throw new InvalidArgumentException('Targeted rebuild review is stale.');
         }
     }
