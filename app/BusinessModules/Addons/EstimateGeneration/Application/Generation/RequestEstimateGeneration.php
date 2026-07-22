@@ -103,7 +103,10 @@ final class RequestEstimateGeneration
 
         $refreshedContext = [
             ...$regionalContext,
-            ...$this->regionalContextResolver->resolve($regionalContext),
+            ...$this->regionalContextResolver->resolve([
+                ...($session->input_payload ?? []),
+                ...$regionalContext,
+            ]),
         ];
 
         if ($refreshedContext === $regionalContext) {

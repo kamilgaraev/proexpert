@@ -82,6 +82,39 @@ final class RetryEstimateGenerationSessionTest extends TestCase
     }
 
     #[Test]
+    public function restart_passes_session_context_to_regional_resolver(): void
+    {
+        $session = $this->generating();
+        $session->input_payload = [
+            'description' => 'Residential building in Republic of Tatarstan',
+            'region' => 'Republic of Tatarstan',
+            'regional_context' => [
+                'normative_dataset_version' => 'fsnb-2022',
+            ],
+        ];
+        $resolver = new class extends EstimateGenerationRegionalContextResolver {
+            /** @var array<string, mixed> */
+            public array $resolvedInput = [];
+
+            public function __construct() {}
+
+            public function resolve(array $input): array
+            {
+                $this->resolvedInput = $input;
+
+                return [];
+            }
+        };
+        [$action] = $this->action($session, $resolver);
+
+        $action->handle($this->command());
+
+        self::assertSame('Residential building in Republic of Tatarstan', $resolver->resolvedInput['description'] ?? null);
+        self::assertSame('Republic of Tatarstan', $resolver->resolvedInput['region'] ?? null);
+        self::assertSame('fsnb-2022', $resolver->resolvedInput['normative_dataset_version'] ?? null);
+    }
+
+    #[Test]
     public function ready_to_generate_session_can_be_started_by_retry(): void
     {
         [$action, , $dispatcher] = $this->action($this->readyToGenerate());
