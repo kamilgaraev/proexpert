@@ -51,6 +51,26 @@ final class EstimateCompletenessProfileTest extends TestCase
         self::assertSame([], $profile['scopes']['roof']['missing_items']);
     }
 
+    #[Test]
+    public function it_exposes_a_missing_normative_candidate_as_a_roof_scope_gap(): void
+    {
+        $draft = $this->draft(['roof' => []], 'pitched');
+        $draft['local_estimates'][0]['coverage_warnings'] = [[
+            'quantity_key' => 'roof.covering',
+            'reason' => 'normative_candidate_missing',
+            'package_key' => 'roof',
+        ]];
+
+        $profile = (new EstimateCompletenessProfile)->project($draft);
+
+        self::assertSame('confirmed_scope_only', $profile['status']);
+        self::assertSame('unresolved', $profile['scopes']['roof']['state']);
+        self::assertSame([[
+            'work_key' => 'roof.covering',
+            'reason' => 'normative_candidate_missing',
+        ]], $profile['scopes']['roof']['gaps']);
+    }
+
     /** @param array<string, list<string>> $workKeys */
     private function draft(array $workKeys, string $roofType = ''): array
     {
@@ -67,6 +87,7 @@ final class EstimateCompletenessProfileTest extends TestCase
                 'sections' => [[
                     'work_items' => array_map(static fn (string $key): array => [
                         'item_type' => 'priced_work',
+                        'pricing_status' => 'calculated',
                         'metadata' => ['composition_work_key' => $key],
                     ], $keys),
                 ]],

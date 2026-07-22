@@ -77,6 +77,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
         $telemetry = new NormativeMatchTelemetry;
         foreach ($data['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
+                $excludedWorkItem = false;
                 foreach ($section['work_items'] as $itemIndex => $workItem) {
                     $decisionContext = [
                         'organization_id' => $context->organizationId,
@@ -141,6 +142,13 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                     );
                     if ($pinnedCandidates === []) {
                         $telemetry->missingPinnedCandidate();
+                        if ($candidateIdsByWorkItem !== null) {
+                            $this->appendMissingPinnedCandidateWarning($data['local_estimates'][$localIndex], $workItem);
+                            unset($data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex]);
+                            $excludedWorkItem = true;
+
+                            continue;
+                        }
                         $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->blocked($workItem, 'review_required', 'normative_not_found');
 
                         continue;
@@ -204,6 +212,12 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                     $telemetry->matched();
                     $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $enriched;
                 }
+
+                if ($excludedWorkItem) {
+                    $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] = array_values(
+                        $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'],
+                    );
+                }
             }
         }
 
@@ -235,6 +249,28 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
     {
         return ($workItem['skip_normative_matching'] ?? false) !== true
             && ! in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note', 'quantity_review'], true);
+    }
+
+    private function appendMissingPinnedCandidateWarning(array &$localEstimate, array $workItem): void
+    {
+        $warning = [
+            'quantity_key' => (string) ($workItem['quantity_formula'] ?? $workItem['key'] ?? ''),
+            'reason' => 'normative_candidate_missing',
+            'package_key' => (string) ($localEstimate['key'] ?? ''),
+        ];
+        $warnings = is_array($localEstimate['coverage_warnings'] ?? null) ? $localEstimate['coverage_warnings'] : [];
+
+        foreach ($warnings as $existingWarning) {
+            if (is_array($existingWarning)
+                && ($existingWarning['quantity_key'] ?? null) === $warning['quantity_key']
+                && ($existingWarning['reason'] ?? null) === $warning['reason']
+                && ($existingWarning['package_key'] ?? null) === $warning['package_key']) {
+                return;
+            }
+        }
+
+        $warnings[] = $warning;
+        $localEstimate['coverage_warnings'] = array_values($warnings);
     }
 
     private function canLog(): bool

@@ -20,6 +20,7 @@ final class QuantityCoverageWarning
         'included_in_residential_stair_assembly',
         'finished_wet_room_area_missing',
         'not_applicable_to_residential_preliminary_scenario',
+        'normative_candidate_missing',
         'opening_schedule_missing',
         'plumbing_design_takeoff_missing',
         'radiator_schedule_missing',

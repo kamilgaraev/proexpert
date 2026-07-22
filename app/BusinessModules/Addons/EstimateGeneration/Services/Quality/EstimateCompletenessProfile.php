@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Quality;
 
 use App\BusinessModules\Addons\EstimateGeneration\Planning\ResidentialWorkCompositionCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityCoverageWarning;
 
 final readonly class EstimateCompletenessProfile
 {
@@ -32,6 +33,17 @@ final readonly class EstimateCompletenessProfile
                 static fn (string $item): bool => ! isset($coveredWorkKeys[$key][$item]),
             ));
             $exclusion = $exclusions[$key] ?? null;
+            $gaps = $this->warningGaps($draft, $key);
+            $warningWorkKeys = array_fill_keys(array_column($gaps, 'work_key'), true);
+            if ($exclusion === null) {
+                foreach ($missingItems as $item) {
+                    if (isset($warningWorkKeys[$item])) {
+                        continue;
+                    }
+
+                    $gaps[] = ['work_key' => $item, 'reason' => 'document_takeoff_missing'];
+                }
+            }
 
             $scopes[$key] = [
                 'key' => $key,
@@ -43,6 +55,7 @@ final readonly class EstimateCompletenessProfile
                 'required_items' => $requiredItems,
                 'covered_items' => $coveredItems,
                 'missing_items' => $exclusion === null ? $missingItems : [],
+                'gaps' => $gaps,
                 'evidence_refs' => $exclusion['evidence_refs'] ?? [],
                 'exclusion_reason' => $exclusion['reason'] ?? null,
             ];
@@ -117,7 +130,9 @@ final readonly class EstimateCompletenessProfile
 
             foreach ((array) ($estimate['sections'] ?? []) as $section) {
                 foreach (is_array($section) ? (array) ($section['work_items'] ?? []) : [] as $workItem) {
-                    if (! is_array($workItem) || ($workItem['item_type'] ?? 'priced_work') !== 'priced_work') {
+                    if (! is_array($workItem)
+                        || ($workItem['item_type'] ?? 'priced_work') !== 'priced_work'
+                        || ($workItem['pricing_status'] ?? null) !== 'calculated') {
                         continue;
                     }
 
@@ -137,6 +152,38 @@ final readonly class EstimateCompletenessProfile
         }
 
         return $covered;
+    }
+
+    /** @return list<array{work_key: string, reason: string}> */
+    private function warningGaps(array $draft, string $packageKey): array
+    {
+        $gaps = [];
+        $seen = [];
+
+        foreach ((array) ($draft['local_estimates'] ?? []) as $estimate) {
+            if (! is_array($estimate) || trim((string) ($estimate['key'] ?? '')) !== $packageKey) {
+                continue;
+            }
+
+            foreach ((array) ($estimate['coverage_warnings'] ?? []) as $warning) {
+                if (! QuantityCoverageWarning::isValid($warning)
+                    || $warning['package_key'] !== $packageKey) {
+                    continue;
+                }
+
+                $workKey = $warning['quantity_key'];
+                $reason = $warning['reason'];
+                $pair = $workKey."\0".$reason;
+                if (isset($seen[$pair])) {
+                    continue;
+                }
+
+                $seen[$pair] = true;
+                $gaps[] = ['work_key' => $workKey, 'reason' => $reason];
+            }
+        }
+
+        return $gaps;
     }
 
     /** @param list<string> $packageKeys

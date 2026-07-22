@@ -13,6 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeC
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeHardGate;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRerankerModelSet;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
@@ -25,6 +26,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtif
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePriorOutputs;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePlanResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
@@ -47,18 +49,186 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingServic
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationQuantityLearningEvidenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\NormativeCandidateRerankerInterface;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use DateTimeImmutable;
+use Illuminate\Config\Repository;
+use Illuminate\Container\Container;
+use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\NullLogger;
 
 final class PipelineStageFunctionalTest extends TestCase
 {
+    private Container $previousContainer;
+
+    private mixed $previousFacadeApplication;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->previousContainer = Container::getInstance();
+        $this->previousFacadeApplication = Facade::getFacadeApplication();
+        $container = new Container;
+        $container->instance('config', new Repository([
+            'estimate-generation' => [
+                'normative_matching' => [
+                    'reranker' => ['models' => ['openai/test-model']],
+                ],
+            ],
+        ]));
+        $container->instance('log', new NullLogger);
+        Container::setInstance($container);
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($container);
+    }
+
+    protected function tearDown(): void
+    {
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($this->previousFacadeApplication);
+        Container::setInstance($this->previousContainer);
+
+        parent::tearDown();
+    }
+
+    #[Test]
+    public function it_excludes_a_work_item_and_records_a_scope_boundary_when_its_modern_pin_has_no_candidate(): void
+    {
+        $artifacts = new InMemoryPipelineArtifactStore;
+        $graph = PipelineDefinitionGraph::standard();
+        $results = new StageResultFactory($artifacts, $graph);
+        $base = 'sha256:'.str_repeat('a', 64);
+        $attempt = '00000000-0000-4000-8000-000000000002';
+        $warning = [
+            'quantity_key' => 'roof.covering',
+            'reason' => 'normative_candidate_missing',
+            'package_key' => 'roof',
+        ];
+        $presentedWarning = [...$warning, 'message' => 'Работа не включена в смету.'];
+        $plan = [
+            'object_profile' => ['object_type' => 'house'],
+            'package_plan' => [],
+            'document_requirements' => [],
+            'generation_mode' => 'strict',
+            'regional_context' => [],
+            'normative_context_pin' => [
+                'dataset_version' => 'fsnb-2026.1',
+                'applicability_date' => '2026-07-13',
+                'catalog_candidates' => [],
+                'candidate_ids_by_work_item' => ['roof-covering' => []],
+            ],
+            'local_estimates' => [[
+                'key' => 'roof',
+                'coverage_warnings' => [$presentedWarning],
+                'sections' => [[
+                    'work_items' => [
+                        [
+                            'key' => 'roof-covering',
+                            'name' => 'Устройство кровельного покрытия',
+                            'unit' => 'm2',
+                            'quantity' => '10',
+                            'quantity_formula' => 'roof.covering',
+                            'item_type' => 'priced_work',
+                        ],
+                        [
+                            'key' => 'roof-reference',
+                            'name' => 'Справочная позиция',
+                            'item_type' => 'operation',
+                        ],
+                    ],
+                ]],
+            ]],
+        ];
+        $planned = $results->make(
+            new PipelineContext(
+                1,
+                2,
+                3,
+                4,
+                $base,
+                'generating',
+                generationAttemptId: $attempt,
+                baseInputVersion: $base,
+                stage: ProcessingStage::PlanWorkItems,
+                dependencyVersions: [
+                    ProcessingStage::UnderstandObject->value => $base,
+                    ProcessingStage::ExtractQuantities->value => $base,
+                ],
+            ),
+            ProcessingStage::PlanWorkItems,
+            $plan,
+        );
+        self::assertNotNull($planned->output);
+        $context = new PipelineContext(
+            1,
+            2,
+            3,
+            5,
+            $base,
+            'generating',
+            priorOutputs: new PipelinePriorOutputs(
+                [ProcessingStage::PlanWorkItems->value => $planned->output],
+                [ProcessingStage::PlanWorkItems->value => $plan],
+            ),
+            generationAttemptId: $attempt,
+            baseInputVersion: $base,
+            stage: ProcessingStage::MatchNormatives,
+            dependencyVersions: [ProcessingStage::PlanWorkItems->value => $planned->output->version],
+        );
+        $workflow = new NormativeMatchingWorkflow(
+            new NormativeRetrievalService(
+                new class implements NormativeCandidateSource
+                {
+                    public function find(int $organizationId, int $projectId, string $datasetVersion, string $query, int $limit, ?string $semanticIndexVersion): array
+                    {
+                        throw new \LogicException('The workflow must not search when the modern pin has no candidate.');
+                    }
+                },
+                new NormativeHardGate,
+                16,
+                null,
+            ),
+            new class implements NormativeCandidateRerankerInterface
+            {
+                public function rerank(WorkIntentData $workItem, NormativeCandidateDecisionContextData $context, NormativeCandidateSetData $candidateSet): NormativeRerankResultData
+                {
+                    throw new \LogicException('The workflow must not rerank when the modern pin has no candidate.');
+                }
+            },
+        );
+        $result = (new MatchNormativesStage(
+            $this->createMock(ResourceAssemblyService::class),
+            $workflow,
+            new NormativeWorkIntentFactory(
+                new WorkIntentClassifier(new NormativeScopeRuleCatalog),
+                new NormativeRerankerModelSet(['openai/test-model']),
+            ),
+            $results,
+        ))->execute($context);
+        $output = $result->transientData;
+
+        self::assertNotNull($output);
+        self::assertSame([$presentedWarning], $output['local_estimates'][0]['coverage_warnings']);
+        $workItems = $output['local_estimates'][0]['sections'][0]['work_items'];
+        self::assertSame(['roof-reference'], array_column($workItems, 'key'));
+        self::assertArrayNotHasKey(1, $workItems);
+        self::assertSame([], array_values(array_filter(
+            $workItems,
+            static fn (array $workItem): bool => ($workItem['pricing_blocker'] ?? null) === 'normative_not_found'
+                || in_array('normative_not_found', $workItem['validation_flags'] ?? [], true)
+                || ($workItem['item_type'] ?? null) === 'review_note',
+        )));
+    }
+
     #[Test]
     public function nine_real_stage_boundaries_consume_exact_typed_dependencies(): void
     {

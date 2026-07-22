@@ -22,6 +22,11 @@ final class QuantityCoverageWarningTest extends TestCase
                 'reason' => 'documented_wet_rooms_missing',
                 'package_key' => 'sewerage',
             ],
+            [
+                'quantity_key' => 'roof.covering',
+                'reason' => 'normative_candidate_missing',
+                'package_key' => 'roof',
+            ],
         ] as $warning) {
             self::assertTrue(
                 QuantityCoverageWarning::isValid($warning),
