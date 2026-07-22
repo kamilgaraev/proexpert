@@ -107,6 +107,31 @@ final class ShadowArbiterCoordinatorTest extends TestCase
         self::assertSame(['heating'], $reviewed['arbiter_review']['cycle']['target_package_keys']);
     }
 
+    #[Test]
+    public function it_finishes_an_attempted_remediation_as_human_review_when_the_arbiter_throws(): void
+    {
+        $draft = $this->heatingDraft();
+        $contexts = new ArbiterReviewContextFactory;
+        $inputHash = $contexts->make($draft)['input_hash'];
+        $remediation = new ArbiterRemediationCoordinator;
+        $attempted = $remediation->markAttempted(
+            $remediation->recordShadowCycle($draft, $this->targetedVerdict(), $inputHash),
+            $inputHash,
+        );
+
+        $reviewed = (new ShadowArbiterCoordinator(
+            $this->throwingArbiter(),
+            $contexts,
+            new ArbiterVerdictValidator,
+        ))->review($attempted);
+
+        self::assertSame($draft['local_estimates'], $reviewed['local_estimates']);
+        self::assertSame('human_review', $reviewed['arbiter_review']['outcome']);
+        self::assertSame('reviewed', $reviewed['arbiter_review']['remediation']['phase']);
+        self::assertSame('human_review', $reviewed['arbiter_review']['remediation']['review_outcome']);
+        self::assertSame(['heating'], $reviewed['arbiter_review']['cycle']['target_package_keys']);
+    }
+
     /** @return array<string, mixed> */
     private function heatingDraft(): array
     {
@@ -154,6 +179,27 @@ final class ShadowArbiterCoordinatorTest extends TestCase
                         'reason_code' => 'missing_component',
                     ]],
                 ];
+            }
+
+            public function model(): string
+            {
+                return 'openai/gpt-5-mini';
+            }
+
+            public function promptVersion(): string
+            {
+                return 'completeness-arbiter:v1';
+            }
+        };
+    }
+
+    private function throwingArbiter(): CompletenessArbiter
+    {
+        return new class implements CompletenessArbiter
+        {
+            public function review(array $context): array
+            {
+                throw new \RuntimeException('Arbiter unavailable.');
             }
 
             public function model(): string

@@ -27,6 +27,9 @@ final readonly class ArbiterRemediationState
         if (! in_array($phase, ['attempted', 'reviewed'], true)) {
             throw new InvalidArgumentException('Invalid arbiter remediation phase.');
         }
+        if (! $rebuildAttempted) {
+            throw new InvalidArgumentException('Arbiter remediation requires an attempted rebuild.');
+        }
         if ($phase === 'attempted' && $reviewOutcome !== null) {
             throw new InvalidArgumentException('Invalid attempted arbiter remediation outcome.');
         }

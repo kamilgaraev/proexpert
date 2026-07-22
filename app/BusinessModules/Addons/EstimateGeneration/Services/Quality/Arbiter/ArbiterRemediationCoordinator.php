@@ -47,7 +47,7 @@ final class ArbiterRemediationCoordinator
     public function markAttempted(array $draft, string $rootInputHash): array
     {
         $cycle = $this->cycle($draft);
-        if (! $this->isOriginalRecommendation($cycle, $rootInputHash)) {
+        if ($this->remediation($draft) !== null || ! $this->isOriginalRecommendation($cycle, $rootInputHash)) {
             return $this->routeToHumanReview($draft, $rootInputHash);
         }
 
@@ -146,6 +146,13 @@ final class ArbiterRemediationCoordinator
 
     private function attemptedRemediation(array $draft): ?ArbiterRemediationState
     {
+        $state = $this->remediation($draft);
+
+        return $state !== null && $state->phase === 'attempted' && $state->rebuildAttempted ? $state : null;
+    }
+
+    private function remediation(array $draft): ?ArbiterRemediationState
+    {
         $review = is_array($draft['arbiter_review'] ?? null) ? $draft['arbiter_review'] : null;
         $remediation = is_array($review) && is_array($review['remediation'] ?? null)
             ? $review['remediation']
@@ -160,7 +167,7 @@ final class ArbiterRemediationCoordinator
             return null;
         }
 
-        return $state->phase === 'attempted' && $state->rebuildAttempted ? $state : null;
+        return $state;
     }
 
     private function cycle(array $draft): ?ArbiterReviewCycle

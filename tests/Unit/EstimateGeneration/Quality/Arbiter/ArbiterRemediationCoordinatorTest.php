@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Quality\Arbiter;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterRemediationCoordinator;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterRemediationState;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterVerdict;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
@@ -107,6 +108,24 @@ final class ArbiterRemediationCoordinatorTest extends TestCase
     }
 
     #[Test]
+    public function it_rejects_a_second_attempt_when_a_valid_remediation_already_exists(): void
+    {
+        $coordinator = new ArbiterRemediationCoordinator;
+        $draft = $this->draft();
+        $attempted = $coordinator->markAttempted(
+            $coordinator->recordShadowCycle($draft, $this->targetedRebuildVerdict(), $this->inputHash()),
+            $this->inputHash(),
+        );
+
+        $reviewed = $coordinator->markAttempted($attempted, $this->inputHash());
+
+        self::assertSame($draft['local_estimates'], $reviewed['local_estimates']);
+        self::assertSame('human_review', $reviewed['arbiter_review']['outcome']);
+        self::assertSame([], $reviewed['arbiter_review']['cycle']['target_package_keys']);
+        self::assertArrayNotHasKey('remediation', $reviewed['arbiter_review']);
+    }
+
+    #[Test]
     public function it_resolves_an_attempted_remediation_as_passed_without_changing_the_root_or_targets(): void
     {
         $coordinator = new ArbiterRemediationCoordinator;
@@ -146,6 +165,21 @@ final class ArbiterRemediationCoordinatorTest extends TestCase
     }
 
     #[Test]
+    #[DataProvider('remediationStatesWithoutRebuildAttempt')]
+    public function it_rejects_remediation_states_without_an_attempted_rebuild(string $phase, ?string $reviewOutcome): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        new ArbiterRemediationState(
+            $this->inputHash(),
+            ['heating'],
+            false,
+            $phase,
+            $reviewOutcome,
+        );
+    }
+
+    #[Test]
     #[DataProvider('invalidTargetedRebuildVerdicts')]
     public function it_requires_evidence_and_known_packages_without_changing_local_estimates(ArbiterVerdict $verdict): void
     {
@@ -182,6 +216,13 @@ final class ArbiterRemediationCoordinatorTest extends TestCase
             'package_keys' => ['unknown-package'],
             'evidence_refs' => ['evidence:1'],
         ]])];
+    }
+
+    /** @return iterable<string, array{string, null|string}> */
+    public static function remediationStatesWithoutRebuildAttempt(): iterable
+    {
+        yield 'attempted' => ['attempted', null];
+        yield 'reviewed' => ['reviewed', 'passed'];
     }
 
     /** @return array<string, mixed> */
