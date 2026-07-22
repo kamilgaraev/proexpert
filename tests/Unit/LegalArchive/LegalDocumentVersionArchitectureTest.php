@@ -68,6 +68,25 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
         self::assertStringNotContainsString('public function transitionProcessingStatus', $source);
     }
 
+    public function test_fenced_completion_authorizes_version_mutations_before_current_rotation(): void
+    {
+        $source = file_get_contents(
+            __DIR__.'/../../../app/Services/LegalArchive/Files/LegalDocumentFileService.php',
+        );
+        self::assertIsString($source);
+        $method = strstr($source, 'private function markFencedReady(');
+        self::assertIsString($method);
+        $method = strstr($method, 'private function markFencedFailed(', true);
+        self::assertIsString($method);
+
+        $authorization = strpos($method, '$this->authorizeDatabaseMutation();');
+        $rotation = strpos($method, '$this->setFencedVersionCurrent(');
+
+        self::assertIsInt($authorization);
+        self::assertIsInt($rotation);
+        self::assertLessThan($rotation, $authorization);
+    }
+
     public function test_technical_mutation_capability_is_confined_to_model_file_and_signature_services(): void
     {
         $root = realpath(__DIR__.'/../../../app');

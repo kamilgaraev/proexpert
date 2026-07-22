@@ -579,10 +579,10 @@ final class LegalDocumentFileService
                 $operationInput = VersionInput::fromOperation($operation);
                 $this->assertCurrentVersionRotationAllowed($document, $operationInput->metadata['editor_session_id'] ?? null);
             }
+            $this->authorizeDatabaseMutation();
             if ($makeCurrent && $hasCurrent) {
                 $this->setFencedVersionCurrent($document, (int) $file->current_version_id, false, $attempt);
             }
-            $this->authorizeDatabaseMutation();
             $attempt->assertOwned($document);
             LegalArchiveDocumentVersion::technicalMutation(function () use ($locked, $makeCurrent): void {
                 $locked->processing_status = 'ready';
