@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ProjectCommandCenter\Services;
 
 use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectDeliveryData;
+use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectCommandCenterPeriod;
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Models\Project;
 use Carbon\CarbonImmutable;
@@ -17,6 +18,7 @@ final class ProjectDeliveryBuilder
         ProjectContext $projectContext,
         CarbonImmutable $asOf,
         array $problems,
+        ProjectCommandCenterPeriod $period,
     ): ProjectDeliveryData {
         if ($project->getKey() !== $projectContext->projectId) {
             return ProjectDeliveryData::unavailable('project_command_center.delivery.project_context_mismatch');
@@ -28,7 +30,7 @@ final class ProjectDeliveryBuilder
             ->orderByRaw("CASE status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END")
             ->orderByDesc('updated_at')
             ->first([
-                'id', 'planned_end_date', 'baseline_end_date', 'actual_end_date', 'overall_progress_percent',
+                'id', 'status', 'planned_end_date', 'baseline_end_date', 'actual_end_date', 'overall_progress_percent',
                 'critical_path_calculated', 'critical_path_duration_days',
             ]);
 
@@ -36,19 +38,35 @@ final class ProjectDeliveryBuilder
             return ProjectDeliveryData::unavailable('project_command_center.delivery.schedule_unavailable');
         }
 
-        $taskFacts = DB::table('schedule_tasks')
+        $tasks = DB::table('schedule_tasks')
             ->where('schedule_id', $schedule->id)
             ->whereNull('deleted_at')
             ->whereNotIn('task_type', ['summary', 'container'])
+            ->when($period->hasRange(), static function ($query) use ($period): void {
+                $query->whereBetween('planned_end_date', [$period->from->toDateString(), $period->to->toDateString()]);
+            });
+
+        $taskFacts = (clone $tasks)
             ->selectRaw("SUM(CASE WHEN planned_end_date < ? AND status NOT IN ('completed', 'cancelled') THEN 1 ELSE 0 END) as overdue_count", [$asOf->toDateString()])
             ->selectRaw("SUM(CASE WHEN COALESCE(is_critical, false) = true AND status NOT IN ('completed', 'cancelled') THEN 1 ELSE 0 END) as critical_count")
             ->selectRaw("SUM(CASE WHEN COALESCE(is_milestone_critical, false) = true AND status NOT IN ('completed', 'cancelled') THEN 1 ELSE 0 END) as critical_milestones_count")
             ->first();
 
+        $forecastCompletion = null;
+        if ((bool) $schedule->critical_path_calculated && $schedule->status !== 'completed') {
+            $forecastCompletion = (clone $tasks)
+                ->where('is_critical', true)
+                ->whereNotIn('status', ['completed', 'cancelled'])
+                ->max('early_finish_date');
+        }
+
         $pendingWorks = DB::table('completed_works')
             ->where('project_id', $project->getKey())
             ->whereNull('deleted_at')
             ->whereIn('status', ['pending', 'in_review'])
+            ->when($period->hasRange(), static function ($query) use ($period): void {
+                $query->whereBetween('created_at', [$period->from->startOfDay(), $period->to->endOfDay()]);
+            })
             ->count();
 
         return $this->fromFacts([
@@ -56,6 +74,8 @@ final class ProjectDeliveryBuilder
                 'planned_end_date' => $schedule->planned_end_date,
                 'baseline_end_date' => $schedule->baseline_end_date,
                 'actual_end_date' => $schedule->actual_end_date,
+                'status' => $schedule->status,
+                'forecast_completion_date' => $forecastCompletion,
                 'progress_percent' => $schedule->overall_progress_percent,
                 'critical_path_calculated' => (bool) $schedule->critical_path_calculated,
                 'critical_path_duration_days' => $schedule->critical_path_duration_days,
@@ -84,15 +104,15 @@ final class ProjectDeliveryBuilder
             : null;
         $scheduleDeviation = $baselineEnd === null ? null : $baselineEnd->diffInDays($plannedEnd, false);
         $riskReasons = $this->riskReasons($facts, $scheduleDeviation);
-        $actualEnd = ! empty($schedule['actual_end_date'])
-            ? CarbonImmutable::parse((string) $schedule['actual_end_date'])->startOfDay()
+        $forecastCompletion = ! empty($schedule['forecast_completion_date'])
+            ? CarbonImmutable::parse((string) $schedule['forecast_completion_date'])->startOfDay()
             : null;
 
         return ProjectDeliveryData::available([
             'forecast_completion' => [
-                'available' => $actualEnd !== null,
-                'reason_key' => $actualEnd === null ? 'project_command_center.delivery.forecast_completion_unavailable' : null,
-                'date' => $actualEnd?->toDateString(),
+                'available' => $forecastCompletion !== null,
+                'reason_key' => $forecastCompletion === null ? 'project_command_center.delivery.forecast_completion_unavailable' : null,
+                'date' => $forecastCompletion?->toDateString(),
             ],
             'schedule_deviation_days' => $scheduleDeviation,
             'progress_percent' => $this->number($schedule['progress_percent'] ?? null),

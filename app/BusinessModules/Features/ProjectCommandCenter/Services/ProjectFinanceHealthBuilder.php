@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ProjectCommandCenter\Services;
 
 use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectFinanceHealthData;
+use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectCommandCenterPeriod;
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\ProjectOrganizationRole;
@@ -21,7 +22,7 @@ final class ProjectFinanceHealthBuilder
     ) {
     }
 
-    public function build(Project $project, ProjectContext $projectContext, CarbonImmutable $asOf): ProjectFinanceHealthData
+    public function build(Project $project, ProjectContext $projectContext, CarbonImmutable $asOf, ProjectCommandCenterPeriod $period): ProjectFinanceHealthData
     {
         if (! $this->canViewFinances($projectContext)) {
             return ProjectFinanceHealthData::unavailable('project_command_center.finance.access_restricted');
@@ -29,7 +30,7 @@ final class ProjectFinanceHealthBuilder
 
         $visibleOrganizationId = $this->visibleOrganizationId($projectContext);
         $metrics = $this->evmService->calculateMetrics($project, $visibleOrganizationId);
-        $payments = $this->paymentFacts($project->getKey(), $visibleOrganizationId);
+        $payments = $this->paymentFacts($project->getKey(), $visibleOrganizationId, $period);
         $contractedRevenue = $this->contractedRevenue($project, $projectContext, $visibleOrganizationId);
 
         return $this->fromFacts([
@@ -104,7 +105,7 @@ final class ProjectFinanceHealthBuilder
         );
     }
 
-    private function paymentFacts(int $projectId, ?int $visibleOrganizationId): array
+    private function paymentFacts(int $projectId, ?int $visibleOrganizationId, ProjectCommandCenterPeriod $period): array
     {
         $query = DB::table('payment_documents')
             ->where('project_id', $projectId)
@@ -115,6 +116,10 @@ final class ProjectFinanceHealthBuilder
 
         if ($visibleOrganizationId !== null) {
             $query->where('organization_id', $visibleOrganizationId);
+        }
+
+        if ($period->hasRange()) {
+            $query->whereBetween('due_date', [$period->from->toDateString(), $period->to->toDateString()]);
         }
 
         return $query->get()

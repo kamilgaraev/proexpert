@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ProjectCommandCenter\Services;
 
 use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectCommandCenterData;
+use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectCommandCenterPeriod;
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Models\Project;
 use Carbon\CarbonImmutable;
@@ -27,12 +28,20 @@ final class ProjectCommandCenterService
         ?string $dateTo,
     ): ProjectCommandCenterData {
         $generatedAt = CarbonImmutable::now();
+        $resolvedPeriod = ProjectCommandCenterPeriod::resolve(
+            preset: $period,
+            dateFrom: $dateFrom,
+            dateTo: $dateTo,
+            projectStart: $project->start_date?->toDateString(),
+            projectEnd: $project->end_date?->toDateString(),
+            asOf: $generatedAt,
+        );
         $data = ProjectCommandCenterData::empty(
             project: $project,
             projectContext: $projectContext,
             period: $period,
-            dateFrom: $dateFrom,
-            dateTo: $dateTo,
+            dateFrom: $resolvedPeriod->from?->toDateString(),
+            dateTo: $resolvedPeriod->to?->toDateString(),
             generatedAt: $generatedAt,
         );
 
@@ -42,8 +51,8 @@ final class ProjectCommandCenterService
             now: $generatedAt,
         );
 
-        $finance = $this->financeHealthBuilder->build($project, $projectContext, $generatedAt)->toArray();
-        $delivery = $this->deliveryBuilder->build($project, $projectContext, $generatedAt, $problems)->toArray();
+        $finance = $this->financeHealthBuilder->build($project, $projectContext, $generatedAt, $resolvedPeriod)->toArray();
+        $delivery = $this->deliveryBuilder->build($project, $projectContext, $generatedAt, $problems, $resolvedPeriod)->toArray();
 
         return $data
             ->withProblems($problems)
@@ -52,6 +61,7 @@ final class ProjectCommandCenterService
             ->withAnalytics($this->analyticsBuilder->fromFacts(
                 finance: $finance,
                 asOf: $generatedAt,
+                period: $resolvedPeriod,
             ));
     }
 }

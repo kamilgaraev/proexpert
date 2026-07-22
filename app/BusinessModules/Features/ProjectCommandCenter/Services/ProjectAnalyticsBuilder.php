@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ProjectCommandCenter\Services;
 
+use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectCommandCenterPeriod;
 use Carbon\CarbonImmutable;
 
 final class ProjectAnalyticsBuilder
@@ -15,27 +16,31 @@ final class ProjectAnalyticsBuilder
     public function fromFacts(
         array $finance,
         CarbonImmutable $asOf,
+        ?ProjectCommandCenterPeriod $period = null,
     ): array {
         $financialReason = (string) ($finance['reason_key'] ?? 'project_command_center.finance.access_restricted');
         $canViewFinance = ($finance['available'] ?? false) === true;
 
         return [
             'plan_vs_fact' => $canViewFinance
-                ? $this->planVsFact($finance, $asOf)
+                ? $this->planVsFact($finance, $asOf, $period)
                 : $this->unavailable($financialReason),
             'cash_flow' => $canViewFinance
                 ? $this->cashFlow($finance)
                 : $this->unavailable($financialReason),
             'risk_trend' => $this->unavailable('project_command_center.analytics.risk_trend_history_unavailable'),
             'cost_outlook' => $canViewFinance
-                ? $this->costOutlook($finance)
+                ? $this->costOutlook($finance, $period)
                 : $this->unavailable($financialReason),
             'work_progress' => $this->unavailable('project_command_center.analytics.work_progress_history_unavailable'),
         ];
     }
 
-    private function planVsFact(array $finance, CarbonImmutable $asOf): array
+    private function planVsFact(array $finance, CarbonImmutable $asOf, ProjectCommandCenterPeriod $period): array
     {
+        if ($period?->hasRange()) {
+            return $this->unavailable('project_command_center.analytics.plan_vs_fact_history_unavailable');
+        }
         $evm = $finance['evm'] ?? [];
         if (($evm['available'] ?? false) !== true) {
             return $this->unavailable((string) ($evm['reason_key'] ?? 'project_command_center.finance.actual_cost_unavailable'));
@@ -91,8 +96,11 @@ final class ProjectAnalyticsBuilder
         ];
     }
 
-    private function costOutlook(array $finance): array
+    private function costOutlook(array $finance, ProjectCommandCenterPeriod $period): array
     {
+        if ($period?->hasRange()) {
+            return $this->unavailable('project_command_center.analytics.cost_outlook_history_unavailable');
+        }
         $evm = $finance['evm'] ?? [];
         $actualCost = $this->number($evm['actual_cost'] ?? null);
         $forecastCost = $this->number($evm['forecast_total_cost'] ?? null);
