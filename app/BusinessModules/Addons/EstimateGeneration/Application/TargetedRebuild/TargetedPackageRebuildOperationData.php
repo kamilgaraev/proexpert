@@ -287,7 +287,7 @@ final readonly class TargetedPackageRebuildOperationData
     private function validResultDelta(array $resultDelta): bool
     {
         $expected = ['target_package', 'target_before_fingerprint', 'target_after_fingerprint', 'non_target_fingerprints'];
-        if (array_keys($resultDelta) !== $expected
+        if (! $this->hasExactKeys($resultDelta, $expected)
             || ! $this->validTargetPackage($resultDelta['target_package'] ?? null)
             || ! is_string($resultDelta['target_before_fingerprint'])
             || ! $this->isHash($resultDelta['target_before_fingerprint'])
@@ -382,15 +382,16 @@ final readonly class TargetedPackageRebuildOperationData
             || ! $this->isPackageKey($package['key'])) {
             return false;
         }
-        $keys = array_keys($package);
-        if ($keys === ['key']) {
+        if ($this->hasExactKeys($package, ['key'])) {
             return true;
         }
-        if ($keys !== ['key', 'sections'] || ! is_array($package['sections']) || ! array_is_list($package['sections'])) {
+        if (! $this->hasExactKeys($package, ['key', 'sections'])
+            || ! is_array($package['sections'])
+            || ! array_is_list($package['sections'])) {
             return false;
         }
         foreach ($package['sections'] as $section) {
-            if (! is_array($section) || array_keys($section) !== ['key', 'work_items']
+            if (! is_array($section) || ! $this->hasExactKeys($section, ['key', 'work_items'])
                 || ! is_string($section['key']) || ! $this->isPackageKey($section['key'])
                 || ! is_array($section['work_items']) || ! array_is_list($section['work_items'])) {
                 return false;
@@ -570,7 +571,7 @@ final readonly class TargetedPackageRebuildOperationData
             return false;
         }
         foreach ($findings as $finding) {
-            if (! is_array($finding) || array_keys($finding) !== ['scope_key', 'package_keys', 'evidence_refs', 'action', 'reason_code']
+            if (! is_array($finding) || ! $this->hasExactKeys($finding, ['scope_key', 'package_keys', 'evidence_refs', 'action', 'reason_code'])
                 || ! is_string($finding['scope_key']) || ! $this->isPackageKey($finding['scope_key'])
                 || ! in_array($finding['action'], ['rebuild', 'review'], true)
                 || ! in_array($finding['reason_code'], ['missing_component', 'evidence_required', 'quantity_unconfirmed', 'invalid_response', 'invalid_reference'], true)
@@ -602,9 +603,7 @@ final readonly class TargetedPackageRebuildOperationData
     /** @param array<string, mixed> $cycle */
     private function validCycle(array $cycle): bool
     {
-        $keys = array_keys($cycle);
-        sort($keys, SORT_STRING);
-        if ($keys !== ['attempted', 'input_hash', 'status', 'target_package_keys', 'terminal_outcome']
+        if (! $this->hasExactKeys($cycle, ['attempted', 'input_hash', 'status', 'target_package_keys', 'terminal_outcome'])
             || ! is_string($cycle['input_hash']) || ! is_bool($cycle['attempted'])
             || ! is_array($cycle['target_package_keys']) || ! is_string($cycle['status']) || ! is_string($cycle['terminal_outcome'])) {
             return false;
@@ -618,6 +617,16 @@ final readonly class TargetedPackageRebuildOperationData
         );
 
         return true;
+    }
+
+    /** @param list<string> $expected */
+    private function hasExactKeys(array $value, array $expected): bool
+    {
+        $actual = array_keys($value);
+        sort($actual, SORT_STRING);
+        sort($expected, SORT_STRING);
+
+        return $actual === $expected;
     }
 
     private function isVersion(mixed $value): bool
