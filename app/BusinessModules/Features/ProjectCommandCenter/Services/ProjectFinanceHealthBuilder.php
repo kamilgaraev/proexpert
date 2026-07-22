@@ -170,7 +170,7 @@ final class ProjectFinanceHealthBuilder
             $days = $asOf->startOfDay()->diffInDays($dueAt, false);
             $datedPayments++;
 
-            if ($days < 1) {
+            if ($days < 0) {
                 $overdue[$payment['direction']] += (float) $payment['amount'];
                 continue;
             }

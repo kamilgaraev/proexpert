@@ -126,6 +126,25 @@ final class ProjectFinanceHealthBuilderTest extends TestCase
         self::assertSame(-250.0, $result['cash_flow']['projections'][0]['net']);
     }
 
+    public function test_it_places_documents_due_on_as_of_date_in_first_cash_flow_projection(): void
+    {
+        $result = $this->builder()->fromFacts([
+            'metrics' => ['bac' => 1_000, 'ac' => 500, 'eac' => 1_100],
+            'payments' => [
+                ['direction' => 'incoming', 'amount' => 700, 'due_at' => '2026-07-21'],
+                ['direction' => 'outgoing', 'amount' => 250, 'due_at' => '2026-07-21'],
+                ['direction' => 'incoming', 'amount' => 100, 'due_at' => '2026-07-20'],
+                ['direction' => 'outgoing', 'amount' => 50, 'due_at' => '2026-07-20'],
+            ],
+        ], CarbonImmutable::parse('2026-07-21'))->toArray();
+
+        self::assertSame(100.0, $result['cash_flow']['overdue']['incoming']);
+        self::assertSame(50.0, $result['cash_flow']['overdue']['outgoing']);
+        self::assertSame(700.0, $result['cash_flow']['projections'][0]['incoming']);
+        self::assertSame(250.0, $result['cash_flow']['projections'][0]['outgoing']);
+        self::assertSame(450.0, $result['cash_flow']['projections'][0]['net']);
+    }
+
     public function test_it_marks_missing_actual_costs_explicitly(): void
     {
         $result = $this->builder()->fromFacts([
