@@ -126,6 +126,32 @@ final class ArbiterRemediationCoordinatorTest extends TestCase
     }
 
     #[Test]
+    public function it_routes_an_unparseable_existing_remediation_to_human_review_without_a_new_attempt(): void
+    {
+        $coordinator = new ArbiterRemediationCoordinator;
+        $draft = $this->draft();
+        $recommended = $coordinator->recordShadowCycle(
+            $draft,
+            $this->targetedRebuildVerdict(),
+            $this->inputHash(),
+        );
+        $recommended['arbiter_review']['remediation'] = [
+            'root_input_hash' => $this->inputHash(),
+            'target_package_keys' => ['heating', 'ventilation'],
+            'rebuild_attempted' => false,
+            'phase' => 'attempted',
+            'review_outcome' => null,
+        ];
+
+        $reviewed = $coordinator->markAttempted($recommended, $this->inputHash());
+
+        self::assertSame($draft['local_estimates'], $reviewed['local_estimates']);
+        self::assertSame('human_review', $reviewed['arbiter_review']['outcome']);
+        self::assertSame([], $reviewed['arbiter_review']['cycle']['target_package_keys']);
+        self::assertArrayNotHasKey('remediation', $reviewed['arbiter_review']);
+    }
+
+    #[Test]
     public function it_resolves_an_attempted_remediation_as_passed_without_changing_the_root_or_targets(): void
     {
         $coordinator = new ArbiterRemediationCoordinator;
