@@ -37,16 +37,21 @@ final class ProjectFinanceHealthBuilder
             'metrics' => $metrics,
             'payments' => $payments,
             'contracted_revenue' => $contractedRevenue,
-        ], $asOf);
+        ], $asOf, $period);
     }
 
     /**
      * Kept public so calculation rules can be verified without a database connection.
      */
-    public function fromFacts(array $facts, CarbonImmutable $asOf): ProjectFinanceHealthData
+    public function fromFacts(
+        array $facts,
+        CarbonImmutable $asOf,
+        ?ProjectCommandCenterPeriod $period = null,
+    ): ProjectFinanceHealthData
     {
         $metrics = $facts['metrics'] ?? [];
         $payments = $facts['payments'] ?? [];
+        $periodMetricsAvailable = $period === null || $period->preset === 'project';
         $bac = $this->number($metrics['bac'] ?? null);
         $actualCost = $this->number($metrics['ac'] ?? null);
         $forecastCost = $this->number($metrics['eac'] ?? null);
@@ -56,7 +61,12 @@ final class ProjectFinanceHealthBuilder
             'reason_key' => 'project_command_center.finance.contracted_revenue_unavailable',
         ];
 
-        if (($facts['contracted_revenue'] ?? null) !== null && $forecastCost !== null) {
+        if (! $periodMetricsAvailable) {
+            $margin = [
+                'available' => false,
+                'reason_key' => 'project_command_center.finance.period_metrics_unavailable',
+            ];
+        } elseif (($facts['contracted_revenue'] ?? null) !== null && $forecastCost !== null) {
             $revenue = $this->number($facts['contracted_revenue']);
             $margin = [
                 'available' => $revenue !== null,
@@ -76,26 +86,32 @@ final class ProjectFinanceHealthBuilder
             margin: $margin,
             cashFlow: $cashFlow,
             evm: [
-                'available' => $bac !== null && $actualCost !== null,
-                'reason_key' => $bac === null
+                'available' => $periodMetricsAvailable && $bac !== null && $actualCost !== null,
+                'reason_key' => ! $periodMetricsAvailable
+                    ? 'project_command_center.finance.period_metrics_unavailable'
+                    : ($bac === null
                     ? 'project_command_center.finance.planned_cost_unavailable'
-                    : ($actualCost === null ? 'project_command_center.finance.actual_cost_unavailable' : null),
-                'plan_total_cost' => $bac,
-                'actual_cost' => $actualCost,
-                'forecast_total_cost' => $forecastCost,
-                'deviation' => $forecastCost !== null && $bac !== null ? round($forecastCost - $bac, 2) : null,
-                'metrics' => $metrics === [] ? null : $metrics,
+                    : ($actualCost === null ? 'project_command_center.finance.actual_cost_unavailable' : null)),
+                'plan_total_cost' => $periodMetricsAvailable ? $bac : null,
+                'actual_cost' => $periodMetricsAvailable ? $actualCost : null,
+                'forecast_total_cost' => $periodMetricsAvailable ? $forecastCost : null,
+                'deviation' => $periodMetricsAvailable && $forecastCost !== null && $bac !== null ? round($forecastCost - $bac, 2) : null,
+                'metrics' => $periodMetricsAvailable && $metrics !== [] ? $metrics : null,
             ],
             dataCompleteness: [
                 'contracted_revenue' => [
-                    'available' => ($facts['contracted_revenue'] ?? null) !== null,
-                    'reason_key' => ($facts['contracted_revenue'] ?? null) === null
+                    'available' => $periodMetricsAvailable && ($facts['contracted_revenue'] ?? null) !== null,
+                    'reason_key' => ! $periodMetricsAvailable
+                        ? 'project_command_center.finance.period_metrics_unavailable'
+                        : (($facts['contracted_revenue'] ?? null) === null
                         ? 'project_command_center.finance.contracted_revenue_unavailable'
-                        : null,
+                        : null),
                 ],
                 'actual_costs' => [
-                    'available' => $actualCost !== null,
-                    'reason_key' => $actualCost === null ? 'project_command_center.finance.actual_cost_unavailable' : null,
+                'available' => $periodMetricsAvailable && $actualCost !== null,
+                'reason_key' => ! $periodMetricsAvailable
+                    ? 'project_command_center.finance.period_metrics_unavailable'
+                    : ($actualCost === null ? 'project_command_center.finance.actual_cost_unavailable' : null),
                 ],
                 'payment_schedule' => [
                     'available' => $cashFlow['available'],

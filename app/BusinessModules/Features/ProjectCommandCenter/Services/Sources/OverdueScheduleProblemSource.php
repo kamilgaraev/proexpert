@@ -34,6 +34,8 @@ final class OverdueScheduleProblemSource implements ProjectProblemSource
         return DB::table('schedule_tasks as task')
             ->join('project_schedules as schedule', 'schedule.id', '=', 'task.schedule_id')
             ->where('schedule.project_id', $projectContext->projectId)
+            ->where('schedule.organization_id', $projectContext->organizationId)
+            ->where('task.organization_id', $projectContext->organizationId)
             ->whereNull('schedule.deleted_at')
             ->whereNull('task.deleted_at')
             ->whereNotIn('task.task_type', ['summary', 'container'])

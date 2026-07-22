@@ -35,6 +35,8 @@ final class QualityDefectProblemSource implements ProjectProblemSource
 
         return DB::table('quality_defects')
             ->where('project_id', $projectContext->projectId)
+            ->where('organization_id', $projectContext->organizationId)
+            ->whereNull('deleted_at')
             ->where('severity', 'critical')
             ->whereNotIn('status', ['resolved', 'verified', 'closed', 'cancelled'])
             ->orderBy('due_date')

@@ -26,6 +26,7 @@ final class ProjectDeliveryBuilder
 
         $schedule = DB::table('project_schedules')
             ->where('project_id', $project->getKey())
+            ->where('organization_id', $projectContext->organizationId)
             ->whereNull('deleted_at')
             ->orderByRaw("CASE status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END")
             ->orderByDesc('updated_at')
@@ -38,10 +39,13 @@ final class ProjectDeliveryBuilder
             return ProjectDeliveryData::unavailable('project_command_center.delivery.schedule_unavailable');
         }
 
-        $tasks = DB::table('schedule_tasks')
+        $allTasks = DB::table('schedule_tasks')
             ->where('schedule_id', $schedule->id)
+            ->where('organization_id', $projectContext->organizationId)
             ->whereNull('deleted_at')
-            ->whereNotIn('task_type', ['summary', 'container'])
+            ->whereNotIn('task_type', ['summary', 'container']);
+
+        $tasks = (clone $allTasks)
             ->when($period->hasRange(), static function ($query) use ($period): void {
                 $query->whereBetween('planned_end_date', [$period->from->toDateString(), $period->to->toDateString()]);
             });
@@ -54,7 +58,7 @@ final class ProjectDeliveryBuilder
 
         $forecastCompletion = null;
         if ((bool) $schedule->critical_path_calculated && $schedule->status !== 'completed') {
-            $forecastCompletion = (clone $tasks)
+            $forecastCompletion = (clone $allTasks)
                 ->where('is_critical', true)
                 ->whereNotIn('status', ['completed', 'cancelled'])
                 ->max('early_finish_date');
@@ -62,6 +66,7 @@ final class ProjectDeliveryBuilder
 
         $pendingWorks = DB::table('completed_works')
             ->where('project_id', $project->getKey())
+            ->where('organization_id', $projectContext->organizationId)
             ->whereNull('deleted_at')
             ->whereIn('status', ['pending', 'in_review'])
             ->when($period->hasRange(), static function ($query) use ($period): void {

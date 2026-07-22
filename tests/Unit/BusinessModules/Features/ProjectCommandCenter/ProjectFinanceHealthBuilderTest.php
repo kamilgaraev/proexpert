@@ -5,12 +5,29 @@ declare(strict_types=1);
 namespace Tests\Unit\BusinessModules\Features\ProjectCommandCenter;
 
 use App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectFinanceHealthBuilder;
+use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectCommandCenterPeriod;
 use App\Services\Analytics\EVMService;
 use Carbon\CarbonImmutable;
 use PHPUnit\Framework\TestCase;
 
 final class ProjectFinanceHealthBuilderTest extends TestCase
 {
+    public function test_it_does_not_label_full_project_evm_and_margin_as_month_facts(): void
+    {
+        $period = ProjectCommandCenterPeriod::resolve('month', null, null, null, null, CarbonImmutable::parse('2026-07-21'));
+        $result = $this->builder()->fromFacts([
+            'metrics' => ['bac' => 1000, 'ac' => 500, 'eac' => 1200],
+            'contracted_revenue' => 1500,
+            'payments' => [],
+        ], CarbonImmutable::parse('2026-07-21'), $period)->toArray();
+
+        self::assertFalse($result['margin']['available']);
+        self::assertSame('project_command_center.finance.period_metrics_unavailable', $result['margin']['reason_key']);
+        self::assertFalse($result['evm']['available']);
+        self::assertNull($result['evm']['actual_cost']);
+        self::assertSame('project_command_center.finance.period_metrics_unavailable', $result['evm']['reason_key']);
+    }
+
     public function test_it_builds_plan_fact_forecast_and_dated_cash_flow(): void
     {
         $result = $this->builder()->fromFacts([

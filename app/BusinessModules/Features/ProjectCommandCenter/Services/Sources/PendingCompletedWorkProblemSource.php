@@ -33,6 +33,7 @@ final class PendingCompletedWorkProblemSource implements ProjectProblemSource
 
         return DB::table('completed_works')
             ->where('project_id', $projectContext->projectId)
+            ->where('organization_id', $projectContext->organizationId)
             ->whereNull('deleted_at')
             ->whereIn('status', ['pending', 'in_review'])
             ->orderBy('created_at')
