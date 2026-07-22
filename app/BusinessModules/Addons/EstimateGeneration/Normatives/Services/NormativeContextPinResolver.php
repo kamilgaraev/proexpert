@@ -180,13 +180,15 @@ class NormativeContextPinResolver
                 || array_filter($normativeSections, static fn (string $section): bool => mb_strlen($section) > 32) !== []) {
                 continue;
             }
-            $key = implode('|', array_map(mb_strtolower(...), [
-                $search, $unit, (string) $code, (string) $material, (string) $action, (string) $scope,
-                (string) $system, (string) $object, implode(',', $normativeSections),
-                (string) $objectType,
-                hash('sha256', json_encode([$specializationScenario, $specializationEvidence], JSON_THROW_ON_ERROR)),
+            $key = implode('|', [
+                ...array_map(mb_strtolower(...), [
+                    $search, $unit, (string) $code, (string) $material, (string) $action, (string) $scope,
+                    (string) $system, (string) $object, implode(',', $normativeSections),
+                    (string) $objectType,
+                    hash('sha256', json_encode([$specializationScenario, $specializationEvidence], JSON_THROW_ON_ERROR)),
+                ]),
                 (string) $workItemKey,
-            ]));
+            ]);
             $resolved[$key] = ['search_text' => $search, 'unit' => $unit, 'code' => $code];
             if ($workItemKey !== null) {
                 $resolved[$key]['work_item_key'] = $workItemKey;

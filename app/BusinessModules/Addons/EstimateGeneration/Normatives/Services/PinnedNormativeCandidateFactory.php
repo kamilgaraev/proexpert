@@ -18,14 +18,22 @@ final readonly class PinnedNormativeCandidateFactory
         array $workItem,
         array $normativeSections = [],
         ?WorkIntentData $canonicalIntent = null,
-        array $candidateIdsByWorkItem = [],
+        ?array $candidateIdsByWorkItem = null,
     ): array {
         $rankable = [];
         $byId = [];
-        $allowedIds = $candidateIdsByWorkItem[(string) ($workItem['key'] ?? '')] ?? null;
-        $allowedIdLookup = is_array($allowedIds) && array_is_list($allowedIds)
-            ? array_fill_keys(array_filter($allowedIds, 'is_string'), true)
-            : null;
+        $allowedIdLookup = null;
+        if ($candidateIdsByWorkItem !== null) {
+            $workItemKey = (string) ($workItem['key'] ?? '');
+            if (! array_key_exists($workItemKey, $candidateIdsByWorkItem)) {
+                return [];
+            }
+            $allowedIds = $candidateIdsByWorkItem[$workItemKey];
+            if (! is_array($allowedIds) || ! array_is_list($allowedIds)) {
+                return [];
+            }
+            $allowedIdLookup = array_fill_keys(array_filter($allowedIds, 'is_string'), true);
+        }
         foreach ($catalogCandidates as $candidate) {
             if (! is_array($candidate) || ! is_string($candidate['candidate_id'] ?? null)) {
                 continue;

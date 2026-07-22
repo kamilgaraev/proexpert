@@ -619,8 +619,8 @@ final class NormativeContextPinResolverTest extends TestCase
             'source' => 'document',
             'evidence_refs' => ['doc:1'],
         ]];
-        $intents[0]['work_item_key'] = 'walls-norm-intent-1';
-        $intents[] = [...$intents[0], 'work_item_key' => 'walls-norm-intent-2'];
+        $intents[0]['work_item_key'] = 'Roof-1';
+        $intents[] = [...$intents[0], 'work_item_key' => 'roof-1'];
         $pin = $resolver->resolve($context, $intents);
 
         self::assertSame('pinned', $pin['status']);
@@ -630,7 +630,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertSame('electrical.power_lines', $pin['supplementary_materials'][0]['work_item_key']);
         self::assertSame('2026-07-01', $pin['applicability_date']);
         self::assertSame(
-            ['walls-norm-intent-1', 'walls-norm-intent-2'],
+            ['Roof-1', 'roof-1'],
             array_column($source->intents, 'work_item_key'),
         );
         self::assertSame($pin, $resolver->resolve($context, $intents));

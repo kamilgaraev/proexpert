@@ -56,6 +56,19 @@ final class PinnedNormativeCandidateFactoryTest extends TestCase
         self::assertSame(['roof-rate'], array_map(static fn ($item): string => $item->id, $selected));
     }
 
+    public function test_new_candidate_map_without_the_current_work_item_has_no_candidates(): void
+    {
+        $selected = (new PinnedNormativeCandidateFactory)->forWorkItem(
+            [$this->candidate('roof-rate', '12-01-001-01', 'Монтаж покрытия', '12-01', 'м2')],
+            ['key' => 'roof-norm-intent-1', 'name' => 'Монтаж покрытия', 'unit' => 'м2'],
+            ['12'],
+            null,
+            ['other-work-item' => ['roof-rate']],
+        );
+
+        self::assertSame([], $selected);
+    }
+
     /** @return array<string, mixed> */
     private function candidate(
         string $id,
