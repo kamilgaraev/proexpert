@@ -58,6 +58,12 @@ final class LegalDocumentReconciliationService
             }
 
             if ($namedSource === 'contracts') {
+                $this->repairMissingContractDossiers($organizationId, $remaining, $dryRun, $summary);
+                $remaining = $limit - $summary['candidates'];
+                if ($remaining < 1) {
+                    continue;
+                }
+
                 $this->repairContractLinks($organizationId, $remaining, $dryRun, $summary);
                 $remaining = $limit - $summary['candidates'];
                 if ($remaining < 1) {
@@ -260,6 +266,34 @@ final class LegalDocumentReconciliationService
                 ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId)),
             default => throw new InvalidArgumentException('Unknown reconciliation source.'),
         };
+    }
+
+    /** @param array{candidates:int, linked:int, problem_flags:int, skipped:int, sources:array<string, int>} $summary */
+    private function repairMissingContractDossiers(?int $organizationId, int $limit, bool $dryRun, array &$summary): void
+    {
+        Contract::query()
+            ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('contracts.organization_id', $organizationId))
+            ->whereNull('contracts.legal_archive_document_id')
+            ->whereNotExists(function (QueryBuilder $documents): void {
+                $documents->selectRaw('1')
+                    ->from('legal_archive_documents as dossier')
+                    ->whereColumn('dossier.organization_id', 'contracts.organization_id')
+                    ->where('dossier.source_type', 'contract')
+                    ->whereRaw('dossier.source_id = CAST(contracts.id AS text)');
+            })
+            ->orderBy('contracts.id')
+            ->limit($limit)
+            ->get(['contracts.*'])
+            ->each(function (Contract $contract) use ($dryRun, &$summary): void {
+                $summary['candidates']++;
+                $summary['sources']['contracts']++;
+                $summary['problem_flags']++;
+                if ($dryRun) {
+                    return;
+                }
+
+                $this->createAndLinkContract($contract, (int) $contract->organization_id, 'contract', $summary);
+            });
     }
 
     /** @param array{candidates:int, linked:int, problem_flags:int, skipped:int, sources:array<string, int>} $summary */

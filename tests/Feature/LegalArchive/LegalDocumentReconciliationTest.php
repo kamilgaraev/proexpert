@@ -72,6 +72,20 @@ final class LegalDocumentReconciliationTest extends TestCase
         self::assertStringNotContainsString('$this->linkContract($entity, $document, $dryRun, $summary);', $repair);
     }
 
+    public function test_missing_contract_dossiers_are_repaired_independently_of_the_cursor(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__, 3).'/app/Services/LegalArchive/Integrations/LegalDocumentReconciliationService.php');
+
+        self::assertStringContainsString('private function repairMissingContractDossiers(', $source);
+        self::assertStringContainsString('$this->repairMissingContractDossiers($organizationId, $remaining, $dryRun, $summary);', $source);
+        self::assertStringContainsString("->whereNull('contracts.legal_archive_document_id')", $source);
+        self::assertStringContainsString("->whereRaw('dossier.source_id = CAST(contracts.id AS text)')", $source);
+
+        $repair = (string) str($source)
+            ->between('private function repairMissingContractDossiers(', 'private function repairContractLinks(');
+        self::assertStringNotContainsString("->whereNull('dossier.deleted_at')", $repair);
+    }
+
     public function test_reconciliation_of_legacy_sources_is_scheduled(): void
     {
         $schedule = (string) file_get_contents(dirname(__DIR__, 3).'/routes/console.php');
