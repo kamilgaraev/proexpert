@@ -47,7 +47,7 @@ return new class extends Migration
         DB::statement("ALTER TABLE public.estimate_generation_targeted_rebuild_operations ADD CONSTRAINT eg_targeted_rebuild_status_ck CHECK (status IN ('queued','running','reviewed','committed','human_review','stale','cancelled'))");
         DB::statement("ALTER TABLE public.estimate_generation_targeted_rebuild_operations ADD CONSTRAINT eg_targeted_rebuild_identifier_ck CHECK (operation_id::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' AND operation_id <> '00000000-0000-0000-0000-000000000000'::uuid AND idempotency_key ~ '^[a-f0-9]{64}$' AND source_input_version ~ '^sha256:[a-f0-9]{64}$' AND root_input_hash ~ '^sha256:[a-f0-9]{64}$' AND source_draft_fingerprint ~ '^sha256:[a-f0-9]{64}$' AND package_key ~ '^[A-Za-z0-9:._-]{1,120}$')");
         DB::statement('ALTER TABLE public.estimate_generation_targeted_rebuild_operations ADD CONSTRAINT eg_targeted_rebuild_lease_ck CHECK ((lease_token IS NULL AND lease_expires_at IS NULL) OR (lease_token IS NOT NULL AND lease_expires_at IS NOT NULL))');
-        DB::statement(<<<'SQL'
+        DB::unprepared(<<<'SQL'
             ALTER TABLE public.estimate_generation_targeted_rebuild_operations
             ADD CONSTRAINT eg_targeted_rebuild_result_ck CHECK (
                 jsonb_typeof(result_delta) = 'object'

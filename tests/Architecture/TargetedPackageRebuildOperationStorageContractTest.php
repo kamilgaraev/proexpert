@@ -39,4 +39,17 @@ final class TargetedPackageRebuildOperationStorageContractTest extends TestCase
         self::assertStringNotContainsString("jsonb('prompt_payload')", strtolower($migration));
         self::assertStringNotContainsString("jsonb('document_payload')", strtolower($migration));
     }
+
+    #[Test]
+    public function it_executes_postgres_json_key_constraints_without_parameter_binding(): void
+    {
+        $migration = (string) file_get_contents(
+            dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_22_000200_create_estimate_generation_targeted_rebuild_operations.php',
+        );
+
+        self::assertMatchesRegularExpression(
+            "/DB::unprepared\\(<<<'SQL'\\R\\s*ALTER TABLE public\\.estimate_generation_targeted_rebuild_operations\\R\\s*ADD CONSTRAINT eg_targeted_rebuild_result_ck CHECK \\(/",
+            $migration,
+        );
+    }
 }
