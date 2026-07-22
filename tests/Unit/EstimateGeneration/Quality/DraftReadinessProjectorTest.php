@@ -42,7 +42,7 @@ final class DraftReadinessProjectorTest extends TestCase
     }
 
     #[Test]
-    public function it_persists_direct_cost_boundary_without_treating_zero_overhead_as_calculated(): void
+    public function it_preserves_direct_costs_without_promoting_confirmed_scope_only_to_a_commercial_budget(): void
     {
         $projected = (new DraftReadinessProjector)->project([
             'object_profile' => ['object_type' => 'house', 'floors' => 2],
@@ -59,11 +59,19 @@ final class DraftReadinessProjectorTest extends TestCase
                     'metadata' => ['composition_work_key' => 'heating.unit'],
                 ]]]],
             ]],
+            'budget_calculation' => [
+                'overhead' => ['status' => 'calculated', 'amount' => 200.0],
+                'profit' => ['status' => 'calculated', 'amount' => 100.0],
+            ],
         ]);
 
         self::assertSame(1200.0, $projected['budget_scope']['direct_costs']);
         self::assertSame('not_calculated', $projected['budget_scope']['overhead']['status']);
         self::assertNull($projected['budget_scope']['overhead']['amount']);
+        self::assertSame('not_calculated', $projected['budget_scope']['profit']['status']);
+        self::assertNull($projected['budget_scope']['profit']['amount']);
+        self::assertSame('not_calculated', $projected['budget_scope']['commercial_budget']['status']);
+        self::assertNull($projected['budget_scope']['commercial_budget']['amount']);
         self::assertSame('confirmed_scope_only', $projected['budget_scope']['claim']);
     }
 }

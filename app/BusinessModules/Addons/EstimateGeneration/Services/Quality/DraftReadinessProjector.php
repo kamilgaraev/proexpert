@@ -16,6 +16,9 @@ final readonly class DraftReadinessProjector
     {
         $draft['completeness'] = $this->completeness->project($draft);
         $draft['budget_scope'] = $this->budgetScope->project($draft, $this->directCosts($draft));
+        if ($draft['completeness']['status'] === 'confirmed_scope_only') {
+            $draft['budget_scope'] = $this->confirmedScopeBudget($draft['budget_scope']);
+        }
         $inspection = $this->inspector->inspect($draft);
         $blockingCodes = array_column($inspection->blockingIssues, 'code');
         $warningCodes = array_column($inspection->warnings, 'code');
@@ -56,5 +59,19 @@ final readonly class DraftReadinessProjector
         }
 
         return round($total, 2);
+    }
+
+    /** @param array<string, mixed> $budgetScope
+     *  @return array<string, mixed>
+     */
+    private function confirmedScopeBudget(array $budgetScope): array
+    {
+        return [
+            'direct_costs' => $budgetScope['direct_costs'],
+            'overhead' => ['status' => 'not_calculated', 'amount' => null],
+            'profit' => ['status' => 'not_calculated', 'amount' => null],
+            'commercial_budget' => ['status' => 'not_calculated', 'amount' => null],
+            'claim' => 'confirmed_scope_only',
+        ];
     }
 }

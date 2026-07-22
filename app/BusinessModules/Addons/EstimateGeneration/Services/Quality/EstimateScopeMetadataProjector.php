@@ -12,12 +12,16 @@ final class EstimateScopeMetadataProjector
 
     private const MAX_REFERENCES = 100;
 
+    private const MAX_GAPS = 100;
+
     /** @return array<string, mixed> */
     public function project(array $draft, array $budgetScope): array
     {
+        $completeness = $this->completeness($draft['completeness'] ?? []);
+
         return [
-            'completeness' => $this->completeness($draft['completeness'] ?? []),
-            'budget_scope' => $this->budgetScope($budgetScope),
+            'completeness' => $completeness,
+            'budget_scope' => $this->budgetScope($budgetScope, $completeness['status']),
             'arbiter_review' => $this->arbiterReview($draft['arbiter_review'] ?? []),
         ];
     }
@@ -46,6 +50,7 @@ final class EstimateScopeMetadataProjector
                 'required_items' => $this->references($scope['required_items'] ?? []),
                 'covered_items' => $this->references($scope['covered_items'] ?? []),
                 'missing_items' => $this->references($scope['missing_items'] ?? []),
+                'gaps' => $this->gaps($scope['gaps'] ?? []),
                 'evidence_refs' => $this->references($scope['evidence_refs'] ?? []),
                 'exclusion_reason' => in_array($scope['exclusion_reason'] ?? null, ['user_decision', 'document'], true)
                     ? $scope['exclusion_reason']
@@ -57,7 +62,7 @@ final class EstimateScopeMetadataProjector
     }
 
     /** @return array<string, mixed> */
-    private function budgetScope(array $budgetScope): array
+    private function budgetScope(array $budgetScope, string $completenessStatus): array
     {
         $directCosts = $this->positiveOrZero($budgetScope['direct_costs'] ?? null);
         $overhead = $this->budgetComponent($budgetScope['overhead'] ?? []);
@@ -70,12 +75,24 @@ final class EstimateScopeMetadataProjector
             'review_required',
         ], true) ? $budgetScope['claim'] : 'review_required';
 
-        return [
+        $scope = [
             'direct_costs' => $directCosts,
             'overhead' => $overhead,
             'profit' => $profit,
             'commercial_budget' => $commercial,
             'claim' => $claim,
+        ];
+
+        if ($completenessStatus !== 'confirmed_scope_only') {
+            return $scope;
+        }
+
+        return [
+            'direct_costs' => $directCosts,
+            'overhead' => ['status' => 'not_calculated', 'amount' => null],
+            'profit' => ['status' => 'not_calculated', 'amount' => null],
+            'commercial_budget' => ['status' => 'not_calculated', 'amount' => null],
+            'claim' => 'confirmed_scope_only',
         ];
     }
 
@@ -162,6 +179,32 @@ final class EstimateScopeMetadataProjector
         }
 
         return array_values(array_unique($references));
+    }
+
+    /** @return list<array{work_key: string, reason: string}> */
+    private function gaps(mixed $values): array
+    {
+        $gaps = [];
+        $values = is_array($values) ? $values : [];
+
+        foreach (array_slice(array_values($values), 0, self::MAX_GAPS) as $gap) {
+            if (! is_array($gap)
+                || ! $this->isReference($gap['work_key'] ?? null)
+                || ! $this->isReference($gap['reason'] ?? null)) {
+                continue;
+            }
+
+            $workKey = (string) $gap['work_key'];
+            $reason = (string) $gap['reason'];
+            $gaps[$workKey."\0".$reason] = ['work_key' => $workKey, 'reason' => $reason];
+        }
+
+        $gaps = array_values($gaps);
+        usort($gaps, static function (array $left, array $right): int {
+            return [$left['work_key'], $left['reason']] <=> [$right['work_key'], $right['reason']];
+        });
+
+        return $gaps;
     }
 
     private function isReference(mixed $value): bool

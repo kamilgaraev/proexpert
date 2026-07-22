@@ -59,9 +59,35 @@ final class GeneratedEstimateScopeMetadataTest extends TestCase
                     'required_items' => ['heating.unit'],
                     'covered_items' => [],
                     'missing_items' => ['heating.unit'],
+                    'gaps' => [
+                        [
+                            'work_key' => 'zeta.unit',
+                            'reason' => 'quantity_missing',
+                            'message' => 'Secret document message',
+                            'evidence_payload' => ['document' => 'secret'],
+                        ],
+                        [
+                            'work_key' => 'alpha.unit',
+                            'reason' => 'document_takeoff_missing',
+                            'internal_flag' => true,
+                        ],
+                        [
+                            'work_key' => 'alpha.unit',
+                            'reason' => 'document_takeoff_missing',
+                            'user_input' => 'must not be persisted',
+                        ],
+                        ['work_key' => 'invalid work key', 'reason' => 'quantity_missing'],
+                        ['work_key' => 'beta.unit', 'reason' => 'invalid reason'],
+                        ...array_fill(0, 95, ['work_key' => 'invalid work key', 'reason' => 'quantity_missing']),
+                        ['work_key' => 'late.unit', 'reason' => 'quantity_missing'],
+                    ],
                     'evidence_refs' => ['evidence:1'],
                     'exclusion_reason' => null,
                 ]],
+            ],
+            'budget_calculation' => [
+                'overhead' => ['status' => 'calculated', 'amount' => 200.0],
+                'profit' => ['status' => 'calculated', 'amount' => 100.0],
             ],
             'arbiter_review' => [
                 'mode' => 'shadow',
@@ -98,13 +124,22 @@ final class GeneratedEstimateScopeMetadataTest extends TestCase
                 'required_items' => ['heating.unit'],
                 'covered_items' => [],
                 'missing_items' => ['heating.unit'],
+                'gaps' => [
+                    ['work_key' => 'alpha.unit', 'reason' => 'document_takeoff_missing'],
+                    ['work_key' => 'zeta.unit', 'reason' => 'quantity_missing'],
+                ],
                 'evidence_refs' => ['evidence:1'],
                 'exclusion_reason' => null,
             ]],
         ], $writer->attributes['metadata']['ai_scope']['completeness']);
         self::assertSame(1200.0, $writer->attributes['metadata']['ai_scope']['budget_scope']['direct_costs']);
         self::assertSame('not_calculated', $writer->attributes['metadata']['ai_scope']['budget_scope']['overhead']['status']);
+        self::assertNull($writer->attributes['metadata']['ai_scope']['budget_scope']['overhead']['amount']);
+        self::assertSame('not_calculated', $writer->attributes['metadata']['ai_scope']['budget_scope']['profit']['status']);
+        self::assertNull($writer->attributes['metadata']['ai_scope']['budget_scope']['profit']['amount']);
+        self::assertSame('not_calculated', $writer->attributes['metadata']['ai_scope']['budget_scope']['commercial_budget']['status']);
         self::assertNull($writer->attributes['metadata']['ai_scope']['budget_scope']['commercial_budget']['amount']);
+        self::assertSame('confirmed_scope_only', $writer->attributes['metadata']['ai_scope']['budget_scope']['claim']);
         self::assertSame([
             'mode' => 'shadow',
             'status' => 'reviewed',
