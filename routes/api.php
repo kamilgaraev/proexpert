@@ -237,6 +237,10 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         // require __DIR__ . '/api/v1/admin/agreements.php';
 
         // Сюда можно будет добавлять require для новых файлов маршрутов админки
+        Route::get('project-command-center', [\App\Http\Controllers\Api\V1\Admin\ProjectCommandCenterController::class, 'show'])
+            ->middleware('throttle:dashboard')
+            ->name('project-command-center.show');
+
         require __DIR__.'/api/v1/admin/dashboard.php';
         require __DIR__.'/api/v1/admin/knowledge_hub.php';
         require __DIR__.'/api/v1/admin/profile.php';
