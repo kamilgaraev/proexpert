@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterVerdict;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class TargetedPackageRebuilderTest extends TestCase
@@ -160,6 +161,62 @@ final class TargetedPackageRebuilderTest extends TestCase
         self::assertSame(['heating-work-2', 'heating-work-3'], array_column($result->draft['local_estimates'][1]['sections'][1]['work_items'], 'key'));
     }
 
+    #[DataProvider('malformedTargetCandidates')]
+    public function test_it_rejects_malformed_target_topology_before_services_are_called(\Closure $mutate): void
+    {
+        $draft = $this->draft();
+        $mutate($draft);
+        $resources = $this->createMock(ResourceAssemblyService::class);
+        $pricing = $this->createMock(EstimatePricingService::class);
+        $resources->expects(self::never())->method('enrich');
+        $pricing->expects(self::never())->method('price');
+
+        $this->expectException(TargetedPackageEvidenceRequired::class);
+
+        (new TargetedPackageRebuilder($resources, $pricing))->rebuild($this->command($draft));
+    }
+
+    #[DataProvider('invalidReviewFences')]
+    public function test_it_rejects_an_invalid_review_fence_before_services_are_called(\Closure $mutate): void
+    {
+        $draft = $this->draft();
+        $mutate($draft);
+        $resources = $this->createMock(ResourceAssemblyService::class);
+        $pricing = $this->createMock(EstimatePricingService::class);
+        $resources->expects(self::never())->method('enrich');
+        $pricing->expects(self::never())->method('price');
+
+        $this->expectException(TargetedPackageEvidenceRequired::class);
+
+        (new TargetedPackageRebuilder($resources, $pricing))->rebuild($this->command($draft));
+    }
+
+    public function test_it_fails_closed_when_pricing_drops_an_enriched_resource(): void
+    {
+        $draft = $this->draft();
+        $resources = $this->createMock(ResourceAssemblyService::class);
+        $pricing = $this->createMock(EstimatePricingService::class);
+        $resources->expects(self::once())
+            ->method('enrich')
+            ->willReturnCallback(static fn (array $workItems): array => [[
+                ...$workItems[0],
+                'materials' => [
+                    ['key' => 'water', 'resource_type' => 'water'],
+                    ['key' => 'pipe', 'resource_type' => 'pipe'],
+                ],
+            ]]);
+        $pricing->expects(self::once())
+            ->method('price')
+            ->willReturnCallback(static fn (array $workItems): array => [[
+                ...$workItems[0],
+                'materials' => [$workItems[0]['materials'][0]],
+            ]]);
+
+        $this->expectException(TargetedPackageEvidenceRequired::class);
+
+        (new TargetedPackageRebuilder($resources, $pricing))->rebuild($this->command($draft));
+    }
+
     public function test_production_files_do_not_reference_the_full_generation_pipeline(): void
     {
         $forbidden = [
@@ -226,6 +283,8 @@ final class TargetedPackageRebuilderTest extends TestCase
                 ['key' => 'heating', 'sections' => $heatingSections],
             ],
             'arbiter_review' => [
+                'outcome' => 'targeted_rebuild',
+                'findings' => [$this->targetedReviewFinding()],
                 'cycle' => [
                     'input_hash' => $this->arbiterInputHash(),
                     'attempted' => false,
@@ -269,11 +328,63 @@ final class TargetedPackageRebuilderTest extends TestCase
 
     private function targetedVerdict(): ArbiterVerdict
     {
-        return new ArbiterVerdict('targeted_rebuild', [[
+        return new ArbiterVerdict('targeted_rebuild', [$this->targetedReviewFinding()]);
+    }
+
+    private function targetedReviewFinding(): array
+    {
+        return [
+            'scope_key' => 'heating',
             'action' => 'rebuild',
             'package_keys' => ['heating'],
             'evidence_refs' => ['evidence:arbiter-heating'],
-        ]]);
+            'reason_code' => 'missing_component',
+        ];
+    }
+
+    /** @return iterable<string, array{\Closure}> */
+    public static function malformedTargetCandidates(): iterable
+    {
+        yield 'non-array section' => [static function (array &$draft): void {
+            $draft['local_estimates'][1]['sections'][] = 'invalid';
+        }];
+        yield 'missing section key' => [static function (array &$draft): void {
+            unset($draft['local_estimates'][1]['sections'][0]['key']);
+        }];
+        yield 'duplicate section key' => [static function (array &$draft): void {
+            $draft['local_estimates'][1]['sections'][] = $draft['local_estimates'][1]['sections'][0];
+        }];
+        yield 'non-array work item' => [static function (array &$draft): void {
+            $draft['local_estimates'][1]['sections'][0]['work_items'][] = 'invalid';
+        }];
+        yield 'missing work item key' => [static function (array &$draft): void {
+            unset($draft['local_estimates'][1]['sections'][0]['work_items'][0]['key']);
+        }];
+        yield 'duplicate work item key across sections' => [static function (array &$draft): void {
+            $draft['local_estimates'][1]['sections'][] = [
+                'key' => 'heating-second',
+                'work_items' => [$draft['local_estimates'][1]['sections'][0]['work_items'][0]],
+            ];
+        }];
+    }
+
+    /** @return iterable<string, array{\Closure}> */
+    public static function invalidReviewFences(): iterable
+    {
+        yield 'cycle exhausted' => [static function (array &$draft): void {
+            $draft['arbiter_review']['cycle']['status'] = 'cycle_exhausted';
+            $draft['arbiter_review']['cycle']['terminal_outcome'] = 'human_review';
+            $draft['arbiter_review']['cycle']['target_package_keys'] = [];
+        }];
+        yield 'malformed cycle attempted type' => [static function (array &$draft): void {
+            $draft['arbiter_review']['cycle']['attempted'] = 'false';
+        }];
+        yield 'review already routes to human review' => [static function (array &$draft): void {
+            $draft['arbiter_review']['outcome'] = 'human_review';
+        }];
+        yield 'review findings lack evidence' => [static function (array &$draft): void {
+            $draft['arbiter_review']['findings'][0]['evidence_refs'] = [];
+        }];
     }
 
     private function sourceInputVersion(): string

@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\Assembl
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterReviewCycle;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterRemediationState;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 
@@ -44,6 +45,7 @@ final readonly class TargetedPackageRebuilder
             $workItems = $section['work_items'];
             $enriched = $this->resources->enrich($workItems, $regionalContext);
             $this->assertUnchangedWorkItemTopology($workItems, $enriched);
+            $resourceComposition = $this->resourceComposition($enriched);
 
             $matched = $this->matchedResources->handle([
                 'local_estimates' => [[...$candidate, 'sections' => [[...$section, 'work_items' => $enriched]]]],
@@ -51,9 +53,11 @@ final readonly class TargetedPackageRebuilder
             ]);
             $matchedWorkItems = $this->matchedWorkItems($matched);
             $this->assertUnchangedWorkItemTopology($workItems, $matchedWorkItems);
+            $this->assertResourceComposition($resourceComposition, $matchedWorkItems);
 
             $priced = $this->pricing->price($matchedWorkItems, $regionalContext, $context);
             $this->assertUnchangedWorkItemTopology($workItems, $priced);
+            $this->assertResourceComposition($resourceComposition, $priced);
             $candidate['sections'][$sectionIndex]['work_items'] = $priced;
         }
 
@@ -75,15 +79,21 @@ final readonly class TargetedPackageRebuilder
         }
 
         $review = $command->draft['arbiter_review'] ?? null;
-        $cycle = is_array($review) ? $review['cycle'] ?? null : null;
-        $cycleInputHash = is_array($cycle) ? $cycle['input_hash'] ?? null : null;
-        if (! is_string($cycleInputHash)
-            || ! $this->isSha256($cycleInputHash)
-            || ! hash_equals($cycleInputHash, $command->arbiterInputHash)) {
+        if (! is_array($review)
+            || ($review['outcome'] ?? null) !== 'targeted_rebuild'
+            || ! $this->findingsTargetPackageWithEvidence($review['findings'] ?? null, $command->packageKey)) {
+            $this->evidenceRequired();
+        }
+        $cycle = $this->reviewCycle($review);
+        if (! hash_equals($cycle->inputHash, $command->arbiterInputHash)
+            || $cycle->attempted
+            || $cycle->status !== 'shadow_recommendation'
+            || $cycle->terminalOutcome !== 'targeted_rebuild'
+            || ! in_array($command->packageKey, $cycle->targetPackageKeys, true)) {
             $this->evidenceRequired();
         }
 
-        $remediation = is_array($review) ? $review['remediation'] ?? null : null;
+        $remediation = $review['remediation'] ?? null;
         if (! is_array($remediation)) {
             $this->evidenceRequired();
         }
@@ -99,7 +109,8 @@ final readonly class TargetedPackageRebuilder
             $this->evidenceRequired();
         }
 
-        if ($command->verdict->outcome !== 'targeted_rebuild' || ! $this->verdictTargetsPackageWithEvidence($command)) {
+        if ($command->verdict->outcome !== 'targeted_rebuild'
+            || ! $this->verdictTargetsPackageWithEvidence($command->verdict->findings, $command->packageKey)) {
             $this->evidenceRequired();
         }
     }
@@ -144,25 +155,82 @@ final readonly class TargetedPackageRebuilder
         }
 
         $genericWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy;
+        $sectionKeys = [];
+        $workItemKeys = [];
         foreach ($sections as $section) {
-            $workItems = is_array($section) ? $section['work_items'] ?? null : null;
+            if (! is_array($section) || ! $this->registerUniqueKey($section['key'] ?? null, $sectionKeys)) {
+                $this->evidenceRequired();
+            }
+            $workItems = $section['work_items'] ?? null;
             if (! is_array($workItems) || ! array_is_list($workItems) || $workItems === []) {
                 $this->evidenceRequired();
             }
             foreach ($workItems as $workItem) {
-                if (! is_array($workItem) || ! $this->isPricedWorkItem($workItem)) {
-                    continue;
+                if (! is_array($workItem) || ! $this->registerUniqueKey($workItem['key'] ?? null, $workItemKeys)) {
+                    $this->evidenceRequired();
                 }
-                if ($genericWorkItemPolicy->requiresReview($workItem) || ! $this->hasEvidenceBoundedQuantity($workItem)) {
+                $this->resourceComposition([$workItem]);
+                if ($this->isPricedWorkItem($workItem)
+                    && ($genericWorkItemPolicy->requiresReview($workItem) || ! $this->hasEvidenceBoundedQuantity($workItem))) {
                     $this->evidenceRequired();
                 }
             }
         }
     }
 
-    private function verdictTargetsPackageWithEvidence(TargetedPackageRebuildCommand $command): bool
+    /** @param array<string, mixed> $review */
+    private function reviewCycle(array $review): ArbiterReviewCycle
     {
-        foreach ($command->verdict->findings as $finding) {
+        $cycle = $review['cycle'] ?? null;
+        if (! is_array($cycle)) {
+            $this->evidenceRequired();
+        }
+        $keys = array_keys($cycle);
+        sort($keys, SORT_STRING);
+        if ($keys !== ['attempted', 'input_hash', 'status', 'target_package_keys', 'terminal_outcome']
+            || ! is_string($cycle['input_hash'])
+            || ! is_bool($cycle['attempted'])
+            || ! is_array($cycle['target_package_keys'])
+            || ! is_string($cycle['status'])
+            || ! is_string($cycle['terminal_outcome'])) {
+            $this->evidenceRequired();
+        }
+        try {
+            return new ArbiterReviewCycle(
+                $cycle['input_hash'],
+                $cycle['attempted'],
+                $cycle['target_package_keys'],
+                $cycle['status'],
+                $cycle['terminal_outcome'],
+            );
+        } catch (\Throwable) {
+            $this->evidenceRequired();
+        }
+    }
+
+    private function findingsTargetPackageWithEvidence(mixed $findings, string $packageKey): bool
+    {
+        if (! is_array($findings) || ! array_is_list($findings) || $findings === []) {
+            return false;
+        }
+        $targetsPackage = false;
+        foreach ($findings as $finding) {
+            if (! is_array($finding) || ! $this->isValidFinding($finding)) {
+                return false;
+            }
+            if ($finding['action'] === 'rebuild'
+                && in_array($packageKey, $finding['package_keys'], true)) {
+                $targetsPackage = true;
+            }
+        }
+
+        return $targetsPackage;
+    }
+
+    /** @param list<array<string, mixed>> $findings */
+    private function verdictTargetsPackageWithEvidence(array $findings, string $packageKey): bool
+    {
+        foreach ($findings as $finding) {
             if (! is_array($finding) || ($finding['action'] ?? null) !== 'rebuild') {
                 continue;
             }
@@ -170,12 +238,32 @@ final readonly class TargetedPackageRebuilder
             $evidenceReferences = $this->validReferences($finding['evidence_refs'] ?? null);
             if ($packageKeys !== null
                 && $evidenceReferences !== null
-                && in_array($command->packageKey, $packageKeys, true)) {
+                && in_array($packageKey, $packageKeys, true)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /** @param array<string, mixed> $finding */
+    private function isValidFinding(array $finding): bool
+    {
+        $keys = array_keys($finding);
+        sort($keys, SORT_STRING);
+        if ($keys !== ['action', 'evidence_refs', 'package_keys', 'reason_code', 'scope_key']
+            || ! is_string($finding['scope_key'])
+            || preg_match('/\A[A-Za-z0-9:._-]{1,120}\z/', $finding['scope_key']) !== 1
+            || ! in_array($finding['action'], ['rebuild', 'review'], true)
+            || ! in_array($finding['reason_code'], ['missing_component', 'evidence_required', 'quantity_unconfirmed'], true)
+            || $this->validReferences($finding['package_keys'], false) === null
+            || $this->validReferences($finding['evidence_refs'], false) === null) {
+            return false;
+        }
+
+        return $finding['action'] !== 'rebuild'
+            || ($this->validReferences($finding['package_keys']) !== null
+                && $this->validReferences($finding['evidence_refs']) !== null);
     }
 
     /** @param array<string, mixed> $workItem */
@@ -205,9 +293,9 @@ final readonly class TargetedPackageRebuilder
     }
 
     /** @return list<string>|null */
-    private function validReferences(mixed $references): ?array
+    private function validReferences(mixed $references, bool $required = true): ?array
     {
-        if (! is_array($references) || ! array_is_list($references) || $references === []) {
+        if (! is_array($references) || ! array_is_list($references) || ($required && $references === [])) {
             return null;
         }
         $normalized = [];
@@ -224,6 +312,17 @@ final readonly class TargetedPackageRebuilder
         }
 
         return array_keys($normalized);
+    }
+
+    /** @param array<string, true> $registered */
+    private function registerUniqueKey(mixed $key, array &$registered): bool
+    {
+        if (! is_string($key) || trim($key) === '' || isset($registered[$key])) {
+            return false;
+        }
+        $registered[$key] = true;
+
+        return true;
     }
 
     /** @return array<string, mixed> */
@@ -280,6 +379,64 @@ final readonly class TargetedPackageRebuilder
                 $this->evidenceRequired();
             }
         }
+    }
+
+    /** @param list<array<string, mixed>> $workItems @return list<array{materials: list<string>, labor: list<string>, machinery: list<string>, other_resources: list<string>}> */
+    private function resourceComposition(array $workItems): array
+    {
+        $composition = [];
+        foreach ($workItems as $workItem) {
+            if (! is_array($workItem)) {
+                $this->evidenceRequired();
+            }
+            $groups = [];
+            foreach (['materials', 'labor', 'machinery', 'other_resources'] as $group) {
+                $resources = $workItem[$group] ?? [];
+                if (! is_array($resources) || ! array_is_list($resources)) {
+                    $this->evidenceRequired();
+                }
+                $groups[$group] = [];
+                foreach ($resources as $resource) {
+                    if (! is_array($resource)) {
+                        $this->evidenceRequired();
+                    }
+                    $identity = $this->resourceIdentity($resource);
+                    if ($identity === null) {
+                        $this->evidenceRequired();
+                    }
+                    $groups[$group][] = $identity;
+                }
+            }
+            $composition[] = $groups;
+        }
+
+        return $composition;
+    }
+
+    /** @param list<array{materials: list<string>, labor: list<string>, machinery: list<string>, other_resources: list<string>}> $expected */
+    private function assertResourceComposition(array $expected, array $workItems): void
+    {
+        if ($expected !== $this->resourceComposition($workItems)) {
+            $this->evidenceRequired();
+        }
+    }
+
+    /** @param array<string, mixed> $resource */
+    private function resourceIdentity(array $resource): ?string
+    {
+        foreach (['key', 'code'] as $field) {
+            $value = $resource[$field] ?? null;
+            if (is_string($value) && preg_match('/\A[A-Za-z0-9:._-]{1,120}\z/', $value) === 1) {
+                return $field.':'.$value;
+            }
+        }
+        $normativeReference = $resource['normative_ref'] ?? null;
+        $resourceCode = is_array($normativeReference) ? $normativeReference['resource_code'] ?? null : null;
+        if (is_string($resourceCode) && preg_match('/\A[A-Za-z0-9:._-]{1,120}\z/', $resourceCode) === 1) {
+            return 'normative_ref.resource_code:'.$resourceCode;
+        }
+
+        return null;
     }
 
     private function isSha256(string $value): bool
