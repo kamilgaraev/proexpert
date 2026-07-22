@@ -42,12 +42,25 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\LaravelEs
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\EloquentTargetedPackageRebuildOperationStore;
-use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\NoopTargetedPackageRebuildJobHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\EloquentTargetedPackageRebuildSessionSource;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\RunTargetedPackageRebuildOperation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildJobScheduler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildJobHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildSessionSource;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildExecutor;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildCommitter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\CommitTargetedPackageRebuild;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageCommitStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\EloquentTargetedPackageCommitStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageDraftWriter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageReviewUpdater;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\AdvanceTargetedPackageReviewUpdater;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationService;
 use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationStore;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ShadowArbiterCoordinator;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\TargetedPackageRebuildReviewer;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkGate;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
@@ -274,8 +287,27 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         );
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ShadowArbiterCoordinator::class);
         $this->app->singleton(TargetedPackageRebuildOperationStore::class, EloquentTargetedPackageRebuildOperationStore::class);
+        $this->app->singleton(TargetedPackageRebuildSessionSource::class, EloquentTargetedPackageRebuildSessionSource::class);
+        $this->app->singleton(TargetedPackageRebuildExecutor::class, TargetedPackageRebuilder::class);
+        $this->app->singleton(TargetedPackageRebuildReviewer::class, ShadowArbiterCoordinator::class);
+        $this->app->singleton(TargetedPackageCommitStore::class, EloquentTargetedPackageCommitStore::class);
+        $this->app->singleton(TargetedPackageDraftWriter::class, \App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService::class);
+        $this->app->singleton(TargetedPackageReviewUpdater::class, AdvanceTargetedPackageReviewUpdater::class);
+        $this->app->singleton(TargetedPackageRebuildCommitter::class, CommitTargetedPackageRebuild::class);
         $this->app->singleton(TargetedPackageRebuildJobScheduler::class, LaravelTargetedPackageRebuildJobScheduler::class);
-        $this->app->singleton(TargetedPackageRebuildJobHandler::class, NoopTargetedPackageRebuildJobHandler::class);
+        $this->app->singleton(TargetedPackageRebuildJobHandler::class, static function ($app): RunTargetedPackageRebuildOperation {
+            $settings = config('estimate-generation.completeness_arbiter');
+            $settings = is_array($settings) ? $settings : [];
+
+            return new RunTargetedPackageRebuildOperation(
+                $app->make(TargetedPackageRebuildOperationStore::class),
+                $app->make(TargetedPackageRebuildSessionSource::class),
+                $app->make(TargetedPackageRebuildExecutor::class),
+                $app->make(TargetedPackageRebuildReviewer::class),
+                $app->make(TargetedPackageRebuildCommitter::class),
+                ($settings['active_targeted_rebuild_enabled'] ?? false) === true,
+            );
+        });
         $this->app->singleton(TargetedPackageRebuildOperationFactory::class);
         $this->app->singleton(TargetedPackageRebuildOperationService::class, static function ($app): TargetedPackageRebuildOperationService {
             $settings = config('estimate-generation.completeness_arbiter');

@@ -13,7 +13,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\Arbit
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ArbiterRemediationState;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 
-final readonly class TargetedPackageRebuilder
+final readonly class TargetedPackageRebuilder implements TargetedPackageRebuildExecutor
 {
     public function __construct(
         private ResourceAssemblyService $resources,

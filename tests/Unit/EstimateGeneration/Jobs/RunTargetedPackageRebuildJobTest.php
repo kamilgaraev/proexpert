@@ -51,6 +51,17 @@ final class RunTargetedPackageRebuildJobTest extends TestCase
         self::assertNotFalse($afterCommit);
         self::assertTrue($dispatch < $connection && $connection < $queue && $queue < $afterCommit);
     }
+
+    #[Test]
+    public function it_binds_the_dedicated_job_to_the_safe_targeted_executor(): void
+    {
+        $source = (string) file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/EstimateGenerationServiceProvider.php',
+        );
+
+        self::assertStringContainsString('TargetedPackageRebuildJobHandler::class', $source);
+        self::assertStringContainsString('new RunTargetedPackageRebuildOperation(', $source);
+    }
 }
 
 final class RecordingTargetedPackageRebuildJobHandler implements TargetedPackageRebuildJobHandler

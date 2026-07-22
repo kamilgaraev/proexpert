@@ -255,6 +255,21 @@ final class TargetedPackageRebuildOperationDataTest extends TestCase
         $claimed->withReviewed($this->resultDelta(), $unavailable);
     }
 
+    #[Test]
+    public function it_allows_a_confirmed_shadow_review_to_route_a_rebuild_to_human_review(): void
+    {
+        $review = $this->safeReview();
+        $review['outcome'] = 'human_review';
+        $review['remediation']['review_outcome'] = 'human_review';
+
+        $humanReview = $this->queued()
+            ->withLease('018f809a-e85e-7382-b419-00f5a7d7ab59', new \DateTimeImmutable('2026-07-22T12:30:00+00:00'))
+            ->withHumanReview($review);
+
+        self::assertSame('human_review', $humanReview->status);
+        self::assertSame('reviewed', $humanReview->safeArbiterReview['status']);
+    }
+
     private function queued(): \App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationData
     {
         return \App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationData::queued(

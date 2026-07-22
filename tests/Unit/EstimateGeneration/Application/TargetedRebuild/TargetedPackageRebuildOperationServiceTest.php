@@ -122,6 +122,35 @@ final class InMemoryTargetedPackageRebuildOperationStore implements TargetedPack
 
         return new TargetedPackageRebuildOperationStoreResult($operation, true);
     }
+
+    public function find(string $operationId): ?TargetedPackageRebuildOperationData
+    {
+        foreach ($this->operations as $operation) {
+            if ($operation->operationId === $operationId) {
+                return $operation;
+            }
+        }
+
+        return null;
+    }
+
+    public function claimQueued(string $operationId, string $leaseToken, \DateTimeImmutable $leaseExpiresAt): ?TargetedPackageRebuildOperationData
+    {
+        $operation = $this->find($operationId);
+        if (! $operation instanceof TargetedPackageRebuildOperationData || $operation->status !== 'queued') {
+            return null;
+        }
+
+        $claimed = $operation->withLease($leaseToken, $leaseExpiresAt);
+        $this->operations[$claimed->idempotencyKey] = $claimed;
+
+        return $claimed;
+    }
+
+    public function save(TargetedPackageRebuildOperationData $operation): void
+    {
+        $this->operations[$operation->idempotencyKey] = $operation;
+    }
 }
 
 final class RecordingTargetedPackageRebuildJobScheduler implements TargetedPackageRebuildJobScheduler

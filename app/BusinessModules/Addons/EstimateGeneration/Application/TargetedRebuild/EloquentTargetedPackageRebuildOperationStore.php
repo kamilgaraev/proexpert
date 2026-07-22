@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebu
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTargetedRebuildOperation;
 use DateTimeImmutable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Database\QueryException;
 use LogicException;
 
@@ -36,6 +37,52 @@ final class EloquentTargetedPackageRebuildOperationStore implements TargetedPack
         return new TargetedPackageRebuildOperationStoreResult($this->matchingData($created, $operation), true);
     }
 
+    public function find(string $operationId): ?TargetedPackageRebuildOperationData
+    {
+        $model = $this->query()->whereKey($operationId)->first();
+
+        return $model instanceof EstimateGenerationTargetedRebuildOperation
+            ? $this->data($model)
+            : null;
+    }
+
+    public function claimQueued(string $operationId, string $leaseToken, DateTimeImmutable $leaseExpiresAt): ?TargetedPackageRebuildOperationData
+    {
+        $updated = $this->query()
+            ->whereKey($operationId)
+            ->where('status', 'queued')
+            ->whereNull('lease_token')
+            ->update([
+                'status' => 'running',
+                'lease_token' => $leaseToken,
+                'lease_expires_at' => $leaseExpiresAt,
+                'attempt_count' => DB::raw('attempt_count + 1'),
+                'updated_at' => now(),
+            ]);
+        if ($updated !== 1) {
+            return null;
+        }
+
+        return $this->find($operationId);
+    }
+
+    public function save(TargetedPackageRebuildOperationData $operation): void
+    {
+        $model = $this->query()->whereKey($operation->operationId)->first();
+        if (! $model instanceof EstimateGenerationTargetedRebuildOperation) {
+            throw new LogicException('Targeted rebuild operation is unavailable.');
+        }
+
+        $model->forceFill($this->attributes($operation));
+        if ($operation->status === 'reviewed') {
+            $model->reviewed_at = now();
+            $model->finished_at = null;
+        } elseif (in_array($operation->status, ['committed', 'human_review', 'stale', 'cancelled'], true)) {
+            $model->finished_at = now();
+        }
+        $model->save();
+    }
+
     private function query(): \Illuminate\Database\Eloquent\Builder
     {
         return EstimateGenerationTargetedRebuildOperation::query();
@@ -45,7 +92,26 @@ final class EloquentTargetedPackageRebuildOperationStore implements TargetedPack
         EstimateGenerationTargetedRebuildOperation $model,
         TargetedPackageRebuildOperationData $expected,
     ): TargetedPackageRebuildOperationData {
-        $stored = TargetedPackageRebuildOperationData::fromPersisted(
+        $stored = $this->data($model);
+
+        if ($stored->idempotencyKey !== $expected->idempotencyKey
+            || $stored->organizationId !== $expected->organizationId
+            || $stored->projectId !== $expected->projectId
+            || $stored->sessionId !== $expected->sessionId
+            || $stored->expectedStateVersion !== $expected->expectedStateVersion
+            || $stored->sourceInputVersion !== $expected->sourceInputVersion
+            || $stored->rootInputHash !== $expected->rootInputHash
+            || $stored->sourceDraftFingerprint !== $expected->sourceDraftFingerprint
+            || $stored->packageKey !== $expected->packageKey) {
+            throw new LogicException('Targeted rebuild idempotency key is bound to different content.');
+        }
+
+        return $stored;
+    }
+
+    private function data(EstimateGenerationTargetedRebuildOperation $model): TargetedPackageRebuildOperationData
+    {
+        return TargetedPackageRebuildOperationData::fromPersisted(
             operationId: (string) $model->operation_id,
             idempotencyKey: (string) $model->idempotency_key,
             organizationId: (int) $model->organization_id,
@@ -63,20 +129,6 @@ final class EloquentTargetedPackageRebuildOperationStore implements TargetedPack
             resultDelta: is_array($model->result_delta) ? $model->result_delta : [],
             safeArbiterReview: is_array($model->safe_arbiter_review) ? $model->safe_arbiter_review : [],
         );
-
-        if ($stored->idempotencyKey !== $expected->idempotencyKey
-            || $stored->organizationId !== $expected->organizationId
-            || $stored->projectId !== $expected->projectId
-            || $stored->sessionId !== $expected->sessionId
-            || $stored->expectedStateVersion !== $expected->expectedStateVersion
-            || $stored->sourceInputVersion !== $expected->sourceInputVersion
-            || $stored->rootInputHash !== $expected->rootInputHash
-            || $stored->sourceDraftFingerprint !== $expected->sourceDraftFingerprint
-            || $stored->packageKey !== $expected->packageKey) {
-            throw new LogicException('Targeted rebuild idempotency key is bound to different content.');
-        }
-
-        return $stored;
     }
 
     private function isUniqueViolation(QueryException $exception): bool

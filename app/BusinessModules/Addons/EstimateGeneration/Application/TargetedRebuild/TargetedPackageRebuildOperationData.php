@@ -326,7 +326,7 @@ final readonly class TargetedPackageRebuildOperationData
             || ! $this->validFindings($review['findings'])) {
             return false;
         }
-        if (($review['status'] === 'unavailable') !== ($review['outcome'] === 'human_review')) {
+        if ($review['status'] === 'unavailable' && $review['outcome'] !== 'human_review') {
             return false;
         }
         foreach (['input_tokens', 'output_tokens'] as $key) {

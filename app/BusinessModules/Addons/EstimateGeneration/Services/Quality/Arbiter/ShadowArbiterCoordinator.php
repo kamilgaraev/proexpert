@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter
 
 use Throwable;
 
-final readonly class ShadowArbiterCoordinator
+final readonly class ShadowArbiterCoordinator implements TargetedPackageRebuildReviewer
 {
     public function __construct(
         private CompletenessArbiter $arbiter,

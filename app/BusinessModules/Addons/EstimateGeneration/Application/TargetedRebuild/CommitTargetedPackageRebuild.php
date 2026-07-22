@@ -15,7 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\Arbit
 use DomainException;
 use InvalidArgumentException;
 
-final readonly class CommitTargetedPackageRebuild
+final readonly class CommitTargetedPackageRebuild implements TargetedPackageRebuildCommitter
 {
     public function __construct(
         private TargetedPackageCommitStore $store,
