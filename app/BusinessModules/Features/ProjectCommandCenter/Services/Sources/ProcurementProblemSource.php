@@ -16,6 +16,8 @@ use DateTimeInterface;
 
 final class ProcurementProblemSource implements ProjectProblemSource
 {
+    use ChecksProjectProblemVisibility;
+
     public function __construct(
         private readonly AccessController $accessController,
         private readonly ?Closure $issues = null,
@@ -25,7 +27,7 @@ final class ProcurementProblemSource implements ProjectProblemSource
 
     public function isAvailable(ProjectContext $projectContext): bool
     {
-        return $projectContext->hasPermission('procurement.view')
+        return $this->canViewProblemSource($projectContext, 'procurement.view')
             && $this->accessController->hasModuleAccess($projectContext->organizationId, 'procurement');
     }
 

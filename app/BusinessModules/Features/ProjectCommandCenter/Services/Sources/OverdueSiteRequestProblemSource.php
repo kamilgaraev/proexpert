@@ -16,6 +16,8 @@ use DateTimeInterface;
 
 final class OverdueSiteRequestProblemSource implements ProjectProblemSource
 {
+    use ChecksProjectProblemVisibility;
+
     public function __construct(
         private readonly AccessController $accessController,
         private readonly ?Closure $requests = null,
@@ -25,7 +27,7 @@ final class OverdueSiteRequestProblemSource implements ProjectProblemSource
 
     public function isAvailable(ProjectContext $projectContext): bool
     {
-        return $projectContext->hasPermission('site_requests.view')
+        return $this->canViewProblemSource($projectContext, 'site_requests.view')
             && $this->accessController->hasModuleAccess($projectContext->organizationId, 'site-requests');
     }
 

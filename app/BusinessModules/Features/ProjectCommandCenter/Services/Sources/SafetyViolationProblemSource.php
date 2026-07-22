@@ -17,6 +17,8 @@ use App\Modules\Core\AccessController;
 
 final class SafetyViolationProblemSource implements ProjectProblemSource
 {
+    use ChecksProjectProblemVisibility;
+
     public function __construct(
         private readonly AccessController $accessController,
         private readonly ?Closure $violations = null,
@@ -26,7 +28,7 @@ final class SafetyViolationProblemSource implements ProjectProblemSource
 
     public function isAvailable(ProjectContext $projectContext): bool
     {
-        if (! $projectContext->hasPermission('safety-management.view')) {
+        if (! $this->canViewProblemSource($projectContext, 'safety-management.view')) {
             return false;
         }
 

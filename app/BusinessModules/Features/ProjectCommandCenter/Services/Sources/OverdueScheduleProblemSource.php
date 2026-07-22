@@ -15,13 +15,15 @@ use Illuminate\Support\Facades\DB;
 
 final class OverdueScheduleProblemSource implements ProjectProblemSource
 {
+    use ChecksProjectProblemVisibility;
+
     public function __construct(private readonly AccessController $accessController)
     {
     }
 
     public function isAvailable(ProjectContext $projectContext): bool
     {
-        return $projectContext->hasPermission('schedule.view')
+        return $this->canViewProblemSource($projectContext, 'schedule.view')
             && $this->accessController->hasModuleAccess($projectContext->organizationId, 'schedule-management');
     }
 

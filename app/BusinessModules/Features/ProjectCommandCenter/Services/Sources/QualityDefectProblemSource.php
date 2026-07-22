@@ -16,6 +16,8 @@ use Illuminate\Support\Facades\Schema;
 
 final class QualityDefectProblemSource implements ProjectProblemSource
 {
+    use ChecksProjectProblemVisibility;
+
     public function __construct(private readonly AccessController $accessController)
     {
     }
@@ -23,7 +25,7 @@ final class QualityDefectProblemSource implements ProjectProblemSource
     public function isAvailable(ProjectContext $projectContext): bool
     {
         return Schema::hasTable('quality_defects')
-            && $projectContext->hasPermission('quality-control.view')
+            && $this->canViewProblemSource($projectContext, 'quality-control.view')
             && $this->accessController->hasModuleAccess($projectContext->organizationId, 'quality-control');
     }
 

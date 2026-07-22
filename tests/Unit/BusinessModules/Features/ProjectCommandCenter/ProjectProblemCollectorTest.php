@@ -9,6 +9,7 @@ use App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemCol
 use App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemSource;
 use App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\SafetyViolationProblemSource;
 use App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\OverdueSiteRequestProblemSource;
+use App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\OverdueScheduleProblemSource;
 use App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\ProcurementProblemSource;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyViolation;
 use App\Domain\Project\ValueObjects\ProjectContext;
@@ -220,6 +221,15 @@ final class ProjectProblemCollectorTest extends TestCase
         self::assertSame(['project_id' => 42], $result['items'][0]['action']['query']);
         self::assertSame(['project_id' => 42], $result['items'][1]['action']['query']);
         self::assertSame([7, 42], $captured);
+    }
+
+    public function test_owner_context_can_read_problem_sources_from_active_modules(): void
+    {
+        $context = $this->context(['view_all']);
+
+        self::assertTrue((new OverdueScheduleProblemSource($this->activeProjectModules(['schedule-management'])))->isAvailable($context));
+        self::assertTrue((new OverdueSiteRequestProblemSource($this->activeProjectModules(['site-requests'])))->isAvailable($context));
+        self::assertTrue((new ProcurementProblemSource($this->activeProjectModules(['procurement'])))->isAvailable($context));
     }
 
     private function problem(

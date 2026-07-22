@@ -15,13 +15,15 @@ use Illuminate\Support\Facades\DB;
 
 final class PendingCompletedWorkProblemSource implements ProjectProblemSource
 {
+    use ChecksProjectProblemVisibility;
+
     public function __construct(private readonly AccessController $accessController)
     {
     }
 
     public function isAvailable(ProjectContext $projectContext): bool
     {
-        return $projectContext->hasPermission('completed_works.view')
+        return $this->canViewProblemSource($projectContext, 'completed_works.view')
             && $this->accessController->hasModuleAccess($projectContext->organizationId, 'workflow-management');
     }
 
