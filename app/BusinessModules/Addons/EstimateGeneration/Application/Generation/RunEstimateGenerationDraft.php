@@ -41,6 +41,7 @@ final readonly class RunEstimateGenerationDraft
             $expectedStateVersion,
             $attemptId,
             $snapshot->nextEvent(),
+            false,
         )->onQueue(GenerateEstimateDraftJob::QUEUE)->afterCommit();
     }
 }

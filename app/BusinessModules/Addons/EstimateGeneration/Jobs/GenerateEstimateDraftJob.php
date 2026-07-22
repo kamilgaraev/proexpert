@@ -43,6 +43,7 @@ class GenerateEstimateDraftJob implements ShouldQueue
         private readonly int $expectedStateVersion,
         private readonly string $attemptId,
         private readonly FailureExecutionSnapshot $failureSnapshot,
+        private readonly bool $throttleEntry = true,
     ) {
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
@@ -50,10 +51,14 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public function middleware(): array
     {
-        return [
+        $middleware = [
             Skip::when(fn (): bool => $this->isStale()),
-            new RateLimited('estimate-generation-drafts'),
         ];
+        if ($this->throttleEntry) {
+            $middleware[] = new RateLimited('estimate-generation-drafts');
+        }
+
+        return $middleware;
     }
 
     public function rateLimitKey(): string

@@ -25,6 +25,19 @@ final class EstimateGenerationQueueBackpressureTest extends TestCase
         self::assertStringContainsString('public function rateLimitKey(): string', $source);
     }
 
+    public function test_draft_generation_continuation_bypasses_entry_rate_limit(): void
+    {
+        $jobSource = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Jobs/GenerateEstimateDraftJob.php'));
+        $runnerSource = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Application/Generation/RunEstimateGenerationDraft.php'));
+
+        self::assertIsString($jobSource);
+        self::assertIsString($runnerSource);
+        self::assertStringContainsString('private readonly bool $throttleEntry = true,', $jobSource);
+        self::assertStringContainsString('if ($this->throttleEntry) {', $jobSource);
+        self::assertStringContainsString("new RateLimited('estimate-generation-drafts')", $jobSource);
+        self::assertStringContainsString('$snapshot->nextEvent(),'."\n".'            false,', $runnerSource);
+    }
+
     public function test_document_dispatcher_and_unit_job_have_separate_backpressure(): void
     {
         $source = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Jobs/ProcessEstimateGenerationDocumentJob.php'));
