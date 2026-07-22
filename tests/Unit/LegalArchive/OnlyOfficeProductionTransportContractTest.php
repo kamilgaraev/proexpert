@@ -41,4 +41,37 @@ final class OnlyOfficeProductionTransportContractTest extends TestCase
         self::assertStringContainsString('sed -E "s/^', $deployment);
         self::assertStringNotContainsString('sed -E \\"', $deployment);
     }
+
+    public function test_deployment_refuses_to_continue_with_mismatched_onlyoffice_jwt_secrets(): void
+    {
+        $deployment = (string) file_get_contents(dirname(__DIR__, 3).'/.github/workflows/deploy-backend.yml');
+        $guardStart = strpos($deployment, 'ensure_onlyoffice_jwt_secret_alignment()');
+        $guardEnd = strpos($deployment, 'apply_onlyoffice_callback_transport()');
+        $runtimeGuard = strpos($deployment, "ensure_onlyoffice_jwt_secret_alignment\n            if ! git diff");
+        $runtimeShutdown = strpos($deployment, 'trap deployment_failed ERR');
+
+        self::assertIsInt($guardStart);
+        self::assertIsInt($guardEnd);
+        self::assertIsInt($runtimeGuard);
+        self::assertIsInt($runtimeShutdown);
+        $guard = substr($deployment, $guardStart, $guardEnd - $guardStart);
+
+        self::assertStringContainsString('editor_enabled_lines', $deployment);
+        self::assertStringContainsString("'1'|'true'|'on'|'yes'", $deployment);
+        self::assertStringContainsString("s/^[[:space:]]+//; s/[[:space:]]+$//", $deployment);
+        self::assertStringContainsString('OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment', $deployment);
+        self::assertStringContainsString('LEGAL_DOCUMENT_EDITOR_JWT_SECRET', $guard);
+        self::assertStringContainsString('ONLYOFFICE_JWT_SECRET', $guard);
+        self::assertStringContainsString('onlyoffice_runtime_secret', $guard);
+        self::assertStringContainsString("docker inspect -f '{{.State.Running}}' most-onlyoffice", $guard);
+        self::assertStringContainsString("docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' most-onlyoffice", $guard);
+        self::assertStringContainsString('OnlyOffice JWT secrets or running container differ; refusing deployment', $guard);
+        self::assertMatchesRegularExpression('/OnlyOffice JWT secrets or running container differ; refusing deployment\'\R\s+return 1/', $guard);
+        self::assertStringNotContainsString('echo "${backend_secret}"', $guard);
+        self::assertStringNotContainsString('echo "${onlyoffice_secret}"', $guard);
+        self::assertLessThan(
+            $runtimeShutdown,
+            $runtimeGuard,
+        );
+    }
 }

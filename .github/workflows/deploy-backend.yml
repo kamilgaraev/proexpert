@@ -139,6 +139,63 @@ jobs:
               unset current_secret
             }
 
+            ensure_onlyoffice_jwt_secret_alignment() {
+              local backend_enabled backend_secret editor_enabled_lines onlyoffice_runtime_secret onlyoffice_secret root_env_file
+              editor_enabled_lines="$(grep -c '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env || true)"
+              if [ "${editor_enabled_lines}" -ne 1 ]; then
+                echo 'OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment'
+                return 1
+              fi
+              backend_enabled="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env | cut -d= -f2- || true)"
+              backend_enabled="$(printf '%s' "${backend_enabled}" | sed -E "s/^['\"]//; s/['\"]$//; s/^[[:space:]]+//; s/[[:space:]]+$//")"
+              backend_enabled="$(printf '%s' "${backend_enabled}" | tr '[:upper:]' '[:lower:]')"
+              case "${backend_enabled}" in
+                '1'|'true'|'on'|'yes') ;;
+                '0'|'false'|'off'|'no'|'') return 0 ;;
+                *)
+                  echo 'OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment'
+                  return 1
+                  ;;
+              esac
+              if [ ! -f deploy/onlyoffice/.env ]; then
+                echo 'OnlyOffice environment file is missing while the editor is enabled; refusing deployment'
+                return 1
+              fi
+              if [ "$(grep -c '^LEGAL_DOCUMENT_EDITOR_JWT_SECRET=' .env || true)" -ne 1 ] \
+                || [ "$(grep -c '^ONLYOFFICE_JWT_SECRET=' deploy/onlyoffice/.env || true)" -ne 1 ]; then
+                echo 'OnlyOffice JWT secret configuration is missing or duplicated; refusing deployment'
+                return 1
+              fi
+              backend_secret="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_JWT_SECRET=' .env | cut -d= -f2-)"
+              backend_secret="$(printf '%s' "${backend_secret}" | sed -E "s/^['\"]//; s/['\"]$//")"
+              root_env_file="${ENV_FILE}"
+              ENV_FILE="deploy/onlyoffice/.env"
+              ENV_TEMP_FILE=''
+              ENV_EXPECTED_UID=''
+              ENV_EXPECTED_GID=''
+              initialize_secure_env
+              onlyoffice_secret="$(grep -m1 '^ONLYOFFICE_JWT_SECRET=' deploy/onlyoffice/.env | cut -d= -f2-)"
+              onlyoffice_secret="$(printf '%s' "${onlyoffice_secret}" | sed -E "s/^['\"]//; s/['\"]$//")"
+              ENV_FILE="${root_env_file}"
+              ENV_TEMP_FILE=''
+              ENV_EXPECTED_UID=''
+              ENV_EXPECTED_GID=''
+              initialize_secure_env
+              if [ "$(docker inspect -f '{{.State.Running}}' most-onlyoffice 2>/dev/null || true)" != 'true' ]; then
+                unset backend_secret onlyoffice_secret
+                echo 'OnlyOffice JWT secrets or running container differ; refusing deployment'
+                return 1
+              fi
+              onlyoffice_runtime_secret="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' most-onlyoffice 2>/dev/null | awk -F= '$1=="JWT_SECRET" {sub(/^[^=]*=/, ""); print; exit}')"
+              if [ -z "${backend_secret}" ] || [ -z "${onlyoffice_secret}" ] || [ -z "${onlyoffice_runtime_secret}" ] \
+                || [ "${backend_secret}" != "${onlyoffice_secret}" ] || [ "${backend_secret}" != "${onlyoffice_runtime_secret}" ]; then
+                unset backend_secret onlyoffice_secret onlyoffice_runtime_secret
+                echo 'OnlyOffice JWT secrets or running container differ; refusing deployment'
+                return 1
+              fi
+              unset backend_secret onlyoffice_secret onlyoffice_runtime_secret
+            }
+
             apply_onlyoffice_callback_transport() {
               local callback_base_url callback_host root_env_file
               callback_base_url="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_CALLBACK_BASE_URL=' .env | cut -d= -f2- || true)"
@@ -309,6 +366,7 @@ jobs:
             remove_env_key LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED
 
             ensure_immutable_audit_writer_secret
+            ensure_onlyoffice_jwt_secret_alignment
             if ! git diff --quiet "${PREVIOUS_RELEASE_SHA}" "${RELEASE_SHA}" -- deploy/onlyoffice; then
               apply_onlyoffice_callback_transport
             fi
