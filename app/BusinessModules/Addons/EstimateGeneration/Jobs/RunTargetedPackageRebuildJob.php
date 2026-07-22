@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildJobHandler;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -33,5 +34,10 @@ final class RunTargetedPackageRebuildJob implements ShouldQueue
     public function operationId(): string
     {
         return $this->operationId;
+    }
+
+    public function handle(TargetedPackageRebuildJobHandler $handler): void
+    {
+        $handler->handle($this->operationId);
     }
 }

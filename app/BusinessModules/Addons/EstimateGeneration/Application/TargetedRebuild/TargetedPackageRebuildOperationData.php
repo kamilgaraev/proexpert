@@ -93,6 +93,44 @@ final readonly class TargetedPackageRebuildOperationData
         );
     }
 
+    public static function fromPersisted(
+        string $operationId,
+        string $idempotencyKey,
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        int $expectedStateVersion,
+        string $sourceInputVersion,
+        string $rootInputHash,
+        string $sourceDraftFingerprint,
+        string $packageKey,
+        string $status,
+        ?string $leaseToken,
+        ?DateTimeImmutable $leaseExpiresAt,
+        int $attemptCount,
+        array $resultDelta,
+        array $safeArbiterReview,
+    ): self {
+        return new self(
+            $operationId,
+            $idempotencyKey,
+            $organizationId,
+            $projectId,
+            $sessionId,
+            $expectedStateVersion,
+            $sourceInputVersion,
+            $rootInputHash,
+            $sourceDraftFingerprint,
+            $packageKey,
+            $status,
+            $leaseToken,
+            $leaseExpiresAt,
+            $attemptCount,
+            $resultDelta,
+            $safeArbiterReview,
+        );
+    }
+
     public function withLease(string $leaseToken, DateTimeImmutable $leaseExpiresAt): self
     {
         if ($this->status !== 'queued') {
