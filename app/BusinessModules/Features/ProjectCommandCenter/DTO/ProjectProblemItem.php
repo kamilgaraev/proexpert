@@ -21,6 +21,8 @@ final readonly class ProjectProblemItem
         'completed_work',
         'materials',
         'quality',
+        'site_requests',
+        'procurement',
     ];
 
     /**
@@ -37,9 +39,14 @@ final readonly class ProjectProblemItem
         public ?DateTimeInterface $dueAt,
         public DateTimeInterface $detectedAt,
         public string $actionModule,
+        public ?string $actionRoute = null,
     ) {
         if (! in_array($actionModule, self::ACTION_MODULES, true)) {
             throw new InvalidArgumentException('Неизвестный модуль действия проблемы.');
+        }
+
+        if ($actionRoute !== null && ! self::isAllowedActionRoute($actionRoute)) {
+            throw new InvalidArgumentException('Invalid problem action route.');
         }
     }
 
@@ -88,7 +95,7 @@ final readonly class ProjectProblemItem
     /** @return array<string, mixed> */
     public function toArray(int $projectId): array
     {
-        $actionRoute = self::ACTION_ROUTES[$this->actionModule] ?? null;
+        $actionRoute = $this->actionRoute ?? self::ACTION_ROUTES[$this->actionModule] ?? null;
 
         return [
             'id' => $this->id,
@@ -118,5 +125,11 @@ final readonly class ProjectProblemItem
         return str_starts_with($description, 'project_command_center.')
             ? trans_message($description)
             : $description;
+    }
+
+    private static function isAllowedActionRoute(string $route): bool
+    {
+        return preg_match('#^/site-requests/\d+$#', $route) === 1
+            || preg_match('#^/procurement/(?:purchase-requests|purchase-orders)/\d+$#', $route) === 1;
     }
 }

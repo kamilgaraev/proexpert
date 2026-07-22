@@ -8,6 +8,8 @@ use App\BusinessModules\Features\ProjectCommandCenter\DTO\ProjectProblemItem;
 use App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemCollector;
 use App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemSource;
 use App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\SafetyViolationProblemSource;
+use App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\OverdueSiteRequestProblemSource;
+use App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\ProcurementProblemSource;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyViolation;
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\Domain\Project\ValueObjects\ProjectRoleConfig;
@@ -176,6 +178,50 @@ final class ProjectProblemCollectorTest extends TestCase
         self::assertFalse($source->isAvailable($this->context(['safety-management.view'])));
     }
 
+    public function test_it_includes_overdue_site_requests_and_project_procurement_issues_in_the_problem_queue(): void
+    {
+        $siteRequestSource = new OverdueSiteRequestProblemSource(
+            $this->activeProjectModules(['site-requests']),
+            static fn (): array => [[
+                'id' => 11,
+                'title' => 'Бетон М300',
+                'required_date' => '2026-07-14',
+                'created_at' => '2026-07-10T10:00:00+03:00',
+            ]],
+            static fn (): string => 'Срок исполнения заявки с объекта просрочен.',
+        );
+        $captured = [];
+        $procurementSource = new ProcurementProblemSource(
+            $this->activeProjectModules(['procurement']),
+            static function (ProjectContext $context) use (&$captured): array {
+                $captured = [$context->organizationId, $context->projectId];
+
+                return [[
+                    'id' => 'pr-pending-12',
+                    'severity' => 'warning',
+                    'title' => 'Закупочная заявка ожидает рассмотрения',
+                    'description' => 'Нужно принять решение по закупке.',
+                    'entity_href' => '/procurement/purchase-requests/12',
+                    'created_at' => '2026-07-15T10:00:00+03:00',
+                ]];
+            },
+        );
+
+        $result = (new ProjectProblemCollector([$siteRequestSource, $procurementSource]))->collect(
+            $this->project(),
+            $this->context(['site_requests.view', 'procurement.view']),
+            new DateTimeImmutable('2026-07-21T12:00:00+03:00'),
+        );
+
+        self::assertSame(['site-request-11', 'procurement-pr-pending-12'], array_column($result['items'], 'id'));
+        self::assertSame(['total' => 2, 'critical' => 0, 'risk' => 2, 'attention' => 0], $result['summary']);
+        self::assertSame('/site-requests/11', $result['items'][0]['action']['route']);
+        self::assertSame('/procurement/purchase-requests/12', $result['items'][1]['action']['route']);
+        self::assertSame(['project_id' => 42], $result['items'][0]['action']['query']);
+        self::assertSame(['project_id' => 42], $result['items'][1]['action']['query']);
+        self::assertSame([7, 42], $captured);
+    }
+
     private function problem(
         string $id,
         string $flagSeverity,
@@ -237,6 +283,22 @@ final class ProjectProblemCollectorTest extends TestCase
                     'project-management',
                     'file-management',
                 ], true);
+            }
+        };
+    }
+
+    /** @param list<string> $modules */
+    private function activeProjectModules(array $modules): AccessController
+    {
+        return new class ($modules) extends AccessController {
+            /** @param list<string> $modules */
+            public function __construct(private readonly array $modules)
+            {
+            }
+
+            public function hasModuleAccess(int $organizationId, string $moduleSlug): bool
+            {
+                return $organizationId === 7 && in_array($moduleSlug, $this->modules, true);
             }
         };
     }

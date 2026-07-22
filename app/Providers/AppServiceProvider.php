@@ -57,6 +57,11 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(\App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemCollector::class, static fn ($app) => new \App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemCollector([
             new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\SafetyViolationProblemSource($app->make(\App\Modules\Core\AccessController::class)),
             new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\OverdueScheduleProblemSource($app->make(\App\Modules\Core\AccessController::class)),
+            new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\OverdueSiteRequestProblemSource($app->make(\App\Modules\Core\AccessController::class)),
+            new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\ProcurementProblemSource(
+                $app->make(\App\Modules\Core\AccessController::class),
+                issueService: $app->make(\App\BusinessModules\Features\Procurement\Services\ProcurementIssueService::class),
+            ),
             new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\PendingCompletedWorkProblemSource($app->make(\App\Modules\Core\AccessController::class)),
             new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\QualityDefectProblemSource($app->make(\App\Modules\Core\AccessController::class)),
         ]));
