@@ -69,7 +69,7 @@ final readonly class ProjectProblemItem
             'warning' => 'risk',
             default => 'attention',
         };
-        $description = (string) ($flag['message'] ?? $surface['workflow_summary']['stage_label'] ?? $surface['workflow_summary']['status_label'] ?? '');
+        $description = self::descriptionFromSurface($flag, $surface);
 
         return new self(
             id: $id,
@@ -105,5 +105,18 @@ final readonly class ProjectProblemItem
                 'query' => ['project_id' => $projectId],
             ],
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $flag
+     * @param array<string, mixed> $surface
+     */
+    private static function descriptionFromSurface(array $flag, array $surface): string
+    {
+        $description = (string) ($flag['message'] ?? $surface['workflow_summary']['stage_label'] ?? $surface['workflow_summary']['status_label'] ?? '');
+
+        return str_starts_with($description, 'project_command_center.')
+            ? trans_message($description)
+            : $description;
     }
 }

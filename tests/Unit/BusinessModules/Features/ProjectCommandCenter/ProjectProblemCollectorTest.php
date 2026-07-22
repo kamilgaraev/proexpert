@@ -117,6 +117,49 @@ final class ProjectProblemCollectorTest extends TestCase
         self::assertSame(['project_id' => 42], $result['items'][0]['action']['query']);
         self::assertStringNotContainsString('/safety/violations', json_encode($result['items'][0]['action'], JSON_THROW_ON_ERROR));
         self::assertSame(['project_id' => 42, 'organization_id' => 7], $captured);
+        self::assertSame('Нарушение не устранено в срок.', $result['items'][0]['description']);
+        self::assertStringNotContainsString('project_command_center.', $result['items'][0]['description']);
+    }
+
+    public function test_it_translates_command_center_problem_description_keys_for_user_output(): void
+    {
+        $item = ProjectProblemItem::fromWorkflowSurface(
+            id: 'schedule-task-7',
+            module: 'schedule',
+            title: 'Монтаж перекрытия',
+            surface: [
+                'problem_flags' => [[
+                    'severity' => 'warning',
+                    'message' => 'project_command_center.problems.schedule_task_overdue',
+                ]],
+            ],
+            impactTypes: ['schedule'],
+            amount: null,
+            dueAt: new DateTimeImmutable('2026-07-20T00:00:00+03:00'),
+            detectedAt: new DateTimeImmutable('2026-07-19T00:00:00+03:00'),
+            actionModule: 'schedule',
+        );
+
+        self::assertNotNull($item);
+        self::assertSame('Срок выполнения задачи по графику просрочен.', $item->description);
+        self::assertStringNotContainsString('project_command_center.', $item->description);
+    }
+
+    public function test_command_center_problem_description_translations_are_human_readable(): void
+    {
+        $descriptions = [
+            'project_command_center.problems.schedule_task_overdue' => 'Срок выполнения задачи по графику просрочен.',
+            'project_command_center.problems.completed_work_pending' => 'Выполненная работа ожидает проверки.',
+            'project_command_center.problems.quality_defect_critical' => 'Критический дефект качества требует устранения.',
+            'safety_management.problem_flags.violation_overdue' => 'Срок устранения нарушения просрочен.',
+        ];
+
+        foreach ($descriptions as $key => $expectedDescription) {
+            $description = trans_message($key);
+
+            self::assertSame($expectedDescription, $description);
+            self::assertStringNotContainsString('project_command_center.', $description);
+        }
     }
 
     public function test_safety_source_requires_all_active_module_dependencies(): void

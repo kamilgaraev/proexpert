@@ -46,7 +46,7 @@ final class QualityDefectProblemSource implements ProjectProblemSource
                 severity: 'critical',
                 module: 'quality',
                 title: (string) ($defect->title ?? $defect->defect_number ?? ('#' . $defect->id)),
-                description: 'project_command_center.problems.quality_defect_critical',
+                description: trans_message('project_command_center.problems.quality_defect_critical'),
                 impactTypes: ['quality', 'schedule'],
                 amount: null,
                 dueAt: self::date($defect->due_date),

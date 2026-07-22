@@ -48,7 +48,7 @@ final class OverdueScheduleProblemSource implements ProjectProblemSource
                 severity: $task->priority === 'critical' ? 'critical' : 'risk',
                 module: 'schedule',
                 title: (string) $task->name,
-                description: 'project_command_center.problems.schedule_task_overdue',
+                description: trans_message('project_command_center.problems.schedule_task_overdue'),
                 impactTypes: ['schedule'],
                 amount: null,
                 dueAt: self::date($task->planned_end_date),

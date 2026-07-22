@@ -43,7 +43,7 @@ final class PendingCompletedWorkProblemSource implements ProjectProblemSource
                 severity: 'attention',
                 module: 'completed_work',
                 title: (string) ($work->notes ?: ('#' . $work->id)),
-                description: 'project_command_center.problems.completed_work_pending',
+                description: trans_message('project_command_center.problems.completed_work_pending'),
                 impactTypes: ['workflow'],
                 amount: null,
                 dueAt: null,
