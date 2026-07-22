@@ -4,7 +4,7 @@ return [
     'legal_archive' => [
         'max_size_bytes' => (int) env('LEGAL_ARCHIVE_MAX_FILE_SIZE_BYTES', 104857600),
         'temporary_url_minutes' => (int) env('LEGAL_ARCHIVE_TEMPORARY_URL_MINUTES', 5),
-        'scanner' => env('LEGAL_ARCHIVE_SCANNER', 'fail_closed'),
+        'scanner' => env('LEGAL_ARCHIVE_SCANNER', 'clamav'),
         'clamav' => [
             'host' => env('LEGAL_ARCHIVE_CLAMAV_HOST', 'clamav'),
             'port' => (int) env('LEGAL_ARCHIVE_CLAMAV_PORT', 3310),
