@@ -127,7 +127,7 @@ final class EstimateGenerationPackagePresenterTest extends TestCase
             'item_type' => 'priced_work',
             'name' => 'Обратная засыпка пазух',
             'unit' => 'м3',
-            'quantity' => 42.5,
+            'quantity' => '42.5',
             'quantity_basis' => ['description' => 'Количество требует проверки'],
             'price_source' => null,
             'normative_status' => 'candidate',
