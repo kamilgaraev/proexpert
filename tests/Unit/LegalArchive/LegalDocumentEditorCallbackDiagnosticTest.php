@@ -35,6 +35,15 @@ final class LegalDocumentEditorCallbackDiagnosticTest extends TestCase
         );
 
         self::assertSame('sqlstate_23505', $method->invoke($controller, $sqlStateError));
+        $errorInfoState = new QueryException(
+            'pgsql',
+            'update legal_document_editor_saves set state = ?',
+            [],
+            new PDOException('ERROR: check violation'),
+        );
+        $errorInfoState->errorInfo = ['23514', 0, 'ERROR: check violation'];
+
+        self::assertSame('sqlstate_23514', $method->invoke($controller, $errorInfoState));
         self::assertNull($method->invoke($controller, new RuntimeException('database unavailable')));
     }
 }

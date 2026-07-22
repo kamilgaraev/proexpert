@@ -67,8 +67,11 @@ final class LegalDocumentEditorController extends Controller
             ? $error->getMessage()
             : ($error instanceof QueryException ? (string) $error->getPrevious()?->getMessage() : '');
         if (preg_match('/\b(legal_document_editor_[a-z0-9_]+)\b/', $message, $matches) !== 1) {
-            if ($error instanceof QueryException && preg_match('/^\d{5}$/', (string) $error->getCode()) === 1) {
-                return 'sqlstate_'.$error->getCode();
+            $sqlState = $error instanceof QueryException
+                ? (string) ($error->errorInfo[0] ?? $error->getCode())
+                : '';
+            if (preg_match('/^\d{5}$/', $sqlState) === 1) {
+                return 'sqlstate_'.$sqlState;
             }
 
             return null;
