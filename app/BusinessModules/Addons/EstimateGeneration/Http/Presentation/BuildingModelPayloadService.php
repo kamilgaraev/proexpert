@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\AnalysisFloorAreaQuantityFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
@@ -18,6 +19,7 @@ final readonly class BuildingModelPayloadService
         private NormalizedBuildingModelQuantityInputMapper $mapper = new NormalizedBuildingModelQuantityInputMapper,
         private BuildingQuantityCalculator $calculator = new BuildingQuantityCalculator,
         private QuantityFormulaInputsPresenter $formulaInputs = new QuantityFormulaInputsPresenter,
+        private AnalysisFloorAreaQuantityFactory $analysisFloorArea = new AnalysisFloorAreaQuantityFactory,
     ) {}
 
     /** @return array<string, mixed> */
@@ -43,7 +45,16 @@ final readonly class BuildingModelPayloadService
             throw new \UnexpectedValueException('Building model content version is invalid.');
         }
         $calculation = $this->calculator->calculate($this->mapper->map($model));
-        $quantities = array_values($calculation->all());
+        $quantitiesByKey = $calculation->all();
+        $totalArea = $this->data->totalArea($organizationId, $projectId, $sessionId);
+        $documentArea = $this->analysisFloorArea->make([
+            'normalized_building_model' => $model->toArray(),
+            'document_total_area' => $totalArea,
+        ]);
+        if ($documentArea !== null) {
+            $quantitiesByKey[$documentArea->key] = $documentArea;
+        }
+        $quantities = array_values($quantitiesByKey);
         $total = count($quantities);
         $lastPage = max(1, (int) ceil($total / $perPage));
         $page = min(max(1, $page), $lastPage);

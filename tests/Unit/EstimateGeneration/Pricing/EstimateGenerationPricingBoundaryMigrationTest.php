@@ -112,6 +112,247 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
         self::assertStringContainsString('LEFT JOIN public.estimate_regional_price_versions rv', $source);
     }
 
+    #[Test]
+    public function database_price_scales_work_quantity_to_the_norm_measurement_unit(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000600_scale_quantity_by_norm_unit.php');
+
+        self::assertIsString($migration);
+        self::assertStringContainsString('eg_norm_quantity_factor', $migration);
+        self::assertStringContainsString("p_work_unit = 'm2'", $migration);
+        self::assertStringContainsString("p_work_unit = 'pcs'", $migration);
+        self::assertStringContainsString("p_work_unit = 'kg'", $migration);
+        self::assertStringContainsString("chr(178),'2'", $migration);
+        self::assertStringContainsString("U&'\\0448\\0442'", $migration);
+        self::assertStringContainsString('eg_expected_package_item_price_v2', $migration);
+        self::assertStringContainsString("'pricing_formula_version','norm_measurement:v2'", $migration);
+        self::assertStringContainsString("'norm_measurement_unit',norm_unit", $migration);
+        self::assertStringContainsString("'work_to_norm_factor',norm_quantity_factor::text", $migration);
+        self::assertStringContainsString("public.eg_norm_quantity_factor(evidence.value->>'unit', norm_unit)", $migration);
+        self::assertStringContainsString('estimate_generation.norm_quantity_unit_mismatch', $migration);
+        self::assertStringContainsString('estimate_generation.norm_quantity_formula_rollback_blocked', $migration);
+        self::assertStringContainsString("definition('public.eg_expected_package_item_price(bigint)')", $migration);
+    }
+
+    #[Test]
+    public function pricing_canonicalization_parenthesizes_json_extraction_before_text_concatenation(): void
+    {
+        $base = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/';
+        $pricing = file_get_contents($base.'2026_07_18_000600_scale_quantity_by_norm_unit.php');
+        $repair = file_get_contents($base.'2026_07_18_000700_parenthesize_pricing_evidence_unit.php');
+
+        self::assertIsString($pricing);
+        self::assertIsString($repair);
+        self::assertStringContainsString("||(evidence.value->>'unit')||", $pricing);
+        self::assertStringContainsString("||(evidence.value->>'unit')||", $repair);
+        self::assertStringContainsString("definition('public.eg_expected_package_item_price_v2(bigint)')", $repair);
+        self::assertStringContainsString('estimate_generation.pricing_evidence_unit_precedence_contract_changed', $repair);
+        self::assertStringContainsString('hasParenthesizedEvidenceUnit', $repair);
+        self::assertStringNotContainsString('pricing_evidence_unit_precedence_rollback_contract_changed', $repair);
+    }
+
+    #[Test]
+    public function project_selected_resource_price_keeps_the_abstract_norm_resource_in_the_database_formula(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_18_000800_price_project_selected_resources.php');
+
+        self::assertIsString($migration);
+        self::assertStringContainsString('eg_expected_package_item_price_v3', $migration);
+        self::assertStringContainsString("\"'norm_measurement:v2'\"", $migration);
+        self::assertStringContainsString("\"'project_resource:v3'\"", $migration);
+        self::assertStringContainsString("LOWER(COALESCE(nr.raw_payload->>'source_tag', '')) = 'abstractresource'", $migration);
+        self::assertStringContainsString("nr.resource_code !~ '^[0-9]{2}\\\\.[0-9]\\\\.[0-9]{2}\\\\.[0-9]{2}$'", $migration);
+        self::assertStringContainsString("replace(nr.resource_code, '.', '\\\\.')", $migration);
+        self::assertStringContainsString("'-[0-9]{4}$'", $migration);
+        self::assertStringContainsString('public.eg_expected_package_item_price_closed_v3(p_item_id)', $migration);
+        self::assertStringContainsString("='project_resource:v3'", $migration);
+        self::assertStringContainsString('estimate_generation.project_resource_formula_rollback_blocked', $migration);
+        self::assertStringContainsString('REVOKE ALL ON FUNCTION public.eg_expected_package_item_price_v3(bigint) FROM PUBLIC', $migration);
+    }
+
+    #[Test]
+    public function semantic_abstract_resource_selection_is_finalized_only_from_the_pinned_resource_reference(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_000200_finalize_semantic_abstract_resource_prices.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            'eg_expected_package_item_price_v5',
+            'semantic_project_resource:v5',
+            "persisted_resource.value->'normative_ref'->>'norm_resource_id' = nr.id::text",
+            "persisted_resource.value->'normative_ref'->>'price_id' = rp.id::text",
+            "->>'selected_resource_code' = rp.resource_code",
+            'regional_semantic_metal_gutter_family_median:v1',
+            'regional_semantic_pipe_hard_attributes_median:v1',
+            'public.eg_expected_package_item_price_closed_v5(p_item_id)',
+            'estimate_generation.semantic_abstract_price_formula_rollback_blocked',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
+    #[Test]
+    public function semantic_resource_payload_is_cast_to_jsonb_before_merging_resource_groups(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_000300_cast_semantic_resource_payload_to_jsonb.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            'eg_expected_package_item_price_v6',
+            'semantic_project_resource:v6',
+            "str_replace('item.resources->', '(item.resources::jsonb)->'",
+            '$payloadCastCount !== 4',
+            'public.eg_expected_package_item_price_closed_v6(p_item_id)',
+            'estimate_generation.semantic_resource_payload_rollback_blocked',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
+    #[Test]
+    public function pinned_regional_resource_children_are_accepted_only_for_matching_normative_groups(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_000400_accept_pinned_regional_resource_children.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            'eg_expected_package_item_price_v7',
+            'semantic_project_resource:v7',
+            "nr.resource_code ~ '^[0-9]{2}",
+            "rp.resource_code !~ ('^'||replace(nr.resource_code, '.', '\\.')||'-[0-9]{4}$')",
+            "persisted_resource.value->'normative_ref'->>'price_id' = rp.id::text",
+            'public.eg_expected_package_item_price_closed_v7(p_item_id)',
+            'estimate_generation.pinned_resource_child_rollback_blocked',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
+    #[Test]
+    public function pinned_abstract_conversion_uses_the_normative_output_unit_and_price_input_unit(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_001400_fix_pinned_abstract_resource_conversion_units.php');
+
+        self::assertIsString($migration);
+        self::assertStringContainsString('public.eg_expected_package_item_price_v8(bigint)', $migration);
+        self::assertStringContainsString('nr.unit IS DISTINCT FROM arc.to_unit', $migration);
+        self::assertStringContainsString('rp.unit IS DISTINCT FROM arc.from_unit', $migration);
+    }
+
+    #[Test]
+    public function deferred_price_input_validator_uses_the_same_v8_formula_as_the_finalizer(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_21_001500_route_deferred_price_input_validation_to_v8.php');
+
+        self::assertIsString($migration);
+        self::assertStringContainsString("public.eg_price_input_deferred_validate()", $migration);
+        self::assertStringContainsString("pricing_formula_version'='semantic_project_resource:v8'", $migration);
+        self::assertStringContainsString('public.eg_expected_package_item_price_closed_v8(item_id)', $migration);
+    }
+
+    #[Test]
+    public function supplementary_project_material_is_database_priced_from_an_immutable_versioned_rule(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000100_finalize_supplementary_project_material_prices.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            "Schema::create('estimate_generation_project_material_rules'",
+            "Schema::create('estimate_generation_package_item_project_price_inputs'",
+            'eg_expected_package_item_price_v4',
+            'eg_expected_project_material_price_id_v4',
+            'project_material_candidate_pool:v2',
+            'candidate_resource_price_ids',
+            'supplementary_project_material:v4',
+            'quantity_per_work_unit',
+            'project_material_price_input_mismatch',
+            "dv.source_type IN ('fsbc','fsnb_2022')",
+            "selection_policy'='semantic_group_median'",
+            "selection_policy'='semantic_catalog_attributes_median'",
+            'row_number() OVER (ORDER BY base_price,resource_code,dataset_source_priority,id DESC)',
+            "selection_policy='exact_code' AND exact_rank=1",
+            'source_priority=(SELECT min(source_priority) FROM eligible)',
+            'project_material_evidence',
+            'eg_project_material_rule_immutable',
+            'eg_project_price_input_append',
+            'eg_finalized_project_material_price_immutable',
+            'eg_finalized_project_material_dataset_immutable',
+            'project_material_formula_rollback_blocked',
+            'REVOKE ALL ON FUNCTION public.eg_expected_package_item_price_v4(bigint) FROM PUBLIC',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
+    #[Test]
+    public function supplementary_project_material_price_fields_are_canonicalized_at_the_database_boundary(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000200_canonicalize_supplementary_project_material_price_fields.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            'trim(rp.unit)=trim(x.source_unit)',
+            'trim(rp.resource_code)=trim(x.preferred_resource_code)',
+            'trim(rp.resource_code)=trim(r.preferred_resource_code)',
+            'lower(trim(rp.resource_name))',
+            'trim(dv.source_type)',
+            'trim(rv.version_key)',
+            'trim(dv.version_key)',
+            "'price_unit',trim(rp.unit)",
+            'project_material_canonicalization_rollback_blocked',
+            'SECURITY DEFINER',
+            'REVOKE ALL ON FUNCTION public.eg_expected_project_material_price_id_v4(bigint) FROM PUBLIC',
+            'REVOKE ALL ON FUNCTION public.eg_expected_package_item_price_v4(bigint) FROM PUBLIC',
+            'REVOKE ALL ON FUNCTION public.eg_expected_package_item_price_closed_v4(bigint) FROM PUBLIC',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
+    #[Test]
+    public function work_scenario_and_selected_project_material_have_separate_assumption_contracts(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000300_separate_work_scenario_from_project_material_assumption.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            'scenario_assumption_code',
+            "WHEN 'electrical.main_cable' THEN 'residential_feeder_cable_clips'",
+            "WHEN 'lighting.fixtures' THEN 'residential_ceiling_luminaire'",
+            "selection->>'assumption_code' IS DISTINCT FROM r.assumption_code",
+            "specialization_scenario'->>'assumption_code' IS DISTINCT FROM r.scenario_assumption_code",
+            'eg_project_material_price_mismatch_code_v4',
+            'selection_material_assumption_code',
+            'scenario_assumption_code',
+            'project_material_price_input_mismatch:%',
+            'project_material_scenario_boundary_rollback_blocked',
+            'SECURITY DEFINER',
+            'REVOKE ALL ON FUNCTION public.eg_project_material_price_mismatch_code_v4(bigint) FROM PUBLIC',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
+    #[Test]
+    public function residential_project_material_v5_adds_bounded_lighting_and_electric_boiler_rules(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_20_000400_extend_residential_project_material_catalog.php');
+
+        self::assertIsString($migration);
+        foreach ([
+            'residential_project_material:v5',
+            "'work_item_key' => 'lighting.fixtures'",
+            "'semantic_name_markers' => ['светиль', 'светодиод']",
+            "'work_item_key' => 'heating.unit'",
+            '89.1.63.01-0079',
+            'residential_electric_boiler_installation_analog_30kg',
+            'residential_wall_mounted_single_circuit_electric_boiler_18kw',
+            'residential_project_material_catalog_rollback_blocked',
+        ] as $required) {
+            self::assertStringContainsString($required, $migration);
+        }
+    }
+
     private function source(): string
     {
         return (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001200_harden_estimate_generation_pricing_boundary.php');

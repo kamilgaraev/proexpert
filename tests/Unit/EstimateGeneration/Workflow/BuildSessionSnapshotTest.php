@@ -87,7 +87,7 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
-    public function terminal_service_action_is_not_recommended_as_navigation(): void
+    public function cancelled_session_recommends_regeneration_instead_of_archive(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
             session: $this->makeSession(EstimateGenerationStatus::Cancelled),
@@ -95,8 +95,8 @@ final class BuildSessionSnapshotTest extends TestCase
             readinessSummary: ['blockers' => [], 'warnings' => []],
         );
 
-        self::assertSame(['archive'], array_column($snapshot->availableActions, 'action'));
-        self::assertNull($snapshot->nextAction);
+        self::assertSame(['generate', 'archive'], array_column($snapshot->availableActions, 'action'));
+        self::assertSame('generate', $snapshot->nextAction);
     }
 
     #[Test]
@@ -186,17 +186,30 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
-    public function applied_and_cancelled_sessions_expose_only_archive(): void
+    public function applied_session_exposes_confirmed_regeneration_without_hiding_archive(): void
     {
-        foreach ([EstimateGenerationStatus::Applied, EstimateGenerationStatus::Cancelled] as $status) {
-            $snapshot = app(BuildSessionSnapshot::class)->handle(
-                session: $this->makeSession($status),
-                permissions: ['estimate_generation.generate'],
-                readinessSummary: ['blockers' => [], 'warnings' => []],
-            );
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::Applied),
+            permissions: ['estimate_generation.generate'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
 
-            self::assertSame(['archive'], array_column($snapshot->availableActions, 'action'));
-        }
+        self::assertSame(['generate', 'archive'], array_column($snapshot->availableActions, 'action'));
+        self::assertSame('Сформировать заново', $snapshot->availableActions[0]['label']);
+        self::assertTrue($snapshot->availableActions[0]['requires_confirmation']);
+        self::assertSame('open_estimate', $snapshot->nextAction);
+    }
+
+    #[Test]
+    public function cancelled_session_can_be_regenerated_or_archived(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::Cancelled),
+            permissions: ['estimate_generation.generate'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+
+        self::assertSame(['generate', 'archive'], array_column($snapshot->availableActions, 'action'));
     }
 
     #[Test]
@@ -237,12 +250,54 @@ final class BuildSessionSnapshotTest extends TestCase
             'available_actions', 'blocking_issues', 'warnings', 'next_action',
             'readiness_evaluated',
             'documents_summary', 'estimate_summary', 'review_summary',
+            'scope_summary',
             'applied_estimate_id', 'updated_at',
         ], array_keys($snapshot->toArray()));
         self::assertSame(['total_count' => 2, 'ready_count' => 2], $snapshot->documentsSummary);
         self::assertSame(['review_items_total' => 3, 'review_items_blocking' => 1], $snapshot->reviewSummary);
         self::assertSame('review', $snapshot->nextAction);
         self::assertSame('capital_repair', $snapshot->objectInput['construction_type']);
+    }
+
+    #[Test]
+    public function simplified_snapshot_preserves_only_the_safe_scope_boundary_after_a_session_action(): void
+    {
+        $session = $this->makeSession(EstimateGenerationStatus::EstimateReviewRequired);
+        $session->draft_payload = [
+            'quality_summary' => ['total_work_items' => 12],
+            'completeness' => [
+                'status' => 'confirmed_scope_only',
+                'scopes' => [[
+                    'key' => 'heating',
+                    'title' => 'Отопление',
+                    'state' => 'unresolved',
+                    'missing_items' => ['heating.radiators'],
+                ]],
+            ],
+            'budget_scope' => [
+                'direct_costs' => 1200.0,
+                'overhead' => ['status' => 'not_calculated', 'amount' => null],
+                'profit' => ['status' => 'not_calculated', 'amount' => null],
+                'commercial_budget' => ['status' => 'not_calculated', 'amount' => null],
+                'claim' => 'confirmed_scope_only',
+            ],
+            'arbiter_review' => [
+                'mode' => 'shadow',
+                'status' => 'reviewed',
+                'outcome' => 'human_review',
+                'prompt' => 'must never be returned to the client',
+            ],
+        ];
+
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $session,
+            permissions: ['estimate_generation.view'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+
+        self::assertSame('confirmed_scope_only', $snapshot->scopeSummary['completeness']['status']);
+        self::assertArrayNotHasKey('title', $snapshot->scopeSummary['completeness']['scopes'][0]);
+        self::assertArrayNotHasKey('prompt', $snapshot->scopeSummary['arbiter_review']);
     }
 
     private function makeSession(EstimateGenerationStatus $status): EstimateGenerationSession

@@ -9,21 +9,86 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 
 final class PipelineBaseInputVersion
 {
-    public const SCHEMA_VERSION = 2;
+    public const SCHEMA_VERSION = 6;
 
-    /** @param list<array{id: int, source_version: string, status: string, derived_version: string}> $documents */
-    public static function fromProjection(array $input, array $documents): string
-    {
+    /**
+     * @param  list<array{id: int, source_version: string, status: string, derived_version: string}>  $documents
+     * @param  array{evidence_id?: int, source_version?: string, fingerprint?: string, invalidation_version?: int, active?: bool}|null  $documentTotalArea
+     */
+    public static function fromProjection(
+        array $input,
+        array $documents,
+        ?array $documentTotalArea = null,
+        ?array $buildingModel = null,
+    ): string {
         unset($input['generation_attempt_id'], $input['generation_requested']);
 
         return 'sha256:'.hash('sha256', CanonicalPipelineJson::encode([
             'schema_version' => self::SCHEMA_VERSION,
             'input' => $input,
             'documents' => $documents,
+            'document_total_area_evidence' => self::documentTotalAreaEvidence($documentTotalArea),
+            'building_model' => self::buildingModelProjection($buildingModel),
         ]));
     }
 
-    public static function fromSession(EstimateGenerationSession $session): string
+    /**
+     * @param  array{content_version?: string, model?: array<string, mixed>}|null  $buildingModel
+     * @return array{content_version: string, scale_status: string, evidence_ids: list<int>}|null
+     */
+    private static function buildingModelProjection(?array $buildingModel): ?array
+    {
+        $contentVersion = $buildingModel['content_version'] ?? null;
+        $model = is_array($buildingModel['model'] ?? null) ? $buildingModel['model'] : [];
+        if (! is_string($contentVersion)
+            || preg_match('/^sha256:[a-f0-9]{64}$/D', $contentVersion) !== 1
+            || ! in_array($model['scale_status'] ?? null, ['confirmed', 'estimated', 'unknown'], true)) {
+            return null;
+        }
+        $evidenceIds = array_values(array_unique(array_map(
+            'intval',
+            is_array($model['evidence_ids'] ?? null) ? $model['evidence_ids'] : [],
+        )));
+        sort($evidenceIds, SORT_NUMERIC);
+
+        return [
+            'content_version' => $contentVersion,
+            'scale_status' => (string) $model['scale_status'],
+            'evidence_ids' => $evidenceIds,
+        ];
+    }
+
+    /**
+     * @param  array{evidence_id?: int, source_version?: string, fingerprint?: string, invalidation_version?: int, active?: bool}|null  $area
+     * @return array{evidence_id: int, source_version: string, fingerprint: string, invalidation_version: int, active: true}|null
+     */
+    private static function documentTotalAreaEvidence(?array $area): ?array
+    {
+        $evidenceId = (int) ($area['evidence_id'] ?? 0);
+        $invalidationVersion = (int) ($area['invalidation_version'] ?? -1);
+        if ($evidenceId < 1
+            || $invalidationVersion < 0
+            || ! is_string($area['source_version'] ?? null)
+            || preg_match('/^sha256:[a-f0-9]{64}$/D', $area['source_version']) !== 1
+            || ! is_string($area['fingerprint'] ?? null)
+            || preg_match('/^[a-f0-9]{64}$/D', $area['fingerprint']) !== 1
+            || ($area['active'] ?? null) !== true) {
+            return null;
+        }
+
+        return [
+            'evidence_id' => $evidenceId,
+            'source_version' => $area['source_version'],
+            'fingerprint' => $area['fingerprint'],
+            'invalidation_version' => $invalidationVersion,
+            'active' => true,
+        ];
+    }
+
+    /**
+     * @param  array{evidence_id?: int, source_version?: string, fingerprint?: string, invalidation_version?: int, active?: bool}|null  $documentTotalArea
+     */
+    public static function fromSession(EstimateGenerationSession $session, ?array $documentTotalArea = null): string
     {
         $input = is_array($session->input_payload) ? $session->input_payload : [];
         unset($input['generation_attempt_id'], $input['generation_requested']);
@@ -38,7 +103,7 @@ final class PipelineBaseInputVersion
             ->values()
             ->all();
 
-        return self::fromProjection($input, $documents);
+        return self::fromProjection($input, $documents, $documentTotalArea);
     }
 
     private static function derivedVersion(object $document): string

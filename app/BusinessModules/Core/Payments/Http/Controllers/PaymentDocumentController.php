@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\BusinessModules\Core\Payments\Services\PurchaseOrderContractRequirementService;
 use App\BusinessModules\Core\Payments\Services\Export\PaymentOrderPdfService;
 use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\BusinessModules\Core\Payments\Services\PaymentPurposeGenerator;
@@ -37,7 +38,8 @@ class PaymentDocumentController extends Controller
         private readonly PaymentDocumentService $service,
         private readonly PaymentOrderPdfService $pdfExport,
         private readonly PaymentPurposeGenerator $purposeGenerator,
-        private readonly PaymentBudgetLimitService $budgetLimitService
+        private readonly PaymentBudgetLimitService $budgetLimitService,
+        private readonly PurchaseOrderContractRequirementService $contractRequirement,
     ) {}
 
     /**
@@ -175,6 +177,7 @@ class PaymentDocumentController extends Controller
             $filters['sort_order'] = $filters['sort_order'] ?? 'desc';
 
             $documents = $this->service->getForOrganization($organizationId, $filters);
+            $this->contractRequirement->preload($documents);
 
             return AdminResponse::paginated(
                 $documents->map(fn ($document) => $this->formatDocument($document)),
@@ -813,6 +816,7 @@ class PaymentDocumentController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $documents = $this->service->getOverdue($organizationId);
+            $this->contractRequirement->preload($documents);
 
             return AdminResponse::paginated(
                 $documents->map(fn($doc) => $this->formatDocument($doc)),
@@ -840,6 +844,7 @@ class PaymentDocumentController extends Controller
             $days = $request->input('days', 7);
 
             $documents = $this->service->getUpcoming($organizationId, $days);
+            $this->contractRequirement->preload($documents);
 
             return AdminResponse::paginated(
                 $documents->map(fn($doc) => $this->formatDocument($doc)),
@@ -1168,6 +1173,9 @@ class PaymentDocumentController extends Controller
         if ($document->relationLoaded('estimateSplits') && $document->estimateSplits->contains(fn($split) => (float) $split->price_deviation > 0)) {
             $flags[] = 'has_estimate_deviation';
         }
+        if (($contractBlocker = $this->contractRequirement->blocker($document)) !== null) {
+            $flags[] = $contractBlocker;
+        }
 
         return array_values(array_unique($flags));
     }
@@ -1201,6 +1209,9 @@ class PaymentDocumentController extends Controller
             'is_blocked' => !empty($problemFlags),
             'blockers' => $problemFlags,
             'related_site_requests' => $relatedSiteRequests,
+            'available_actions' => array_values(array_filter([
+                $this->contractRequirement->continuationAction($document),
+            ])),
         ];
     }
 }

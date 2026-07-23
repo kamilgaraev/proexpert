@@ -11,7 +11,8 @@ final readonly class NormativeSearchQueryBuilder
         preg_match_all('/[\p{L}\p{N}.-]+/u', mb_strtolower($searchText), $matches);
         $tokens = array_slice(array_values(array_unique(array_filter(
             $matches[0] ?? [],
-            static fn (string $token): bool => mb_strlen(trim($token, '.- ')) >= 3,
+            static fn (string $token): bool => mb_strlen(trim($token, '.- ')) >= 3
+                && ! NormativeLexemePolicy::isGeneric(trim($token, '.- ')),
         ))), 0, 10);
 
         if ($tokens === []) {

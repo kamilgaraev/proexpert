@@ -20,7 +20,7 @@ final class WorkIntentClassifierTest extends TestCase
         string $expectedDimension,
         array $forbiddenCollections
     ): void {
-        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog()))->classify([
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
             'name' => $name,
             'unit' => $unit,
         ], [
@@ -38,20 +38,20 @@ final class WorkIntentClassifierTest extends TestCase
 
     public function test_returns_non_empty_low_confidence_intent_for_unknown_work(): void
     {
-        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog()))->classify([
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
             'name' => 'Нестандартная работа по объекту',
             'unit' => 'компл',
         ], []);
 
         $this->assertNotSame('', $intent->scope);
         $this->assertNotSame('', $intent->action);
-        $this->assertContains('set', $intent->expectedDimensions);
+        $this->assertContains('piece', $intent->expectedDimensions);
         $this->assertLessThan(0.6, $intent->confidence);
     }
 
     public function test_classifies_heating_unit_as_equipment_not_pipe_layout(): void
     {
-        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog()))->classify([
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
             'name' => 'Тепловой узел',
             'unit' => 'компл',
         ], [
@@ -62,7 +62,7 @@ final class WorkIntentClassifierTest extends TestCase
         $this->assertSame('engineering', $intent->scope);
         $this->assertSame('heating', $intent->system);
         $this->assertSame('heating_equipment', $intent->action);
-        $this->assertContains('set', $intent->expectedDimensions);
+        $this->assertContains('piece', $intent->expectedDimensions);
         $this->assertContains('18', $intent->preferredSectionPrefixes);
         $this->assertContains('20', $intent->preferredSectionPrefixes);
         $this->assertNotContains('16', $intent->preferredSectionPrefixes);
@@ -70,7 +70,7 @@ final class WorkIntentClassifierTest extends TestCase
 
     public function test_finishing_work_keeps_finishing_scope_inside_plumbing_package(): void
     {
-        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog()))->classify([
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
             'name' => 'Отделка мокрых зон плиткой',
             'unit' => 'м2',
         ], [
@@ -84,9 +84,36 @@ final class WorkIntentClassifierTest extends TestCase
         $this->assertNotContains('16', $intent->preferredSectionPrefixes);
     }
 
+    public function test_wet_zone_waterproofing_uses_floor_construction_norms(): void
+    {
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
+            'name' => 'Гидроизоляция мокрых зон',
+            'unit' => 'м2',
+        ], [
+            'scope_type' => 'finishing',
+            'section_title' => 'Водоснабжение',
+        ]);
+
+        self::assertSame('finishing', $intent->scope);
+        self::assertSame('waterproofing', $intent->action);
+        self::assertSame(['11'], $intent->preferredSectionPrefixes);
+    }
+
+    public function test_residential_stair_area_allows_carpentry_stair_norms(): void
+    {
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
+            'name' => 'Устройство внутриквартирных лестниц без подшивки',
+            'unit' => 'м2',
+        ], ['scope_type' => 'stairs']);
+
+        self::assertSame('stairs', $intent->scope);
+        self::assertContains('10', $intent->preferredSectionPrefixes);
+        self::assertNotContains('10', $intent->forbiddenSectionPrefixes);
+    }
+
     public function test_pipe_layout_is_not_classified_as_masonry_because_of_prokladka(): void
     {
-        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog()))->classify([
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
             'name' => 'Прокладка труб отопления',
             'unit' => 'м',
         ], [
@@ -99,6 +126,96 @@ final class WorkIntentClassifierTest extends TestCase
         $this->assertSame('pipe_layout', $intent->action);
         $this->assertContains('16', $intent->preferredSectionPrefixes);
         $this->assertNotContains('08', $intent->preferredSectionPrefixes);
+    }
+
+    public function test_classifies_soil_transport_separately_from_excavation_and_loading(): void
+    {
+        $classifier = new WorkIntentClassifier(new NormativeScopeRuleCatalog);
+
+        foreach (['Вывоз излишнего грунта', 'Погрузка и перевозка излишнего грунта'] as $name) {
+            $intent = $classifier->classify(['name' => $name, 'unit' => 'м3'], ['scope_type' => 'foundation']);
+
+            self::assertSame('soil_haulage', $intent->action);
+            self::assertContains('volume', $intent->expectedDimensions);
+            self::assertSame(['01'], $intent->preferredSectionPrefixes);
+        }
+    }
+
+    public function test_classifies_inflected_reverse_backfill_title(): void
+    {
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
+            'name' => 'Обратная засыпка пазух грунтом',
+            'unit' => 'м3',
+        ], ['scope_type' => 'foundation']);
+
+        self::assertSame('backfill', $intent->action);
+        self::assertContains('volume', $intent->expectedDimensions);
+        self::assertSame(['01'], $intent->preferredSectionPrefixes);
+    }
+
+    public function test_classifies_grounding_as_electrical_installation(): void
+    {
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
+            'name' => 'Устройство контура заземления',
+            'unit' => 'м',
+        ], ['scope_type' => 'engineering']);
+
+        self::assertSame('electrical', $intent->system);
+        self::assertSame('grounding_installation', $intent->action);
+        self::assertSame(['08'], $intent->preferredSectionPrefixes);
+    }
+
+    public function test_classifies_rough_floor_preparation_separately_from_finish_covering(): void
+    {
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
+            'name' => 'Устройство черновой подготовки пола',
+            'unit' => 'м2',
+        ], ['scope_type' => 'finishing']);
+
+        self::assertSame('floor_preparation', $intent->action);
+        self::assertSame(['11'], $intent->preferredSectionPrefixes);
+    }
+
+    #[DataProvider('distinctInstallationIntentProvider')]
+    public function test_classifies_distinct_installation_targets(string $name, string $section, string $expectedAction): void
+    {
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
+            'name' => $name,
+            'unit' => 'шт',
+        ], [
+            'scope_type' => 'engineering',
+            'section_title' => $section,
+        ]);
+
+        self::assertSame($expectedAction, $intent->action);
+    }
+
+    public static function distinctInstallationIntentProvider(): array
+    {
+        return [
+            ['Монтаж кабельных лотков', 'Электроснабжение', 'cable_tray_installation'],
+            ['Монтаж квартирного распределительного щита', 'Электроснабжение', 'electrical_panel_installation'],
+            ['Установка потолочных светильников', 'Освещение', 'lighting_fixture_installation'],
+            ['Монтаж сантехнических точек', 'Водоснабжение', 'sanitary_fixture_installation'],
+            ['Монтаж дверных блоков', 'Окна и двери', 'door_installation'],
+            ['Монтаж канализационных ревизий', 'Канализация', 'sewer_revision_installation'],
+            ['Монтаж канализационных стояков', 'Канализация', 'sewer_riser_installation'],
+            ['Устройство выпусков канализации', 'Канализация', 'sewer_outlet_installation'],
+            ['Монтаж стальных радиаторов', 'Отопление', 'heating_emitter_installation'],
+        ];
+    }
+
+    public function test_cable_laying_on_trays_remains_cable_installation(): void
+    {
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog))->classify([
+            'name' => 'Прокладка кабеля по лоткам',
+            'unit' => 'м',
+        ], [
+            'scope_type' => 'engineering',
+            'section_title' => 'Электроснабжение',
+        ]);
+
+        self::assertSame('cable_installation', $intent->action);
     }
 
     public static function workIntentProvider(): array

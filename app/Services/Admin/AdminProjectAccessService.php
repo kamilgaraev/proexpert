@@ -32,7 +32,14 @@ class AdminProjectAccessService
         }
 
         try {
-            return $this->projectContextService->getContext($project, $organization);
+            $projectContext = $this->projectContextService->getContext($project, $organization);
+
+            return $projectContext->withPermissionResolver(
+                static fn (string $permission): bool => $user->hasPermission($permission, [
+                    'project_id' => $project->id,
+                    'organization_id' => $organization->id,
+                ]),
+            );
         } catch (\Throwable) {
             return null;
         }

@@ -2,12 +2,12 @@
 
 namespace App\BusinessModules\Features\ContractManagement;
 
-use App\Modules\Contracts\ModuleInterface;
-use App\Modules\Contracts\ConfigurableInterface;
-use App\Enums\ModuleType;
 use App\Enums\BillingModel;
+use App\Enums\ModuleType;
+use App\Modules\Contracts\ConfigurableInterface;
+use App\Modules\Contracts\ModuleInterface;
 
-class ContractManagementModule implements ModuleInterface, ConfigurableInterface
+class ContractManagementModule implements ConfigurableInterface, ModuleInterface
 {
     public function getName(): string
     {
@@ -64,6 +64,7 @@ class ContractManagementModule implements ModuleInterface, ConfigurableInterface
     {
         // Проверяем что базовые модули активированы
         $accessController = app(\App\Modules\Core\AccessController::class);
+
         return $accessController->hasModuleAccess($organizationId, 'organizations') &&
                $accessController->hasModuleAccess($organizationId, 'users') &&
                $accessController->hasModuleAccess($organizationId, 'project-management');
@@ -84,8 +85,9 @@ class ContractManagementModule implements ModuleInterface, ConfigurableInterface
         return [
             'contracts.view',
             'contracts.create',
-            'contracts.edit', 
+            'contracts.edit',
             'contracts.delete',
+            'contracts.archive',
             'contracts.analytics',
             'contracts.completed_works.view',
             'contracts.performance_acts.view',
@@ -104,7 +106,7 @@ class ContractManagementModule implements ModuleInterface, ConfigurableInterface
             'specifications.view',
             'specifications.create',
             'specifications.edit',
-            'specifications.delete'
+            'specifications.delete',
         ];
     }
 
@@ -119,7 +121,7 @@ class ContractManagementModule implements ModuleInterface, ConfigurableInterface
             'Управление платежами по контрактам',
             'Дополнительные соглашения',
             'Спецификации к контрактам',
-            'Полная детализация контрактов'
+            'Полная детализация контрактов',
         ];
     }
 
@@ -128,7 +130,7 @@ class ContractManagementModule implements ModuleInterface, ConfigurableInterface
         return [
             'max_contracts' => null,
             'max_agreements_per_contract' => 20,
-            'max_specifications_per_contract' => 50
+            'max_specifications_per_contract' => 50,
         ];
     }
 
@@ -139,50 +141,50 @@ class ContractManagementModule implements ModuleInterface, ConfigurableInterface
                 'auto_generate_numbers' => true,
                 'number_prefix' => 'КТ',
                 'year_in_number' => true,
-                'reset_yearly' => true
+                'reset_yearly' => true,
             ],
             'workflow_settings' => [
                 'require_approval' => false,
                 'auto_create_acts' => false,
                 'allow_retroactive_acts' => true,
-                'performance_tracking' => true
+                'performance_tracking' => true,
             ],
             'notification_settings' => [
                 'contract_created' => true,
                 'contract_expiring' => true,
                 'payment_due' => true,
                 'act_created' => true,
-                'agreement_added' => true
+                'agreement_added' => true,
             ],
             'export_settings' => [
                 'default_format' => 'pdf',
                 'include_signatures' => true,
                 'watermark_drafts' => true,
-                'archive_exports' => true
+                'archive_exports' => true,
             ],
             'payment_settings' => [
                 'track_payment_schedule' => true,
                 'alert_overdue_payments' => true,
-                'auto_calculate_penalties' => false
-            ]
+                'auto_calculate_penalties' => false,
+            ],
         ];
     }
 
     public function validateSettings(array $settings): bool
     {
-        if (isset($settings['max_agreements_per_contract']) && 
-            (!is_int($settings['max_agreements_per_contract']) || $settings['max_agreements_per_contract'] < 1)) {
+        if (isset($settings['max_agreements_per_contract']) &&
+            (! is_int($settings['max_agreements_per_contract']) || $settings['max_agreements_per_contract'] < 1)) {
             return false;
         }
 
-        if (isset($settings['max_specifications_per_contract']) && 
-            (!is_int($settings['max_specifications_per_contract']) || $settings['max_specifications_per_contract'] < 1)) {
+        if (isset($settings['max_specifications_per_contract']) &&
+            (! is_int($settings['max_specifications_per_contract']) || $settings['max_specifications_per_contract'] < 1)) {
             return false;
         }
 
         $allowedFormats = ['pdf', 'excel', 'word'];
-        if (isset($settings['export_settings']['default_format']) && 
-            !in_array($settings['export_settings']['default_format'], $allowedFormats)) {
+        if (isset($settings['export_settings']['default_format']) &&
+            ! in_array($settings['export_settings']['default_format'], $allowedFormats)) {
             return false;
         }
 
@@ -191,7 +193,7 @@ class ContractManagementModule implements ModuleInterface, ConfigurableInterface
 
     public function applySettings(int $organizationId, array $settings): void
     {
-        if (!$this->validateSettings($settings)) {
+        if (! $this->validateSettings($settings)) {
             throw new \InvalidArgumentException('Некорректные настройки модуля управления контрактами');
         }
 
@@ -204,7 +206,7 @@ class ContractManagementModule implements ModuleInterface, ConfigurableInterface
         if ($activation) {
             $currentSettings = $activation->module_settings ?? [];
             $activation->update([
-                'module_settings' => array_merge($currentSettings, $settings)
+                'module_settings' => array_merge($currentSettings, $settings),
             ]);
         }
     }
@@ -217,7 +219,7 @@ class ContractManagementModule implements ModuleInterface, ConfigurableInterface
             })
             ->first();
 
-        if (!$activation) {
+        if (! $activation) {
             return $this->getDefaultSettings();
         }
 

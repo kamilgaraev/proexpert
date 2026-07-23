@@ -6,6 +6,9 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateBudgetScope;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateScopeMetadataProjector;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -19,18 +22,33 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
 {
     private const ESTIMATE_NAME_MAX_LENGTH = 255;
 
+    private const ESTIMATE_ITEM_RESOURCE_NAME_MAX_LENGTH = 255;
+
     private const NUMBER_CREATE_ATTEMPTS = 4;
+
+    /** @var array<string, int|null> */
+    private array $measurementUnitIdCache = [];
+
+    /** @var array<int, list<array{id: int, organization_id: int|null, name: string, short_name: string}>> */
+    private array $measurementUnitsCache = [];
 
     public function __construct(
         private EstimateDraftPersistenceService $draftService,
         private GeneratedEstimateNumberAllocator $numberAllocator,
+        private GeneratedEstimateItemMetadataFactory $itemMetadata = new GeneratedEstimateItemMetadataFactory,
+        private FinalizedPackageDraftProjector $finalizedDraftProjector = new FinalizedPackageDraftProjector,
+        private EstimateBudgetScope $budgetScope = new EstimateBudgetScope,
+        private EstimateScopeMetadataProjector $scopeMetadata = new EstimateScopeMetadataProjector,
     ) {}
 
     public function createFromSession(
         EstimateGenerationSession $session,
         ApplyGeneratedEstimateCommand $command,
     ): int {
-        $draft = $this->draftService->validatedDraft($session);
+        $draft = $this->finalizedDraftProjector->project(
+            $session,
+            $this->draftService->validatedDraft($session),
+        );
         $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
         $total = $this->draftService->persistableDraftTotal($draft);
         $estimate = $this->createEstimate($session, $command, $draft, $regionalContext, $total);
@@ -51,6 +69,8 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         array $regionalContext,
         float $total,
     ): Estimate {
+        $budgetScope = $this->budgetScope->project($draft, $total);
+
         for ($attempt = 0; $attempt < self::NUMBER_CREATE_ATTEMPTS; $attempt++) {
             try {
                 $attributes = [
@@ -71,6 +91,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                         'draft_traceability' => $draft['traceability'] ?? [],
                         'quality_summary' => $draft['quality_summary'] ?? null,
                         'regional_context' => $regionalContext,
+                        'ai_scope' => $this->scopeMetadata->project($draft, $budgetScope),
                     ],
                     'total_direct_costs' => $total,
                     'total_amount' => $total,
@@ -230,20 +251,14 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
             'materials_cost' => $workItem['materials_cost'],
             'machinery_cost' => $workItem['machinery_cost'],
             'labor_cost' => $workItem['labor_cost'],
+            'labor_hours' => $workItem['labor_hours'],
+            'machinery_hours' => $workItem['machinery_hours'],
             'direct_costs' => $workItem['total_cost'],
             'total_amount' => $workItem['total_cost'],
             'current_total_amount' => $workItem['total_cost'],
             'justification' => $workItem['quantity_basis'],
             'is_manual' => true,
-            'metadata' => [
-                'source_refs' => $workItem['source_refs'],
-                'confidence' => $workItem['confidence'],
-                'validation_flags' => $workItem['validation_flags'],
-                'normative_dataset' => $workItem['normative_dataset'] ?? null,
-                'normative_match' => $workItem['normative_match'] ?? null,
-                'normative_candidates' => $workItem['normative_candidates'] ?? [],
-                'price_source' => $workItem['price_source'] ?? null,
-            ],
+            'metadata' => $this->itemMetadata->make($workItem),
         ]);
     }
 
@@ -271,6 +286,12 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                 'unit_price' => $resource['unit_price'],
                 'total_amount' => $resource['total_price'],
                 'current_total_amount' => $resource['total_price'],
+                'labor_hours' => $itemType === EstimatePositionItemType::LABOR->value
+                    ? $resource['quantity']
+                    : 0,
+                'machinery_hours' => $itemType === EstimatePositionItemType::MACHINERY->value
+                    ? $resource['quantity']
+                    : 0,
                 'is_manual' => true,
                 'metadata' => [
                     'confidence' => $resource['confidence'] ?? null,
@@ -278,13 +299,19 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
                     'quantity_per_unit' => $resource['quantity_per_unit'] ?? null,
                     'normative_ref' => $resource['normative_ref'] ?? null,
                     'source' => $resource['source'] ?? null,
+                    'price_source' => $resource['price_source'] ?? null,
+                    'price_source_version' => $resource['price_source_version'] ?? null,
+                    'rounding_adjustment' => $resource['rounding_adjustment'] ?? null,
+                    'project_resource_selection' => $resource['project_resource_selection'] ?? null,
+                    'project_material_selection' => $resource['project_material_selection'] ?? null,
+                    'machine_price_breakdown' => $resource['machine_price_breakdown'] ?? null,
                 ],
             ]);
 
             EstimateItemResource::create([
                 'estimate_item_id' => $parent->id,
                 'resource_type' => $itemType === EstimatePositionItemType::MACHINERY->value ? 'equipment' : $itemType,
-                'name' => $resource['name'],
+                'name' => $this->estimateItemResourceName((string) $resource['name']),
                 'description' => $resource['normative_ref']['resource_code'] ?? ($resource['source'] ?? null),
                 'measurement_unit_id' => $measurementUnitId,
                 'quantity_per_unit' => $resource['quantity_per_unit'] ?? 1,
@@ -295,15 +322,68 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         }
     }
 
-    private function resolveMeasurementUnitId(int $organizationId, string $unit): ?int
+    protected function estimateItemResourceName(string $name): string
+    {
+        return mb_substr($name, 0, self::ESTIMATE_ITEM_RESOURCE_NAME_MAX_LENGTH);
+    }
+
+    protected function resolveMeasurementUnitId(int $organizationId, string $unit): ?int
     {
         $normalized = mb_strtolower(trim($unit));
+        $cacheKey = $organizationId.'|'.$normalized;
 
-        return MeasurementUnit::query()
+        if (array_key_exists($cacheKey, $this->measurementUnitIdCache)) {
+            return $this->measurementUnitIdCache[$cacheKey];
+        }
+
+        $units = $this->measurementUnits($organizationId);
+        foreach ($units as $candidate) {
+            if (in_array($normalized, [
+                mb_strtolower(trim($candidate['short_name'])),
+                mb_strtolower(trim($candidate['name'])),
+            ], true)) {
+                return $this->measurementUnitIdCache[$cacheKey] = $candidate['id'];
+            }
+        }
+
+        $target = NormativeUnitNormalizer::parseDetailed($unit);
+        if ($target->baseUnit === '') {
+            return $this->measurementUnitIdCache[$cacheKey] = null;
+        }
+
+        foreach ($units as $candidate) {
+            foreach ([$candidate['short_name'], $candidate['name']] as $candidateUnit) {
+                $parsed = NormativeUnitNormalizer::parseDetailed($candidateUnit);
+                if (
+                    $parsed->baseUnit === $target->baseUnit
+                    && $parsed->dimension === $target->dimension
+                    && abs($parsed->multiplier - $target->multiplier) < 0.000001
+                ) {
+                    return $this->measurementUnitIdCache[$cacheKey] = $candidate['id'];
+                }
+            }
+        }
+
+        return $this->measurementUnitIdCache[$cacheKey] = null;
+    }
+
+    /** @return list<array{id: int, organization_id: int|null, name: string, short_name: string}> */
+    protected function measurementUnits(int $organizationId): array
+    {
+        return $this->measurementUnitsCache[$organizationId] ??= MeasurementUnit::query()
             ->where(fn ($query) => $query->where('organization_id', $organizationId)->orWhereNull('organization_id'))
-            ->where(fn ($query) => $query->whereRaw('LOWER(short_name) = ?', [$normalized])
-                ->orWhereRaw('LOWER(name) = ?', [$normalized]))
-            ->value('id');
+            ->orderByRaw('CASE WHEN organization_id = ? THEN 0 ELSE 1 END', [$organizationId])
+            ->orderBy('id')
+            ->get(['id', 'organization_id', 'name', 'short_name'])
+            ->map(static fn (MeasurementUnit $measurementUnit): array => [
+                'id' => (int) $measurementUnit->id,
+                'organization_id' => $measurementUnit->organization_id !== null
+                    ? (int) $measurementUnit->organization_id
+                    : null,
+                'name' => (string) $measurementUnit->name,
+                'short_name' => (string) $measurementUnit->short_name,
+            ])
+            ->all();
     }
 
     /** @param array<string, mixed> $draft */

@@ -8,6 +8,9 @@ use Illuminate\Support\Carbon;
 
 final class ImmutableAuditEventData
 {
+    private const SUBJECT_LABEL_MAX_LENGTH = 255;
+    private const SUBJECT_LABEL_ELLIPSIS = "\u{2026}";
+
     public function __construct(
         public readonly int $organizationId,
         public readonly string $domain,
@@ -41,6 +44,22 @@ final class ImmutableAuditEventData
         public readonly ?Carbon $occurredAt = null,
     ) {}
 
+    public function subjectLabelForStorage(): ?string
+    {
+        if ($this->subjectLabel === null) {
+            return null;
+        }
+        if (mb_strlen($this->subjectLabel) <= self::SUBJECT_LABEL_MAX_LENGTH) {
+            return $this->subjectLabel;
+        }
+
+        return mb_substr(
+            $this->subjectLabel,
+            0,
+            self::SUBJECT_LABEL_MAX_LENGTH - mb_strlen(self::SUBJECT_LABEL_ELLIPSIS),
+        ).self::SUBJECT_LABEL_ELLIPSIS;
+    }
+
     public function toArray(): array
     {
         return [
@@ -64,7 +83,7 @@ final class ImmutableAuditEventData
             'idempotency_key' => $this->idempotencyKey,
             'subject_type' => $this->subjectType,
             'subject_id' => $this->subjectId === null ? null : (string) $this->subjectId,
-            'subject_label' => $this->subjectLabel,
+            'subject_label' => $this->subjectLabelForStorage(),
             'related_subjects' => $this->relatedSubjects,
             'reason' => $this->reason,
             'before_state' => $this->beforeState,

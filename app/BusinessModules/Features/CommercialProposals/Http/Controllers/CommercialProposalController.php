@@ -20,7 +20,10 @@ use App\BusinessModules\Features\CommercialProposals\Http\Resources\CommercialPr
 use App\BusinessModules\Features\CommercialProposals\Http\Resources\CommercialProposalTemplateResource;
 use App\BusinessModules\Features\CommercialProposals\Http\Resources\CommercialProposalVersionResource;
 use App\BusinessModules\Features\CommercialProposals\Services\CommercialProposalService;
+use App\DTOs\Contract\ContractDossierCreationInput;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Admin\Contract\StoreContractRequest;
+use App\Http\Resources\Api\V1\Admin\Contract\ContractResource;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -238,6 +241,41 @@ final class CommercialProposalController extends Controller
             );
         } catch (Throwable $e) {
             return $this->failure($request, $e, 'commercial_proposals.errors.result');
+        }
+    }
+
+    public function createContract(StoreContractRequest $request, string $proposalId): JsonResponse
+    {
+        try {
+            $contract = $request->toDto();
+            $result = $this->service->createContract(
+                $this->organizationId($request),
+                $proposalId,
+                $request->user(),
+                new ContractDossierCreationInput(
+                    contract: $contract,
+                    idempotencyKey: 'commercial-proposal:'.hash('sha256', $proposalId.':'.$request->string('idempotency_key')->toString()),
+                    documentTitle: $request->validated('document_title') ?? 'Договор №'.$contract->number,
+                    profileCode: $request->validated('document_profile_code') ?? 'contract.work',
+                    documentMetadata: $request->validated('document_metadata') ?? [],
+                    confidentialityLevel: $request->validated('document_confidentiality_level'),
+                    sourceLinks: [[
+                        'link_type' => 'commercial_proposal',
+                        'linked_type' => 'commercial_proposal',
+                        'linked_id' => $proposalId,
+                    ]],
+                    sourceType: 'commercial_proposal',
+                    sourceId: $proposalId,
+                ),
+            );
+
+            return AdminResponse::success(
+                new ContractResource($result->contract),
+                null,
+                $result->replayed ? 200 : 201,
+            );
+        } catch (Throwable $e) {
+            return $this->failure($request, $e, 'commercial_proposals.errors.contract_creation');
         }
     }
 

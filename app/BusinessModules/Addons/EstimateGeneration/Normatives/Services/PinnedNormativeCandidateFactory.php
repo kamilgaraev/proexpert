@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
 use DateTimeImmutable;
 
 final readonly class PinnedNormativeCandidateFactory
@@ -12,15 +13,35 @@ final readonly class PinnedNormativeCandidateFactory
     public function __construct(private NormativeIntentCandidateRanker $ranker = new NormativeIntentCandidateRanker) {}
 
     /** @return list<NormativeCandidateData> */
-    public function forWorkItem(array $catalogCandidates, array $workItem, ?string $normativeSection = null): array
-    {
+    public function forWorkItem(
+        array $catalogCandidates,
+        array $workItem,
+        array $normativeSections = [],
+        ?WorkIntentData $canonicalIntent = null,
+        ?array $candidateIdsByWorkItem = null,
+    ): array {
         $rankable = [];
         $byId = [];
+        $allowedIdLookup = null;
+        if ($candidateIdsByWorkItem !== null) {
+            $workItemKey = (string) ($workItem['key'] ?? '');
+            if (! array_key_exists($workItemKey, $candidateIdsByWorkItem)) {
+                return [];
+            }
+            $allowedIds = $candidateIdsByWorkItem[$workItemKey];
+            if (! is_array($allowedIds) || ! array_is_list($allowedIds)) {
+                return [];
+            }
+            $allowedIdLookup = array_fill_keys(array_filter($allowedIds, 'is_string'), true);
+        }
         foreach ($catalogCandidates as $candidate) {
             if (! is_array($candidate) || ! is_string($candidate['candidate_id'] ?? null)) {
                 continue;
             }
             $id = $candidate['candidate_id'];
+            if ($allowedIdLookup !== null && ! isset($allowedIdLookup[$id])) {
+                continue;
+            }
             $byId[$id] = $candidate;
             $rankable[] = (object) [
                 'id' => $id, 'code' => (string) ($candidate['code'] ?? ''),
@@ -28,13 +49,34 @@ final readonly class PinnedNormativeCandidateFactory
                 'canonical_unit' => (string) ($candidate['unit'] ?? ''), 'unit' => (string) ($candidate['unit'] ?? ''),
                 'section_name' => (string) ($candidate['section']['name'] ?? ''),
                 'section_code' => (string) ($candidate['section']['code'] ?? ''),
+                'work_composition' => is_array($candidate['work_composition'] ?? null)
+                    ? $candidate['work_composition']
+                    : [],
             ];
         }
         $selected = $this->ranker->select($rankable, [[
             'search_text' => (string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''),
             'unit' => (string) ($workItem['unit'] ?? ''),
-            'code' => is_string($workItem['normative_rate_code'] ?? null) ? $workItem['normative_rate_code'] : null,
-            'normative_section' => $normativeSection,
+            'code' => $canonicalIntent?->requestedNormativeCode
+                ?? (is_string($workItem['normative_rate_code'] ?? null) ? $workItem['normative_rate_code'] : null),
+            'action' => $canonicalIntent?->technology ?? (is_string($workItem['work_intent']['action'] ?? null)
+                ? $workItem['work_intent']['action']
+                : null),
+            'scope' => $canonicalIntent?->structure ?? (is_string($workItem['work_intent']['scope'] ?? null)
+                ? $workItem['work_intent']['scope']
+                : null),
+            'system' => $canonicalIntent?->system ?? (is_string($workItem['work_intent']['system'] ?? null)
+                ? $workItem['work_intent']['system']
+                : null),
+            'object' => $canonicalIntent?->workObject ?? (is_string($workItem['work_intent']['object'] ?? null)
+                ? $workItem['work_intent']['object']
+                : null),
+            'object_type' => $canonicalIntent?->objectType,
+            'normative_sections' => $normativeSections,
+            'specialization_evidence' => $canonicalIntent?->specializationEvidence
+                ?? (is_array($workItem['specialization_evidence'] ?? null) ? $workItem['specialization_evidence'] : []),
+            'specialization_scenario' => $canonicalIntent?->specializationScenario
+                ?? (is_array($workItem['specialization_scenario'] ?? null) ? $workItem['specialization_scenario'] : null),
         ]]);
         if ($selected === null) {
             return [];
@@ -62,6 +104,9 @@ final readonly class PinnedNormativeCandidateFactory
                 lexicalScore: max(0.1, 1 - ($index * 0.1)), semanticScore: null,
                 lexicalAlgorithmVersion: 'pinned-catalog-v1', semanticIndexVersion: null,
                 sourceEvidence: ['norm:'.(string) $candidate['normative_id'], 'dataset:'.(string) $candidate['dataset_id']],
+                workComposition: is_array($candidate['work_composition'] ?? null)
+                    ? array_values(array_filter($candidate['work_composition'], 'is_string'))
+                    : [],
             );
         }, $selected, array_keys($selected));
     }

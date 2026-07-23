@@ -38,16 +38,18 @@ final class EstimateGenerationPlan2CorrectiveContractTest extends TestCase
     public function planner_and_gateway_do_not_eager_load_the_whole_source_graph(): void
     {
         $planner = $this->source('Pipeline/EloquentPipelineExecutionPlanner.php');
+        $baseInputResolver = $this->source('Pipeline/EvidenceAwarePipelineBaseInputVersionResolver.php');
         $gateway = $this->source('Pipeline/EloquentGenerationPipelineDataGateway.php');
 
         self::assertStringNotContainsString('->with([', $planner);
         self::assertStringNotContainsString('string_agg', $planner);
         self::assertStringNotContainsString('to_jsonb', $planner);
-        self::assertStringContainsString("selectRaw('COUNT(*) AS source_count')", $planner);
-        self::assertStringContainsString('BoundedSourceVersionHasher', $planner);
+        self::assertStringContainsString('EvidenceAwarePipelineBaseInputVersionResolver', $planner);
+        self::assertStringContainsString("selectRaw('COUNT(*) AS source_count')", $baseInputResolver);
+        self::assertStringContainsString('BoundedSourceVersionHasher', $baseInputResolver);
         self::assertStringContainsString("hash_init('sha256')", $this->source('Pipeline/BoundedSourceVersionHasher.php'));
-        self::assertStringContainsString("orderBy('document_id')->orderBy('id')->cursor()", $planner);
-        self::assertLessThan(strpos($planner, '->cursor()'), strpos($planner, "selectRaw('COUNT(*) AS source_count')"));
+        self::assertStringContainsString("orderBy('document_id')->orderBy('id')->cursor()", $baseInputResolver);
+        self::assertLessThan(strpos($baseInputResolver, '->cursor()'), strpos($baseInputResolver, "selectRaw('COUNT(*) AS source_count')"));
         self::assertStringNotContainsString('documents.facts', $planner);
         self::assertStringNotContainsString('documents.drawingElements', $planner);
         self::assertStringNotContainsString('documents.quantityTakeoffs', $planner);

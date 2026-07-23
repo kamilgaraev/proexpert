@@ -8,11 +8,17 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandid
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateSetData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\RejectedNormativeCandidateData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSemanticCompatibilityService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ObjectTypeSignalClassifier;
 
 final class NormativeHardGate
 {
+    public function __construct(
+        private readonly NormativeSemanticCompatibilityService $semanticCompatibility = new NormativeSemanticCompatibilityService,
+        private readonly ResidentialSignedNormCompatibility $signedNormCompatibility = new ResidentialSignedNormCompatibility,
+    ) {}
+
     /** @param list<NormativeCandidateData> $candidates */
     public function filter(WorkIntentData $workItem, array $candidates): NormativeCandidateSetData
     {
@@ -61,9 +67,20 @@ final class NormativeHardGate
                 $reasons[] = $code.'_mismatch';
             }
         }
-        if ($candidate->normativeSection !== null && $candidate->normativeSection !== ''
-            && $intent->normativeSection !== ''
-            && ! $this->sectionCompatible($candidate->normativeSection, $intent->normativeSection)) {
+        $preferredSections = $intent->normativeSections;
+        if ($preferredSections === [] && $intent->normativeSection !== '') {
+            $preferredSections = [$intent->normativeSection];
+        }
+        $sectionMatches = $preferredSections === [];
+        foreach ($preferredSections as $preferredSection) {
+            if ($candidate->normativeSection !== null && $candidate->normativeSection !== ''
+                && $this->sectionCompatible($candidate->normativeSection, $preferredSection)) {
+                $sectionMatches = true;
+
+                break;
+            }
+        }
+        if ($candidate->normativeSection !== null && $candidate->normativeSection !== '' && ! $sectionMatches) {
             $reasons[] = 'normative_section_mismatch';
         }
         if ($candidate->objectType !== null && $candidate->objectType !== '' && $intent->objectType !== ''
@@ -83,6 +100,29 @@ final class NormativeHardGate
         if (($candidate->validFrom !== null && $candidate->validFrom > $intent->applicabilityDate)
             || ($candidate->validTo !== null && $candidate->validTo < $intent->applicabilityDate)) {
             $reasons[] = 'applicability_date_mismatch';
+        }
+        $semanticCompatible = $this->semanticCompatibility->isCompatible(
+            implode(' ', [$candidate->name, ...$candidate->workComposition]),
+            $intent->intent,
+            [
+                'material' => $intent->material,
+                'action' => $intent->technology,
+                'scope' => $intent->structure,
+                'system' => $intent->system,
+                'object' => $intent->workObject,
+                'object_type' => $intent->objectType,
+                'candidate_title' => $candidate->name,
+                'specialization_evidence' => $intent->specializationEvidence,
+                'specialization_scenario' => $intent->specializationScenario,
+            ],
+        );
+        if (! $semanticCompatible && ! $this->signedNormCompatibility->matches(
+            $intent->specializationScenario,
+            $intent->objectType,
+            $candidate->code,
+            $candidate->name,
+        )) {
+            $reasons[] = 'semantic_mismatch';
         }
 
         return $reasons;

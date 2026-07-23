@@ -17,12 +17,14 @@ final readonly class FusedGeometryElementData
         public string $evidenceRef, public string $sourceFingerprint, public int $pageNumber,
         public string $coordinateSpace, public string $runtimeVersion, public string $modelVersion,
         public float $confidence, array $provenance = [], ?string $coordinateTransform = null,
+        public ?string $label = null,
     ) {
         if ($key === '' || ! in_array($type, ['room', 'wall', 'opening', 'engineering_element'], true)
             || ! in_array($sourceType, ['vector', 'vision'], true) || $evidenceRef === ''
             || preg_match('/^sha256:[a-f0-9]{64}$/', $sourceFingerprint) !== 1 || $pageNumber < 1
             || $coordinateSpace === '' || $runtimeVersion === '' || $modelVersion === ''
-            || ! is_finite($confidence) || $confidence < 0 || $confidence > 1 || $coordinateTransform === '') {
+            || ! is_finite($confidence) || $confidence < 0 || $confidence > 1 || $coordinateTransform === ''
+            || ($label !== null && (trim($label) === '' || mb_strlen($label) > 100))) {
             throw new InvalidArgumentException('Fused geometry element is invalid.');
         }
         $this->assertGeometry($type, $geometry);
@@ -66,7 +68,7 @@ final readonly class FusedGeometryElementData
 
     public function withProvenanceFrom(self $other): self
     {
-        return new self($this->key, $this->type, $this->geometry, $this->sourceType, $this->evidenceRef, $this->sourceFingerprint, $this->pageNumber, $this->coordinateSpace, $this->runtimeVersion, $this->modelVersion, min($this->confidence, $other->confidence), [...$this->provenance, ...$other->provenance], $this->coordinateTransform);
+        return new self($this->key, $this->type, $this->geometry, $this->sourceType, $this->evidenceRef, $this->sourceFingerprint, $this->pageNumber, $this->coordinateSpace, $this->runtimeVersion, $this->modelVersion, min($this->confidence, $other->confidence), [...$this->provenance, ...$other->provenance], $this->coordinateTransform, $this->label);
     }
 
     private function assertGeometry(string $type, array $geometry): void

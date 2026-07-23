@@ -3,7 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Contract;
-use App\Models\SupplementaryAgreement;
+use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Contract\ContractStateEventService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -25,7 +25,8 @@ class MigrateLegacyContractsToEventSourcing extends Command
     protected $description = 'Мигрировать legacy контракты (без Event Sourcing) в новую систему событий';
 
     public function __construct(
-        private readonly ContractStateEventService $stateService
+        private readonly ContractStateEventService $stateService,
+        private readonly ContractAuditedMutationService $contractMutations,
     ) {
         parent::__construct();
     }
@@ -36,11 +37,11 @@ class MigrateLegacyContractsToEventSourcing extends Command
     public function handle(): int
     {
         $rollback = $this->option('rollback');
-        
+
         if ($rollback) {
             return $this->handleRollback();
         }
-        
+
         $dryRun = $this->option('dry-run');
         $contractId = $this->option('contract');
         $organizationId = $this->option('organization');
@@ -69,6 +70,7 @@ class MigrateLegacyContractsToEventSourcing extends Command
 
         if ($contracts->isEmpty()) {
             $this->warn('⚠️  Legacy контракты не найдены (все уже мигрированы)');
+
             return self::SUCCESS;
         }
 
@@ -83,36 +85,46 @@ class MigrateLegacyContractsToEventSourcing extends Command
             try {
                 $this->newLine();
                 $this->line("📝 Контракт ID {$contract->id} ({$contract->number}):");
-                $this->line("   Базовая сумма: " . number_format($contract->total_amount, 2, '.', ' ') . " руб.");
+                $this->line('   Базовая сумма: '.number_format($contract->total_amount, 2, '.', ' ').' руб.');
                 $this->line("   Дополнительных соглашений: {$contract->agreements->count()}");
 
-                if (!$dryRun) {
+                if (! $dryRun) {
                     DB::transaction(function () use ($contract) {
                         // ВАЖНО: Сохраняем base_amount если его нет
-                        if (!$contract->base_amount) {
+                        if (! $contract->base_amount) {
                             // Вычисляем base_amount вычитая все ДС из total_amount
                             $agreementsSum = $contract->agreements->sum('change_amount');
-                            $contract->base_amount = $contract->total_amount - $agreementsSum;
-                            $contract->save();
+                            $this->contractMutations->update(
+                                $contract,
+                                ['base_amount' => $contract->total_amount - $agreementsSum],
+                                'event_sourcing_base_amount_migrated',
+                                null,
+                                ['source_event_id' => 'event_sourcing_migration:'.(string) $contract->id.':base_amount'],
+                            );
                         }
-                        
+
                         // 1. Создаем начальное событие CREATED с БАЗОВОЙ суммой (без ДС)
                         $contractForEvent = $contract->fresh();
                         $contractForEvent->total_amount = $contract->base_amount; // Подменяем для события
                         $this->stateService->createContractCreatedEvent($contractForEvent);
-                        
+
                         // 2. Создаем события для всех ДС
                         foreach ($contract->agreements as $agreement) {
                             $this->stateService->createSupplementaryAgreementEvent($contract, $agreement);
                         }
-                        
+
                         // 3. Пересчитываем total_amount из событий
                         $currentState = $this->stateService->getCurrentState($contract->fresh());
                         $calculatedAmount = (float) $currentState['total_amount'];
-                        
+
                         // 4. Обновляем контракт
-                        $contract->total_amount = $calculatedAmount;
-                        $contract->save();
+                        $this->contractMutations->update(
+                            $contract,
+                            ['total_amount' => $calculatedAmount],
+                            'event_sourcing_total_migrated',
+                            null,
+                            ['source_event_id' => 'event_sourcing_migration:'.(string) $contract->id.':total_amount'],
+                        );
                     });
 
                     // Перечитываем для вывода
@@ -120,9 +132,9 @@ class MigrateLegacyContractsToEventSourcing extends Command
                     $currentState = $this->stateService->getCurrentState($contract);
                     $newAmount = (float) $currentState['total_amount'];
 
-                    $this->line("   Событий создано: " . $contract->stateEvents->count());
-                    $this->line("   Новая сумма: " . number_format($newAmount, 2, '.', ' ') . " руб.");
-                    $this->info("   ✅ Мигрировано");
+                    $this->line('   Событий создано: '.$contract->stateEvents->count());
+                    $this->line('   Новая сумма: '.number_format($newAmount, 2, '.', ' ').' руб.');
+                    $this->info('   ✅ Мигрировано');
                     $migrated++;
                 } else {
                     // Расчет в dry-run режиме
@@ -130,15 +142,15 @@ class MigrateLegacyContractsToEventSourcing extends Command
                     foreach ($contract->agreements as $agreement) {
                         $calculatedAmount += $agreement->change_amount ?? 0;
                     }
-                    
-                    $this->line("   Будет создано событий: " . (1 + $contract->agreements->count()));
-                    $this->line("   Будет установлена сумма: " . number_format($calculatedAmount, 2, '.', ' ') . " руб.");
-                    $this->warn("   🔍 Будет мигрировано (dry-run)");
+
+                    $this->line('   Будет создано событий: '.(1 + $contract->agreements->count()));
+                    $this->line('   Будет установлена сумма: '.number_format($calculatedAmount, 2, '.', ' ').' руб.');
+                    $this->warn('   🔍 Будет мигрировано (dry-run)');
                 }
             } catch (\Exception $e) {
                 $this->newLine();
                 $this->error("❌ Ошибка при миграции контракта ID {$contract->id}: {$e->getMessage()}");
-                $this->error("   Trace: " . $e->getTraceAsString());
+                $this->error('   Trace: '.$e->getTraceAsString());
                 $errors++;
             }
 
@@ -188,6 +200,7 @@ class MigrateLegacyContractsToEventSourcing extends Command
 
         if ($contracts->isEmpty()) {
             $this->warn('⚠️  Контракты с Event Sourcing не найдены');
+
             return self::SUCCESS;
         }
 
@@ -207,16 +220,22 @@ class MigrateLegacyContractsToEventSourcing extends Command
                 DB::transaction(function () use ($contract) {
                     // 1. Удаляем все события
                     $contract->stateEvents()->delete();
-                    
+
                     // 2. Восстанавливаем total_amount из base_amount + ДС
                     if ($contract->base_amount) {
                         $agreementsSum = $contract->agreements->sum('change_amount');
-                        $contract->total_amount = $contract->base_amount + $agreementsSum;
-                        $contract->save();
+                        $restoredAmount = $contract->base_amount + $agreementsSum;
+                        $this->contractMutations->update(
+                            $contract,
+                            ['total_amount' => $restoredAmount],
+                            'event_sourcing_total_rollback',
+                            null,
+                            ['source_event_id' => 'event_sourcing_rollback:'.(string) $contract->id.':'.hash('sha256', (string) $restoredAmount)],
+                        );
                     }
                 });
 
-                $this->info("   ✅ Откачено");
+                $this->info('   ✅ Откачено');
                 $rolled++;
             } catch (\Exception $e) {
                 $this->newLine();
@@ -237,4 +256,3 @@ class MigrateLegacyContractsToEventSourcing extends Command
         return self::SUCCESS;
     }
 }
-

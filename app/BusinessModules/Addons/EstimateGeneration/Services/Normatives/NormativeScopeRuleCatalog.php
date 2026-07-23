@@ -62,7 +62,7 @@ final class NormativeScopeRuleCatalog
         return match ($scope) {
             'foundation' => $this->rule(['gesn_building', 'gesn_concrete'], [], ['01', '06'], []),
             'roof' => $this->rule(['gesn_building', 'gesnr_roof'], ['gesn_earthwork', 'gesnp_plumbing'], ['10', '12', '26'], ['01', '03', '09', '16', '18', '20', '27', '28']),
-            'stairs' => $this->rule(['gesn_building', 'gesn_concrete'], ['gesn_earthwork'], ['06', '07', '08'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
+            'stairs' => $this->rule(['gesn_building', 'gesn_concrete'], ['gesn_earthwork'], ['06', '07', '08', '10'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
             'engineering' => $this->rule(['gesnm', 'gesnp'], ['gesn_earthwork'], ['08', '16', '18', '20'], ['01', '05', '07', '09', '10', '12', '15', '26', '27', '28']),
             'walls' => $this->rule(['gesn_building'], ['gesn_earthwork'], ['07', '08'], ['01', '03', '05', '09', '27', '28']),
             'slabs' => $this->rule(['gesn_building', 'gesn_concrete'], ['gesn_earthwork'], ['06', '07'], ['01']),
@@ -77,12 +77,16 @@ final class NormativeScopeRuleCatalog
 
     private function engineeringRules(?string $system, ?string $action): array
     {
-        if ($system === 'electrical' || $action === 'cable_installation') {
+        if ($system === 'electrical' || in_array($action, ['cable_installation', 'cable_tray_installation', 'grounding_installation'], true)) {
             return $this->rule(['gesnm_electrical', 'gesnp_electrical'], ['gesn_earthwork'], ['08'], ['01', '03', '05', '07', '09', '10', '12', '15', '16', '18', '20', '27', '28']);
         }
 
-        if ($action === 'heating_equipment') {
+        if (in_array($action, ['heating_equipment', 'heating_emitter_installation'], true)) {
             return $this->rule(['gesnm_heating', 'gesnp_plumbing'], ['gesn_earthwork'], ['18', '20'], ['01', '03', '05', '07', '08', '09', '10', '12', '15', '16', '27', '28']);
+        }
+
+        if ($action === 'sanitary_fixture_installation') {
+            return $this->rule(['gesnp_plumbing'], ['gesn_earthwork'], ['17'], ['01', '03', '05', '07', '08', '09', '10', '12', '15', '16', '18', '20', '27', '28']);
         }
 
         if ($system === 'heating' || $action === 'pipe_layout') {
@@ -99,7 +103,7 @@ final class NormativeScopeRuleCatalog
     private function foundationActionRules(?string $action): array
     {
         return match ($action) {
-            'excavation', 'backfill' => $this->rule(['gesn_earthwork'], [], ['01'], []),
+            'excavation', 'backfill', 'soil_haulage' => $this->rule(['gesn_earthwork'], [], ['01'], []),
             'concreting', 'reinforcement', 'formwork' => $this->rule(['gesn_concrete'], [], ['01', '06'], []),
             'waterproofing' => $this->rule(['gesn_building'], [], ['08', '12'], []),
             default => $this->rule([], [], [], []),
@@ -128,7 +132,8 @@ final class NormativeScopeRuleCatalog
         return match ($action) {
             'plastering' => $this->rule(['gesn_building', 'gesnr_finishing'], ['gesn_earthwork'], ['15'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
             'painting', 'tiling', 'ceiling_finishing' => $this->rule(['gesn_building', 'gesnr_finishing'], ['gesn_earthwork'], ['15'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
-            'floor_covering', 'baseboard_installation' => $this->rule(['gesn_building', 'gesnr_finishing'], ['gesn_earthwork'], ['11'], ['01', '03', '05', '08', '09', '15', '16', '18', '20', '27', '28']),
+            'waterproofing' => $this->rule(['gesn_building'], ['gesn_earthwork'], ['11'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
+            'floor_preparation', 'floor_covering', 'baseboard_installation' => $this->rule(['gesn_building', 'gesnr_finishing'], ['gesn_earthwork'], ['11'], ['01', '03', '05', '08', '09', '15', '16', '18', '20', '27', '28']),
             default => $this->rule([], [], [], []),
         };
     }
@@ -136,7 +141,7 @@ final class NormativeScopeRuleCatalog
     private function openingsActionRules(?string $action): array
     {
         return match ($action) {
-            'window_installation' => $this->rule(['gesn_building', 'gesnr_finishing'], ['gesn_earthwork'], ['10', '15'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
+            'window_installation', 'door_installation' => $this->rule(['gesn_building', 'gesnr_finishing'], ['gesn_earthwork'], ['10', '15'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
             default => $this->rule([], [], [], []),
         };
     }
@@ -150,10 +155,10 @@ final class NormativeScopeRuleCatalog
     }
 
     /**
-     * @param array<int, string> $preferredNormTypes
-     * @param array<int, string> $forbiddenNormTypes
-     * @param array<int, string> $preferredSectionPrefixes
-     * @param array<int, string> $forbiddenSectionPrefixes
+     * @param  array<int, string>  $preferredNormTypes
+     * @param  array<int, string>  $forbiddenNormTypes
+     * @param  array<int, string>  $preferredSectionPrefixes
+     * @param  array<int, string>  $forbiddenSectionPrefixes
      * @return array{
      *     preferred_norm_types: array<int, string>,
      *     forbidden_norm_types: array<int, string>,
@@ -176,8 +181,8 @@ final class NormativeScopeRuleCatalog
     }
 
     /**
-     * @param array<string, array<int, string>> $base
-     * @param array<string, array<int, string>> $extra
+     * @param  array<string, array<int, string>>  $base
+     * @param  array<string, array<int, string>>  $extra
      * @return array<string, array<int, string>>
      */
     private function mergeRules(array $base, array $extra): array

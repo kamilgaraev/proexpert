@@ -30,6 +30,7 @@ final readonly class NormativeResourceRowData
             $regionalPriceVersionId !== null => 'regional_catalog',
             $datasetSourceType === 'fsbc' => 'fsbc_base',
             $datasetSourceType === 'fsnb_2022' => 'fsnb_base',
+            $datasetSourceType === 'fgis_labor_prices' => 'fgis_labor_base',
             default => null,
         };
         $priceSourceVersion = trim((string) (
@@ -37,7 +38,49 @@ final readonly class NormativeResourceRowData
                 ? ($row->regional_price_version_key ?? '')
                 : ($row->price_dataset_version ?? '')
         ));
-        $identityMatches = $resourceCode !== '' && hash_equals($resourceCode, $priceResourceCode);
+        $projectResourceCandidatesCount = self::positiveInt($row->project_resource_candidates_count ?? null);
+        $isAbstractResource = strcasecmp(trim((string) ($row->raw_source_tag ?? '')), 'AbstractResource') === 0;
+        $projectResourcePricePolicy = trim((string) ($row->project_resource_price_policy
+            ?? ($regionalPriceVersionId !== null ? 'regional_child_median:v1' : '')));
+        $isSemanticProjectSelection = in_array($projectResourcePricePolicy, [
+            'regional_semantic_pipe_hard_attributes_median:v1',
+            'regional_semantic_metal_gutter_family_median:v1',
+            'regional_semantic_hard_attributes_median:v2',
+            'fsbc_semantic_hard_attributes_median:v2',
+            'fsnb_semantic_hard_attributes_median:v2',
+            'regional_semantic_hard_attributes_median:v3',
+            'fsbc_semantic_hard_attributes_median:v3',
+            'fsnb_semantic_hard_attributes_median:v3',
+            'regional_semantic_hard_attributes_median:v4',
+            'fsbc_semantic_hard_attributes_median:v4',
+            'fsnb_semantic_hard_attributes_median:v4',
+        ], true)
+            && self::policyMatchesPriceSource($projectResourcePricePolicy, $priceSource)
+            && $priceResourceCode !== ''
+            && trim((string) ($row->price_resource_name ?? '')) !== '';
+        $isExactGroupProjectSelection = in_array($projectResourcePricePolicy, [
+            'regional_child_median:v1',
+            'fsbc_base_child_median:v1',
+            'fsnb_base_child_median:v1',
+            'regional_residential_converted_child_median:v1',
+            'regional_child_hard_attributes_median:v1',
+            'fsbc_base_child_hard_attributes_median:v1',
+            'fsnb_base_child_hard_attributes_median:v1',
+            'regional_child_hard_attributes_median:v2',
+            'fsbc_base_child_hard_attributes_median:v2',
+            'fsnb_base_child_hard_attributes_median:v2',
+            'fsbc_residential_converted_child_median:v1',
+            'fsnb_2022_residential_converted_child_median:v1',
+        ], true)
+            && self::policyMatchesPriceSource($projectResourcePricePolicy, $priceSource)
+            && preg_match('/^'.preg_quote($resourceCode, '/').'-\d{4}$/D', $priceResourceCode) === 1;
+        $isProjectResourceSelection = $isAbstractResource
+            && $projectResourceCandidatesCount !== null
+            && preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}$/D', $resourceCode) === 1
+            && ($isExactGroupProjectSelection || $isSemanticProjectSelection);
+        $identityMatches = $resourceCode !== '' && (
+            hash_equals($resourceCode, $priceResourceCode) || $isProjectResourceSelection
+        );
         if (
             $normId === null || $normResourceId === null || $priceId === null || ! $identityMatches
             || $priceSource === null || $priceSourceVersion === '' || ! is_numeric($unitPrice) || (float) $unitPrice <= 0
@@ -51,7 +94,7 @@ final readonly class NormativeResourceRowData
             default => 'other',
         };
 
-        return new self($normId, $group, [
+        $resource = [
             'code' => $resourceCode,
             'name' => (string) ($row->resource_name ?? ''),
             'unit' => (string) ($row->unit ?? ''),
@@ -61,9 +104,46 @@ final readonly class NormativeResourceRowData
             'unit_price' => $unitPrice,
             'price_source' => $priceSource,
             'price_source_version' => $priceSourceVersion,
-            'linked_resource_id' => $linkedResourceId ?? $priceResourceId,
+            'linked_resource_id' => $isProjectResourceSelection
+                ? $priceResourceId
+                : ($linkedResourceId ?? $priceResourceId),
             'norm_resource_id' => $normResourceId,
-        ]);
+        ];
+        if ($isProjectResourceSelection) {
+            $resource['project_resource_selection'] = [
+                'group_code' => $resourceCode,
+                'selected_resource_code' => $priceResourceCode,
+                'selected_resource_name' => (string) ($row->price_resource_name ?? ''),
+                'price_source' => $priceSource,
+                'price_source_version' => $priceSourceVersion,
+                'policy' => $projectResourcePricePolicy,
+                'candidates_count' => $projectResourceCandidatesCount,
+            ];
+            $conversionAssumption = trim((string) ($row->project_resource_conversion_assumption ?? ''));
+            if ($conversionAssumption !== '') {
+                $resource['project_resource_selection']['conversion_assumption'] = $conversionAssumption;
+                $sourceUnitPrice = $row->project_resource_source_unit_price ?? null;
+                $sourcePriceUnit = trim((string) ($row->project_resource_source_price_unit ?? ''));
+                $conversionFactor = $row->project_resource_conversion_factor ?? null;
+                if (is_numeric($sourceUnitPrice) && (float) $sourceUnitPrice > 0
+                    && $sourcePriceUnit !== ''
+                    && is_numeric($conversionFactor) && (float) $conversionFactor > 0) {
+                    $resource['project_resource_selection']['source_unit_price'] = (string) $sourceUnitPrice;
+                    $resource['project_resource_selection']['source_price_unit'] = $sourcePriceUnit;
+                    $resource['project_resource_selection']['conversion_factor'] = (string) $conversionFactor;
+                    $ruleKey = trim((string) ($row->project_resource_abstract_selection_rule_key ?? ''));
+                    $ruleVersion = $row->project_resource_abstract_selection_rule_version ?? null;
+                    $quantityFactor = $row->project_resource_quantity_factor ?? null;
+                    if ($ruleKey !== '' && self::positiveInt($ruleVersion) !== null && is_numeric($quantityFactor) && (float) $quantityFactor > 0) {
+                        $resource['project_resource_selection']['abstract_selection_rule_key'] = $ruleKey;
+                        $resource['project_resource_selection']['abstract_selection_rule_version'] = self::positiveInt($ruleVersion);
+                        $resource['project_resource_selection']['quantity_factor'] = (string) $quantityFactor;
+                    }
+                }
+            }
+        }
+
+        return new self($normId, $group, $resource);
     }
 
     private static function positiveInt(mixed $value): ?int
@@ -73,5 +153,15 @@ final readonly class NormativeResourceRowData
         }
 
         return is_string($value) && preg_match('/^[1-9][0-9]*$/D', $value) === 1 ? (int) $value : null;
+    }
+
+    private static function policyMatchesPriceSource(string $policy, ?string $priceSource): bool
+    {
+        return match ($priceSource) {
+            'regional_catalog' => str_starts_with($policy, 'regional_'),
+            'fsbc_base' => str_starts_with($policy, 'fsbc_'),
+            'fsnb_base' => str_starts_with($policy, 'fsnb_'),
+            default => false,
+        };
     }
 }

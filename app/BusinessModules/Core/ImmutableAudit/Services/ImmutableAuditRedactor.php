@@ -31,6 +31,18 @@ final class ImmutableAuditRedactor
         'inn',
         'address',
         'full_name',
+        'file_content',
+        'document_content',
+        'private_key',
+        'signature_value',
+    ];
+
+    private const EXACT_SENSITIVE_KEYS = [
+        'content',
+        'binary',
+        'bytes',
+        'base64',
+        'raw_body',
     ];
 
     public function redact(array $payload): array
@@ -62,7 +74,11 @@ final class ImmutableAuditRedactor
                 continue;
             }
 
-            if (is_string($value) && $this->looksSensitive($value)) {
+            if (
+                is_string($value)
+                && ! $this->isEvidenceHash($normalizedKey, $value)
+                && $this->looksSensitive($value)
+            ) {
                 $redacted[$key] = self::REDACTED;
                 $sensitiveFields[] = $path;
 
@@ -80,6 +96,10 @@ final class ImmutableAuditRedactor
 
     private function isSensitiveKey(string $key): bool
     {
+        if (in_array($key, self::EXACT_SENSITIVE_KEYS, true)) {
+            return true;
+        }
+
         foreach (self::SENSITIVE_KEYS as $sensitiveKey) {
             if ($key === $sensitiveKey || str_contains($key, $sensitiveKey)) {
                 return true;
@@ -87,6 +107,11 @@ final class ImmutableAuditRedactor
         }
 
         return false;
+    }
+
+    private function isEvidenceHash(string $key, string $value): bool
+    {
+        return str_ends_with($key, '_hash') && preg_match('/\A[a-f0-9]{64}\z/i', $value) === 1;
     }
 
     private function looksSensitive(string $value): bool

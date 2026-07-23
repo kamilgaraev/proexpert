@@ -76,7 +76,11 @@ final class PipelineNineInvocationE2ETest extends TestCase
         return match ($stage) {
             ProcessingStage::UnderstandDocuments => ['base_input_version' => 'sha256:'.str_repeat('a', 64), 'documents' => [], 'documents_count' => 0, 'rebuild_section_key' => null],
             ProcessingStage::UnderstandObject => ['analysis' => []],
-            ProcessingStage::ExtractQuantities => ['quantity_learning_hints' => [], 'building_quantities' => []],
+            ProcessingStage::ExtractQuantities => [
+                'quantity_learning_hints' => [],
+                'quantity_coverage_warnings' => [],
+                'building_quantities' => [],
+            ],
             ProcessingStage::PlanWorkItems => ['object_profile' => [], 'package_plan' => [], 'document_requirements' => [], 'generation_mode' => 'complete', 'regional_context' => [], 'normative_context_pin' => ['status' => 'review_required', 'blocking_issues' => ['normative_dataset_not_pinned']], 'local_estimates' => []],
             ProcessingStage::MatchNormatives, ProcessingStage::AssembleResources, ProcessingStage::ResolvePrices => ['regional_context' => [], 'local_estimates' => []],
             ProcessingStage::BuildDraft => ['draft' => []],

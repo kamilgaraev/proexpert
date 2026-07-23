@@ -17,7 +17,11 @@ final readonly class ResolveUnitConversion
             return null;
         }
         if ($fromUnit === '' || $toUnit === '' || $version < 1) {
-            throw MissingRegionalPrice::forResource(0);
+            throw MissingRegionalPrice::forResource(0, 'unit_conversion_identity_invalid', [
+                'from_unit' => $fromUnit,
+                'to_unit' => $toUnit,
+                'unit_conversion_version' => $version,
+            ]);
         }
 
         $rows = $this->lookup !== null
@@ -32,7 +36,12 @@ final readonly class ResolveUnitConversion
                 ->map(static fn (object $row): array => (array) $row)
                 ->all();
         if (! is_array($rows) || count($rows) !== 1 || ! is_array($rows[0])) {
-            throw MissingRegionalPrice::forResource(0);
+            throw MissingRegionalPrice::forResource(0, 'unit_conversion_missing', [
+                'from_unit' => $fromUnit,
+                'to_unit' => $toUnit,
+                'unit_conversion_version' => $version,
+                'matching_rows_count' => is_array($rows) ? count($rows) : null,
+            ]);
         }
         $row = $rows[0];
         if (($row['is_active'] ?? false) !== true
@@ -41,7 +50,11 @@ final readonly class ResolveUnitConversion
             || (int) ($row['version'] ?? 0) !== $version
             || (int) ($row['id'] ?? 0) < 1
             || preg_match('/^[0-9a-f]{64}$/D', (string) ($row['fingerprint'] ?? '')) !== 1) {
-            throw MissingRegionalPrice::forResource(0);
+            throw MissingRegionalPrice::forResource(0, 'unit_conversion_payload_invalid', [
+                'from_unit' => $fromUnit,
+                'to_unit' => $toUnit,
+                'unit_conversion_version' => $version,
+            ]);
         }
 
         return new UnitConversionData(

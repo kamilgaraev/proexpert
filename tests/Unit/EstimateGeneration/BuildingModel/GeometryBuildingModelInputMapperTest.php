@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\BuildingModel;
 
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
@@ -58,6 +59,48 @@ final class GeometryBuildingModelInputMapperTest extends TestCase
         self::assertSame('room', $input->geometry->elements[0]->type);
         self::assertSame('source_units_v1', $input->geometry->elements[0]->coordinateSpace);
         self::assertSame($fingerprint, $input->geometry->elements[0]->sourceFingerprint);
+    }
+
+    public function test_room_with_safe_display_punctuation_preserves_exact_name(): void
+    {
+        $fingerprint = 'sha256:'.str_repeat('b', 64);
+        $vision = VisionAnalysisData::fromProviderArray([
+            'schema_version' => 1,
+            'sheet_type' => 'floor_plan',
+            'evidence' => [[
+                'key' => 'page-1',
+                'locator' => [
+                    'page_id' => 10,
+                    'page_number' => 1,
+                    'processing_unit_id' => 20,
+                    'source_version' => $fingerprint,
+                    'coordinate_space' => 'normalized_source_v1',
+                ],
+            ]],
+            'elements' => [[
+                'key' => 'room-1',
+                'type' => 'room',
+                'label' => 'Санузел (1 этаж)',
+                'polygon' => [[0.1, 0.1], [0.5, 0.1], [0.5, 0.4], [0.1, 0.4]],
+                'confidence' => 0.93,
+                'evidence_ref' => 'page-1',
+            ]],
+            'scale_candidates' => [[
+                'source' => 'manual_reference',
+                'meters_per_unit' => 10.0,
+                'confidence' => 1.0,
+                'evidence_ref' => 'page-1',
+                'detail' => 'confirmed_control_dimension',
+            ]],
+            'warnings' => [],
+        ], 'timeweb', 'vision/model', 'vision/model', 'provider:v1', 'unavailable', null, null, 50);
+
+        $input = (new GeometryBuildingModelInputMapper)->map($vision, null, ['page-1' => 101], 'floor-1');
+        $model = (new BuildingModelAssembler)->assembleVision($input)->model;
+
+        self::assertCount(1, $model->floors[0]->rooms);
+        self::assertSame('Санузел (1 этаж)', $model->floors[0]->rooms[0]->name);
+        self::assertSame([101], $model->floors[0]->rooms[0]->evidenceIds);
     }
 
     public function test_sketch_without_scale_is_fail_closed_and_requests_review(): void

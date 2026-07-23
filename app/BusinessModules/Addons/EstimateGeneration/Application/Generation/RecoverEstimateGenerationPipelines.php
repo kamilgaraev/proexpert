@@ -75,6 +75,7 @@ final class RecoverEstimateGenerationPipelines
                 (int) $session->state_version,
                 $attempt,
                 FailureExecutionSnapshot::capture($session, 'recover_generation_pipeline', $attempt),
+                false,
             )->onQueue(GenerateEstimateDraftJob::QUEUE)->afterCommit();
             $dispatched++;
         }

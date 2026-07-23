@@ -18,6 +18,7 @@ return [
 
     'waits' => [
         'redis_estimate_generation:estimate-generation' => 120,
+        'redis_estimate_generation:estimate-generation-recovery' => 30,
         'redis_estimate_generation:estimate-generation-units' => 120,
         'redis_estimate_generation:estimate-generation-units-recovery' => 30,
         'redis_estimate_generation:estimate-generation-unit-maintenance' => 60,
@@ -125,8 +126,17 @@ return [
                 'minProcesses' => 1,
                 'maxProcesses' => 2,
                 'tries' => 3,
-                'timeout' => 1800,
+                'timeout' => 2100,
                 'memory' => 512,
+            ],
+            'supervisor-estimate-generation-recovery' => [
+                'connection' => 'redis_estimate_generation',
+                'queue' => ['estimate-generation-recovery'],
+                'balance' => 'simple',
+                'processes' => 1,
+                'tries' => 3,
+                'timeout' => 60,
+                'memory' => 128,
             ],
             'supervisor-estimate-generation-units' => [
                 'connection' => 'redis_estimate_generation',
@@ -189,7 +199,7 @@ return [
                 'minProcesses' => 1,
                 'maxProcesses' => 2,
                 'tries' => 3,
-                'timeout' => 1800,
+                'timeout' => 2100,
                 'memory' => 512,
                 'nice' => 5,
             ],
@@ -241,6 +251,15 @@ return [
                 'tries' => 3,
                 'timeout' => 1800,
                 'memory' => 512,
+            ],
+            'supervisor-estimate-generation-recovery' => [
+                'connection' => 'redis_estimate_generation',
+                'queue' => ['estimate-generation-recovery'],
+                'balance' => 'simple',
+                'processes' => 1,
+                'tries' => 3,
+                'timeout' => 60,
+                'memory' => 128,
             ],
             'supervisor-ai-rag' => [
                 'connection' => env('AI_RAG_QUEUE_CONNECTION', 'redis_ai_rag'),

@@ -1,6 +1,27 @@
 <?php
 
 return [
+    'legal_archive' => [
+        'max_size_bytes' => (int) env('LEGAL_ARCHIVE_MAX_FILE_SIZE_BYTES', 104857600),
+        'temporary_url_minutes' => (int) env('LEGAL_ARCHIVE_TEMPORARY_URL_MINUTES', 5),
+        'scanner' => env('LEGAL_ARCHIVE_SCANNER', 'clamav'),
+        'clamav' => [
+            'host' => env('LEGAL_ARCHIVE_CLAMAV_HOST', 'clamav'),
+            'port' => (int) env('LEGAL_ARCHIVE_CLAMAV_PORT', 3310),
+            'timeout_seconds' => (float) env('LEGAL_ARCHIVE_CLAMAV_TIMEOUT_SECONDS', 30),
+        ],
+        'allowed_extensions' => ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'odt', 'ods'],
+        'allowed_mime_types' => [
+            'pdf' => ['application/pdf'],
+            'doc' => ['application/msword'],
+            'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+            'xls' => ['application/vnd.ms-excel'],
+            'xlsx' => ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+            'odt' => ['application/vnd.oasis.opendocument.text'],
+            'ods' => ['application/vnd.oasis.opendocument.spreadsheet'],
+        ],
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | File Upload Settings
@@ -90,4 +111,3 @@ return [
         'users' => 'users',
     ],
 ];
-

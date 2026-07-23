@@ -36,9 +36,10 @@ final readonly class AiOperationContext
                 throw new InvalidArgumentException('Optional usage scope identifiers must be positive.');
             }
         }
-        if (! in_array($stage, ['understand_documents', 'match_normatives'], true)
-            || ! in_array($operation, ['ocr', 'vision', 'rerank'], true)
-            || ($stage === 'match_normatives') !== ($operation === 'rerank')) {
+        $valid = ($stage === 'understand_documents' && in_array($operation, ['ocr', 'vision'], true))
+            || ($stage === 'match_normatives' && $operation === 'rerank')
+            || ($stage === 'validate_draft' && $operation === 'completeness_review');
+        if (! $valid) {
             throw new InvalidArgumentException('Invalid usage operation context.');
         }
     }

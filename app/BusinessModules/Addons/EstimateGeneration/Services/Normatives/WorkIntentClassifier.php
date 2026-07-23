@@ -13,8 +13,8 @@ final class WorkIntentClassifier
     ) {}
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $context
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $context
      */
     public function classify(array $workItem, array $context = []): WorkIntentData
     {
@@ -45,8 +45,8 @@ final class WorkIntentClassifier
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $context
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $context
      */
     private function text(array $workItem, array $context): string
     {
@@ -64,7 +64,7 @@ final class WorkIntentClassifier
     }
 
     /**
-     * @param array<int, string> $signals
+     * @param  array<int, string>  $signals
      */
     private function scope(string $text, string $contextScope, array &$signals): string
     {
@@ -81,6 +81,7 @@ final class WorkIntentClassifier
             'плинтус',
             'галтел',
             'покрыти',
+            'гидроизоляц',
             'линолеум',
             'ламинат',
             'паркет',
@@ -92,7 +93,7 @@ final class WorkIntentClassifier
             return 'finishing';
         }
 
-        if (!in_array($contextScope, [
+        if (! in_array($contextScope, [
             'facade',
             'roof',
             'walls',
@@ -113,6 +114,7 @@ final class WorkIntentClassifier
             'плинтус',
             'галтел',
             'покрыти',
+            'гидроизоляц',
             'линолеум',
             'ламинат',
             'паркет',
@@ -138,7 +140,7 @@ final class WorkIntentClassifier
             'site' => ['благоустрой', 'планировк', 'вывоз грунта'],
         ] as $scope => $needles) {
             if ($this->containsAny($text, $needles)) {
-                $signals[] = 'scope_' . $scope;
+                $signals[] = 'scope_'.$scope;
 
                 return $scope;
             }
@@ -156,7 +158,7 @@ final class WorkIntentClassifier
     }
 
     /**
-     * @param array<int, string> $signals
+     * @param  array<int, string>  $signals
      */
     private function system(string $text, array &$signals): ?string
     {
@@ -168,20 +170,74 @@ final class WorkIntentClassifier
             'ventilation' => ['вентиляц', 'воздуховод'],
         ] as $system => $needles) {
             if ($this->containsAny($text, $needles)) {
-                $signals[] = 'system_' . $system;
+                $signals[] = 'system_'.$system;
 
                 return $system;
             }
+        }
+
+        if ($this->containsAny($text, ['заземл'])) {
+            $signals[] = 'system_electrical';
+
+            return 'electrical';
         }
 
         return null;
     }
 
     /**
-     * @param array<int, string> $signals
+     * @param  array<int, string>  $signals
      */
     private function action(string $text, ?string $system, string $scope, array &$signals): string
     {
+        if ($this->containsAny($text, ['заземл'])) {
+            $signals[] = 'action_grounding_installation';
+
+            return 'grounding_installation';
+        }
+
+        if ($this->containsAny($text, ['чернов', 'подготов', 'стяжк', 'подстилающ'])
+            && $this->containsAny($text, ['пол'])) {
+            $signals[] = 'action_floor_preparation';
+
+            return 'floor_preparation';
+        }
+
+        foreach ([
+            'sewer_revision_installation' => ['ревиз'],
+            'sewer_riser_installation' => ['стояк'],
+            'sewer_outlet_installation' => ['выпуск'],
+        ] as $sewerAction => $markers) {
+            if ($system === 'sewerage' && $this->containsAny($text, $markers)) {
+                $signals[] = 'action_'.$sewerAction;
+
+                return $sewerAction;
+            }
+        }
+
+        if ($this->containsAny($text, ['кабел'])
+            && $this->containsAny($text, ['лотк'])
+            && $this->containsAny($text, ['монтаж', 'установк', 'устройств'])) {
+            $signals[] = 'action_cable_tray_installation';
+
+            return 'cable_tray_installation';
+        }
+
+        if (($this->containsAny($text, ['сантехническ']) && $this->containsAny($text, ['точ']))
+            || ($this->containsAny($text, ['санитарно-техническ']) && $this->containsAny($text, ['прибор']))
+            || $this->containsAny($text, ['сантехприбор'])) {
+            $signals[] = 'action_sanitary_fixture_installation';
+
+            return 'sanitary_fixture_installation';
+        }
+
+        if (($this->containsAny($text, ['дверн']) && $this->containsAny($text, ['блок']))
+            || $this->containsAny($text, ['монтаж двер', 'установк двер'])) {
+            $signals[] = 'action_door_installation';
+
+            return 'door_installation';
+        }
+
         if ($scope === 'engineering' && in_array($system, ['water_supply', 'sewerage'], true) && $this->containsAny($text, ['арматур', 'сантехническ', 'канализац'])) {
             $signals[] = 'action_pipe_layout';
 
@@ -194,6 +250,19 @@ final class WorkIntentClassifier
             return 'pipe_layout';
         }
 
+        if ($this->containsAny($text, ['вывоз'])
+            || ($this->containsAny($text, ['перевоз', 'транспортир']) && $this->containsAny($text, ['грунт']))) {
+            $signals[] = 'action_soil_haulage';
+
+            return 'soil_haulage';
+        }
+
+        if ($this->containsAny($text, ['обратн']) && $this->containsAny($text, ['засып'])) {
+            $signals[] = 'action_backfill';
+
+            return 'backfill';
+        }
+
         foreach ([
             'insulation' => ['утепл', 'теплоизоляц'],
             'plastering' => ['штукатур'],
@@ -201,9 +270,12 @@ final class WorkIntentClassifier
             'tiling' => ['плитк', 'облицов'],
             'floor_covering' => ['покрытие пола', 'покрытия пола', 'покрытий пола', 'чистовое покрыти', 'чистового покрыти', 'напольн покрыти', 'линолеум', 'ламинат', 'паркет'],
             'ceiling_finishing' => ['подвесн', 'монтаж потол', 'потолок', 'потолк'],
+            'electrical_panel_installation' => ['распределительн щит', 'распределительного щит', 'электрощит', 'щиток'],
+            'lighting_fixture_installation' => ['светильник', 'светильников', 'люстр'],
             'cable_installation' => ['кабел'],
             'pipe_layout' => ['разводк труб', 'прокладк труб', 'труб отоплен'],
-            'heating_equipment' => ['тепловой узел', 'теплового узла', 'теплопункт', 'завес', 'радиатор', 'котел', 'конвектор', 'теплогенератор'],
+            'heating_emitter_installation' => ['радиатор', 'конвектор', 'отопительн прибор'],
+            'heating_equipment' => ['тепловой узел', 'теплового узла', 'теплопункт', 'завес', 'котел', 'теплогенератор'],
             'window_installation' => ['установк окон', 'монтаж окон', 'окн', 'двер', 'ворот'],
             'masonry' => ['кладк', 'кирпич', 'блок'],
             'ventilation_installation' => ['монтаж вентиляц', 'вентиляц', 'воздуховод'],
@@ -219,7 +291,7 @@ final class WorkIntentClassifier
             'planning' => ['планировк'],
         ] as $action => $needles) {
             if ($this->containsAny($text, $needles)) {
-                $signals[] = 'action_' . $action;
+                $signals[] = 'action_'.$action;
 
                 return $action;
             }
@@ -317,21 +389,24 @@ final class WorkIntentClassifier
         }
 
         return match ($action) {
-            'cable_installation', 'pipe_layout' => ['length'],
+            'cable_installation', 'cable_tray_installation', 'grounding_installation', 'pipe_layout' => ['length'],
             'insulation', 'formwork', 'waterproofing' => ['area'],
             'masonry' => ['volume'],
-            'plastering', 'painting', 'tiling', 'floor_covering', 'ceiling_finishing', 'ventilation_installation' => ['area'],
-            'window_installation', 'heating_equipment' => ['piece'],
+            'plastering', 'painting', 'tiling', 'floor_preparation', 'floor_covering', 'ceiling_finishing', 'ventilation_installation' => ['area'],
+            'window_installation', 'door_installation', 'sanitary_fixture_installation', 'sewer_revision_installation', 'heating_equipment',
+            'heating_emitter_installation',
+            'electrical_panel_installation', 'lighting_fixture_installation', 'socket_installation' => ['piece'],
+            'sewer_riser_installation', 'sewer_outlet_installation' => ['length'],
             'fence_installation' => ['length'],
             'baseboard_installation' => ['length'],
-            'concreting', 'excavation', 'backfill' => ['volume'],
+            'concreting', 'excavation', 'backfill', 'soil_haulage' => ['volume'],
             'reinforcement' => ['mass'],
             default => ['piece'],
         };
     }
 
     /**
-     * @param array<int, string> $signals
+     * @param  array<int, string>  $signals
      */
     private function confidence(array $signals, string $scope, string $action): float
     {
@@ -363,7 +438,7 @@ final class WorkIntentClassifier
     }
 
     /**
-     * @param array<int, string> $needles
+     * @param  array<int, string>  $needles
      */
     private function containsAny(string $text, array $needles): bool
     {

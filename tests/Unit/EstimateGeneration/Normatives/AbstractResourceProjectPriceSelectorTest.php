@@ -1,0 +1,203 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\EstimateGeneration\Normatives;
+
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\AbstractResourceProjectPriceSelector;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\AbstractResourceSemanticPriceSelector;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialAbstractResourcePriceSelector;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialSignedNormCompatibility;
+use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\TestCase;
+
+final class AbstractResourceProjectPriceSelectorTest extends TestCase
+{
+    #[Test]
+    public function verified_residential_conversion_precedes_a_generic_same_group_price(): void
+    {
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('roof.insulation', 'residential');
+        self::assertIsArray($scenario);
+        $candidate = (object) [
+            'price_resource_code' => '12.2.05.02-1001',
+            'price_resource_name' => 'Плиты теплоизоляционные минераловатные',
+            'price_unit' => 'м3',
+            'base_price' => 10_000,
+            'unit_price' => 10_000,
+            'price_id' => 17,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+
+        $selection = (new AbstractResourceProjectPriceSelector)->select(
+            [[
+                'object_type' => 'house',
+                'specialization_scenario' => $scenario,
+            ]],
+            '12-01-013-07',
+            'Утепление покрытий плитами из минеральной ваты',
+            '12.2.05.02',
+            'Плиты теплоизоляционные',
+            11,
+            [$candidate],
+            [4],
+        );
+
+        self::assertSame('fsnb_2022_residential_converted_child_median:v1', $selection['policy'] ?? null);
+        self::assertSame('м2', $selection['row']->price_unit ?? null);
+        self::assertSame(2_000.0, $selection['row']->unit_price ?? null);
+    }
+
+    #[Test]
+    public function residential_conversion_exposes_a_pinned_rule_identity_for_authoritative_finalization(): void
+    {
+        $candidate = (object) [
+            'price_resource_code' => '12.2.05.02-1001',
+            'price_resource_name' => 'Плиты теплоизоляционные минераловатные',
+            'price_unit' => 'м3',
+            'base_price' => 10_000,
+            'unit_price' => 10_000,
+            'price_id' => 17,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+
+        $selection = (new ResidentialAbstractResourcePriceSelector)->select(
+            '12-01-013-07',
+            '12.2.05.02',
+            [$candidate],
+            [4],
+        );
+
+        self::assertSame('12-01-013-07|12.2.05.02', $selection['abstract_selection_rule_key'] ?? null);
+        self::assertSame('0.20', $selection['price_factor'] ?? null);
+        self::assertSame('5', $selection['quantity_factor'] ?? null);
+    }
+
+    #[Test]
+    public function verified_floor_reinforcement_scenario_rejects_embedded_parts_and_selects_reinforcement_steel(): void
+    {
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('slabs.rebar', 'residential');
+        self::assertIsArray($scenario);
+        $embeddedParts = (object) [
+            'price_resource_code' => '08.4.01.02-0011',
+            'price_resource_name' => 'Детали закладные и накладные',
+            'price_unit' => 'т',
+            'base_price' => 115_095,
+            'price_id' => 22,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+        $reinforcement = (object) [
+            'price_resource_code' => '08.4.03.03-0004',
+            'price_resource_name' => 'Прокат арматурный для железобетонных конструкций, класс A500C, диаметр 12 мм',
+            'price_unit' => 'т',
+            'base_price' => 72_000,
+            'price_id' => 21,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+
+        $selection = (new AbstractResourceProjectPriceSelector)->select(
+            [['object_type' => 'house', 'specialization_scenario' => $scenario]],
+            '06-23-003-05',
+            'Установка заготовок арматурных в опалубку перекрытий',
+            '08.4.01.02',
+            'Заготовки арматурные',
+            11,
+            [$embeddedParts, $reinforcement],
+            [4],
+        );
+
+        self::assertSame('08.4.03.03-0004', $selection['row']->price_resource_code ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v4', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function incompatible_exact_group_tile_is_left_for_semantic_catalog_selection(): void
+    {
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('sanitary.tile', 'residential');
+        self::assertIsArray($scenario);
+        $acidTile = (object) [
+            'price_resource_code' => '06.2.05.04-0001',
+            'price_resource_name' => 'Плитка кислотоупорная футеровочная графитовая',
+            'price_unit' => 'т',
+            'base_price' => 94_166.29,
+            'unit_price' => 94_166.29,
+            'price_id' => 7297,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+        ];
+
+        $selection = (new AbstractResourceProjectPriceSelector)->select(
+            [['object_type' => 'house', 'specialization_scenario' => $scenario]],
+            '15-01-019-05',
+            'Гладкая облицовка стен керамическими плитками на клее',
+            '06.2.05.04',
+            'Плитки по проекту',
+            11,
+            [$acidTile],
+            [4],
+        );
+
+        self::assertNull($selection);
+    }
+
+    #[Test]
+    public function semantic_catalog_selects_ceramic_tile_and_rejects_graphite_tile(): void
+    {
+        $ceramic = (object) [
+            'price_resource_code' => '06.2.01.02-0041',
+            'price_resource_name' => 'Плитка керамическая глазурованная для стен',
+            'price_unit' => 'м2',
+            'base_price' => 1_298.47,
+            'price_id' => 497603,
+            'dataset_version_id' => 4,
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsbc',
+        ];
+        $graphite = (object) [
+            ...get_object_vars($ceramic),
+            'price_resource_code' => '06.2.05.04-0001',
+            'price_resource_name' => 'Плитка кислотоупорная футеровочная графитовая',
+            'price_id' => 7297,
+        ];
+        $selector = new AbstractResourceSemanticPriceSelector;
+
+        self::assertSame('tile', $selector->queryHints(
+            'Гладкая облицовка стен керамическими плитками на клее',
+            'Плитки по проекту',
+        )['family'] ?? null);
+        $selection = $selector->select(
+            'Гладкая облицовка стен керамическими плитками на клее',
+            'Плитки по проекту',
+            'м2',
+            11,
+            [$graphite, $ceramic],
+            [4],
+        );
+
+        self::assertSame('06.2.01.02-0041', $selection['row']->price_resource_code ?? null);
+    }
+
+    #[Test]
+    public function lintel_scenario_is_signed_for_its_exact_norm(): void
+    {
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('walls.lintels', 'residential');
+
+        self::assertIsArray($scenario);
+        self::assertSame('07-01-021-01', $scenario['normative_rate_code'] ?? null);
+        self::assertTrue((new ResidentialSignedNormCompatibility)->matches(
+            $scenario,
+            'house',
+            '07-01-021-01',
+            'Укладка перемычек при наибольшей массе монтажных элементов в здании: до 5 т, масса перемычки до 0,7 т',
+        ));
+    }
+}

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Workflow;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\GenerationAttemptGuard;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationTransitionMap;
@@ -136,6 +137,34 @@ final class EstimateGenerationWorkflowTest extends TestCase
 
         self::assertSame(EstimateGenerationStatus::Generating, $updated->status);
         self::assertSame(5, $updated->state_version);
+    }
+
+    #[Test]
+    public function regeneration_preserves_superseded_estimate_history_and_reopens_applied_session(): void
+    {
+        $session = $this->session(EstimateGenerationStatus::Applied, 4);
+        $session->forceFill([
+            'applied_estimate_id' => 408,
+            'input_payload' => [
+                'superseded_estimate_ids' => [301],
+                'generation_mode' => 'accurate',
+            ],
+        ]);
+        $store = new InMemorySessionStateStore($session);
+
+        $updated = (new AdvanceEstimateGeneration($this->workflow($store)))->generationStarted(
+            $store->current(),
+            'replacement-attempt',
+            ['generation_mode' => 'balanced'],
+        );
+
+        self::assertSame(EstimateGenerationStatus::Generating, $updated->status);
+        self::assertSame(5, $updated->state_version);
+        self::assertNull($updated->applied_estimate_id);
+        self::assertNull($updated->applied_at);
+        self::assertSame([301, 408], $updated->input_payload['superseded_estimate_ids']);
+        self::assertSame('replacement-attempt', $updated->input_payload['generation_attempt_id']);
+        self::assertSame('balanced', $updated->input_payload['generation_mode']);
     }
 
     #[Test]

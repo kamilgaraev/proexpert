@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\Customer\CustomerRequestController;
 use App\Http\Controllers\Api\V1\Customer\FinanceController;
 use App\Http\Controllers\Api\V1\Customer\InvitationController;
 use App\Http\Controllers\Api\V1\Customer\IssueController;
+use App\Http\Controllers\Api\V1\Customer\LegalArchiveController;
 use App\Http\Controllers\Api\V1\Customer\OrganizationSearchController;
 use App\Http\Controllers\Api\V1\Customer\PortalController;
 use App\Http\Controllers\Api\V1\Customer\ProjectController;
@@ -67,6 +68,18 @@ Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'verified', 'orga
         Route::get('/projects/{project}/conversations', [ProjectController::class, 'conversations'])->name('projects.conversations');
         Route::get('/contracts', [ContractController::class, 'index'])->name('contracts.index');
         Route::get('/contracts/{contract}', [ContractController::class, 'show'])->name('contracts.show');
+        Route::get('/contracts/{contract}/legal-documents', [LegalArchiveController::class, 'contract'])->name('contracts.legal-documents');
+        Route::get('/legal-documents', [LegalArchiveController::class, 'index'])->name('legal-documents.index');
+        Route::get('/legal-documents/{document}', [LegalArchiveController::class, 'show'])->whereNumber('document')->name('legal-documents.show');
+        Route::get('/legal-document-versions/{version}/preview', [LegalArchiveController::class, 'fileUrl'])
+            ->defaults('purpose', 'preview')->whereNumber('version')->name('legal-document-versions.preview');
+        Route::get('/legal-document-versions/{version}/download', [LegalArchiveController::class, 'fileUrl'])
+            ->defaults('purpose', 'download')->whereNumber('version')->name('legal-document-versions.download');
+        Route::post('/legal-workflow-steps/{step}/{action}', [LegalArchiveController::class, 'decide'])
+            ->whereNumber('step')->whereIn('action', ['approve', 'reject', 'return'])->name('legal-workflow-steps.decide');
+        Route::post('/legal-signature-requests/{signatureRequest}/upload-original', [LegalArchiveController::class, 'uploadOriginal'])->whereNumber('signatureRequest')->name('legal-signature-requests.upload-original');
+        Route::post('/legal-signature-requests/{signatureRequest}/signing-session', [LegalArchiveController::class, 'signingSession'])
+            ->whereNumber('signatureRequest')->name('legal-signature-requests.signing-session');
         Route::get('/finance/summary', [FinanceController::class, 'summary'])->name('finance.summary');
         Route::get('/issues', [IssueController::class, 'index'])->name('issues.index');
         Route::post('/issues', [IssueController::class, 'store'])->name('issues.store');

@@ -1,6 +1,8 @@
 <?php
 
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverExpiredTrainingDatasetLeasesJob;
+use App\Jobs\LegalArchive\MonitorLegalDocumentOutboxDeadLetters;
+use App\Jobs\LegalArchive\RecoverLegalDocumentOutboxMessages;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -26,6 +28,27 @@ Schedule::command('commercial:reconcile --limit=100')
 Schedule::job(new RecoverExpiredTrainingDatasetLeasesJob)
     ->everyFiveMinutes()
     ->withoutOverlapping();
+
+Schedule::job(new RecoverLegalDocumentOutboxMessages)
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onOneServer();
+
+Schedule::command('legal-archive:recover-notification-deliveries --limit=100')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onOneServer();
+
+Schedule::command('legal-archive:reconcile --limit=100')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(60)
+    ->onOneServer()
+    ->runInBackground();
+
+Schedule::job(new MonitorLegalDocumentOutboxDeadLetters)
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onOneServer();
 use App\Console\Commands\ReverifyOrganizationsCommand;
 use Illuminate\Support\Facades\File;
 
@@ -210,16 +233,70 @@ Schedule::command($ragBackfillCommand)
     })
     ->appendOutputTo(storage_path('logs/schedule-ai-rag-backfill.log'));
 
-Schedule::command('estimates:regional-prices:sync-fgiscs --region=RU-TA --latest-only')
-    ->dailyAt('03:30')
-    ->withoutOverlapping(180)
+Schedule::command('estimates:regional-prices:sync-fgiscs --all-regions --latest-only')
+    ->dailyAt('01:00')
+    ->withoutOverlapping(720)
+    ->createMutexNameUsing('estimate-generation:fgiscs-all-regions:v1')
     ->runInBackground()
     ->onFailure(function () {
         Log::channel('stderr')->error('Scheduled estimates:regional-prices:sync-fgiscs command failed.');
     })
     ->appendOutputTo(storage_path('logs/schedule-regional-prices-sync.log'));
 
+Schedule::command('estimates:regional-prices:sync-fgiscs-building-resources --all-regions')
+    ->dailyAt('13:00')
+    ->withoutOverlapping(720)
+    ->createMutexNameUsing('estimate-generation:fgiscs-all-regions:v1')
+    ->runInBackground()
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled estimates:regional-prices:sync-fgiscs-building-resources command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-building-resource-prices-sync.log'));
+
 $oneCExchangeScheduledLimit = max(1, (int) config('one_c_exchange.delivery.scheduled_limit', 50));
+
+Schedule::command('contracts:reconcile-audit-debts --limit=100')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->runInBackground()
+    ->onFailure(function (): void {
+        Log::error('contract.audit_reconciliation.schedule_failed');
+    });
+
+Schedule::command('legal-signatures:expire --limit=200')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onFailure(function (): void {
+        Log::error('legal_signature.expiry_schedule_failed');
+    });
+
+Schedule::command('legal-signatures:cleanup-storage --limit=200')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onFailure(function (): void {
+        Log::error('legal_signature.cleanup_storage_schedule_failed');
+    });
+
+Schedule::command('legal-signatures:reconcile-artifacts --limit=200')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onFailure(function (): void {
+        Log::error('legal_signature.reconcile_artifacts_schedule_failed');
+    });
+
+Schedule::command('legal-documents:cleanup-file-storage --limit=200')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onFailure(function (): void {
+        Log::error('legal_document.file_cleanup_storage_schedule_failed');
+    });
+
+Schedule::command('immutable-audit:rollout-status')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(5)
+    ->onFailure(function (): void {
+        Log::critical('immutable_audit.rollout_status_failed');
+    });
 
 if ((bool) config('one_c_exchange.delivery.enabled', false)) {
     Schedule::command("one-c-exchange:deliver --limit={$oneCExchangeScheduledLimit}")

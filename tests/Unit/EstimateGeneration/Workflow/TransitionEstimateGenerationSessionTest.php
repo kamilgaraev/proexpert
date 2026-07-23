@@ -24,6 +24,7 @@ final class TransitionEstimateGenerationSessionTest extends TestCase
             [EstimateGenerationStatus::InputReviewRequired, EstimateGenerationEvent::InputConfirmed, EstimateGenerationStatus::ReadyToGenerate, null],
             [EstimateGenerationStatus::ReadyToGenerate, EstimateGenerationEvent::Cancelled, EstimateGenerationStatus::Cancelled, null],
             [EstimateGenerationStatus::Failed, EstimateGenerationEvent::Retried, EstimateGenerationStatus::Generating, EstimateGenerationStatus::Generating],
+            [EstimateGenerationStatus::Cancelled, EstimateGenerationEvent::GenerationStarted, EstimateGenerationStatus::Generating, null],
             [EstimateGenerationStatus::Applied, EstimateGenerationEvent::Archived, EstimateGenerationStatus::Archived, null],
         ];
 

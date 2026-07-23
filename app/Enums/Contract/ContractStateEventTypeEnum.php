@@ -10,5 +10,5 @@ enum ContractStateEventTypeEnum: string
     case CANCELLED = 'cancelled';
     case SUPPLEMENTARY_AGREEMENT_CREATED = 'supplementary_agreement_created';
     case PAYMENT_CREATED = 'payment_created';
+    case STATUS_TRANSITION = 'status_transition';
 }
-

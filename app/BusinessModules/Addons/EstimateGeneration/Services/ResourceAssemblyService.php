@@ -72,6 +72,16 @@ class ResourceAssemblyService
         $matchCache = [];
 
         foreach ($workItems as $index => &$workItem) {
+            if ($this->hasMatchedNormativeDecision($workItem)) {
+                $processed = $index + 1;
+
+                if ($progressCallback !== null && ($processed % self::PROGRESS_STEP === 0 || $processed === $total)) {
+                    $progressCallback($processed, $total);
+                }
+
+                continue;
+            }
+
             if ($this->isQuantityReviewItem($workItem)) {
                 $workItem = $this->clearQuantityReviewPricing($workItem);
                 $processed = $index + 1;
@@ -164,6 +174,13 @@ class ResourceAssemblyService
     private function isPricedItem(array $workItem): bool
     {
         return ! in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note', 'quantity_review'], true);
+    }
+
+    /** @param  array<string, mixed>  $workItem */
+    private function hasMatchedNormativeDecision(array $workItem): bool
+    {
+        return is_array($workItem['normative_match'] ?? null)
+            && ($workItem['normative_match']['status'] ?? null) === 'matched';
     }
 
     /**
@@ -406,7 +423,7 @@ class ResourceAssemblyService
             throw new \InvalidArgumentException('accepted_normative_decision_mismatch');
         }
 
-        return $this->applyNormativeResources($workItem, $match, $selectedByUser, $decision);
+        return $this->applyNormativeResources($workItem, $match, $accepted, $selectedByUser, $decision);
     }
 
     /**
@@ -414,8 +431,13 @@ class ResourceAssemblyService
      * @param  array<string, mixed>  $match
      * @return array<string, mixed>
      */
-    private function applyNormativeResources(array $workItem, array $match, bool $selectedByUser = false, ?array $decision = null): array
-    {
+    private function applyNormativeResources(
+        array $workItem,
+        array $match,
+        AcceptedNormativeDecisionData $accepted,
+        bool $selectedByUser = false,
+        ?array $decision = null,
+    ): array {
         $selected = $match['selected'];
         $version = $match['version'];
         $priceVersion = $match['price_version'] ?? null;
@@ -451,9 +473,13 @@ class ResourceAssemblyService
             : 'calculated';
         $workItem['pricing_blocker'] = null;
         $workItem['pricing_blocker_message'] = null;
+        $unpricedAbstractResources = $accepted->unpricedAbstractResources;
+        $projectResourceSelections = $this->projectResourceSelections($resources);
         $warnings = array_values(array_unique([
             ...($selected['warnings'] ?? []),
             ...($decision['warnings'] ?? []),
+            ...($unpricedAbstractResources !== [] ? ['project_resource_selection_required'] : []),
+            ...($projectResourceSelections !== [] ? ['project_resource_price_assumption'] : []),
         ]));
 
         $workItem['normative_match'] = [
@@ -477,8 +503,20 @@ class ResourceAssemblyService
             'decision' => $decision,
             'resources_count' => $this->resourcesCount($resources),
             'priced_resources_count' => $this->pricedResourcesCount($resources),
+            'unpriced_abstract_resources' => $unpricedAbstractResources,
+            'project_resource_selections' => $projectResourceSelections,
             'work_composition' => $this->normalizeComposition($selected['work_composition'] ?? []),
         ];
+        if ($unpricedAbstractResources !== []) {
+            $workItem['pricing_status'] = 'not_calculated';
+            $workItem['pricing_blocker'] = 'project_resource_selection_required';
+            $workItem['pricing_blocker_message'] = $this->message('estimate_generation.project_resource_selection_required');
+            $workItem['validation_flags'] = array_values(array_unique([
+                ...($workItem['validation_flags'] ?? []),
+                'project_resource_selection_required',
+                'pricing_not_calculated',
+            ]));
+        }
         $workItem = $this->applyNormativeComposition($workItem, $selected);
         $freshCandidates = array_map(
             fn (array $candidate): array => $this->candidateSummary($candidate, $workItem),
@@ -580,6 +618,9 @@ class ResourceAssemblyService
                 $quantityPerUnit = $resource['quantity'] !== null ? (float) $resource['quantity'] : 0.0;
                 $quantity = round($quantityPerUnit * $normQuantity, 6);
                 $unitPrice = (float) ($resource['unit_price'] ?? 0);
+                $projectResourceSelection = is_array($resource['project_resource_selection'] ?? null)
+                    ? $resource['project_resource_selection']
+                    : null;
 
                 return [
                     'key' => ($workItem['key'] ?? 'work').'-norm-'.$selected['norm_id'].'-'.$targetType.'-'.($index + 1),
@@ -592,8 +633,11 @@ class ResourceAssemblyService
                     'quantity_basis' => 'normative_resource',
                     'unit_price' => $unitPrice,
                     'total_price' => round($quantity * $unitPrice, 2),
+                    'price_source' => $resource['price_source'],
+                    'price_source_version' => $resource['price_source_version'] ?? $version['version_key'],
                     'source' => 'fsnb_2022:'.$version['version_key'],
                     'confidence' => $selected['confidence'],
+                    ...($projectResourceSelection !== null ? ['project_resource_selection' => $projectResourceSelection] : []),
                     'normative_ref' => [
                         'norm_id' => $selected['norm_id'],
                         'catalog_source' => $selected['catalog_source'] ?? 'estimate_norms',
@@ -605,12 +649,49 @@ class ResourceAssemblyService
                         'price_id' => $resource['price_id'],
                         'price_source' => $resource['price_source'],
                         'embedded_price' => $resource['embedded_price'] ?? null,
+                        ...($projectResourceSelection !== null ? ['project_resource_selection' => $projectResourceSelection] : []),
                     ],
                 ];
             },
             array_values($resources),
             array_keys(array_values($resources))
         );
+    }
+
+    /**
+     * @param  array<string, mixed>  $resources
+     * @return list<array<string, mixed>>
+     */
+    private function projectResourceSelections(array $resources): array
+    {
+        $selections = [];
+        foreach ($resources as $records) {
+            if (! is_array($records)) {
+                continue;
+            }
+            foreach ($records as $resource) {
+                if (! is_array($resource) || ! is_array($resource['project_resource_selection'] ?? null)) {
+                    continue;
+                }
+                $selections[] = [
+                    ...$resource['project_resource_selection'],
+                    'price_id' => $resource['price_id'],
+                    'applied_unit_price' => $resource['unit_price'],
+                    'price_unit' => $resource['price_unit'] ?? $resource['unit'],
+                ];
+            }
+        }
+
+        return $selections;
+    }
+
+    private function message(string $key): ?string
+    {
+        try {
+            return trans_message($key);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

@@ -1,0 +1,351 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
+
+final class ResidentialMaterialScenarioCatalog
+{
+    private const CATALOG_VERSION = 'residential_material_scenario:v19';
+
+    private const SCENARIO_ID = 'residential_preliminary_common:v19';
+
+    private const SIGNING_NAMESPACE = 'most:estimate-generation:residential-material-scenario:v19';
+
+    /**
+     * @var array<string, array{
+     *     material_markers: list<string>,
+     *     assumption_code: string,
+     *     intent_action?: string,
+     *     work_item_name?: string,
+     *     normative_search_text?: string,
+     *     normative_rate_code?: string
+     * }>
+     */
+    private const WORK_ITEMS = [
+        'foundation.prep' => [
+            'material_markers' => ['бетонная подготовка', '100 мм'],
+            'assumption_code' => 'foundation_concrete_preparation_100mm',
+            'intent_action' => 'concreting',
+            'work_item_name' => 'Устройство бетонной подготовки под фундаменты',
+            'normative_search_text' => 'устройство бетонной подготовки фундаментов общего назначения',
+            'normative_rate_code' => '06-01-001-01',
+        ],
+        'foundation.waterproofing' => [
+            'material_markers' => ['обмазочн', 'мастич', 'мастик'],
+            'assumption_code' => 'foundation_coating_waterproofing',
+            'normative_search_text' => 'боковая обмазочная битумная гидроизоляция',
+            'normative_rate_code' => '08-01-003-07',
+        ],
+        'walls.external_volume' => [
+            'material_markers' => ['газобетон', 'ячеист'],
+            'assumption_code' => 'external_walls_aerated_concrete',
+            'normative_search_text' => 'кладка стен из газобетонных блоков на клее',
+            'normative_rate_code' => '08-03-004-01',
+        ],
+        'walls.internal' => [
+            'material_markers' => ['газобетон', 'ячеист'],
+            'assumption_code' => 'internal_partitions_aerated_concrete',
+            'normative_search_text' => 'кладка перегородок из газобетонных блоков на клее',
+            'normative_rate_code' => '08-04-003-01',
+        ],
+        'walls.lintels' => [
+            'material_markers' => ['перемыч', 'железобетон'],
+            'assumption_code' => 'residential_precast_concrete_lintels',
+            'normative_search_text' => 'укладка перемычек при наибольшей массе монтажных элементов в здании до 5 т масса перемычки до 0,7 т',
+            'normative_rate_code' => '07-01-021-01',
+        ],
+        'slabs.rebar' => [
+            'material_markers' => ['арматур', 'сталь', 'A500C'],
+            'assumption_code' => 'monolithic_floor_reinforcement_steel',
+            'intent_action' => 'reinforcement',
+            'normative_search_text' => 'установка заготовок арматурных в опалубку монолитных железобетонных конструкций надземной части здания перекрытий',
+            'normative_rate_code' => '06-23-003-05',
+        ],
+        'roof.insulation' => [
+            'material_markers' => ['минераловат', 'минеральн'],
+            'assumption_code' => 'pitched_roof_mineral_wool',
+            'normative_search_text' => 'утепление покрытий плитами из минеральной ваты насухо',
+            'normative_rate_code' => '12-01-013-07',
+        ],
+        'roof.rafters' => [
+            'material_markers' => ['стропил', 'деревян'],
+            'assumption_code' => 'pitched_roof_wooden_rafters',
+            'normative_search_text' => 'установка деревянных стропил',
+            'normative_rate_code' => '10-01-002-01',
+        ],
+        'roof.vapor_barrier' => [
+            'material_markers' => ['пароизоляционн', 'пленк', 'один слой'],
+            'assumption_code' => 'pitched_roof_single_layer_vapor_barrier',
+            'intent_action' => 'waterproofing',
+            'normative_search_text' => 'устройство пароизоляции кровли прокладочной в один слой',
+            'normative_rate_code' => '12-01-015-03',
+        ],
+        'roof.covering' => [
+            'material_markers' => ['металлочереп'],
+            'assumption_code' => 'pitched_roof_metal_tile',
+            'normative_search_text' => 'устройство простой кровли из металлочерепицы по готовым прогонам',
+            'normative_rate_code' => '12-01-023-01',
+        ],
+        'roof.membrane' => [
+            'material_markers' => ['гидроветрозащитн', 'диффузионн', 'мембран'],
+            'assumption_code' => 'pitched_roof_diffusion_membrane',
+            'intent_action' => 'waterproofing',
+            'work_item_name' => 'Укладка подкровельной диффузионной мембраны',
+            'normative_search_text' => 'устройство пароизоляции кровли прокладочной в один слой',
+            'normative_rate_code' => '12-01-015-03',
+        ],
+        'roof.battens' => [
+            'material_markers' => ['деревянн', 'обрешетк', 'бруск'],
+            'assumption_code' => 'pitched_roof_timber_battens',
+            'intent_action' => 'installation',
+            'normative_search_text' => 'устройство деревянной обрешетки с прозорами из брусков',
+            'normative_rate_code' => '12-01-034-02',
+        ],
+        'finish.floor' => [
+            'material_markers' => ['ламинат', 'ламинированн'],
+            'assumption_code' => 'floor_laminate',
+            'normative_search_text' => 'устройство покрытий из досок ламинированных замковым способом',
+            'normative_rate_code' => '11-01-034-04',
+        ],
+        'finish.baseboard' => [
+            'material_markers' => ['поливинилхлорид', 'пвх', 'пластик'],
+            'assumption_code' => 'baseboard_pvc',
+            'normative_search_text' => 'устройство плинтусов поливинилхлоридных на винтах самонарезающих',
+            'normative_rate_code' => '11-01-040-03',
+        ],
+        'ventilation.air_exchange' => [
+            'material_markers' => [
+                'воздуховод',
+                'листовой оцинкованной стали',
+                'класс н',
+                'диаметром до 200 мм',
+            ],
+            'assumption_code' => 'residential_small_galvanized_ducts',
+            'work_item_name' => 'Монтаж вытяжных воздуховодов жилого дома',
+            'normative_search_text' => 'монтаж воздуховодов',
+            'normative_rate_code' => '20-01-001-01',
+        ],
+        'sewerage.pipe' => [
+            'material_markers' => ['полипропилен', 'канализационн', 'диаметр 50 мм'],
+            'assumption_code' => 'residential_internal_sewer_pp_50mm',
+            'intent_action' => 'pipeline_installation',
+            'work_item_name' => 'Прокладка внутренней канализации со стояками и ревизиями',
+            'normative_search_text' => 'прокладка внутренних трубопроводов канализации из полипропиленовых труб диаметром 50 мм',
+            'normative_rate_code' => '16-04-004-01',
+        ],
+        'sewerage.outlet_route' => [
+            'material_markers' => ['полипропилен', 'канализационн', 'диаметр 110 мм'],
+            'assumption_code' => 'residential_sewer_outlet_pp_110mm',
+            'intent_action' => 'pipeline_installation',
+            'work_item_name' => 'Прокладка канализационного выпуска из полипропиленовых труб 110 мм',
+            'normative_search_text' => 'прокладка внутренних трубопроводов канализации из полипропиленовых труб диаметром 110 мм',
+            'normative_rate_code' => '16-04-004-02',
+        ],
+        'heating.unit' => [
+            'material_markers' => ['электрический котел', 'отопление', 'масса до 0,03 т'],
+            'assumption_code' => 'residential_electric_boiler_installation_analog_30kg',
+            'intent_action' => 'electric_boiler_installation_analog',
+            'work_item_name' => 'Монтаж электрического котла отопления до 30 кг',
+            'normative_search_text' => 'монтаж оборудования в помещении массой до 0,03 т электрический котел отопления',
+            'normative_rate_code' => '37-01-002-01',
+        ],
+        'stairs.flights' => [
+            'material_markers' => ['внутриквартирн', 'лестниц', 'без подшив'],
+            'assumption_code' => 'residential_stair_without_soffit',
+            'normative_search_text' => 'устройство внутриквартирных лестниц без подшивки',
+            'normative_rate_code' => '10-01-052-02',
+        ],
+        'openings.windows' => [
+            'material_markers' => ['оконн', 'пвх', 'поворотно-откид', 'двухстворчат', 'до 2 м2'],
+            'assumption_code' => 'residential_pvc_windows',
+            'normative_search_text' => 'установка оконных блоков из ПВХ профилей двухстворчатых площадью до 2 м2',
+            'normative_rate_code' => '10-01-034-05',
+        ],
+        'electrical.grounding' => [
+            'material_markers' => ['заземлител', 'горизонтальн', 'кругл', '12 мм'],
+            'assumption_code' => 'residential_round_steel_grounding',
+            'normative_search_text' => 'заземлитель горизонтальный из круглой стали диаметром 12 мм',
+            'normative_rate_code' => '08-02-472-01',
+        ],
+        'electrical.main_cable' => [
+            'material_markers' => ['кабел', 'скоб', 'ответвительн'],
+            'assumption_code' => 'residential_feeder_cable_clips',
+            'intent_action' => 'cable_installation',
+            'normative_search_text' => 'прокладка кабеля с креплением скобами и установкой ответвительных коробок',
+            'normative_rate_code' => '08-02-401-01',
+        ],
+        'electrical.power_lines' => [
+            'material_markers' => ['силов', 'магистрал', 'стояк', 'готовых канал'],
+            'assumption_code' => 'residential_power_wiring_channels',
+            'intent_action' => 'cable_installation',
+            'normative_search_text' => 'прокладка проводов силовой сети в готовых каналах сечением до 6 мм2',
+            'normative_rate_code' => '08-02-404-01',
+        ],
+        'lighting.lines' => [
+            'material_markers' => ['осветительн', 'под штукатур', 'борозд'],
+            'assumption_code' => 'residential_lighting_wiring_chases',
+            'intent_action' => 'cable_installation',
+            'normative_search_text' => 'прокладка проводов групповых осветительных сетей под штукатурку или в бороздах',
+            'normative_rate_code' => '08-02-403-03',
+        ],
+        'electrical.panel' => [
+            'material_markers' => ['щиток', 'осветительн', 'ниш', 'до 6 кг'],
+            'assumption_code' => 'residential_recessed_lighting_panel',
+            'intent_action' => 'electrical_panel_installation',
+            'normative_search_text' => 'щиток осветительный устанавливаемый в нише распорными дюбелями массой до 6 кг',
+            'normative_rate_code' => '08-03-599-01',
+        ],
+        'electrical.outlets' => [
+            'material_markers' => ['розетк', 'штепсельн', 'утопленн', 'скрыт проводк'],
+            'assumption_code' => 'residential_recessed_socket',
+            'intent_action' => 'socket_installation',
+            'normative_search_text' => 'розетка штепсельная утопленного типа при скрытой проводке',
+            'normative_rate_code' => '08-03-591-09',
+        ],
+        'electrical.switches' => [
+            'material_markers' => ['выключател', 'одноклавишн', 'утопленн', 'скрыт проводк'],
+            'assumption_code' => 'residential_recessed_single_switch',
+            'intent_action' => 'socket_installation',
+            'normative_search_text' => 'выключатель одноклавишный утопленного типа при скрытой проводке',
+            'normative_rate_code' => '08-03-591-02',
+        ],
+        'lighting.fixtures' => [
+            'material_markers' => ['светильник', 'потолочн', 'нормальн услов', 'однолампов'],
+            'assumption_code' => 'residential_ceiling_luminaire',
+            'intent_action' => 'lighting_fixture_installation',
+            'normative_search_text' => 'светильник потолочный с креплением винтами для помещений с нормальными условиями среды одноламповый',
+            'normative_rate_code' => '08-03-593-06',
+        ],
+        'heating.radiators' => [
+            'material_markers' => ['радиатор', 'алюминиев', 'биметаллическ', 'секционн'],
+            'assumption_code' => 'residential_aluminium_or_bimetallic_radiator_sections',
+            'intent_action' => 'heating_emitter_installation',
+            'work_item_name' => 'Установка алюминиевых или биметаллических секционных радиаторов',
+            'normative_search_text' => 'установка алюминиевых и биметаллических секционных радиаторов',
+            'normative_rate_code' => '18-03-006-02',
+        ],
+        'sanitary.waterproofing' => [
+            'material_markers' => ['гидроизоляц', 'обмазочн', 'мастик'],
+            'assumption_code' => 'wet_zone_coating_waterproofing',
+            'normative_search_text' => 'устройство обмазочной гидроизоляции битумной мастикой в один слой толщиной 2 мм',
+            'normative_rate_code' => '11-01-004-05',
+        ],
+        'sanitary.tile' => [
+            'material_markers' => ['облицовк', 'стен', 'керамическ', 'кле'],
+            'assumption_code' => 'wet_zone_ceramic_wall_tile',
+            'normative_search_text' => 'гладкая облицовка стен керамическими плитками на клее по кирпичу и бетону',
+            'normative_rate_code' => '15-01-019-05',
+        ],
+        'sanitary.floor_tile' => [
+            'material_markers' => ['плитк', 'керамическ', 'для полов', 'одноцветн'],
+            'assumption_code' => 'wet_zone_ceramic_floor_tile',
+            'intent_action' => 'tiling',
+            'work_item_name' => 'Устройство плиточного покрытия пола мокрых зон',
+            'normative_search_text' => 'устройство покрытий на цементном растворе из плиток керамических для полов одноцветных с красителем',
+            'normative_rate_code' => '11-01-027-03',
+        ],
+        'sanitary.showers' => [
+            'material_markers' => ['кабина душевая', 'пластиковый поддон'],
+            'assumption_code' => 'residential_shower_cabin_plastic_tray',
+            'intent_action' => 'sanitary_fixture_installation',
+            'work_item_name' => 'Установка душевых кабин с пластиковым поддоном',
+            'normative_search_text' => 'установка душевых кабин с пластиковым поддоном',
+            'normative_rate_code' => '17-01-001-21',
+        ],
+        'sanitary.toilets' => [
+            'material_markers' => ['унитаз', 'бачок непосредственно присоединенный'],
+            'assumption_code' => 'residential_close_coupled_toilet',
+            'intent_action' => 'sanitary_fixture_installation',
+            'normative_search_text' => 'установка унитазов с бачком непосредственно присоединенным',
+            'normative_rate_code' => '17-01-003-01',
+        ],
+        'sanitary.washbasins' => [
+            'material_markers' => ['умывальник', 'холодная и горячая вода'],
+            'assumption_code' => 'residential_hot_cold_washbasin',
+            'intent_action' => 'sanitary_fixture_installation',
+            'normative_search_text' => 'установка умывальников одиночных с подводкой холодной и горячей воды',
+            'normative_rate_code' => '17-01-001-14',
+        ],
+        'rough.floor' => [
+            'material_markers' => ['стяжка', 'цементная', '20 мм'],
+            'assumption_code' => 'residential_cement_floor_screed_20mm',
+            'intent_action' => 'floor_preparation',
+            'normative_search_text' => 'устройство стяжек цементных толщиной 20 мм',
+            'normative_rate_code' => '11-01-011-01',
+        ],
+    ];
+
+    /** @return array<string, mixed>|null */
+    public function issue(string $workItemKey, string $objectType): ?array
+    {
+        if ($objectType !== 'residential' || ! isset(self::WORK_ITEMS[$workItemKey])) {
+            return null;
+        }
+
+        $definition = self::WORK_ITEMS[$workItemKey];
+        $payload = [
+            'version' => self::CATALOG_VERSION,
+            'scenario_id' => self::SCENARIO_ID,
+            'work_item_key' => $workItemKey,
+            'object_type' => 'residential',
+            'material_markers' => $definition['material_markers'],
+            'assumption_code' => $definition['assumption_code'],
+            ...isset($definition['intent_action'])
+                ? ['intent_action' => $definition['intent_action']]
+                : [],
+            ...isset($definition['normative_search_text'])
+                ? ['normative_search_text' => $definition['normative_search_text']]
+                : [],
+            ...isset($definition['work_item_name'])
+                ? ['work_item_name' => $definition['work_item_name']]
+                : [],
+            ...isset($definition['normative_rate_code'])
+                ? ['normative_rate_code' => $definition['normative_rate_code']]
+                : [],
+        ];
+
+        return [
+            ...$payload,
+            'signature' => $this->signature($payload),
+        ];
+    }
+
+    /** @return array<string, mixed>|null */
+    public function resolve(mixed $scenario, string $workItemKey, string $objectType): ?array
+    {
+        if (! is_array($scenario)) {
+            return null;
+        }
+
+        $canonical = $this->issue($workItemKey, $objectType);
+        if ($canonical === null || ! isset($scenario['signature']) || ! is_string($scenario['signature'])) {
+            return null;
+        }
+
+        if (! hash_equals((string) $canonical['signature'], $scenario['signature'])) {
+            return null;
+        }
+
+        return $this->canonicalize($scenario) === $this->canonicalize($canonical) ? $canonical : null;
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function signature(array $payload): string
+    {
+        return hash('sha256', self::SIGNING_NAMESPACE.'|'.json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+    }
+
+    private function canonicalize(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        return array_map(fn (mixed $item): mixed => $this->canonicalize($item), $value);
+    }
+}

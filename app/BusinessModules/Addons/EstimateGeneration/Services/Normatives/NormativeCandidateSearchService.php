@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 
-use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\WorkIntentData;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeSearchProfileData;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\WorkIntentData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
 use Illuminate\Database\Eloquent\Builder;
@@ -14,6 +14,7 @@ use Illuminate\Support\Collection;
 final class NormativeCandidateSearchService
 {
     private const MIN_POOL_SIZE = 300;
+
     private const MIN_PROFILE_FALLBACK_POOL_SIZE = 30;
 
     public function __construct(
@@ -22,9 +23,9 @@ final class NormativeCandidateSearchService
     ) {}
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $context
-     * @param array<int, string> $tokens
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $context
+     * @param  array<int, string>  $tokens
      * @return Collection<int, EstimateNorm>
      */
     public function search(
@@ -54,7 +55,7 @@ final class NormativeCandidateSearchService
     }
 
     /**
-     * @param array<int, string> $tokens
+     * @param  array<int, string>  $tokens
      * @return Collection<int, EstimateNorm>
      */
     private function queryPool(
@@ -64,8 +65,7 @@ final class NormativeCandidateSearchService
         WorkIntentData $intent,
         NormativeSearchProfileData $profile,
         int $poolLimit
-    ): Collection
-    {
+    ): Collection {
         $tokens = $this->expandedTokens($tokens, $intent, $profile);
         $pool = $this->executePoolQuery($version, $tokens, $intent, $profile, $poolLimit);
 
@@ -84,7 +84,7 @@ final class NormativeCandidateSearchService
     }
 
     /**
-     * @param array<int, string> $tokens
+     * @param  array<int, string>  $tokens
      * @return Collection<int, EstimateNorm>
      */
     private function executePoolQuery(
@@ -93,8 +93,7 @@ final class NormativeCandidateSearchService
         WorkIntentData $intent,
         NormativeSearchProfileData $profile,
         int $poolLimit
-    ): Collection
-    {
+    ): Collection {
         $query = EstimateNorm::query()
             ->with(['collection', 'section'])
             ->whereHas('collection', static function (Builder $query) use ($version): void {
@@ -104,7 +103,7 @@ final class NormativeCandidateSearchService
         if ($tokens !== []) {
             $query->where(function (Builder $query) use ($tokens): void {
                 foreach ($tokens as $token) {
-                    $like = '%' . mb_strtolower($token) . '%';
+                    $like = '%'.mb_strtolower($token).'%';
                     $query->orWhereRaw('LOWER(code) LIKE ?', [$like])
                         ->orWhereRaw('LOWER(name) LIKE ?', [$like])
                         ->orWhereRaw('LOWER(COALESCE(section_name, \'\')) LIKE ?', [$like])
@@ -118,7 +117,7 @@ final class NormativeCandidateSearchService
                 $query->whereNull('section_code');
 
                 foreach ($profile->allowedSectionPrefixes as $prefix) {
-                    $query->orWhere('section_code', 'like', $prefix . '%');
+                    $query->orWhere('section_code', 'like', $prefix.'%');
                 }
             });
         }
@@ -126,7 +125,7 @@ final class NormativeCandidateSearchService
         foreach (array_values(array_unique([...$intent->forbiddenSectionPrefixes, ...$profile->forbiddenSectionPrefixes])) as $prefix) {
             $query->where(function (Builder $query) use ($prefix): void {
                 $query->whereNull('section_code')
-                    ->orWhere('section_code', 'not like', $prefix . '%');
+                    ->orWhere('section_code', 'not like', $prefix.'%');
             });
         }
 
@@ -137,8 +136,8 @@ final class NormativeCandidateSearchService
     }
 
     /**
-     * @param Collection<int, EstimateNorm> $pool
-     * @param array<int, string> $tokens
+     * @param  Collection<int, EstimateNorm>  $pool
+     * @param  array<int, string>  $tokens
      */
     private function shouldExpandByProfile(Collection $pool, array $tokens, NormativeSearchProfileData $profile, int $poolLimit): bool
     {
@@ -150,7 +149,7 @@ final class NormativeCandidateSearchService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function forbiddenDomainCandidate(EstimateNorm $norm, array $workItem, WorkIntentData $intent): bool
     {
@@ -167,29 +166,29 @@ final class NormativeCandidateSearchService
             (string) ($workItem['normative_search_text'] ?? ''),
         ]))));
 
-        if ($this->containsAny($candidateText, ['кран портальн', 'портальный кран', 'кран козлов']) && !$this->containsAny($workText, ['кран', 'подъемн'])) {
+        if ($this->containsAny($candidateText, ['кран портальн', 'портальный кран', 'кран козлов']) && ! $this->containsAny($workText, ['кран', 'подъемн'])) {
             return true;
         }
 
-        if ($this->containsAny($candidateText, ['железнодорож', 'земляное полотно']) && !$this->containsAny($workText, ['железнодорож', 'рельс', 'путь'])) {
+        if ($this->containsAny($candidateText, ['железнодорож', 'земляное полотно']) && ! $this->containsAny($workText, ['железнодорож', 'рельс', 'путь'])) {
             return true;
         }
 
-        if ($this->containsAny($candidateText, ['бурени', 'скважин']) && !$this->containsAny($workText, ['бурени', 'скважин'])) {
+        if ($this->containsAny($candidateText, ['бурени', 'скважин']) && ! $this->containsAny($workText, ['бурени', 'скважин'])) {
             return true;
         }
 
-        if ($this->containsAny($candidateText, ['взрыв', 'взрываем']) && !$this->containsAny($workText, ['взрыв', 'взрываем'])) {
+        if ($this->containsAny($candidateText, ['взрыв', 'взрываем']) && ! $this->containsAny($workText, ['взрыв', 'взрываем'])) {
             return true;
         }
 
-        if ($this->containsAny($candidateText, ['шпунт']) && !$this->containsAny($workText, ['шпунт'])) {
+        if ($this->containsAny($candidateText, ['шпунт']) && ! $this->containsAny($workText, ['шпунт'])) {
             return true;
         }
 
         if (
             $this->containsAny($candidateText, ['водопроводн арматур', 'арматур водопровод'])
-            && !in_array($intent->system, ['water_supply', 'sewerage'], true)
+            && ! in_array($intent->system, ['water_supply', 'sewerage'], true)
             && $intent->action !== 'pipe_layout'
         ) {
             return true;
@@ -197,8 +196,8 @@ final class NormativeCandidateSearchService
 
         if (
             $this->containsAny($candidateText, ['землян', 'разработк грунт', 'котлован', 'транше'])
-            && !in_array($intent->scope, ['foundation', 'site'], true)
-            && !in_array($intent->action, ['excavation', 'backfill'], true)
+            && ! in_array($intent->scope, ['foundation', 'site'], true)
+            && ! in_array($intent->action, ['excavation', 'backfill', 'soil_haulage'], true)
         ) {
             return true;
         }
@@ -207,7 +206,7 @@ final class NormativeCandidateSearchService
     }
 
     /**
-     * @param array<int, string> $tokens
+     * @param  array<int, string>  $tokens
      * @return array<int, string>
      */
     private function expandedTokens(array $tokens, WorkIntentData $intent, NormativeSearchProfileData $profile): array
@@ -275,7 +274,7 @@ final class NormativeCandidateSearchService
         $token = preg_replace('/[^0-9-]/', '', $token) ?? '';
         $token = preg_replace('/-+/', '-', trim($token, '-')) ?? '';
 
-        if (!preg_match('/^\d{2}-\d{2}-\d{3}(?:-\d{2})?$/', $token)) {
+        if (! preg_match('/^\d{2}-\d{2}-\d{3}(?:-\d{2})?$/', $token)) {
             return null;
         }
 
@@ -348,8 +347,8 @@ final class NormativeCandidateSearchService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<int, string> $tokens
+     * @param  array<string, mixed>  $workItem
+     * @param  array<int, string>  $tokens
      */
     private function scorePoolCandidate(
         EstimateNorm $norm,
@@ -357,8 +356,7 @@ final class NormativeCandidateSearchService
         array $tokens,
         WorkIntentData $intent,
         NormativeSearchProfileData $profile
-    ): float
-    {
+    ): float {
         $score = 0.0;
         $workName = mb_strtolower(trim((string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? '')));
         $haystack = mb_strtolower(implode(' ', [
@@ -434,7 +432,7 @@ final class NormativeCandidateSearchService
     }
 
     /**
-     * @param array<int, string> $needles
+     * @param  array<int, string>  $needles
      */
     private function containsAny(string $text, array $needles): bool
     {
@@ -448,7 +446,7 @@ final class NormativeCandidateSearchService
     }
 
     /**
-     * @param Collection<int, EstimateNorm> $candidates
+     * @param  Collection<int, EstimateNorm>  $candidates
      * @return Collection<int, EstimateNorm>
      */
     private function compatibleCandidates(Collection $candidates, string $workUnit): Collection

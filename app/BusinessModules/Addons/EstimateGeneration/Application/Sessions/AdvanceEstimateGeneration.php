@@ -57,23 +57,46 @@ final class AdvanceEstimateGeneration
         ]);
     }
 
-    public function generationStarted(EstimateGenerationSession $session, string $attemptId): EstimateGenerationSession
-    {
+    /** @param array<string, mixed> $inputPayloadChanges */
+    public function generationStarted(
+        EstimateGenerationSession $session,
+        string $attemptId,
+        array $inputPayloadChanges = [],
+    ): EstimateGenerationSession {
         if ($session->status === EstimateGenerationStatus::Generating) {
             return $session;
         }
 
-        return $this->workflow->transition($session, EstimateGenerationEvent::GenerationStarted, [
+        $inputPayload = [
+            ...($session->input_payload ?? []),
+            ...$inputPayloadChanges,
+            'generation_attempt_id' => $attemptId,
+            'generation_requested' => false,
+        ];
+        $attributes = [
             'processing_stage' => 'generating',
             'processing_progress' => 40,
             'last_error' => null,
             'failure_code' => null,
-            'input_payload' => [
-                ...($session->input_payload ?? []),
-                'generation_attempt_id' => $attemptId,
-                'generation_requested' => false,
-            ],
-        ]);
+            'input_payload' => $inputPayload,
+        ];
+
+        if ($session->status === EstimateGenerationStatus::Applied) {
+            $supersededEstimateIds = array_values(array_unique(array_filter(array_map(
+                static fn (mixed $estimateId): int => (int) $estimateId,
+                is_array($inputPayload['superseded_estimate_ids'] ?? null)
+                    ? $inputPayload['superseded_estimate_ids']
+                    : [],
+            ))));
+            if ($session->applied_estimate_id !== null) {
+                $supersededEstimateIds[] = (int) $session->applied_estimate_id;
+            }
+            $attributes['applied_estimate_id'] = null;
+            $attributes['applied_at'] = null;
+            $attributes['input_payload']['superseded_estimate_ids'] = array_values(array_unique($supersededEstimateIds));
+        }
+
+        return $this->workflow->transition($session, EstimateGenerationEvent::GenerationStarted, $attributes);
     }
 
     public function documentsNeedReview(EstimateGenerationSession $session, ?string $failureCode = null): EstimateGenerationSession

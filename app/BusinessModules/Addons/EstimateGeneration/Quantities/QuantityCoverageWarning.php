@@ -1,0 +1,69 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Addons\EstimateGeneration\Quantities;
+
+final class QuantityCoverageWarning
+{
+    private const REASONS = [
+        'electrical_design_takeoff_missing',
+        'documented_wet_rooms_missing',
+        'external_gutter_not_inferred_for_flat_roof',
+        'external_network_route_missing',
+        'floor_count_missing',
+        'foundation_build_up_missing',
+        'foundation_footprint_missing',
+        'grounding_installation_type_missing',
+        'heating_design_takeoff_missing',
+        'heating_source_type_missing',
+        'included_in_residential_stair_assembly',
+        'finished_wet_room_area_missing',
+        'not_applicable_to_residential_preliminary_scenario',
+        'normative_candidate_missing',
+        'opening_schedule_missing',
+        'plumbing_design_takeoff_missing',
+        'radiator_schedule_missing',
+        'room_annotations_missing',
+        'site_geodetic_inputs_missing',
+        'site_preparation_scope_missing',
+        'roof_drainage_takeoff_missing',
+        'roof_composition_evidence_missing',
+        'roof_geometry_takeoff_missing',
+        'roof_structure_geometry_missing',
+        'sewerage_design_takeoff_missing',
+        'sewer_outlet_route_missing',
+        'single_storey_house',
+        'soil_balance_missing',
+        'soil_transport_inputs_missing',
+        'stair_construction_geometry_missing',
+        'stair_railing_geometry_missing',
+        'total_internal_area_missing',
+        'ventilation_duct_takeoff_missing',
+        'wet_room_annotations_missing',
+        'wet_zone_finish_specification_missing',
+        'window_schedule_missing',
+    ];
+
+    /** @return list<string> */
+    public static function reasons(): array
+    {
+        return self::REASONS;
+    }
+
+    public static function isValid(mixed $warning): bool
+    {
+        if (! is_array($warning)) {
+            return false;
+        }
+
+        foreach (['quantity_key', 'reason', 'package_key'] as $key) {
+            $value = $warning[$key] ?? null;
+            if (! is_string($value) || preg_match('/^[a-z0-9][a-z0-9_.-]*$/D', $value) !== 1) {
+                return false;
+            }
+        }
+
+        return in_array($warning['reason'], self::REASONS, true);
+    }
+}

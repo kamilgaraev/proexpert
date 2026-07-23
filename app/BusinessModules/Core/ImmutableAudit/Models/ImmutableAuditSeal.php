@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\ImmutableAudit\Models;
 
+use App\Exceptions\ImmutableDataException;
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
@@ -48,6 +49,16 @@ final class ImmutableAuditSeal extends Model
         'sealed_at' => 'datetime',
         'created_at' => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        self::updating(static function (): never {
+            throw new ImmutableDataException(self::class, 'update');
+        });
+        self::deleting(static function (): never {
+            throw new ImmutableDataException(self::class, 'delete');
+        });
+    }
 
     public function organization(): BelongsTo
     {

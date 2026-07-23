@@ -9,11 +9,52 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvide
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityMapper;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
 {
+    #[Test]
+    public function mapped_room_area_quantity_with_deep_source_formula_is_materialized_idempotently(): void
+    {
+        $repository = new InMemoryEvidenceRepository;
+        $materializer = new AcceptedQuantityEvidenceMaterializer($repository);
+        $context = new PipelineContext(
+            30, 10, 20, 1, 'sha256:'.str_repeat('a', 64), 'generating',
+            baseInputVersion: 'sha256:'.str_repeat('b', 64),
+        );
+        $source = new QuantityData(
+            key: 'floor_area',
+            unit: 'm2',
+            amount: '192.800000',
+            formulaKey: 'floor.area.room_annotations',
+            formulaVersion: '1.0.0',
+            formulaInputs: [
+                'items' => [[
+                    'evidence_id' => 'room:1',
+                    'named_operands' => ['area' => ['value' => '21.900000', 'unit' => 'm2']],
+                ]],
+            ],
+            source: QuantitySource::Evidenced,
+            evidenceIds: ['room:1'],
+            modelVersion: 'building-model:v1',
+        );
+        $quantity = (new WorkItemQuantityMapper)->map('earth.trench', ['floor_area' => $source]);
+
+        self::assertNotNull($quantity);
+        self::assertSame('86.760000', $quantity->amount);
+
+        $first = $materializer->materialize($context, $quantity, ['key' => 'earth.trench']);
+        $retry = $materializer->materialize($context, $quantity, ['key' => 'earth.trench']);
+
+        self::assertSame($first->id, $retry->id);
+        self::assertSame($first->fingerprint, $retry->fingerprint);
+        self::assertSame(0.65, $first->confidence);
+        self::assertSame('86.760000', $first->value['quantity']);
+    }
+
     #[Test]
     public function accepted_quantity_is_idempotent_and_verifiable_only_in_exact_pipeline_scope(): void
     {
@@ -55,5 +96,19 @@ final class AcceptedQuantityEvidenceMaterializerTest extends TestCase
         self::assertNotSame($first->fingerprint, $changed->fingerprint);
         self::assertNotSame($first->value['work_code'], $changed->value['work_code']);
         self::assertSame($first->locator, $changed->locator);
+
+        $estimated = $materializer->materialize($context, new QuantityData(
+            key: 'finish.floor',
+            unit: 'm2',
+            amount: '12.000000',
+            formulaKey: 'work_item.quantity.finish.floor',
+            formulaVersion: '1.1.0',
+            formulaInputs: ['factor' => '1'],
+            source: QuantitySource::Estimated,
+            evidenceIds: ['1'],
+            modelVersion: 'building-model:v1',
+        ), ['key' => 'estimated-floor']);
+
+        self::assertSame(0.65, $estimated->confidence);
     }
 }

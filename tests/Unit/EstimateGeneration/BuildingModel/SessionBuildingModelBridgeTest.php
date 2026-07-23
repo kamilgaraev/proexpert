@@ -14,12 +14,78 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\SessionBuildingM
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\RoomAnnotationFloorAreaQuantityFactory;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class SessionBuildingModelBridgeTest extends TestCase
 {
+    #[Test]
+    public function room_area_annotations_receive_dedicated_extractions_and_produce_internal_floor_area(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('f', 64));
+        [$bridge, , $evidence] = $this->bridge();
+        $unit = $this->visionUnit();
+        $payload = $unit->payload;
+        $payload['vision_analysis']['elements'][0]['label'] = 'Кухня 42,7';
+        $payload['vision_analysis']['elements'][] = [
+            'key' => 'vision-veranda', 'type' => 'room', 'label' => 'Веранда 20,8',
+            'polygon' => [[0.0, 0.0], [0.8, 0.0], [0.8, 0.8]],
+            'confidence' => 0.94, 'evidence_ref' => 'vision-page',
+        ];
+        $unit = new SessionBuildingModelUnitData(
+            $unit->unitId, $unit->documentId, $unit->pageId, $unit->type, $unit->index,
+            $unit->sourceVersion, $unit->confidence, $payload,
+        );
+
+        $model = $bridge->store($context, [$unit]);
+        $quantity = $model === null ? null : (new RoomAnnotationFloorAreaQuantityFactory($evidence))->make($context, $model);
+
+        self::assertNotNull($model);
+        self::assertSame(3, $model->metrics['evidence_count']);
+        self::assertSame('42.700000', $quantity?->amount);
+        self::assertSame([], $quantity?->reviewBlockers);
+        self::assertCount(2, array_filter(
+            $evidence->nodes(),
+            static fn ($node): bool => ($node->value['field_key'] ?? null) === 'room_area',
+        ));
+    }
+
+    #[Test]
+    public function explicit_pdf_room_annotations_remain_reference_only_when_a_raster_floor_plan_exists(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('f', 64));
+        [$bridge, , $evidence] = $this->bridge();
+        $raster = $this->visionUnit();
+        $rasterPayload = $raster->payload;
+        $rasterPayload['vision_analysis']['elements'][0]['label'] = 'Кухня 42,7';
+        $raster = new SessionBuildingModelUnitData(
+            $raster->unitId, $raster->documentId, $raster->pageId, $raster->type, $raster->index,
+            $raster->sourceVersion, $raster->confidence, $rasterPayload,
+        );
+        $pdf = $this->pdfVectorUnit();
+        $pdfPayload = $pdf->payload;
+        $pdfPayload['vision_analysis'] = $this->visionUnit()->payload['vision_analysis'];
+        $pdfPayload['vision_analysis']['elements'][0]['label'] = 'Офис 99,9';
+        $pdf = new SessionBuildingModelUnitData(
+            $pdf->unitId, $pdf->documentId, $pdf->pageId, $pdf->type, $pdf->index,
+            $pdf->sourceVersion, $pdf->confidence, $pdfPayload,
+        );
+
+        $model = $bridge->store($context, [$raster, $pdf]);
+        $quantity = $model === null ? null : (new RoomAnnotationFloorAreaQuantityFactory($evidence))->make($context, $model);
+
+        self::assertNotNull($model);
+        self::assertSame(2, $model->metrics['room_count']);
+        self::assertSame('42.700000', $quantity?->amount);
+        self::assertSame([], array_values(array_filter(
+            $evidence->nodes(),
+            static fn ($node): bool => $node->sourceRef === 'document:503'
+                && ($node->value['field_key'] ?? null) === 'room_area',
+        )));
+    }
+
     #[Test]
     public function mixed_vision_and_vector_units_produce_one_order_independent_persisted_model(): void
     {
@@ -148,13 +214,18 @@ final class SessionBuildingModelBridgeTest extends TestCase
             $payload,
         );
 
-        [$bridge] = $this->bridge();
+        [$bridge, , $evidence] = $this->bridge();
         $model = $bridge->store($context, [$this->visionUnit(), $pdf]);
 
         self::assertNotNull($model);
         self::assertSame(['floor-vision'], array_column($model->toArray()['floors'], 'key'));
         self::assertSame(1, $model->metrics['room_count']);
         self::assertSame(0, $model->metrics['wall_count']);
+        self::assertSame([], array_values(array_filter(
+            $evidence->nodes(),
+            static fn ($node): bool => $node->sourceRef === 'document:503'
+                && ($node->value['field_key'] ?? null) === 'room_area',
+        )));
     }
 
     #[Test]
@@ -165,6 +236,7 @@ final class SessionBuildingModelBridgeTest extends TestCase
         $payload = $pdf->payload;
         unset($payload['floor_key']);
         $payload['vision_analysis'] = $this->visionUnit()->payload['vision_analysis'];
+        $payload['vision_analysis']['elements'][0]['label'] = 'Офис 99,9';
         $pdf = new SessionBuildingModelUnitData(
             $pdf->unitId,
             $pdf->documentId,
@@ -176,13 +248,18 @@ final class SessionBuildingModelBridgeTest extends TestCase
             $payload,
         );
 
-        [$bridge] = $this->bridge();
+        [$bridge, , $evidence] = $this->bridge();
         $model = $bridge->store($context, [$this->visionUnit(), $pdf]);
 
         self::assertNotNull($model);
         self::assertSame(['floor-vision'], array_column($model->toArray()['floors'], 'key'));
         self::assertSame(1, $model->metrics['room_count']);
         self::assertSame(0, $model->metrics['wall_count']);
+        self::assertSame([], array_values(array_filter(
+            $evidence->nodes(),
+            static fn ($node): bool => $node->sourceRef === 'document:503'
+                && ($node->value['field_key'] ?? null) === 'room_area',
+        )));
     }
 
     #[Test]
@@ -216,6 +293,191 @@ final class SessionBuildingModelBridgeTest extends TestCase
         self::assertSame(['floor-document-501-page-1', 'floor-document-502-page-1'], array_column($model->toArray()['floors'], 'key'));
         $roomKeys = array_column(array_merge(...array_column($model->toArray()['floors'], 'rooms')), 'key');
         self::assertCount(2, array_unique($roomKeys));
+    }
+
+    #[Test]
+    public function document_names_materialize_stable_floor_identity_without_document_ids(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
+        [$bridge] = $this->bridge();
+        $first = $this->unkeyedVisionUnit(101, 501, 601, 'a', 'first');
+        $second = $this->unkeyedVisionUnit(102, 502, 602, 'b', 'second');
+
+        $firstPayload = $first->payload;
+        $firstPayload['document_name'] = '01-план-1-этажа.jpg';
+        $secondPayload = $second->payload;
+        $secondPayload['document_name'] = '02-план-2-этажа.jpg';
+
+        $model = $bridge->store($context, [
+            new SessionBuildingModelUnitData(
+                $first->unitId,
+                $first->documentId,
+                $first->pageId,
+                $first->type,
+                $first->index,
+                $first->sourceVersion,
+                $first->confidence,
+                $firstPayload,
+            ),
+            new SessionBuildingModelUnitData(
+                $second->unitId,
+                $second->documentId,
+                $second->pageId,
+                $second->type,
+                $second->index,
+                $second->sourceVersion,
+                $second->confidence,
+                $secondPayload,
+            ),
+        ]);
+
+        self::assertNotNull($model);
+        self::assertSame(['floor-1', 'floor-2'], array_column($model->toArray()['floors'], 'key'));
+    }
+
+    #[Test]
+    public function explicit_valid_floor_key_takes_priority_over_document_name(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
+        [$bridge] = $this->bridge();
+        $unit = $this->visionUnit();
+        $payload = $unit->payload;
+        $payload['document_name'] = 'План 2-го этажа.pdf';
+
+        $model = $bridge->store($context, [new SessionBuildingModelUnitData(
+            $unit->unitId,
+            $unit->documentId,
+            $unit->pageId,
+            $unit->type,
+            $unit->index,
+            $unit->sourceVersion,
+            $unit->confidence,
+            $payload,
+        )]);
+
+        self::assertNotNull($model);
+        self::assertSame(['floor-vision'], array_column($model->toArray()['floors'], 'key'));
+    }
+
+    #[Test]
+    public function equally_inferred_documents_for_the_same_floor_fail_closed_instead_of_summing_rooms(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
+        [$bridge] = $this->bridge();
+        $first = $this->withDocumentFloor($this->unkeyedVisionUnit(101, 501, 601, 'a', 'first'), 'План 1 этажа.jpg');
+        $replacement = $this->withDocumentFloor($this->unkeyedVisionUnit(102, 502, 602, 'b', 'replacement'), '1st floor revised.jpg');
+
+        self::assertNull($bridge->store($context, [$first, $replacement]));
+    }
+
+    #[Test]
+    public function one_explicit_floor_source_is_authoritative_over_an_inferred_document_for_that_floor(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
+        [$bridge] = $this->bridge();
+        $authoritative = $this->withDocumentFloor($this->unkeyedVisionUnit(101, 501, 601, 'a', 'primary'), 'Основной план.jpg');
+        $authoritativePayload = $authoritative->payload;
+        $authoritativePayload['floor_key'] = 'floor-1';
+        $authoritative = new SessionBuildingModelUnitData(
+            $authoritative->unitId,
+            $authoritative->documentId,
+            $authoritative->pageId,
+            $authoritative->type,
+            $authoritative->index,
+            $authoritative->sourceVersion,
+            $authoritative->confidence,
+            $authoritativePayload,
+        );
+        $reference = $this->withDocumentFloor($this->unkeyedVisionUnit(102, 502, 602, 'b', 'reference'), 'План 1 этажа.jpg');
+
+        $model = $bridge->store($context, [$authoritative, $reference]);
+
+        self::assertNotNull($model);
+        self::assertSame(['floor-1'], array_column($model->toArray()['floors'], 'key'));
+        self::assertSame(1, $model->metrics['room_count']);
+    }
+
+    #[Test]
+    public function two_explicit_documents_for_the_same_floor_fail_closed(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
+        [$bridge] = $this->bridge();
+        $first = $this->withExplicitFloor($this->unkeyedVisionUnit(101, 501, 601, 'a', 'first'), 'floor-1');
+        $second = $this->withExplicitFloor($this->unkeyedVisionUnit(102, 502, 602, 'b', 'second'), 'floor-1');
+
+        self::assertNull($bridge->store($context, [$first, $second]));
+    }
+
+    #[Test]
+    public function raster_floor_pages_with_different_pixel_scales_keep_metric_rooms_after_session_merge(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
+        [$bridge] = $this->bridge();
+        $first = $this->unkeyedVisionUnit(101, 501, 601, '1', 'first-scale');
+        $firstPayload = $first->payload;
+        $firstPayload['vision_analysis']['elements'][0]['polygon'] = [[0.0, 0.0], [1.0, 0.0], [1.0, 0.75], [0.0, 0.75]];
+        $firstPayload['vision_analysis']['scale_candidates'][0]['meters_per_unit'] = 4.0;
+        $firstScaleEvidence = $firstPayload['vision_analysis']['evidence'][0];
+        $firstScaleEvidence['key'] = 'vision-scale-first';
+        $firstPayload['vision_analysis']['evidence'][] = $firstScaleEvidence;
+        $firstScaleCandidate = $firstPayload['vision_analysis']['scale_candidates'][0];
+        $firstScaleCandidate['evidence_ref'] = 'vision-scale-first';
+        $firstPayload['vision_analysis']['scale_candidates'][] = $firstScaleCandidate;
+        $first = new SessionBuildingModelUnitData(
+            $first->unitId, $first->documentId, $first->pageId, $first->type, $first->index,
+            $first->sourceVersion, $first->confidence, $firstPayload,
+        );
+        $second = $this->unkeyedVisionUnit(102, 502, 602, '2', 'second-scale');
+        $secondPayload = $second->payload;
+        $secondPayload['vision_analysis']['elements'][0]['polygon'] = [[0.0, 0.0], [1.0, 0.0], [1.0, 0.8], [0.0, 0.8]];
+        $secondPayload['vision_analysis']['scale_candidates'][0]['meters_per_unit'] = 5.0;
+        $secondScaleEvidence = $secondPayload['vision_analysis']['evidence'][0];
+        $secondScaleEvidence['key'] = 'vision-scale-second';
+        $secondPayload['vision_analysis']['evidence'][] = $secondScaleEvidence;
+        $secondScaleCandidate = $secondPayload['vision_analysis']['scale_candidates'][0];
+        $secondScaleCandidate['evidence_ref'] = 'vision-scale-second';
+        $secondPayload['vision_analysis']['scale_candidates'][] = $secondScaleCandidate;
+        $second = new SessionBuildingModelUnitData(
+            $second->unitId, $second->documentId, $second->pageId, $second->type, $second->index,
+            $second->sourceVersion, $second->confidence, $secondPayload,
+        );
+
+        $model = $bridge->store($context, [$first, $second]);
+
+        self::assertNotNull($model);
+        self::assertSame('confirmed', $model->scaleStatus);
+        self::assertSame(1.0, $model->scaleMetersPerUnit);
+        self::assertSame(2, $model->metrics['floor_count']);
+        self::assertSame(2, $model->metrics['room_count']);
+        self::assertSame([[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]], $model->floors[0]->rooms[0]->polygon);
+        self::assertSame([[0.0, 0.0], [5.0, 0.0], [5.0, 4.0], [0.0, 4.0]], $model->floors[1]->rooms[0]->polygon);
+        self::assertSame(12.0, self::polygonArea($model->floors[0]->rooms[0]->polygon));
+        self::assertSame(20.0, self::polygonArea($model->floors[1]->rooms[0]->polygon));
+        self::assertSame([], $model->assumptions);
+    }
+
+    #[Test]
+    public function extracted_room_label_is_preserved_as_the_room_name(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
+        [$bridge] = $this->bridge();
+        $unit = $this->unkeyedVisionUnit(101, 501, 601, '1', 'named-room');
+        $payload = $unit->payload;
+        $payload['vision_analysis']['elements'][0]['label'] = 'Кухня';
+
+        $model = $bridge->store($context, [new SessionBuildingModelUnitData(
+            $unit->unitId,
+            $unit->documentId,
+            $unit->pageId,
+            $unit->type,
+            $unit->index,
+            $unit->sourceVersion,
+            $unit->confidence,
+            $payload,
+        )]);
+
+        self::assertNotNull($model);
+        self::assertSame('Кухня', $model->floors[0]->rooms[0]->name);
     }
 
     #[Test]
@@ -270,7 +532,7 @@ final class SessionBuildingModelBridgeTest extends TestCase
         self::assertSame(1, $model->metrics['room_count']);
     }
 
-    /** @return array{SessionBuildingModelBridge, BuildingModelRepository} */
+    /** @return array{SessionBuildingModelBridge, BuildingModelRepository, InMemoryEvidenceRepository} */
     private function bridge(): array
     {
         $evidence = new InMemoryEvidenceRepository;
@@ -281,7 +543,7 @@ final class SessionBuildingModelBridgeTest extends TestCase
             new GeometryBuildingModelInputMapper,
             new BuildingModelAssembler,
             $repository,
-        ), $repository];
+        ), $repository, $evidence];
     }
 
     private function visionUnit(): SessionBuildingModelUnitData
@@ -376,5 +638,50 @@ final class SessionBuildingModelBridgeTest extends TestCase
         $payload['vision_analysis']['scale_candidates'][0]['evidence_ref'] = 'vision-page-'.$suffix;
 
         return new SessionBuildingModelUnitData($unitId, $documentId, $pageId, 'sketch', 1, $source, 0.95, $payload);
+    }
+
+    private function withDocumentFloor(SessionBuildingModelUnitData $unit, string $documentName): SessionBuildingModelUnitData
+    {
+        $payload = $unit->payload;
+        $payload['document_name'] = $documentName;
+
+        return new SessionBuildingModelUnitData(
+            $unit->unitId,
+            $unit->documentId,
+            $unit->pageId,
+            $unit->type,
+            $unit->index,
+            $unit->sourceVersion,
+            $unit->confidence,
+            $payload,
+        );
+    }
+
+    private function withExplicitFloor(SessionBuildingModelUnitData $unit, string $floorKey): SessionBuildingModelUnitData
+    {
+        $payload = $unit->payload;
+        $payload['floor_key'] = $floorKey;
+
+        return new SessionBuildingModelUnitData(
+            $unit->unitId,
+            $unit->documentId,
+            $unit->pageId,
+            $unit->type,
+            $unit->index,
+            $unit->sourceVersion,
+            $unit->confidence,
+            $payload,
+        );
+    }
+
+    private static function polygonArea(array $polygon): float
+    {
+        $area = 0.0;
+        foreach ($polygon as $index => $point) {
+            $next = $polygon[($index + 1) % count($polygon)];
+            $area += $point[0] * $next[1] - $next[0] * $point[1];
+        }
+
+        return abs($area) / 2;
     }
 }

@@ -36,7 +36,7 @@ final class WebSocketProductionConfigurationTest extends TestCase
         self::assertStringContainsString('REVERB_INTERNAL_HOST: websockets', $source);
         self::assertStringContainsString('REVERB_INTERNAL_PORT: 8080', $source);
         self::assertStringContainsString('REVERB_INTERNAL_SCHEME: http', $source);
-        self::assertSame(5, substr_count($source, 'environment: *reverb-client-environment'));
+        self::assertSame(7, substr_count($source, 'environment: *reverb-client-environment'));
     }
 
     public function test_deployment_retires_legacy_workers_and_checks_reverb_health(): void
@@ -44,11 +44,13 @@ final class WebSocketProductionConfigurationTest extends TestCase
         $workflow = file_get_contents(dirname(__DIR__, 3).'/.github/workflows/deploy-backend.yml');
 
         self::assertIsString($workflow);
-        self::assertStringContainsString("grep -Eq '^laravel-worker(_[0-9]+|:)'", $workflow);
-        self::assertStringContainsString("supervisorctl stop 'laravel-worker:*'", $workflow);
-        self::assertStringContainsString("pgrep -af '^php /var/www/prohelper/artisan queue:work( |$)'", $workflow);
+        self::assertStringContainsString('stop_legacy_supervisor_processes', $workflow);
+        self::assertStringContainsString('source deploy/backend-runtime-allowlist.sh', $workflow);
+        self::assertStringContainsString('MOST_SUPERVISOR_WRITER_PROGRAM_PATTERN', $workflow);
+        self::assertStringContainsString('/proc/[0-9]*', $workflow);
+        self::assertStringContainsString('MOST backend writer process remains active', $workflow);
         self::assertStringContainsString('REVERB_APP_KEY="${{ secrets.REVERB_APP_KEY }}"', $workflow);
-        self::assertStringContainsString('s|^REVERB_APP_KEY=.*|REVERB_APP_KEY=${REVERB_APP_KEY}|', $workflow);
+        self::assertStringContainsString('upsert_env REVERB_APP_KEY "${REVERB_APP_KEY}"', $workflow);
         self::assertStringContainsString('@fsockopen', $workflow);
     }
 }

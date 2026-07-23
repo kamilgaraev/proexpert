@@ -16,4 +16,15 @@ final class NormativeSearchQueryBuilderTest extends TestCase
             (new NormativeSearchQueryBuilder)->build('Разработка грунта под фундаменты'),
         );
     }
+
+    public function test_generic_construction_words_do_not_crowd_out_the_work_subject(): void
+    {
+        $query = (new NormativeSearchQueryBuilder)->build(
+            'Устройство опалубки фундаментов',
+        );
+
+        self::assertStringNotContainsString('устройство', $query);
+        self::assertStringContainsString('опалубки', $query);
+        self::assertStringContainsString('фундаментов', $query);
+    }
 }

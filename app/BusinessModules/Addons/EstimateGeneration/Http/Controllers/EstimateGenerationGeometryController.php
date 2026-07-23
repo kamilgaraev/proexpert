@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
@@ -89,12 +90,26 @@ final class EstimateGenerationGeometryController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.geometry_not_found'), 404);
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
-        } catch (InvalidArgumentException) {
+        } catch (InvalidArgumentException $exception) {
+            Log::warning('[EstimateGeneration] Geometry confirmation rejected', [
+                'reason' => $exception->getMessage(),
+                'organization_id' => (int) ($request->user()?->current_organization_id ?? 0),
+                'project_id' => (int) $project->getKey(),
+                'session_id' => (int) $session->getKey(),
+                'operations_count' => is_array($request->input('operations')) ? count($request->input('operations')) : 0,
+                'has_scale' => $request->filled('scale'),
+            ]);
+
             return AdminResponse::error(trans_message('estimate_generation.geometry_invalid'), 422);
         } catch (\Throwable $exception) {
             $failureId = bin2hex(random_bytes(8));
             Log::error('[EstimateGeneration] Geometry confirmation failed', [
                 'exception' => $exception,
+                'exception_class' => $exception::class,
+                'exception_message' => $exception->getMessage(),
+                'sql_state' => $exception instanceof QueryException ? ($exception->errorInfo[0] ?? null) : null,
+                'driver_error_code' => $exception instanceof QueryException ? ($exception->errorInfo[1] ?? null) : null,
+                'query_template' => $exception instanceof QueryException ? $exception->getSql() : null,
                 'failure_id' => $failureId,
                 'organization_id' => (int) ($request->user()?->current_organization_id ?? 0),
                 'project_id' => (int) $project->getKey(),

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline;
 
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityCoverageWarning;
 use InvalidArgumentException;
 
 final readonly class PipelineStagePayload
@@ -11,11 +12,11 @@ final readonly class PipelineStagePayload
     private const KEYS = [
         'understand_documents' => ['base_input_version', 'documents', 'documents_count', 'rebuild_section_key'],
         'understand_object' => ['analysis'],
-        'extract_quantities' => ['quantity_learning_hints', 'building_quantities'],
+        'extract_quantities' => ['quantity_learning_hints', 'quantity_coverage_warnings', 'building_quantities'],
         'plan_work_items' => ['object_profile', 'package_plan', 'document_requirements', 'generation_mode', 'regional_context', 'normative_context_pin', 'local_estimates'],
-        'match_normatives' => ['regional_context', 'local_estimates'],
-        'assemble_resources' => ['regional_context', 'local_estimates'],
-        'resolve_prices' => ['regional_context', 'local_estimates'],
+        'match_normatives' => ['regional_context', 'supplementary_materials', 'local_estimates'],
+        'assemble_resources' => ['regional_context', 'supplementary_materials', 'local_estimates'],
+        'resolve_prices' => ['regional_context', 'supplementary_materials', 'local_estimates'],
         'build_draft' => ['draft'],
         'validate_draft' => ['draft', 'requires_review'],
     ];
@@ -50,6 +51,7 @@ final readonly class PipelineStagePayload
     private static function assertPricedWorkItems(array $data): void
     {
         self::assertArray($data['regional_context']);
+        self::assertList($data['supplementary_materials']);
         self::assertList($data['local_estimates']);
     }
 
@@ -84,6 +86,12 @@ final readonly class PipelineStagePayload
     private static function assertExtractedQuantities(array $data): void
     {
         self::assertArray($data['quantity_learning_hints']);
+        self::assertList($data['quantity_coverage_warnings']);
+        foreach ($data['quantity_coverage_warnings'] as $warning) {
+            if (! QuantityCoverageWarning::isValid($warning)) {
+                throw new InvalidArgumentException('Pipeline quantity coverage warning is invalid.');
+            }
+        }
         self::assertArray($data['building_quantities']);
     }
 

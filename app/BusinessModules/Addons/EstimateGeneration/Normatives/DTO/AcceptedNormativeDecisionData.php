@@ -31,6 +31,7 @@ final readonly class AcceptedNormativeDecisionData
         public array $matchReasons,
         public array $warnings,
         public array $evidenceRefs,
+        public array $unpricedAbstractResources,
     ) {}
 
     public static function fromWorkflowResult(NormativeWorkflowResultData $result, array $catalogCandidate): self
@@ -43,6 +44,12 @@ final readonly class AcceptedNormativeDecisionData
                 break;
             }
         }
+        $retrievalMetadata = is_array($catalogCandidate['retrieval_metadata'] ?? null)
+            ? $catalogCandidate['retrieval_metadata']
+            : [];
+        $unpricedAbstractResources = self::abstractResources(
+            $retrievalMetadata['unpriced_abstract_resources'] ?? []
+        );
         $catalogIdentity = $catalogCandidate;
         unset($catalogIdentity['retrieval_metadata']);
         if ($selected === null || ! self::exactKeys($catalogIdentity, self::CATALOG_KEYS)
@@ -75,6 +82,7 @@ final readonly class AcceptedNormativeDecisionData
                     || ! is_numeric($resource['quantity'] ?? null) || (float) $resource['quantity'] < 0) {
                     throw new InvalidArgumentException('accepted_normative_resources_invalid');
                 }
+                self::assertProjectResourceSelection($resource);
                 $hasPositiveQuantity = $hasPositiveQuantity || (float) $resource['quantity'] > 0;
             }
         }
@@ -91,6 +99,7 @@ final readonly class AcceptedNormativeDecisionData
             $result->rerankResult?->confidence ?? min(1.0, max(0.0, $selected->semanticScore ?? $selected->lexicalScore)),
             $result->rerankResult?->explanationCodes ?? ['lexical_match'], [],
             array_values(array_unique([...$selected->sourceEvidence, ...($result->rerankResult?->evidenceRefs ?? [])])),
+            $unpricedAbstractResources,
         );
     }
 
@@ -112,12 +121,126 @@ final readonly class AcceptedNormativeDecisionData
             self::strings($selected['work_composition'] ?? []), $selected['resources'],
             (float) ($selected['score'] ?? 0), (float) ($decision['confidence'] ?? $selected['confidence'] ?? 0),
             self::strings($selected['match_reasons'] ?? []), self::strings($decision['warnings'] ?? []), [],
+            self::abstractResources($selected['unpriced_abstract_resources'] ?? []),
         );
+    }
+
+    private static function abstractResources(mixed $value): array
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            throw new InvalidArgumentException('accepted_normative_abstract_resources_invalid');
+        }
+
+        return array_map(static function (mixed $resource): array {
+            if (! is_array($resource)
+                || ! is_string($resource['resource_code'] ?? null)
+                || ! is_string($resource['name'] ?? null)
+                || ! is_string($resource['unit'] ?? null)
+                || ! is_numeric($resource['quantity'] ?? null)
+                || ($resource['reason'] ?? null) !== 'project_resource_selection_required') {
+                throw new InvalidArgumentException('accepted_normative_abstract_resources_invalid');
+            }
+
+            return [
+                'resource_code' => $resource['resource_code'],
+                'name' => $resource['name'],
+                'unit' => $resource['unit'],
+                'quantity' => (float) $resource['quantity'],
+                'reason' => 'project_resource_selection_required',
+            ];
+        }, $value);
     }
 
     private static function resourceCount(array $resources): int
     {
         return array_sum(array_map(static fn (mixed $items): int => is_array($items) ? count($items) : 0, $resources));
+    }
+
+    /** @param array<string, mixed> $resource */
+    private static function assertProjectResourceSelection(array $resource): void
+    {
+        if (! array_key_exists('project_resource_selection', $resource)) {
+            return;
+        }
+        $selection = $resource['project_resource_selection'];
+        $groupCode = $resource['code'] ?? null;
+        $policy = is_array($selection) ? ($selection['policy'] ?? null) : null;
+        $selectedResourceCode = is_array($selection) ? ($selection['selected_resource_code'] ?? null) : null;
+        $isSemanticSelection = in_array($policy, [
+            'regional_semantic_pipe_hard_attributes_median:v1',
+            'regional_semantic_metal_gutter_family_median:v1',
+            'regional_semantic_hard_attributes_median:v2',
+            'fsbc_semantic_hard_attributes_median:v2',
+            'fsnb_semantic_hard_attributes_median:v2',
+            'regional_semantic_hard_attributes_median:v3',
+            'fsbc_semantic_hard_attributes_median:v3',
+            'fsnb_semantic_hard_attributes_median:v3',
+            'regional_semantic_hard_attributes_median:v4',
+            'fsbc_semantic_hard_attributes_median:v4',
+            'fsnb_semantic_hard_attributes_median:v4',
+        ], true)
+            && self::policyMatchesPriceSource($policy, $selection['price_source'] ?? null)
+            && is_string($selectedResourceCode)
+            && trim($selectedResourceCode) !== '';
+        $isExactGroupSelection = is_string($groupCode)
+            && is_string($selectedResourceCode)
+            && in_array($policy, [
+                'regional_child_median:v1',
+                'fsbc_base_child_median:v1',
+                'fsnb_base_child_median:v1',
+                'regional_residential_converted_child_median:v1',
+                'regional_child_hard_attributes_median:v1',
+                'fsbc_base_child_hard_attributes_median:v1',
+                'fsnb_base_child_hard_attributes_median:v1',
+                'regional_child_hard_attributes_median:v2',
+                'fsbc_base_child_hard_attributes_median:v2',
+                'fsnb_base_child_hard_attributes_median:v2',
+                'fsbc_residential_converted_child_median:v1',
+                'fsnb_2022_residential_converted_child_median:v1',
+            ], true)
+            && self::policyMatchesPriceSource($policy, $selection['price_source'] ?? null)
+            && preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', $selectedResourceCode) === 1;
+        $isConvertedSelection = is_string($policy) && str_contains($policy, '_residential_converted_');
+        $hasValidConversionProvenance = ! $isConvertedSelection || (
+            is_string($selection['conversion_assumption'] ?? null)
+            && trim($selection['conversion_assumption']) !== ''
+            && is_numeric($selection['source_unit_price'] ?? null)
+            && (float) $selection['source_unit_price'] > 0
+            && is_string($selection['source_price_unit'] ?? null)
+            && trim($selection['source_price_unit']) !== ''
+            && is_numeric($selection['conversion_factor'] ?? null)
+            && (float) $selection['conversion_factor'] > 0
+        );
+        if (! is_array($selection)
+            || ! is_string($groupCode)
+            || preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}$/D', $groupCode) !== 1
+            || ($selection['group_code'] ?? null) !== $groupCode
+            || ! ($isExactGroupSelection || $isSemanticSelection)
+            || ! is_string($selection['selected_resource_name'] ?? null)
+            || trim($selection['selected_resource_name']) === ''
+            || ! in_array(($selection['price_source'] ?? null), ['regional_catalog', 'fsbc_base', 'fsnb_base'], true)
+            || ($resource['price_source'] ?? null) !== ($selection['price_source'] ?? null)
+            || ! is_string($selection['price_source_version'] ?? null)
+            || trim($selection['price_source_version']) === ''
+            || ! is_int($selection['candidates_count'] ?? null)
+            || $selection['candidates_count'] <= 0
+            || ! $hasValidConversionProvenance) {
+            throw new InvalidArgumentException('accepted_normative_project_resource_selection_invalid');
+        }
+    }
+
+    private static function policyMatchesPriceSource(mixed $policy, mixed $priceSource): bool
+    {
+        if (! is_string($policy) || ! is_string($priceSource)) {
+            return false;
+        }
+
+        return match ($priceSource) {
+            'regional_catalog' => str_starts_with($policy, 'regional_'),
+            'fsbc_base' => str_starts_with($policy, 'fsbc_'),
+            'fsnb_base' => str_starts_with($policy, 'fsnb_'),
+            default => false,
+        };
     }
 
     private static function record(mixed $value): array

@@ -17,6 +17,10 @@ use Illuminate\Support\Str;
 
 class FileService
 {
+    private const S3_CONNECT_TIMEOUT_SECONDS = 5.0;
+
+    private const S3_REQUEST_TIMEOUT_SECONDS = 60.0;
+
     protected LoggingService $logging;
 
     public function __construct(LoggingService $logging)
@@ -46,6 +50,7 @@ class FileService
             $result = $client->putObject([
                 'Bucket' => $bucket, 'Key' => $path, 'Body' => $body,
                 'ContentType' => $contentType, 'IfNoneMatch' => '*',
+                '@http' => $this->s3HttpOptions(),
             ]);
             $etag = is_string($result['ETag'] ?? null) ? trim($result['ETag'], '"') : null;
             $version = is_string($result['VersionId'] ?? null) ? $result['VersionId'] : null;
@@ -96,7 +101,7 @@ class FileService
             $arguments['VersionId'] = $versionId;
         }
         try {
-            $head = $client->headObject($arguments);
+            $head = $client->headObject([...$arguments, '@http' => $this->s3HttpOptions()]);
         } catch (AwsException $exception) {
             throw $this->versionedAwsException($exception);
         }
@@ -110,7 +115,7 @@ class FileService
         }
         $arguments['VersionId'] = $resolvedVersion;
         try {
-            $object = $client->getObject($arguments);
+            $object = $client->getObject([...$arguments, '@http' => $this->s3HttpOptions()]);
         } catch (AwsException $exception) {
             throw $this->versionedAwsException($exception);
         }
@@ -162,7 +167,11 @@ class FileService
         if (! is_string($bucket) || $bucket === '') {
             throw new \RuntimeException('s3_versioned_read_unavailable');
         }
-        $head = $this->s3Client()->headObject(['Bucket' => $bucket, 'Key' => $path]);
+        $head = $this->s3Client()->headObject([
+            'Bucket' => $bucket,
+            'Key' => $path,
+            '@http' => $this->s3HttpOptions(),
+        ]);
         $size = $head['ContentLength'] ?? null;
         $version = $head['VersionId'] ?? null;
         if (! is_numeric($size) || (int) $size < 1 || ! is_string($version) || trim($version) === '') {
@@ -215,7 +224,7 @@ class FileService
             throw new \RuntimeException('s3_versioned_delete_requires_version');
         }
         $arguments = ['Bucket' => $bucket, 'Key' => $path, 'VersionId' => $versionId];
-        $this->s3Client()->deleteObject($arguments);
+        $this->s3Client()->deleteObject([...$arguments, '@http' => $this->s3HttpOptions()]);
     }
 
     protected function s3Client(): \Aws\S3\S3ClientInterface
@@ -248,7 +257,11 @@ class FileService
         }
 
         if ($versionId === null || trim($versionId) === '') {
-            $head = $client->headObject(['Bucket' => $bucket, 'Key' => $path]);
+            $head = $client->headObject([
+                'Bucket' => $bucket,
+                'Key' => $path,
+                '@http' => $this->s3HttpOptions(),
+            ]);
             $versionId = is_string($head['VersionId'] ?? null) ? trim($head['VersionId']) : null;
         }
         if ($versionId === null || $versionId === '') {
@@ -260,6 +273,7 @@ class FileService
                 'Bucket' => $bucket,
                 'Key' => $path,
                 'VersionId' => $versionId,
+                '@http' => $this->s3HttpOptions(),
                 'Tagging' => [
                     'TagSet' => [['Key' => 'most-module', 'Value' => 'estimate-generation']],
                 ],
@@ -271,6 +285,7 @@ class FileService
                         'Bucket' => $bucket,
                         'Key' => $path,
                         'VersionId' => $versionId,
+                        '@http' => $this->s3HttpOptions(),
                     ]);
                 } catch (\Throwable) {
                 }
@@ -278,6 +293,14 @@ class FileService
 
             throw new \RuntimeException('s3_object_tagging_failed', 0, $exception);
         }
+    }
+
+    private function s3HttpOptions(): array
+    {
+        return [
+            'connect_timeout' => self::S3_CONNECT_TIMEOUT_SECONDS,
+            'timeout' => self::S3_REQUEST_TIMEOUT_SECONDS,
+        ];
     }
 
     private function safeStorageFailureCode(\Throwable $exception): string

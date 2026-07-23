@@ -3,13 +3,13 @@
 namespace App\Console\Commands\Contracts;
 
 use App\Models\Contract;
+use App\Services\Contract\ContractAuditedMutationService;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
  * Команда для пересчета total_amount контрактов с нефиксированной суммой
- * 
+ *
  * Использование:
  * php artisan contracts:recalculate-non-fixed-total --all
  * php artisan contracts:recalculate-non-fixed-total --contract=92
@@ -17,6 +17,11 @@ use Illuminate\Support\Facades\Log;
  */
 class RecalculateNonFixedContractsTotalCommand extends Command
 {
+    public function __construct(private readonly ContractAuditedMutationService $contractMutations)
+    {
+        parent::__construct();
+    }
+
     /**
      * The name and signature of the console command.
      *
@@ -56,7 +61,7 @@ class RecalculateNonFixedContractsTotalCommand extends Command
         // Отключаем Observer'ы при загрузке, чтобы избежать автоматического обновления
         $dispatcher = Contract::getEventDispatcher();
         Contract::unsetEventDispatcher();
-        
+
         try {
             $query = Contract::query()
                 ->where('is_fixed_amount', false)
@@ -66,8 +71,9 @@ class RecalculateNonFixedContractsTotalCommand extends Command
                 $query->where('id', $contractId);
             } elseif ($organizationId) {
                 $query->where('organization_id', $organizationId);
-            } elseif (!$all) {
+            } elseif (! $all) {
                 $this->error('Укажите опцию --contract=ID, --organization=ID или --all');
+
                 return Command::FAILURE;
             }
 
@@ -76,6 +82,7 @@ class RecalculateNonFixedContractsTotalCommand extends Command
 
             if ($totalContracts === 0) {
                 $this->warn('Контракты с нефиксированной суммой не найдены');
+
                 return Command::SUCCESS;
             }
 
@@ -92,17 +99,17 @@ class RecalculateNonFixedContractsTotalCommand extends Command
             foreach ($contracts as $contract) {
                 try {
                     $oldTotalAmount = $contract->total_amount ?? 0;
-                    
+
                     // Рассчитываем сумму вручную для проверки
                     $actsAmount = $contract->performanceActs()
                         ->where('is_approved', true)
                         ->sum('amount') ?? 0;
-                    
+
                     $agreementsAmount = $contract->agreements()
                         ->sum('change_amount') ?? 0;
-                    
+
                     $calculatedTotal = round((float) $actsAmount + (float) $agreementsAmount, 2);
-                    
+
                     // Пересчитываем сумму через метод модели
                     $newTotalAmount = $contract->recalculateTotalAmountForNonFixed();
 
@@ -110,6 +117,7 @@ class RecalculateNonFixedContractsTotalCommand extends Command
                         // Контракт с фиксированной суммой (не должен попасть в выборку, но на всякий случай)
                         $skipped++;
                         $bar->advance();
+
                         continue;
                     }
 
@@ -119,30 +127,36 @@ class RecalculateNonFixedContractsTotalCommand extends Command
                     // Всегда показываем детали для отладки
                     $this->newLine();
                     $this->line("  Контракт #{$contract->id} ({$contract->number}):");
-                    $this->line("    Текущая сумма в БД: " . number_format($oldTotalAmount, 2, '.', ' ') . " руб.");
-                    $this->line("    Рассчитанная сумма: " . number_format($calculatedTotal, 2, '.', ' ') . " руб.");
-                    $this->line("    Сумма одобренных актов: " . number_format($actsAmount, 2, '.', ' ') . " руб.");
-                    $this->line("    Сумма ДС: " . number_format($agreementsAmount, 2, '.', ' ') . " руб.");
+                    $this->line('    Текущая сумма в БД: '.number_format($oldTotalAmount, 2, '.', ' ').' руб.');
+                    $this->line('    Рассчитанная сумма: '.number_format($calculatedTotal, 2, '.', ' ').' руб.');
+                    $this->line('    Сумма одобренных актов: '.number_format($actsAmount, 2, '.', ' ').' руб.');
+                    $this->line('    Сумма ДС: '.number_format($agreementsAmount, 2, '.', ' ').' руб.');
                     $this->line("    Количество одобренных актов: {$contract->performanceActs->where('is_approved', true)->count()}");
                     $this->line("    Количество ДС: {$contract->agreements->count()}");
-                    $this->line("    Разница: " . number_format($difference, 2, '.', ' ') . " руб.");
+                    $this->line('    Разница: '.number_format($difference, 2, '.', ' ').' руб.');
 
                     if ($difference > 0.01) {
-                        if (!$dryRun) {
+                        if (! $dryRun) {
                             // Обновляем контракт напрямую
-                            DB::table('contracts')
-                                ->where('id', $contract->id)
-                                ->update(['total_amount' => $calculatedTotal]);
-                            
+                            $this->contractMutations->update(
+                                $contract,
+                                ['total_amount' => $calculatedTotal],
+                                'maintenance_total_recalculated',
+                                null,
+                                [
+                                    'source_event_id' => 'recalculate_non_fixed:'.(string) $contract->id.':'.hash('sha256', (string) $oldTotalAmount.':'.(string) $calculatedTotal),
+                                ],
+                            );
+
                             // Обновляем значение в модели
                             $contract->total_amount = $calculatedTotal;
                         }
 
                         $updated++;
-                        $this->info("    ✅ Будет обновлено на: " . number_format($calculatedTotal, 2, '.', ' ') . " руб.");
+                        $this->info('    ✅ Будет обновлено на: '.number_format($calculatedTotal, 2, '.', ' ').' руб.');
                     } else {
                         $skipped++;
-                        $this->comment("    ⏭️  Без изменений (разница < 0.01 руб.)");
+                        $this->comment('    ⏭️  Без изменений (разница < 0.01 руб.)');
                     }
                 } catch (\Exception $e) {
                     $errors++;
@@ -189,4 +203,3 @@ class RecalculateNonFixedContractsTotalCommand extends Command
         }
     }
 }
-

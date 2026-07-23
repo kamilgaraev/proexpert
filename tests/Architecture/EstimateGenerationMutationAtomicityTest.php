@@ -40,6 +40,8 @@ final class EstimateGenerationMutationAtomicityTest extends TestCase
         self::assertStringContainsString('$this->completionHook->beforeComplete(', $store);
         self::assertLessThan(strpos($source, 'syncFromDraft'), strpos($source, '->lockForUpdate()'));
         self::assertLessThan(strpos($source, 'syncFromDraft'), strpos($source, 'hash_equals('));
+        self::assertLessThan(strpos($source, 'assertCalculatedPricesFinalized'), strpos($source, 'syncFromDraft'));
+        self::assertLessThan(strpos($source, 'generationCompleted'), strpos($source, 'assertCalculatedPricesFinalized'));
         self::assertLessThan(strpos($source, 'generationCompleted'), strpos($source, 'syncFromDraft'));
     }
 

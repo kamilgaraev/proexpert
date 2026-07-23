@@ -484,6 +484,222 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
         }
     }
 
+    public function test_database_finalizes_typed_supplementary_project_material_with_v4_provenance(): void
+    {
+        $this->requireDisposablePostgres();
+
+        DB::beginTransaction();
+        try {
+            $fixture = $this->fixture();
+            $rule = DB::table('estimate_generation_project_material_rules')
+                ->where('catalog_version', 'residential_project_material:v3')
+                ->where('work_item_key', 'lighting.fixtures')
+                ->sole();
+            $priceId = DB::table('estimate_resource_prices')->insertGetId([
+                'dataset_version_id' => $fixture['dataset_id'],
+                'regional_price_version_id' => null,
+                'region_id' => null,
+                'price_zone_id' => null,
+                'period_id' => null,
+                'resource_code' => ' 59.1.20.03-0798 ',
+                'resource_name' => 'Светильник светодиодный потолочный',
+                'unit' => ' шт ',
+                'base_price' => '100.0000',
+                'price_type' => 'material',
+                'raw_payload' => '{}',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            DB::table('estimate_generation_package_items')->where('id', $fixture['item_id'])->update([
+                'metadata' => json_encode(['specialization_scenario' => [
+                    'work_item_key' => 'lighting.fixtures',
+                    'assumption_code' => 'residential_ceiling_luminaire',
+                ]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+            ]);
+            DB::table('estimate_generation_package_item_project_price_inputs')->insert([
+                'package_item_id' => $fixture['item_id'],
+                'project_material_rule_id' => $rule->id,
+                'resource_price_id' => $priceId,
+                'ordinal' => 1,
+                'selection' => json_encode([
+                    'version' => 'residential_project_material:v3',
+                    'work_item_key' => 'lighting.fixtures',
+                    'assumption_code' => 'residential_led_ceiling_luminaire_18w',
+                    'preferred_resource_code' => '59.1.20.03-0798',
+                    'candidate_pool_version' => 'project_material_candidate_pool:v2',
+                    'candidate_resource_price_ids' => [$priceId],
+                    'selection_policy' => 'exact_code',
+                    'source_unit_price' => '100.0000',
+                    'source_price_unit' => 'шт',
+                    'price_conversion_factor' => '1',
+                    'resource_code' => '59.1.20.03-0798',
+                    'resource_name' => 'Светильник светодиодный потолочный',
+                    'price_unit' => 'pcs',
+                    'price_source' => 'fsnb_base',
+                    'price_source_version' => $fixture['dataset_version_key'],
+                ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            DB::table('estimate_generation_package_items')->where('id', $fixture['item_id'])->update([
+                'metadata' => json_encode(['specialization_scenario' => [
+                    'work_item_key' => 'lighting.fixtures',
+                    'assumption_code' => 'residential_led_ceiling_luminaire_18w',
+                ]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+            ]);
+            self::assertSame(
+                'scenario_assumption_code',
+                DB::scalar('SELECT eg_project_material_price_mismatch_code_v4(?)', [$fixture['item_id']]),
+            );
+            DB::table('estimate_generation_package_items')->where('id', $fixture['item_id'])->update([
+                'metadata' => json_encode(['specialization_scenario' => [
+                    'work_item_key' => 'lighting.fixtures',
+                    'assumption_code' => 'residential_ceiling_luminaire',
+                ]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+            ]);
+            self::assertNull(DB::scalar(
+                'SELECT eg_project_material_price_mismatch_code_v4(?)',
+                [$fixture['item_id']],
+            ));
+
+            DB::select('SELECT eg_finalize_package_item_price(?)', [$fixture['item_id']]);
+            DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
+
+            $item = DB::table('estimate_generation_package_items')->find($fixture['item_id']);
+            $snapshot = json_decode((string) $item->price_snapshot, true, 512, JSON_THROW_ON_ERROR);
+            self::assertSame('325.00', $item->total_cost);
+            self::assertSame('supplementary_project_material:v4', $snapshot['coefficients']['pricing_formula_version']);
+            self::assertSame('250.00', $snapshot['coefficients']['project_material_amount']);
+            self::assertSame($priceId, $snapshot['coefficients']['project_material_evidence'][0]['resource_price_id']);
+            self::assertSame('59.1.20.03-0798', $snapshot['coefficients']['project_material_evidence'][0]['resource_code']);
+            self::assertSame('шт', $snapshot['coefficients']['project_material_evidence'][0]['price_unit']);
+        } finally {
+            DB::rollBack();
+        }
+    }
+
+    public function test_database_semantic_project_material_price_matches_cross_dataset_median_and_regional_priority(): void
+    {
+        $this->requireDisposablePostgres();
+
+        DB::beginTransaction();
+        try {
+            $fixture = $this->fixture();
+            $ruleId = (int) DB::table('estimate_generation_project_material_rules')
+                ->where('catalog_version', 'residential_project_material:v3')
+                ->where('work_item_key', 'lighting.fixtures')
+                ->value('id');
+            $fsbcVersion = strtolower((string) str()->ulid());
+            $fsbcDatasetId = DB::table('estimate_dataset_versions')->insertGetId([
+                'source_type' => 'fsbc', 'version_key' => $fsbcVersion, 'bucket' => 'contract',
+                'prefix' => $fsbcVersion, 'status' => 'parsed', 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            $baseCandidates = [];
+            foreach ([
+                [$fsbcDatasetId, $fsbcVersion, '59.1.20.03-1001', '10.0000'],
+                [$fsbcDatasetId, $fsbcVersion, '59.1.20.03-1002', '20.0000'],
+                [$fixture['dataset_id'], $fixture['dataset_version_key'], '59.1.20.03-1003', '30.0000'],
+                [$fixture['dataset_id'], $fixture['dataset_version_key'], '59.1.20.03-1004', '40.0000'],
+            ] as [$datasetId, $version, $code, $price]) {
+                $baseCandidates[$code] = [
+                    'id' => DB::table('estimate_resource_prices')->insertGetId([
+                        'dataset_version_id' => $datasetId, 'regional_price_version_id' => null,
+                        'region_id' => null, 'price_zone_id' => null, 'period_id' => null,
+                        'resource_code' => $code, 'resource_name' => 'Светильник потолочный', 'unit' => 'шт',
+                        'base_price' => $price, 'price_type' => 'material', 'raw_payload' => '{}',
+                        'created_at' => now(), 'updated_at' => now(),
+                    ]),
+                    'version' => $version,
+                    'price' => $price,
+                ];
+            }
+
+            $finalize = function (string $logicalKey, int $priceId, array $selection) use ($fixture, $ruleId): object {
+                $itemId = $this->unpricedItem($fixture, $logicalKey, 1, null);
+                DB::table('estimate_generation_package_items')->where('id', $itemId)->update([
+                    'metadata' => json_encode(['specialization_scenario' => [
+                        'work_item_key' => 'lighting.fixtures',
+                        'assumption_code' => 'residential_ceiling_luminaire',
+                    ]], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+                ]);
+                DB::table('estimate_generation_package_item_price_inputs')->insert([
+                    'package_item_id' => $itemId, 'norm_resource_id' => $fixture['norm_resource_id'],
+                    'resource_price_id' => $fixture['price_id'], 'unit_conversion_id' => $fixture['conversion_id'],
+                    'ordinal' => 1, 'created_at' => now(), 'updated_at' => now(),
+                ]);
+                DB::table('estimate_generation_package_item_project_price_inputs')->insert([
+                    'package_item_id' => $itemId, 'project_material_rule_id' => $ruleId,
+                    'resource_price_id' => $priceId, 'ordinal' => 1,
+                    'selection' => json_encode($selection, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
+                    'created_at' => now(), 'updated_at' => now(),
+                ]);
+                DB::select('SELECT eg_finalize_package_item_price(?)', [$itemId]);
+                DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
+                DB::statement('SET CONSTRAINTS ALL DEFERRED');
+
+                return DB::table('estimate_generation_package_items')->find($itemId);
+            };
+            $selection = static fn (string $code, string $price, string $source, string $version, array $candidatePriceIds) => [
+                'version' => 'residential_project_material:v3',
+                'work_item_key' => 'lighting.fixtures',
+                'assumption_code' => 'residential_led_ceiling_luminaire_18w',
+                'preferred_resource_code' => '59.1.20.03-0798',
+                'candidate_pool_version' => 'project_material_candidate_pool:v2',
+                'candidate_resource_price_ids' => $candidatePriceIds,
+                'selection_policy' => 'semantic_group_median',
+                'source_unit_price' => $price,
+                'source_price_unit' => 'шт',
+                'price_conversion_factor' => '1',
+                'resource_code' => $code,
+                'resource_name' => 'Светильник потолочный',
+                'price_unit' => 'pcs',
+                'price_source' => $source,
+                'price_source_version' => $version,
+            ];
+
+            $base = $baseCandidates['59.1.20.03-1002'];
+            $baseCandidateIds = array_column($baseCandidates, 'id');
+            sort($baseCandidateIds, SORT_NUMERIC);
+            $baseItem = $finalize('semantic-base-median', $base['id'], $selection(
+                '59.1.20.03-1002', $base['price'], 'fsbc_base', $base['version'], $baseCandidateIds,
+            ));
+            self::assertSame('125.00', $baseItem->total_cost);
+            $this->assertRejected(fn () => DB::table('estimate_resource_prices')
+                ->where('id', $baseCandidates['59.1.20.03-1001']['id'])
+                ->update(['base_price' => '11.0000']));
+            $this->assertRejected(fn () => DB::table('estimate_dataset_versions')
+                ->where('id', $fsbcDatasetId)
+                ->update(['status' => 'failed']));
+
+            $regionalCandidates = [];
+            foreach ([['59.1.20.03-2001', '50.0000'], ['59.1.20.03-2002', '60.0000'], ['59.1.20.03-2003', '70.0000']] as [$code, $price]) {
+                $regionalCandidates[$code] = DB::table('estimate_resource_prices')->insertGetId([
+                    'dataset_version_id' => $fixture['price_dataset_id'],
+                    'regional_price_version_id' => $fixture['version_id'],
+                    'region_id' => $fixture['region_id'], 'price_zone_id' => $fixture['zone_id'],
+                    'period_id' => $fixture['period_id'], 'resource_code' => $code,
+                    'resource_name' => 'Светильник потолочный', 'unit' => 'шт', 'base_price' => $price,
+                    'price_type' => 'material', 'raw_payload' => '{}', 'created_at' => now(), 'updated_at' => now(),
+                ]);
+            }
+            $regionalCandidateIds = array_values($regionalCandidates);
+            sort($regionalCandidateIds, SORT_NUMERIC);
+            $regionalItem = $finalize('semantic-regional-median', $regionalCandidates['59.1.20.03-2002'], $selection(
+                '59.1.20.03-2002',
+                '60.0000',
+                'regional_catalog',
+                (string) DB::table('estimate_regional_price_versions')->where('id', $fixture['version_id'])->value('version_key'),
+                $regionalCandidateIds,
+            ));
+            $regionalSnapshot = json_decode((string) $regionalItem->price_snapshot, true, 512, JSON_THROW_ON_ERROR);
+            self::assertSame('225.00', $regionalItem->total_cost);
+            self::assertSame('regional_catalog', $regionalSnapshot['coefficients']['project_material_evidence'][0]['price_source']);
+        } finally {
+            DB::rollBack();
+        }
+    }
+
     private function serviceDraft(array $f, string $quantity): array
     {
         return ['local_estimates' => [[

@@ -9,6 +9,8 @@ use RuntimeException;
 
 final readonly class EloquentSessionBaseInputVersionResolver implements SessionBaseInputVersionResolver
 {
+    public function __construct(private EvidenceAwarePipelineBaseInputVersionResolver $baseInputVersions) {}
+
     public function resolve(EstimateGenerationSession $session): string
     {
         $model = new EstimateGenerationSession;
@@ -16,17 +18,11 @@ final readonly class EloquentSessionBaseInputVersionResolver implements SessionB
         $current = $model->newQuery()
             ->whereKey($session->getKey())
             ->lockForUpdate()
-            ->with([
-                'documents.facts',
-                'documents.drawingElements',
-                'documents.quantityTakeoffs',
-                'documents.scopeInferences',
-            ])
             ->first();
         if (! $current instanceof EstimateGenerationSession) {
             throw new RuntimeException('Estimate generation session is unavailable.');
         }
 
-        return PipelineBaseInputVersion::fromSession($current);
+        return $this->baseInputVersions->fromSession($current);
     }
 }

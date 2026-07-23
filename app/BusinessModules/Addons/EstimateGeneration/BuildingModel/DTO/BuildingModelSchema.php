@@ -60,6 +60,20 @@ final class BuildingModelSchema
         return trim($value);
     }
 
+    public static function nullableRoomLabel(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (! is_string($value) || trim($value) === '' || strlen($value) > 100 || ! mb_check_encoding($value, 'UTF-8')
+            || preg_match('/^[\p{L}\p{N}\p{Zs}\p{P}№]+$/u', trim($value)) !== 1
+            || str_contains($value, '<') || str_contains($value, '>') || str_contains($value, '@')) {
+            throw new InvalidArgumentException('Room name is invalid.');
+        }
+
+        return trim($value);
+    }
+
     public static function confidence(mixed $value): float
     {
         if (! is_int($value) && ! is_float($value)) {

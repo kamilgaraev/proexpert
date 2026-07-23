@@ -8,13 +8,18 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 
 final class LegalArchiveDocument extends Model
 {
+    use SoftDeletes;
+
     protected $fillable = [
         'organization_id',
         'primary_project_id',
@@ -22,6 +27,11 @@ final class LegalArchiveDocument extends Model
         'document_number',
         'document_type',
         'status',
+        'type_profile_code',
+        'lifecycle_status',
+        'approval_status',
+        'signature_status',
+        'confidentiality_level',
         'direction',
         'source_system',
         'counterparty_name',
@@ -32,13 +42,31 @@ final class LegalArchiveDocument extends Model
         'legal_significance_status',
         'edo_status',
         'one_c_status',
-        'retention_policy',
-        'retention_basis',
-        'retention_started_at',
-        'retention_until',
-        'legal_hold',
         'archived_at',
         'archived_by_user_id',
+        'owner_user_id',
+        'responsible_user_id',
+        'current_primary_version_id',
+        'lock_version',
+        'structured_fields',
+        'activated_at',
+        'completed_at',
+        'terminated_at',
+        'source_type',
+        'source_id',
+        'source_idempotency_key',
+        'source_create_status',
+        'source_request_fingerprint',
+        'source_create_failure_fingerprint',
+        'source_create_failed_at',
+        'create_operation_id',
+        'create_operation_key',
+        'source_create_attempt_token',
+        'source_create_attempt_count',
+        'source_create_started_at',
+        'source_create_heartbeat_at',
+        'source_create_lease_expires_at',
+        'source_create_retry_action',
         'created_by_user_id',
         'updated_by_user_id',
         'metadata',
@@ -52,8 +80,23 @@ final class LegalArchiveDocument extends Model
         'retention_until' => 'datetime',
         'legal_hold' => 'boolean',
         'archived_at' => 'datetime',
+        'lock_version' => 'integer',
+        'structured_fields' => 'array',
+        'activated_at' => 'datetime',
+        'completed_at' => 'datetime',
+        'terminated_at' => 'datetime',
         'metadata' => 'array',
+        'source_create_failed_at' => 'datetime',
+        'source_create_attempt_count' => 'integer',
+        'source_create_started_at' => 'datetime',
+        'source_create_heartbeat_at' => 'datetime',
+        'source_create_lease_expires_at' => 'datetime',
     ];
+
+    protected function confidentialityLevel(): Attribute
+    {
+        return Attribute::get(static fn (mixed $value): string => is_string($value) && $value !== '' ? $value : 'internal');
+    }
 
     public function scopeForOrganization(Builder $query, int $organizationId): Builder
     {
@@ -70,9 +113,21 @@ final class LegalArchiveDocument extends Model
         return $this->belongsTo(Project::class, 'primary_project_id');
     }
 
-    public function currentVersion(): HasOne
+    public function currentVersion(): BelongsTo
     {
-        return $this->hasOne(LegalArchiveDocumentVersion::class, 'document_id')->where('is_current', true);
+        return $this->belongsTo(LegalArchiveDocumentVersion::class, 'current_primary_version_id');
+    }
+
+    public function currentPrimaryVersion(): BelongsTo
+    {
+        return $this->belongsTo(LegalArchiveDocumentVersion::class, 'current_primary_version_id')
+            ->whereExists(static function (QueryBuilder $query): void {
+                $query->selectRaw('1')
+                    ->from('legal_archive_documents as owner')
+                    ->whereColumn('owner.id', 'legal_archive_document_versions.document_id')
+                    ->whereColumn('owner.organization_id', 'legal_archive_document_versions.organization_id')
+                    ->whereColumn('owner.current_primary_version_id', 'legal_archive_document_versions.id');
+            });
     }
 
     public function versions(): HasMany
@@ -80,13 +135,78 @@ final class LegalArchiveDocument extends Model
         return $this->hasMany(LegalArchiveDocumentVersion::class, 'document_id')->orderByDesc('created_at');
     }
 
+    public function files(): HasMany
+    {
+        return $this->hasMany(LegalArchiveDocumentFile::class, 'document_id')->orderBy('sort_order');
+    }
+
     public function links(): HasMany
     {
         return $this->hasMany(LegalArchiveDocumentLink::class, 'document_id')->orderBy('link_type');
     }
 
+    public function workflowInstances(): HasMany
+    {
+        return $this->hasMany(LegalWorkflowInstance::class, 'document_id')->orderByDesc('id');
+    }
+
+    public function latestWorkflowInstance(): HasOne
+    {
+        return $this->hasOne(LegalWorkflowInstance::class, 'document_id')->latestOfMany('id');
+    }
+
+    public function parties(): HasMany
+    {
+        return $this->hasMany(LegalDocumentParty::class, 'document_id')->orderBy('id');
+    }
+
+    public function partySnapshotSets(): HasMany
+    {
+        return $this->hasMany(LegalDocumentPartySnapshotSet::class, 'document_id')->orderBy('id');
+    }
+
+    public function accessGrants(): HasMany
+    {
+        return $this->hasMany(LegalDocumentAccessGrant::class, 'document_id')->orderByDesc('id');
+    }
+
+    public function comments(): HasMany
+    {
+        return $this->hasMany(LegalDocumentComment::class, 'document_id')->orderBy('id');
+    }
+
+    public function obligations(): HasMany
+    {
+        return $this->hasMany(LegalDocumentObligation::class, 'document_id')->orderBy('due_at');
+    }
+
+    public function signatureRequests(): HasMany
+    {
+        return $this->hasMany(LegalSignatureRequest::class, 'document_id')->orderByDesc('id');
+    }
+
+    public function signatures(): HasMany
+    {
+        return $this->hasMany(LegalDocumentSignature::class, 'document_id')->orderByDesc('id');
+    }
+
+    public function editorSessions(): HasMany
+    {
+        return $this->hasMany(LegalDocumentEditorSession::class, 'document_id')->orderByDesc('created_at');
+    }
+
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by_user_id');
+    }
+
+    public function owner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'owner_user_id');
+    }
+
+    public function responsible(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'responsible_user_id');
     }
 }

@@ -14,7 +14,7 @@ class NormativeContextPinResolver
         private readonly ?ConnectionInterface $database = null,
     ) {}
 
-    public function resolve(array $regionalContext, array $workIntents = []): array
+    public function resolve(array $regionalContext, array $workIntents = [], ?callable $progress = null): array
     {
         $date = $this->date($regionalContext);
         $values = [
@@ -52,7 +52,9 @@ class NormativeContextPinResolver
         if ($intents === []) {
             return ['status' => 'review_required', 'blocking_issues' => ['normative_work_intents_not_pinned']];
         }
-        $approved = $this->source?->resolveForIntents($requested, $intents);
+        $approved = $this->source instanceof ProgressAwareNormativeContextPinSource
+            ? $this->source->resolveForIntentsWithProgress($requested, $intents, $progress ?? static fn (): null => null)
+            : $this->source?->resolveForIntents($requested, $intents);
         if ($approved === null || $approved->catalogCandidates === [] || $approved->catalogContentHash === null) {
             return ['status' => 'review_required', 'blocking_issues' => ['normative_resource_context_not_approved']];
         }
@@ -134,7 +136,7 @@ class NormativeContextPinResolver
         return null;
     }
 
-    /** @return list<array{search_text: string, unit: string, code?: string|null, normative_section?: string|null}>|null */
+    /** @return list<array{work_item_key?: string, search_text: string, unit: string, code?: string|null, material?: string|null, action?: string|null, scope?: string|null, system?: string|null, object?: string|null, object_type?: string|null, normative_section?: string|null, normative_sections?: list<string>}>|null */
     private function intents(array $workIntents): ?array
     {
         $resolved = [];
@@ -144,17 +146,69 @@ class NormativeContextPinResolver
             }
             $search = trim((string) ($intent['search_text'] ?? ''));
             $unit = trim((string) ($intent['unit'] ?? ''));
+            $workItemKey = isset($intent['work_item_key']) ? trim((string) $intent['work_item_key']) : null;
             $code = isset($intent['code']) ? trim((string) $intent['code']) : null;
+            $material = isset($intent['material']) ? trim((string) $intent['material']) : null;
+            $action = isset($intent['action']) ? trim((string) $intent['action']) : null;
+            $scope = isset($intent['scope']) ? trim((string) $intent['scope']) : null;
+            $system = isset($intent['system']) ? trim((string) $intent['system']) : null;
+            $object = isset($intent['object']) ? trim((string) $intent['object']) : null;
+            $objectType = isset($intent['object_type']) ? trim((string) $intent['object_type']) : null;
+            $specializationScenario = $this->boundedSpecialization($intent['specialization_scenario'] ?? null);
+            $specializationEvidence = $this->boundedSpecialization($intent['specialization_evidence'] ?? null);
             $normativeSection = isset($intent['normative_section']) ? trim((string) $intent['normative_section']) : null;
+            $normativeSections = is_array($intent['normative_sections'] ?? null)
+                ? array_values(array_unique(array_filter(array_map(
+                    static fn (mixed $section): string => is_string($section) ? trim($section) : '',
+                    $intent['normative_sections'],
+                ))))
+                : [];
+            if ($normativeSections === [] && $normativeSection !== null && $normativeSection !== '') {
+                $normativeSections = [$normativeSection];
+            }
             if ($search === '' || mb_strlen($search) > 500 || $unit === '' || mb_strlen($unit) > 32
                 || ($code !== null && mb_strlen($code) > 80)
-                || ($normativeSection !== null && mb_strlen($normativeSection) > 32)) {
+                || ($material !== null && mb_strlen($material) > 160)
+                || ($action !== null && mb_strlen($action) > 80)
+                || ($scope !== null && mb_strlen($scope) > 80)
+                || ($system !== null && mb_strlen($system) > 80)
+                || ($object !== null && mb_strlen($object) > 80)
+                || ($objectType !== null && mb_strlen($objectType) > 80)
+                || ($normativeSection !== null && mb_strlen($normativeSection) > 32)
+                || count($normativeSections) > 8
+                || ($workItemKey !== null && preg_match('/^[A-Za-z0-9:._-]{1,120}$/D', $workItemKey) !== 1)
+                || array_filter($normativeSections, static fn (string $section): bool => mb_strlen($section) > 32) !== []) {
                 continue;
             }
-            $key = mb_strtolower($search).'|'.mb_strtolower($unit).'|'.mb_strtolower((string) $code).'|'.mb_strtolower((string) $normativeSection);
+            $key = implode('|', [
+                ...array_map(mb_strtolower(...), [
+                    $search, $unit, (string) $code, (string) $material, (string) $action, (string) $scope,
+                    (string) $system, (string) $object, implode(',', $normativeSections),
+                    (string) $objectType,
+                    hash('sha256', json_encode([$specializationScenario, $specializationEvidence], JSON_THROW_ON_ERROR)),
+                ]),
+                (string) $workItemKey,
+            ]);
             $resolved[$key] = ['search_text' => $search, 'unit' => $unit, 'code' => $code];
-            if ($normativeSection !== null && $normativeSection !== '') {
-                $resolved[$key]['normative_section'] = $normativeSection;
+            if ($workItemKey !== null) {
+                $resolved[$key]['work_item_key'] = $workItemKey;
+            }
+            foreach (['material' => $material, 'action' => $action, 'scope' => $scope, 'system' => $system, 'object' => $object, 'object_type' => $objectType] as $field => $value) {
+                if ($value !== null && $value !== '') {
+                    $resolved[$key][$field] = $value;
+                }
+            }
+            if ($normativeSections !== []) {
+                $resolved[$key]['normative_sections'] = $normativeSections;
+                if (count($normativeSections) === 1) {
+                    $resolved[$key]['normative_section'] = $normativeSections[0];
+                }
+            }
+            if ($specializationScenario !== null) {
+                $resolved[$key]['specialization_scenario'] = $specializationScenario;
+            }
+            if ($specializationEvidence !== null) {
+                $resolved[$key]['specialization_evidence'] = $specializationEvidence;
             }
             if (count($resolved) > 64) {
                 return null;
@@ -162,5 +216,17 @@ class NormativeContextPinResolver
         }
 
         return array_values($resolved);
+    }
+
+    /** @return array<mixed>|null */
+    private function boundedSpecialization(mixed $value): ?array
+    {
+        if (! is_array($value)) {
+            return null;
+        }
+
+        $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        return is_string($encoded) && strlen($encoded) <= 16_384 ? $value : null;
     }
 }

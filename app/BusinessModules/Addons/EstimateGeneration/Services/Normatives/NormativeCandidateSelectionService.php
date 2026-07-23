@@ -11,7 +11,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPac
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -26,6 +28,8 @@ class NormativeCandidateSelectionService
         protected EstimateGenerationPackagePersistenceService $packagePersistenceService,
         protected EstimateGenerationLearningRecorder $learningRecorder,
         protected AdvanceEstimateGeneration $advanceGeneration,
+        protected NormativeCandidateSelectionHardGate $selectionHardGate,
+        protected DraftReadinessProjector $readinessProjector = new DraftReadinessProjector,
     ) {}
 
     /**
@@ -33,6 +37,23 @@ class NormativeCandidateSelectionService
      */
     public function select(EstimateGenerationSession $session, string $workItemKey, int $normId, bool $allowCatalogSelection = false): array
     {
+        return DB::transaction(function () use ($session, $workItemKey, $normId, $allowCatalogSelection): array {
+            $lockedSession = EstimateGenerationSession::query()
+                ->whereKey($session->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            return $this->selectLocked($lockedSession, $workItemKey, $normId, $allowCatalogSelection);
+        }, 3);
+    }
+
+    /** @return array<string, mixed> */
+    protected function selectLocked(
+        EstimateGenerationSession $session,
+        string $workItemKey,
+        int $normId,
+        bool $allowCatalogSelection,
+    ): array {
         $draft = $session->draft_payload ?? [];
         $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
         $found = false;
@@ -55,6 +76,9 @@ class NormativeCandidateSelectionService
                         'scope_type' => $localEstimate['scope_type'] ?? null,
                         'local_estimate_title' => $localEstimate['title'] ?? null,
                         'section_title' => $section['title'] ?? null,
+                        'object_type' => data_get($draft, 'object_profile.object_type')
+                            ?? data_get($session->analysis_payload, 'object_profile.object_type')
+                            ?? data_get($session->input_payload, 'object_profile.object_type'),
                         'source_refs' => $section['source_refs'] ?? $localEstimate['source_refs'] ?? [],
                         'regional_context' => $regionalContext,
                         'normative_dataset_version' => is_array($regionalContext)
@@ -63,6 +87,15 @@ class NormativeCandidateSelectionService
                         'selection_source' => $allowCatalogSelection ? 'catalog_search' : 'offered_candidate',
                     ];
 
+                    $confirmedCurrentSelection = $this->confirmedCurrentPricedSelection($workItem, $normId);
+                    if ($confirmedCurrentSelection !== null) {
+                        $learningSelection = [$originalWorkItem, $confirmedCurrentSelection, $context];
+                        $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex] = $confirmedCurrentSelection;
+                        $updated = true;
+
+                        break 3;
+                    }
+
                     $match = $this->matcher->matchSelectedNorm($normId, $workItem, $context);
 
                     if ($match === null) {
@@ -70,6 +103,8 @@ class NormativeCandidateSelectionService
                             'norm_id' => [$this->message('estimate_generation.normative_candidate_not_available')],
                         ]);
                     }
+
+                    $this->assertMatchPassesHardGate($workItem, $context, $match);
 
                     $workItem = $this->resourceAssemblyService->applySelectedNormativeMatch($workItem, $match, $context);
                     $workItem = $this->pricingService->price([$workItem], is_array($regionalContext) ? $regionalContext : [])[0];
@@ -94,7 +129,7 @@ class NormativeCandidateSelectionService
             ]);
         }
 
-        $draft = $this->validationService->validate($draft);
+        $draft = $this->readinessProjector->project($this->validationService->validate($draft));
         if (! $this->packagePersistenceService->syncWorkItemPackageFromDraft($session, $draft, $workItemKey)) {
             $this->packagePersistenceService->syncFromDraft($session, $draft);
         }
@@ -112,6 +147,22 @@ class NormativeCandidateSelectionService
         ]);
 
         return $draft;
+    }
+
+    /**
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $context
+     * @param  array<string, mixed>  $match
+     */
+    protected function assertMatchPassesHardGate(array $workItem, array $context, array $match): void
+    {
+        if ($this->selectionHardGate->rejectionReasons($workItem, $context, $match) === []) {
+            return;
+        }
+
+        throw $this->validationException([
+            'norm_id' => [$this->message('estimate_generation.normative_candidate_not_available')],
+        ]);
     }
 
     /**
@@ -156,6 +207,40 @@ class NormativeCandidateSelectionService
         ]);
     }
 
+    /**
+     * @param  array<string, mixed>  $workItem
+     * @return array<string, mixed>|null
+     */
+    protected function confirmedCurrentPricedSelection(array $workItem, int $normId): ?array
+    {
+        $currentMatch = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
+        $hasPricedResources = array_filter([
+            $workItem['materials'] ?? [],
+            $workItem['labor'] ?? [],
+            $workItem['machinery'] ?? [],
+            $workItem['other_resources'] ?? [],
+        ], static fn (mixed $resources): bool => is_array($resources) && $resources !== []) !== [];
+
+        if (
+            (int) ($currentMatch['norm_id'] ?? $currentMatch['id'] ?? 0) !== $normId
+            || (string) ($currentMatch['status'] ?? '') !== 'matched'
+            || (string) ($workItem['pricing_status'] ?? '') !== 'calculated'
+            || ($workItem['pricing_blocker'] ?? null) !== null
+            || (float) ($workItem['quantity'] ?? 0) <= 0
+            || (float) ($workItem['total_cost'] ?? 0) <= 0
+            || ! $hasPricedResources
+        ) {
+            return null;
+        }
+
+        $workItem['normative_match'] = [
+            ...$currentMatch,
+            'selected_by_user' => true,
+        ];
+
+        return $workItem;
+    }
+
     protected function message(string $key): string
     {
         return trans_message($key);
@@ -174,7 +259,8 @@ class NormativeCandidateSelectionService
      */
     private function draftRequiresReview(array $draft): bool
     {
-        return (int) data_get($draft, 'quality_summary.normative_items.requires_review', 0) > 0
+        return (array) data_get($draft, 'readiness_summary.blocking_issues', []) !== []
+            || (int) data_get($draft, 'quality_summary.normative_items.requires_review', 0) > 0
             || (int) data_get($draft, 'quality_summary.quantity_review_work_items', 0) > 0
             || (int) data_get($draft, 'quality_summary.not_calculated_work_items', 0) > 0
             || (int) data_get($draft, 'quality_summary.safe_norm_required_work_items', 0) > 0

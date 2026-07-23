@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationAction;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateScopeMetadataProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReadinessResult;
 
 use function trans_message;
@@ -23,8 +24,8 @@ final class BuildSessionSnapshot
         'estimate_review_required' => [EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Cancel],
         'ready_to_apply' => [EstimateGenerationAction::Apply, EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Cancel],
         'failed' => [EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel, EstimateGenerationAction::Archive],
-        'applied' => [EstimateGenerationAction::Export, EstimateGenerationAction::Archive],
-        'cancelled' => [EstimateGenerationAction::Archive],
+        'applied' => [EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Archive],
+        'cancelled' => [EstimateGenerationAction::Generate, EstimateGenerationAction::Archive],
     ];
 
     /** @var array<string, string> */
@@ -66,6 +67,7 @@ final class BuildSessionSnapshot
         );
         $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
         $metrics = is_array($readinessSummary['metrics'] ?? null) ? $readinessSummary['metrics'] : [];
+        $budgetScope = is_array($draft['budget_scope'] ?? null) ? $draft['budget_scope'] : [];
 
         return new SessionSnapshotData(
             id: (int) $session->getKey(),
@@ -93,6 +95,7 @@ final class BuildSessionSnapshot
             )->toArray(),
             canGenerate: (bool) ($readinessSummary['can_generate'] ?? false),
             canApply: (bool) ($readinessSummary['can_apply'] ?? false),
+            scopeSummary: (new EstimateScopeMetadataProjector)->project($draft, $budgetScope),
         );
     }
 
@@ -164,14 +167,20 @@ final class BuildSessionSnapshot
 
         return [
             'action' => $action->value,
-            'label' => trans_message('estimate_generation.action_'.$action->value),
+            'label' => trans_message(
+                $action === EstimateGenerationAction::Generate
+                    && $session->status === EstimateGenerationStatus::Applied
+                        ? 'estimate_generation.action_regenerate'
+                        : 'estimate_generation.action_'.$action->value,
+            ),
             'method' => $method,
             'endpoint' => $base.$suffix,
             'requires_confirmation' => in_array($action, [
                 EstimateGenerationAction::Apply,
                 EstimateGenerationAction::Cancel,
                 EstimateGenerationAction::Archive,
-            ], true),
+            ], true) || ($action === EstimateGenerationAction::Generate
+                && $session->status === EstimateGenerationStatus::Applied),
         ];
     }
 
@@ -181,7 +190,7 @@ final class BuildSessionSnapshot
         if ($status === EstimateGenerationStatus::ProcessingDocuments) {
             return 'wait_documents';
         }
-        if (in_array($status, [EstimateGenerationStatus::Cancelled, EstimateGenerationStatus::Archived], true)) {
+        if ($status === EstimateGenerationStatus::Archived) {
             return null;
         }
         if ($status === EstimateGenerationStatus::Applied) {

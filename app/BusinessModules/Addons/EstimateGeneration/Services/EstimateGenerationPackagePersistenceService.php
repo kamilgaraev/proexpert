@@ -4,20 +4,32 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateItemMetadataFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageDraftWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
-class EstimateGenerationPackagePersistenceService
+class EstimateGenerationPackagePersistenceService implements TargetedPackageDraftWriter
 {
+    private const NORMATIVE_PRICING_FORMULA_VERSION = 'semantic_project_resource:v8';
+
+    private const PROJECT_MATERIAL_PRICING_FORMULA_VERSION = 'supplementary_project_material:v4';
+
+    private const PRICING_CALCULATION_IDENTITY = 'authoritative_package_pricing:v1';
+
     public function __construct(
         private readonly ?AuthoritativePackagePricingGuard $pricingGuard = null,
         private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
         private readonly ?SessionBaseInputVersionResolver $baseInputVersions = null,
+        private readonly GeneratedEstimateItemMetadataFactory $itemMetadata = new GeneratedEstimateItemMetadataFactory,
     ) {}
 
     /**
@@ -50,6 +62,35 @@ class EstimateGenerationPackagePersistenceService
         });
     }
 
+    /** @param array<string, mixed> $localEstimate */
+    public function syncPackageFromDraft(
+        EstimateGenerationSession $session,
+        string $packageKey,
+        array $localEstimate,
+        string $sourceInputVersion,
+    ): void {
+        if (! is_string($localEstimate['key'] ?? null) || ! hash_equals($localEstimate['key'], $packageKey)) {
+            throw new \InvalidArgumentException('Targeted package key does not match its draft.');
+        }
+
+        DB::transaction(function () use ($session, $packageKey, $localEstimate, $sourceInputVersion): void {
+            $inputVersion = $this->baseInputVersions?->resolve($session);
+            if (! $this->sourceInputCurrent($sourceInputVersion, $inputVersion)) {
+                throw new \DomainException('Targeted package source input version is stale.');
+            }
+            $package = EstimateGenerationPackage::query()
+                ->where('session_id', $session->getKey())
+                ->where('key', $packageKey)
+                ->lockForUpdate()
+                ->first();
+            if (! $package instanceof EstimateGenerationPackage) {
+                throw new \DomainException('Targeted package does not exist.');
+            }
+
+            $this->syncExistingPackage($package, $localEstimate, $inputVersion, $sourceInputVersion);
+        });
+    }
+
     /**
      * @param  array<string, mixed>  $draft
      */
@@ -78,6 +119,71 @@ class EstimateGenerationPackagePersistenceService
 
             return false;
         });
+    }
+
+    /** @param array<string, mixed> $draft */
+    public function assertCalculatedPricesFinalized(EstimateGenerationSession $session, array $draft): void
+    {
+        $expected = [];
+        foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
+            if (! is_array($localEstimate)) {
+                continue;
+            }
+            $packageKey = $this->packageKey($localEstimate, (int) $localIndex);
+            foreach ($this->workItems($localEstimate) as $workIndex => $workItem) {
+                if ((string) ($workItem['item_type'] ?? 'priced_work') !== 'priced_work'
+                    || ! in_array((string) ($workItem['pricing_status'] ?? ''), ['calculated', 'calculated_review_required'], true)) {
+                    continue;
+                }
+                $logicalKey = (string) ($workItem['key'] ?? $packageKey.'.item.'.($workIndex + 1));
+                $expected[$packageKey.'|'.$logicalKey] = $this->hasProjectMaterialSelection($workItem)
+                    ? self::PROJECT_MATERIAL_PRICING_FORMULA_VERSION
+                    : self::NORMATIVE_PRICING_FORMULA_VERSION;
+            }
+        }
+        if ($expected === []) {
+            return;
+        }
+
+        $persisted = EstimateGenerationPackageItem::query()
+            ->select('estimate_generation_package_items.*', 'estimate_generation_packages.key as package_key')
+            ->join('estimate_generation_packages', 'estimate_generation_packages.id', '=', 'estimate_generation_package_items.package_id')
+            ->where('estimate_generation_packages.session_id', $session->id)
+            ->whereIn('estimate_generation_packages.key', array_values(array_unique(array_map(
+                static fn (string $key): string => explode('|', $key, 2)[0],
+                array_keys($expected),
+            ))))
+            ->latestLogicalRevisions()
+            ->get();
+        foreach ($persisted as $item) {
+            $identity = (string) $item->getAttribute('package_key').'|'.(string) ($item->logical_key ?? $item->key);
+            if (! isset($expected[$identity])) {
+                continue;
+            }
+            if ($item->pricing_finalized_at !== null
+                && (float) ($item->total_cost ?? 0) > 0
+                && data_get($item->price_snapshot, 'coefficients.pricing_formula_version') === $expected[$identity]) {
+                unset($expected[$identity]);
+            }
+        }
+
+        if ($expected !== []) {
+            throw new \DomainException('Calculated draft prices were not finalized by the authoritative pricing boundary.');
+        }
+    }
+
+    /** @param array<string, mixed> $workItem */
+    private function hasProjectMaterialSelection(array $workItem): bool
+    {
+        foreach (['materials', 'labor', 'machinery', 'other_resources'] as $group) {
+            foreach ($workItem[$group] ?? [] as $resource) {
+                if (is_array($resource) && is_array($resource['project_material_selection'] ?? null)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -156,6 +262,9 @@ class EstimateGenerationPackagePersistenceService
                     'generated_from' => 'estimate_generation_v2',
                     'input_version' => $inputVersion,
                     'source_input_version' => is_string($sourceInputVersion) ? $sourceInputVersion : null,
+                    'coverage_warnings' => is_array($localEstimate['coverage_warnings'] ?? null)
+                        ? array_values(array_filter($localEstimate['coverage_warnings'], 'is_array'))
+                        : [],
                 ],
                 'sort_order' => ($localIndex + 1) * 100,
                 'finished_at' => now(),
@@ -173,6 +282,56 @@ class EstimateGenerationPackagePersistenceService
             $this->appendItemRevision($package, $workItem, $workIndex);
         }
 
+        $this->supersedeMissingItemRevisions($package, $workItems);
+
+        $this->refreshPackagePricingState($package);
+    }
+
+    /** @param array<string, mixed> $localEstimate */
+    private function syncExistingPackage(
+        EstimateGenerationPackage $package,
+        array $localEstimate,
+        string $inputVersion,
+        string $sourceInputVersion,
+    ): void {
+        $workItems = $this->estimateWorkItems($this->workItems($localEstimate));
+        $quality = $this->packageQuality($localEstimate, $workItems);
+        $itemCounters = $this->itemCounters($workItems);
+        $package->forceFill([
+            'input_version' => $inputVersion,
+            'title' => (string) ($localEstimate['title'] ?? 'Локальная смета'),
+            'scope_type' => (string) ($localEstimate['scope_type'] ?? 'custom'),
+            'status' => $this->packageStatus($quality),
+            'generation_stage' => 'quality_check',
+            'generation_progress' => 100,
+            'target_items_min' => (int) ($localEstimate['target_items_min'] ?? 0),
+            'target_items_max' => (int) ($localEstimate['target_items_max'] ?? 0),
+            'actual_items_count' => $itemCounters['total_items_count'],
+            'totals' => [
+                'total_cost' => $this->workItemsTotal($workItems),
+                ...$itemCounters,
+            ],
+            'quality_summary' => $quality,
+            'assumptions' => $localEstimate['assumptions'] ?? [],
+            'source_refs' => $localEstimate['source_refs'] ?? [],
+            'metadata' => [
+                'generated_from' => 'estimate_generation_v2',
+                'input_version' => $inputVersion,
+                'source_input_version' => $sourceInputVersion,
+                'coverage_warnings' => is_array($localEstimate['coverage_warnings'] ?? null)
+                    ? array_values(array_filter($localEstimate['coverage_warnings'], 'is_array'))
+                    : [],
+            ],
+            'finished_at' => now(),
+            'failed_at' => null,
+            'cancelled_at' => null,
+            'last_error_code' => null,
+        ])->save();
+
+        foreach ($workItems as $workIndex => $workItem) {
+            $this->appendItemRevision($package, $workItem, $workIndex);
+        }
+        $this->supersedeMissingItemRevisions($package, $workItems);
         $this->refreshPackagePricingState($package);
     }
 
@@ -194,7 +353,7 @@ class EstimateGenerationPackagePersistenceService
         $aggregate = DB::query()->fromSub($latestIds, 'latest')
             ->join('estimate_generation_package_items as item', 'item.id', '=', 'latest.id')
             ->where('latest.revision_rank', 1)
-            ->selectRaw('COUNT(*) AS total_items_count')
+            ->selectRaw("SUM(CASE WHEN item.item_type NOT IN ('operation', 'resource_note', 'review_note') THEN 1 ELSE 0 END) AS total_items_count")
             ->selectRaw("SUM(CASE WHEN item.item_type = 'priced_work' AND item.pricing_finalized_at IS NOT NULL THEN 1 ELSE 0 END) AS priced_items_count")
             ->selectRaw("SUM(CASE WHEN item.item_type = 'priced_work' AND item.pricing_finalized_at IS NULL THEN 1 ELSE 0 END) AS unfinalized_items_count")
             ->selectRaw("COALESCE(SUM(CASE WHEN item.item_type = 'priced_work' AND item.pricing_finalized_at IS NOT NULL THEN item.total_cost ELSE 0 END), 0) AS total_cost")
@@ -230,6 +389,67 @@ class EstimateGenerationPackagePersistenceService
         ])->save();
     }
 
+    /**
+     * @param  array<int, array<string, mixed>>  $workItems
+     */
+    private function supersedeMissingItemRevisions(EstimateGenerationPackage $package, array $workItems): void
+    {
+        EstimateGenerationPackage::query()->whereKey($package->id)->lockForUpdate()->firstOrFail();
+        $activeKeys = array_fill_keys(array_map(
+            fn (array $workItem, int $index): string => (string) ($workItem['key'] ?? $package->key.'.item.'.($index + 1)),
+            $workItems,
+            array_keys($workItems),
+        ), true);
+        $latestItems = EstimateGenerationPackageItem::query()
+            ->where('package_id', $package->id)
+            ->latestLogicalRevisions()
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($latestItems as $latest) {
+            $logicalKey = (string) ($latest->logical_key ?? $latest->key);
+            if (isset($activeKeys[$logicalKey]) || in_array($latest->item_type, EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true)) {
+                continue;
+            }
+
+            EstimateGenerationPackageItem::query()->create([
+                'package_id' => $package->id,
+                'key' => $logicalKey.'#r'.((int) $latest->revision + 1),
+                'logical_key' => $logicalKey,
+                'revision' => (int) $latest->revision + 1,
+                'supersedes_item_id' => $latest->id,
+                'parent_key' => $latest->parent_key,
+                'level' => (int) $latest->level,
+                'item_type' => 'operation',
+                'name' => $latest->name,
+                'unit' => null,
+                'quantity' => null,
+                'quantity_basis' => [],
+                'price_source' => null,
+                'price_snapshot' => null,
+                'quantity_evidence_id' => null,
+                'quantity_evidence_fingerprint' => null,
+                'estimate_norm_id' => null,
+                'region_id' => null,
+                'price_zone_id' => null,
+                'period_id' => null,
+                'regional_price_version_id' => null,
+                'pricing_finalized_at' => null,
+                'normative_status' => null,
+                'normative_confidence' => null,
+                'unit_price' => '0.000000',
+                'direct_cost' => '0.00',
+                'overhead_cost' => '0.00',
+                'profit_cost' => '0.00',
+                'total_cost' => '0.00',
+                'resources' => [],
+                'flags' => [],
+                'metadata' => ['superseded_by_regeneration' => true],
+                'sort_order' => (int) $latest->sort_order,
+            ]);
+        }
+    }
+
     private function appendItemRevision(EstimateGenerationPackage $package, array $workItem, int $index): void
     {
         EstimateGenerationPackage::query()->whereKey($package->id)->lockForUpdate()->firstOrFail();
@@ -240,7 +460,7 @@ class EstimateGenerationPackagePersistenceService
             ->orderByDesc('revision')->orderByDesc('id')->lockForUpdate()->first();
         $revision = max(1, (int) ($latest?->revision ?? 0) + 1);
         $pricing = $this->authoritativePricing($package, $workItem, $logicalKey);
-        if ($latest !== null && $pricing !== null && $this->samePricingIdentity($latest, $pricing)) {
+        if ($latest !== null && $pricing !== null && $this->samePricingIdentity($package, $latest, $pricing)) {
             return;
         }
         $payload = $this->itemPayload($package, $workItem, $index);
@@ -275,12 +495,157 @@ class EstimateGenerationPackagePersistenceService
                 'updated_at' => now(),
             ]);
         }
-        DB::select('SELECT public.eg_finalize_package_item_price(?)', [$item->id]);
+        foreach ($pricing['project_material_inputs'] as $ordinal => $input) {
+            DB::table('estimate_generation_package_item_project_price_inputs')->insert([
+                'package_item_id' => $item->id,
+                'ordinal' => $ordinal + 1,
+                'resource_price_id' => $input['resource_price_id'],
+                'project_material_rule_id' => $input['project_material_rule_id'],
+                'selection' => json_encode($input['selection'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        $this->reportPricingInputCardinalityMismatch($item, $pricing['inputs'], $workItem);
+        $this->reportPricingInputContractMismatch($item);
+        try {
+            DB::select('SELECT public.eg_finalize_package_item_price(?)', [$item->id]);
+        } catch (QueryException $exception) {
+            Log::warning('estimate_generation.pricing_finalization_rejected', [
+                'package_item_id' => $item->id,
+                'estimate_norm_id' => $item->estimate_norm_id,
+                'logical_key' => $item->logical_key,
+                'message' => $exception->getMessage(),
+            ]);
+
+            throw $exception;
+        }
     }
 
-    /** @param array{item: array<string, mixed>, inputs: list<array<string, int|null>>} $pricing */
-    private function samePricingIdentity(EstimateGenerationPackageItem $latest, array $pricing): bool
+    /** @param list<array<string, int|null>> $inputs @param array<string, mixed> $workItem */
+    private function reportPricingInputCardinalityMismatch(
+        EstimateGenerationPackageItem $item,
+        array $inputs,
+        array $workItem,
+    ): void {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+        $expectedIds = DB::table('estimate_norm_resources')
+            ->where('estimate_norm_id', $item->estimate_norm_id)
+            ->where('quantity', '>', 0)
+            ->where('resource_type', '<>', 'summary')
+            ->orderBy('id')
+            ->pluck('id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+        $actualIds = array_map(static fn (array $input): int => (int) $input['norm_resource_id'], $inputs);
+        sort($actualIds, SORT_NUMERIC);
+
+        if ($expectedIds === $actualIds) {
+            return;
+        }
+
+        Log::warning('estimate_generation.pricing_input_cardinality_mismatch', [
+            'package_item_id' => $item->id,
+            'estimate_norm_id' => $item->estimate_norm_id,
+            'norm_code' => data_get($workItem, 'normative_match.code'),
+            'work_name' => $workItem['name'] ?? null,
+            'expected_count' => count($expectedIds),
+            'actual_count' => count($actualIds),
+            'missing_norm_resource_ids' => array_values(array_diff($expectedIds, $actualIds)),
+            'unexpected_norm_resource_ids' => array_values(array_diff($actualIds, $expectedIds)),
+        ]);
+    }
+
+    private function reportPricingInputContractMismatch(EstimateGenerationPackageItem $item): void
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
+        $mismatches = DB::table('estimate_generation_package_item_price_inputs as inputs')
+            ->join('estimate_norm_resources as resources', 'resources.id', '=', 'inputs.norm_resource_id')
+            ->join('estimate_resource_prices as prices', 'prices.id', '=', 'inputs.resource_price_id')
+            ->leftJoin('estimate_generation_unit_conversions as conversions', 'conversions.id', '=', 'inputs.unit_conversion_id')
+            ->leftJoin(
+                'estimate_generation_pinned_abstract_resource_conversions as abstract_conversions',
+                'abstract_conversions.id',
+                '=',
+                'inputs.pinned_abstract_resource_conversion_id',
+            )
+            ->leftJoin('estimate_regional_price_versions as versions', 'versions.id', '=', 'prices.regional_price_version_id')
+            ->where('inputs.package_item_id', $item->id)
+            ->where(function ($query) use ($item): void {
+                $query->where('resources.estimate_norm_id', '<>', $item->estimate_norm_id)
+                    ->orWhereRaw(
+                        "CASE WHEN resources.resource_code ~ '^[0-9]{2}\\.[0-9]\\.[0-9]{2}\\.[0-9]{2}$' ".
+                        "THEN prices.resource_code !~ ('^'||replace(resources.resource_code, '.', '\\\\.')||'-[0-9]{4}$') ".
+                        'ELSE prices.resource_code IS DISTINCT FROM resources.resource_code END',
+                    )
+                    ->orWhere('prices.region_id', '<>', $item->region_id)
+                    ->orWhere('prices.price_zone_id', '<>', $item->price_zone_id)
+                    ->orWhere('prices.period_id', '<>', $item->period_id)
+                    ->orWhere('prices.regional_price_version_id', '<>', $item->regional_price_version_id)
+                    ->orWhere('versions.status', '<>', 'active')
+                    ->orWhereNull('prices.base_price')
+                    ->orWhere('prices.base_price', '<=', 0)
+                    ->orWhere(function ($unit) {
+                        $unit->whereColumn('prices.unit', '<>', 'resources.unit')
+                            ->where(function ($conversion) {
+                                $conversion->whereNull('conversions.id')
+                                    ->orWhereColumn('conversions.from_unit', '<>', 'resources.unit')
+                                    ->orWhereColumn('conversions.to_unit', '<>', 'prices.unit')
+                                    ->orWhere('conversions.factor', '<=', 0);
+                            });
+                    })
+                    ->orWhere(function ($unit) {
+                        $unit->whereColumn('prices.unit', '=', 'resources.unit')
+                            ->whereNotNull('conversions.id');
+                    });
+            })
+            ->orderBy('inputs.ordinal')
+            ->get([
+                'inputs.ordinal', 'resources.id as norm_resource_id', 'resources.resource_code as norm_resource_code',
+                'resources.unit as norm_unit', 'prices.id as price_id', 'prices.resource_code as price_resource_code',
+                'prices.unit as price_unit', 'prices.region_id', 'prices.price_zone_id', 'prices.period_id',
+                'prices.regional_price_version_id', 'prices.base_price', 'versions.status as version_status',
+                'conversions.id as conversion_id', 'conversions.from_unit', 'conversions.to_unit', 'conversions.factor',
+                'inputs.pinned_abstract_resource_conversion_id', 'abstract_conversions.rule_key as abstract_conversion_rule_key',
+                'abstract_conversions.version as abstract_conversion_rule_version',
+            ]);
+
+        if ($mismatches->isNotEmpty()) {
+            Log::warning('estimate_generation.pricing_input_contract_mismatch', [
+                'package_item_id' => $item->id,
+                'estimate_norm_id' => $item->estimate_norm_id,
+                'context' => [
+                    'region_id' => $item->region_id,
+                    'price_zone_id' => $item->price_zone_id,
+                    'period_id' => $item->period_id,
+                    'regional_price_version_id' => $item->regional_price_version_id,
+                ],
+                'inputs' => $mismatches->map(static fn (object $input): array => (array) $input)->all(),
+            ]);
+        }
+    }
+
+    /** @param array{item: array<string, mixed>, inputs: list<array<string, int|null>>, project_material_inputs: list<array<string, mixed>>, formula_version: string} $pricing */
+    private function samePricingIdentity(
+        EstimateGenerationPackage $package,
+        EstimateGenerationPackageItem $latest,
+        array $pricing,
+    ): bool {
+        $metadata = is_array($latest->metadata) ? $latest->metadata : [];
+        if (! is_string($package->input_version)
+            || ! is_string($metadata['source_input_version'] ?? null)
+            || ! hash_equals($package->input_version, $metadata['source_input_version'])
+            || ($metadata['pricing_calculation_identity'] ?? null) !== self::PRICING_CALCULATION_IDENTITY) {
+            return false;
+        }
+        if (data_get($latest->price_snapshot, 'coefficients.pricing_formula_version') !== $pricing['formula_version']) {
+            return false;
+        }
         foreach (['quantity_evidence_id', 'quantity_evidence_fingerprint', 'estimate_norm_id', 'region_id', 'price_zone_id', 'period_id', 'regional_price_version_id'] as $column) {
             if ((string) $latest->getAttribute($column) !== (string) ($pricing['item'][$column] ?? null)) {
                 return false;
@@ -294,13 +659,35 @@ class EstimateGenerationPackagePersistenceService
                 'unit_conversion_id' => $input->unit_conversion_id === null ? null : (int) $input->unit_conversion_id,
             ])->all();
 
-        return $stored === $pricing['inputs'];
+        if ($stored !== $pricing['inputs']) {
+            return false;
+        }
+
+        $projectMaterials = DB::table('estimate_generation_package_item_project_price_inputs')
+            ->where('package_item_id', $latest->id)
+            ->orderBy('ordinal')
+            ->get(['resource_price_id', 'project_material_rule_id', 'selection'])
+            ->map(static fn (object $input): array => [
+                'resource_price_id' => (int) $input->resource_price_id,
+                'project_material_rule_id' => (int) $input->project_material_rule_id,
+                'selection' => is_string($input->selection)
+                    ? json_decode($input->selection, true, flags: JSON_THROW_ON_ERROR)
+                    : (array) $input->selection,
+            ])->all();
+
+        return CanonicalPipelineJson::encode($projectMaterials)
+            === CanonicalPipelineJson::encode($pricing['project_material_inputs']);
     }
 
-    /** @return array{item: array<string, mixed>, inputs: list<array<string, int|null>>}|null */
+    /** @return array{item: array<string, mixed>, inputs: list<array<string, int|null>>, project_material_inputs: list<array<string, mixed>>, formula_version: string}|null */
     private function authoritativePricing(EstimateGenerationPackage $package, array $workItem, string $logicalKey): ?array
     {
         if ((string) ($workItem['item_type'] ?? 'priced_work') !== 'priced_work') {
+            return null;
+        }
+        $pricingStatus = $workItem['pricing_status'] ?? null;
+        if (($workItem['pricing_blocker'] ?? null) !== null
+            || (is_string($pricingStatus) && ! in_array($pricingStatus, ['calculated', 'calculated_review_required'], true))) {
             return null;
         }
         $snapshot = is_array($workItem['price_snapshot'] ?? null) ? $workItem['price_snapshot'] : [];
@@ -338,6 +725,16 @@ class EstimateGenerationPackagePersistenceService
         if ($inputs === null) {
             return null;
         }
+        $projectMaterialInputs = $this->pricingGuard->projectMaterialInputs(
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $session->id,
+            $evidenceSourceVersion,
+            $workItem,
+        );
+        if ($projectMaterialInputs === null) {
+            return null;
+        }
 
         return ['item' => [
             'price_snapshot' => null,
@@ -352,7 +749,13 @@ class EstimateGenerationPackagePersistenceService
             'quantity_evidence_fingerprint' => $evidenceFingerprint,
             'estimate_norm_id' => $normId,
             ...$context,
-        ], 'inputs' => $inputs];
+        ],
+            'inputs' => $inputs,
+            'project_material_inputs' => $projectMaterialInputs,
+            'formula_version' => $projectMaterialInputs === []
+                ? self::NORMATIVE_PRICING_FORMULA_VERSION
+                : self::PROJECT_MATERIAL_PRICING_FORMULA_VERSION,
+        ];
     }
 
     private function positiveInt(mixed $value): ?int
@@ -592,6 +995,7 @@ class EstimateGenerationPackagePersistenceService
     private function itemPayload(EstimateGenerationPackage $package, array $workItem, int $index): array
     {
         $workComposition = $this->workComposition($workItem);
+        $quantityCalculation = $this->itemMetadata->quantityCalculation($workItem);
 
         return [
             'package_id' => $package->id,
@@ -602,10 +1006,7 @@ class EstimateGenerationPackagePersistenceService
             'name' => (string) ($workItem['name'] ?? 'Работа'),
             'unit' => $workItem['unit'] ?? null,
             'quantity' => isset($workItem['quantity']) ? (string) BigDecimal::of((string) $workItem['quantity']) : null,
-            'quantity_basis' => [
-                'description' => $workItem['quantity_basis'] ?? null,
-                'formula' => $workItem['quantity_formula'] ?? null,
-            ],
+            'quantity_basis' => $quantityCalculation,
             'price_source' => $workItem['price_source'] ?? null,
             'price_snapshot' => $workItem['price_snapshot'] ?? null,
             'normative_status' => $workItem['normative_match']['status'] ?? null,
@@ -637,8 +1038,20 @@ class EstimateGenerationPackagePersistenceService
                 'work_category' => $workItem['work_category'] ?? null,
                 'confidence' => $workItem['confidence'] ?? null,
                 ...($workItem['metadata'] ?? []),
+                'specialization_scenario' => is_array($workItem['specialization_scenario'] ?? null)
+                    ? $workItem['specialization_scenario']
+                    : (is_array($workItem['metadata']['specialization_scenario'] ?? null)
+                        ? $workItem['metadata']['specialization_scenario']
+                        : null),
+                'quantity_evidence' => is_array($workItem['quantity_evidence'] ?? null)
+                    ? $workItem['quantity_evidence']
+                    : null,
+                'quantity_calculation' => $quantityCalculation,
+                'applied_price' => $this->itemMetadata->appliedPrice($workItem),
                 'work_composition' => $workComposition,
                 'composition_items_count' => count($workComposition),
+                'source_input_version' => $package->input_version,
+                'pricing_calculation_identity' => self::PRICING_CALCULATION_IDENTITY,
             ],
             'sort_order' => ($index + 1) * 100,
         ];

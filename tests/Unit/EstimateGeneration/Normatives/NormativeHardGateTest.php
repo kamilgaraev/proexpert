@@ -54,6 +54,7 @@ final class NormativeHardGateTest extends TestCase
             new DateTimeImmutable('2026-01-01'), ['doc:1'],
         );
         $candidate = $this->candidate([
+            'name' => 'Разработка грунта экскаваторами под фундаменты',
             'canonicalUnit' => '1000 м3', 'unitDimension' => null, 'material' => null,
             'technology' => null, 'structure' => null, 'normativeSection' => null,
             'objectType' => 'residential', 'regionCode' => null, 'validFrom' => null,
@@ -81,6 +82,23 @@ final class NormativeHardGateTest extends TestCase
         ])]);
 
         self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
+    }
+
+    public function test_candidate_must_belong_to_one_of_all_allowed_sections(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'foundation.concrete', 'Бетонирование фундаментов', 'm3', 'volume', '',
+            '', '', '', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'], ['01', '06'],
+        );
+
+        $set = (new NormativeHardGate)->filter($intent, [
+            $this->candidate(['id' => 'allowed', 'canonicalUnit' => 'm3', 'unitDimension' => 'volume', 'normativeSection' => '06-01']),
+            $this->candidate(['id' => 'foreign', 'canonicalUnit' => 'm3', 'unitDimension' => 'volume', 'normativeSection' => '09-01']),
+        ]);
+
+        self::assertSame(['allowed'], array_map(static fn ($row): string => $row->id, $set->candidates));
+        self::assertSame(['normative_section_mismatch'], $set->rejected[0]->reasonCodes);
     }
 
     public function test_house_and_residential_object_types_are_compatible(): void
@@ -124,6 +142,241 @@ final class NormativeHardGateTest extends TestCase
         self::assertSame(['unit_mismatch', 'material_mismatch'], $set->rejected[0]->reasonCodes);
         self::assertSame('candidate-1', $set->rejected[0]->candidate->id);
         self::assertNotEmpty($set->rejected[0]->evidence);
+    }
+
+    #[DataProvider('semanticIncompatibilities')]
+    public function test_semantically_foreign_normative_is_rejected_before_reranking(
+        string $work,
+        string $action,
+        string $candidateName,
+    ): void {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'work-semantic', $work, 'm3', 'volume', '', $action, '', '',
+            'residential', 'v1', 'published', '78', new DateTimeImmutable('2026-01-01'), ['doc:1'],
+        );
+        $candidate = $this->candidate([
+            'name' => $candidateName,
+            'canonicalUnit' => 'm3',
+            'unitDimension' => 'volume',
+            'material' => null,
+            'technology' => null,
+            'structure' => null,
+            'normativeSection' => null,
+            'objectType' => null,
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame([], $set->candidates);
+        self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
+    }
+
+    public static function semanticIncompatibilities(): array
+    {
+        return [
+            'temporary fence is not grounding' => [
+                'Устройство временного ограждения строительной площадки',
+                'fence_installation',
+                'Прокладка заземляющего проводника открыто по строительным основаниям',
+            ],
+            'foundation concrete is not reactor work' => [
+                'Бетонирование ленточного фундамента',
+                'concreting',
+                'Устройство строительных конструкций атомного реактора',
+            ],
+            'backfill is not excavation' => [
+                'Обратная засыпка пазух фундамента',
+                'backfill',
+                'Разработка грунта экскаваторами в котлованах',
+            ],
+            'wall masonry is not clay insulation' => [
+                'Кладка наружных стен из газобетонных блоков',
+                'masonry',
+                'Боковая изоляция стен и фундаментов глиной',
+            ],
+        ];
+    }
+
+    public function test_semantically_matching_normative_remains_available_for_reranking(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'work-semantic', 'Кладка наружных стен из газобетонных блоков', 'm3', 'volume',
+            '', 'masonry', '', '', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'],
+        );
+        $candidate = $this->candidate([
+            'name' => 'Кладка стен из газобетонных блоков',
+            'canonicalUnit' => 'm3',
+            'unitDimension' => 'volume',
+            'material' => null,
+            'technology' => null,
+            'structure' => null,
+            'normativeSection' => null,
+            'objectType' => null,
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
+    }
+
+    public function test_generic_normative_title_can_be_confirmed_by_its_work_composition(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'work-composition', 'Кладка наружных стен из газобетонных блоков', 'm3', 'volume',
+            '', 'masonry', '', '', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'],
+        );
+        $candidate = $this->candidate([
+            'name' => 'Устройство конструкций здания',
+            'canonicalUnit' => 'm3', 'unitDimension' => 'volume',
+            'material' => null, 'technology' => null, 'structure' => null,
+            'normativeSection' => null, 'objectType' => null,
+            'workComposition' => ['Кладка наружных стен из газобетонных блоков'],
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
+    }
+
+    public function test_strong_action_is_not_inferred_from_work_composition(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'work-cable', 'Прокладка кабельных линий', 'm', 'length',
+            '', 'cable_installation', '', '', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'],
+        );
+        $candidate = $this->candidate([
+            'name' => 'Трубопровод стальной 219 мм',
+            'canonicalUnit' => 'm', 'unitDimension' => 'length',
+            'material' => null, 'technology' => null, 'structure' => null,
+            'normativeSection' => null, 'objectType' => null,
+            'workComposition' => ['Прокладка кабеля в защитной трубе'],
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame([], $set->candidates);
+        self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
+    }
+
+    public function test_residential_pipe_rejects_industrial_diameter_at_hard_gate(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'water-pipe', 'Прокладка труб водоснабжения', 'm', 'length',
+            '', 'pipe_layout', 'engineering', '16', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'], ['16'],
+        );
+        $candidate = $this->candidate([
+            'name' => 'Прокладка трубопроводов водоснабжения диаметром 200 мм',
+            'canonicalUnit' => 'm', 'unitDimension' => 'length',
+            'material' => null, 'technology' => null, 'structure' => null,
+            'normativeSection' => '16', 'objectType' => null,
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame([], $set->candidates);
+        self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
+    }
+
+    public function test_explicitly_requested_normative_code_cannot_bypass_semantic_safety(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'work-explicit', 'Устройство временного ограждения', 'm', 'length',
+            '', 'fence_installation', '', '', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'], [], '09-01-001-01',
+        );
+        $candidate = $this->candidate([
+            'code' => '09-01-001-01', 'name' => 'Специальная проектная норма',
+            'canonicalUnit' => 'm', 'unitDimension' => 'length',
+            'material' => null, 'technology' => null, 'structure' => null,
+            'normativeSection' => null, 'objectType' => null,
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame([], $set->candidates);
+        self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
+    }
+
+    public function test_signed_residential_scenario_accepts_its_exact_lexically_matching_norm(): void
+    {
+        $scenario = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog)
+            ->issue('foundation.prep', 'residential');
+        self::assertIsArray($scenario);
+        $intent = new WorkIntentData(
+            1, 2, 3, 'foundation.prep', 'устройство бетонной подготовки фундаментов общего назначения', 'm3', 'volume',
+            '', 'concreting', 'foundation', '06', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'], ['06'], (string) $scenario['normative_rate_code'],
+            specializationScenario: $scenario,
+        );
+        $candidate = $this->candidate([
+            'code' => '06-01-001-01',
+            'name' => 'Устройство бетонной подготовки и фундаментов общего назначения: Устройство бетонной подготовки',
+            'canonicalUnit' => '100 m3',
+            'unitDimension' => 'volume',
+            'material' => null,
+            'technology' => null,
+            'structure' => null,
+            'normativeSection' => '06-01',
+            'objectType' => null,
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
+        self::assertSame([], $set->rejected);
+    }
+
+    public function test_work_system_is_used_by_semantic_safety_gate(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'heating-pipe', 'Прокладка труб отопления', 'm', 'length',
+            '', 'pipe_layout', 'engineering', '16', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'], [], null, 'heating', 'pipe',
+        );
+        $candidate = $this->candidate([
+            'name' => 'Прокладка в траншеях трубопроводов из чугунных канализационных труб диаметром 50 мм',
+            'canonicalUnit' => 'm', 'unitDimension' => 'length',
+            'material' => null, 'technology' => null, 'structure' => null,
+            'normativeSection' => '16', 'objectType' => null,
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame([], $set->candidates);
+        self::assertContains('semantic_mismatch', $set->rejected[0]->reasonCodes);
+    }
+
+    public function test_explicit_facade_material_reaches_semantic_safety_gate(): void
+    {
+        $intent = new WorkIntentData(
+            1, 2, 3, 'facade-finish', 'Отделка фасада', 'm2', 'area',
+            'fiber_cement', 'general_work', 'facade', '15', 'residential', 'v1', 'published', '78',
+            new DateTimeImmutable('2026-01-01'), ['doc:1'], ['15'],
+            specializationEvidence: [[
+                'text' => 'Фасадные плиты: фиброцемент',
+                'source' => 'document',
+                'evidence_refs' => ['doc:1'],
+            ]],
+        );
+        $candidate = $this->candidate([
+            'name' => 'Облицовка фасадов фиброцементными плитами',
+            'canonicalUnit' => 'm2',
+            'unitDimension' => 'area',
+            'material' => null,
+            'technology' => null,
+            'structure' => null,
+            'normativeSection' => '15-01',
+            'objectType' => null,
+        ]);
+
+        $set = (new NormativeHardGate)->filter($intent, [$candidate]);
+
+        self::assertSame(['candidate-1'], array_map(static fn ($row): string => $row->id, $set->candidates));
+        self::assertSame([], $set->rejected);
     }
 
     private function intent(): WorkIntentData

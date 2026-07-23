@@ -19,6 +19,7 @@ class NormativeUnitNormalizerTest extends TestCase
         $this->assertSame(['piece', 'шт', 1.0], $this->unitTuple('шт'));
         $this->assertSame(['piece', 'шт', 1.0], $this->unitTuple('точка'));
         $this->assertSame(['piece', 'шт', 1.0], $this->unitTuple('компл'));
+        $this->assertSame(['power', 'кВт', 100.0], $this->unitTuple('100 кВт'));
     }
 
     public function test_incompatible_dimensions_have_no_safe_quantity_factor(): void
@@ -49,10 +50,12 @@ class NormativeUnitNormalizerTest extends TestCase
         $this->assertTrue(NormativeUnitNormalizer::compatible('kg', 'кг'));
         $this->assertTrue(NormativeUnitNormalizer::compatible('100 м³', 'м3'));
         $this->assertTrue(NormativeUnitNormalizer::compatible('100 пог. м', 'м'));
+        $this->assertTrue(NormativeUnitNormalizer::compatible('kw', '100 кВт'));
         $this->assertSame(0.001, NormativeUnitNormalizer::quantityFactor('м3', '1000 м³'));
         $this->assertSame(0.01, NormativeUnitNormalizer::quantityFactor('м2', '100 м²'));
         $this->assertSame(0.01, NormativeUnitNormalizer::quantityFactor('м3', '100 м³'));
         $this->assertSame(0.01, NormativeUnitNormalizer::quantityFactor('м', '100 пог. м'));
+        $this->assertSame(0.01, NormativeUnitNormalizer::quantityFactor('kw', '100 кВт'));
         $this->assertSame(1000.0, NormativeUnitNormalizer::quantityFactor('тыс. шт', 'шт'));
         $this->assertSame(0.1, NormativeUnitNormalizer::quantityFactor('0,1 т', 'т'));
     }

@@ -9,9 +9,35 @@ use PHPUnit\Framework\TestCase;
 
 class ConstructionSemanticParserTest extends TestCase
 {
+    public function test_parser_propagates_consistent_visual_roof_type(): void
+    {
+        $documents = array_map(static fn (int $id): array => [
+            'id' => $id,
+            'filename' => 'facade-'.$id.'.jpg',
+            'status' => 'ready',
+            'quality' => ['level' => 'good', 'score' => 0.95, 'flags' => []],
+            'extracted_text' => '',
+            'facts_summary' => [
+                'document_understanding' => ['role_for_estimation' => 'quantity_source'],
+                'roof_type' => 'pitched',
+                'zones' => [],
+                'engineering_systems' => [],
+                'conflicts' => [],
+            ],
+            'facts' => [],
+        ], [31, 32]);
+
+        $analysis = (new ConstructionSemanticParser)->parse([
+            'description' => 'Индивидуальный жилой дом',
+        ], $documents);
+
+        self::assertSame('pitched', $analysis['document_context']['facts_summary']['roof_type']);
+        self::assertSame('pitched', (new \App\BusinessModules\Addons\EstimateGeneration\Services\RoofTypeResolver)->resolve($analysis));
+    }
+
     public function test_parser_preserves_confirmed_object_dimensions_and_construction_type(): void
     {
-        $analysis = (new ConstructionSemanticParser())->parse([
+        $analysis = (new ConstructionSemanticParser)->parse([
             'description' => 'Дом по эскизу',
             'construction_type' => 'new_construction',
             'floors' => 2,
@@ -25,7 +51,7 @@ class ConstructionSemanticParserTest extends TestCase
 
     public function test_parser_detects_house_prompt_without_fake_sheet(): void
     {
-        $parser = new ConstructionSemanticParser();
+        $parser = new ConstructionSemanticParser;
 
         $analysis = $parser->parse([
             'description' => $this->housePrompt(),
@@ -56,7 +82,7 @@ class ConstructionSemanticParserTest extends TestCase
 
     public function test_parser_extracts_mixed_office_warehouse_prompt_as_separate_scopes(): void
     {
-        $parser = new ConstructionSemanticParser();
+        $parser = new ConstructionSemanticParser;
 
         $analysis = $parser->parse([
             'description' => $this->mixedOfficeWarehousePrompt(),
@@ -97,7 +123,7 @@ class ConstructionSemanticParserTest extends TestCase
 
     public function test_parser_uses_trusted_ocr_facts_when_manual_description_is_empty(): void
     {
-        $parser = new ConstructionSemanticParser();
+        $parser = new ConstructionSemanticParser;
 
         $analysis = $parser->parse([
             'description' => '',
@@ -149,7 +175,7 @@ class ConstructionSemanticParserTest extends TestCase
 
     public function test_parser_keeps_explicit_house_type_when_document_mentions_storage_process(): void
     {
-        $parser = new ConstructionSemanticParser();
+        $parser = new ConstructionSemanticParser;
 
         $analysis = $parser->parse([
             'description' => 'Хочу получить подробную смету на частный дом',
@@ -183,9 +209,39 @@ class ConstructionSemanticParserTest extends TestCase
         $this->assertNotContains('structural', $scopeTypes);
     }
 
+    public function test_parser_prioritizes_manual_residential_type_over_incidental_document_object_terms(): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse([
+            'description' => 'Индивидуальный жилой дом площадью 180 м2.',
+        ], [[
+            'id' => 80,
+            'filename' => 'house-specification.pdf',
+            'status' => 'ready',
+            'quality' => ['level' => 'good', 'score' => 0.95, 'flags' => []],
+            'extracted_text' => 'Служебные обозначения: офис заказчика, склад материалов.',
+            'facts_summary' => [
+                'zones' => [],
+                'engineering_systems' => [],
+                'conflicts' => [],
+            ],
+            'facts' => [],
+        ]]);
+
+        $this->assertSame('house', $analysis['object']['object_type']);
+    }
+
+    public function test_parser_preserves_manual_mixed_office_warehouse_type(): void
+    {
+        $analysis = (new ConstructionSemanticParser)->parse([
+            'description' => 'Офисно-складской комплекс с отдельными зонами офиса и склада.',
+        ], []);
+
+        $this->assertSame('mixed_warehouse_office', $analysis['object']['object_type']);
+    }
+
     public function test_parser_uses_aggregate_floor_plan_area_instead_of_first_room(): void
     {
-        $parser = new ConstructionSemanticParser();
+        $parser = new ConstructionSemanticParser;
 
         $analysis = $parser->parse([
             'description' => '',
@@ -233,7 +289,7 @@ class ConstructionSemanticParserTest extends TestCase
 
     public function test_parser_does_not_use_reference_estimate_as_primary_quantity_evidence(): void
     {
-        $parser = new ConstructionSemanticParser();
+        $parser = new ConstructionSemanticParser;
 
         $analysis = $parser->parse([
             'description' => '',
@@ -271,7 +327,7 @@ class ConstructionSemanticParserTest extends TestCase
 
     public function test_parser_keeps_context_document_text_without_quantity_evidence(): void
     {
-        $parser = new ConstructionSemanticParser();
+        $parser = new ConstructionSemanticParser;
 
         $analysis = $parser->parse([
             'description' => '',
@@ -314,7 +370,7 @@ class ConstructionSemanticParserTest extends TestCase
 
     public function test_parser_does_not_trust_low_quality_ocr_for_object_defaults(): void
     {
-        $parser = new ConstructionSemanticParser();
+        $parser = new ConstructionSemanticParser;
 
         $analysis = $parser->parse([
             'description' => 'Ручное описание объекта',

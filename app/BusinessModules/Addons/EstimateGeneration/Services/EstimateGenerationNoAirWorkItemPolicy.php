@@ -36,6 +36,10 @@ final class EstimateGenerationNoAirWorkItemPolicy
      */
     public function requiresReview(array $workItem): bool
     {
+        if ($this->hasMatchedNormativeDecision($workItem)) {
+            return false;
+        }
+
         if (!$this->isPricedWorkItem($workItem)) {
             return false;
         }
@@ -60,6 +64,10 @@ final class EstimateGenerationNoAirWorkItemPolicy
      */
     public function markRequiresReview(array $workItem, ?string $message = null): array
     {
+        if ($this->hasMatchedNormativeDecision($workItem)) {
+            return $workItem;
+        }
+
         $flags = array_values(array_unique([
             ...$this->flags($workItem),
             self::NO_AIR_FLAG,
@@ -100,6 +108,13 @@ final class EstimateGenerationNoAirWorkItemPolicy
 
         return $type !== EstimateGenerationPackageItem::QUANTITY_REVIEW_ITEM_TYPE
             && !in_array($type, EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true);
+    }
+
+    /** @param array<string, mixed> $workItem */
+    private function hasMatchedNormativeDecision(array $workItem): bool
+    {
+        return is_array($workItem['normative_match'] ?? null)
+            && ($workItem['normative_match']['status'] ?? null) === 'matched';
     }
 
     private function isGenericTitle(string $title): bool

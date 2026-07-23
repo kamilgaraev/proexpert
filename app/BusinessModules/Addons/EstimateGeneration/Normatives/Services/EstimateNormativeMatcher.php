@@ -18,6 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateReso
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSearchProfileCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSemanticCompatibilityService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use Illuminate\Database\Eloquent\Builder;
@@ -41,18 +42,22 @@ class EstimateNormativeMatcher
 
     private readonly LegacyNormativeRateCatalogAdapter $legacyCatalogAdapter;
 
+    private readonly NormativeSemanticCompatibilityService $semanticCompatibilityService;
+
     public function __construct(
         ?NormativeCandidateSearchService $candidateSearchService = null,
         ?EstimateGenerationLearningEvidenceService $learningEvidenceService = null,
         ?WorkIntentClassifier $workIntentClassifier = null,
         ?NormativeSearchProfileCatalog $searchProfileCatalog = null,
         ?LegacyNormativeRateCatalogAdapter $legacyCatalogAdapter = null,
+        ?NormativeSemanticCompatibilityService $semanticCompatibilityService = null,
     ) {
         $this->candidateSearchService = $candidateSearchService ?? app(NormativeCandidateSearchService::class);
         $this->learningEvidenceService = $learningEvidenceService ?? app(EstimateGenerationLearningEvidenceService::class);
         $this->workIntentClassifier = $workIntentClassifier ?? app(WorkIntentClassifier::class);
         $this->searchProfileCatalog = $searchProfileCatalog ?? app(NormativeSearchProfileCatalog::class);
         $this->legacyCatalogAdapter = $legacyCatalogAdapter ?? app(LegacyNormativeRateCatalogAdapter::class);
+        $this->semanticCompatibilityService = $semanticCompatibilityService ?? new NormativeSemanticCompatibilityService;
     }
 
     /**
@@ -476,6 +481,26 @@ class EstimateNormativeMatcher
             $reasons[] = 'search_profile_terms';
         }
 
+        $semanticMismatch = ! $this->semanticCompatibilityService->isCompatible(
+            $name.' '.$composition,
+            $workName,
+            [
+                'scope' => $intent->scope,
+                'action' => $intent->action,
+                'system' => $intent->system,
+                'object' => $intent->object,
+                'object_type' => $context['object_type'] ?? null,
+                'candidate_title' => $name,
+            ],
+            $profile->forbiddenDomainTerms,
+        );
+        if ($semanticMismatch) {
+            $score -= 300;
+            $reasons[] = 'semantic_mismatch';
+        } else {
+            $reasons[] = 'semantic_compatible';
+        }
+
         $learningScore = (float) ($learningEvidence['learning_score'] ?? 0);
         $learningPositiveCount = (int) ($learningEvidence['learning_positive_count'] ?? 0);
         $learningNegativeCount = (int) ($learningEvidence['learning_negative_count'] ?? 0);
@@ -526,6 +551,7 @@ class EstimateNormativeMatcher
                 'path' => $norm->section?->path,
             ],
             'work_composition' => array_slice($norm->work_composition ?? [], 0, 20),
+            'object_type' => $norm->object_type,
             'score' => round($score, 2),
             'confidence' => $confidence,
             'match_reasons' => array_values(array_unique($reasons)),
@@ -535,7 +561,8 @@ class EstimateNormativeMatcher
                 $pricedCount,
                 ! $unitMatches,
                 $scopeMismatch,
-                $learningNegativeCount
+                $learningNegativeCount,
+                $semanticMismatch,
             ),
             'resources' => $resources,
             'learning_positive_count' => $learningPositiveCount,
@@ -573,7 +600,6 @@ class EstimateNormativeMatcher
             ->where('estimate_norm_id', $norm->id)
             ->where('resource_type', '<>', EstimateResourceType::SUMMARY->value)
             ->orderBy('id')
-            ->limit(120)
             ->get();
 
         $regionalPriceVersionId = $this->regionalPriceVersionIdFromContext($context);
@@ -605,7 +631,14 @@ class EstimateNormativeMatcher
 
         foreach ($resources as $resource) {
             $type = $resource->resource_type?->value ?? EstimateResourceType::OTHER->value;
-            $price = $this->resolvePrice($prices->get($resource->resource_code) ?? collect(), $type, (string) ($resource->unit ?? ''));
+            $isAbstractResource = $this->isAbstractResource($resource->raw_payload);
+            $price = $isAbstractResource
+                ? null
+                : $this->resolvePrice(
+                    $prices->get($resource->resource_code) ?? collect(),
+                    $type,
+                    (string) ($resource->unit ?? ''),
+                );
             $unitPrice = $this->effectiveUnitPrice($price, $type, (string) ($resource->unit ?? ''));
             $payload = [
                 'code' => $resource->resource_code,
@@ -624,6 +657,11 @@ class EstimateNormativeMatcher
                 'price_id' => $price?->id,
                 'norm_resource_id' => $resource->id,
                 'linked_resource_id' => $resource->construction_resource_id,
+                'is_abstract_resource' => $isAbstractResource,
+                'requires_project_resource_selection' => $isAbstractResource,
+                'raw_source_tag' => is_array($resource->raw_payload)
+                    ? ($resource->raw_payload['source_tag'] ?? null)
+                    : null,
                 'pricing' => $this->pricePayload($price),
             ];
 
@@ -654,6 +692,12 @@ class EstimateNormativeMatcher
         }
 
         return $grouped;
+    }
+
+    private function isAbstractResource(mixed $rawPayload): bool
+    {
+        return is_array($rawPayload)
+            && mb_strtolower(trim((string) ($rawPayload['source_tag'] ?? ''))) === 'abstractresource';
     }
 
     /**
@@ -703,7 +747,8 @@ class EstimateNormativeMatcher
         int $pricedCount,
         bool $unitMismatch,
         bool $scopeMismatch,
-        int $learningNegativeCount = 0
+        int $learningNegativeCount = 0,
+        bool $semanticMismatch = false,
     ): array {
         $warnings = [];
 
@@ -729,6 +774,10 @@ class EstimateNormativeMatcher
 
         if ($scopeMismatch) {
             $warnings[] = 'scope_mismatch';
+        }
+
+        if ($semanticMismatch) {
+            $warnings[] = 'semantic_mismatch';
         }
 
         if ($learningNegativeCount > 0) {

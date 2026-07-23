@@ -20,6 +20,7 @@ final readonly class VisionBuildingModelInputData
         public array $evidenceIdsByRef,
         public string $producerVersion,
         public string $floorKey,
+        public array $roomAreaEvidenceIdsByRoomKey = [],
     ) {
         foreach ($sketchAssumptions as $assumption) {
             if (! $assumption instanceof SketchAssumption) {
@@ -50,6 +51,12 @@ final readonly class VisionBuildingModelInputData
         foreach (array_unique($refs) as $ref) {
             if (! is_string($ref) || ! isset($evidenceIdsByRef[$ref]) || ! is_int($evidenceIdsByRef[$ref]) || $evidenceIdsByRef[$ref] < 1) {
                 throw new InvalidArgumentException('Vision evidence mapping is incomplete.');
+            }
+        }
+        foreach ($roomAreaEvidenceIdsByRoomKey as $roomKey => $evidenceId) {
+            BuildingModelSchema::key($roomKey, 'Room area evidence key');
+            if (! is_int($evidenceId) || $evidenceId < 1) {
+                throw new InvalidArgumentException('Room area evidence mapping is invalid.');
             }
         }
     }

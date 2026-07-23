@@ -2,16 +2,27 @@
 
 namespace App\Http\Requests\Api\V1\Admin\Contract\PerformanceAct;
 
-use Illuminate\Foundation\Http\FormRequest;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\DTOs\Contract\ContractPerformanceActDTO;
+use Illuminate\Foundation\Http\FormRequest;
 
 class UpdateContractPerformanceActRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        // $act = $this->route('performanceAct'); // Route model binding
-        // return Auth::user()->can('update', $act);
-        return true;
+        $user = $this->user();
+        $context = [
+            'organization_id' => (int) (
+                $this->attributes->get('current_organization_id')
+                ?? $user?->current_organization_id
+            ),
+        ];
+        if ($this->route('project') !== null) {
+            $context['project_id'] = (int) $this->route('project');
+        }
+
+        return $user !== null
+            && app(AuthorizationService::class)->can($user, 'contracts.performance_acts.edit', $context);
     }
 
     public function rules(): array
@@ -21,9 +32,9 @@ class UpdateContractPerformanceActRequest extends FormRequest
             'act_date' => ['sometimes', 'required', 'date_format:Y-m-d'],
             'description' => ['sometimes', 'nullable', 'string'],
             'is_approved' => ['sometimes', 'boolean'],
-            'approval_date' => ['sometimes','nullable', 'date_format:Y-m-d', 'required_if:is_approved,true'],
+            'approval_date' => ['sometimes', 'nullable', 'date_format:Y-m-d', 'required_if:is_approved,true'],
             'organization_id_for_show' => ['sometimes', 'integer'], // Временное поле
-            
+
             // Сумма акта
             'amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
 
@@ -58,4 +69,4 @@ class UpdateContractPerformanceActRequest extends FormRequest
             amount: $validatedData['amount'] ?? 0 // Используем переданную сумму или 0 по умолчанию
         );
     }
-} 
+}

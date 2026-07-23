@@ -37,7 +37,7 @@ final class BuildingModelAssembler
             $detections[] = new BuildingModelDetectionData(
                 $input->producerVersion,
                 $model->scaleStatus,
-                $model->scaleMetersPerUnit,
+                $model->scaleStatus === 'confirmed' ? 1.0 : $model->scaleMetersPerUnit,
                 $model->floors,
                 $model->evidenceIds,
             );
@@ -77,9 +77,14 @@ final class BuildingModelAssembler
         }
         foreach ($modelElements as $element) {
             $evidenceIds = array_map(static fn (string $reference): int => $input->evidenceIdsByRef[$reference], $element->evidenceRefs());
+            if ($element->type === 'room' && isset($input->roomAreaEvidenceIdsByRoomKey[$element->key])) {
+                $evidenceIds[] = $input->roomAreaEvidenceIdsByRoomKey[$element->key];
+                sort($evidenceIds, SORT_NUMERIC);
+                $evidenceIds = array_values(array_unique($evidenceIds));
+            }
             $floorEvidence = [...$floorEvidence, ...$evidenceIds];
             if ($element->type === 'room') {
-                $rooms[] = new RoomData($element->key, null, $confirmed ? $this->metricPolygon($element, $input->scale->metersPerUnit) : null, $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown');
+                $rooms[] = new RoomData($element->key, $element->label, $confirmed ? $this->metricPolygon($element, $input->scale->metersPerUnit) : null, $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown');
             } elseif ($element->type === 'wall') {
                 $walls[] = new WallData(
                     $element->key,

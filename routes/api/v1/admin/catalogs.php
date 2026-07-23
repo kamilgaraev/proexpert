@@ -1,14 +1,13 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\V1\Admin\MaterialController;
-use App\Http\Controllers\Api\V1\Admin\WorkTypeController;
-use App\Http\Controllers\Api\V1\Admin\SupplierController;
 use App\Http\Controllers\Api\V1\Admin\ContractorController;
-use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Controllers\Api\V1\Admin\CostCategoryController;
-use App\Http\Controllers\Api\V1\Admin\MeasurementUnitController;
 use App\Http\Controllers\Api\V1\Admin\EstimateItemTypesController;
+use App\Http\Controllers\Api\V1\Admin\MaterialController;
+use App\Http\Controllers\Api\V1\Admin\MeasurementUnitController;
+use App\Http\Controllers\Api\V1\Admin\SupplierController;
+use App\Http\Controllers\Api\V1\Admin\WorkTypeController;
+use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
@@ -52,7 +51,6 @@ Route::apiResource('materials', MaterialController::class);
 
 Route::apiResource('suppliers', SupplierController::class);
 Route::apiResource('contractors', ContractorController::class);
-Route::apiResource('contracts', ContractController::class);
 
 // Маршруты для единиц измерения
 Route::get('/measurement-units/material-units', [MeasurementUnitController::class, 'getMaterialUnits'])->name('measurement-units.material-units');
@@ -66,14 +64,14 @@ Route::apiResource('cost-categories', CostCategoryController::class);
 Route::apiresource('work-types', WorkTypeController::class)->except([]); // Оставляем все стандартные CRUD для WorkType
 Route::prefix('work-types/{work_type}')->name('work-types.')->group(function () {
     // Подключаем маршруты для управления материалами, привязанными к виду работ
-    if (file_exists(__DIR__ . '/work_type_materials.php')) {
-        require __DIR__ . '/work_type_materials.php';
+    if (file_exists(__DIR__.'/work_type_materials.php')) {
+        require __DIR__.'/work_type_materials.php';
     }
 });
 
 // Подключаем маршруты для справочника позиций сметы
-if (file_exists(__DIR__ . '/estimate_positions.php')) {
-    require __DIR__ . '/estimate_positions.php';
+if (file_exists(__DIR__.'/estimate_positions.php')) {
+    require __DIR__.'/estimate_positions.php';
 }
 
 // Маршрут для получения типов позиций сметы

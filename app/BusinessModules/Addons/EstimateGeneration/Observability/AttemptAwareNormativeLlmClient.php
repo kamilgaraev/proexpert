@@ -14,6 +14,10 @@ use Throwable;
 
 final readonly class AttemptAwareNormativeLlmClient
 {
+    public const MODEL_STRATEGY_CONFIGURED_FALLBACKS = 'configured_fallbacks';
+
+    private const MODEL_STRATEGY_EFFECTIVE_RETRIES = 'effective_retries';
+
     public function __construct(
         private RerankWireClient $wire,
         private AiUsageStore $usageStore,
@@ -33,6 +37,8 @@ final readonly class AttemptAwareNormativeLlmClient
     public function chat(array $messages, array $options, array $domainContext): array
     {
         $operation = RerankOperationContext::fromArray($domainContext);
+        $modelStrategy = $this->modelStrategy($domainContext);
+        $callerTimeout = $this->callerTimeout($options['timeout'] ?? null);
         $heartbeat = is_callable($domainContext['heartbeat_callback'] ?? null)
             ? Closure::fromCallable($domainContext['heartbeat_callback'])
             : null;
@@ -47,11 +53,18 @@ final readonly class AttemptAwareNormativeLlmClient
             'model_version' => (string) ($domainContext['model_version'] ?? ''),
             'dataset_versions' => is_array($domainContext['dataset_versions'] ?? null)
                 ? array_values(array_map('strval', $domainContext['dataset_versions'])) : [],
+            'model_strategy' => $modelStrategy,
+            'timeout_cap_seconds' => $callerTimeout,
         ], JSON_THROW_ON_ERROR);
         $correlationId = AiOperationContext::deterministicId('rerank|'.$seed);
         $effective = $this->settingsResolver?->forOperation($correlationId, $organizationId, $sessionId);
-        $models = $this->models($effective);
-        $options['timeout'] = $effective?->timeoutSeconds('normative_matching') ?? ($options['timeout'] ?? null);
+        $models = $this->models($effective, $modelStrategy);
+        $timeout = $this->timeout($callerTimeout, $effective);
+        if ($timeout !== null) {
+            $options['timeout'] = $timeout;
+        } else {
+            unset($options['timeout']);
+        }
         $last = null;
 
         foreach ($models as $index => $model) {
@@ -83,11 +96,20 @@ final readonly class AttemptAwareNormativeLlmClient
                 $wireClaimed = true;
                 $response = $this->wire->call($model, $messages, $options);
                 $reportedModel = $response['model'] ?? null;
-                $content = trim((string) ($response['content'] ?? ''));
+                $content = $this->normalizedContent(
+                    (string) ($response['content'] ?? ''),
+                    ($options['profile'] ?? null) === 'json',
+                );
+                $response['content'] = $content;
                 $decoded = json_decode($content, true);
-                $status = $content === '' || ! is_array($decoded)
-                    || (is_string($reportedModel) && $reportedModel !== $model)
-                    ? 'malformed_response' : 'succeeded';
+                $malformedReason = match (true) {
+                    $content === '' && ($response['finish_reason'] ?? null) === 'length' => 'output_budget_exhausted',
+                    $content === '' => 'empty_content',
+                    ! is_array($decoded) => 'invalid_json',
+                    is_string($reportedModel) && $reportedModel !== $model => 'reported_model_mismatch',
+                    default => null,
+                };
+                $status = $malformedReason === null ? 'succeeded' : 'malformed_response';
                 if ($status === 'succeeded') {
                     if ($effective !== null) {
                         $response['effective_settings'] = $effective;
@@ -95,6 +117,14 @@ final readonly class AttemptAwareNormativeLlmClient
 
                     return $response;
                 }
+                $this->recordMalformedDiagnostic(
+                    $operation,
+                    $model,
+                    is_string($reportedModel) ? $reportedModel : null,
+                    $malformedReason,
+                    strlen($content),
+                    $response,
+                );
                 $last = new RerankWireException('malformed_response');
             } catch (RerankWireException $exception) {
                 $status = $exception->attemptStatus;
@@ -164,15 +194,22 @@ final readonly class AttemptAwareNormativeLlmClient
     }
 
     /** @return array<int, string> */
-    private function models(?EffectiveEstimateGenerationSettings $effective = null): array
+    private function models(?EffectiveEstimateGenerationSettings $effective, string $strategy): array
     {
-        if ($effective !== null) {
+        if ($effective !== null && $strategy === self::MODEL_STRATEGY_EFFECTIVE_RETRIES) {
             return array_fill(
                 0,
                 $effective->retryAttempts('normative_matching') + 1,
                 $effective->model('normative_matching'),
             );
         }
+
+        return $this->configuredModels();
+    }
+
+    /** @return array<int, string> */
+    private function configuredModels(): array
+    {
         if ($this->configuredModels === null) {
             return ($this->modelSet ?? new NormativeRerankerModelSet)->models;
         }
@@ -180,6 +217,79 @@ final readonly class AttemptAwareNormativeLlmClient
         $models = is_string($models) ? explode(',', $models) : $models;
 
         return array_values(array_filter(array_map(static fn (mixed $model): string => trim((string) $model), is_array($models) ? $models : [])));
+    }
+
+    /** @param array<string, mixed> $domainContext */
+    private function modelStrategy(array $domainContext): string
+    {
+        if (! array_key_exists('model_strategy', $domainContext)) {
+            return self::MODEL_STRATEGY_EFFECTIVE_RETRIES;
+        }
+        if ($domainContext['model_strategy'] !== self::MODEL_STRATEGY_CONFIGURED_FALLBACKS) {
+            throw new InvalidArgumentException('Unsupported reranker model strategy.');
+        }
+
+        return self::MODEL_STRATEGY_CONFIGURED_FALLBACKS;
+    }
+
+    private function callerTimeout(mixed $timeout): ?int
+    {
+        return is_int($timeout) && $timeout >= 1 && $timeout <= 3600
+            ? $timeout
+            : null;
+    }
+
+    private function timeout(?int $callerTimeout, ?EffectiveEstimateGenerationSettings $effective): ?int
+    {
+        $effectiveTimeout = $effective?->timeoutSeconds('normative_matching');
+        if ($effectiveTimeout === null) {
+            return $callerTimeout;
+        }
+
+        return $callerTimeout === null
+            ? $effectiveTimeout
+            : min($effectiveTimeout, $callerTimeout);
+    }
+
+    private function normalizedContent(string $content, bool $jsonProfile): string
+    {
+        $content = trim($content);
+        if (! $jsonProfile || json_decode($content, true) !== null) {
+            return $content;
+        }
+        if (preg_match('/\A```(?:json)?[ \t]*\R(?<json>[\s\S]+)\R```[ \t]*\z/i', $content, $matches) !== 1) {
+            return $content;
+        }
+        $json = trim((string) ($matches['json'] ?? ''));
+
+        return is_array(json_decode($json, true)) ? $json : $content;
+    }
+
+    /** @param array<string, mixed> $response */
+    private function recordMalformedDiagnostic(
+        RerankOperationContext $operation,
+        string $requestedModel,
+        ?string $reportedModel,
+        string $reason,
+        int $contentBytes,
+        array $response,
+    ): void {
+        try {
+            Log::warning('[EstimateGeneration] Reranker response rejected', array_filter([
+                'organization_id' => $operation->organizationId,
+                'project_id' => $operation->projectId,
+                'session_id' => $operation->sessionId,
+                'requested_model' => $requestedModel,
+                'reported_model' => $reportedModel,
+                'reason' => $reason,
+                'content_bytes' => $contentBytes,
+                'usage_available' => ($response['usage_available'] ?? false) === true,
+                'output_tokens' => isset($response['output_tokens']) ? max(0, (int) $response['output_tokens']) : null,
+                'finish_reason' => is_string($response['finish_reason'] ?? null)
+                    ? $response['finish_reason'] : null,
+            ], static fn (mixed $value): bool => $value !== null));
+        } catch (Throwable) {
+        }
     }
 
     /** @return array<string, mixed> */

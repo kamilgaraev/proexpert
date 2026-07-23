@@ -55,6 +55,9 @@ Route::prefix('api/v1/admin/commercial-proposals')
         Route::post('/{proposalId}/result', [CommercialProposalController::class, 'recordResult'])
             ->middleware('authorize:commercial_proposals.result')
             ->name('result');
+        Route::post('/{proposalId}/contract', [CommercialProposalController::class, 'createContract'])
+            ->middleware(['authorize:commercial_proposals.result', 'authorize:contracts.create'])
+            ->name('contract.create');
 
         Route::get('/{proposalId}/preview', [CommercialProposalController::class, 'preview'])
             ->middleware('authorize:commercial_proposals.export')

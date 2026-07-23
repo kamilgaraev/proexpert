@@ -97,6 +97,35 @@ final class OperationalReadinessInputFactoryTest extends TestCase
     }
 
     #[Test]
+    public function priced_traceable_draft_does_not_report_missing_document_quantities(): void
+    {
+        $hash = 'sha256:'.str_repeat('a', 64);
+        $input = (new OperationalReadinessInputFactory)->fromAggregates(
+            session: [
+                'status' => 'ready_to_apply',
+                'has_draft' => true,
+                'quality_status' => 'ready',
+                'quality_level' => 'passed',
+                'quality_total_work_items' => 1,
+                'quality_priced_work_items' => 1,
+                'review_classifier_version' => 2,
+                'review_content_version' => $hash,
+                'review_source_version' => $hash,
+                'review_canonical_input_version' => $hash,
+                'review_input_version' => $hash,
+            ],
+            documents: ['total' => 1, 'ready' => 1],
+            estimate: [],
+            sources: [],
+        );
+
+        $result = (new EstimatorReadinessEvaluator)->evaluate($input);
+
+        self::assertSame('ready_to_apply', $result['status']);
+        self::assertSame([], $result['warnings']);
+    }
+
+    #[Test]
     public function stale_review_snapshot_is_blocked_conservatively(): void
     {
         $input = (new OperationalReadinessInputFactory)->fromAggregates(

@@ -2,15 +2,15 @@
 
 namespace App\Domain\Authorization\Models;
 
+use App\Domain\Authorization\Enums\ConditionType;
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Builder;
-use Carbon\Carbon;
-use App\Domain\Authorization\Enums\ConditionType;
 
 /**
  * Модель условий для ролей (ABAC)
- * 
+ *
  * @property int $id
  * @property int $assignment_id
  * @property string $condition_type
@@ -23,13 +23,13 @@ class RoleCondition extends Model
         'assignment_id',
         'condition_type',
         'condition_data',
-        'is_active'
+        'is_active',
     ];
 
     protected $casts = [
         'condition_type' => ConditionType::class,
         'condition_data' => 'array',
-        'is_active' => 'boolean'
+        'is_active' => 'boolean',
     ];
 
     // Типы условий теперь определены в ConditionType enum
@@ -63,15 +63,15 @@ class RoleCondition extends Model
      */
     public function evaluate(array $context = []): bool
     {
-        if (!$this->is_active) {
+        if (! $this->is_active) {
             return false;
         }
 
-        return match($this->condition_type) {
+        return match ($this->condition_type) {
             ConditionType::TIME => $this->evaluateTimeCondition(),
             ConditionType::LOCATION => $this->evaluateLocationCondition($context),
             ConditionType::BUDGET => $this->evaluateBudgetCondition($context),
-            ConditionType::PROJECT_COUNT => $this->evaluateProjectCountCondition(),
+            ConditionType::PROJECT_COUNT => $this->evaluateProjectCountCondition($context),
             ConditionType::CUSTOM => $this->evaluateCustomCondition($context),
         };
     }
@@ -90,8 +90,8 @@ class RoleCondition extends Model
             if (count($hours) === 2) {
                 $start = Carbon::createFromFormat('H:i', trim($hours[0]));
                 $end = Carbon::createFromFormat('H:i', trim($hours[1]));
-                
-                if (!$now->between($start, $end)) {
+
+                if (! $now->between($start, $end)) {
                     return false;
                 }
             }
@@ -100,7 +100,7 @@ class RoleCondition extends Model
         // Проверка дней недели
         if (isset($data['working_days'])) {
             $allowedDays = $data['working_days'];
-            if (!in_array($now->dayOfWeek, $allowedDays)) {
+            if (! in_array($now->dayOfWeek, $allowedDays)) {
                 return false;
             }
         }
@@ -133,7 +133,7 @@ class RoleCondition extends Model
         // Проверка IP адреса
         if (isset($data['allowed_ips'])) {
             $userIp = $context['ip'] ?? request()->ip();
-            if (!in_array($userIp, $data['allowed_ips'])) {
+            if (! in_array($userIp, $data['allowed_ips'])) {
                 return false;
             }
         }
@@ -141,7 +141,7 @@ class RoleCondition extends Model
         // Проверка географических координат (если есть)
         if (isset($data['allowed_regions'], $context['location'])) {
             $userRegion = $context['location']['region'] ?? null;
-            if ($userRegion && !in_array($userRegion, $data['allowed_regions'])) {
+            if ($userRegion && ! in_array($userRegion, $data['allowed_regions'])) {
                 return false;
             }
         }
@@ -179,13 +179,18 @@ class RoleCondition extends Model
     /**
      * Проверка условия количества проектов
      */
-    protected function evaluateProjectCountCondition(): bool
+    protected function evaluateProjectCountCondition(array $context = []): bool
     {
         $data = $this->condition_data;
-        $user = $this->assignment->user;
 
         if (isset($data['max_projects'])) {
-            $activeProjectsCount = $user->projects()->active()->count();
+            $activeProjectsCount = array_key_exists('active_projects_count', $context)
+                ? (int) $context['active_projects_count']
+                : $this->assignment->user->assignedProjects()
+                    ->wherePivot('is_active', true)
+                    ->where('projects.status', 'active')
+                    ->whereNull('projects.deleted_at')
+                    ->count();
             if ($activeProjectsCount >= $data['max_projects']) {
                 return false;
             }
@@ -218,17 +223,25 @@ class RoleCondition extends Model
         ?Carbon $validUntil = null
     ): self {
         $data = [];
-        
-        if ($workingHours) $data['working_hours'] = $workingHours;
-        if ($workingDays) $data['working_days'] = $workingDays;
-        if ($validFrom) $data['valid_from'] = $validFrom->toDateTimeString();
-        if ($validUntil) $data['valid_until'] = $validUntil->toDateTimeString();
+
+        if ($workingHours) {
+            $data['working_hours'] = $workingHours;
+        }
+        if ($workingDays) {
+            $data['working_days'] = $workingDays;
+        }
+        if ($validFrom) {
+            $data['valid_from'] = $validFrom->toDateTimeString();
+        }
+        if ($validUntil) {
+            $data['valid_until'] = $validUntil->toDateTimeString();
+        }
 
         return static::create([
             'assignment_id' => $assignment->id,
             'condition_type' => ConditionType::TIME,
             'condition_data' => $data,
-            'is_active' => true
+            'is_active' => true,
         ]);
     }
 
@@ -242,16 +255,22 @@ class RoleCondition extends Model
         ?float $monthlyLimit = null
     ): self {
         $data = [];
-        
-        if ($maxAmount) $data['max_amount'] = $maxAmount;
-        if ($dailyLimit) $data['daily_limit'] = $dailyLimit;
-        if ($monthlyLimit) $data['monthly_limit'] = $monthlyLimit;
+
+        if ($maxAmount) {
+            $data['max_amount'] = $maxAmount;
+        }
+        if ($dailyLimit) {
+            $data['daily_limit'] = $dailyLimit;
+        }
+        if ($monthlyLimit) {
+            $data['monthly_limit'] = $monthlyLimit;
+        }
 
         return static::create([
             'assignment_id' => $assignment->id,
             'condition_type' => ConditionType::BUDGET,
             'condition_data' => $data,
-            'is_active' => true
+            'is_active' => true,
         ]);
     }
 }

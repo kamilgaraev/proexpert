@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\ImmutableAudit\Services;
 
+use App\BusinessModules\Core\ImmutableAudit\Support\ImmutableAuditInvariantDefinitions;
 use App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventData;
 use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
 use DateTimeInterface;
+use DomainException;
+use Illuminate\Database\Connection;
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -16,47 +20,70 @@ final class ImmutableAuditRecorder
     public function __construct(
         private readonly ImmutableAuditRedactor $redactor,
         private readonly ImmutableAuditIntegrityService $integrity,
+        private readonly ?ConnectionInterface $connection = null,
+        private readonly ?string $writerSecret = null,
+        private readonly ImmutableAuditWriterReadinessService $readiness = new ImmutableAuditWriterReadinessService,
     ) {}
 
     public function record(ImmutableAuditEventData $data): ImmutableAuditEvent
     {
-        if ($data->sourceEventId !== null) {
-            $existing = $this->findExisting($data);
-
-            if ($existing !== null) {
-                return $existing;
-            }
-        }
-
-        try {
-            return DB::transaction(function () use ($data): ImmutableAuditEvent {
-                if (DB::getDriverName() === 'pgsql') {
-                    DB::statement('LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE');
-                }
-
-                if ($data->sourceEventId !== null) {
-                    $existing = $this->findExisting($data);
-
-                    if ($existing !== null) {
-                        return $existing;
-                    }
-                }
-
-                $attributes = $this->buildAttributes($data);
-
-                return ImmutableAuditEvent::query()->create($attributes);
-            }, 3);
-        } catch (QueryException $e) {
-            if ($data->sourceEventId !== null) {
+        for ($attempt = 1; $attempt <= 5; $attempt++) {
+            if ($this->database()->getDriverName() !== 'pgsql' && $data->sourceEventId !== null) {
                 $existing = $this->findExisting($data);
-
                 if ($existing !== null) {
+                    $this->assertSameLogicalEvent($existing, $data);
+
                     return $existing;
                 }
             }
 
-            throw $e;
+            try {
+                return $this->database()->transaction(function () use ($data): ImmutableAuditEvent {
+                    if ($this->database()->getDriverName() === 'pgsql') {
+                        $this->database()->select('SELECT pg_advisory_xact_lock_shared(hashtextextended(?, 0))', ['immutable_audit_writer_fence']);
+                        $credential = $this->readiness->assertReady($this->database(), $this->writerSecret());
+                        $this->activateWriterCredential($credential);
+                        $chainScope = $data->chainScope ?? 'organization:'.$data->organizationId;
+                        $this->database()->select('SELECT pg_advisory_xact_lock(hashtextextended(?, 0))', [$chainScope]);
+                    }
+
+                    if ($data->sourceEventId !== null) {
+                        $existing = $this->findExisting($data);
+
+                        if ($existing !== null) {
+                            $this->assertSameLogicalEvent($existing, $data);
+
+                            return $existing;
+                        }
+                    }
+
+                    $attributes = $this->buildAttributes($data);
+
+                    $event = new ImmutableAuditEvent;
+                    $event->setConnection($this->database()->getName());
+                    $event->fill($attributes)->save();
+
+                    return $event;
+                }, 3);
+            } catch (QueryException $e) {
+                if ($data->sourceEventId !== null) {
+                    $existing = $this->findExisting($data);
+
+                    if ($existing !== null) {
+                        $this->assertSameLogicalEvent($existing, $data);
+
+                        return $existing;
+                    }
+                }
+                if ($attempt < 5 && $this->isSequenceCollision($e)) {
+                    continue;
+                }
+
+                throw $e;
+            }
         }
+
+        throw new \RuntimeException('immutable_audit_sequence_retry_exhausted');
     }
 
     private function buildAttributes(ImmutableAuditEventData $data): array
@@ -92,7 +119,7 @@ final class ImmutableAuditRecorder
             'idempotency_key' => $data->idempotencyKey,
             'subject_type' => $data->subjectType,
             'subject_id' => $data->subjectId === null ? null : (string) $data->subjectId,
-            'subject_label' => $data->subjectLabel,
+            'subject_label' => $data->subjectLabelForStorage(),
             'related_subjects' => $redacted['related_subjects'],
             'reason' => $data->reason,
             'before_state' => $redacted['before_state'],
@@ -165,14 +192,20 @@ final class ImmutableAuditRecorder
             $normalized[$key] = $this->normalizeJsonPayload($item);
         }
 
+        if (! array_is_list($normalized)) {
+            ksort($normalized, SORT_STRING);
+        }
+
         return $normalized;
     }
 
     private function findExisting(ImmutableAuditEventData $data): ?ImmutableAuditEvent
     {
-        return ImmutableAuditEvent::query()
+        return $this->query()
             ->forOrganization($data->organizationId)
             ->where('domain', $data->domain)
+            ->where('subject_type', $data->subjectType)
+            ->where('subject_id', $data->subjectId === null ? null : (string) $data->subjectId)
             ->where('source', $data->source)
             ->where('source_event_id', $data->sourceEventId)
             ->first();
@@ -180,12 +213,25 @@ final class ImmutableAuditRecorder
 
     private function nextSequenceId(): int
     {
-        return ((int) ImmutableAuditEvent::query()->max('sequence_id')) + 1;
+        if ($this->database()->getDriverName() === 'pgsql') {
+            $row = $this->database()->selectOne('SELECT '.ImmutableAuditInvariantDefinitions::ALLOCATOR_FUNCTION.'() AS value');
+
+            return (int) ($row->value ?? 0);
+        }
+
+        return ((int) $this->query()->max('sequence_id')) + 1;
+    }
+
+    private function isSequenceCollision(QueryException $exception): bool
+    {
+        $sqlState = $exception->errorInfo[0] ?? null;
+
+        return $sqlState === '23505' && str_contains($exception->getMessage(), 'immutable_audit_events_sequence_id_unique');
     }
 
     private function previousHash(string $chainScope): ?string
     {
-        return ImmutableAuditEvent::query()
+        return $this->query()
             ->where('chain_scope', $chainScope)
             ->orderByDesc('sequence_id')
             ->value('record_hash');
@@ -196,5 +242,88 @@ final class ImmutableAuditRecorder
         $years = in_array($domain, ['warehouse', 'crm', 'procurement'], true) ? 5 : 7;
 
         return $occurredAt->copy()->addYearsNoOverflow($years);
+    }
+
+    private function database(): ConnectionInterface
+    {
+        return $this->connection ?? DB::connection();
+    }
+
+    private function writerSecret(): string
+    {
+        $secret = $this->writerSecret ?? (string) config('legal_archive.audit_writer_secret', '');
+        if (strlen($secret) < 32) {
+            throw new DomainException('immutable_audit_writer_secret_not_configured');
+        }
+
+        return $secret;
+    }
+
+    private function activateWriterCredential(string $credential): void
+    {
+        $database = $this->database();
+        if (! $database instanceof Connection) {
+            throw new DomainException('immutable_audit_writer_connection_not_supported');
+        }
+        $statement = $database->getPdo()->prepare("SELECT set_config('most.immutable_audit_writer_version', '2', true), set_config('most.immutable_audit_writer_credential', ?, true)");
+        $statement->execute([$credential]);
+    }
+
+    private function assertSameLogicalEvent(ImmutableAuditEvent $existing, ImmutableAuditEventData $data): void
+    {
+        $redacted = $this->redactPayloads($data);
+        $expected = [
+            'organization_id' => $data->organizationId,
+            'project_id' => $data->projectId,
+            'domain' => $data->domain,
+            'event_type' => $data->eventType,
+            'action' => $data->action,
+            'result' => $data->result,
+            'severity' => $data->severity,
+            'actor_type' => $data->actorType,
+            'actor_user_id' => $data->actorUserId,
+            'actor_snapshot' => $redacted['actor_snapshot'],
+            'impersonator_user_id' => $data->impersonatorUserId,
+            'source' => $data->source,
+            'source_route' => $data->sourceRoute,
+            'source_model' => $data->sourceModel,
+            'source_table' => $data->sourceTable,
+            'correlation_id' => $data->correlationId,
+            'idempotency_key' => $data->idempotencyKey,
+            'subject_label' => $data->subjectLabelForStorage(),
+            'subject_type' => $data->subjectType,
+            'subject_id' => $data->subjectId === null ? null : (string) $data->subjectId,
+            'related_subjects' => $redacted['related_subjects'],
+            'reason' => $data->reason,
+            'before_state' => $redacted['before_state'],
+            'after_state' => $redacted['after_state'],
+            'diff' => $redacted['diff'],
+            'domain_context' => $redacted['domain_context'],
+            'sensitive_fields' => $redacted['sensitive_fields'],
+            'redaction_policy_version' => ImmutableAuditRedactor::POLICY_VERSION,
+            'chain_scope' => $data->chainScope ?? 'organization:'.$data->organizationId,
+            'chain_version' => $data->chainVersion,
+        ];
+        if ($data->occurredAt !== null) {
+            $expected['occurred_at'] = $data->occurredAt->copy()->setMicrosecond(0);
+        }
+        $actual = [];
+        foreach (array_keys($expected) as $field) {
+            $actual[$field] = $existing->getAttribute($field);
+        }
+
+        $expectedHash = hash('sha256', $this->integrity->canonicalJson($expected));
+        $actualHash = hash('sha256', $this->integrity->canonicalJson($actual));
+        if (! hash_equals($expectedHash, $actualHash)) {
+            throw new DomainException('immutable_audit_idempotency_conflict');
+        }
+    }
+
+    private function query(): \Illuminate\Database\Eloquent\Builder
+    {
+        $event = new ImmutableAuditEvent;
+        $event->setConnection($this->database()->getName());
+
+        return $event->newQuery();
     }
 }
