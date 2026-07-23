@@ -36,10 +36,10 @@ final class NormativeWorkItemPlannerResidentialScenarioTest extends TestCase
         $requirements = (new ResidentialWorkCompositionCatalog)->requirements($plan);
         $units = [
             'earth.trench' => 'm3', 'earth.backfill' => 'm3', 'earth.export' => 'm3', 'earth.plan' => 'm2',
-            'foundation.prep' => 'm3', 'foundation.formwork' => 'm2', 'foundation.rebar' => 't',
+            'foundation.prep' => 'm3', 'foundation.formwork' => 'm2', 'foundation.rebar' => 'kg',
             'foundation.concrete' => 'm3', 'foundation.waterproofing' => 'm2',
             'walls.external_volume' => 'm3', 'walls.internal' => 'm2', 'walls.lintels' => 'pcs',
-            'slabs.formwork' => 'm2', 'slabs.concrete' => 'm3', 'slabs.rebar' => 't',
+            'slabs.formwork' => 'm2', 'slabs.concrete' => 'm3', 'slabs.rebar' => 'kg',
             'stairs.flights' => 'm2', 'stairs.landings' => 'm2', 'stairs.railings' => 'm',
             'roof.rafters' => 'm3', 'roof.area' => 'm2', 'roof.insulation' => 'm2',
             'roof.vapor_barrier' => 'm2', 'roof.membrane' => 'm2', 'roof.battens' => 'm2',
