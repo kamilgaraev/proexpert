@@ -61,7 +61,7 @@ final class ArbiterReviewContextFactoryTest extends TestCase
         self::assertSame(180, $context['review_context']['building_quantities']['total_area']);
         self::assertSame(7, $context['review_context']['source_documents'][0]['id']);
         self::assertSame('Heating boiler', $context['work_items'][0]['name']);
-        self::assertSame(1, $context['work_items'][0]['resource_counts']['materials']);
+        self::assertArrayNotHasKey('resource_counts', $context['work_items'][0]);
         self::assertArrayNotHasKey('materials', $context['work_items'][0]);
     }
 
@@ -112,7 +112,7 @@ final class ArbiterReviewContextFactoryTest extends TestCase
         self::assertArrayNotHasKey('labor', $context['work_items'][0]);
         self::assertArrayNotHasKey('machinery', $context['work_items'][0]);
         self::assertArrayNotHasKey('price_snapshot', $context['work_items'][0]);
-        self::assertSame(20, $context['work_items'][0]['resource_counts']['materials']);
+        self::assertArrayNotHasKey('resource_counts', $context['work_items'][0]);
     }
 
     #[Test]
@@ -121,7 +121,7 @@ final class ArbiterReviewContextFactoryTest extends TestCase
         $workItems = [];
         for ($i = 0; $i < 50; $i++) {
             $workItems[] = [
-                'name' => str_repeat('Detailed work item name '.$i.' ', 4),
+                'name' => str_repeat('Работа жилого дома '.$i.' ', 4),
                 'quantity' => 10 + $i,
                 'unit' => 'm2',
                 'total_cost' => 1000 + $i,
@@ -129,8 +129,8 @@ final class ArbiterReviewContextFactoryTest extends TestCase
                     'status' => 'confirmed',
                     'confidence' => 0.91,
                     'evidence_ids' => [$i + 1, $i + 2],
-                    'source' => str_repeat('source ', 20),
-                    'reason' => str_repeat('reason ', 20),
+                    'source' => str_repeat('источник ', 20),
+                    'reason' => str_repeat('причина ', 20),
                 ],
                 'normative_match' => [
                     'status' => 'matched',

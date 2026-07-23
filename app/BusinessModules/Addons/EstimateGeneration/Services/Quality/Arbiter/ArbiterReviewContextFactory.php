@@ -171,27 +171,15 @@ final class ArbiterReviewContextFactory
     private function workItemSummary(string $packageKey, array $workItem, array $quantityEvidence): array
     {
         $normativeMatch = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
-        $materialsCount = $this->resourceCount($workItem['materials'] ?? null);
-        $laborCount = $this->resourceCount($workItem['labor'] ?? null);
-        $machineryCount = $this->resourceCount($workItem['machinery'] ?? null);
-
         return array_filter([
             'package_key' => $packageKey,
-            'name' => $this->shortText($workItem['name'] ?? null, 56),
+            'name' => $this->shortText($workItem['name'] ?? null, 36),
             'quantity' => $this->scalar($workItem['quantity'] ?? null),
             'unit' => $this->shortText($workItem['unit'] ?? null, 24),
-            'total_cost' => $this->scalar($workItem['total_cost'] ?? null),
             'evidence_status' => $this->shortText($quantityEvidence['status'] ?? null, 32),
-            'evidence_confidence' => $this->scalar($quantityEvidence['confidence'] ?? null),
-            'evidence_ids' => array_slice($this->references($quantityEvidence['evidence_ids'] ?? []), 0, 3),
+            'evidence_ids' => array_slice($this->references($quantityEvidence['evidence_ids'] ?? []), 0, 2),
             'norm_status' => $this->shortText($normativeMatch['status'] ?? null, 32),
             'norm_code' => $this->shortText($normativeMatch['norm_code'] ?? null, 48),
-            'normative_code' => $this->shortText($normativeMatch['normative_code'] ?? null, 48),
-            'resource_counts' => array_filter([
-                'materials' => $materialsCount > 0 ? $materialsCount : null,
-                'labor' => $laborCount > 0 ? $laborCount : null,
-                'machinery' => $machineryCount > 0 ? $machineryCount : null,
-            ], static fn (?int $value): bool => $value !== null),
         ], static fn (mixed $value): bool => $value !== null && $value !== [] && $value !== '');
     }
 
