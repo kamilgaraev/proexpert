@@ -359,7 +359,7 @@ final class LegalDocumentReconciliationService
     private function organizationId(Model $entity): int
     {
         $organizationId = $entity->getAttribute('organization_id')
-            ?? $entity->getRelation('contract')?->getAttribute('organization_id');
+            ?? $this->contractRelation($entity)?->getAttribute('organization_id');
 
         if (! is_numeric($organizationId) || (int) $organizationId < 1) {
             throw new InvalidArgumentException('Legal archive source has no organization.');
@@ -371,9 +371,20 @@ final class LegalDocumentReconciliationService
     private function projectId(Model $entity): ?int
     {
         $projectId = $entity->getAttribute('project_id')
-            ?? $entity->getRelation('contract')?->getAttribute('project_id');
+            ?? $this->contractRelation($entity)?->getAttribute('project_id');
 
         return is_numeric($projectId) && (int) $projectId > 0 ? (int) $projectId : null;
+    }
+
+    private function contractRelation(Model $entity): ?Model
+    {
+        if (! $entity->relationLoaded('contract')) {
+            return null;
+        }
+
+        $contract = $entity->getRelation('contract');
+
+        return $contract instanceof Model ? $contract : null;
     }
 
     private function title(Model $entity, string $sourceType): string
