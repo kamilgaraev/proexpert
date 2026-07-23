@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\Domain\Authorization\Services\AuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Throwable;
@@ -36,12 +37,22 @@ final class EstimateGenerationSessionListResource extends JsonResource
             return [];
         }
 
-        $cacheKey = 'estimate_generation_permissions_'.(int) $session->project_id;
+        $organizationId = $user->current_organization_id;
+        if ($organizationId === null) {
+            return [];
+        }
+
+        $context = [
+            'organization_id' => (int) $organizationId,
+            'project_id' => (int) $session->project_id,
+        ];
+        $cacheKey = 'estimate_generation_permissions_'.(int) $organizationId.'_'.(int) $session->project_id;
         $cached = $request->attributes->get($cacheKey);
         if (is_array($cached)) {
             return array_values(array_filter($cached, 'is_string'));
         }
 
+        $authorization = app(AuthorizationService::class);
         $permissions = [];
         foreach ([
             'estimate_generation.upload_documents',
@@ -52,7 +63,7 @@ final class EstimateGenerationSessionListResource extends JsonResource
             'estimate_generation.export',
         ] as $permission) {
             try {
-                if ($user->hasPermission($permission, ['project_id' => (int) $session->project_id])) {
+                if ($authorization->can($user, $permission, $context)) {
                     $permissions[] = $permission;
                 }
             } catch (Throwable) {

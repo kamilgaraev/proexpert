@@ -124,6 +124,7 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
         $session->setRelation('documents', collect());
         $user = new TestPermissionUser(['estimate_generation.view']);
         $user->forceFill(['id' => 3, 'current_organization_id' => 9]);
+        $this->bindAuthorizationPermissions($user, ['estimate_generation.view']);
         $readiness = new CountingEstimatorReadinessService;
         $documents = new CountingDocumentReadinessService;
         $this->app->instance(EstimatorReadinessService::class, $readiness);
@@ -185,6 +186,8 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
             'processing_stage' => 'input_review_required',
         ]);
         $user = new TestPermissionUser(['estimate_generation.review']);
+        $user->forceFill(['id' => 3, 'current_organization_id' => 9]);
+        $this->bindAuthorizationPermissions($user, ['estimate_generation.review']);
         $request = Request::create('/api/v1/admin/projects/17/estimate-generation/sessions/41', 'GET');
         $request->setUserResolver(static fn (): User => $user);
 
@@ -197,6 +200,38 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
 
         self::assertContains('estimate_generation.review', $permissions);
         self::assertContains('confirm_input', array_column($snapshot->availableActions, 'action'));
+    }
+
+    #[Test]
+    public function draft_session_snapshot_uses_authorization_service_context_for_upload_action(): void
+    {
+        $session = $this->makeSession(41);
+        $session->forceFill([
+            'organization_id' => 9,
+            'project_id' => 17,
+            'status' => EstimateGenerationStatus::Draft,
+            'processing_stage' => 'draft',
+        ]);
+        $user = new TestPermissionUser([]);
+        $user->forceFill(['id' => 3, 'current_organization_id' => 9]);
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')
+            ->andReturnUsing(static fn (User $actor, string $permission, ?array $context = null): bool => $actor === $user
+                && $permission === 'estimate_generation.upload_documents'
+                && $context === ['organization_id' => 9, 'project_id' => 17]);
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $request = Request::create('/api/v1/admin/projects/17/estimate-generation/sessions/41', 'GET');
+        $request->setUserResolver(static fn (): User => $user);
+
+        $permissions = EstimateGenerationSessionListResource::permissions($request, $session);
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $session,
+            permissions: $permissions,
+            documentsSummary: ['total' => 0],
+        );
+
+        self::assertContains('estimate_generation.upload_documents', $permissions);
+        self::assertContains('upload_documents', array_column($snapshot->availableActions, 'action'));
     }
 
     private function makeSession(int $id): EstimateGenerationSession
@@ -214,6 +249,17 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
         ]);
 
         return $session;
+    }
+
+    /** @param list<string> $permissions */
+    private function bindAuthorizationPermissions(User $user, array $permissions): void
+    {
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')
+            ->andReturnUsing(static fn (User $actor, string $permission, ?array $context = null): bool => $actor === $user
+                && $context === ['organization_id' => 9, 'project_id' => 17]
+                && in_array($permission, $permissions, true));
+        $this->app->instance(AuthorizationService::class, $authorization);
     }
 }
 
