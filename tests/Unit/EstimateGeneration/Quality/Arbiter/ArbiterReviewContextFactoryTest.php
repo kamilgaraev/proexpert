@@ -31,7 +31,7 @@ final class ArbiterReviewContextFactoryTest extends TestCase
     }
 
     #[Test]
-    public function it_passes_the_full_structured_draft_context_to_the_arbiter_without_persisting_it(): void
+    public function it_passes_the_structured_draft_context_to_the_arbiter_without_resource_payloads(): void
     {
         $context = (new ArbiterReviewContextFactory)->make([
             'object_profile' => ['description' => 'Two-storey house'],
@@ -61,6 +61,57 @@ final class ArbiterReviewContextFactoryTest extends TestCase
         self::assertSame(180, $context['review_context']['building_quantities']['total_area']);
         self::assertSame(7, $context['review_context']['source_documents'][0]['id']);
         self::assertSame('Heating boiler', $context['work_items'][0]['name']);
-        self::assertSame('Boiler', $context['work_items'][0]['materials'][0]['name']);
+        self::assertSame(1, $context['work_items'][0]['resource_summary']['materials_count']);
+        self::assertArrayNotHasKey('materials', $context['work_items'][0]);
+    }
+
+    #[Test]
+    public function it_keeps_the_arbiter_context_compact_for_resource_heavy_estimates(): void
+    {
+        $resource = [
+            'name' => str_repeat('Concrete resource with verbose provider payload ', 20),
+            'quantity' => 1.25,
+            'unit' => 'm3',
+            'unit_price' => 1234.56,
+            'total_cost' => 1543.2,
+            'metadata' => ['payload' => str_repeat('heavy metadata ', 80)],
+        ];
+        $workItems = [];
+        for ($i = 0; $i < 50; $i++) {
+            $workItems[] = [
+                'name' => 'Work item '.$i,
+                'description' => str_repeat('Long generated explanation ', 30),
+                'quantity' => 10 + $i,
+                'unit' => 'm2',
+                'total_cost' => 1000 + $i,
+                'quantity_evidence' => ['evidence_ids' => [$i + 1]],
+                'normative_match' => [
+                    'status' => 'matched',
+                    'norm_code' => '08-01-00'.$i,
+                    'candidates' => array_fill(0, 10, ['payload' => str_repeat('candidate ', 50)]),
+                ],
+                'price_snapshot' => ['payload' => str_repeat('price snapshot ', 80)],
+                'materials' => array_fill(0, 20, $resource),
+                'labor' => array_fill(0, 20, $resource),
+                'machinery' => array_fill(0, 20, $resource),
+            ];
+        }
+
+        $context = (new ArbiterReviewContextFactory)->make([
+            'completeness' => ['status' => 'review_required', 'scopes' => []],
+            'local_estimates' => [[
+                'key' => 'house',
+                'sections' => [['work_items' => $workItems]],
+            ]],
+        ]);
+
+        $encoded = json_encode($context, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+
+        self::assertLessThan(24_000, strlen($encoded));
+        self::assertArrayNotHasKey('materials', $context['work_items'][0]);
+        self::assertArrayNotHasKey('labor', $context['work_items'][0]);
+        self::assertArrayNotHasKey('machinery', $context['work_items'][0]);
+        self::assertArrayNotHasKey('price_snapshot', $context['work_items'][0]);
+        self::assertSame(20, $context['work_items'][0]['resource_summary']['materials_count']);
     }
 }

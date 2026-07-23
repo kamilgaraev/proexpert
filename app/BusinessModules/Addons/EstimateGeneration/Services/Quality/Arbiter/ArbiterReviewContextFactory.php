@@ -59,17 +59,17 @@ final class ArbiterReviewContextFactory
                     $evidenceRefs = [...$evidenceRefs, ...$this->references($quantityEvidence['evidence_ids'] ?? [])];
                     $workItems[] = [
                         'package_key' => $key,
-                        'name' => $workItem['name'] ?? null,
-                        'description' => $workItem['description'] ?? null,
+                        'name' => $this->shortText($workItem['name'] ?? null, 96),
                         'quantity' => $workItem['quantity'] ?? null,
                         'unit' => $workItem['unit'] ?? null,
                         'total_cost' => $workItem['total_cost'] ?? null,
-                        'quantity_evidence' => $quantityEvidence,
-                        'normative_match' => is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [],
-                        'price_snapshot' => is_array($workItem['price_snapshot'] ?? null) ? $workItem['price_snapshot'] : [],
-                        'materials' => is_array($workItem['materials'] ?? null) ? $workItem['materials'] : [],
-                        'labor' => is_array($workItem['labor'] ?? null) ? $workItem['labor'] : [],
-                        'machinery' => is_array($workItem['machinery'] ?? null) ? $workItem['machinery'] : [],
+                        'quantity_evidence' => $this->quantityEvidenceSummary($quantityEvidence),
+                        'normative_match' => $this->normativeMatchSummary($workItem['normative_match'] ?? null),
+                        'resource_summary' => [
+                            'materials_count' => $this->resourceCount($workItem['materials'] ?? null),
+                            'labor_count' => $this->resourceCount($workItem['labor'] ?? null),
+                            'machinery_count' => $this->resourceCount($workItem['machinery'] ?? null),
+                        ],
                     ];
                 }
             }
@@ -138,4 +138,55 @@ final class ArbiterReviewContextFactory
     {
         return is_string($value) && preg_match('/^[A-Za-z0-9:._-]{1,120}$/', $value) === 1;
     }
+
+    private function shortText(mixed $value, int $limit): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+
+        return mb_substr($value, 0, $limit);
+    }
+
+    /** @return array<string, mixed> */
+    private function quantityEvidenceSummary(array $evidence): array
+    {
+        return array_filter([
+            'status' => is_string($evidence['status'] ?? null) ? $evidence['status'] : null,
+            'confidence' => is_int($evidence['confidence'] ?? null) || is_float($evidence['confidence'] ?? null)
+                ? (float) $evidence['confidence']
+                : null,
+            'evidence_ids' => $this->references($evidence['evidence_ids'] ?? []),
+            'source' => $this->shortText($evidence['source'] ?? null, 120),
+            'reason' => $this->shortText($evidence['reason'] ?? null, 160),
+        ], static fn (mixed $value): bool => $value !== null && $value !== []);
+    }
+
+    /** @return array<string, mixed> */
+    private function normativeMatchSummary(mixed $match): array
+    {
+        if (! is_array($match)) {
+            return [];
+        }
+
+        return array_filter([
+            'status' => is_string($match['status'] ?? null) ? $match['status'] : null,
+            'norm_code' => $this->shortText($match['norm_code'] ?? null, 80),
+            'normative_code' => $this->shortText($match['normative_code'] ?? null, 80),
+            'confidence' => is_int($match['confidence'] ?? null) || is_float($match['confidence'] ?? null)
+                ? (float) $match['confidence']
+                : null,
+            'reason_code' => $this->shortText($match['reason_code'] ?? null, 120),
+        ], static fn (mixed $value): bool => $value !== null && $value !== '');
+    }
+
+    private function resourceCount(mixed $resources): int
+    {
+        return is_array($resources) ? count($resources) : 0;
+    }
+
 }
