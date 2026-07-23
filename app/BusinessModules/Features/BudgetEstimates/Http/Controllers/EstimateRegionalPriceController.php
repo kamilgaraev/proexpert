@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegi
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceActivation;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceActivationService;
+use App\BusinessModules\Features\BudgetEstimates\Support\EstimateRegionalPriceOptionPresenter;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
@@ -37,6 +38,8 @@ class EstimateRegionalPriceController extends Controller
                 ->orderByDesc('id')
                 ->get();
 
+            $versionPresenter = new EstimateRegionalPriceOptionPresenter();
+
             return AdminResponse::success([
                 'regions' => $regions->map(static fn (EstimateRegion $region): array => [
                     'id' => $region->id,
@@ -50,20 +53,13 @@ class EstimateRegionalPriceController extends Controller
                         'fgiscs_price_zone_id' => $zone->fgiscs_price_zone_id,
                     ])->values()->all(),
                 ])->values()->all(),
-                'versions' => $versions->map(static fn (EstimateRegionalPriceVersion $version): array => [
-                    'id' => $version->id,
-                    'source' => $version->source,
-                    'version_key' => $version->version_key,
-                    'status' => $version->status?->value,
-                    'is_active' => in_array($version->id, $activeVersionIds, true),
-                    'region_id' => $version->region_id,
-                    'price_zone_id' => $version->price_zone_id,
-                    'period_id' => $version->period_id,
-                    'period_name' => $version->period?->name,
-                    'year' => $version->period?->year,
-                    'quarter' => $version->period?->quarter,
-                    'activated_at' => $version->activated_at?->toISOString(),
-                ])->values()->all(),
+                'versions' => $versions
+                    ->map(static fn (EstimateRegionalPriceVersion $version): array => $versionPresenter->version(
+                        $version,
+                        $activeVersionIds
+                    ))
+                    ->values()
+                    ->all(),
             ]);
         } catch (Throwable $exception) {
             Log::error('estimate_regional_prices.options_failed', [
