@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter;
 
+use InvalidArgumentException;
+use RuntimeException;
 use Throwable;
 
 final readonly class ShadowArbiterCoordinator implements TargetedPackageRebuildReviewer
@@ -29,6 +31,7 @@ final readonly class ShadowArbiterCoordinator implements TargetedPackageRebuildR
         $context = $this->contexts->make($draft, $operation);
         $status = 'reviewed';
         $tokens = [];
+        $unavailableReason = null;
         try {
             $raw = $this->arbiter->review($context);
             $verdict = $this->validator->validate($raw, $context);
@@ -37,8 +40,9 @@ final readonly class ShadowArbiterCoordinator implements TargetedPackageRebuildR
                     $tokens[$key] = $raw[$key];
                 }
             }
-        } catch (Throwable) {
+        } catch (Throwable $exception) {
             $status = 'unavailable';
+            $unavailableReason = $this->unavailableReason($exception);
             $verdict = new ArbiterVerdict('human_review', []);
         }
         $draft['arbiter_review'] = [
@@ -52,6 +56,9 @@ final readonly class ShadowArbiterCoordinator implements TargetedPackageRebuildR
             'findings' => $verdict->findings,
             ...$tokens,
         ];
+        if ($unavailableReason !== null) {
+            $draft['arbiter_review']['unavailable_reason'] = $unavailableReason;
+        }
         if ($previousCycle !== null) {
             $draft['arbiter_review']['cycle'] = $previousCycle;
         }
@@ -63,6 +70,28 @@ final readonly class ShadowArbiterCoordinator implements TargetedPackageRebuildR
         }
 
         return $this->remediation->recordShadowCycle($draft, $verdict, $context['input_hash']);
+    }
+
+    private function unavailableReason(Throwable $exception): string
+    {
+        if ($exception instanceof InvalidArgumentException) {
+            return match ($exception->getMessage()) {
+                'Completeness arbiter operation context is required.' => 'operation_context_required',
+                'Completeness arbiter input exceeds the configured token limit.' => 'input_limit_exceeded',
+                'Invalid completeness arbiter configuration.' => 'invalid_configuration',
+                default => 'invalid_argument',
+            };
+        }
+
+        if ($exception instanceof RuntimeException) {
+            return match ($exception->getMessage()) {
+                'completeness_arbiter_disabled' => 'disabled',
+                'usage_recording_failed' => 'usage_recording_failed',
+                default => 'runtime_exception',
+            };
+        }
+
+        return 'unexpected_exception';
     }
 
     /** @param array<string, mixed>|null $remediation */

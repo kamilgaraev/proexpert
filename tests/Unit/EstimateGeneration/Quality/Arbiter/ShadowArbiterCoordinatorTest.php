@@ -132,6 +132,21 @@ final class ShadowArbiterCoordinatorTest extends TestCase
         self::assertSame(['heating'], $reviewed['arbiter_review']['cycle']['target_package_keys']);
     }
 
+    #[Test]
+    public function it_records_a_safe_unavailable_reason_when_the_shadow_arbiter_fails(): void
+    {
+        $reviewed = (new ShadowArbiterCoordinator(
+            $this->throwingArbiter(),
+            new ArbiterReviewContextFactory,
+            new ArbiterVerdictValidator,
+        ))->review($this->heatingDraft());
+
+        self::assertSame('unavailable', $reviewed['arbiter_review']['status']);
+        self::assertSame('runtime_exception', $reviewed['arbiter_review']['unavailable_reason']);
+        self::assertArrayNotHasKey('exception', $reviewed['arbiter_review']);
+        self::assertArrayNotHasKey('message', $reviewed['arbiter_review']);
+    }
+
     /** @return array<string, mixed> */
     private function heatingDraft(): array
     {
