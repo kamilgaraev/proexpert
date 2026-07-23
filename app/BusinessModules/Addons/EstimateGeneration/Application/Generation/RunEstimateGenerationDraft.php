@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Generation;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineEntrypoint;
 
-final readonly class RunEstimateGenerationDraft
+readonly class RunEstimateGenerationDraft
 {
     public function __construct(private DraftPipelineEntrypoint $pipeline) {}
 
@@ -31,7 +32,12 @@ final readonly class RunEstimateGenerationDraft
             return;
         }
 
-        $run = $this->pipeline->run($snapshot);
+        try {
+            $run = $this->pipeline->run($snapshot);
+        } catch (StaleEstimateGenerationState) {
+            return;
+        }
+
         if (! $run->dispatchNext) {
             return;
         }
@@ -41,6 +47,7 @@ final readonly class RunEstimateGenerationDraft
             $expectedStateVersion,
             $attemptId,
             $snapshot->nextEvent(),
+            false,
         )->onQueue(GenerateEstimateDraftJob::QUEUE)->afterCommit();
     }
 }

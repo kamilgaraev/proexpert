@@ -46,6 +46,8 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
         ->middleware('authorize:legal_archive.archive')->whereNumber('legalDocument')->name('documents.restore');
     Route::post('documents/{legalDocument}/activate', [LegalArchiveDocumentController::class, 'activate'])
         ->middleware('authorize:legal_archive.signatures.verify')->whereNumber('legalDocument')->name('documents.activate');
+    Route::patch('documents/{legalDocument}/obligations/{obligation}', [LegalArchiveDocumentController::class, 'updateObligation'])
+        ->middleware('authorize:legal_archive.update')->whereNumber('legalDocument')->whereNumber('obligation')->name('documents.obligations.update');
     Route::get('documents/{legalDocument}/timeline', [LegalArchiveDocumentController::class, 'timeline'])
         ->middleware('authorize:legal_archive.audit.view')->whereNumber('legalDocument')->name('documents.timeline');
     Route::get('documents/{legalDocument}/available-actions', [LegalArchiveDocumentController::class, 'availableActions'])
@@ -67,6 +69,9 @@ Route::prefix('legal-archive')->name('legal-archive.')->group(function (): void 
         ->middleware('authorize:legal_archive.files.view')->whereNumber('documentVersion')->whereNumber('otherDocumentVersion')->name('document-file-versions.compare');
     Route::post('document-file-versions/{documentVersion}/editor/session', [LegalArchiveFileController::class, 'editorSession'])
         ->middleware('authorize:legal_archive.view')->whereNumber('documentVersion')->name('document-file-versions.editor.session');
+    Route::post('documents/{legalDocument}/editor/blank-session', [LegalArchiveFileController::class, 'startBlankEditorSession'])
+        ->middleware(['authorize:legal_archive.files.upload', 'authorize:legal_archive.versions.create', 'authorize:legal_archive.editor.edit'])
+        ->whereNumber('legalDocument')->name('documents.editor.blank-session');
 
     Route::post('documents/{legalDocument}/workflow/submit', [LegalArchiveWorkflowController::class, 'submit'])
         ->middleware('authorize:legal_archive.workflow.submit')->whereNumber('legalDocument')->name('workflow.submit');

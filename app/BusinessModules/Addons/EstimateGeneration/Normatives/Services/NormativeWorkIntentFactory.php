@@ -43,13 +43,15 @@ final class NormativeWorkIntentFactory
             $recorded['specialization_evidence'] ?? $item['specialization_evidence'] ?? [],
             $evidence,
         );
-        $specializationScenario = $specializationEvidence === []
-            ? $this->specializationScenario(
-                $item['specialization_scenario'] ?? $recorded['specialization_scenario'] ?? null,
-                $quantityKey,
-                $objectType,
-            )
-            : null;
+        $metadata = is_array($item['metadata'] ?? null) ? $item['metadata'] : [];
+        $specializationScenario = $this->specializationScenario(
+            $item['specialization_scenario']
+                ?? $metadata['specialization_scenario']
+                ?? $recorded['specialization_scenario']
+                ?? null,
+            $quantityKey,
+            $objectType,
+        );
         if (is_string($specializationScenario['intent_action'] ?? null)
             && trim($specializationScenario['intent_action']) !== '') {
             $classified['action'] = trim($specializationScenario['intent_action']);
@@ -58,6 +60,11 @@ final class NormativeWorkIntentFactory
         if (preg_match('/^(\d{2})-\d{2}-\d{3}-\d{2}$/D', $rateCode, $matches) === 1) {
             $classified['preferred_section_prefixes'] = [$matches[1]];
         }
+        $requestedNormativeCode = $rateCode !== ''
+            ? $rateCode
+            : (is_string($item['normative_rate_code'] ?? null) && $item['normative_rate_code'] !== ''
+                ? $item['normative_rate_code']
+                : null);
 
         $preferredSections = array_values(array_filter(
             $classified['preferred_section_prefixes'] ?? [],
@@ -74,9 +81,7 @@ final class NormativeWorkIntentFactory
             $objectType,
             $datasetVersion, 'parsed', $this->region($context), new DateTimeImmutable((string) $context['applicability_date']),
             $evidence, $preferredSections,
-            is_string($item['normative_rate_code'] ?? null) && $item['normative_rate_code'] !== ''
-                ? $item['normative_rate_code']
-                : null,
+            $requestedNormativeCode,
             (string) ($intent->system ?? ''),
             (string) ($classified['object'] ?? ''),
             $specializationEvidence,

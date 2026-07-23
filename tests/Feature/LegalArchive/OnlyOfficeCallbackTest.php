@@ -26,6 +26,18 @@ final class OnlyOfficeCallbackTest extends TestCase
         self::assertStringContainsString('finally', $service);
     }
 
+    public function test_callback_rejection_logs_a_safe_diagnostic_code_without_tokens(): void
+    {
+        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalDocumentEditorController.php');
+
+        self::assertIsString($controller);
+        self::assertStringContainsString("'error_code' =>", $controller);
+        self::assertStringContainsString("'callback_status' =>", $controller);
+        self::assertStringContainsString("'document_key_hash' =>", $controller);
+        $logContext = substr($controller, (int) strpos($controller, "Log::warning('legal_archive.editor.callback_rejected'"), 1200);
+        self::assertStringNotContainsString("'token' =>", $logContext);
+    }
+
     public function test_routes_have_separate_preview_download_and_editor_permissions(): void
     {
         $routes = file_get_contents(__DIR__.'/../../../routes/api/v1/admin/legal_archive.php');
@@ -96,6 +108,20 @@ final class OnlyOfficeCallbackTest extends TestCase
         self::assertStringContainsString('required_ability', $service);
         self::assertStringContainsString('$session->mode', $service);
         self::assertStringContainsString('upgrade_mode', $controller);
+    }
+
+    public function test_editor_restart_creates_a_separate_generation_without_interrupting_a_save(): void
+    {
+        $service = file_get_contents(__DIR__.'/../../../app/Services/LegalArchive/Editor/LegalDocumentEditorSessionService.php');
+        $controller = file_get_contents(__DIR__.'/../../../app/Http/Controllers/Api/V1/Admin/LegalArchive/LegalArchiveFileController.php');
+
+        self::assertIsString($service);
+        self::assertIsString($controller);
+        self::assertStringContainsString('bool $restart = false', $service);
+        self::assertStringContainsString('legal_document_editor_restart_pending_save', $service);
+        self::assertStringContainsString("'failure_code' => 'restarted'", $service);
+        self::assertStringContainsString('} elseif (! $upgradeMode || $mode !== \'edit\' || (string) $existing->mode !== \'review\'', $service);
+        self::assertStringContainsString('$request->boolean(\'restart\')', $controller);
     }
 
     public function test_completed_replay_precedes_reauthorization_and_active_completion_reauthorizes_again(): void

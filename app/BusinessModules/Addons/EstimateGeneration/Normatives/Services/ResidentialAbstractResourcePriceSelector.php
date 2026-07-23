@@ -22,6 +22,11 @@ final readonly class ResidentialAbstractResourcePriceSelector
 
         $eligible = array_values(array_filter($candidates, static function (object $candidate) use ($conversion, $baseDatasetIds): bool {
             $name = mb_strtolower(trim((string) ($candidate->price_resource_name ?? '')));
+            $isRegional = (int) ($candidate->regional_price_version_id ?? 0) > 0
+                && (string) ($candidate->source_price_kind ?? '') !== 'regional_worker_salary';
+            $isApprovedBase = in_array((int) ($candidate->dataset_version_id ?? 0), $baseDatasetIds, true)
+                && ! $isRegional
+                && in_array((string) ($candidate->price_dataset_source_type ?? ''), ['fsbc', 'fsnb_2022'], true);
 
             return preg_match('/^'.preg_quote($conversion['candidate_group_code'], '/').'-\d{4}$/D', trim((string) ($candidate->price_resource_code ?? ''))) === 1
                 && array_filter(
@@ -29,15 +34,21 @@ final readonly class ResidentialAbstractResourcePriceSelector
                     static fn (string $marker): bool => ! str_contains($name, $marker),
                 ) === []
                 && trim((string) ($candidate->price_unit ?? '')) === $conversion['from_unit']
-                && in_array((int) ($candidate->dataset_version_id ?? 0), $baseDatasetIds, true)
-                && ($candidate->regional_price_version_id ?? null) === null
-                && in_array((string) ($candidate->price_dataset_source_type ?? ''), ['fsbc', 'fsnb_2022'], true)
+                && ($isRegional || $isApprovedBase)
                 && is_numeric($candidate->base_price ?? null)
                 && (float) $candidate->base_price > 0
                 && (int) ($candidate->price_id ?? 0) > 0;
         }));
         if ($eligible === []) {
             return null;
+        }
+
+        $regionalEligible = array_values(array_filter(
+            $eligible,
+            static fn (object $candidate): bool => (int) ($candidate->regional_price_version_id ?? 0) > 0,
+        ));
+        if ($regionalEligible !== []) {
+            $eligible = $regionalEligible;
         }
 
         usort($eligible, static function (object $left, object $right): int {
@@ -59,18 +70,27 @@ final readonly class ResidentialAbstractResourcePriceSelector
         $selected->price_unit = $conversion['to_unit'];
         $selected->project_resource_conversion_assumption = $conversion['assumption'];
 
-        $policy = $conversion['candidate_group_code'] === $groupCode
-            ? (string) $selected->price_dataset_source_type.'_residential_converted_child_median:v1'
-            : match ((string) $selected->price_dataset_source_type) {
-                'fsbc' => 'fsbc_semantic_hard_attributes_median:v4',
-                'fsnb_2022' => 'fsnb_semantic_hard_attributes_median:v4',
-            };
+        $isRegionalSelection = (int) ($selected->regional_price_version_id ?? 0) > 0;
+        $policy = $isRegionalSelection
+            ? ($conversion['candidate_group_code'] === $groupCode
+                ? 'regional_residential_converted_child_median:v1'
+                : 'regional_semantic_hard_attributes_median:v4')
+            : ($conversion['candidate_group_code'] === $groupCode
+                ? (string) $selected->price_dataset_source_type.'_residential_converted_child_median:v1'
+                : match ((string) $selected->price_dataset_source_type) {
+                    'fsbc' => 'fsbc_semantic_hard_attributes_median:v4',
+                    'fsnb_2022' => 'fsnb_semantic_hard_attributes_median:v4',
+                });
 
         return [
             'row' => $selected,
             'candidates_count' => count($eligible),
             'policy' => $policy,
             'assumption' => $conversion['assumption'],
+            'abstract_selection_rule_key' => $normCode.'|'.$groupCode,
+            'abstract_selection_rule_version' => 1,
+            'price_factor' => $conversion['factor'],
+            'quantity_factor' => (string) (1 / (float) $conversion['factor']),
         ];
     }
 

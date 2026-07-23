@@ -8,6 +8,7 @@ use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Audit\LegalDocumentAudit;
+use App\Services\LegalArchive\Obligations\LegalDocumentObligationService;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
 
@@ -18,7 +19,12 @@ final readonly class LegalArchiveLifecycleService
         private LegalDocumentAudit $audit,
         private ConnectionInterface $connection,
         private LegalDocumentAggregateLock $lock,
-    ) {}
+        ?LegalDocumentObligationService $obligations = null,
+    ) {
+        $this->obligations = $obligations ?? new LegalDocumentObligationService;
+    }
+
+    private LegalDocumentObligationService $obligations;
 
     public function archive(LegalArchiveDocument $document, User $actor, int $expectedLockVersion): LegalArchiveDocument
     {
@@ -60,7 +66,9 @@ final readonly class LegalArchiveLifecycleService
             }
 
             return ['status' => 'active', 'lifecycle_status' => 'active', 'activated_at' => now()];
-        }, 'activated');
+        }, 'activated', function (LegalArchiveDocument $locked): void {
+            $this->obligations->syncFromEffectiveDocument($locked);
+        });
     }
 
     private function mutate(
@@ -70,8 +78,9 @@ final readonly class LegalArchiveLifecycleService
         string $permission,
         callable $changes,
         string $event,
+        ?callable $afterMutation = null,
     ): LegalArchiveDocument {
-        return $this->connection->transaction(function () use ($document, $actor, $expectedLockVersion, $permission, $changes, $event): LegalArchiveDocument {
+        return $this->connection->transaction(function () use ($document, $actor, $expectedLockVersion, $permission, $changes, $event, $afterMutation): LegalArchiveDocument {
             $locked = $this->lock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
             $this->access->authorizePermission($actor, $locked, $permission);
             if ((int) $locked->lock_version !== $expectedLockVersion) {
@@ -83,6 +92,9 @@ final readonly class LegalArchiveLifecycleService
                 'updated_by_user_id' => (int) $actor->id,
                 'lock_version' => $expectedLockVersion + 1,
             ])->save();
+            if ($afterMutation !== null) {
+                $afterMutation($locked);
+            }
             $this->audit->record($event, $locked, $actor, [
                 'before' => $before,
                 'after' => ['status' => $locked->status, 'lifecycle_status' => $locked->lifecycle_status, 'lock_version' => (int) $locked->lock_version],

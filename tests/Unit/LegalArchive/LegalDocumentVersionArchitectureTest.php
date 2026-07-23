@@ -68,6 +68,69 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
         self::assertStringNotContainsString('public function transitionProcessingStatus', $source);
     }
 
+    public function test_fenced_completion_authorizes_version_mutations_before_current_rotation(): void
+    {
+        $source = file_get_contents(
+            __DIR__.'/../../../app/Services/LegalArchive/Files/LegalDocumentFileService.php',
+        );
+        self::assertIsString($source);
+        $method = strstr($source, 'private function markFencedReady(');
+        self::assertIsString($method);
+        $method = strstr($method, 'private function markFencedFailed(', true);
+        self::assertIsString($method);
+
+        $authorization = strpos($method, '$this->authorizeDatabaseMutation();');
+        $rotation = strpos($method, '$this->setFencedVersionCurrent(');
+
+        self::assertIsInt($authorization);
+        self::assertIsInt($rotation);
+        self::assertLessThan($rotation, $authorization);
+    }
+
+    public function test_fenced_completion_does_not_revalidate_the_source_during_current_version_rotation(): void
+    {
+        $source = file_get_contents(
+            __DIR__.'/../../../app/Services/LegalArchive/Files/LegalDocumentFileService.php',
+        );
+        self::assertIsString($source);
+        $method = strstr($source, 'private function markFencedReady(');
+        self::assertIsString($method);
+        $method = strstr($method, 'private function markFencedFailed(', true);
+        self::assertIsString($method);
+        $rotation = strstr($method, '$this->setFencedVersionCurrent(');
+        self::assertIsString($rotation);
+        $pointerPromotion = strstr($rotation, '$this->setFencedCurrentPointers(', true);
+        self::assertIsString($pointerPromotion);
+
+        self::assertStringNotContainsString('$attempt->assertOwned($document);', $pointerPromotion);
+        self::assertStringContainsString(
+            '$this->setFencedCurrentPointers($document, $file, (int) $locked->id);',
+            $method,
+        );
+        $afterPointerPromotion = strstr($method, '$this->setFencedCurrentPointers($document, $file, (int) $locked->id);');
+        self::assertIsString($afterPointerPromotion);
+        self::assertStringContainsString('$attempt->assertOwned($document);', $afterPointerPromotion);
+    }
+
+    public function test_current_version_flag_reconciliation_only_repairs_a_consistent_primary_pointer_without_another_current_version(): void
+    {
+        $path = __DIR__.'/../../../database/migrations/2026_07_22_190000_reconcile_legal_document_current_version_flags.php';
+        self::assertFileExists($path);
+        $source = file_get_contents($path);
+        self::assertIsString($source);
+
+        self::assertStringContainsString("SET LOCAL most.legal_archive_version_mutation = 'service'", $source);
+        self::assertStringContainsString(
+            'LOCK TABLE legal_archive_documents, legal_archive_document_files, legal_archive_document_versions IN EXCLUSIVE MODE',
+            $source,
+        );
+        self::assertStringContainsString('document.current_primary_version_id = version.id', $source);
+        self::assertStringContainsString('file.current_version_id = version.id', $source);
+        self::assertStringContainsString("version.processing_status = 'ready'", $source);
+        self::assertStringContainsString("version.status = 'uploaded'", $source);
+        self::assertStringContainsString('NOT EXISTS', $source);
+    }
+
     public function test_technical_mutation_capability_is_confined_to_model_file_and_signature_services(): void
     {
         $root = realpath(__DIR__.'/../../../app');
@@ -113,6 +176,8 @@ final class LegalDocumentVersionArchitectureTest extends TestCase
         self::assertStringContainsString('instanceof LegalDocumentScanFailed', $fileController);
         self::assertStringContainsString('legal_archive.messages.document_file_processing_failed', $documentController);
         self::assertStringContainsString('legal_archive.messages.version_file_processing_failed', $fileController);
+        self::assertStringContainsString("'processing_failure_code' => \$failureCode", $documentController);
+        self::assertStringContainsString("'processing_failure_code' => \$failureCode", $fileController);
         self::assertStringContainsString('new LegalArchiveDocumentResource(', $documentController);
         self::assertStringContainsString('new LegalArchiveDocumentVersionResource($error->version)', $fileController);
     }

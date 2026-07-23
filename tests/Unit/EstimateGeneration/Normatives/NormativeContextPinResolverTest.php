@@ -619,6 +619,8 @@ final class NormativeContextPinResolverTest extends TestCase
             'source' => 'document',
             'evidence_refs' => ['doc:1'],
         ]];
+        $intents[0]['work_item_key'] = 'Roof-1';
+        $intents[] = [...$intents[0], 'work_item_key' => 'roof-1'];
         $pin = $resolver->resolve($context, $intents);
 
         self::assertSame('pinned', $pin['status']);
@@ -627,9 +629,13 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertSame([['candidate_id' => '101']], $pin['catalog_candidates']);
         self::assertSame('electrical.power_lines', $pin['supplementary_materials'][0]['work_item_key']);
         self::assertSame('2026-07-01', $pin['applicability_date']);
+        self::assertSame(
+            ['Roof-1', 'roof-1'],
+            array_column($source->intents, 'work_item_key'),
+        );
         self::assertSame($pin, $resolver->resolve($context, $intents));
         self::assertSame(2, $source->calls);
-        self::assertSame($intents, $source->intents);
+        self::assertEquals($intents, $source->intents);
     }
 
     #[Test]
@@ -806,7 +812,7 @@ final class NormativeContextPinResolverTest extends TestCase
         ]]);
 
         self::assertSame('review_required', $pin['status']);
-        self::assertNull($pin['catalog_candidates']);
+        self::assertArrayNotHasKey('catalog_candidates', $pin);
     }
 
     #[Test]
@@ -820,16 +826,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("->where('id', \$requested->datasetId)", $source);
         self::assertStringContainsString("->where('prices.regional_price_version_id', \$requested->regionalPriceVersionId)", $source);
         self::assertStringContainsString("->where('status', 'active')", $source);
-        self::assertStringContainsString('->whereExists(function ($priced) use ($requested, $basePriceDatasetIds)', $source);
-        self::assertStringContainsString("->where('pin_resources.quantity', '>', 0)", $source);
-        self::assertStringContainsString("->where('pin_prices.base_price', '>', 0)", $source);
-        self::assertStringNotContainsString("->whereColumn('pin_resources.construction_resource_id', 'pin_prices.construction_resource_id')", $source);
-        self::assertStringNotContainsString("->on('pin_prices.price_type', '=', 'pin_resources.resource_type')", $source);
-        self::assertStringContainsString('->whereNotExists(function ($unpriced) use ($requested, $basePriceDatasetIds)', $source);
-        self::assertStringContainsString('->whereNotExists(function ($validPrice) use ($requested, $basePriceDatasetIds)', $source);
-        self::assertStringContainsString("->where('required_resources.quantity', '>', 0)", $source);
-        self::assertStringContainsString("->where('required_resources.resource_type', '<>', 'summary')", $source);
-        self::assertStringContainsString("required_resources.raw_payload->>'source_tag'", $source);
+        self::assertStringContainsString('prices.id = (SELECT candidate_prices.id', $source);
         self::assertStringContainsString("resources.raw_payload->>'source_tag'", $source);
         self::assertStringContainsString("raw_payload->>'source_tag'", $source);
         self::assertStringContainsString('unpriced_abstract_resources', $source);
@@ -837,20 +834,12 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("->where('positive_resources.quantity', '>', 0)", $source);
         self::assertStringContainsString('->whereNotExists(function ($negativeQuantity)', $source);
         self::assertStringContainsString("->where('negative_resources.quantity', '<', 0)", $source);
-        self::assertStringContainsString("->whereColumn('valid_prices.resource_code', 'required_resources.resource_code')", $source);
-        self::assertStringContainsString('estimate_generation_unit_conversions as valid_conversions', $source);
-        self::assertStringContainsString("->where('valid_conversions.version', 1)", $source);
-        self::assertStringContainsString("->where('valid_conversions.is_active', true)", $source);
-        self::assertStringContainsString("->where('valid_conversions.factor', '>', 0)", $source);
-        self::assertStringContainsString('pin_prices.unit IS NOT DISTINCT FROM pin_resources.unit', $source);
-        self::assertStringContainsString("REGEXP_REPLACE(COALESCE(pin_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
+        self::assertStringContainsString('estimate_generation_unit_conversions AS candidate_conversions', $source);
+        self::assertStringContainsString('candidate_conversions.version = 1', $source);
+        self::assertStringContainsString('candidate_conversions.is_active = TRUE', $source);
+        self::assertStringContainsString('candidate_conversions.factor > 0', $source);
         self::assertStringContainsString('residentialAbstractResourcePriceSelector->supportedCandidateGroups()', $source);
         self::assertStringContainsString('residentialAbstractResourcePriceSelector->supportedUnitPairs()', $source);
-        self::assertStringContainsString("->where('pin_resources.resource_code', \$pair['group_code'])", $source);
-        self::assertStringContainsString("->where('pin_prices.unit', \$pair['from_unit'])", $source);
-        self::assertStringNotContainsString("->where('pin_prices.regional_price_version_id', \$requested->regionalPriceVersionId);", $source);
-        self::assertStringContainsString('valid_prices.unit IS NOT DISTINCT FROM required_resources.unit', $source);
-        self::assertStringContainsString("REGEXP_REPLACE(COALESCE(valid_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString('candidate_prices.unit IS NOT DISTINCT FROM resources.unit', $source);
         self::assertStringContainsString("REGEXP_REPLACE(COALESCE(candidate_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString("table('estimate_resource_prices as semantic_project_prices')", $source);
@@ -862,6 +851,10 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("'prices.unit as price_unit'", $source);
         self::assertStringContainsString("->where('resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('resources.resource_type', '<>', 'summary')", $source);
+        self::assertStringContainsString('$normalResourceRowsQuery = function (int $normId)', $source);
+        self::assertStringContainsString("->where('scoped_resources.estimate_norm_id', '=', \$normId)", $source);
+        self::assertStringContainsString("->on('scoped_resources.id', '=', 'resources.id')", $source);
+        self::assertStringNotContainsString('(clone $normalResourceRowsQuery)', $source);
         self::assertStringContainsString("->where('quantity', '>', 0)", $source);
         self::assertStringContainsString('$this->ranker->select($query->all(), [$intent])', $source);
         self::assertStringContainsString("norms.search_vector @@ websearch_to_tsquery('russian', ?)", $source);
@@ -876,8 +869,6 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('$fsbcBasePriceDatasetId,', $source);
         self::assertStringContainsString('$fgisLaborPriceDatasetId,', $source);
         self::assertStringContainsString('$requested->datasetId,', $source);
-        self::assertStringContainsString("->whereIn('pin_prices.dataset_version_id', \$basePriceDatasetIds)", $source);
-        self::assertStringContainsString("->whereIn('valid_prices.dataset_version_id', \$basePriceDatasetIds)", $source);
         self::assertStringContainsString('candidate_prices.dataset_version_id IN (', $source);
         self::assertStringContainsString('$basePricePlaceholders', $source);
         self::assertStringContainsString("->whereNull('regional_price_version_id')", $source);
@@ -1415,6 +1406,9 @@ final class NormativeContextPinResolverTest extends TestCase
             'project_resource_source_unit_price' => 10_000,
             'project_resource_source_price_unit' => 'м3',
             'project_resource_conversion_factor' => 0.20,
+            'project_resource_abstract_selection_rule_key' => '12-01-013-07|12.2.05.02',
+            'project_resource_abstract_selection_rule_version' => 1,
+            'project_resource_quantity_factor' => '5',
         ]);
 
         self::assertSame([
@@ -1427,6 +1421,55 @@ final class NormativeContextPinResolverTest extends TestCase
             'candidates_count' => 3,
             'conversion_assumption' => 'mineral_wool_thickness_m:0.20',
             'source_unit_price' => '10000',
+            'source_price_unit' => 'м3',
+            'conversion_factor' => '0.2',
+            'abstract_selection_rule_key' => '12-01-013-07|12.2.05.02',
+            'abstract_selection_rule_version' => 1,
+            'quantity_factor' => '5',
+        ], $mapped->resource['project_resource_selection']);
+    }
+
+    #[Test]
+    public function converted_regional_residential_resource_row_preserves_tatarstan_price_provenance(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101,
+            'norm_resource_id' => 7001,
+            'construction_resource_id' => null,
+            'price_construction_resource_id' => 502,
+            'price_id' => 9001,
+            'resource_type' => 'material',
+            'resource_code' => '12.2.05.02',
+            'price_resource_code' => '12.2.05.02-0006',
+            'resource_name' => 'Плиты теплоизоляционные по проекту',
+            'price_resource_name' => 'Плиты теплоизоляционные минераловатные',
+            'unit' => 'м2',
+            'price_unit' => 'м2',
+            'quantity' => '100.000000',
+            'unit_price' => '1415.600000',
+            'regional_price_version_id' => 150,
+            'regional_price_version_key' => '2026-q2-ru-ta-r1',
+            'price_dataset_source_type' => 'fgiscs',
+            'price_dataset_version' => '2026-q2',
+            'raw_source_tag' => 'AbstractResource',
+            'project_resource_candidates_count' => 1,
+            'project_resource_price_policy' => 'regional_residential_converted_child_median:v1',
+            'project_resource_conversion_assumption' => 'mineral_wool_thickness_m:0.20',
+            'project_resource_source_unit_price' => 7078,
+            'project_resource_source_price_unit' => 'м3',
+            'project_resource_conversion_factor' => 0.20,
+        ]);
+
+        self::assertSame([
+            'group_code' => '12.2.05.02',
+            'selected_resource_code' => '12.2.05.02-0006',
+            'selected_resource_name' => 'Плиты теплоизоляционные минераловатные',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => '2026-q2-ru-ta-r1',
+            'policy' => 'regional_residential_converted_child_median:v1',
+            'candidates_count' => 1,
+            'conversion_assumption' => 'mineral_wool_thickness_m:0.20',
+            'source_unit_price' => '7078',
             'source_price_unit' => 'м3',
             'conversion_factor' => '0.2',
         ], $mapped->resource['project_resource_selection']);

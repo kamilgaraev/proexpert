@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\HandleEstimateGenerationDraftFailure;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use Illuminate\Bus\Queueable;
@@ -32,7 +33,7 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public int $maxExceptions = 3;
 
-    public int $timeout = 1800;
+    public int $timeout = 2100;
 
     public array $backoff = [60, 180];
 
@@ -43,6 +44,7 @@ class GenerateEstimateDraftJob implements ShouldQueue
         private readonly int $expectedStateVersion,
         private readonly string $attemptId,
         private readonly FailureExecutionSnapshot $failureSnapshot,
+        private readonly bool $throttleEntry = true,
     ) {
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
@@ -50,10 +52,14 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public function middleware(): array
     {
-        return [
+        $middleware = [
             Skip::when(fn (): bool => $this->isStale()),
-            new RateLimited('estimate-generation-drafts'),
         ];
+        if ($this->throttleEntry) {
+            $middleware[] = new RateLimited('estimate-generation-drafts');
+        }
+
+        return $middleware;
     }
 
     public function rateLimitKey(): string
@@ -63,11 +69,19 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public function handle(RunEstimateGenerationDraft $generation): void
     {
-        $generation->handle($this->failureSnapshot, $this->expectedStateVersion, $this->attemptId);
+        try {
+            $generation->handle($this->failureSnapshot, $this->expectedStateVersion, $this->attemptId);
+        } catch (StaleEstimateGenerationState) {
+            return;
+        }
     }
 
     public function failed(Throwable $error): void
     {
+        if ($error instanceof StaleEstimateGenerationState) {
+            return;
+        }
+
         app(HandleEstimateGenerationDraftFailure::class)->handle($this->failureSnapshot, $error);
     }
 

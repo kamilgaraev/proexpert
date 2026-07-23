@@ -6,8 +6,11 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\DTOs\Contract\ContractDTO;
 use App\DTOs\Contract\ContractDossierCreationInput;
+use App\DTOs\Contract\ContractDossierCreationResult;
+use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
+use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\User;
@@ -44,13 +47,35 @@ class PurchaseContractService
 
     public function createFromOrder(PurchaseOrder $order): Contract
     {
-        return DB::transaction(function () use ($order): Contract {
+        return $this->createDossierFromOrder($order)->contract;
+    }
+
+    public function createDossierFromOrder(PurchaseOrder $order): ContractDossierCreationResult
+    {
+        return DB::transaction(function () use ($order): ContractDossierCreationResult {
             $order = PurchaseOrder::query()
                 ->whereKey($order->id)
                 ->lockForUpdate()
                 ->firstOrFail();
             if ($order->contract_id !== null) {
-                return $order->contract()->firstOrFail();
+                $contract = $order->contract()->with([
+                    'supplier',
+                    'contractor',
+                    'project',
+                    'organization',
+                    'legalArchiveDocument',
+                ])->firstOrFail();
+                $document = $contract->legalArchiveDocument;
+
+                if (
+                    (int) $contract->organization_id !== (int) $order->organization_id
+                    || $document === null
+                    || (int) $document->organization_id !== (int) $order->organization_id
+                ) {
+                    throw new \DomainException(trans_message('procurement.purchase_orders.create_contract_error'));
+                }
+
+                return new ContractDossierCreationResult($contract, $document, true);
             }
             if (! in_array($order->status, [
                 PurchaseOrderStatusEnum::CONFIRMED,
@@ -80,11 +105,15 @@ class PurchaseContractService
                     'date' => now()->toDateString(),
                     'subject' => 'Договор поставки по заказу '.$order->order_number,
                     'total_amount' => (float) $order->total_amount,
+                    'delivery_terms' => $order->delivery_date?->toDateString(),
                     'notes' => 'Создан из заказа поставщику: '.$order->order_number,
                 ]),
                 idempotencyKey: 'purchase-order:'.$order->id,
                 documentTitle: 'Договор поставки №'.$contractNumber,
                 profileCode: 'contract.supply',
+                documentMetadata: [
+                    'delivery_terms' => $order->delivery_date?->toDateString(),
+                ],
                 sourceLinks: [[
                     'link_type' => 'purchase_order',
                     'linked_type' => 'purchase_order',
@@ -101,7 +130,11 @@ class PurchaseContractService
                 DB::afterCommit(static fn () => event(new \App\BusinessModules\Features\Procurement\Events\PurchaseContractCreated($contract, $order)));
             }
 
-            return $contract->fresh(['supplier', 'contractor', 'project', 'organization']);
+            return new ContractDossierCreationResult(
+                $contract->fresh(['supplier', 'contractor', 'project', 'organization', 'legalArchiveDocument']) ?? $contract,
+                $result->document,
+                $result->replayed,
+            );
         });
     }
 
@@ -230,10 +263,11 @@ class PurchaseContractService
             subject: $data['subject'] ?? null,
             work_type_category: ContractWorkTypeCategoryEnum::SUPPLY,
             payment_terms: $data['payment_terms'] ?? null,
+            delivery_terms: $data['delivery_terms'] ?? null,
             base_amount: (float) $data['total_amount'],
             total_amount: (float) $data['total_amount'],
             gp_percentage: null,
-            gp_calculation_type: null,
+            gp_calculation_type: GpCalculationTypeEnum::PERCENTAGE,
             gp_coefficient: null,
             warranty_retention_calculation_type: null,
             warranty_retention_percentage: null,
@@ -248,6 +282,9 @@ class PurchaseContractService
             is_fixed_amount: true,
             supplier_id: isset($data['supplier_id']) ? (int) $data['supplier_id'] : null,
             contract_category: 'procurement',
+            contract_side_type: ! empty($data['supplier_id'])
+                ? ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_SUPPLIER
+                : ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR,
         );
     }
 

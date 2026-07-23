@@ -1248,6 +1248,13 @@ final class LegalDocumentWorkflowTest extends TestCase
             'primary_project_id' => 7,
             'title' => 'Договор поставки',
             'type_profile_code' => 'contract.supply',
+            'structured_fields' => [
+                'subject' => 'Поставка материалов',
+                'buyer' => 'Заказчик',
+                'supplier' => 'Поставщик',
+                'price' => 100000,
+                'delivery_terms' => 'Доставка в течение 10 дней',
+            ],
             'approval_status' => 'not_started',
             'lock_version' => 0,
         ]);
@@ -1283,6 +1290,7 @@ final class LegalDocumentWorkflowTest extends TestCase
             $table->unsignedBigInteger('primary_project_id')->nullable();
             $table->string('title');
             $table->string('type_profile_code')->nullable();
+            $table->json('structured_fields')->nullable();
             $table->string('approval_status')->nullable();
             $table->string('lifecycle_status')->nullable();
             $table->unsignedBigInteger('current_primary_version_id')->nullable();

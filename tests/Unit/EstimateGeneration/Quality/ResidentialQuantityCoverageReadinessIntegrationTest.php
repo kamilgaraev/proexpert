@@ -95,9 +95,9 @@ final class ResidentialQuantityCoverageReadinessIntegrationTest extends TestCase
         $coverage = $issue['details']['quantity_coverage'] ?? [];
 
         self::assertSame(
-            ['heating.unit', 'sewerage.outlets'],
+            ['heating.unit', 'sewerage.outlet_route'],
             array_values(array_intersect(
-                ['heating.unit', 'sewerage.outlets'],
+                ['heating.unit', 'sewerage.outlet_route'],
                 array_column($coverage, 'quantity_key'),
             )),
         );

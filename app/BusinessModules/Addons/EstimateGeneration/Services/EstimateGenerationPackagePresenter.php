@@ -8,6 +8,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPacka
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use Illuminate\Support\Collection;
 
+use function trans_message;
+
 class EstimateGenerationPackagePresenter
 {
     /**
@@ -87,20 +89,36 @@ class EstimateGenerationPackagePresenter
                 continue;
             }
 
+            $reason = trim((string) ($warning['reason'] ?? ''));
+            if ($reason === '') {
+                continue;
+            }
+
             $message = trim((string) ($warning['message'] ?? ''));
+            if ($message === '') {
+                $message = $this->coverageWarningMessage($reason);
+            }
             if ($message === '') {
                 continue;
             }
 
             $result[] = [
                 'quantity_key' => trim((string) ($warning['quantity_key'] ?? '')),
-                'reason' => trim((string) ($warning['reason'] ?? '')),
+                'reason' => $reason,
                 'package_key' => trim((string) ($warning['package_key'] ?? $package->key)),
                 'message' => $message,
             ];
         }
 
         return $result;
+    }
+
+    private function coverageWarningMessage(string $reason): string
+    {
+        $key = 'estimate_generation.quantity_coverage_warnings.'.$reason;
+        $message = trans_message($key);
+
+        return $message === $key ? '' : trim($message);
     }
 
     /**

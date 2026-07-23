@@ -86,6 +86,17 @@ final class LegalDocumentProfileValidatorTest extends TestCase
         }
     }
 
+    public function test_draft_fields_can_be_saved_before_all_contract_requisites_are_ready(): void
+    {
+        $result = (new LegalDocumentProfileValidator)->validate(
+            $this->profile(),
+            ['price' => '1250.50'],
+            enforceRequired: false,
+        );
+
+        self::assertSame(['price' => 1250.5], $result);
+    }
+
     public function test_required_string_containing_only_whitespace_is_missing(): void
     {
         $validator = new LegalDocumentProfileValidator;
@@ -137,6 +148,51 @@ final class LegalDocumentProfileValidatorTest extends TestCase
         ]);
 
         self::assertSame([], $result['tags']);
+    }
+
+    public function test_obligation_definitions_are_normalized_without_becoming_arbitrary_profile_fields(): void
+    {
+        $result = (new LegalDocumentProfileValidator)->validate($this->profile(), [
+            'subject' => 'Поставка',
+            'obligations' => [[
+                'title' => '  Передать материалы  ',
+                'due_at' => '2026-08-01',
+                'amount' => '1250.50',
+                'volume' => '10',
+                'unit' => ' шт. ',
+                'responsible_party' => 'supplier',
+                'status' => 'open',
+            ]],
+        ]);
+
+        self::assertSame([
+            'title' => 'Передать материалы',
+            'due_at' => '2026-08-01',
+            'amount' => 1250.5,
+            'volume' => 10.0,
+            'unit' => 'шт.',
+            'responsible_party' => 'supplier',
+            'status' => 'open',
+        ], $result['obligations'][0]);
+    }
+
+    public function test_obligation_definition_rejects_unknown_or_invalid_values(): void
+    {
+        $validator = new LegalDocumentProfileValidator;
+
+        try {
+            $validator->validate($this->profile(), [
+                'subject' => 'Поставка',
+                'obligations' => [[
+                    'title' => 'Передать материалы',
+                    'status' => 'completed',
+                    'unexpected' => 'value',
+                ]],
+            ]);
+            self::fail('Ожидалась ошибка некорректного обязательства');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('obligations', $exception->errors());
+        }
     }
 
     public function test_boolean_is_rejected_for_integer_field(): void

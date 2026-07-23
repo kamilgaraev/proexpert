@@ -42,6 +42,10 @@ final readonly class WorkPlanCompiler
             }
         }
         $localEstimates = $this->deduplicateSignedScenarioItems($localEstimates);
+        $objectType = is_string($profile->toArray()['object_type'] ?? null)
+            ? $profile->toArray()['object_type']
+            : null;
+        $localEstimates = $this->materializeSignedScenarios($localEstimates, $objectType);
 
         $regionalContext = is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : [];
 
@@ -56,9 +60,7 @@ final readonly class WorkPlanCompiler
                 : $this->resolveNormativeContextPin(
                     $regionalContext,
                     $localEstimates,
-                    is_string($profile->toArray()['object_type'] ?? null)
-                        ? $profile->toArray()['object_type']
-                        : null,
+                    $objectType,
                 ),
             'local_estimates' => $localEstimates,
         ];
@@ -110,15 +112,45 @@ final readonly class WorkPlanCompiler
         return $localEstimates;
     }
 
+    /** @param list<array<string, mixed>> $localEstimates
+     * @return list<array<string, mixed>>
+     */
+    private function materializeSignedScenarios(array $localEstimates, ?string $objectType): array
+    {
+        foreach ($localEstimates as $localIndex => $localEstimate) {
+            foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
+                foreach ($section['work_items'] ?? [] as $itemIndex => $item) {
+                    if (! is_array($item)) {
+                        continue;
+                    }
+
+                    $scenario = $this->resolvedMaterialScenario($item, $objectType);
+                    if ($scenario === null) {
+                        continue;
+                    }
+
+                    $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = [
+                        ...$item,
+                        'specialization_scenario' => $scenario,
+                    ];
+                }
+            }
+        }
+
+        return $localEstimates;
+    }
+
     public function resolveNormativeContextPin(
         array $regionalContext,
         array $localEstimates,
         ?string $objectType = null,
+        ?callable $progress = null,
     ): array {
-        return $this->normativePins->resolve(
-            $regionalContext,
-            $this->normativeIntents($localEstimates, $objectType),
-        );
+        $intents = $this->normativeIntents($localEstimates, $objectType);
+
+        return $progress === null
+            ? $this->normativePins->resolve($regionalContext, $intents)
+            : $this->normativePins->resolve($regionalContext, $intents, $progress);
     }
 
     /** @param array<string, mixed> $intent
@@ -155,7 +187,7 @@ final readonly class WorkPlanCompiler
         ];
     }
 
-    /** @return list<array{search_text: string, unit: string, code: string|null, material?: string, action: string, scope: string, system: string|null, object: string|null, object_type?: string, normative_section: string|null, normative_sections: list<string>}> */
+    /** @return list<array{work_item_key: string, search_text: string, unit: string, code: string|null, material?: string, action: string, scope: string, system: string|null, object: string|null, object_type?: string, normative_section: string|null, normative_sections: list<string>}> */
     private function normativeIntents(array $localEstimates, ?string $objectType = null): array
     {
         $intents = [];
@@ -164,6 +196,10 @@ final readonly class WorkPlanCompiler
             foreach ($localEstimate['sections'] ?? [] as $section) {
                 foreach ($section['work_items'] ?? [] as $item) {
                     if (! is_array($item) || in_array((string) ($item['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note', 'quantity_review'], true)) {
+                        continue;
+                    }
+                    $workItemKey = (string) ($item['key'] ?? '');
+                    if ($workItemKey === '') {
                         continue;
                     }
                     $recordedIntent = is_array($item['work_intent'] ?? null) ? $item['work_intent'] : null;
@@ -187,6 +223,7 @@ final readonly class WorkPlanCompiler
                     $normativeSection = count($normativeSections) === 1 ? $normativeSections[0] : null;
                     $material = $this->intentString($recordedIntent, 'material') ?? $classified->material;
                     $resolvedIntent = [
+                        'work_item_key' => $workItemKey,
                         'search_text' => $this->intentString($scenario, 'normative_search_text')
                             ?? (string) ($item['normative_search_text'] ?? $item['name'] ?? ''),
                         'unit' => (string) ($item['unit'] ?? ''),

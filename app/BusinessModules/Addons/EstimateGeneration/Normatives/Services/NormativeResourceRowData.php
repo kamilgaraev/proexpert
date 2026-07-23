@@ -62,6 +62,7 @@ final readonly class NormativeResourceRowData
             'regional_child_median:v1',
             'fsbc_base_child_median:v1',
             'fsnb_base_child_median:v1',
+            'regional_residential_converted_child_median:v1',
             'regional_child_hard_attributes_median:v1',
             'fsbc_base_child_hard_attributes_median:v1',
             'fsnb_base_child_hard_attributes_median:v1',
@@ -130,6 +131,14 @@ final readonly class NormativeResourceRowData
                     $resource['project_resource_selection']['source_unit_price'] = (string) $sourceUnitPrice;
                     $resource['project_resource_selection']['source_price_unit'] = $sourcePriceUnit;
                     $resource['project_resource_selection']['conversion_factor'] = (string) $conversionFactor;
+                    $ruleKey = trim((string) ($row->project_resource_abstract_selection_rule_key ?? ''));
+                    $ruleVersion = $row->project_resource_abstract_selection_rule_version ?? null;
+                    $quantityFactor = $row->project_resource_quantity_factor ?? null;
+                    if ($ruleKey !== '' && self::positiveInt($ruleVersion) !== null && is_numeric($quantityFactor) && (float) $quantityFactor > 0) {
+                        $resource['project_resource_selection']['abstract_selection_rule_key'] = $ruleKey;
+                        $resource['project_resource_selection']['abstract_selection_rule_version'] = self::positiveInt($ruleVersion);
+                        $resource['project_resource_selection']['quantity_factor'] = (string) $quantityFactor;
+                    }
                 }
             }
         }

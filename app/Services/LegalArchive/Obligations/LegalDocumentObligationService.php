@@ -32,15 +32,12 @@ final class LegalDocumentObligationService
                 'organization_id' => (int) $document->organization_id,
                 'document_version_id' => $document->current_primary_version_id,
                 'project_id' => $document->primary_project_id,
-                'responsible_user_id' => $definition['responsible_user_id'] ?? null,
                 'responsible_party' => $definition['responsible_party'] ?? null,
                 'due_at' => $definition['due_at'] ?? null,
                 'amount' => $definition['amount'] ?? null,
                 'volume' => $definition['volume'] ?? null,
                 'unit' => $definition['unit'] ?? null,
                 'status' => $definition['status'] ?? 'open',
-                'evidence' => $definition['evidence'] ?? null,
-                'metadata' => $definition['metadata'] ?? null,
             ]));
         }
         return $result;

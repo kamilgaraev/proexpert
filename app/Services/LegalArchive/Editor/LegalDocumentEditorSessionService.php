@@ -43,6 +43,7 @@ final class LegalDocumentEditorSessionService
         User $actor,
         string $mode = 'edit',
         bool $upgradeMode = false,
+        bool $restart = false,
     ): EditorSessionPayload {
         if (! in_array($mode, ['view', 'review', 'edit'], true)) {
             throw new DomainException('legal_document_editor_mode_invalid');
@@ -75,7 +76,7 @@ final class LegalDocumentEditorSessionService
         $this->authorizer->authorize($actor, $document, $mode === 'review'
             ? LegalDocumentAbility::COMMENT->value
             : LegalDocumentAbility::EDIT->value);
-        $session = $this->connection->transaction(function () use ($version, $document, $actor, $expiresAt, $mode, $upgradeMode): LegalDocumentEditorSession {
+        $session = $this->connection->transaction(function () use ($version, $document, $actor, $expiresAt, $mode, $upgradeMode, $restart): LegalDocumentEditorSession {
             $lockedDocument = $this->aggregateLock->lockDocument($this->connection, (int) $document->organization_id, (int) $document->id);
             $lockedVersion = $this->aggregateLock->lockVersion($this->connection, $lockedDocument, (int) $version->id);
             $this->assertEditable($lockedDocument, $lockedVersion);
@@ -101,31 +102,35 @@ final class LegalDocumentEditorSessionService
                         throw new DomainException('legal_document_editor_actor_conflict');
                     }
                     if ((string) $existing->mode === $mode) {
-                        $this->recordParticipant($existing, $actor, $this->abilityForMode($mode));
-                        $this->audit->record('editor_session_accessed', $lockedDocument, $actor, [
-                            'source_event_id' => 'editor-session:'.$existing->id.':access:'.Str::uuid(),
-                            'session_id' => $existing->id,
-                            'document_version_id' => (int) $lockedVersion->id,
-                        ]);
+                        if ($restart) {
+                            $this->restart($existing, $lockedDocument, $lockedVersion, $actor);
+                        } else {
+                            $this->recordParticipant($existing, $actor, $this->abilityForMode($mode));
+                            $this->audit->record('editor_session_accessed', $lockedDocument, $actor, [
+                                'source_event_id' => 'editor-session:'.$existing->id.':access:'.Str::uuid(),
+                                'session_id' => $existing->id,
+                                'document_version_id' => (int) $lockedVersion->id,
+                            ]);
 
-                        return $existing;
-                    }
-                    if (! $upgradeMode || $mode !== 'edit' || (string) $existing->mode !== 'review'
+                            return $existing;
+                        }
+                    } elseif (! $upgradeMode || $mode !== 'edit' || (string) $existing->mode !== 'review'
                         || $this->saves()->where('editor_session_id', $existing->id)
                             ->whereIn('state', ['reserved', 'processing'])->exists()) {
                         throw new DomainException('legal_document_editor_mode_conflict');
+                    } else {
+                        LegalDocumentEditorSession::serviceMutation(fn () => $existing->forceFill([
+                            'status' => 'closed',
+                            'completed_at' => now(),
+                            'failure_code' => 'mode_upgraded',
+                        ])->save());
+                        $this->audit->record('editor_session_mode_upgraded', $lockedDocument, $actor, [
+                            'source_event_id' => 'editor-session:'.$existing->id.':mode-upgraded',
+                            'session_id' => $existing->id,
+                            'from_mode' => (string) $existing->mode,
+                            'to_mode' => $mode,
+                        ]);
                     }
-                    LegalDocumentEditorSession::serviceMutation(fn () => $existing->forceFill([
-                        'status' => 'closed',
-                        'completed_at' => now(),
-                        'failure_code' => 'mode_upgraded',
-                    ])->save());
-                    $this->audit->record('editor_session_mode_upgraded', $lockedDocument, $actor, [
-                        'source_event_id' => 'editor-session:'.$existing->id.':mode-upgraded',
-                        'session_id' => $existing->id,
-                        'from_mode' => (string) $existing->mode,
-                        'to_mode' => $mode,
-                    ]);
                 }
             }
             $latestGeneration = $this->sessions()->where('organization_id', $lockedDocument->organization_id)
@@ -375,24 +380,50 @@ final class LegalDocumentEditorSessionService
 
     private function assertSourceStillEditable(LegalDocumentEditorSession $session, LegalArchiveDocument $document, bool $allowOwnVersion = false): void
     {
-        if ((int) $document->current_primary_version_id === (int) $session->source_version_id) {
-            $source = $this->versions()->find((int) $session->source_version_id);
-            if ($source instanceof LegalArchiveDocumentVersion
-                && (bool) $source->is_current
-                && $source->processing_status === 'ready'
-                && $source->status === 'uploaded'
-                && hash_equals((string) $session->source_content_hash, (string) $source->content_hash)) {
-                return;
-            }
+        $currentId = $document->current_primary_version_id;
+        $source = (int) $currentId === (int) $session->source_version_id
+            ? $this->versions()->find((int) $session->source_version_id)
+            : null;
+        $current = $allowOwnVersion && $currentId !== null && (int) $currentId !== (int) $session->source_version_id
+            ? $this->versions()->find((int) $currentId)
+            : null;
+        $failureCode = $this->sourceStateFailureCode($session, $document, $source, $current);
+        if ($failureCode !== null) {
+            throw new DomainException($failureCode);
         }
-        if ($allowOwnVersion && $document->current_primary_version_id !== null) {
-            $current = $this->versions()->find((int) $document->current_primary_version_id);
+    }
+
+    private function sourceStateFailureCode(
+        LegalDocumentEditorSession $session,
+        LegalArchiveDocument $document,
+        ?LegalArchiveDocumentVersion $source,
+        ?LegalArchiveDocumentVersion $current,
+    ): ?string {
+        if ((int) $document->current_primary_version_id !== (int) $session->source_version_id) {
             if ($current instanceof LegalArchiveDocumentVersion
                 && (($current->metadata ?? [])['editor_session_id'] ?? null) === (string) $session->id) {
-                return;
+                return null;
             }
+
+            return 'legal_document_editor_source_pointer_changed';
         }
-        throw new DomainException('legal_document_editor_source_version_changed');
+        if (! $source instanceof LegalArchiveDocumentVersion) {
+            return 'legal_document_editor_source_missing';
+        }
+        if (! (bool) $source->is_current) {
+            return 'legal_document_editor_source_not_current';
+        }
+        if ($source->processing_status !== 'ready') {
+            return 'legal_document_editor_source_not_ready';
+        }
+        if ($source->status !== 'uploaded') {
+            return 'legal_document_editor_source_not_uploaded';
+        }
+        if (! hash_equals((string) $session->source_content_hash, (string) $source->content_hash)) {
+            return 'legal_document_editor_source_content_changed';
+        }
+
+        return null;
     }
 
     private function completeSave(LegalDocumentEditorSave $candidate, LegalArchiveDocumentVersion $saved, string $leaseToken): void
@@ -520,6 +551,30 @@ final class LegalDocumentEditorSessionService
     private function assertEditable(LegalArchiveDocument $document, LegalArchiveDocumentVersion $version): void
     {
         (new LegalDocumentEditGuard($this->connection))->assertEditorOpenAllowed($document, $version);
+    }
+
+    private function restart(
+        LegalDocumentEditorSession $session,
+        LegalArchiveDocument $document,
+        LegalArchiveDocumentVersion $version,
+        User $actor,
+    ): void {
+        if ($this->saves()->where('editor_session_id', $session->id)
+            ->whereIn('state', ['reserved', 'processing'])->exists()) {
+            throw new DomainException('legal_document_editor_restart_pending_save');
+        }
+
+        LegalDocumentEditorSession::serviceMutation(fn () => $session->forceFill([
+            'status' => 'closed',
+            'completed_at' => now(),
+            'failure_code' => 'restarted',
+        ])->save());
+        $this->audit->record('editor_session_restarted', $document, $actor, [
+            'source_event_id' => 'editor-session:'.$session->id.':restarted',
+            'session_id' => $session->id,
+            'document_version_id' => (int) $version->id,
+            'generation' => (int) $session->generation,
+        ]);
     }
 
     private function documentForVersion(LegalArchiveDocumentVersion $version): LegalArchiveDocument

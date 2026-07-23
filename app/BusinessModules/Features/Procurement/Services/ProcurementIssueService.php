@@ -25,15 +25,7 @@ final class ProcurementIssueService
     public function paginate(int $organizationId, ?string $scope, int $page, int $perPage): array
     {
         $normalizedScope = in_array($scope, ['purchase_requests', 'purchase_orders'], true) ? $scope : 'all';
-        $issues = collect();
-
-        if ($normalizedScope === 'all' || $normalizedScope === 'purchase_requests') {
-            $issues = $issues->merge($this->purchaseRequestIssues($organizationId));
-        }
-
-        if ($normalizedScope === 'all' || $normalizedScope === 'purchase_orders') {
-            $issues = $issues->merge($this->purchaseOrderIssues($organizationId));
-        }
+        $issues = $this->collectIssues($organizationId, $normalizedScope);
 
         $sorted = $issues
             ->sortBy([
@@ -66,10 +58,38 @@ final class ProcurementIssueService
         ];
     }
 
+    /** @return Collection<int, array<string, mixed>> */
+    public function forProject(int $organizationId, int $projectId): Collection
+    {
+        return $this->collectIssues($organizationId, 'all', $projectId)
+            ->map(static function (array $issue): array {
+                unset($issue['severity_rank'], $issue['created_timestamp']);
+
+                return $issue;
+            })
+            ->values();
+    }
+
+    /** @return Collection<int, array<string, mixed>> */
+    private function collectIssues(int $organizationId, string $scope, ?int $projectId = null): Collection
+    {
+        $issues = collect();
+
+        if ($scope === 'all' || $scope === 'purchase_requests') {
+            $issues = $issues->merge($this->purchaseRequestIssues($organizationId, $projectId));
+        }
+
+        if ($scope === 'all' || $scope === 'purchase_orders') {
+            $issues = $issues->merge($this->purchaseOrderIssues($organizationId, $projectId));
+        }
+
+        return $issues;
+    }
+
     /**
      * @return Collection<int, array<string, mixed>>
      */
-    private function purchaseRequestIssues(int $organizationId): Collection
+    private function purchaseRequestIssues(int $organizationId, ?int $projectId = null): Collection
     {
         return PurchaseRequest::forOrganization($organizationId)
             ->with(['siteRequest', 'assignedUser', 'purchaseOrders.items', 'supplierRequests.proposals', 'supplierRequests.proposalDecision'])
@@ -77,6 +97,10 @@ final class ProcurementIssueService
                 PurchaseRequestStatusEnum::PENDING->value,
                 PurchaseRequestStatusEnum::APPROVED->value,
             ])
+            ->when($projectId !== null, static fn ($query) => $query->whereHas(
+                'siteRequest',
+                static fn ($siteRequestQuery) => $siteRequestQuery->where('project_id', $projectId)
+            ))
             ->orderByDesc('created_at')
             ->get()
             ->flatMap(function (PurchaseRequest $purchaseRequest): array {
@@ -140,7 +164,7 @@ final class ProcurementIssueService
     /**
      * @return Collection<int, array<string, mixed>>
      */
-    private function purchaseOrderIssues(int $organizationId): Collection
+    private function purchaseOrderIssues(int $organizationId, ?int $projectId = null): Collection
     {
         return PurchaseOrder::forOrganization($organizationId)
             ->with(['supplier', 'externalSupplierContact', 'items'])
@@ -150,6 +174,10 @@ final class ProcurementIssueService
                 PurchaseOrderStatusEnum::CONFIRMED->value,
                 PurchaseOrderStatusEnum::IN_DELIVERY->value,
             ])
+            ->when($projectId !== null, static fn ($query) => $query->whereHas(
+                'purchaseRequest.siteRequest',
+                static fn ($siteRequestQuery) => $siteRequestQuery->where('project_id', $projectId)
+            ))
             ->orderByDesc('created_at')
             ->get()
             ->flatMap(function (PurchaseOrder $purchaseOrder): array {

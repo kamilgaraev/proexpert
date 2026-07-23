@@ -31,6 +31,7 @@ use App\Services\LegalArchive\Sources\LegalDocumentSourceResolver;
 use App\Services\LegalArchive\Workflow\LegalWorkflowActionResolver;
 use App\Services\Project\UserProjectAccessService;
 use App\Services\Storage\FileService;
+use DomainException;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Routing\ResponseFactory;
@@ -282,6 +283,194 @@ final class LegalDocumentVersionConcurrencyTest extends TestCase
         self::assertSame(2, $file->versions()->count());
         self::assertSame(1, $file->versions()->where('is_current', true)->count());
         self::assertSame('2', $file->versions()->where('is_current', true)->value('version_number'));
+    }
+
+    public function test_rejects_a_duplicate_explicit_version_before_uploading_to_storage(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Договор']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10,
+            'organization_id' => 20,
+            'role' => 'primary',
+            'title' => 'Договор',
+        ]);
+        LegalArchiveDocumentVersion::query()->create([
+            'document_id' => 10,
+            'document_file_id' => $file->id,
+            'organization_id' => 20,
+            'version_number' => '1',
+            'is_current' => false,
+            'status' => 'uploaded',
+            'processing_status' => 'failed',
+            'file_path' => 'org-20/legal-archive/files/1/failed.pdf',
+            'original_filename' => 'failed.pdf',
+            'size_bytes' => 10,
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::never())->method('upload');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::never())->method('assertClean');
+        $service = new LegalDocumentFileService(
+            $storage,
+            new LegalDocumentFilePolicy($this->configuration),
+            $scanner,
+            $this->connection(),
+        );
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('legal_document_version_number_taken');
+
+        $service->addVersion(
+            $file,
+            $this->pdf('replacement.pdf'),
+            new VersionInput(versionNumber: '1', uploadedByUserId: 30),
+        );
+    }
+
+    public function test_fenced_version_conflict_after_upload_is_reconciled_as_a_domain_conflict(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Договор']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10,
+            'organization_id' => 20,
+            'role' => 'primary',
+            'title' => 'Договор',
+        ]);
+        $storedPath = 'org-20/legal-archive/files/1/concurrent.pdf';
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('upload')->willReturnCallback(function () use ($file, $storedPath): string {
+            LegalArchiveDocumentVersion::query()->create([
+                'document_id' => 10,
+                'document_file_id' => $file->id,
+                'organization_id' => 20,
+                'version_number' => '1',
+                'is_current' => false,
+                'status' => 'uploaded',
+                'processing_status' => 'ready',
+                'file_path' => 'org-20/legal-archive/files/1/winner.pdf',
+                'original_filename' => 'winner.pdf',
+                'size_bytes' => 10,
+            ]);
+
+            return $storedPath;
+        });
+        $storage->expects(self::once())->method('delete')->with($storedPath, self::callback(
+            static fn ($organization): bool => (int) $organization->id === 20,
+        ));
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::never())->method('assertClean');
+        $service = new LegalDocumentFileService(
+            $storage,
+            new LegalDocumentFilePolicy($this->configuration),
+            $scanner,
+            $this->connection(),
+        );
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('legal_document_version_number_taken');
+
+        $service->addVersion(
+            $file,
+            $this->pdf('concurrent.pdf'),
+            new VersionInput(versionNumber: '1', uploadedByUserId: 30),
+            new LegalDocumentVersionAttempt('version-operation', 'attempt-one', static function (): void {}),
+        );
+    }
+
+    public function test_automatic_version_number_skips_a_fenced_operation_reservation(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Договор']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10,
+            'organization_id' => 20,
+            'role' => 'primary',
+            'title' => 'Договор',
+        ]);
+        $this->connection()->table('legal_archive_document_version_operations')->insert([
+            'organization_id' => 20,
+            'document_id' => 10,
+            'document_file_id' => $file->id,
+            'operation_id' => 'fenced-operation',
+            'operation_generation' => 1,
+            'request_fingerprint' => str_repeat('a', 64),
+            'reserved_version_number' => '1',
+            'requested_version_number' => null,
+            'version_label' => null,
+            'uploaded_by_user_id' => 30,
+            'version_metadata' => null,
+            'file_original_name' => 'fenced.pdf',
+            'file_size_bytes' => 10,
+            'file_content_hash' => str_repeat('b', 64),
+            'file_client_mime_type' => 'application/pdf',
+            'file_detected_mime_type' => 'application/pdf',
+            'make_current' => true,
+            'attempt_token' => 'fenced-attempt',
+            'attempt_count' => 1,
+            'status' => 'reserved',
+            'storage_path' => null,
+            'document_version_id' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('upload')->willReturn('org-20/legal-archive/files/1/automatic.pdf');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::once())->method('assertClean');
+        $service = new LegalDocumentFileService(
+            $storage,
+            new LegalDocumentFilePolicy($this->configuration),
+            $scanner,
+            $this->connection(),
+        );
+
+        $version = $service->addVersion(
+            $file,
+            $this->pdf('automatic.pdf'),
+            new VersionInput(uploadedByUserId: 30),
+        );
+
+        self::assertSame('2', $version->version_number);
+    }
+
+    public function test_automatic_version_number_increments_a_number_larger_than_php_integer(): void
+    {
+        LegalArchiveDocument::query()->forceCreate(['id' => 10, 'organization_id' => 20, 'title' => 'Договор']);
+        $file = LegalArchiveDocumentFile::query()->create([
+            'document_id' => 10,
+            'organization_id' => 20,
+            'role' => 'primary',
+            'title' => 'Договор',
+        ]);
+        LegalArchiveDocumentVersion::query()->create([
+            'document_id' => 10,
+            'document_file_id' => $file->id,
+            'organization_id' => 20,
+            'version_number' => '9223372036854775807',
+            'is_current' => true,
+            'status' => 'uploaded',
+            'processing_status' => 'ready',
+            'file_path' => 'org-20/legal-archive/files/1/large.pdf',
+            'original_filename' => 'large.pdf',
+            'size_bytes' => 10,
+        ]);
+        $storage = $this->createMock(FileService::class);
+        $storage->expects(self::once())->method('upload')->willReturn('org-20/legal-archive/files/1/next.pdf');
+        $scanner = $this->createMock(LegalDocumentScanner::class);
+        $scanner->expects(self::once())->method('assertClean');
+        $service = new LegalDocumentFileService(
+            $storage,
+            new LegalDocumentFilePolicy($this->configuration),
+            $scanner,
+            $this->connection(),
+        );
+
+        $version = $service->addVersion(
+            $file,
+            $this->pdf('next.pdf'),
+            new VersionInput(uploadedByUserId: 30),
+        );
+
+        self::assertSame('9223372036854775808', $version->version_number);
     }
 
     public function test_reclaimed_operation_fences_worker_that_loses_ownership_during_upload(): void

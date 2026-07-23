@@ -35,6 +35,14 @@ final class RequestEstimateGenerationIdempotencyTest extends TestCase
         $this->useCase()->handle($this->generatingSession(12, ''), 12, null);
     }
 
+    #[Test]
+    public function selected_price_source_is_not_silently_ignored_during_generation(): void
+    {
+        $this->expectException(InvalidEstimateGenerationState::class);
+
+        $this->useCase()->handle($this->generatingSession(12, 'attempt-owned'), 12, null, 150);
+    }
+
     private function useCase(): RequestEstimateGeneration
     {
         return (new ReflectionClass(RequestEstimateGeneration::class))->newInstanceWithoutConstructor();

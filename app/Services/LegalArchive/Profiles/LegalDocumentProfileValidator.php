@@ -18,13 +18,23 @@ final class LegalDocumentProfileValidator
      * @param  array<string, mixed>  $fields
      * @return array<string, mixed>
      */
-    public function validate(LegalDocumentProfile $profile, array $fields): array
+    public function validate(LegalDocumentProfile $profile, array $fields, bool $enforceRequired = true): array
     {
         $schema = $this->validatedSchema($profile);
         $errors = [];
         $normalized = [];
 
         foreach ($fields as $field => $value) {
+            if ($field === 'obligations') {
+                try {
+                    $normalized[$field] = $this->normalizeObligations($value);
+                } catch (InvalidArgumentException) {
+                    $errors[$field][] = trans_message('legal_archive.profiles.field_invalid', ['field' => 'Обязательства']);
+                }
+
+                continue;
+            }
+
             if (! array_key_exists($field, $schema)) {
                 $errors[$field][] = trans_message('legal_archive.profiles.field_unknown', ['field' => $field]);
 
@@ -37,10 +47,12 @@ final class LegalDocumentProfileValidator
             if ($this->isMissingValue($value, $isRequired)) {
                 $label = (string) $definition['label'];
 
-                if ($isRequired) {
+                if ($isRequired && $enforceRequired) {
                     $errors[$field][] = trans_message('legal_archive.profiles.field_required', ['field' => $label]);
                 } elseif (($definition['nullable'] ?? false) === true) {
                     $normalized[$field] = null;
+                } elseif ($isRequired) {
+                    continue;
                 } else {
                     $errors[$field][] = trans_message('legal_archive.profiles.field_invalid', ['field' => $label]);
                 }
@@ -56,10 +68,12 @@ final class LegalDocumentProfileValidator
             }
         }
 
-        foreach ($profile->requiredFields as $field) {
-            if (! array_key_exists($field, $fields)) {
-                $label = (string) $schema[$field]['label'];
-                $errors[$field][] = trans_message('legal_archive.profiles.field_required', ['field' => $label]);
+        if ($enforceRequired) {
+            foreach ($profile->requiredFields as $field) {
+                if (! array_key_exists($field, $fields)) {
+                    $label = (string) $schema[$field]['label'];
+                    $errors[$field][] = trans_message('legal_archive.profiles.field_required', ['field' => $label]);
+                }
             }
         }
 
@@ -213,6 +227,61 @@ final class LegalDocumentProfileValidator
             fn (mixed $item): mixed => $this->normalizeValue($item, ['type' => $itemType]),
             $value,
         );
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function normalizeObligations(mixed $value): array
+    {
+        if (! is_array($value) || ! array_is_list($value) || count($value) > 100) {
+            throw new InvalidArgumentException;
+        }
+
+        $allowed = ['title', 'due_at', 'amount', 'volume', 'unit', 'responsible_party', 'status'];
+
+        return array_map(function (mixed $item) use ($allowed): array {
+            if (! is_array($item) || array_is_list($item) || array_diff(array_keys($item), $allowed) !== []) {
+                throw new InvalidArgumentException;
+            }
+
+            $title = $this->normalizeString($item['title'] ?? null);
+            if ($title === '' || mb_strlen($title) > 500) {
+                throw new InvalidArgumentException;
+            }
+
+            $normalized = ['title' => $title];
+
+            if (array_key_exists('due_at', $item)) {
+                $normalized['due_at'] = $this->normalizeDate($item['due_at']);
+            }
+            foreach (['amount', 'volume'] as $field) {
+                if (! array_key_exists($field, $item)) {
+                    continue;
+                }
+                $number = $this->normalizeNumber($item[$field]);
+                if ($number < 0) {
+                    throw new InvalidArgumentException;
+                }
+                $normalized[$field] = $number;
+            }
+            foreach (['unit', 'responsible_party'] as $field) {
+                if (! array_key_exists($field, $item)) {
+                    continue;
+                }
+                $string = $this->normalizeString($item[$field]);
+                if ($string === '' || mb_strlen($string) > 255) {
+                    throw new InvalidArgumentException;
+                }
+                $normalized[$field] = $string;
+            }
+            if (array_key_exists('status', $item)) {
+                if ($item['status'] !== 'open') {
+                    throw new InvalidArgumentException;
+                }
+                $normalized['status'] = 'open';
+            }
+
+            return $normalized;
+        }, $value);
     }
 
     /** @param list<scalar> $options */

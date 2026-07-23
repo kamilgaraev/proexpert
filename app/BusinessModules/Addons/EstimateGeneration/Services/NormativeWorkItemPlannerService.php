@@ -99,45 +99,16 @@ final class NormativeWorkItemPlannerService
         int $index
     ): ?array {
         $definition = $this->withResidentialMaterialScenario($definition, $analysis);
+        if (! $this->allowsRoofCompositionPricing($definition, $analysis)) {
+            return null;
+        }
         $quantity = $this->quantityForDefinition($definition, $analysis, $quantityModel);
 
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
         $key = $packageKey.'-norm-intent-'.($index + 1);
 
         if ($this->isPlannerFallbackQuantity($quantity)) {
-            if (! $this->shouldExposePlannerFallback($definition, $localEstimate, $analysis)) {
-                return null;
-            }
-
-            return $this->basePricedWorkItem(
-                key: $key,
-                localEstimate: $localEstimate,
-                section: $section,
-                name: (string) $definition['name'],
-                searchText: (string) ($definition['normative_search_text'] ?? $definition['name']),
-                category: (string) $definition['category'],
-                unit: (string) $quantity['unit'],
-                quantity: (float) $quantity['value'],
-                quantityFormula: (string) $definition['quantity_key'],
-                quantityBasis: (string) $quantity['basis'],
-                sourceRefs: [],
-                confidence: $this->plannedQuantityConfidence($definition, $quantity, 0.48),
-                validationFlags: [
-                    'normative_required',
-                    'document_takeoff_required',
-                    ...$this->materialScenarioFlags($definition),
-                ],
-                metadata: [
-                    'generation_source' => $definition['generation_source'] ?? 'normative_intent_catalog',
-                    'quantity_key' => $definition['quantity_key'],
-                    'quantity_source' => $quantity['source'],
-                    'package_key' => $packageKey,
-                    ...($definition['metadata'] ?? []),
-                    ...$this->quantityLearningMetadata($quantity),
-                ],
-                normativeRateCode: isset($definition['normative_rate_code']) ? (string) $definition['normative_rate_code'] : null,
-                operations: $definition['operations'] ?? $this->operationBank((string) $definition['category'])
-            );
+            return null;
         }
 
         if (($quantity['review_required'] ?? false) === true) {
@@ -181,6 +152,24 @@ final class NormativeWorkItemPlannerService
             normativeRateCode: isset($definition['normative_rate_code']) ? (string) $definition['normative_rate_code'] : null,
             operations: $definition['operations'] ?? $this->operationBank((string) $definition['category'])
         );
+    }
+
+    /** @param array<string, mixed> $definition */
+    private function allowsRoofCompositionPricing(array $definition, array $analysis): bool
+    {
+        $workItemKey = $this->materialScenarioWorkItemKey($definition);
+        if (! in_array($workItemKey, [
+            'roof.rafters',
+            'roof.insulation',
+            'roof.vapor_barrier',
+            'roof.membrane',
+            'roof.battens',
+            'roof.gutter',
+        ], true)) {
+            return true;
+        }
+
+        return $this->trustedSpecializationEvidence($analysis, $workItemKey) !== [];
     }
 
     /**
@@ -412,7 +401,17 @@ final class NormativeWorkItemPlannerService
     private function withTrustedSpecializationEvidence(array $definition, array $evidence): array
     {
         $metadata = is_array($definition['metadata'] ?? null) ? $definition['metadata'] : [];
-        unset($metadata['specialization_scenario'], $metadata['material_assumption'], $metadata['material_scenario_work_key']);
+        $workItemKey = $this->materialScenarioWorkItemKey($definition);
+        $catalog = $this->materialScenarioCatalog ?? new ResidentialMaterialScenarioCatalog;
+        $scenario = $catalog->issue($workItemKey, 'residential');
+        $keepScenario = is_array($scenario) && $this->trustedEvidenceMatchesScenario($evidence, $scenario);
+        unset($metadata['material_assumption']);
+        if ($keepScenario) {
+            $metadata['material_scenario_work_key'] = $workItemKey;
+            $metadata['specialization_scenario'] = $scenario;
+        } else {
+            unset($metadata['specialization_scenario'], $metadata['material_scenario_work_key']);
+        }
 
         $searches = $this->uniqueEvidenceValues($evidence, 'normative_search_text');
         $codes = $this->uniqueEvidenceValues($evidence, 'normative_rate_code');
@@ -428,6 +427,36 @@ final class NormativeWorkItemPlannerService
         ];
 
         return $definition;
+    }
+
+    private function trustedEvidenceMatchesScenario(array $evidence, array $scenario): bool
+    {
+        $codes = $this->uniqueEvidenceValues($evidence, 'normative_rate_code');
+        $scenarioCode = trim((string) ($scenario['normative_rate_code'] ?? ''));
+        if ($codes !== []) {
+            return count($codes) === 1 && $scenarioCode !== '' && $codes[0] === $scenarioCode;
+        }
+
+        $markers = array_values(array_filter(
+            $scenario['material_markers'] ?? [],
+            static fn (mixed $marker): bool => is_string($marker) && trim($marker) !== '',
+        ));
+        if ($markers === []) {
+            return false;
+        }
+
+        $text = mb_strtolower(implode(' ', array_map(
+            static fn (array $item): string => (string) ($item['text'] ?? ''),
+            $evidence,
+        )));
+
+        foreach ($markers as $marker) {
+            if (str_contains($text, mb_strtolower($marker))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -1288,83 +1317,6 @@ final class NormativeWorkItemPlannerService
         return
             ($quantity['source'] ?? null) === 'planner_fallback'
             && ($quantity['source_refs'] ?? []) === [];
-    }
-
-    /**
-     * @param  array<string, mixed>  $definition
-     * @param  array<string, mixed>  $localEstimate
-     * @param  array<string, mixed>  $analysis
-     */
-    private function shouldExposePlannerFallback(array $definition, array $localEstimate, array $analysis): bool
-    {
-        $packageKey = (string) ($localEstimate['key'] ?? '');
-        $category = (string) ($definition['category'] ?? '');
-
-        if (in_array($packageKey, ['external_networks', 'siteworks', 'roads'], true)) {
-            return $this->analysisMentionsAny($analysis, match ($packageKey) {
-                'external_networks' => [
-                    'external networks',
-                    'utility',
-                    'utilities',
-                    'наружн',
-                    'сети',
-                    'подключен',
-                ],
-                'siteworks' => [
-                    'landscaping',
-                    'siteworks',
-                    'благоустрой',
-                    'озелен',
-                    'отмост',
-                    'тротуар',
-                ],
-                'roads' => [
-                    'roads',
-                    'driveway',
-                    'parking',
-                    'дорог',
-                    'проезд',
-                    'подъезд',
-                    'парков',
-                ],
-                default => [],
-            });
-        }
-
-        if (! in_array($packageKey, ['ventilation', 'fire_safety'], true) && $category !== 'ventilation') {
-            return true;
-        }
-
-        return $this->analysisMentionsAny($analysis, [
-            'ventilation',
-            'fire safety',
-            'fire alarm',
-            'smoke removal',
-            'вентиляц',
-            'пожарн',
-            'сигнализац',
-            'дымоудален',
-        ]);
-    }
-
-    /**
-     * @param  array<string, mixed>  $analysis
-     * @param  array<int, string>  $needles
-     */
-    private function analysisMentionsAny(array $analysis, array $needles): bool
-    {
-        $text = mb_strtolower(implode(' ', $this->documentTextFragments(
-            $analysis,
-            is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : []
-        )));
-
-        foreach ($needles as $needle) {
-            if ($needle !== '' && str_contains($text, mb_strtolower($needle))) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**

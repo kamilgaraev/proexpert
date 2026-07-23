@@ -36,6 +36,7 @@ final readonly class SessionSnapshotData
         public array $usageSummary = [],
         public array $failureSummary = [],
         public array $objectInput = [],
+        public array $scopeSummary = [],
     ) {}
 
     /** @return array<string, mixed> */
@@ -60,6 +61,7 @@ final readonly class SessionSnapshotData
             'documents_summary' => $this->documentsSummary,
             'estimate_summary' => $this->estimateSummary,
             'review_summary' => $this->reviewSummary,
+            'scope_summary' => $this->scopeSummary,
             'applied_estimate_id' => $this->appliedEstimateId,
             'updated_at' => $this->updatedAt,
         ];
@@ -92,6 +94,7 @@ final readonly class SessionSnapshotData
             'review_summary' => $this->reviewSummary,
             'evidence_summary' => $this->evidenceSummary,
             'quality_summary' => $this->qualitySummary,
+            'scope_summary' => $this->scopeSummary,
             'usage_summary' => $this->usageSummary,
             'failure_summary' => $this->failureSummary,
             'applied_estimate_id' => $this->appliedEstimateId,

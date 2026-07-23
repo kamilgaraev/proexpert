@@ -7,8 +7,12 @@ namespace Tests\Unit\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
+use Illuminate\Config\Repository;
+use Illuminate\Container\Container;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\NullLogger;
 
 final class EstimateGenerationPackagePresenterTest extends TestCase
 {
@@ -37,6 +41,66 @@ final class EstimateGenerationPackagePresenterTest extends TestCase
         );
     }
 
+    public function test_package_summary_translates_a_generated_missing_normative_candidate_warning(): void
+    {
+        $translations = require dirname(__DIR__, 3).'/lang/ru/estimate_generation.php';
+        $previousContainer = Container::getInstance();
+        $previousFacadeApplication = Facade::getFacadeApplication();
+        $container = new Container;
+        $container->instance('app', new class
+        {
+            public function getLocale(): string
+            {
+                return 'ru';
+            }
+        });
+        $container->instance('config', new Repository(['app' => ['fallback_locale' => 'ru']]));
+        $container->instance('translator', new class($translations)
+        {
+            public function __construct(private array $translations) {}
+
+            public function get(string $key): string
+            {
+                $reason = str_replace('estimate_generation.quantity_coverage_warnings.', '', $key);
+
+                return $this->translations['quantity_coverage_warnings'][$reason] ?? $key;
+            }
+        });
+        $container->instance('log', new NullLogger);
+        Container::setInstance($container);
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($container);
+
+        try {
+            $package = new EstimateGenerationPackage([
+                'id' => 8,
+                'key' => 'roof',
+                'title' => 'Кровля',
+                'totals' => [],
+                'metadata' => [
+                    'coverage_warnings' => [[
+                        'quantity_key' => 'roof.covering',
+                        'reason' => 'normative_candidate_missing',
+                        'package_key' => 'roof',
+                    ]],
+                ],
+            ]);
+
+            $payload = (new EstimateGenerationPackagePresenter)->summary($package);
+
+            self::assertSame([[
+                'quantity_key' => 'roof.covering',
+                'reason' => 'normative_candidate_missing',
+                'package_key' => 'roof',
+                'message' => $translations['quantity_coverage_warnings']['normative_candidate_missing'],
+            ]], $payload['coverage_warnings']);
+        } finally {
+            Facade::clearResolvedInstances();
+            Facade::setFacadeApplication($previousFacadeApplication);
+            Container::setInstance($previousContainer);
+        }
+    }
+
     #[Test]
     public function test_item_preserves_exact_quantity_as_canonical_string(): void
     {
@@ -63,7 +127,7 @@ final class EstimateGenerationPackagePresenterTest extends TestCase
             'item_type' => 'priced_work',
             'name' => 'Обратная засыпка пазух',
             'unit' => 'м3',
-            'quantity' => 42.5,
+            'quantity' => '42.5',
             'quantity_basis' => ['description' => 'Количество требует проверки'],
             'price_source' => null,
             'normative_status' => 'candidate',

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Resources\Api\V1\Admin\LegalArchive;
 
 use App\Services\LegalArchive\LegalArchiveDictionary;
+use App\Services\LegalArchive\Profiles\LegalDocumentProfileAssignmentGuard;
+use App\Services\LegalArchive\Signatures\ElectronicSignatureProvider;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -14,9 +16,16 @@ final class LegalArchiveDocumentResource extends JsonResource
     {
         $workflowSummary = $this->resource->getAttribute('api_workflow_summary');
         $problemFlags = is_array($workflowSummary) ? (array) ($workflowSummary['problem_flags'] ?? []) : [];
+        $resolvedTypeProfile = $this->resource->getAttribute('api_type_profile');
+        $typeProfileConfigured = is_array($resolvedTypeProfile);
+        $profileAssignmentAllowed = ! $typeProfileConfigured
+            && (new LegalDocumentProfileAssignmentGuard)->canAssign($this->resource);
         $linkedContract = $this->resource->relationLoaded('links')
             ? $this->links->first(static fn ($link): bool => in_array((string) $link->linked_type, ['contract', 'App\\Models\\Contract'], true))
             : null;
+        $signatureDriver = (string) config('legal-document-signatures.driver', 'disabled');
+        $signatureDrivers = (array) config('legal-document-signatures.drivers', []);
+        $providerClass = $signatureDrivers[$signatureDriver] ?? null;
 
         return [
             'id' => $this->id,
@@ -31,7 +40,14 @@ final class LegalArchiveDocumentResource extends JsonResource
             'document_number' => $this->document_number,
             'document_type' => $this->document_type,
             'document_type_label' => LegalArchiveDictionary::label('types', $this->document_type),
-            'type_profile' => $this->resource->getAttribute('api_type_profile') ?? [
+            'type_profile_configured' => $typeProfileConfigured,
+            'profile_assignment' => [
+                'allowed' => $profileAssignmentAllowed,
+                'blocker' => $typeProfileConfigured || $profileAssignmentAllowed
+                    ? null
+                    : trans_message('legal_archive.profiles.assignment_not_available'),
+            ],
+            'type_profile' => $resolvedTypeProfile ?? [
                 'code' => (string) ($this->type_profile_code ?: $this->document_type),
                 'base_code' => (string) $this->document_type,
                 'name' => LegalArchiveDictionary::label('types', (string) $this->document_type),
@@ -76,8 +92,30 @@ final class LegalArchiveDocumentResource extends JsonResource
                 'id' => $obligation->id, 'title' => $obligation->title, 'status' => $obligation->status,
                 'due_at' => $obligation->due_at?->toISOString(), 'amount' => $obligation->amount,
                 'volume' => $obligation->volume, 'unit' => $obligation->unit,
+                'responsible_user_id' => $obligation->responsible_user_id,
+                'responsible_user' => $obligation->relationLoaded('responsible') && $obligation->responsible !== null ? [
+                    'id' => (int) $obligation->responsible->id,
+                    'name' => (string) $obligation->responsible->name,
+                ] : null,
+                'evidence' => $obligation->evidence ?? [],
+                'completed_at' => $obligation->completed_at?->toISOString(),
             ])->values()),
             'lock_version' => (int) $this->lock_version,
+            'editor' => [
+                'enabled' => (bool) config('legal-document-editor.enabled', false)
+                    && (string) config('legal-document-editor.driver', 'onlyoffice') === 'onlyoffice',
+                'current_version_editable' => (bool) $this->resource->getAttribute('api_editor_current_version_editable'),
+            ],
+            'signature_capabilities' => [
+                'electronic_signing_available' => $signatureDriver !== 'disabled'
+                    && is_string($providerClass)
+                    && is_a($providerClass, ElectronicSignatureProvider::class, true),
+                'electronic_signing_provider' => $signatureDriver !== 'disabled'
+                    && is_string($providerClass)
+                    && is_a($providerClass, ElectronicSignatureProvider::class, true)
+                    ? $signatureDriver
+                    : null,
+            ],
             'current_version' => new LegalArchiveDocumentVersionResource($this->whenLoaded('currentVersion')),
             'current_primary_version' => new LegalArchiveDocumentVersionResource($this->whenLoaded('currentVersion')),
             'versions' => LegalArchiveDocumentVersionResource::collection($this->whenLoaded('versions')),
@@ -97,6 +135,7 @@ final class LegalArchiveDocumentResource extends JsonResource
                 'number' => $linkedContract->display_name,
                 'status' => data_get($linkedContract->metadata, 'status'),
             ],
+            'structured_fields' => $this->structured_fields ?? [],
             'metadata' => $this->metadata ?? [],
             'created_by_user_id' => $this->created_by_user_id,
             'updated_by_user_id' => $this->updated_by_user_id,

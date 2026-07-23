@@ -54,6 +54,18 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->bind(\App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemCollector::class, static fn ($app) => new \App\BusinessModules\Features\ProjectCommandCenter\Services\ProjectProblemCollector([
+            new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\SafetyViolationProblemSource($app->make(\App\Modules\Core\AccessController::class)),
+            new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\OverdueScheduleProblemSource($app->make(\App\Modules\Core\AccessController::class)),
+            new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\OverdueSiteRequestProblemSource($app->make(\App\Modules\Core\AccessController::class)),
+            new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\ProcurementProblemSource(
+                $app->make(\App\Modules\Core\AccessController::class),
+                issueService: $app->make(\App\BusinessModules\Features\Procurement\Services\ProcurementIssueService::class),
+            ),
+            new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\PendingCompletedWorkProblemSource($app->make(\App\Modules\Core\AccessController::class)),
+            new \App\BusinessModules\Features\ProjectCommandCenter\Services\Sources\QualityDefectProblemSource($app->make(\App\Modules\Core\AccessController::class)),
+        ]));
+
         $this->app->bind(
             \App\Services\Contract\ContractDossierDocumentCreator::class,
             \App\Services\LegalArchive\LegalArchiveRegistryService::class,
@@ -98,9 +110,21 @@ class AppServiceProvider extends ServiceProvider
 
         $this->app->bind(
             \App\Services\LegalArchive\Files\LegalDocumentScanner::class,
-            $this->app->environment('testing')
-                ? \App\Services\LegalArchive\Files\TestingLegalDocumentScanner::class
-                : \App\Services\LegalArchive\Files\FailClosedLegalDocumentScanner::class,
+            function ($app) {
+                if ($app->environment('testing')) {
+                    return new \App\Services\LegalArchive\Files\TestingLegalDocumentScanner;
+                }
+
+                if ((string) config('file-uploads.legal_archive.scanner', 'fail_closed') !== 'clamav') {
+                    return new \App\Services\LegalArchive\Files\FailClosedLegalDocumentScanner;
+                }
+
+                return new \App\Services\LegalArchive\Files\ClamAvLegalDocumentScanner(
+                    (string) config('file-uploads.legal_archive.clamav.host', 'clamav'),
+                    (int) config('file-uploads.legal_archive.clamav.port', 3310),
+                    (float) config('file-uploads.legal_archive.clamav.timeout_seconds', 30),
+                );
+            },
         );
         $this->app->bind(
             \App\Services\LegalArchive\Access\LegalDocumentAuthorizer::class,

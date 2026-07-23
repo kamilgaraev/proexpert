@@ -13,7 +13,7 @@ final readonly class AuthoritativePackagePricingGuard
 {
     public function __construct(private AcceptedQuantityEvidenceVerifier $evidence) {}
 
-    /** @param array<string, mixed> $workItem @return list<array{norm_resource_id: int, resource_price_id: int, unit_conversion_id: int|null}>|null */
+    /** @param array<string, mixed> $workItem @return list<array{norm_resource_id: int, resource_price_id: int, unit_conversion_id: int|null, pinned_abstract_resource_conversion_id: int|null}>|null */
     public function inputs(int $organizationId, int $projectId, int $sessionId, string $currentVersion, array $workItem): ?array
     {
         if (! $this->evidence->verifyScope($organizationId, $projectId, $sessionId, $currentVersion, $workItem)) {
@@ -31,10 +31,17 @@ final readonly class AuthoritativePackagePricingGuard
                 if ($normResourceId === null || $priceId === null) {
                     return null;
                 }
+                $abstractRuleId = $this->abstractResourceSelectionRuleId($resource);
+                if ($abstractRuleId === false) {
+                    return null;
+                }
                 $inputs[] = [
                     'norm_resource_id' => $normResourceId,
                     'resource_price_id' => $priceId,
-                    'unit_conversion_id' => $this->positiveInt($reference['unit_conversion_id'] ?? null),
+                    'unit_conversion_id' => $abstractRuleId === null
+                        ? $this->positiveInt($reference['unit_conversion_id'] ?? null)
+                        : null,
+                    'pinned_abstract_resource_conversion_id' => $abstractRuleId,
                 ];
             }
         }
@@ -89,6 +96,37 @@ final readonly class AuthoritativePackagePricingGuard
         }
 
         return $inputs;
+    }
+
+    private function abstractResourceSelectionRuleId(array $resource): int|false|null
+    {
+        $selection = is_array($resource['project_resource_selection'] ?? null)
+            ? $resource['project_resource_selection']
+            : [];
+        $ruleKey = trim((string) ($selection['abstract_selection_rule_key'] ?? ''));
+        if ($ruleKey === '') {
+            return null;
+        }
+        $ruleVersion = $this->positiveInt($selection['abstract_selection_rule_version'] ?? null);
+        $priceFactor = $selection['conversion_factor'] ?? null;
+        $quantityFactor = $selection['quantity_factor'] ?? null;
+        $assumption = trim((string) ($selection['conversion_assumption'] ?? ''));
+        $sourceUnit = trim((string) ($selection['source_price_unit'] ?? ''));
+        if ($ruleVersion === null || ! is_numeric($priceFactor) || (float) $priceFactor <= 0
+            || ! is_numeric($quantityFactor) || (float) $quantityFactor <= 0
+            || $assumption === '' || $sourceUnit === '') {
+            return false;
+        }
+        $ruleId = DB::table('estimate_generation_pinned_abstract_resource_conversions')
+            ->where('rule_key', $ruleKey)
+            ->where('version', $ruleVersion)
+            ->where('from_unit', $sourceUnit)
+            ->where('assumption', $assumption)
+            ->where('monetary_factor', (string) $priceFactor)
+            ->where('quantity_factor', (string) $quantityFactor)
+            ->value('id');
+
+        return $this->positiveInt($ruleId) ?? false;
     }
 
     private function positiveInt(mixed $value): ?int

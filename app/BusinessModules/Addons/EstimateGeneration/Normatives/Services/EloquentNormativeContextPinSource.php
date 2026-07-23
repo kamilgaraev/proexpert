@@ -8,9 +8,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeS
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\Log;
 
-final readonly class EloquentNormativeContextPinSource implements NormativeContextPinSource
+final readonly class EloquentNormativeContextPinSource implements ProgressAwareNormativeContextPinSource
 {
     private const CANDIDATE_POOL_LIMIT = 300;
+
+    private const MAX_FINAL_RESOURCE_ROWS = 10_000;
 
     public function __construct(
         private Connection $database,
@@ -28,6 +30,14 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
 
     public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
     {
+        return $this->resolveForIntentsWithProgress($requested, $intents, static fn (): null => null);
+    }
+
+    public function resolveForIntentsWithProgress(
+        NormativeContextPinData $requested,
+        array $intents,
+        callable $progress,
+    ): ?NormativeContextPinData {
         $dataset = $this->database->table('estimate_dataset_versions')
             ->where('id', $requested->datasetId)
             ->where('source_type', 'fsnb_2022')
@@ -53,6 +63,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
 
             return null;
         }
+        $this->progress($progress, 'identity_checked', ['intents_count' => count($intents)]);
         $fsbcBasePriceDatasetId = $this->latestPriceDatasetId('fsbc', true);
         $fgisLaborPriceDatasetId = $this->latestPriceDatasetId('fgis_labor_prices', false);
         $basePriceDatasetIds = array_values(array_unique(array_filter([
@@ -60,9 +71,21 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             $fsbcBasePriceDatasetId,
             $requested->datasetId,
         ], static fn (int $id): bool => $id > 0)));
+        $this->progress($progress, 'base_price_datasets_resolved', ['intents_count' => count($intents)]);
         $norms = collect();
+        $rankedNormIdsByWorkItem = [];
+        $workItemKeyByIntentIndex = [];
         $poolCandidatesCount = 0;
-        foreach ($intents as $intent) {
+        foreach ($intents as $intentIndex => $intent) {
+            $workItemKey = null;
+            if (isset($intent['work_item_key'])) {
+                $candidateWorkItemKey = trim((string) $intent['work_item_key']);
+                if (preg_match('/^[A-Za-z0-9:._-]{1,120}$/D', $candidateWorkItemKey) === 1) {
+                    $workItemKey = $candidateWorkItemKey;
+                }
+            }
+            $rankingKey = $workItemKey !== null ? $workItemKey : '__legacy_'.$intentIndex;
+            $workItemKeyByIntentIndex[$intentIndex] = $workItemKey;
             $search = mb_strtolower(trim((string) ($intent['search_text'] ?? '')));
             $unit = trim((string) ($intent['unit'] ?? ''));
             $code = mb_strtolower(trim((string) ($intent['code'] ?? '')));
@@ -137,7 +160,13 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 ->orderBy('norms.id')
                 ->limit(self::CANDIDATE_POOL_LIMIT)
                 ->get();
+            $this->progress($progress, 'intent_lookup_completed', [
+                'intent_index' => $intentIndex + 1,
+                'intents_count' => count($intents),
+                'candidate_count' => $query->count(),
+            ]);
             if ($query->isEmpty()) {
+                $rankedNormIdsByWorkItem[$rankingKey] = [];
                 $this->telemetryPrePriceCandidates(
                     $requested,
                     $basePriceDatasetIds,
@@ -160,8 +189,13 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             $poolCandidatesCount += $query->count();
             $selectedForIntent = $this->ranker->select($query->all(), [$intent]);
             if ($selectedForIntent !== null) {
+                $rankedNormIdsByWorkItem[$rankingKey] = array_values(array_filter(
+                    array_map(static fn (object $candidate): int => (int) $candidate->id, $selectedForIntent),
+                    static fn (int $id): bool => $id > 0,
+                ));
                 $norms = $norms->concat($selectedForIntent);
             } else {
+                $rankedNormIdsByWorkItem[$rankingKey] = [];
                 $this->telemetryPrePriceCandidates(
                     $requested,
                     $basePriceDatasetIds,
@@ -187,6 +221,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             }
         }
         $norms = $norms->unique('id')->values();
+        $this->progress($progress, 'norms_selected', ['norms_count' => $norms->count()]);
         if ($norms->isEmpty()) {
             $this->telemetry('norms_rejected', [
                 'intents_count' => count($intents),
@@ -205,38 +240,108 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->get(['estimate_norm_id', $this->database->raw('COUNT(*) AS resource_count')])
             ->mapWithKeys(static fn (object $row): array => [(int) $row->estimate_norm_id => (int) $row->resource_count])
             ->all();
+        $expectedNormalResourceCounts = $this->database->table('estimate_norm_resources')
+            ->whereIn('estimate_norm_id', $ids)
+            ->where('quantity', '>', 0)
+            ->where('resource_type', '<>', 'summary')
+            ->whereRaw("LOWER(COALESCE(raw_payload->>'source_tag', '')) <> 'abstractresource'")
+            ->groupBy('estimate_norm_id')
+            ->get(['estimate_norm_id', $this->database->raw('COUNT(*) AS resource_count')])
+            ->mapWithKeys(static fn (object $row): array => [(int) $row->estimate_norm_id => (int) $row->resource_count])
+            ->all();
+        $processableNormIds = array_values(array_filter($ids, function (int $id) use ($expectedResourceCounts): bool {
+            $resourceCount = (int) ($expectedResourceCounts[$id] ?? 0);
+
+            if ($resourceCount > self::MAX_FINAL_RESOURCE_ROWS) {
+                $this->telemetry('candidate_bundle_rejected', [
+                    'norm_id' => $id,
+                    'reason' => 'resource_bundle_over_limit',
+                    'expected_resource_rows_count' => $resourceCount,
+                    'resource_limit' => self::MAX_FINAL_RESOURCE_ROWS,
+                ]);
+
+                return false;
+            }
+
+            return $resourceCount > 0;
+        }));
+        if ($processableNormIds === []) {
+            $this->telemetry('candidate_bundles_rejected', [
+                'selected_count' => $norms->count(),
+                'reason' => 'no_candidate_bundle_within_resource_limit',
+            ]);
+
+            return null;
+        }
+        $norms = $norms->filter(static fn (object $norm): bool => in_array((int) $norm->id, $processableNormIds, true))->values();
+        $ids = $processableNormIds;
         $basePricePlaceholders = implode(', ', array_fill(0, count($basePriceDatasetIds), '?'));
         $normalizedCandidateUnitSql = "LOWER(REGEXP_REPLACE(COALESCE(candidate_prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(resources.unit, ''), '[[:space:].,-]+', '', 'g'))";
-        $resourceRows = $this->database->table('estimate_norm_resources as resources')
-            ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
-                $join->on('prices.resource_code', '=', 'resources.resource_code')
-                    ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
-                        $priceContext->where(function ($regional) use ($requested): void {
-                            $regional->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
-                                ->where('prices.region_id', $requested->regionId)
-                                ->where('prices.price_zone_id', $requested->priceZoneId)
-                                ->where('prices.period_id', $requested->periodId);
-                        })->orWhere(function ($base) use ($basePriceDatasetIds): void {
-                            $base->whereIn('prices.dataset_version_id', $basePriceDatasetIds)
-                                ->whereNull('prices.regional_price_version_id');
+        $normalizedPriceUnitSql = "LOWER(REGEXP_REPLACE(COALESCE(prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(resources.unit, ''), '[[:space:].,-]+', '', 'g'))";
+        $this->progress($progress, 'resource_rows_started', ['norms_count' => $norms->count()]);
+        $normalResourceRowsQuery = function (int $normId) use (
+            $requested,
+            $basePriceDatasetIds,
+            $basePricePlaceholders,
+            $normalizedCandidateUnitSql,
+            $normalizedPriceUnitSql,
+            $fgisLaborPriceDatasetId,
+            $fsbcBasePriceDatasetId,
+        ) {
+            return $this->database->table('estimate_norm_resources as resources')
+                ->joinSub(
+                    $this->database->table('estimate_norm_resources as scoped_resources')
+                        ->select('scoped_resources.id')
+                        ->where('scoped_resources.estimate_norm_id', '=', $normId),
+                    'scoped_resources',
+                    static function ($join): void {
+                        $join->on('scoped_resources.id', '=', 'resources.id');
+                    },
+                )
+                ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
+                    $join->on('prices.resource_code', '=', 'resources.resource_code')
+                        ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
+                            $priceContext->where(function ($regional) use ($requested): void {
+                                $regional->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                                    ->where('prices.region_id', $requested->regionId)
+                                    ->where('prices.price_zone_id', $requested->priceZoneId)
+                                    ->where('prices.period_id', $requested->periodId);
+                            })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                                $base->whereIn('prices.dataset_version_id', $basePriceDatasetIds)
+                                    ->whereNull('prices.regional_price_version_id');
+                            });
                         });
-                    });
-            })
-            ->leftJoin('estimate_dataset_versions as price_datasets', 'price_datasets.id', '=', 'prices.dataset_version_id')
-            ->leftJoin('estimate_regional_price_versions as price_regional_versions', 'price_regional_versions.id', '=', 'prices.regional_price_version_id')
-            ->whereIn('resources.estimate_norm_id', $ids)
-            ->where('resources.quantity', '>', 0)
-            ->where('resources.resource_type', '<>', 'summary')
-            ->whereRaw("LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) <> 'abstractresource'")
-            ->where('prices.base_price', '>', 0)
-            ->whereRaw(
-                'prices.id = (SELECT candidate_prices.id FROM estimate_resource_prices AS candidate_prices
+                })
+                ->leftJoin('estimate_dataset_versions as price_datasets', 'price_datasets.id', '=', 'prices.dataset_version_id')
+                ->leftJoin('estimate_regional_price_versions as price_regional_versions', 'price_regional_versions.id', '=', 'prices.regional_price_version_id')
+                ->where('resources.quantity', '>', 0)
+                ->where('resources.resource_type', '<>', 'summary')
+                ->whereRaw("LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) <> 'abstractresource'")
+                ->where('prices.base_price', '>', 0)
+                ->where(function ($units) use ($normalizedPriceUnitSql): void {
+                    $units->whereRaw('prices.unit IS NOT DISTINCT FROM resources.unit')
+                        ->orWhereRaw($normalizedPriceUnitSql)
+                        ->orWhereExists(function ($conversion): void {
+                            $conversion->selectRaw('1')
+                                ->from('estimate_generation_unit_conversions as price_conversions')
+                                ->whereColumn('price_conversions.from_unit', 'resources.unit')
+                                ->whereColumn('price_conversions.to_unit', 'prices.unit')
+                                ->where('price_conversions.version', 1)
+                                ->where('price_conversions.is_active', true)
+                                ->where('price_conversions.factor', '>', 0);
+                        });
+                })
+                ->whereRaw("resources.resource_type IN ('labor', 'machine_labor') OR COALESCE(prices.source_price_kind, '') <> 'regional_worker_salary'")
+                ->whereRaw(
+                    'prices.id = (SELECT candidate_prices.id FROM estimate_resource_prices AS candidate_prices
                     WHERE candidate_prices.resource_code = resources.resource_code
                       AND ((candidate_prices.regional_price_version_id = ?
                         AND candidate_prices.region_id = ? AND candidate_prices.price_zone_id = ?
                         AND candidate_prices.period_id = ?)
                         OR (candidate_prices.dataset_version_id IN ('.$basePricePlaceholders.') AND candidate_prices.regional_price_version_id IS NULL))
                       AND candidate_prices.base_price > 0
+                      AND (resources.resource_type IN (\'labor\', \'machine_labor\')
+                        OR COALESCE(candidate_prices.source_price_kind, \'\') <> \'regional_worker_salary\')
                       AND (candidate_prices.unit IS NOT DISTINCT FROM resources.unit
                         OR '.$normalizedCandidateUnitSql.'
                         OR EXISTS (
@@ -252,162 +357,95 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                       CASE WHEN candidate_prices.dataset_version_id = ? THEN 0 ELSE 1 END,
                       CASE WHEN candidate_prices.unit IS NOT DISTINCT FROM resources.unit THEN 0 ELSE 1 END, candidate_prices.id
                     LIMIT 1)',
-                [
-                    $requested->regionalPriceVersionId,
-                    $requested->regionId,
-                    $requested->priceZoneId,
-                    $requested->periodId,
-                    ...$basePriceDatasetIds,
-                    $requested->regionalPriceVersionId,
-                    $fgisLaborPriceDatasetId,
-                    $fsbcBasePriceDatasetId,
-                ],
-            )
-            ->orderBy('resources.estimate_norm_id')->orderBy('resources.id')
-            ->limit(10_001)
-            ->get([
-                'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
-                'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
-                'prices.id as price_id', 'prices.construction_resource_id as price_construction_resource_id',
-                'prices.resource_code as price_resource_code', 'prices.price_type', 'prices.unit as price_unit',
-                'prices.base_price as unit_price', 'prices.regional_price_version_id',
-                'price_regional_versions.version_key as regional_price_version_key',
-                'price_datasets.source_type as price_dataset_source_type',
-                'price_datasets.version_key as price_dataset_version',
-            ]);
-        $abstractResourceRows = $this->database->table('estimate_norm_resources as resources')
-            ->join('estimate_resource_prices as prices', function ($join) use ($requested, $basePriceDatasetIds): void {
-                $join->where(function ($resourceGroup): void {
-                    $resourceGroup->whereRaw("prices.resource_code LIKE (resources.resource_code || '-____')");
-                    foreach ($this->residentialAbstractResourcePriceSelector->supportedCandidateGroups() as $group) {
-                        if ($group['candidate_group_code'] === $group['group_code']) {
-                            continue;
-                        }
-                        $resourceGroup->orWhere(function ($mappedGroup) use ($group): void {
-                            $mappedGroup->where('resources.resource_code', $group['group_code'])
-                                ->where('prices.resource_code', 'like', $group['candidate_group_code'].'-____');
-                        });
-                    }
-                })
-                    ->whereRaw("RIGHT(prices.resource_code, 4) ~ '^[0-9]{4}$'")
-                    ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
-                        $priceContext->where(function ($regional) use ($requested): void {
-                            $regional->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
-                                ->where('prices.region_id', $requested->regionId)
-                                ->where('prices.price_zone_id', $requested->priceZoneId)
-                                ->where('prices.period_id', $requested->periodId);
-                        })->orWhere(function ($base) use ($basePriceDatasetIds): void {
-                            $base->whereIn('prices.dataset_version_id', $basePriceDatasetIds)
-                                ->whereNull('prices.regional_price_version_id');
-                        });
-                    });
-            })
-            ->leftJoin('estimate_dataset_versions as price_datasets', 'price_datasets.id', '=', 'prices.dataset_version_id')
-            ->leftJoin('estimate_regional_price_versions as price_regional_versions', 'price_regional_versions.id', '=', 'prices.regional_price_version_id')
-            ->whereIn('resources.estimate_norm_id', $ids)
-            ->where('resources.quantity', '>', 0)
-            ->where('resources.resource_type', '<>', 'summary')
-            ->whereRaw("LOWER(COALESCE(resources.raw_payload->>'source_tag', '')) = 'abstractresource'")
-            ->whereRaw("resources.resource_code ~ '^[0-9]{2}\\.[0-9]\\.[0-9]{2}\\.[0-9]{2}$'")
-            ->where('prices.base_price', '>', 0)
-            ->where(function ($compatibleUnit): void {
-                $compatibleUnit->whereRaw('prices.unit IS NOT DISTINCT FROM resources.unit')
-                    ->orWhereRaw(
-                        "LOWER(REGEXP_REPLACE(COALESCE(prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(COALESCE(resources.unit, ''), '[[:space:].,-]+', '', 'g'))"
-                    )
-                    ->orWhereExists(function ($conversion): void {
-                        $conversion->selectRaw('1')
-                            ->from('estimate_generation_unit_conversions as abstract_conversions')
-                            ->whereColumn('abstract_conversions.from_unit', 'resources.unit')
-                            ->whereColumn('abstract_conversions.to_unit', 'prices.unit')
-                            ->where('abstract_conversions.version', 1)
-                            ->where('abstract_conversions.is_active', true)
-                            ->where('abstract_conversions.factor', '>', 0);
-                    })
-                    ->orWhere(function ($residentialConversion): void {
-                        foreach ($this->residentialAbstractResourcePriceSelector->supportedUnitPairs() as $index => $pair) {
-                            $method = $index === 0 ? 'where' : 'orWhere';
-                            $residentialConversion->{$method}(function ($supported) use ($pair): void {
-                                $supported->where('resources.resource_code', $pair['group_code'])
-                                    ->where('prices.unit', $pair['from_unit']);
-                            });
-                        }
-                    });
-            })
-            ->orderBy('resources.estimate_norm_id')
-            ->orderBy('resources.id')
-            ->orderBy('prices.base_price')
-            ->orderBy('prices.resource_code')
-            ->orderBy('prices.id')
-            ->limit(10_001)
-            ->get([
-                'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
-                'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
-                'prices.id as price_id', 'prices.dataset_version_id', 'prices.construction_resource_id as price_construction_resource_id',
-                'prices.resource_code as price_resource_code', 'prices.resource_name as price_resource_name',
-                'prices.price_type', 'prices.unit as price_unit', 'prices.base_price as unit_price',
-                'prices.base_price', 'prices.regional_price_version_id',
-                'price_regional_versions.version_key as regional_price_version_key',
-                'price_datasets.source_type as price_dataset_source_type',
-                'price_datasets.version_key as price_dataset_version',
-                $this->database->raw("'AbstractResource' AS raw_source_tag"),
-            ]);
-        if ($resourceRows->count() + $abstractResourceRows->count() > 10_000) {
-            $this->telemetry('resources_limit_exceeded', [
-                'selected_count' => $norms->count(),
-                'resource_rows_count' => $resourceRows->count() + $abstractResourceRows->count(),
-            ]);
+                    [
+                        $requested->regionalPriceVersionId,
+                        $requested->regionId,
+                        $requested->priceZoneId,
+                        $requested->periodId,
+                        ...$basePriceDatasetIds,
+                        $requested->regionalPriceVersionId,
+                        $fgisLaborPriceDatasetId,
+                        $fsbcBasePriceDatasetId,
+                    ],
+                );
+        };
+        $resourceRowColumns = [
+            'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
+            'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
+            'prices.id as price_id', 'prices.construction_resource_id as price_construction_resource_id',
+            'prices.resource_code as price_resource_code', 'prices.price_type', 'prices.unit as price_unit',
+            'prices.base_price as unit_price', 'prices.regional_price_version_id',
+            'price_regional_versions.version_key as regional_price_version_key',
+            'price_datasets.source_type as price_dataset_source_type',
+            'price_datasets.version_key as price_dataset_version',
+        ];
+        $resourceRows = collect();
+        $admittedNormalNormIds = [];
+        $reservedResourceRowsCount = 0;
+        foreach ($rankedNormIdsByWorkItem as $workItemKey => $rankedNormIds) {
+            $admittedForIntent = false;
+            foreach ($rankedNormIds as $normId) {
+                if (! in_array($normId, $processableNormIds, true)) {
+                    continue;
+                }
+                if (isset($admittedNormalNormIds[$normId])) {
+                    $admittedForIntent = true;
 
-            return null;
-        }
-        $selectedAbstractRows = collect();
-        $normsById = $norms->keyBy('id');
-        foreach ($abstractResourceRows->groupBy('norm_resource_id') as $candidateRows) {
-            $candidateRowList = $candidateRows->values()->all();
-            $representative = $candidateRowList[0] ?? null;
-            if (! is_object($representative)) {
-                continue;
-            }
-            $norm = $normsById->get((int) $representative->estimate_norm_id);
-            $selection = $this->abstractResourceProjectPriceSelector->select(
-                $intents,
-                is_object($norm) ? trim((string) $norm->code) : '',
-                is_object($norm) ? (string) $norm->name : '',
-                trim((string) $representative->resource_code),
-                trim((string) ($representative->resource_name ?? '')),
-                $requested->regionalPriceVersionId,
-                $candidateRowList,
-                $basePriceDatasetIds,
-            );
-            if ($selection === null) {
-                $this->telemetry('abstract_resource_candidates_rejected', [
-                    'norm_code' => is_object($norm) ? trim((string) $norm->code) : '',
-                    'norm_name' => is_object($norm) ? trim((string) $norm->name) : '',
-                    'group_code' => trim((string) $representative->resource_code),
-                    'group_name' => trim((string) ($representative->resource_name ?? '')),
-                    'candidates' => array_map(static fn (object $candidate): array => [
-                        'resource_code' => trim((string) ($candidate->price_resource_code ?? '')),
-                        'resource_name' => trim((string) ($candidate->price_resource_name ?? '')),
-                        'unit' => trim((string) ($candidate->price_unit ?? '')),
-                        'base_price' => is_numeric($candidate->base_price ?? null)
-                            ? (float) $candidate->base_price
-                            : null,
-                        'source_type' => trim((string) ($candidate->price_dataset_source_type ?? '')),
-                        'regional_price_version_id' => isset($candidate->regional_price_version_id)
-                            ? (int) $candidate->regional_price_version_id
-                            : null,
-                    ], array_slice($candidateRowList, 0, 20)),
+                    break;
+                }
+                $expectedNormalCount = (int) ($expectedNormalResourceCounts[$normId] ?? 0);
+                $expectedResourceCount = (int) ($expectedResourceCounts[$normId] ?? 0);
+                if ($reservedResourceRowsCount + $expectedResourceCount > self::MAX_FINAL_RESOURCE_ROWS) {
+                    $this->telemetry('candidate_bundle_rejected', [
+                        'norm_id' => $normId,
+                        'work_item_key' => $workItemKey,
+                        'reason' => 'final_resource_budget_exceeded',
+                        'expected_normal_resource_rows_count' => $expectedNormalCount,
+                        'expected_resource_rows_count' => $expectedResourceCount,
+                        'reserved_resource_rows_count' => $reservedResourceRowsCount,
+                        'resource_limit' => self::MAX_FINAL_RESOURCE_ROWS,
+                    ]);
+
+                    continue;
+                }
+                $candidateRows = $normalResourceRowsQuery($normId)
+                    ->orderBy('resources.id')
+                    ->get($resourceRowColumns);
+                $this->progress($progress, 'candidate_normal_resource_rows_loaded', [
+                    'work_item_key' => $workItemKey,
+                    'norm_id' => $normId,
+                    'expected_resource_rows_count' => $expectedNormalCount,
+                    'priced_resource_rows_count' => $candidateRows->count(),
                 ]);
+                if ($candidateRows->count() !== $expectedNormalCount) {
+                    $this->telemetry('candidate_bundle_rejected', [
+                        'norm_id' => $normId,
+                        'work_item_key' => $workItemKey,
+                        'reason' => 'normal_resource_price_coverage_incomplete',
+                        'expected_normal_resource_rows_count' => $expectedNormalCount,
+                        'priced_normal_resource_rows_count' => $candidateRows->count(),
+                    ]);
 
-                continue;
+                    continue;
+                }
+                $resourceRows = $resourceRows->concat($candidateRows);
+                $admittedNormalNormIds[$normId] = true;
+                $reservedResourceRowsCount += $expectedResourceCount;
+                $admittedForIntent = true;
+
+                break;
             }
-            $selection['row']->project_resource_candidates_count = $selection['candidates_count'];
-            $selection['row']->project_resource_price_policy = $selection['policy'];
-            if (isset($selection['assumption'])) {
-                $selection['row']->project_resource_conversion_assumption = $selection['assumption'];
+            if (! $admittedForIntent) {
+                $this->telemetry('candidate_bundle_rejected', [
+                    'work_item_key' => $workItemKey,
+                    'reason' => 'no_normal_resource_bundle_for_intent',
+                    'ranked_norm_ids' => $rankedNormIds,
+                ]);
             }
-            $selectedAbstractRows->push($selection['row']);
         }
+        $ids = array_map('intval', array_keys($admittedNormalNormIds));
+        $norms = $norms->filter(static fn (object $norm): bool => in_array((int) $norm->id, $ids, true))->values();
+        $this->progress($progress, 'resource_rows_loaded', ['resource_rows_count' => $resourceRows->count()]);
         $abstractDefinitions = $this->database->table('estimate_norm_resources')
             ->whereIn('estimate_norm_id', $ids)
             ->where('quantity', '>', 0)
@@ -416,6 +454,27 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->orderBy('estimate_norm_id')
             ->orderBy('id')
             ->get(['id', 'estimate_norm_id', 'construction_resource_id', 'resource_code', 'resource_name', 'unit', 'quantity', 'resource_type']);
+        $this->progress($progress, 'abstract_resource_rows_started', ['norms_count' => $norms->count()]);
+        $normsById = $norms->keyBy('id');
+        $selectedAbstractRows = collect();
+        foreach ($abstractDefinitions as $abstractIndex => $definition) {
+            $selected = $this->selectAbstractPriceRow(
+                $definition,
+                $normsById->get((int) $definition->estimate_norm_id),
+                $intents,
+                $requested,
+                $basePriceDatasetIds,
+            );
+            if ($selected !== null) {
+                $selectedAbstractRows->push($selected);
+            }
+            $this->progress($progress, 'abstract_resource_candidate_processed', [
+                'abstract_index' => $abstractIndex + 1,
+                'abstract_definitions_count' => $abstractDefinitions->count(),
+                'selected_rows_count' => $selectedAbstractRows->count(),
+            ]);
+        }
+        $this->progress($progress, 'abstract_resource_rows_loaded', ['abstract_resource_rows_count' => $selectedAbstractRows->count()]);
         $unresolvedAbstractDefinitions = $abstractDefinitions->reject(static fn (object $row): bool => $selectedAbstractRows->contains(
             static fn (object $selected): bool => (int) $selected->norm_resource_id === (int) $row->id,
         ));
@@ -556,8 +615,14 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'semantic_project_datasets.source_type as price_dataset_source_type',
                 'semantic_project_datasets.version_key as price_dataset_version',
             ]);
+        $this->progress($progress, 'semantic_price_rows_loaded', ['resource_rows_count' => $semanticProjectPrices->count()]);
         if ($semanticProjectPrices->count() <= 5_000) {
-            foreach ($unresolvedAbstractDefinitions as $definition) {
+            foreach ($unresolvedAbstractDefinitions as $semanticIndex => $definition) {
+                $this->progress($progress, 'semantic_abstract_resource_started', [
+                    'abstract_index' => $semanticIndex + 1,
+                    'abstract_definitions_count' => $unresolvedAbstractDefinitions->count(),
+                    'selected_rows_count' => $selectedAbstractRows->count(),
+                ]);
                 $norm = $normsById->get((int) $definition->estimate_norm_id);
                 if (! is_object($norm)) {
                     continue;
@@ -586,6 +651,11 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 $selected->project_resource_candidates_count = $selection['candidates_count'];
                 $selected->project_resource_price_policy = $selection['policy'];
                 $selectedAbstractRows->push($selected);
+                $this->progress($progress, 'semantic_abstract_resource_processed', [
+                    'abstract_index' => $semanticIndex + 1,
+                    'abstract_definitions_count' => $unresolvedAbstractDefinitions->count(),
+                    'selected_rows_count' => $selectedAbstractRows->count(),
+                ]);
             }
         }
         $selectedAbstractCounts = $selectedAbstractRows
@@ -670,8 +740,10 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'coverage_details' => array_slice($coverageDetails, 0, 30),
             ]);
         }
-        $candidates = [];
+        $candidatesByNormId = [];
+        $candidateResourceCounts = [];
         foreach ($norms as $norm) {
+            $normId = (int) $norm->id;
             $groups = $resources[(int) $norm->id] ?? [];
             $groups = [
                 'materials' => $groups['materials'] ?? [], 'labor' => $groups['labor'] ?? [],
@@ -680,14 +752,25 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             $selectedAbstractCount = (int) ($selectedAbstractCounts[(int) $norm->id] ?? 0);
             $unpricedAbstractCount = count($unpricedAbstractResources[(int) $norm->id] ?? []);
             $pricedExpectedCount = (int) ($expectedResourceCounts[(int) $norm->id] ?? 0) - $unpricedAbstractCount;
-            if ($pricedExpectedCount < $selectedAbstractCount
+            if ($unpricedAbstractCount > 0
+                || $pricedExpectedCount < $selectedAbstractCount
                 || ! $this->resourceCoverage->complete($pricedExpectedCount, $groups)) {
+                $this->telemetry('candidate_bundle_rejected', [
+                    'norm_id' => $normId,
+                    'reason' => $unpricedAbstractCount > 0
+                        ? 'abstract_resource_price_missing'
+                        : 'resource_price_coverage_incomplete',
+                    'expected_resource_rows_count' => (int) ($expectedResourceCounts[$normId] ?? 0),
+                    'selected_abstract_rows_count' => $selectedAbstractCount,
+                    'unpriced_abstract_rows_count' => $unpricedAbstractCount,
+                ]);
+
                 continue;
             }
             $composition = is_array($norm->work_composition)
                 ? $norm->work_composition
                 : json_decode((string) $norm->work_composition, true);
-            $candidates[] = [
+            $candidatesByNormId[$normId] = [
                 'candidate_id' => (string) $norm->id, 'normative_id' => (int) $norm->id,
                 'dataset_id' => $requested->datasetId, 'dataset_version' => $requested->datasetVersion,
                 'dataset_status' => 'parsed', 'code' => (string) $norm->code, 'name' => (string) $norm->name,
@@ -704,16 +787,102 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'work_composition' => is_array($composition) ? array_values($composition) : [],
                 'resources' => $groups,
             ];
+            $candidateResourceCounts[$normId] = array_sum(array_map(
+                static fn (array $group): int => count($group),
+                $groups,
+            ));
         }
-        if ($candidates === []) {
+        if ($candidatesByNormId === []) {
             $this->telemetry('priced_candidates_empty', ['selected_count' => $norms->count(), 'resource_rows_count' => $resourceRows->count()]);
 
             return null;
         }
+        $admittedNormIds = [];
+        $admittedResourceRowsCount = 0;
+        foreach ($rankedNormIdsByWorkItem as $workItemKey => $rankedNormIds) {
+            $admittedForIntent = false;
+            foreach ($rankedNormIds as $normId) {
+                if (! isset($candidatesByNormId[$normId])) {
+                    continue;
+                }
+                if (isset($admittedNormIds[$normId])) {
+                    $admittedForIntent = true;
+
+                    break;
+                }
+                $candidateResourceCount = $candidateResourceCounts[$normId] ?? 0;
+                if ($candidateResourceCount < 1
+                    || $admittedResourceRowsCount + $candidateResourceCount > self::MAX_FINAL_RESOURCE_ROWS) {
+                    $this->telemetry('candidate_bundle_rejected', [
+                        'norm_id' => $normId,
+                        'work_item_key' => $workItemKey,
+                        'reason' => 'final_resource_budget_exceeded',
+                        'candidate_resource_rows_count' => $candidateResourceCount,
+                        'admitted_resource_rows_count' => $admittedResourceRowsCount,
+                        'resource_limit' => self::MAX_FINAL_RESOURCE_ROWS,
+                    ]);
+
+                    continue;
+                }
+                $admittedNormIds[$normId] = true;
+                $admittedResourceRowsCount += $candidateResourceCount;
+                $admittedForIntent = true;
+
+                break;
+            }
+            if (! $admittedForIntent) {
+                $this->telemetry('candidate_bundle_rejected', [
+                    'work_item_key' => $workItemKey,
+                    'reason' => 'no_complete_candidate_for_intent',
+                    'ranked_norm_ids' => $rankedNormIds,
+                ]);
+            }
+        }
+        foreach ($rankedNormIdsByWorkItem as $rankedNormIds) {
+            foreach ($rankedNormIds as $normId) {
+                if (isset($admittedNormIds[$normId]) || ! isset($candidatesByNormId[$normId])) {
+                    continue;
+                }
+                $candidateResourceCount = $candidateResourceCounts[$normId] ?? 0;
+                if ($candidateResourceCount < 1
+                    || $admittedResourceRowsCount + $candidateResourceCount > self::MAX_FINAL_RESOURCE_ROWS) {
+                    continue;
+                }
+                $admittedNormIds[$normId] = true;
+                $admittedResourceRowsCount += $candidateResourceCount;
+            }
+        }
+        $candidates = array_values(array_filter(
+            $candidatesByNormId,
+            static fn (array $candidate): bool => isset($admittedNormIds[(int) $candidate['normative_id']]),
+        ));
+        if ($candidates === []) {
+            return null;
+        }
+        $candidateIdsByWorkItem = [];
+        foreach ($workItemKeyByIntentIndex as $workItemKey) {
+            if ($workItemKey === null) {
+                continue;
+            }
+            $candidateIdsByWorkItem[$workItemKey] = array_values(array_map(
+                static fn (int $normId): string => (string) $candidatesByNormId[$normId]['candidate_id'],
+                array_filter(
+                    $rankedNormIdsByWorkItem[$workItemKey] ?? [],
+                    static fn (int $normId): bool => isset($admittedNormIds[$normId], $candidatesByNormId[$normId]),
+                ),
+            ));
+        }
+        $this->progress($progress, 'pin_candidates_built', ['candidate_count' => count($candidates)]);
+        $this->progress($progress, 'supplementary_materials_started', ['intents_count' => count($intents)]);
         $supplementaryMaterials = $this->supplementaryMaterials($requested, $basePriceDatasetIds, $intents);
-        $this->telemetry('approved', ['intents_count' => count($intents), 'selected_count' => $norms->count(), 'resource_rows_count' => $resourceRows->count(), 'candidates_count' => count($candidates), 'supplementary_materials_count' => count($supplementaryMaterials)]);
+        $this->progress($progress, 'supplementary_materials_loaded', ['supplementary_materials_count' => count($supplementaryMaterials)]);
+        $this->telemetry('approved', ['intents_count' => count($intents), 'selected_count' => $norms->count(), 'resource_rows_count' => $admittedResourceRowsCount, 'candidates_count' => count($candidates), 'supplementary_materials_count' => count($supplementaryMaterials)]);
         $canonical = json_encode(
-            ['catalog_candidates' => $candidates, 'supplementary_materials' => $supplementaryMaterials],
+            [
+                'catalog_candidates' => $candidates,
+                'candidate_ids_by_work_item' => $candidateIdsByWorkItem,
+                'supplementary_materials' => $supplementaryMaterials,
+            ],
             JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION,
         );
 
@@ -722,6 +891,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             $requested->regionId, $requested->priceZoneId, $requested->periodId,
             $requested->regionalPriceVersionId, $requested->priceVersion,
             $candidates, hash('sha256', $canonical), $supplementaryMaterials,
+            $candidateIdsByWorkItem,
         );
     }
 
@@ -988,11 +1158,131 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         ])->all();
     }
 
+    /** @param array<int, int> $basePriceDatasetIds */
+    private function selectAbstractPriceRow(
+        object $definition,
+        mixed $norm,
+        array $intents,
+        NormativeContextPinData $requested,
+        array $basePriceDatasetIds,
+    ): ?object {
+        $candidates = $this->abstractPriceRowsForDefinition($definition, $requested, $basePriceDatasetIds)->all();
+        if ($candidates === [] || ! is_object($norm)) {
+            return null;
+        }
+        $selection = $this->abstractResourceProjectPriceSelector->select(
+            $intents,
+            trim((string) $norm->code),
+            (string) $norm->name,
+            trim((string) $definition->resource_code),
+            trim((string) $definition->resource_name),
+            $requested->regionalPriceVersionId,
+            $candidates,
+            $basePriceDatasetIds,
+        );
+        if ($selection === null) {
+            return null;
+        }
+        $selection['row']->project_resource_candidates_count = $selection['candidates_count'];
+        $selection['row']->project_resource_price_policy = $selection['policy'];
+        if (isset($selection['abstract_selection_rule_key'], $selection['abstract_selection_rule_version'], $selection['quantity_factor'])) {
+            $selection['row']->project_resource_abstract_selection_rule_key = $selection['abstract_selection_rule_key'];
+            $selection['row']->project_resource_abstract_selection_rule_version = $selection['abstract_selection_rule_version'];
+            $selection['row']->project_resource_quantity_factor = $selection['quantity_factor'];
+        }
+        if (isset($selection['assumption'])) {
+            $selection['row']->project_resource_conversion_assumption = $selection['assumption'];
+        }
+
+        return $selection['row'];
+    }
+
+    /** @param array<int, int> $basePriceDatasetIds */
+    private function abstractPriceRowsForDefinition(
+        object $definition,
+        NormativeContextPinData $requested,
+        array $basePriceDatasetIds,
+    ): \Illuminate\Support\Collection {
+        $groupCode = trim((string) $definition->resource_code);
+        $candidateGroups = [$groupCode];
+        foreach ($this->residentialAbstractResourcePriceSelector->supportedCandidateGroups() as $group) {
+            if ($group['group_code'] === $groupCode) {
+                $candidateGroups[] = $group['candidate_group_code'];
+            }
+        }
+        $candidateGroups = array_values(array_unique($candidateGroups));
+        $resourceType = (string) $definition->resource_type;
+        $resourceUnit = (string) $definition->unit;
+        $rows = $this->database->table('estimate_resource_prices as prices')
+            ->leftJoin('estimate_dataset_versions as price_datasets', 'price_datasets.id', '=', 'prices.dataset_version_id')
+            ->leftJoin('estimate_regional_price_versions as price_regional_versions', 'price_regional_versions.id', '=', 'prices.regional_price_version_id')
+            ->where(function ($codes) use ($candidateGroups): void {
+                foreach ($candidateGroups as $index => $code) {
+                    $method = $index === 0 ? 'where' : 'orWhere';
+                    $codes->{$method}('prices.resource_code', 'like', $code.'-____');
+                }
+            })
+            ->where(function ($priceContext) use ($requested, $basePriceDatasetIds): void {
+                $priceContext->where(function ($regional) use ($requested): void {
+                    $regional->where('prices.regional_price_version_id', $requested->regionalPriceVersionId)
+                        ->where('prices.region_id', $requested->regionId)
+                        ->where('prices.price_zone_id', $requested->priceZoneId)
+                        ->where('prices.period_id', $requested->periodId);
+                })->orWhere(function ($base) use ($basePriceDatasetIds): void {
+                    $base->whereIn('prices.dataset_version_id', $basePriceDatasetIds)
+                        ->whereNull('prices.regional_price_version_id');
+                });
+            })
+            ->where('prices.base_price', '>', 0)
+            ->when(! in_array($resourceType, ['labor', 'machine_labor'], true), static fn ($query) => $query->whereRaw("COALESCE(prices.source_price_kind, '') <> 'regional_worker_salary'"))
+            ->where(function ($units) use ($resourceUnit, $groupCode): void {
+                $units->where('prices.unit', $resourceUnit)
+                    ->orWhereRaw("LOWER(REGEXP_REPLACE(COALESCE(prices.unit, ''), '[[:space:].,-]+', '', 'g')) = LOWER(REGEXP_REPLACE(?, '[[:space:].,-]+', '', 'g'))", [$resourceUnit])
+                    ->orWhereExists(function ($conversion) use ($resourceUnit): void {
+                        $conversion->selectRaw('1')->from('estimate_generation_unit_conversions as conversions')
+                            ->where('conversions.from_unit', $resourceUnit)->whereColumn('conversions.to_unit', 'prices.unit')
+                            ->where('conversions.version', 1)->where('conversions.is_active', true)->where('conversions.factor', '>', 0);
+                    });
+                foreach ($this->residentialAbstractResourcePriceSelector->supportedUnitPairs() as $pair) {
+                    if ($pair['group_code'] === $groupCode) {
+                        $units->orWhere('prices.unit', $pair['from_unit']);
+                    }
+                }
+            })
+            ->orderBy('prices.base_price')->orderBy('prices.resource_code')->orderBy('prices.id')->limit(500)
+            ->get([
+                'prices.id as price_id', 'prices.dataset_version_id', 'prices.construction_resource_id as price_construction_resource_id',
+                'prices.resource_code as price_resource_code', 'prices.resource_name as price_resource_name', 'prices.price_type',
+                'prices.source_price_kind', 'prices.unit as price_unit', 'prices.base_price as unit_price', 'prices.base_price',
+                'prices.regional_price_version_id', 'price_regional_versions.version_key as regional_price_version_key',
+                'price_datasets.source_type as price_dataset_source_type', 'price_datasets.version_key as price_dataset_version',
+            ]);
+        foreach ($rows as $row) {
+            $row->norm_resource_id = (int) $definition->id;
+            $row->estimate_norm_id = (int) $definition->estimate_norm_id;
+            $row->construction_resource_id = $definition->construction_resource_id;
+            $row->resource_code = $groupCode;
+            $row->resource_name = (string) $definition->resource_name;
+            $row->unit = $resourceUnit;
+            $row->quantity = $definition->quantity;
+            $row->resource_type = $resourceType;
+            $row->raw_source_tag = 'AbstractResource';
+        }
+
+        return $rows;
+    }
+
     private function telemetry(string $phase, array $context): void
     {
         if (Log::getFacadeRoot() !== null) {
             Log::info('estimate_generation.normative_pin_source', ['phase' => $phase, ...$context]);
         }
+    }
+
+    /** @param callable(string, array<string, int>): void $progress @param array<string, int> $metadata */
+    private function progress(callable $progress, string $phase, array $metadata = []): void
+    {
+        $progress($phase, $metadata);
     }
 
     private function latestPriceDatasetId(string $sourceType, bool $baseOnly): int

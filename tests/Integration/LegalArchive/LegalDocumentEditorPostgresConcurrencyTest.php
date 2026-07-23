@@ -114,6 +114,24 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
         self::assertStringNotContainsString("lockForUpdate()->max('generation')", $source);
     }
 
+    public function test_same_actor_can_explicitly_restart_an_idle_editor_session_with_a_new_key(): void
+    {
+        $version = (new LegalArchiveDocumentVersion)->setConnection($this->first->getName())->newQuery()->findOrFail(1);
+        $actor = (new User)->setConnection($this->first->getName())->newQuery()->findOrFail(1);
+        $first = $this->service($this->first)->open($version, $actor);
+        $second = $this->service($this->first)->open($version, $actor, 'edit', false, true);
+
+        $sessions = $this->first->table('legal_document_editor_sessions')->orderBy('generation')->get();
+
+        self::assertCount(2, $sessions);
+        self::assertSame('closed', $sessions[0]->status);
+        self::assertSame('restarted', $sessions[0]->failure_code);
+        self::assertSame(1, (int) $sessions[0]->generation);
+        self::assertSame('active', $sessions[1]->status);
+        self::assertSame(2, (int) $sessions[1]->generation);
+        self::assertNotSame($first->documentKey, $second->documentKey);
+    }
+
     public function test_database_rejects_second_participant_for_the_same_session(): void
     {
         $this->openSession();
@@ -648,6 +666,11 @@ final class LegalDocumentEditorPostgresConcurrencyTest extends TestCase
             public function authorize(User $user, LegalArchiveDocument $document, string $ability): void {}
 
             public function authorizePermission(User $user, LegalArchiveDocument $document, string $permission): void {}
+
+            public function scopeAccessibleQuery(\Illuminate\Database\Eloquent\Builder $query, User $user, int $organizationId, string $ability = 'view'): \Illuminate\Database\Eloquent\Builder
+            {
+                return $query;
+            }
         };
         $audit = new class implements LegalDocumentAudit
         {

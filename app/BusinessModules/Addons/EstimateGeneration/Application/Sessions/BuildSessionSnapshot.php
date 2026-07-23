@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationAction;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateScopeMetadataProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReadinessResult;
 
 use function trans_message;
@@ -66,6 +67,7 @@ final class BuildSessionSnapshot
         );
         $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
         $metrics = is_array($readinessSummary['metrics'] ?? null) ? $readinessSummary['metrics'] : [];
+        $budgetScope = is_array($draft['budget_scope'] ?? null) ? $draft['budget_scope'] : [];
 
         return new SessionSnapshotData(
             id: (int) $session->getKey(),
@@ -93,6 +95,7 @@ final class BuildSessionSnapshot
             )->toArray(),
             canGenerate: (bool) ($readinessSummary['can_generate'] ?? false),
             canApply: (bool) ($readinessSummary['can_apply'] ?? false),
+            scopeSummary: (new EstimateScopeMetadataProjector)->project($draft, $budgetScope),
         );
     }
 

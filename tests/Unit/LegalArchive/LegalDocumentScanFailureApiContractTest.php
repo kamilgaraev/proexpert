@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Unit\LegalArchive;
 
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocumentVersion;
 use App\Http\Responses\AdminResponse;
+use App\Services\LegalArchive\Files\LegalDocumentScanFailed;
 use Illuminate\Support\Facades\Facade;
+use RuntimeException;
 use Tests\TestCase;
 
 use function trans_message;
@@ -46,6 +49,24 @@ final class LegalDocumentScanFailureApiContractTest extends TestCase
         self::assertSame(
             'Версия сохранена, но файл не прошёл проверку безопасности. Загрузите новую версию файла.',
             $payload['message'],
+        );
+    }
+
+    public function test_scan_failure_exposes_a_safe_processing_reason(): void
+    {
+        $version = new LegalArchiveDocumentVersion;
+
+        self::assertSame(
+            'scanner_unavailable',
+            (new LegalDocumentScanFailed($version, new RuntimeException('legal_document_scanner_unavailable')))->failureCode(),
+        );
+        self::assertSame(
+            'malware_detected',
+            (new LegalDocumentScanFailed($version, new RuntimeException('legal_document_malware_detected')))->failureCode(),
+        );
+        self::assertSame(
+            'scan_failed',
+            (new LegalDocumentScanFailed($version, new RuntimeException('unexpected_scanner_failure')))->failureCode(),
         );
     }
 }

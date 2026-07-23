@@ -18,14 +18,30 @@ final readonly class PinnedNormativeCandidateFactory
         array $workItem,
         array $normativeSections = [],
         ?WorkIntentData $canonicalIntent = null,
+        ?array $candidateIdsByWorkItem = null,
     ): array {
         $rankable = [];
         $byId = [];
+        $allowedIdLookup = null;
+        if ($candidateIdsByWorkItem !== null) {
+            $workItemKey = (string) ($workItem['key'] ?? '');
+            if (! array_key_exists($workItemKey, $candidateIdsByWorkItem)) {
+                return [];
+            }
+            $allowedIds = $candidateIdsByWorkItem[$workItemKey];
+            if (! is_array($allowedIds) || ! array_is_list($allowedIds)) {
+                return [];
+            }
+            $allowedIdLookup = array_fill_keys(array_filter($allowedIds, 'is_string'), true);
+        }
         foreach ($catalogCandidates as $candidate) {
             if (! is_array($candidate) || ! is_string($candidate['candidate_id'] ?? null)) {
                 continue;
             }
             $id = $candidate['candidate_id'];
+            if ($allowedIdLookup !== null && ! isset($allowedIdLookup[$id])) {
+                continue;
+            }
             $byId[$id] = $candidate;
             $rankable[] = (object) [
                 'id' => $id, 'code' => (string) ($candidate['code'] ?? ''),
@@ -41,7 +57,8 @@ final readonly class PinnedNormativeCandidateFactory
         $selected = $this->ranker->select($rankable, [[
             'search_text' => (string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''),
             'unit' => (string) ($workItem['unit'] ?? ''),
-            'code' => is_string($workItem['normative_rate_code'] ?? null) ? $workItem['normative_rate_code'] : null,
+            'code' => $canonicalIntent?->requestedNormativeCode
+                ?? (is_string($workItem['normative_rate_code'] ?? null) ? $workItem['normative_rate_code'] : null),
             'action' => $canonicalIntent?->technology ?? (is_string($workItem['work_intent']['action'] ?? null)
                 ? $workItem['work_intent']['action']
                 : null),

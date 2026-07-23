@@ -226,7 +226,10 @@ final class RetryEstimateGenerationSession
         return [
             'regional_context' => [
                 ...$regionalContext,
-                ...$this->regionalContextResolver->resolve($regionalContext),
+                ...$this->regionalContextResolver->resolve([
+                    ...($session->input_payload ?? []),
+                    ...$regionalContext,
+                ]),
             ],
         ];
     }

@@ -294,6 +294,31 @@ final class ContractPermissionAndLifecycleTest extends TestCase
             ->assertJsonPath('data.project_id', 11);
     }
 
+    public function test_project_update_ignores_display_status_and_preserves_lifecycle_status(): void
+    {
+        $this->createContractTables();
+        $contract = $this->persistContract(78, 11);
+        $this->app->instance(AuthorizationService::class, $this->mockAuthorization(static fn (): bool => true));
+
+        Route::put('/__review/projects/{project}/display-status-contracts/{contract}', static function (UpdateContractRequest $request) {
+            $dto = $request->toDto();
+
+            return AdminResponse::success([
+                'validated_fields' => array_keys($request->validated()),
+                'status' => $dto->status->value,
+            ]);
+        });
+
+        $this->actingAs($this->user(7))
+            ->putJson("/__review/projects/11/display-status-contracts/{$contract->id}", [
+                'subject' => 'Уточненные условия поставки',
+                'status' => 'archived',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.validated_fields', ['subject'])
+            ->assertJsonPath('data.status', 'draft');
+    }
+
     public function test_project_update_requires_permission_for_each_multi_project_target(): void
     {
         $this->createContractTables();

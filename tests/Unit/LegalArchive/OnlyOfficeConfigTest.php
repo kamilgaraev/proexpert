@@ -34,9 +34,11 @@ final class OnlyOfficeConfigTest extends TestCase
         self::assertNotEmpty($payload->token);
         self::assertSame($payload->documentKey, $payload->configuration['document']['key']);
         self::assertSame($payload->token, $payload->configuration['token']);
+        self::assertSame('ru', $payload->configuration['editorConfig']['lang']);
         $claims = \App\Services\LegalArchive\Editor\OnlyOfficeJwt::decode($payload->token, str_repeat('s', 48));
         self::assertSame($payload->documentKey, $claims['document']['key']);
         self::assertSame('https://api.example.test/callback', $claims['editorConfig']['callbackUrl']);
+        self::assertSame('ru', $claims['editorConfig']['lang']);
 
         $this->expectException(DomainException::class);
         $editor->verifyCallbackToken($payload->token, new \App\Services\LegalArchive\Editor\EditorCallbackInput(
@@ -77,6 +79,27 @@ final class OnlyOfficeConfigTest extends TestCase
         ));
     }
 
+    public function test_callback_token_accepts_onlyoffice_outbox_payload_claims(): void
+    {
+        $editor = new OnlyOfficeDocumentEditor([
+            'enabled' => true, 'url' => 'https://office.example.test', 'jwt_secret' => str_repeat('s', 48),
+        ]);
+        $token = \App\Services\LegalArchive\Editor\OnlyOfficeJwt::encode([
+            'payload' => [
+                'key' => 'document-key',
+                'status' => 2,
+                'url' => 'https://office.example.test/result.docx',
+            ],
+            'exp' => time() + 60,
+        ], str_repeat('s', 48));
+
+        $editor->verifyCallbackToken($token, new \App\Services\LegalArchive\Editor\EditorCallbackInput(
+            'session', 'document-key', 2, 'https://office.example.test/result.docx', 'replay', $token,
+        ));
+
+        self::assertTrue(true);
+    }
+
     public function test_view_and_review_modes_have_server_enforced_permissions(): void
     {
         $editor = new OnlyOfficeDocumentEditor([
@@ -92,12 +115,22 @@ final class OnlyOfficeConfigTest extends TestCase
         self::assertFalse($view->configuration['document']['permissions']['review']);
         self::assertFalse($view->configuration['document']['permissions']['comment']);
         self::assertArrayNotHasKey('callbackUrl', $view->configuration['editorConfig']);
+        self::assertSame('ru', $view->configuration['editorConfig']['lang']);
+        self::assertSame(
+            'ru',
+            \App\Services\LegalArchive\Editor\OnlyOfficeJwt::decode($view->token, str_repeat('s', 48))['editorConfig']['lang'],
+        );
 
         $review = $editor->createSession(new EditorDocumentContext(...[...$base, 'review']), 'Иван Иванов');
         self::assertSame('review', $review->mode);
         self::assertFalse($review->configuration['document']['permissions']['edit']);
         self::assertTrue($review->configuration['document']['permissions']['review']);
         self::assertTrue($review->configuration['document']['permissions']['comment']);
+        self::assertSame('ru', $review->configuration['editorConfig']['lang']);
+        self::assertSame(
+            'ru',
+            \App\Services\LegalArchive\Editor\OnlyOfficeJwt::decode($review->token, str_repeat('s', 48))['editorConfig']['lang'],
+        );
     }
 
     public function test_invalid_or_incomplete_server_configuration_fails_closed(): void

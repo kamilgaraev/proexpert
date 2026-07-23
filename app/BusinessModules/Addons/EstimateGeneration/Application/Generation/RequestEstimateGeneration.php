@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\SelectedRegionalPriceContext;
 use Illuminate\Support\Str;
 
 final class RequestEstimateGeneration
@@ -26,11 +27,21 @@ final class RequestEstimateGeneration
         private DocumentGenerationReadinessService $readiness,
         private EloquentSessionBuildingModelBridge $buildingModels,
         private EstimateGenerationRegionalContextResolver $regionalContextResolver,
+        private SelectedRegionalPriceContext $selectedRegionalPriceContext,
     ) {}
 
-    public function handle(EstimateGenerationSession $session, int $expectedVersion, ?string $requestedMode): SessionActionResult
+    public function handle(
+        EstimateGenerationSession $session,
+        int $expectedVersion,
+        ?string $requestedMode,
+        ?int $selectedRegionalPriceVersionId = null,
+    ): SessionActionResult
     {
         if ($session->status === EstimateGenerationStatus::Generating) {
+            if ($selectedRegionalPriceVersionId !== null) {
+                throw new InvalidEstimateGenerationState($session->status, 'price_source_change_during_generation');
+            }
+
             if (trim((string) ($session->input_payload['generation_attempt_id'] ?? '')) === '') {
                 throw new InvalidEstimateGenerationState($session->status, 'generation_retry_without_attempt');
             }
@@ -56,6 +67,21 @@ final class RequestEstimateGeneration
                     EstimateGenerationStatus::Cancelled,
                 ], ['input_payload' => [...($session->input_payload ?? []), 'generation_mode' => $generationMode]]);
             }
+        }
+
+        if ($selectedRegionalPriceVersionId !== null) {
+            $session = $this->advance->update($session, [
+                EstimateGenerationStatus::Draft,
+                EstimateGenerationStatus::ProcessingDocuments,
+                EstimateGenerationStatus::ReadyToGenerate,
+                EstimateGenerationStatus::EstimateReviewRequired,
+                EstimateGenerationStatus::ReadyToApply,
+                EstimateGenerationStatus::Cancelled,
+                EstimateGenerationStatus::Applied,
+            ], ['input_payload' => $this->selectedRegionalPriceContext->replace(
+                $session->input_payload ?? [],
+                $selectedRegionalPriceVersionId,
+            )]);
         }
 
         $session = $this->refreshRegionalContext($session);
@@ -103,7 +129,10 @@ final class RequestEstimateGeneration
 
         $refreshedContext = [
             ...$regionalContext,
-            ...$this->regionalContextResolver->resolve($regionalContext),
+            ...$this->regionalContextResolver->resolve([
+                ...($session->input_payload ?? []),
+                ...$regionalContext,
+            ]),
         ];
 
         if ($refreshedContext === $regionalContext) {

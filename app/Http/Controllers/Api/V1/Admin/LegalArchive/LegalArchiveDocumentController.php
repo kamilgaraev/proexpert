@@ -5,15 +5,19 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Admin\LegalArchive;
 
 use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\LegalArchiveDocumentIndexRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\LegalArchiveLockRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\RecoverLegalArchiveDocumentRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\StoreLegalArchiveDocumentRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\UpdateLegalArchiveDocumentRequest;
+use App\Http\Requests\Api\V1\Admin\LegalArchive\UpdateLegalDocumentObligationRequest;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
+use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
+use App\Services\LegalArchive\Editor\LegalDocumentEditorAvailability;
 use App\Services\LegalArchive\Files\LegalDocumentFileRejected;
 use App\Services\LegalArchive\Files\LegalDocumentScanFailed;
 use App\Services\LegalArchive\LegalArchiveLifecycleService;
@@ -21,9 +25,11 @@ use App\Services\LegalArchive\LegalArchiveRegistryService;
 use App\Services\LegalArchive\LegalDocumentCreateFailed;
 use App\Services\LegalArchive\LegalDocumentCreateFailureReporter;
 use App\Services\LegalArchive\LegalDocumentCreateInProgress;
+use App\Services\LegalArchive\Obligations\LegalDocumentObligationExecutionService;
 use App\Services\LegalArchive\Workflow\LegalWorkflowActionResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Auth\Access\AuthorizationException;
 use Throwable;
 
 use function trans_message;
@@ -34,8 +40,11 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
         private readonly LegalArchiveRegistryService $registry,
         private readonly LegalDocumentAuthorizer $access,
         private readonly LegalWorkflowActionResolver $actions,
+        private readonly LegalDocumentEditorAvailability $editorAvailability,
         private readonly LegalArchiveLifecycleService $lifecycle,
         private readonly LegalDocumentCreateFailureReporter $createFailureReporter,
+        private readonly AuthorizationService $authorization,
+        private readonly LegalDocumentObligationExecutionService $obligationExecution,
     ) {}
 
     public function index(LegalArchiveDocumentIndexRequest $request): JsonResponse
@@ -129,6 +138,12 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                 ), $document);
             }
             if ($error instanceof LegalDocumentScanFailed) {
+                $failureCode = $error->failureCode();
+                $messageKey = match ($failureCode) {
+                    'malware_detected' => 'legal_archive.messages.document_file_malware_detected',
+                    'scanner_unavailable' => 'legal_archive.messages.document_file_scan_unavailable',
+                    default => 'legal_archive.messages.document_file_processing_failed',
+                };
                 $document = $this->registry->findForOrganization(
                     $this->organizationId($request),
                     (int) $error->version->document_id,
@@ -139,10 +154,11 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
 
                 $response = AdminResponse::success(
                     $document === null ? null : new LegalArchiveDocumentResource($document),
-                    trans_message('legal_archive.messages.document_file_processing_failed'),
+                    trans_message($messageKey),
                     202,
                     [
                         'processing_status' => 'failed',
+                        'processing_failure_code' => $failureCode,
                         'operation_result' => 'document_create_failed',
                         'operation_id' => $document?->create_operation_id,
                         'retry_action' => 'retry_upload',
@@ -166,7 +182,9 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
 
     private function reportCreateFailure(Request $request, Throwable $failure, \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument $document): void
     {
-        $original = $failure instanceof LegalDocumentCreateFailed ? ($failure->getPrevious() ?? $failure) : $failure;
+        $original = $failure instanceof LegalDocumentCreateFailed || $failure instanceof LegalDocumentScanFailed
+            ? ($failure->getPrevious() ?? $failure)
+            : $failure;
         $operationId = is_string($document->create_operation_id) && $document->create_operation_id !== ''
             ? $document->create_operation_id
             : 'document-'.(string) $document->id;
@@ -193,6 +211,10 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
                 'api_workflow_summary',
                 $summary->toArray()['workflow_summary'],
             );
+            $found->setAttribute(
+                'api_editor_current_version_editable',
+                $this->editorAvailability->currentVersionEditable($found),
+            );
 
             return $this->etag(AdminResponse::success(
                 new LegalArchiveDocumentResource($found),
@@ -218,6 +240,17 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             if ($found === null || (int) $found->organization_id !== $organizationId || (int) $found->primary_project_id !== $project) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
+            $actor = $this->actor($request);
+            $this->access->authorize($actor, $found, 'view');
+            $summary = $this->actions->forMany($actor, collect([$found]))[(int) $found->id];
+            $found->setAttribute(
+                'api_workflow_summary',
+                $summary->toArray()['workflow_summary'],
+            );
+            $found->setAttribute(
+                'api_editor_current_version_editable',
+                $this->editorAvailability->currentVersionEditable($found),
+            );
 
             return $this->etag(AdminResponse::success(
                 new LegalArchiveDocumentResource($found),
@@ -238,11 +271,29 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             $found = $this->requiredDocument($request, $legalDocument);
             $actor = $this->actor($request);
             $this->access->authorizePermission($actor, $found, 'legal_archive.update');
+            $this->assertLinkedContractUpdateAllowed($actor, $found);
             $updated = $this->registry->update($found, $this->organizationId($request), (int) $actor->id, $request->validated());
 
             return $this->etag(AdminResponse::success(new LegalArchiveDocumentResource($updated), trans_message('legal_archive.messages.document_updated')), $updated);
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'document_update', ['document_id' => $legalDocument]);
+        }
+    }
+
+    private function assertLinkedContractUpdateAllowed(User $actor, \App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument $document): void
+    {
+        $contracts = Contract::query()
+            ->where('organization_id', (int) $document->organization_id)
+            ->where('legal_archive_document_id', (int) $document->id)
+            ->get(['project_id']);
+
+        foreach ($contracts as $contract) {
+            if (! $this->authorization->can($actor, 'contracts.edit', [
+                'organization_id' => (int) $document->organization_id,
+                'project_id' => (int) $contract->project_id,
+            ])) {
+                throw (new AuthorizationException)->withStatus(403);
+            }
         }
     }
 
@@ -276,6 +327,25 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
             return $this->etag(AdminResponse::success(new LegalArchiveDocumentResource($updated), trans_message('legal_archive.messages.document_activated')), $updated);
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'document_activate', ['document_id' => $legalDocument]);
+        }
+    }
+
+    public function updateObligation(UpdateLegalDocumentObligationRequest $request, string $legalDocument, int $obligation): JsonResponse
+    {
+        try {
+            $document = $this->requiredDocument($request, $legalDocument);
+            $actor = $this->actor($request);
+            $this->access->authorizePermission($actor, $document, 'legal_archive.update');
+            $this->assertLinkedContractUpdateAllowed($actor, $document);
+            $updated = $this->obligationExecution->update($document, $obligation, $actor, $request->validated());
+
+            return AdminResponse::success([
+                'id' => (int) $updated->id,
+                'status' => (string) $updated->status,
+                'completed_at' => $updated->completed_at?->toISOString(),
+            ], trans_message('legal_archive.messages.obligation_updated'));
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'document_obligation_update', ['document_id' => $legalDocument, 'obligation_id' => $obligation]);
         }
     }
 

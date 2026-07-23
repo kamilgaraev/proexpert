@@ -25,6 +25,7 @@ on:
       - '.dockerignore'
       - 'docker-compose.yml'
       - 'docker/**'
+      - 'deploy/**'
       - 'lang/**'
       - 'monitoring/**'
       - 'public/**'
@@ -100,6 +101,7 @@ jobs:
             [[ "${REVERB_APP_KEY}" =~ ^[0-9a-f]{64}$ ]]
 
             cd /var/www/prohelper
+            PREVIOUS_RELEASE_SHA="$(git rev-parse HEAD)"
             git fetch origin "${RELEASE_SHA}"
             git reset --hard "${RELEASE_SHA}"
             test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"
@@ -135,6 +137,171 @@ jobs:
               test "${#current_secret}" -eq 64
               upsert_env LEGAL_ARCHIVE_AUDIT_WRITER_SECRET "${current_secret}"
               unset current_secret
+            }
+
+            ensure_onlyoffice_jwt_secret_alignment() {
+              local backend_enabled backend_secret editor_enabled_lines onlyoffice_runtime_secret onlyoffice_secret root_env_file
+              editor_enabled_lines="$(grep -c '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env || true)"
+              if [ "${editor_enabled_lines}" -ne 1 ]; then
+                echo 'OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment'
+                return 1
+              fi
+              backend_enabled="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env | cut -d= -f2- || true)"
+              backend_enabled="$(printf '%s' "${backend_enabled}" | sed -E "s/^['\"]//; s/['\"]$//; s/^[[:space:]]+//; s/[[:space:]]+$//")"
+              backend_enabled="$(printf '%s' "${backend_enabled}" | tr '[:upper:]' '[:lower:]')"
+              case "${backend_enabled}" in
+                '1'|'true'|'on'|'yes') ;;
+                '0'|'false'|'off'|'no'|'') return 0 ;;
+                *)
+                  echo 'OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment'
+                  return 1
+                  ;;
+              esac
+              if [ ! -f deploy/onlyoffice/.env ]; then
+                echo 'OnlyOffice environment file is missing while the editor is enabled; refusing deployment'
+                return 1
+              fi
+              if [ "$(grep -c '^LEGAL_DOCUMENT_EDITOR_JWT_SECRET=' .env || true)" -ne 1 ] \
+                || [ "$(grep -c '^ONLYOFFICE_JWT_SECRET=' deploy/onlyoffice/.env || true)" -ne 1 ]; then
+                echo 'OnlyOffice JWT secret configuration is missing or duplicated; refusing deployment'
+                return 1
+              fi
+              backend_secret="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_JWT_SECRET=' .env | cut -d= -f2-)"
+              backend_secret="$(printf '%s' "${backend_secret}" | sed -E "s/^['\"]//; s/['\"]$//")"
+              root_env_file="${ENV_FILE}"
+              ENV_FILE="deploy/onlyoffice/.env"
+              ENV_TEMP_FILE=''
+              ENV_EXPECTED_UID=''
+              ENV_EXPECTED_GID=''
+              initialize_secure_env
+              onlyoffice_secret="$(grep -m1 '^ONLYOFFICE_JWT_SECRET=' deploy/onlyoffice/.env | cut -d= -f2-)"
+              onlyoffice_secret="$(printf '%s' "${onlyoffice_secret}" | sed -E "s/^['\"]//; s/['\"]$//")"
+              ENV_FILE="${root_env_file}"
+              ENV_TEMP_FILE=''
+              ENV_EXPECTED_UID=''
+              ENV_EXPECTED_GID=''
+              initialize_secure_env
+              if [ "$(docker inspect -f '{{.State.Running}}' most-onlyoffice 2>/dev/null || true)" != 'true' ]; then
+                unset backend_secret onlyoffice_secret
+                echo 'OnlyOffice JWT secrets or running container differ; refusing deployment'
+                return 1
+              fi
+              onlyoffice_runtime_secret="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' most-onlyoffice 2>/dev/null | awk -F= '$1=="JWT_SECRET" {sub(/^[^=]*=/, ""); print; exit}')"
+              if [ -z "${backend_secret}" ] || [ -z "${onlyoffice_secret}" ] || [ -z "${onlyoffice_runtime_secret}" ] \
+                || [ "${backend_secret}" != "${onlyoffice_secret}" ] || [ "${backend_secret}" != "${onlyoffice_runtime_secret}" ]; then
+                unset backend_secret onlyoffice_secret onlyoffice_runtime_secret
+                echo 'OnlyOffice JWT secrets or running container differ; refusing deployment'
+                return 1
+              fi
+              unset backend_secret onlyoffice_secret onlyoffice_runtime_secret
+            }
+
+            ensure_onlyoffice_api_runtime_jwt_secret_alignment() {
+              local backend_enabled api_runtime_secret editor_enabled_lines onlyoffice_runtime_secret
+              editor_enabled_lines="$(grep -c '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env || true)"
+              if [ "${editor_enabled_lines}" -ne 1 ]; then
+                echo 'OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment'
+                return 1
+              fi
+              backend_enabled="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env | cut -d= -f2- || true)"
+              backend_enabled="$(printf '%s' "${backend_enabled}" | sed -E "s/^['\"]//; s/['\"]$//; s/^[[:space:]]+//; s/[[:space:]]+$//")"
+              backend_enabled="$(printf '%s' "${backend_enabled}" | tr '[:upper:]' '[:lower:]')"
+              case "${backend_enabled}" in
+                '1'|'true'|'on'|'yes') ;;
+                '0'|'false'|'off'|'no'|'') return 0 ;;
+                *)
+                  echo 'OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment'
+                  return 1
+                  ;;
+              esac
+              if [ "$(docker inspect -f '{{.State.Running}}' prohelper-api 2>/dev/null || true)" != 'true' ] \
+                || [ "$(docker inspect -f '{{.State.Running}}' most-onlyoffice 2>/dev/null || true)" != 'true' ]; then
+                echo 'OnlyOffice JWT secrets or running containers differ; refusing deployment'
+                return 1
+              fi
+              api_runtime_secret="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' prohelper-api 2>/dev/null | awk -F= '$1=="LEGAL_DOCUMENT_EDITOR_JWT_SECRET" {sub(/^[^=]*=/, ""); print; exit}')"
+              onlyoffice_runtime_secret="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' most-onlyoffice 2>/dev/null | awk -F= '$1=="JWT_SECRET" {sub(/^[^=]*=/, ""); print; exit}')"
+              if [ -z "${api_runtime_secret}" ] || [ -z "${onlyoffice_runtime_secret}" ] \
+                || [ "${api_runtime_secret}" != "${onlyoffice_runtime_secret}" ]; then
+                unset api_runtime_secret onlyoffice_runtime_secret
+                echo 'OnlyOffice JWT secrets or running containers differ; refusing deployment'
+                return 1
+              fi
+              unset api_runtime_secret onlyoffice_runtime_secret
+            }
+
+            apply_onlyoffice_callback_transport() {
+              local backend_enabled callback_base_url callback_host editor_enabled_lines editor_url editor_host allowed_hosts root_env_file
+              editor_enabled_lines="$(grep -c '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env || true)"
+              if [ "${editor_enabled_lines}" -ne 1 ]; then
+                echo 'OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment'
+                return 1
+              fi
+              backend_enabled="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_ENABLED=' .env | cut -d= -f2- || true)"
+              backend_enabled="$(printf '%s' "${backend_enabled}" | sed -E "s/^['\"]//; s/['\"]$//; s/^[[:space:]]+//; s/[[:space:]]+$//")"
+              backend_enabled="$(printf '%s' "${backend_enabled}" | tr '[:upper:]' '[:lower:]')"
+              case "${backend_enabled}" in
+                '1'|'true'|'on'|'yes') ;;
+                '0'|'false'|'off'|'no'|'') return 0 ;;
+                *)
+                  echo 'OnlyOffice editor configuration is missing, duplicated or invalid; refusing deployment'
+                  return 1
+                  ;;
+              esac
+              callback_base_url="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_CALLBACK_BASE_URL=' .env | cut -d= -f2- || true)"
+              if [ -z "${callback_base_url}" ]; then
+                callback_base_url="$(grep -m1 '^APP_URL=' .env | cut -d= -f2- || true)"
+              fi
+              callback_base_url="$(printf '%s' "${callback_base_url}" | sed -E "s/^['\"]//; s/['\"]$//")"
+              if [[ "${callback_base_url}" != https://* ]]; then
+                echo 'OnlyOffice callback base URL must use HTTPS; refusing deployment'
+                return 1
+              fi
+              callback_host="${callback_base_url#https://}"
+              callback_host="${callback_host%%/*}"
+              if [[ ! "${callback_host}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
+                echo 'OnlyOffice callback URL must contain a DNS hostname without a port; refusing deployment'
+                return 1
+              fi
+
+              editor_url="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_URL=' .env | cut -d= -f2- || true)"
+              editor_url="$(printf '%s' "${editor_url}" | sed -E "s/^['\"]//; s/['\"]$//")"
+              if [[ "${editor_url}" != https://* ]]; then
+                echo 'OnlyOffice editor URL must use HTTPS; refusing deployment'
+                return 1
+              fi
+              editor_host="${editor_url#https://}"
+              editor_host="${editor_host%%/*}"
+              if [[ ! "${editor_host}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
+                echo 'OnlyOffice editor URL must contain a DNS hostname without a port; refusing deployment'
+                return 1
+              fi
+              allowed_hosts="$(grep -m1 '^LEGAL_DOCUMENT_EDITOR_DOWNLOAD_ALLOWED_HOSTS=' .env | cut -d= -f2- || true)"
+              allowed_hosts="$(printf '%s' "${allowed_hosts}" | sed -E "s/^['\"]//; s/['\"]$//" | tr -d '[:space:]')"
+              case ",${allowed_hosts}," in
+                *,"${editor_host}",*) ;;
+                *) upsert_env LEGAL_DOCUMENT_EDITOR_DOWNLOAD_ALLOWED_HOSTS "${allowed_hosts:+${allowed_hosts},}${editor_host}" ;;
+              esac
+
+              root_env_file="${ENV_FILE}"
+              ENV_FILE="deploy/onlyoffice/.env"
+              ENV_TEMP_FILE=''
+              ENV_EXPECTED_UID=''
+              ENV_EXPECTED_GID=''
+              initialize_secure_env
+              upsert_env ONLYOFFICE_CALLBACK_HOST "${callback_host}"
+              (
+                cd deploy/onlyoffice
+                docker compose config --quiet
+                docker compose up -d --force-recreate onlyoffice
+                docker compose ps --status running -q onlyoffice | grep -qx '.\+'
+                docker exec most-onlyoffice curl -fsS -o /dev/null --connect-timeout 10 --max-time 20 "https://${callback_host}/"
+              )
+              ENV_FILE="${root_env_file}"
+              ENV_TEMP_FILE=''
+              ENV_EXPECTED_UID=''
+              ENV_EXPECTED_GID=''
+              initialize_secure_env
             }
 
             stop_legacy_supervisor_processes() {
@@ -264,9 +431,26 @@ jobs:
             upsert_env MOST_RELEASE_SHA "${RELEASE_SHA}"
             upsert_env SENTRY_RELEASE "prohelper@${RELEASE_SHA}"
             upsert_env REVERB_APP_KEY "${REVERB_APP_KEY}"
+            upsert_env LEGAL_ARCHIVE_SCANNER clamav
             remove_env_key LEGAL_ARCHIVE_AUDIT_PHASE_B_CUTOVER_ENABLED
 
             ensure_immutable_audit_writer_secret
+            ensure_onlyoffice_jwt_secret_alignment
+            if ! git diff --quiet "${PREVIOUS_RELEASE_SHA}" "${RELEASE_SHA}" -- deploy/onlyoffice .github/workflows/deploy-backend.yml; then
+              apply_onlyoffice_callback_transport
+            fi
+            docker compose pull clamav
+            docker compose up -d clamav
+            for attempt in $(seq 1 72); do
+              if docker compose exec -T clamav clamdscan --ping 1; then
+                break
+              fi
+              if [ "${attempt}" -eq 72 ]; then
+                echo 'ClamAV did not become ready; refusing deployment'
+                exit 1
+              fi
+              sleep 5
+            done
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps geometry-worker /usr/local/bin/geometry-runtime-smoke
 
             trap deployment_failed ERR
@@ -289,11 +473,17 @@ jobs:
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps -e LEGAL_ARCHIVE_AUDIT_REPAIR_ENABLED=true api php artisan immutable-audit:repair-invariants --confirm-repair
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan immutable-audit:writer-readiness
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
+            ensure_onlyoffice_api_runtime_jwt_secret_alignment
+            if grep -q '^ESTIMATE_COMPLETENESS_ARBITER_ENABLED=true$' .env; then
+              docker compose exec -T api php -r 'require "vendor/autoload.php"; $app = require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); exit(config("estimate-generation.completeness_arbiter.enabled") === true ? 0 : 1);'
+              docker compose exec -T horizon php -r 'require "vendor/autoload.php"; $app = require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); exit(config("estimate-generation.completeness_arbiter.enabled") === true ? 0 : 1);'
+            fi
 
             for attempt in $(seq 1 24); do
               if docker compose exec -T api curl -fsS http://localhost:8000/ready >/dev/null \
                 && docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null \
                 && docker compose exec -T websockets php -r 'exit(@fsockopen("127.0.0.1", 8080) ? 0 : 1);' \
+                && docker compose exec -T clamav clamdscan --ping 1 \
                 && docker compose exec -T geometry-worker /usr/local/bin/geometry-runtime-smoke; then
                 systemctl start nginx
                 systemctl is-active --quiet nginx

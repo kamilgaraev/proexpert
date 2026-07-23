@@ -16,4 +16,16 @@ final class LegalDocumentScanFailed extends RuntimeException
     ) {
         parent::__construct('legal_document_scan_failed', 0, $previous);
     }
+
+    public function failureCode(): string
+    {
+        return match ($this->getPrevious()?->getMessage()) {
+            'legal_document_malware_detected' => 'malware_detected',
+            'legal_document_scanner_unavailable',
+            'legal_document_scanner_invalid_response',
+            'legal_document_scan_source_unavailable',
+            'legal_document_scan_source_unreadable' => 'scanner_unavailable',
+            default => 'scan_failed',
+        };
+    }
 }

@@ -113,6 +113,16 @@ return [
             'schema_version' => 'normative-rerank-v1',
         ],
     ],
+    'completeness_arbiter' => [
+        'enabled' => (bool) env('ESTIMATE_COMPLETENESS_ARBITER_ENABLED', false),
+        'active_targeted_rebuild_enabled' => (bool) env('ESTIMATE_TARGETED_REBUILD_ENABLED', false),
+        'model' => $envValue('ESTIMATE_COMPLETENESS_ARBITER_MODEL', 'openai/gpt-5-mini'),
+        'prompt_version' => 'completeness-arbiter:v1',
+        'schema_version' => 'completeness-arbiter:v1',
+        'timeout_seconds' => (int) env('ESTIMATE_COMPLETENESS_ARBITER_TIMEOUT', 20),
+        'max_input_tokens' => (int) env('ESTIMATE_COMPLETENESS_ARBITER_MAX_INPUT_TOKENS', 24_000),
+        'max_output_tokens' => (int) env('ESTIMATE_COMPLETENESS_ARBITER_MAX_OUTPUT_TOKENS', 2_000),
+    ],
     'ai_pricing_catalog' => [
         'vision' => ['timeweb' => [(string) env('ESTIMATE_GENERATION_VISION_MODEL', 'gemini/gemini-3.1-flash') => [[
             'input_per_million' => (string) $envValue('ESTIMATE_GENERATION_VISION_PRICE_INPUT_PER_MILLION', ''),
@@ -151,10 +161,18 @@ return [
                 'effective_at' => (string) $envValue('ESTIMATE_GENERATION_RERANK_NANO_PRICE_EFFECTIVE_AT', '2026-07-20T00:00:00+00:00'),
             ]],
         ]],
+        'completeness_review' => ['timeweb' => [(string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_MODEL', 'openai/gpt-5-mini') => [[
+            'input_per_million' => (string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_PRICE_INPUT_PER_MILLION', ''),
+            'cached_input_per_million' => (string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_PRICE_CACHED_INPUT_PER_MILLION', ''),
+            'output_per_million' => (string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_PRICE_OUTPUT_PER_MILLION', ''),
+            'currency' => (string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_PRICE_CURRENCY', ''),
+            'version' => (string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_PRICE_VERSION', ''),
+            'effective_at' => (string) $envValue('ESTIMATE_COMPLETENESS_ARBITER_PRICE_EFFECTIVE_AT', ''),
+        ]]]],
     ],
     'generation' => [
         'max_draft_jobs_per_minute' => (int) env('ESTIMATE_GENERATION_MAX_DRAFT_JOBS_PER_MINUTE', 3),
-        'pipeline_lease_seconds' => (int) env('ESTIMATE_GENERATION_PIPELINE_LEASE_SECONDS', 2100),
+        'pipeline_lease_seconds' => (int) env('ESTIMATE_GENERATION_PIPELINE_LEASE_SECONDS', 2250),
     ],
     'ai_budget' => [
         'reconciliation_batch' => (int) env('ESTIMATE_GENERATION_AI_BUDGET_RECONCILIATION_BATCH', 100),

@@ -13,6 +13,9 @@ use App\Models\User;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\QueryException;
+use Illuminate\Validation\ValidationException;
+
+use function trans_message;
 
 final class ContractDossierCreationService
 {
@@ -87,7 +90,7 @@ final class ContractDossierCreationService
                         'linked_id' => (string) $contract->id,
                         'display_name' => $contract->number,
                     ]], $input->sourceLinks),
-                    'metadata' => $input->documentMetadata,
+                    'metadata' => $this->documentMetadata($contract, $input),
                 ];
                 if ($input->confidentialityLevel !== null) {
                     $documentData['confidentiality_level'] = $input->confidentialityLevel;
@@ -155,6 +158,57 @@ final class ContractDossierCreationService
         }
 
         return $document;
+    }
+
+    /** @return array<string, mixed> */
+    private function documentMetadata(Contract $contract, ContractDossierCreationInput $input): array
+    {
+        if ($input->profileCode !== 'contract.supply' || $input->sourceType !== 'purchase_order') {
+            return $input->documentMetadata;
+        }
+
+        $subject = $this->firstFilledString($contract->subject);
+        $buyer = $this->firstFilledString($contract->organization?->legal_name, $contract->organization?->name);
+        $supplier = $this->firstFilledString($contract->supplier?->name, $contract->contractor?->name);
+        $deliveryTerms = $this->firstFilledString($input->documentMetadata['delivery_terms'] ?? null);
+        $price = $contract->total_amount ?? $contract->base_amount;
+
+        if (
+            $subject === null
+            || $buyer === null
+            || $supplier === null
+            || $deliveryTerms === null
+            || ! is_numeric($price)
+        ) {
+            throw ValidationException::withMessages([
+                'metadata' => [trans_message('legal_archive.messages.contract_dossier_supply_data_incomplete')],
+            ]);
+        }
+
+        return [
+            ...$input->documentMetadata,
+            'subject' => $subject,
+            'buyer' => $buyer,
+            'supplier' => $supplier,
+            'price' => (float) $price,
+            'delivery_terms' => $deliveryTerms,
+        ];
+    }
+
+    private function firstFilledString(mixed ...$values): ?string
+    {
+        foreach ($values as $value) {
+            if (! is_string($value) && ! is_numeric($value)) {
+                continue;
+            }
+
+            $normalized = trim((string) $value);
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
+        return null;
     }
 
     private function isCreationKeyConflict(QueryException $exception): bool

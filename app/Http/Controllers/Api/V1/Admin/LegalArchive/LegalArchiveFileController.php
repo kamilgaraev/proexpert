@@ -11,12 +11,14 @@ use App\Http\Requests\Api\V1\Admin\LegalArchive\LegalArchiveLockRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\StoreLegalArchiveFileRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\StoreLegalArchiveFileVersionRequest;
 use App\Http\Requests\Api\V1\Admin\LegalArchive\StoreLegalArchiveVersionRequest;
+use App\Http\Requests\Api\V1\Admin\LegalArchive\StartLegalArchiveBlankEditorRequest;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentVersionResource;
 use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveFileResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
 use App\Services\LegalArchive\Editor\LegalDocumentEditorSessionService;
+use App\Services\LegalArchive\Editor\LegalDocumentBlankDraftService;
 use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
 use App\Services\LegalArchive\Files\LegalDocumentFileRejected;
 use App\Services\LegalArchive\Files\LegalDocumentFileService;
@@ -26,6 +28,7 @@ use App\Services\LegalArchive\LegalArchiveRegistryService;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 use function trans_message;
@@ -37,6 +40,7 @@ final class LegalArchiveFileController extends LegalArchiveApiController
         private readonly LegalDocumentFileService $files,
         private readonly LegalDocumentDownloadService $downloads,
         private readonly LegalDocumentEditorSessionService $editor,
+        private readonly LegalDocumentBlankDraftService $blankDrafts,
         private readonly LegalDocumentAuthorizer $access,
     ) {}
 
@@ -132,13 +136,32 @@ final class LegalArchiveFileController extends LegalArchiveApiController
     private function scanFailure(LegalDocumentScanFailed $error): JsonResponse
     {
         $document = $error->version->document()->firstOrFail();
+        $failureCode = $error->failureCode();
+        $cause = $error->getPrevious();
+        $messageKey = match ($failureCode) {
+            'malware_detected' => 'legal_archive.messages.version_file_malware_detected',
+            'scanner_unavailable' => 'legal_archive.messages.version_file_scan_unavailable',
+            default => 'legal_archive.messages.version_file_processing_failed',
+        };
+
+        Log::warning('legal_archive.file_scan_failed', [
+            'organization_id' => (int) $error->version->organization_id,
+            'document_id' => (int) $error->version->document_id,
+            'document_version_id' => (int) $error->version->id,
+            'uploaded_by_user_id' => $error->version->uploaded_by_user_id === null
+                ? null
+                : (int) $error->version->uploaded_by_user_id,
+            'failure_code' => $failureCode,
+            'error_class' => $cause instanceof Throwable ? $cause::class : null,
+        ]);
 
         return $this->etag(AdminResponse::success(
             new LegalArchiveDocumentVersionResource($error->version),
-            trans_message('legal_archive.messages.version_file_processing_failed'),
+            trans_message($messageKey),
             202,
             [
                 'processing_status' => 'failed',
+                'processing_failure_code' => $failureCode,
                 'retry_action' => 'retry_upload',
                 'retry_document_id' => (int) $error->version->document_id,
             ],
@@ -258,9 +281,96 @@ final class LegalArchiveFileController extends LegalArchiveApiController
                 throw new DomainException('legal_document_editor_mode_invalid');
             }
 
-            return AdminResponse::success($this->editor->open($found, $this->actor($request), $mode, $request->boolean('upgrade_mode')), trans_message('legal_archive.messages.editor_opened'));
+            return AdminResponse::success($this->editor->open(
+                $found,
+                $this->actor($request),
+                $mode,
+                $request->boolean('upgrade_mode'),
+                $request->boolean('restart'),
+            ), trans_message('legal_archive.messages.editor_opened'));
         } catch (Throwable $error) {
             return $this->failure($error, $request, 'editor_session', ['version_id' => $documentVersion]);
+        }
+    }
+
+    public function contractEditorSession(Request $request, int $project, int $contract, string $legalDocument, string $documentVersion): JsonResponse
+    {
+        try {
+            $organizationId = $this->organizationId($request);
+            $linkedContract = Contract::query()->whereKey($contract)->where('project_id', $project)
+                ->where('organization_id', $organizationId)->first();
+            $document = LegalArchiveDocument::query()->whereKey((int) $legalDocument)
+                ->where('organization_id', $organizationId)->where('primary_project_id', $project)->first();
+            $found = $this->version($request, $documentVersion);
+
+            if ($linkedContract === null
+                || ! $document instanceof LegalArchiveDocument
+                || (int) $linkedContract->legal_archive_document_id !== (int) $document->id
+                || (int) $found->document_id !== (int) $legalDocument) {
+                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
+
+            return AdminResponse::success(
+                $this->editor->open($found, $this->actor($request), 'edit', false, $request->boolean('restart')),
+                trans_message('legal_archive.messages.editor_opened'),
+            );
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'contract_editor_session', [
+                'project_id' => $project,
+                'contract_id' => $contract,
+                'document_id' => $legalDocument,
+                'version_id' => $documentVersion,
+            ]);
+        }
+    }
+
+    public function startBlankEditorSession(StartLegalArchiveBlankEditorRequest $request, string $legalDocument): JsonResponse
+    {
+        try {
+            $document = $this->document($request, $legalDocument);
+            $result = $this->blankDrafts->start(
+                $document,
+                $this->actor($request),
+                (string) $request->validated('title'),
+                (int) $request->validated('lock_version'),
+            );
+
+            return $this->etag(AdminResponse::success([
+                'version' => new LegalArchiveDocumentVersionResource($result['version']),
+                'editor_session' => $result['session'],
+            ], trans_message('legal_archive.messages.editor_opened'), 201), $document->fresh());
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'editor_blank_session', ['document_id' => $legalDocument]);
+        }
+    }
+
+    public function startContractBlankEditorSession(StartLegalArchiveBlankEditorRequest $request, int $project, int $contract, string $legalDocument): JsonResponse
+    {
+        try {
+            $organizationId = $this->organizationId($request);
+            $linkedContract = Contract::query()->whereKey($contract)->where('project_id', $project)
+                ->where('organization_id', $organizationId)->first();
+            $document = LegalArchiveDocument::query()->whereKey((int) $legalDocument)
+                ->where('organization_id', $organizationId)->where('primary_project_id', $project)->first();
+            if ($linkedContract === null || ! $document instanceof LegalArchiveDocument
+                || (int) $linkedContract->legal_archive_document_id !== (int) $document->id) {
+                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
+            }
+            $result = $this->blankDrafts->start(
+                $document,
+                $this->actor($request),
+                (string) $request->validated('title'),
+                (int) $request->validated('lock_version'),
+            );
+
+            return $this->etag(AdminResponse::success([
+                'version' => new LegalArchiveDocumentVersionResource($result['version']),
+                'editor_session' => $result['session'],
+            ], trans_message('legal_archive.messages.editor_opened'), 201), $document->fresh());
+        } catch (Throwable $error) {
+            return $this->failure($error, $request, 'contract_editor_blank_session', [
+                'project_id' => $project, 'contract_id' => $contract, 'document_id' => $legalDocument,
+            ]);
         }
     }
 

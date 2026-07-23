@@ -7,6 +7,8 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Services\LegalArchive\Editor\EditorCallbackInput;
 use App\Services\LegalArchive\Editor\LegalDocumentEditorSessionService;
+use DomainException;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -48,9 +50,41 @@ final class LegalDocumentEditorController extends Controller
             Log::warning('legal_archive.editor.callback_rejected', [
                 'session_id_hash' => hash('sha256', $session),
                 'error_class' => $error::class,
+                'error_code' => $this->diagnosticCode($error),
+                'callback_status' => is_numeric($request->input('status')) ? (int) $request->input('status') : null,
+                'document_key_hash' => is_string($request->input('key'))
+                    ? hash('sha256', (string) $request->input('key'))
+                    : null,
             ]);
 
             return new JsonResponse(['error' => 1]);
         }
+    }
+
+    private function diagnosticCode(Throwable $error): ?string
+    {
+        $message = $error instanceof DomainException
+            ? $error->getMessage()
+            : ($error instanceof QueryException ? (string) $error->getPrevious()?->getMessage() : '');
+        if (preg_match('/\b(legal_document_editor_[a-z0-9_]+)\b/', $message, $matches) !== 1) {
+            $sqlState = $error instanceof QueryException
+                ? (string) ($error->errorInfo[0] ?? $error->getCode())
+                : '';
+            if (preg_match('/^\d{5}$/', $sqlState) === 1) {
+                return 'sqlstate_'.$sqlState;
+            }
+            if ($error instanceof QueryException
+                && preg_match('/constraint "([a-z][a-z0-9_]{0,127})"/', $message, $constraint) === 1) {
+                return 'constraint_'.$constraint[1];
+            }
+            if ($error instanceof QueryException
+                && preg_match('/\b(?i:insert\s+into|update|delete\s+from)\s+(?:"([a-z][a-z0-9_]{0,127})"|([a-z][a-z0-9_]{0,127})(?![A-Za-z0-9_$]))/', $error->getSql(), $table) === 1) {
+                return 'query_'.($table[1] !== '' ? $table[1] : $table[2]);
+            }
+
+            return null;
+        }
+
+        return $matches[1];
     }
 }

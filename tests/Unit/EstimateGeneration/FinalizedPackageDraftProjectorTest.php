@@ -56,7 +56,14 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
             .'/app/BusinessModules/Addons/EstimateGeneration/Application/Apply/LaravelGeneratedEstimateWriter.php');
 
         self::assertIsString($source);
-        foreach (['price_source', 'price_source_version', 'rounding_adjustment', 'project_resource_selection', 'project_material_selection'] as $field) {
+        foreach ([
+            'price_source',
+            'price_source_version',
+            'rounding_adjustment',
+            'project_resource_selection',
+            'project_material_selection',
+            'machine_price_breakdown',
+        ] as $field) {
             self::assertStringContainsString("'{$field}' => \$resource['{$field}'] ?? null", $source);
         }
     }
@@ -86,7 +93,7 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
         $item = $this->finalizedItem();
         $snapshot = $item->price_snapshot;
         $snapshot['final_amount'] = '549.50';
-        $snapshot['coefficients']['pricing_formula_version'] = 'project_resource:v3';
+        $snapshot['coefficients']['pricing_formula_version'] = 'semantic_project_resource:v8';
         $snapshot['coefficients']['resource_evidence'] = [[
             'norm_resource_id' => 701,
             'norm_id' => 101,
@@ -149,6 +156,28 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
     }
 
     #[Test]
+    public function it_preserves_other_resources_from_a_finalized_norm(): void
+    {
+        $item = $this->finalizedItem();
+        $snapshot = $item->price_snapshot;
+        $snapshot['coefficients']['resource_evidence'][0]['resource_type'] = 'other';
+        $snapshot['coefficients']['provenance']['resources'][0]['resource_type'] = 'other';
+        $resources = $item->resources;
+        $resources['other'] = $resources['labor'];
+        $resources['labor'] = [];
+        $this->replaceRawAttributes($item, [
+            'price_snapshot' => $snapshot,
+            'resources' => $resources,
+        ]);
+
+        $projected = (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$item]);
+        $workItem = $projected['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertCount(1, $workItem['other_resources']);
+        self::assertSame('finalized_normative_resource', $workItem['other_resources'][0]['quantity_basis']);
+    }
+
+    #[Test]
     public function it_replays_database_rounding_for_base_and_supplementary_material_totals_separately(): void
     {
         $item = $this->finalizedItem();
@@ -173,6 +202,218 @@ final class FinalizedPackageDraftProjectorTest extends TestCase
         self::assertSame('1.02', $workItem['total_cost']);
         self::assertSame('0.01', $workItem['materials_cost']);
         self::assertSame('1.01', $workItem['labor_cost']);
+    }
+
+    #[Test]
+    public function it_keeps_the_machine_resource_and_adds_a_machinist_line_from_a_proven_price_breakdown(): void
+    {
+        $item = $this->finalizedItem();
+        $snapshot = $item->price_snapshot;
+        $snapshot['final_amount'] = '814.35';
+        $snapshot['coefficients']['pricing_formula_version'] = 'project_resource:v3';
+        $snapshot['coefficients']['project_material_evidence'] = [];
+        $snapshot['coefficients']['resource_evidence'] = [[
+            'norm_resource_id' => 702,
+            'norm_id' => 101,
+            'resource_code' => '91.14.02-001',
+            'resource_type' => 'machine',
+            'norm_quantity' => '1',
+            'work_to_norm_factor' => '1',
+            'resource_price_id' => 902,
+            'price_unit' => 'маш.-ч',
+            'base_price' => '814.35',
+            'conversion_factor' => '1',
+        ]];
+        $snapshot['coefficients']['provenance']['resources'] = [[
+            'norm_resource_id' => 702,
+            'resource_code' => '91.14.02-001',
+            'resource_name' => 'Автомобили бортовые, грузоподъемность до 5 т',
+            'resource_type' => 'machine',
+            'price_id' => 902,
+            'machine_salary_price' => '336.43',
+            'machine_price_without_salary' => '477.92',
+            'machine_labor_quantity' => '1',
+            'driver_code' => '4-100-040',
+            'machinist_category' => '4.0',
+            'regional_version' => ['version_key' => '2026-Q2'],
+        ]];
+        $resources = [
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [[
+                'name' => 'Устаревшее название машины',
+                'unit' => 'маш.-ч',
+                'quantity' => '1',
+                'unit_price' => '1',
+                'total_price' => '1',
+                'normative_ref' => [
+                    'norm_resource_id' => 702,
+                    'resource_code' => '91.14.02-001',
+                    'price_id' => 1,
+                ],
+            ]],
+            'other' => [],
+        ];
+        $this->replaceRawAttributes($item, [
+            'quantity' => '1.000000000000000000',
+            'unit_price' => '814.350000',
+            'direct_cost' => '814.35',
+            'total_cost' => '814.35',
+            'price_snapshot' => $snapshot,
+            'resources' => $resources,
+        ]);
+
+        $projected = (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$item]);
+        $workItem = $projected['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertCount(1, $workItem['machinery']);
+        self::assertSame(702, data_get($workItem, 'machinery.0.normative_ref.norm_resource_id'));
+        self::assertSame('477.920000', $workItem['machinery'][0]['unit_price']);
+        self::assertSame('477.92', $workItem['machinery'][0]['total_price']);
+        self::assertCount(1, $workItem['labor']);
+        self::assertSame('4-100-040', $workItem['labor'][0]['code']);
+        self::assertSame('1.000000', $workItem['labor'][0]['quantity']);
+        self::assertSame('336.430000', $workItem['labor'][0]['unit_price']);
+        self::assertSame('336.43', $workItem['labor'][0]['total_price']);
+        self::assertSame('finalized_machine_price_breakdown', $workItem['labor'][0]['quantity_basis']);
+        self::assertSame('814.35', $workItem['total_cost']);
+        self::assertSame('336.43', $workItem['labor_cost']);
+        self::assertSame('477.92', $workItem['machinery_cost']);
+        self::assertSame('1.00000000', $workItem['labor_hours']);
+        self::assertSame('1.00000000', $workItem['machinery_hours']);
+    }
+
+    #[Test]
+    public function it_preserves_a_machine_with_a_finalized_price_when_the_catalog_has_no_complete_machinist_breakdown(): void
+    {
+        $item = $this->finalizedItem();
+        $snapshot = $item->price_snapshot;
+        $snapshot['final_amount'] = '814.35';
+        $snapshot['coefficients']['pricing_formula_version'] = 'project_resource:v3';
+        $snapshot['coefficients']['project_material_evidence'] = [];
+        $snapshot['coefficients']['resource_evidence'] = [[
+            'norm_resource_id' => 702,
+            'norm_id' => 101,
+            'resource_code' => '91.14.02-001',
+            'resource_type' => 'machine',
+            'norm_quantity' => '1',
+            'work_to_norm_factor' => '1',
+            'resource_price_id' => 902,
+            'price_unit' => 'маш.-ч',
+            'base_price' => '814.35',
+            'conversion_factor' => '1',
+        ]];
+        $snapshot['coefficients']['provenance']['resources'] = [[
+            'norm_resource_id' => 702,
+            'resource_code' => '91.14.02-001',
+            'resource_name' => 'Автомобили бортовые, грузоподъемность до 5 т',
+            'resource_type' => 'machine',
+            'price_id' => 902,
+            'machine_salary_price' => '336.43',
+            'machine_price_without_salary' => null,
+            'machine_labor_quantity' => null,
+            'driver_code' => null,
+            'machinist_category' => null,
+            'regional_version' => ['version_key' => '2026-Q2'],
+        ]];
+        $resources = [
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [[
+                'name' => 'Автомобили бортовые, грузоподъемность до 5 т',
+                'unit' => 'маш.-ч',
+                'quantity' => '1',
+                'unit_price' => '1',
+                'total_price' => '1',
+                'normative_ref' => [
+                    'norm_resource_id' => 702,
+                    'resource_code' => '91.14.02-001',
+                    'price_id' => 1,
+                ],
+            ]],
+            'other' => [],
+        ];
+        $this->replaceRawAttributes($item, [
+            'quantity' => '1.000000000000000000',
+            'unit_price' => '814.350000',
+            'direct_cost' => '814.35',
+            'total_cost' => '814.35',
+            'price_snapshot' => $snapshot,
+            'resources' => $resources,
+        ]);
+
+        $projected = (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$item]);
+        $workItem = $projected['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertCount(1, $workItem['machinery']);
+        self::assertSame('814.350000', $workItem['machinery'][0]['unit_price']);
+        self::assertSame('814.35', $workItem['machinery'][0]['total_price']);
+        self::assertSame('814.35', $workItem['machinery_cost']);
+        self::assertCount(0, $workItem['labor']);
+        self::assertSame('0.00', $workItem['labor_cost']);
+    }
+
+    #[Test]
+    public function it_rejects_a_machine_breakdown_when_its_components_do_not_prove_the_selected_price(): void
+    {
+        $item = $this->finalizedItem();
+        $snapshot = $item->price_snapshot;
+        $snapshot['final_amount'] = '814.35';
+        $snapshot['coefficients']['pricing_formula_version'] = 'project_resource:v3';
+        $snapshot['coefficients']['project_material_evidence'] = [];
+        $snapshot['coefficients']['resource_evidence'] = [[
+            'norm_resource_id' => 702,
+            'norm_id' => 101,
+            'resource_code' => '91.14.02-001',
+            'resource_type' => 'machine',
+            'norm_quantity' => '1',
+            'work_to_norm_factor' => '1',
+            'resource_price_id' => 902,
+            'price_unit' => 'маш.-ч',
+            'base_price' => '814.35',
+            'conversion_factor' => '1',
+        ]];
+        $snapshot['coefficients']['provenance']['resources'] = [[
+            'norm_resource_id' => 702,
+            'resource_code' => '91.14.02-001',
+            'resource_name' => 'Автомобили бортовые, грузоподъемность до 5 т',
+            'resource_type' => 'machine',
+            'price_id' => 902,
+            'machine_salary_price' => '336.43',
+            'machine_price_without_salary' => '477.91',
+            'machine_labor_quantity' => '1',
+            'driver_code' => '4-100-040',
+            'machinist_category' => '4.0',
+            'regional_version' => ['version_key' => '2026-Q2'],
+        ]];
+        $resources = $item->resources;
+        $resources['materials'] = [];
+        $resources['labor'] = [];
+        $resources['machinery'] = [[
+            'name' => 'Автомобили бортовые, грузоподъемность до 5 т',
+            'unit' => 'маш.-ч',
+            'quantity' => '1',
+            'unit_price' => '1',
+            'total_price' => '1',
+            'normative_ref' => [
+                'norm_resource_id' => 702,
+                'resource_code' => '91.14.02-001',
+                'price_id' => 1,
+            ],
+        ]];
+        $this->replaceRawAttributes($item, [
+            'quantity' => '1.000000000000000000',
+            'unit_price' => '814.350000',
+            'direct_cost' => '814.35',
+            'total_cost' => '814.35',
+            'price_snapshot' => $snapshot,
+            'resources' => $resources,
+        ]);
+
+        $this->expectException(\DomainException::class);
+        $this->expectExceptionMessage('machine price breakdown does not equal');
+
+        (new FinalizedPackageDraftProjector)->projectFromItems($this->draft(), [$item]);
     }
 
     #[Test]

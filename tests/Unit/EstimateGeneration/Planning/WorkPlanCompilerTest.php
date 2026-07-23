@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedWorkPlannerR
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlannerResponseData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantitySource;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialQuantityScenarioCatalog;
@@ -68,7 +69,16 @@ final class WorkPlanCompilerTest extends TestCase
         $lightingItems = $packages['lighting']['sections'][0]['work_items'];
 
         self::assertNotContains('lighting.lines', array_column($electricalItems, 'quantity_formula'));
-        self::assertSame(['lighting.lines', 'lighting.fixtures'], array_column($lightingItems, 'quantity_formula'));
+        self::assertSame(['lighting.lines'], array_column($lightingItems, 'quantity_formula'));
+        $lightingLine = current(array_filter(
+            $lightingItems,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'lighting.lines',
+        ));
+        $scenario = (new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog)
+            ->issue('lighting.lines', 'residential');
+
+        self::assertIsArray($scenario);
+        self::assertSame($scenario, $lightingLine['specialization_scenario'] ?? null);
     }
 
     public function test_quantity_coverage_warnings_are_attached_only_to_the_affected_packages(): void
@@ -208,24 +218,57 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertArrayNotHasKey('norm_id', $item);
     }
 
+    public function test_recorded_intent_keeps_the_catalog_signed_scenario_for_later_normative_matching(): void
+    {
+        $decomposition = $this->createMock(EstimateDecompositionService::class);
+        $decomposition->method('decomposePackagePlan')->willReturn([[
+            'key' => 'walls',
+            'title' => 'Стены',
+            'scope_type' => 'walls',
+            'sections' => [['key' => 'walls', 'title' => 'Стены', 'source_refs' => []]],
+        ]]);
+        $source = new WorkPlannerResponseData([[
+            'section_key' => 'walls',
+            'scope_type' => 'walls',
+            'work_intents' => [[
+                'intent_key' => 'walls-lintels',
+                'name' => 'Устройство перемычек',
+                'category' => 'walls',
+                'unit' => 'шт',
+                'quantity' => '8',
+                'quantity_key' => 'walls.lintels',
+                'quantity_source_refs' => ['doc:1'],
+                'confidence' => 0.91,
+            ]],
+        ]]);
+        $compiler = new WorkPlanCompiler(
+            new PackagePlannerService,
+            $decomposition,
+            new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService),
+            new NormativeContextPinResolver,
+        );
+
+        $payload = $compiler->compile([
+            'object' => ['object_type' => 'house', 'area' => 180],
+            'regional_context' => [],
+            'planning_signals' => ['generation_mode' => 'ai_assisted'],
+        ], $source, true);
+
+        $item = $payload['local_estimates'][0]['sections'][0]['work_items'][0];
+        self::assertSame('07-01-021-01', $item['specialization_scenario']['normative_rate_code'] ?? null);
+    }
+
     public function test_normative_pin_is_resolved_from_final_canonical_work_item_units(): void
     {
         $pins = $this->createMock(NormativeContextPinResolver::class);
+        $capturedIntents = [];
         $pins->expects(self::once())
             ->method('resolve')
-            ->with([], [[
-                'search_text' => 'Устройство полов',
-                'unit' => 'm2',
-                'code' => null,
-                'material' => 'керамическая плитка',
-                'action' => 'general_work',
-                'scope' => 'general',
-                'system' => null,
-                'object' => null,
-                'object_type' => 'house',
-                'normative_section' => '11',
-                'normative_sections' => ['11'],
-            ]])
+            ->with([], self::callback(static function (array $intents) use (&$capturedIntents): bool {
+                $capturedIntents = $intents;
+
+                return true;
+            }))
             ->willReturn(['status' => 'pinned']);
         $compiler = new WorkPlanCompiler(
             new PackagePlannerService,
@@ -238,6 +281,7 @@ final class WorkPlanCompilerTest extends TestCase
             'sections' => [[
                 'work_items' => [[
                     'item_type' => 'priced_work',
+                    'key' => 'roof-norm-intent-1',
                     'name' => 'Устройство полов',
                     'normative_search_text' => 'Устройство полов',
                     'unit' => 'm2',
@@ -251,6 +295,7 @@ final class WorkPlanCompilerTest extends TestCase
         ]], 'house');
 
         self::assertSame(['status' => 'pinned'], $pin);
+        self::assertSame('roof-norm-intent-1', $capturedIntents[0]['work_item_key']);
     }
 
     public function test_normative_pin_preserves_every_allowed_section_prefix(): void
@@ -259,6 +304,7 @@ final class WorkPlanCompilerTest extends TestCase
         $pins->expects(self::once())
             ->method('resolve')
             ->with([], [[
+                'work_item_key' => 'foundation-norm-intent-1',
                 'search_text' => 'Бетонирование фундаментов',
                 'unit' => 'm3',
                 'code' => null,
@@ -285,6 +331,7 @@ final class WorkPlanCompilerTest extends TestCase
                         'work_items' => [
                             [
                                 'item_type' => 'priced_work',
+                                'key' => 'foundation-norm-intent-1',
                                 'name' => 'Бетонирование фундаментов',
                                 'unit' => 'm3',
                                 'work_intent' => ['preferred_section_prefixes' => ['01', '06']],
@@ -323,6 +370,7 @@ final class WorkPlanCompilerTest extends TestCase
             'sections' => [[
                 'work_items' => [[
                     'item_type' => 'priced_work',
+                    'key' => 'lighting-norm-intent-1',
                     'name' => 'Прокладка линий освещения',
                     'normative_search_text' => 'Ненадёжное имя работы от модели',
                     'normative_rate_code' => null,
@@ -359,6 +407,7 @@ final class WorkPlanCompilerTest extends TestCase
             'sections' => [[
                 'work_items' => [[
                     'item_type' => 'priced_work',
+                    'key' => 'slabs-norm-intent-1',
                     'name' => 'Армирование монолитного перекрытия',
                     'normative_search_text' => 'Армирование монолитного перекрытия',
                     'normative_rate_code' => null,

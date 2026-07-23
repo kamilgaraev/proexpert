@@ -136,6 +136,43 @@ class EstimateNormativeMatcherTest extends TestCase
         $this->assertSame(4200.0, $match['selected']['resources']['materials'][0]['unit_price']);
     }
 
+    public function test_matcher_keeps_every_non_summary_resource_of_a_selected_norm(): void
+    {
+        $versionId = $this->createVersion('fsnb_2022', '2026-07-21');
+        $collectionId = $this->createCollection($versionId);
+        $sectionId = $this->createSection($collectionId, 'Земляные работы');
+        $normId = $this->createNorm(
+            $collectionId,
+            $sectionId,
+            '01-01-001-01',
+            'Разработка грунта экскаватором',
+            '1000 м3',
+        );
+
+        for ($index = 1; $index <= 121; $index++) {
+            $this->createNormResource(
+                $normId,
+                '1-100-'.str_pad((string) $index, 3, '0', STR_PAD_LEFT),
+                'Затраты труда рабочих '.$index,
+                'чел.-ч',
+                1.0,
+                'labor',
+            );
+        }
+
+        $match = app(EstimateNormativeMatcher::class)->matchWorkItem([
+            'name' => 'Разработка грунта экскаватором',
+            'normative_rate_code' => '01-01-001-01',
+            'unit' => 'м3',
+            'quantity' => 1000.0,
+        ]);
+
+        self::assertNotNull($match);
+        $candidate = collect($match['candidates'])->firstWhere('code', '01-01-001-01');
+        self::assertIsArray($candidate);
+        self::assertCount(121, $candidate['resources']['labor']);
+    }
+
     public function test_matcher_includes_learning_evidence_in_candidate_scoring(): void
     {
         $organization = Organization::factory()->create();

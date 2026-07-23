@@ -14,6 +14,7 @@ final class FinalizedPackageDraftProjector
 {
     private const ALLOWED_FORMULA_VERSIONS = [
         'project_resource:v3',
+        'semantic_project_resource:v8',
         'supplementary_project_material:v4',
     ];
 
@@ -240,7 +241,7 @@ final class FinalizedPackageDraftProjector
             'materials' => $resourceProjection['materials'],
             'labor' => $resourceProjection['labor'],
             'machinery' => $resourceProjection['machinery'],
-            'other_resources' => [],
+            'other_resources' => $resourceProjection['other_resources'],
             'materials_cost' => $this->resourceTotal($resourceProjection['materials']),
             'labor_cost' => $this->resourceTotal($resourceProjection['labor']),
             'machinery_cost' => $this->resourceTotal($resourceProjection['machinery']),
@@ -258,7 +259,7 @@ final class FinalizedPackageDraftProjector
         ]);
     }
 
-    /** @return array{materials: list<array<string, mixed>>, labor: list<array<string, mixed>>, machinery: list<array<string, mixed>>} */
+    /** @return array{materials: list<array<string, mixed>>, labor: list<array<string, mixed>>, machinery: list<array<string, mixed>>, other_resources: list<array<string, mixed>>} */
     private function projectResources(EstimateGenerationPackageItem $item): array
     {
         $snapshot = is_array($item->price_snapshot) ? $item->price_snapshot : [];
@@ -306,9 +307,12 @@ final class FinalizedPackageDraftProjector
             $unitPrice = $this->positiveDecimal($evidence['base_price'] ?? null, 'base price');
             $exact = $quantity->multipliedBy($unitPrice);
             $group = $this->resourceGroup((string) ($evidence['resource_type'] ?? ''));
+            $machineBreakdown = $this->machinePriceBreakdown($evidence, $trace, $quantity, $unitPrice);
+            $projectedUnitPrice = $machineBreakdown['machine_unit_price'] ?? $unitPrice;
+            $projectedExact = $machineBreakdown['machine_exact'] ?? $exact;
             $resources[] = [
                 'group' => $group,
-                'exact' => $exact,
+                'exact' => $projectedExact,
                 'resource' => array_replace($source, [
                     'name' => trim((string) ($trace['resource_name'] ?? $source['name'] ?? '')),
                     'resource_type' => (string) ($evidence['resource_type'] ?? ''),
@@ -317,8 +321,8 @@ final class FinalizedPackageDraftProjector
                     'quantity' => $this->decimal($quantity, 6),
                     'quantity_per_unit' => $this->decimal($quantityPerUnit, 12),
                     'quantity_basis' => 'finalized_normative_resource',
-                    'unit_price' => $this->decimal($unitPrice, 6),
-                    'total_price' => $this->decimal($exact, 2),
+                    'unit_price' => $this->decimal($projectedUnitPrice, 6),
+                    'total_price' => $this->decimal($projectedExact, 2),
                     'price_source' => 'regional_catalog',
                     'price_source_version' => data_get($trace, 'regional_version.version_key'),
                     'source' => 'finalized_package_price_snapshot',
@@ -333,6 +337,45 @@ final class FinalizedPackageDraftProjector
                     ),
                 ]),
             ];
+            if ($machineBreakdown !== null) {
+                $resources[] = [
+                    'group' => 'labor',
+                    'exact' => $machineBreakdown['labor_exact'],
+                    'resource' => [
+                        'code' => $machineBreakdown['driver_code'],
+                        'name' => $this->machinistName($machineBreakdown['machinist_category']),
+                        'resource_type' => 'machine_labor',
+                        'unit' => 'чел.-ч',
+                        'price_unit' => 'чел.-ч',
+                        'quantity' => $this->decimal($machineBreakdown['labor_quantity'], 6),
+                        'quantity_per_unit' => $this->decimal(
+                            $quantityPerUnit->multipliedBy($machineBreakdown['labor_per_machine_hour']),
+                            12,
+                        ),
+                        'quantity_basis' => 'finalized_machine_price_breakdown',
+                        'unit_price' => $this->decimal($machineBreakdown['labor_unit_price'], 6),
+                        'total_price' => $this->decimal($machineBreakdown['labor_exact'], 2),
+                        'price_source' => 'regional_catalog',
+                        'price_source_version' => data_get($trace, 'regional_version.version_key'),
+                        'source' => 'finalized_package_price_snapshot',
+                        'normative_ref' => [
+                            'norm_resource_id' => $normResourceId,
+                            'resource_code' => $machineBreakdown['driver_code'],
+                            'price_id' => $evidence['resource_price_id'] ?? null,
+                            'price_source' => 'regional_catalog',
+                            'derived_from_machine_resource_code' => $evidence['resource_code'] ?? $trace['resource_code'] ?? null,
+                            'derived_from_machine_price_id' => $evidence['resource_price_id'] ?? null,
+                        ],
+                        'machine_price_breakdown' => [
+                            'machine_salary_price' => $this->decimal($machineBreakdown['labor_unit_price'], 6),
+                            'machine_price_without_salary' => $this->decimal($machineBreakdown['machine_unit_price'], 6),
+                            'machine_labor_quantity' => $this->decimal($machineBreakdown['labor_per_machine_hour'], 6),
+                            'driver_code' => $machineBreakdown['driver_code'],
+                            'machinist_category' => $machineBreakdown['machinist_category'],
+                        ],
+                    ],
+                ];
+            }
             $baseExactTotal = $baseExactTotal->plus($exact);
             unset($stored['normative'][$normResourceId]);
             unset($provenanceByResource[$normResourceId]);
@@ -407,12 +450,78 @@ final class FinalizedPackageDraftProjector
         }
 
         $resources = $this->allocateRoundingDifference($resources, $itemTotal);
-        $projected = ['materials' => [], 'labor' => [], 'machinery' => []];
+        $projected = ['materials' => [], 'labor' => [], 'machinery' => [], 'other_resources' => []];
         foreach ($resources as $entry) {
             $projected[$entry['group']][] = $entry['resource'];
         }
 
         return $projected;
+    }
+
+    /**
+     * @param  array<string, mixed>  $evidence
+     * @param  array<string, mixed>  $trace
+     * @return array{machine_unit_price: BigDecimal, machine_exact: BigDecimal, labor_unit_price: BigDecimal, labor_per_machine_hour: BigDecimal, labor_quantity: BigDecimal, labor_exact: BigDecimal, driver_code: string, machinist_category: string}|null
+     */
+    private function machinePriceBreakdown(
+        array $evidence,
+        array $trace,
+        BigDecimal $machineQuantity,
+        BigDecimal $basePrice,
+    ): ?array {
+        if (! in_array((string) ($evidence['resource_type'] ?? ''), ['machine', 'machinery'], true)) {
+            return null;
+        }
+
+        $componentKeys = [
+            'machine_salary_price',
+            'machine_price_without_salary',
+            'machine_labor_quantity',
+            'driver_code',
+            'machinist_category',
+        ];
+        $present = array_filter(
+            $componentKeys,
+            static fn (string $key): bool => array_key_exists($key, $trace) && $trace[$key] !== null,
+        );
+        if ($present === []) {
+            return null;
+        }
+        if (count($present) !== count($componentKeys)) {
+            return null;
+        }
+
+        $laborUnitPrice = $this->positiveDecimal($trace['machine_salary_price'], 'machine salary price');
+        $machineUnitPrice = $this->positiveDecimal($trace['machine_price_without_salary'], 'machine price without salary');
+        $laborPerMachineHour = $this->positiveDecimal($trace['machine_labor_quantity'], 'machine labor quantity');
+        $driverCode = trim((string) $trace['driver_code']);
+        $machinistCategory = trim((string) $trace['machinist_category']);
+        if ($driverCode === '' || $machinistCategory === '') {
+            throw new \DomainException('Finalized machine price breakdown identity is incomplete.');
+        }
+
+        $breakdownPrice = $machineUnitPrice->plus($laborUnitPrice->multipliedBy($laborPerMachineHour));
+        if ($breakdownPrice->compareTo($basePrice) !== 0) {
+            throw new \DomainException('Finalized machine price breakdown does not equal the selected price.');
+        }
+
+        $laborQuantity = $machineQuantity->multipliedBy($laborPerMachineHour);
+
+        return [
+            'machine_unit_price' => $machineUnitPrice,
+            'machine_exact' => $machineQuantity->multipliedBy($machineUnitPrice),
+            'labor_unit_price' => $laborUnitPrice,
+            'labor_per_machine_hour' => $laborPerMachineHour,
+            'labor_quantity' => $laborQuantity,
+            'labor_exact' => $laborQuantity->multipliedBy($laborUnitPrice),
+            'driver_code' => $driverCode,
+            'machinist_category' => $machinistCategory,
+        ];
+    }
+
+    private function machinistName(string $category): string
+    {
+        return 'Оплата труда машиниста, разряд '.$category;
     }
 
     /**
@@ -494,9 +603,10 @@ final class FinalizedPackageDraftProjector
     private function resourceGroup(string $resourceType): string
     {
         return match ($resourceType) {
-            'material', 'equipment', 'abstract', 'other' => 'materials',
+            'material', 'equipment', 'abstract' => 'materials',
             'labor', 'machine_labor' => 'labor',
             'machine', 'machinery' => 'machinery',
+            'other' => 'other_resources',
             default => throw new \DomainException('Finalized resource type is unsupported.'),
         };
     }

@@ -208,6 +208,7 @@ class UpdateContractRequest extends FormRequest
             'subject' => ['sometimes', 'nullable', 'string'],
             'work_type_category' => ['sometimes', 'nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'payment_terms' => ['sometimes', 'nullable', 'string'],
+            'delivery_terms' => ['sometimes', 'nullable', 'string'],
             'is_fixed_amount' => ['sometimes', 'nullable', 'boolean'],
             'base_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'total_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
@@ -288,6 +289,7 @@ class UpdateContractRequest extends FormRequest
             'subject',
             'work_type_category',
             'payment_terms',
+            'delivery_terms',
             'is_fixed_amount',
             'base_amount',
             'total_amount',
@@ -300,7 +302,6 @@ class UpdateContractRequest extends FormRequest
             'subcontract_amount',
             'planned_advance_amount',
             'actual_advance_amount',
-            'status',
             'start_date',
             'end_date',
             'notes',
@@ -334,6 +335,7 @@ class UpdateContractRequest extends FormRequest
                 ? ContractWorkTypeCategoryEnum::from($validatedData['work_type_category'])
                 : $contract->work_type_category,
             payment_terms: array_key_exists('payment_terms', $validatedData) ? $validatedData['payment_terms'] : $contract->payment_terms,
+            delivery_terms: array_key_exists('delivery_terms', $validatedData) ? $validatedData['delivery_terms'] : $contract->delivery_terms,
             base_amount: array_key_exists('base_amount', $validatedData)
                 ? ($validatedData['base_amount'] !== null ? (float) $validatedData['base_amount'] : null)
                 : $contract->base_amount,

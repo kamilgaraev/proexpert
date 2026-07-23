@@ -58,6 +58,10 @@ abstract class LegalArchiveApiController extends Controller
             ]);
         }
         if ($error instanceof AuthorizationException) {
+            if ($error->status() === 403) {
+                return AdminResponse::error(trans_message('legal_archive.messages.access_denied'), 403);
+            }
+
             return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
         }
         if ($error instanceof ValidationException) {

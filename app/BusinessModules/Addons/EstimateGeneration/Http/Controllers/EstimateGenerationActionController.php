@@ -86,6 +86,7 @@ final class EstimateGenerationActionController extends Controller
                 $session,
                 (int) $request->validated('state_version'),
                 $request->validated('generation_mode'),
+                $request->validated('estimate_regional_price_version_id'),
             );
             if (! $result->successful) {
                 return AdminResponse::error(
@@ -105,6 +106,8 @@ final class EstimateGenerationActionController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (\InvalidArgumentException) {
+            return AdminResponse::error(trans_message('estimate_generation.price_source_invalid'), 422);
         } catch (\Throwable $e) {
             report($e);
             Log::error('[EstimateGeneration] Generate failed', [

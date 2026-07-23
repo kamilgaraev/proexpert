@@ -19,6 +19,7 @@ use App\BusinessModules\Features\Procurement\Services\PurchaseReceiptDocumentPdf
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveDocumentResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -285,16 +286,20 @@ class PurchaseOrderController extends Controller
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
-            $contract = $this->service->createContractFromOrder($order);
+            $result = $this->service->createContractFromOrder($order);
 
             return AdminResponse::success(
                 [
                     'purchase_order' => (new PurchaseOrderResource($order->fresh(['supplier', 'supplierParty', 'purchaseRequest', 'contract', 'items'])))->resolve(),
-                    'contract' => (new PurchaseContractResource($contract))->resolve(),
+                    'contract' => (new PurchaseContractResource($result->contract))->resolve(),
+                    'legal_document' => (new LegalArchiveDocumentResource($result->document->loadMissing(['project', 'links'])))->resolve(),
+                    'already_exists' => $result->replayed,
                 ],
                 trans_message('procurement.purchase_orders.contract_created'),
-                201
+                $result->replayed ? Response::HTTP_OK : Response::HTTP_CREATED
             );
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
         } catch (\DomainException $e) {
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {

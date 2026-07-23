@@ -126,7 +126,7 @@ return [
                 'minProcesses' => 1,
                 'maxProcesses' => 2,
                 'tries' => 3,
-                'timeout' => 1800,
+                'timeout' => 2100,
                 'memory' => 512,
             ],
             'supervisor-estimate-generation-recovery' => [
@@ -199,7 +199,7 @@ return [
                 'minProcesses' => 1,
                 'maxProcesses' => 2,
                 'tries' => 3,
-                'timeout' => 1800,
+                'timeout' => 2100,
                 'memory' => 512,
                 'nice' => 5,
             ],
