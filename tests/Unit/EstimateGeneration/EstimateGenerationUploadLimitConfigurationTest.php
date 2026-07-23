@@ -38,9 +38,13 @@ class EstimateGenerationUploadLimitConfigurationTest extends TestCase
     public function test_api_container_php_runtime_allows_two_hundred_megabyte_uploads(): void
     {
         $contents = file_get_contents(dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'docker-compose.yml');
+        $dockerfile = file_get_contents(dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'Dockerfile.prod');
 
         self::assertStringContainsString('-d post_max_size=640M', (string) $contents);
         self::assertStringContainsString('-d upload_max_filesize=500M', (string) $contents);
         self::assertStringContainsString('-d max_file_uploads=100', (string) $contents);
+        self::assertStringContainsString('post_max_size=640M', (string) $dockerfile);
+        self::assertStringContainsString('upload_max_filesize=500M', (string) $dockerfile);
+        self::assertStringContainsString('max_file_uploads=100', (string) $dockerfile);
     }
 }
