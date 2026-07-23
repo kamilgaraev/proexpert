@@ -178,7 +178,10 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 'rotation' => $output->rotation, 'text' => $output->text,
                 'text_hash' => $output->text !== '' ? hash('sha256', $output->text) : null,
                 'confidence' => $output->confidence, 'normalized_payload' => $output->persistedNormalizedPayload(),
-                'quality_flags' => []])->save();
+                'quality_flags' => [],
+                'status' => 'ready',
+                'excluded_at' => null,
+                'excluded_reason' => null])->save();
 
             return $this->query()
                 ->whereKey($unit->id)

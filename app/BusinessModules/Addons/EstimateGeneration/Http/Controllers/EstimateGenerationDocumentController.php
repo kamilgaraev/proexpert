@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentPageActionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\IgnoreEstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ManageEstimateGenerationDocumentPages;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReuseEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\UploadEstimateGenerationDocuments;
@@ -12,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimat
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\IgnoreEstimateGenerationDocumentRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ManageEstimateGenerationDocumentPagesRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RetryEstimateGenerationDocumentRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ReuseEstimateGenerationDocumentsRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGenerationDocumentsRequest;
@@ -37,6 +40,7 @@ class EstimateGenerationDocumentController extends Controller
         private readonly DocumentGenerationReadinessService $readinessService,
         private readonly RetryEstimateGenerationDocument $retryDocument,
         private readonly IgnoreEstimateGenerationDocument $ignoreDocument,
+        private readonly ManageEstimateGenerationDocumentPages $manageDocumentPages,
         private readonly UploadEstimateGenerationDocuments $uploadDocuments,
         private readonly ReuseEstimateGenerationDocuments $reuseDocuments,
     ) {}
@@ -222,6 +226,104 @@ class EstimateGenerationDocumentController extends Controller
         }
     }
 
+    public function retryPages(
+        ManageEstimateGenerationDocumentPagesRequest $request,
+        Project $project,
+        EstimateGenerationSession $session,
+        EstimateGenerationDocument $document
+    ): JsonResponse {
+        $this->guardDocument($request, $project, $session, $document);
+
+        try {
+            $result = $this->manageDocumentPages->retry(
+                $session,
+                $document,
+                (int) $request->validated('state_version'),
+                array_values(array_map('intval', $request->validated('page_numbers'))),
+                $request->validated('reason'),
+            );
+
+            return AdminResponse::success($this->pageActionPayload($result), trans_message($result->messageKey));
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $e->errors());
+        } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (\Throwable $e) {
+            Log::error('[EstimateGeneration] Document pages retry failed', [
+                'failure_code' => 'document_pages_retry_failed',
+                'session_id' => $session->id,
+                'document_id' => $document->id,
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.documents_upload_error'), 500);
+        }
+    }
+
+    public function excludePages(
+        ManageEstimateGenerationDocumentPagesRequest $request,
+        Project $project,
+        EstimateGenerationSession $session,
+        EstimateGenerationDocument $document
+    ): JsonResponse {
+        $this->guardDocument($request, $project, $session, $document);
+
+        try {
+            $result = $this->manageDocumentPages->exclude(
+                $session,
+                $document,
+                (int) $request->validated('state_version'),
+                array_values(array_map('intval', $request->validated('page_numbers'))),
+                $request->validated('reason'),
+            );
+
+            return AdminResponse::success($this->pageActionPayload($result), trans_message($result->messageKey));
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $e->errors());
+        } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (\Throwable $e) {
+            Log::error('[EstimateGeneration] Document pages exclude failed', [
+                'failure_code' => 'document_pages_exclude_failed',
+                'session_id' => $session->id,
+                'document_id' => $document->id,
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.documents_upload_error'), 500);
+        }
+    }
+
+    public function restorePages(
+        ManageEstimateGenerationDocumentPagesRequest $request,
+        Project $project,
+        EstimateGenerationSession $session,
+        EstimateGenerationDocument $document
+    ): JsonResponse {
+        $this->guardDocument($request, $project, $session, $document);
+
+        try {
+            $result = $this->manageDocumentPages->restore(
+                $session,
+                $document,
+                (int) $request->validated('state_version'),
+                array_values(array_map('intval', $request->validated('page_numbers'))),
+            );
+
+            return AdminResponse::success($this->pageActionPayload($result), trans_message($result->messageKey));
+        } catch (ValidationException $e) {
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $e->errors());
+        } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (\Throwable $e) {
+            Log::error('[EstimateGeneration] Document pages restore failed', [
+                'failure_code' => 'document_pages_restore_failed',
+                'session_id' => $session->id,
+                'document_id' => $document->id,
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.documents_upload_error'), 500);
+        }
+    }
+
     private function guardSession(Request $request, Project $project, EstimateGenerationSession $session): void
     {
         $user = $request->user();
@@ -267,5 +369,27 @@ class EstimateGenerationDocumentController extends Controller
 
             return AdminResponse::error(trans_message('estimate_generation.read_error'), 500);
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function pageActionPayload(DocumentPageActionResult $result): array
+    {
+        return [
+            'document' => (new EstimateGenerationDocumentResource($result->document->setRelation('session', $result->document->session)))->resolve(),
+            'pages' => $result->pages->map(static fn ($page): array => [
+                'id' => $page->id,
+                'page_number' => $page->page_number,
+                'status' => $page->status ?? ManageEstimateGenerationDocumentPages::STATUS_READY,
+                'excluded' => (string) $page->status === ManageEstimateGenerationDocumentPages::STATUS_EXCLUDED,
+                'excluded_at' => $page->excluded_at?->toISOString(),
+                'excluded_reason' => $page->excluded_reason,
+                'retry_attempt_id' => $page->retry_attempt_id,
+                'last_retry_requested_at' => $page->last_retry_requested_at?->toISOString(),
+            ])->all(),
+            'page_summary' => $result->pageSummary,
+            'documents_summary' => $result->summary,
+        ];
     }
 }

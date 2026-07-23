@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentPreviewService;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ManageEstimateGenerationDocumentPages;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -37,6 +38,12 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'text_hash' => $page->text_hash,
                 'confidence' => $page->confidence,
                 'normalized_payload' => $page->normalized_payload ?? [],
+                'status' => $page->status ?? ManageEstimateGenerationDocumentPages::STATUS_READY,
+                'excluded' => (string) $page->status === ManageEstimateGenerationDocumentPages::STATUS_EXCLUDED,
+                'excluded_at' => $page->excluded_at?->toISOString(),
+                'excluded_reason' => $page->excluded_reason,
+                'retry_attempt_id' => $page->retry_attempt_id,
+                'last_retry_requested_at' => $page->last_retry_requested_at?->toISOString(),
                 'page_role' => self::pageRole($page),
                 'role_for_estimation' => self::roleForEstimation($page),
                 'review' => self::reviewPayload($page),

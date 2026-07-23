@@ -31,6 +31,9 @@ Route::middleware([
         Route::get('/{session}/documents/{document}', [EstimateGenerationDocumentController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('documents.show');
         Route::post('/{session}/documents/{document}/retry', [EstimateGenerationDocumentController::class, 'retry'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.retry');
         Route::post('/{session}/documents/{document}/ignore', [EstimateGenerationDocumentController::class, 'ignore'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.ignore');
+        Route::post('/{session}/documents/{document}/pages/retry', [EstimateGenerationDocumentController::class, 'retryPages'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.pages.retry');
+        Route::post('/{session}/documents/{document}/pages/exclude', [EstimateGenerationDocumentController::class, 'excludePages'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.pages.exclude');
+        Route::post('/{session}/documents/{document}/pages/restore', [EstimateGenerationDocumentController::class, 'restorePages'])->middleware('authorize:estimate_generation.review,project,project')->name('documents.pages.restore');
         Route::post('/{session}/analyze', [EstimateGenerationActionController::class, 'analyze'])->middleware('authorize:estimate_generation.generate,project,project')->name('analyze');
         Route::post('/{session}/generate', [EstimateGenerationActionController::class, 'generate'])->middleware('authorize:estimate_generation.generate,project,project')->name('generate');
         Route::post('/{session}/confirm-input', [EstimateGenerationActionController::class, 'confirmInput'])->middleware('authorize:estimate_generation.review,project,project')->name('confirm-input');

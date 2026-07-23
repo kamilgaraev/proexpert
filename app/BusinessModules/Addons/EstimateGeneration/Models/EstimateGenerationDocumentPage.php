@@ -33,6 +33,11 @@ class EstimateGenerationDocumentPage extends Model
         'raw_payload_path',
         'normalized_payload',
         'quality_flags',
+        'status',
+        'excluded_at',
+        'excluded_reason',
+        'retry_attempt_id',
+        'last_retry_requested_at',
     ];
 
     protected $casts = [
@@ -44,6 +49,8 @@ class EstimateGenerationDocumentPage extends Model
         'confidence' => 'float',
         'normalized_payload' => 'array',
         'quality_flags' => 'array',
+        'excluded_at' => 'datetime',
+        'last_retry_requested_at' => 'datetime',
     ];
 
     public function document(): BelongsTo

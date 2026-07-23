@@ -18,6 +18,10 @@ final readonly class EloquentDocumentUnitExhaustionHandler implements DocumentUn
             return;
         }
 
+        $unit->page?->forceFill([
+            'status' => 'failed',
+        ])->save();
+
         $this->review->handle(
             (int) $unit->document->getKey(),
             (string) $unit->source_version,
