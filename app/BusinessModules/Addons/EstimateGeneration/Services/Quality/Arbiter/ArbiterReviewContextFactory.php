@@ -59,7 +59,7 @@ final class ArbiterReviewContextFactory
                     $evidenceRefs = [...$evidenceRefs, ...$this->references($quantityEvidence['evidence_ids'] ?? [])];
                     $workItems[] = [
                         'package_key' => $key,
-                        'name' => $this->shortText($workItem['name'] ?? null, 96),
+                        'name' => $this->shortText($workItem['name'] ?? null, 80),
                         'quantity' => $workItem['quantity'] ?? null,
                         'unit' => $workItem['unit'] ?? null,
                         'total_cost' => $workItem['total_cost'] ?? null,
@@ -91,16 +91,7 @@ final class ArbiterReviewContextFactory
             'scopes' => $scopes,
             'packages' => $packages,
             'work_items' => $workItems,
-            'review_context' => [
-                'object_profile' => is_array($draft['object_profile'] ?? null) ? $draft['object_profile'] : [],
-                'building_model' => is_array($draft['building_model'] ?? null) ? $draft['building_model'] : [],
-                'building_quantities' => is_array($draft['building_quantities'] ?? null) ? $draft['building_quantities'] : [],
-                'source_documents' => is_array($draft['source_documents'] ?? null) ? $draft['source_documents'] : [],
-                'document_requirements' => is_array($draft['document_requirements'] ?? null) ? $draft['document_requirements'] : [],
-                'traceability' => is_array($draft['traceability'] ?? null) ? $draft['traceability'] : [],
-                'regional_context' => is_array($draft['regional_context'] ?? null) ? $draft['regional_context'] : [],
-                'completeness_exclusions' => is_array($draft['completeness_exclusions'] ?? null) ? $draft['completeness_exclusions'] : [],
-            ],
+            'review_context' => $this->reviewContext($draft),
             'budget_scope' => is_array($draft['budget_scope'] ?? null) ? $draft['budget_scope'] : [],
             'scope_keys' => array_values(array_unique($scopeKeys)),
             'package_keys' => array_values(array_unique($packageKeys)),
@@ -162,7 +153,7 @@ final class ArbiterReviewContextFactory
                 : null,
             'evidence_ids' => $this->references($evidence['evidence_ids'] ?? []),
             'source' => $this->shortText($evidence['source'] ?? null, 120),
-            'reason' => $this->shortText($evidence['reason'] ?? null, 160),
+            'reason' => $this->shortText($evidence['reason'] ?? null, 80),
         ], static fn (mixed $value): bool => $value !== null && $value !== []);
     }
 
@@ -187,6 +178,165 @@ final class ArbiterReviewContextFactory
     private function resourceCount(mixed $resources): int
     {
         return is_array($resources) ? count($resources) : 0;
+    }
+
+    /** @return array<string, mixed> */
+    private function reviewContext(array $draft): array
+    {
+        return [
+            'object_profile' => $this->objectProfile($draft['object_profile'] ?? null),
+            'building_model' => $this->buildingModel($draft['building_model'] ?? null),
+            'building_quantities' => $this->buildingQuantities($draft['building_quantities'] ?? null),
+            'source_documents' => $this->sourceDocuments($draft['source_documents'] ?? null),
+            'document_requirements' => is_array($draft['document_requirements'] ?? null)
+                ? $this->compactScalarMap($draft['document_requirements'])
+                : [],
+            'traceability' => $this->traceability($draft['traceability'] ?? null),
+            'regional_context' => is_array($draft['regional_context'] ?? null)
+                ? $this->compactScalarMap($draft['regional_context'])
+                : [],
+            'completeness_exclusions' => is_array($draft['completeness_exclusions'] ?? null)
+                ? $this->compactList($draft['completeness_exclusions'], 20)
+                : [],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function objectProfile(mixed $profile): array
+    {
+        if (! is_array($profile)) {
+            return [];
+        }
+
+        return array_filter([
+            'object_type' => $this->shortText($profile['object_type'] ?? null, 80),
+            'description' => $this->shortText($profile['description'] ?? null, 240),
+            'area' => $this->scalar($profile['area'] ?? null),
+            'floors' => $this->scalar($profile['floors'] ?? null),
+            'rooms' => $this->scalar($profile['rooms'] ?? null),
+            'confidence' => $this->scalar($profile['confidence'] ?? null),
+            'finish_levels' => $this->compactList($profile['finish_levels'] ?? [], 12),
+            'engineering_systems' => $this->compactList($profile['engineering_systems'] ?? [], 12),
+            'missing_inputs' => $this->compactList($profile['missing_inputs'] ?? [], 20),
+        ], static fn (mixed $value): bool => $value !== null && $value !== []);
+    }
+
+    /** @return array<string, mixed> */
+    private function buildingModel(mixed $model): array
+    {
+        if (! is_array($model)) {
+            return [];
+        }
+
+        return array_filter([
+            'unit' => $this->shortText($model['unit'] ?? null, 20),
+            'scale_status' => $this->shortText($model['scale_status'] ?? null, 40),
+            'model_version' => $this->shortText($model['model_version'] ?? null, 80),
+            'scale_meters_per_unit' => $this->scalar($model['scale_meters_per_unit'] ?? null),
+            'floors' => $this->scalar($model['floors'] ?? null),
+            'floors_count' => is_array($model['floors'] ?? null) ? count($model['floors']) : null,
+            'metrics' => is_array($model['metrics'] ?? null) ? $this->compactScalarMap($model['metrics']) : [],
+            'evidence_ids' => $this->references($model['evidence_ids'] ?? []),
+        ], static fn (mixed $value): bool => $value !== null && $value !== []);
+    }
+
+    /** @return array<string, mixed> */
+    private function buildingQuantities(mixed $quantities): array
+    {
+        if (! is_array($quantities)) {
+            return [];
+        }
+
+        return array_filter([
+            'metrics' => is_array($quantities['metrics'] ?? null) ? $this->compactScalarMap($quantities['metrics']) : [],
+            'total_area' => $this->scalar($quantities['total_area'] ?? null),
+            'quantity_count' => is_array($quantities['quantities'] ?? null) ? count($quantities['quantities']) : null,
+            'diagnostics_count' => is_array($quantities['diagnostics'] ?? null) ? count($quantities['diagnostics']) : null,
+        ], static fn (mixed $value): bool => $value !== null && $value !== []);
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function sourceDocuments(mixed $documents): array
+    {
+        $result = [];
+        foreach (array_slice((array) $documents, 0, 20) as $document) {
+            if (! is_array($document)) {
+                continue;
+            }
+            $result[] = array_filter([
+                'id' => $this->scalar($document['id'] ?? null),
+                'filename' => $this->shortText($document['filename'] ?? null, 120),
+                'status' => $this->shortText($document['status'] ?? null, 40),
+                'quality' => $this->shortText($document['quality'] ?? null, 40),
+                'source_refs' => $this->references($document['source_refs'] ?? []),
+                'facts_summary' => $this->compactList($document['facts_summary'] ?? [], 12),
+                'scopes' => $this->compactList($document['scopes'] ?? [], 12),
+            ], static fn (mixed $value): bool => $value !== null && $value !== []);
+        }
+
+        return $result;
+    }
+
+    /** @return array<string, mixed> */
+    private function traceability(mixed $traceability): array
+    {
+        if (! is_array($traceability)) {
+            return [];
+        }
+
+        return array_filter([
+            'document_source_refs' => $this->references($traceability['document_source_refs'] ?? []),
+            'document_context' => is_array($traceability['document_context'] ?? null)
+                ? $this->compactScalarMap($traceability['document_context'])
+                : [],
+        ], static fn (mixed $value): bool => $value !== null && $value !== []);
+    }
+
+    private function scalar(mixed $value): mixed
+    {
+        return is_string($value) || is_int($value) || is_float($value) || is_bool($value) ? $value : null;
+    }
+
+    /** @return array<string, mixed> */
+    private function compactScalarMap(array $map): array
+    {
+        $result = [];
+        foreach ($map as $key => $value) {
+            if (! is_string($key) || count($result) >= 30) {
+                continue;
+            }
+            if (is_string($value)) {
+                $result[$key] = $this->shortText($value, 160);
+
+                continue;
+            }
+            if (is_int($value) || is_float($value) || is_bool($value)) {
+                $result[$key] = $value;
+            }
+        }
+
+        return array_filter($result, static fn (mixed $value): bool => $value !== null && $value !== '');
+    }
+
+    /** @return list<mixed> */
+    private function compactList(mixed $items, int $limit): array
+    {
+        $result = [];
+        foreach (array_slice((array) $items, 0, $limit) as $item) {
+            if (is_string($item)) {
+                $value = $this->shortText($item, 120);
+                if ($value !== null) {
+                    $result[] = $value;
+                }
+
+                continue;
+            }
+            if (is_int($item) || is_float($item) || is_bool($item)) {
+                $result[] = $item;
+            }
+        }
+
+        return $result;
     }
 
 }

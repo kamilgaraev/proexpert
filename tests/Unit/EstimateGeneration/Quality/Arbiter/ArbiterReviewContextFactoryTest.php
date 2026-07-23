@@ -114,4 +114,66 @@ final class ArbiterReviewContextFactoryTest extends TestCase
         self::assertArrayNotHasKey('price_snapshot', $context['work_items'][0]);
         self::assertSame(20, $context['work_items'][0]['resource_summary']['materials_count']);
     }
+
+    #[Test]
+    public function it_compacts_large_review_context_payloads_before_the_token_guard(): void
+    {
+        $workItems = [];
+        for ($i = 0; $i < 50; $i++) {
+            $workItems[] = [
+                'name' => 'Work item '.$i,
+                'quantity' => 10 + $i,
+                'unit' => 'm2',
+                'total_cost' => 1000 + $i,
+                'quantity_evidence' => ['evidence_ids' => [$i + 1], 'reason' => str_repeat('Evidence reason ', 20)],
+                'normative_match' => ['status' => 'matched', 'norm_code' => '08-01-00'.$i],
+            ];
+        }
+
+        $documents = [];
+        for ($i = 0; $i < 7; $i++) {
+            $documents[] = [
+                'id' => $i + 1,
+                'filename' => 'document-'.$i.'.pdf',
+                'status' => 'ready',
+                'quality' => 'accepted',
+                'text' => str_repeat('Full recognized document text ', 200),
+                'facts' => array_fill(0, 30, ['payload' => str_repeat('fact ', 80)]),
+                'quantity_takeoffs' => array_fill(0, 50, ['payload' => str_repeat('takeoff ', 80)]),
+            ];
+        }
+
+        $context = (new ArbiterReviewContextFactory)->make([
+            'object_profile' => [
+                'object_type' => 'house',
+                'area' => 180,
+                'description' => str_repeat('Two-storey individual house ', 40),
+            ],
+            'building_model' => [
+                'unit' => 'm',
+                'floors' => array_fill(0, 2, ['rooms' => array_fill(0, 30, ['payload' => str_repeat('room ', 80)])]),
+                'scale_status' => 'confirmed',
+            ],
+            'building_quantities' => [
+                'metrics' => ['total_area' => 180],
+                'quantities' => array_fill(0, 300, ['payload' => str_repeat('quantity ', 40)]),
+                'diagnostics' => array_fill(0, 100, ['payload' => str_repeat('diagnostic ', 40)]),
+            ],
+            'source_documents' => $documents,
+            'traceability' => ['document_source_refs' => range(1, 7), 'analysis' => str_repeat('trace ', 500)],
+            'completeness' => ['status' => 'review_required', 'scopes' => []],
+            'local_estimates' => [[
+                'key' => 'house',
+                'sections' => [['work_items' => $workItems]],
+            ]],
+        ]);
+
+        $encoded = json_encode($context, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+
+        self::assertLessThan(24_000, strlen($encoded));
+        self::assertArrayNotHasKey('text', $context['review_context']['source_documents'][0]);
+        self::assertArrayNotHasKey('quantity_takeoffs', $context['review_context']['source_documents'][0]);
+        self::assertArrayNotHasKey('quantities', $context['review_context']['building_quantities']);
+        self::assertSame(300, $context['review_context']['building_quantities']['quantity_count']);
+    }
 }
