@@ -107,7 +107,7 @@ final class ProjectDeliveryBuilder
         $baselineEnd = ! empty($schedule['baseline_end_date'])
             ? CarbonImmutable::parse((string) $schedule['baseline_end_date'])->startOfDay()
             : null;
-        $scheduleDeviation = $baselineEnd === null ? null : $baselineEnd->diffInDays($plannedEnd, false);
+        $scheduleDeviation = $baselineEnd === null ? null : (int) $baselineEnd->diffInDays($plannedEnd, false);
         $riskReasons = $this->riskReasons($facts, $scheduleDeviation);
         $forecastCompletion = ! empty($schedule['forecast_completion_date'])
             ? CarbonImmutable::parse((string) $schedule['forecast_completion_date'])->startOfDay()

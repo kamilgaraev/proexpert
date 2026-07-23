@@ -73,13 +73,17 @@ final class LegalDocumentReconciliationService
 
             $sourceType = $this->sourceType($namedSource);
             $sourceQuery = $this->sourceQuery($namedSource, $organizationId);
-            $cursor = $dryRun ? 0 : $this->cursor($organizationId, $namedSource);
+            $usesIntegerCursor = $this->usesIntegerCursor($sourceQuery->getModel());
+            $cursor = $dryRun || ! $usesIntegerCursor ? null : $this->cursor($organizationId, $namedSource);
             $lastSourceId = $cursor;
             $cursorOrganizationId = $organizationId;
             $this->unreconciled($sourceQuery, $namedSource, $sourceType)
-                ->where($sourceQuery->getModel()->qualifyColumn('id'), '>', $cursor)
+                ->when(
+                    $cursor !== null,
+                    static fn (Builder $query): Builder => $query->where($sourceQuery->getModel()->qualifyColumn('id'), '>', $cursor),
+                )
                 ->orderBy('id')
-                ->chunkById(100, function (Collection $entities) use ($namedSource, $sourceType, $dryRun, $cursorOrganizationId, &$lastSourceId, &$summary, $limit): bool {
+                ->chunkById(100, function (Collection $entities) use ($namedSource, $sourceType, $dryRun, $usesIntegerCursor, $cursorOrganizationId, &$lastSourceId, &$summary, $limit): bool {
                     $documents = LegalArchiveDocument::query()
                         ->withTrashed()
                         ->where('source_type', $sourceType)
@@ -88,7 +92,9 @@ final class LegalDocumentReconciliationService
                         ->keyBy(static fn (LegalArchiveDocument $document): string => "{$document->organization_id}:{$document->source_id}");
 
                     foreach ($entities as $entity) {
-                        $lastSourceId = (int) $entity->getKey();
+                        if ($usesIntegerCursor) {
+                            $lastSourceId = (int) $entity->getKey();
+                        }
                         $organizationId = $this->organizationId($entity);
                         $document = $documents->get("{$organizationId}:{$entity->getKey()}");
                         if ($document instanceof LegalArchiveDocument && $document->trashed()) {
@@ -125,13 +131,17 @@ final class LegalDocumentReconciliationService
                         }
 
                         if ($summary['candidates'] >= $limit) {
-                            $this->advanceCursor($cursorOrganizationId, $namedSource, $lastSourceId, $dryRun);
+                            if ($usesIntegerCursor && $lastSourceId !== null) {
+                                $this->advanceCursor($cursorOrganizationId, $namedSource, $lastSourceId, $dryRun);
+                            }
 
                             return false;
                         }
                     }
 
-                    $this->advanceCursor($cursorOrganizationId, $namedSource, $lastSourceId, $dryRun);
+                    if ($usesIntegerCursor && $lastSourceId !== null) {
+                        $this->advanceCursor($cursorOrganizationId, $namedSource, $lastSourceId, $dryRun);
+                    }
 
                     return true;
                 });
@@ -173,6 +183,11 @@ final class LegalDocumentReconciliationService
                 'last_source_id' => $lastSourceId,
                 'updated_at' => $now,
             ]);
+    }
+
+    private function usesIntegerCursor(Model $model): bool
+    {
+        return $model->getIncrementing() && $model->getKeyType() === 'int';
     }
 
     /** @return array<string, mixed> */
