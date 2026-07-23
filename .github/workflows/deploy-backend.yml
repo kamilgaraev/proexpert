@@ -474,6 +474,10 @@ jobs:
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan immutable-audit:writer-readiness
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
             ensure_onlyoffice_api_runtime_jwt_secret_alignment
+            if grep -q '^ESTIMATE_COMPLETENESS_ARBITER_ENABLED=true$' .env; then
+              docker compose exec -T api php -r 'require "vendor/autoload.php"; $app = require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); exit(config("estimate-generation.completeness_arbiter.enabled") === true ? 0 : 1);'
+              docker compose exec -T horizon php -r 'require "vendor/autoload.php"; $app = require "bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); exit(config("estimate-generation.completeness_arbiter.enabled") === true ? 0 : 1);'
+            fi
 
             for attempt in $(seq 1 24); do
               if docker compose exec -T api curl -fsS http://localhost:8000/ready >/dev/null \
