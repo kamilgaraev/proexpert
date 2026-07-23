@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationActionController;
@@ -147,7 +148,7 @@ class EstimateGenerationQueueTest extends TestCase
         $pipeline->shouldNotReceive('run');
 
         $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt', $this->snapshot($session, 'test-attempt'));
-        $job->handle($pipeline);
+        $job->handle(new RunEstimateGenerationDraft($pipeline));
 
         $session->refresh();
 
@@ -163,7 +164,7 @@ class EstimateGenerationQueueTest extends TestCase
             ->andThrow(new StaleEstimateGenerationState((int) $session->id, (int) $session->state_version));
 
         $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt', $this->snapshot($session, 'test-attempt'));
-        $job->handle($pipeline);
+        $job->handle(new RunEstimateGenerationDraft($pipeline));
 
         $session->refresh();
 
@@ -194,7 +195,7 @@ class EstimateGenerationQueueTest extends TestCase
             });
 
         $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt', $this->snapshot($session, 'test-attempt'));
-        $job->handle($pipeline);
+        $job->handle(new RunEstimateGenerationDraft($pipeline));
         self::assertStringNotContainsString(
             'notifyFinished(',
             file_get_contents(base_path('app/BusinessModules/Addons/EstimateGeneration/Jobs/GenerateEstimateDraftJob.php')),
