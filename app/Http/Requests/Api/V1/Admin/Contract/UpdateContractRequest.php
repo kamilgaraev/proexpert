@@ -2,23 +2,64 @@
 
 namespace App\Http\Requests\Api\V1\Admin\Contract;
 
-use App\DTOs\Contract\ContractDTO;
 use App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\DTOs\Contract\ContractDTO;
 use App\Enums\Contract\ContractSideTypeEnum;
-use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
 use App\Models\Contract;
 use App\Rules\ParentContractValid;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rules\Enum;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Enum;
 
 class UpdateContractRequest extends FormRequest
 {
+    private bool $scopeUpdateRequested = false;
+
     public function authorize(): bool
     {
+        $user = $this->user();
+        $routeProjectId = $this->routeProjectId();
+
+        if ($user === null) {
+            return false;
+        }
+
+        if ($routeProjectId !== null && ! $this->contractBelongsToProject($this->resolveContract(), $routeProjectId)) {
+            return false;
+        }
+
+        $baseContext = [
+            'organization_id' => (int) (
+                $this->attributes->get('current_organization_id')
+                ?? $user?->current_organization_id
+            ),
+        ];
+        $projectIds = $routeProjectId !== null ? [$routeProjectId] : [];
+        $contract = $this->resolveContract();
+
+        if ($routeProjectId !== null) {
+            $projectIds = array_merge($projectIds, $this->contractProjectIds($contract));
+            if ($this->scopeUpdateRequested && $this->requestedMultiProjectState($contract)) {
+                $projectIds = array_merge($projectIds, $this->numericProjectIds($this->input('project_ids', [])));
+            }
+        }
+
+        $authorization = app(AuthorizationService::class);
+        if ($projectIds === []) {
+            return $authorization->can($user, 'contracts.edit', $baseContext);
+        }
+
+        foreach (array_unique($projectIds) as $projectId) {
+            if (! $authorization->can($user, 'contracts.edit', $baseContext + ['project_id' => $projectId])) {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -40,22 +81,22 @@ class UpdateContractRequest extends FormRequest
                 if ($organizationId) {
                     $accessController = app(\App\Modules\Core\AccessController::class);
 
-                    if (!$accessController->hasModuleAccess($organizationId, 'procurement')) {
+                    if (! $accessController->hasModuleAccess($organizationId, 'procurement')) {
                         $validator->errors()->add('supplier_id', 'Модуль "Управление закупками" не активирован.');
                     }
 
-                    if (!$accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
+                    if (! $accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
                         $validator->errors()->add('supplier_id', 'Модуль "Базовое управление складом" не активирован.');
                     }
                 }
             }
 
-            if (!$sideType) {
+            if (! $sideType) {
                 return;
             }
 
             if ($sideType->requiresSupplier()) {
-                if (!$supplierId) {
+                if (! $supplierId) {
                     $validator->errors()->add('supplier_id', 'Для этого типа договора нужно выбрать поставщика.');
                 }
 
@@ -69,7 +110,7 @@ class UpdateContractRequest extends FormRequest
             }
 
             if ($sideType === ContractSideTypeEnum::GENERAL_CONTRACTOR_TO_CONTRACTOR) {
-                if (!$contractorId && !$isSelfExecution) {
+                if (! $contractorId && ! $isSelfExecution) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать подрядчика или включить собственные силы.');
                 }
 
@@ -79,7 +120,7 @@ class UpdateContractRequest extends FormRequest
             }
 
             if ($sideType === ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR) {
-                if (!$contractorId) {
+                if (! $contractorId) {
                     $validator->errors()->add('contractor_id', 'Для этого типа договора нужно выбрать субподрядчика.');
                 }
 
@@ -107,14 +148,44 @@ class UpdateContractRequest extends FormRequest
     public function rules(): array
     {
         $organizationId = $this->currentOrganizationId();
+        $routeProjectId = $this->routeProjectId();
+        $isMultiProject = $this->requestedMultiProjectState($this->resolveContract());
+        $projectIdRules = [
+            'sometimes',
+            'nullable',
+            'integer',
+            Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+        ];
+        $projectIdsRules = ['sometimes', 'nullable', 'array', 'min:1'];
+        $projectIdsItemRules = [
+            'integer',
+            Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+        ];
 
-        return [
-            'project_id' => [
-                'sometimes',
-                'nullable',
+        if ($routeProjectId !== null && $this->scopeUpdateRequested) {
+            $projectIdRules = [
+                $isMultiProject ? 'nullable' : 'required',
                 'integer',
                 Rule::exists('projects', 'id')->where('organization_id', $organizationId),
-            ],
+                Rule::in([$routeProjectId]),
+            ];
+            $projectIdsItemRules[] = 'distinct';
+            if ($isMultiProject) {
+                $projectIdsRules = [
+                    'required',
+                    'array',
+                    'min:1',
+                    static function (string $attribute, mixed $value, \Closure $fail) use ($routeProjectId): void {
+                        if (is_array($value) && ! in_array($routeProjectId, array_map('intval', $value), true)) {
+                            $fail(trans_message('contracts.route_project_required'));
+                        }
+                    },
+                ];
+            }
+        }
+
+        return [
+            'project_id' => $projectIdRules,
             'contract_side_type' => ['sometimes', new Enum(ContractSideTypeEnum::class)],
             'contractor_id' => [
                 'sometimes',
@@ -137,6 +208,7 @@ class UpdateContractRequest extends FormRequest
             'subject' => ['sometimes', 'nullable', 'string'],
             'work_type_category' => ['sometimes', 'nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'payment_terms' => ['sometimes', 'nullable', 'string'],
+            'delivery_terms' => ['sometimes', 'nullable', 'string'],
             'is_fixed_amount' => ['sometimes', 'nullable', 'boolean'],
             'base_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'total_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
@@ -149,16 +221,20 @@ class UpdateContractRequest extends FormRequest
             'subcontract_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'planned_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'actual_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'status' => ['sometimes', 'nullable', new Enum(ContractStatusEnum::class)],
+            'status' => ['prohibited'],
             'start_date' => ['sometimes', 'nullable', 'date'],
             'end_date' => ['sometimes', 'nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['sometimes', 'nullable', 'string'],
             'is_multi_project' => ['sometimes', 'nullable', 'boolean'],
-            'project_ids' => ['sometimes', 'nullable', 'array', 'min:1'],
-            'project_ids.*' => [
-                'integer',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
-            ],
+            'project_ids' => $projectIdsRules,
+            'project_ids.*' => $projectIdsItemRules,
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'status.prohibited' => trans_message('contracts.status_transition_only'),
         ];
     }
 
@@ -176,11 +252,11 @@ class UpdateContractRequest extends FormRequest
     private function availableContractorRule(int $organizationId): \Closure
     {
         return static function (string $attribute, mixed $value, \Closure $fail) use ($organizationId): void {
-            if (!$value) {
+            if (! $value) {
                 return;
             }
 
-            if (!app(ContractorSharingInterface::class)->canUseContractor((int) $value, $organizationId)) {
+            if (! app(ContractorSharingInterface::class)->canUseContractor((int) $value, $organizationId)) {
                 $fail(trans_message('contract.contractor_not_available'));
             }
         };
@@ -189,6 +265,12 @@ class UpdateContractRequest extends FormRequest
     protected function prepareForValidation()
     {
         $input = $this->all();
+        $routeProjectId = $this->routeProjectId();
+        $this->scopeUpdateRequested = $this->containsScopeField($input);
+
+        if ($routeProjectId !== null && $this->scopeUpdateRequested && ! array_key_exists('project_id', $input)) {
+            $input['project_id'] = $this->requestedMultiProjectState($this->resolveContract()) ? null : $routeProjectId;
+        }
 
         Log::info('UpdateContractRequest::prepareForValidation - RAW INPUT', [
             'contract_id' => $this->route('contract'),
@@ -207,6 +289,7 @@ class UpdateContractRequest extends FormRequest
             'subject',
             'work_type_category',
             'payment_terms',
+            'delivery_terms',
             'is_fixed_amount',
             'base_amount',
             'total_amount',
@@ -219,7 +302,6 @@ class UpdateContractRequest extends FormRequest
             'subcontract_amount',
             'planned_advance_amount',
             'actual_advance_amount',
-            'status',
             'start_date',
             'end_date',
             'notes',
@@ -241,7 +323,7 @@ class UpdateContractRequest extends FormRequest
             : ($contract->is_fixed_amount ?? true);
 
         return new ContractDTO(
-            project_id: $validatedData['project_id'] ?? $contract->project_id,
+            project_id: array_key_exists('project_id', $validatedData) ? $validatedData['project_id'] : $contract->project_id,
             contractor_id: array_key_exists('contractor_id', $validatedData) ? $validatedData['contractor_id'] : $contract->contractor_id,
             parent_contract_id: array_key_exists('parent_contract_id', $validatedData) ? $validatedData['parent_contract_id'] : $contract->parent_contract_id,
             number: $validatedData['number'] ?? $contract->number,
@@ -253,6 +335,7 @@ class UpdateContractRequest extends FormRequest
                 ? ContractWorkTypeCategoryEnum::from($validatedData['work_type_category'])
                 : $contract->work_type_category,
             payment_terms: array_key_exists('payment_terms', $validatedData) ? $validatedData['payment_terms'] : $contract->payment_terms,
+            delivery_terms: array_key_exists('delivery_terms', $validatedData) ? $validatedData['delivery_terms'] : $contract->delivery_terms,
             base_amount: array_key_exists('base_amount', $validatedData)
                 ? ($validatedData['base_amount'] !== null ? (float) $validatedData['base_amount'] : null)
                 : $contract->base_amount,
@@ -288,7 +371,7 @@ class UpdateContractRequest extends FormRequest
             actual_advance_amount: array_key_exists('actual_advance_amount', $validatedData)
                 ? ($validatedData['actual_advance_amount'] !== null ? (float) $validatedData['actual_advance_amount'] : null)
                 : $contract->actual_advance_amount,
-            status: isset($validatedData['status']) ? ContractStatusEnum::from($validatedData['status']) : $contract->status,
+            status: $contract->status,
             start_date: array_key_exists('start_date', $validatedData)
                 ? ($validatedData['start_date'] ? \Carbon\Carbon::parse($validatedData['start_date'])->format('Y-m-d') : null)
                 : ($contract->start_date ? $contract->start_date->format('Y-m-d') : null),
@@ -318,5 +401,60 @@ class UpdateContractRequest extends FormRequest
     private function resolveContract(): Contract
     {
         return Contract::findOrFail($this->route('contract'));
+    }
+
+    private function routeProjectId(): ?int
+    {
+        $project = $this->route('project');
+
+        if ($project instanceof Model) {
+            return (int) $project->getKey();
+        }
+
+        return $project !== null ? (int) $project : null;
+    }
+
+    private function contractBelongsToProject(Contract $contract, int $projectId): bool
+    {
+        if ((bool) $contract->is_multi_project) {
+            return $contract->projects()->whereKey($projectId)->exists();
+        }
+
+        return (int) $contract->project_id === $projectId;
+    }
+
+    /** @return array<int, int> */
+    private function contractProjectIds(Contract $contract): array
+    {
+        if ((bool) $contract->is_multi_project) {
+            return $contract->projects()->pluck('projects.id')->map(static fn (mixed $id): int => (int) $id)->all();
+        }
+
+        return $contract->project_id !== null ? [(int) $contract->project_id] : [];
+    }
+
+    /** @return array<int, int> */
+    private function numericProjectIds(mixed $projectIds): array
+    {
+        if (! is_array($projectIds)) {
+            return [];
+        }
+
+        return array_map('intval', array_filter($projectIds, 'is_numeric'));
+    }
+
+    private function requestedMultiProjectState(Contract $contract): bool
+    {
+        return $this->has('is_multi_project')
+            ? $this->boolean('is_multi_project')
+            : (bool) $contract->is_multi_project;
+    }
+
+    /** @param array<string, mixed> $input */
+    private function containsScopeField(array $input): bool
+    {
+        return array_key_exists('is_multi_project', $input)
+            || array_key_exists('project_id', $input)
+            || array_key_exists('project_ids', $input);
     }
 }

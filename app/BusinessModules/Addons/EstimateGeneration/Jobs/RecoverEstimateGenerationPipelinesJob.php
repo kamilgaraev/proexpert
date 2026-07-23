@@ -22,10 +22,12 @@ final class RecoverEstimateGenerationPipelinesJob implements ShouldQueue
 
     public int $timeout = 60;
 
+    private const QUEUE = 'estimate-generation-recovery';
+
     public function __construct()
     {
         $this->onConnection(GenerateEstimateDraftJob::CONNECTION);
-        $this->onQueue(GenerateEstimateDraftJob::QUEUE);
+        $this->onQueue(self::QUEUE);
     }
 
     public function handle(RecoverEstimateGenerationPipelines $recovery): void

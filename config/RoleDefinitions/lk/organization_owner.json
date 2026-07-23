@@ -30,7 +30,35 @@
     "erp_controls.override.approve",
     "erp_controls.sod_conflicts.view",
     "erp_controls.sod_conflicts.resolve",
-    "admin.*"
+    "admin.*",
+    "legal_archive.view",
+    "legal_archive.create",
+    "legal_archive.update",
+    "legal_archive.archive",
+    "legal_archive.audit.view",
+    "legal_archive.files.view",
+    "legal_archive.files.upload",
+    "legal_archive.files.download",
+    "legal_archive.editor.edit",
+    "legal_archive.versions.create",
+    "legal_archive.versions.manage",
+    "legal_archive.external_access.manage",
+    "legal_archive.security_recovery.manage",
+    "legal_archive.signatures.request",
+    "legal_archive.signatures.view",
+    "legal_archive.signatures.sign",
+    "legal_archive.signatures.verify",
+    "legal_archive.retention.manage",
+    "legal_archive.legal_hold.manage",
+    "legal_archive.workflow.view",
+    "legal_archive.workflow.submit",
+    "legal_archive.workflow.approve",
+    "legal_archive.workflow.reject",
+    "legal_archive.workflow.return",
+    "legal_archive.workflow.reassign",
+    "legal_archive.workflow.cancel",
+    "legal_archive.workflow_templates.manage",
+    "legal_archive.settings.manage"
   ],
   "module_permissions": {
     "projects": [
@@ -136,7 +164,15 @@
       "*"
     ],
     "estimate-generation": [
-      "*"
+      "*",
+      "estimate_generation.view",
+      "estimate_generation.create",
+      "estimate_generation.upload_documents",
+      "estimate_generation.generate",
+      "estimate_generation.review",
+      "estimate_generation.select_normative",
+      "estimate_generation.export",
+      "estimate_generation.apply"
     ],
     "procurement": [
       "*"
@@ -185,6 +221,36 @@
     ],
     "handover-acceptance": [
       "*"
+    ],
+    "legal-archive": [
+      "legal_archive.view",
+      "legal_archive.create",
+      "legal_archive.update",
+      "legal_archive.archive",
+      "legal_archive.audit.view",
+      "legal_archive.files.view",
+      "legal_archive.files.upload",
+      "legal_archive.files.download",
+      "legal_archive.editor.edit",
+      "legal_archive.versions.create",
+      "legal_archive.versions.manage",
+      "legal_archive.external_access.manage",
+      "legal_archive.security_recovery.manage",
+      "legal_archive.signatures.request",
+      "legal_archive.signatures.view",
+      "legal_archive.signatures.sign",
+      "legal_archive.signatures.verify",
+      "legal_archive.retention.manage",
+      "legal_archive.legal_hold.manage",
+      "legal_archive.workflow.view",
+      "legal_archive.workflow.submit",
+      "legal_archive.workflow.approve",
+      "legal_archive.workflow.reject",
+      "legal_archive.workflow.return",
+      "legal_archive.workflow.reassign",
+      "legal_archive.workflow.cancel",
+      "legal_archive.workflow_templates.manage",
+      "legal_archive.settings.manage"
     ]
   },
   "interface_access": [

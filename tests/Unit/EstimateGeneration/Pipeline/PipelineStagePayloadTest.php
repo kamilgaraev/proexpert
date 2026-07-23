@@ -47,6 +47,7 @@ final class PipelineStagePayloadTest extends TestCase
     {
         $data = [
             'regional_context' => ['region_id' => 16, 'price_zone_id' => 3, 'period_id' => 8],
+            'supplementary_materials' => [],
             'local_estimates' => [],
         ];
 

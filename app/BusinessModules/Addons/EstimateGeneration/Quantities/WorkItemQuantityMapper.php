@@ -17,7 +17,8 @@ final class WorkItemQuantityMapper
         if ($direct !== null) {
             if (DirectTakeoffRequiredWorkItems::contains($workItemKey)
                 && $direct->source === QuantitySource::Estimated
-                && ! ResidentialQuantityScenarioCatalog::owns($direct)) {
+                && ! ResidentialQuantityScenarioCatalog::owns($direct)
+                && ! ResidentialScopeDecisionQuantityMaterializer::owns($direct)) {
                 return null;
             }
 
@@ -193,6 +194,7 @@ final class WorkItemQuantityMapper
             'warehouse.floor_rebar' => ['sources' => [['key' => 'floor_area', 'factor' => '9']], 'unit' => 'kg'],
             'slabs.concrete' => ['sources' => [['key' => 'upper_floor_internal_area', 'factor' => '0.12']], 'unit' => 'm3'],
             'slabs.rebar' => ['sources' => [['key' => 'upper_floor_internal_area', 'factor' => '12']], 'unit' => 'kg'],
+            'slabs.formwork' => ['sources' => [['key' => 'upper_floor_internal_area', 'factor' => '1']], 'unit' => 'm2'],
             'warehouse.frame_weight' => ['sources' => [['key' => 'floor_area', 'factor' => '35']], 'unit' => 'kg'],
             'warehouse.columns', 'warehouse.beams' => ['sources' => [['key' => 'floor_area', 'factor' => '18']], 'unit' => 'kg'],
 
@@ -202,7 +204,7 @@ final class WorkItemQuantityMapper
                 ],
                 'unit' => 'm2',
             ],
-            'finish.baseboard' => $floorLength('0.40'),
+            'finish.baseboard' => $floorLength('0.80'),
             'warehouse.floor_joints' => $floorLength('0.25'),
             'stairs.railings' => $floorLength('0.08'),
             'stairs.flights' => $floorArea('0.05'),
@@ -244,7 +246,7 @@ final class WorkItemQuantityMapper
             'warehouse.lighting' => $engineeringCount('electrical', '0.08'),
             'office.network_points', 'warehouse.fire' => $engineeringCount('electrical', '0.06'),
             'sanitary.points' => $engineeringCount('water', '0.04'),
-            'sewerage.outlets' => $engineeringCount('sewer', '0.04'),
+            'sewerage.outlet_route' => $engineeringLength('sewer', '0.04'),
             'sewerage.revisions', 'sewerage.risers' => $engineeringCount('sewer', '0.015'),
             'heating.radiators' => $engineeringCount('heating', '0.06'),
             'heating.air_curtains' => $engineeringCount('heating', '0.01'),

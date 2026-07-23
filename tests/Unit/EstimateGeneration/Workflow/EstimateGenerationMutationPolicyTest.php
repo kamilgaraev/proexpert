@@ -35,6 +35,24 @@ final class EstimateGenerationMutationPolicyTest extends TestCase
     }
 
     #[Test]
+    public function cancelled_session_can_be_regenerated_with_exact_version(): void
+    {
+        $session = $this->session(EstimateGenerationStatus::Cancelled, 8);
+
+        (new EstimateGenerationMutationPolicy)->generate($session, 8);
+
+        self::assertTrue(true);
+    }
+
+    #[Test]
+    public function input_review_session_allows_geometry_confirmation(): void
+    {
+        self::assertTrue(EstimateGenerationMutationPolicy::canConfirmGeometry(
+            $this->session(EstimateGenerationStatus::InputReviewRequired, 8),
+        ));
+    }
+
+    #[Test]
     public function stale_version_is_rejected_before_state_policy(): void
     {
         $this->expectException(StaleEstimateGenerationState::class);

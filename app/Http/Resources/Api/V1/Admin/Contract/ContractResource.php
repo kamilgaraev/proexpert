@@ -188,6 +188,7 @@ class ContractResource extends JsonResource
             'work_type_category' => $workTypeCategory?->value ?? $workTypeCategoryValue,
             'work_type_category_label' => $workTypeCategory?->label(),
             'payment_terms' => $this->payment_terms,
+            'delivery_terms' => $this->delivery_terms,
             'base_amount' => $modelBaseAmount,
             'total_amount' => $totalAmountCalculated,
             'gp_percentage' => (float) ($this->gp_percentage ?? 0),
@@ -210,6 +211,9 @@ class ContractResource extends JsonResource
             'is_fixed_amount' => $this->is_fixed_amount ?? true, // По умолчанию true для обратной совместимости
             // Самоподряд (собственные силы)
             'is_self_execution' => $this->is_self_execution ?? false,
+            'legal_document_id' => $this->legal_archive_document_id === null
+                ? null
+                : (int) $this->legal_archive_document_id,
             'contractor_display_name' => $this->is_self_execution 
                 ? 'Собственные силы' 
                 : ($this->whenLoaded('contractor', fn() => $this->contractor?->name, null)),

@@ -3,10 +3,10 @@
 namespace App\Console\Commands;
 
 use App\Models\Contract;
-use App\Services\Contract\ContractStateEventService;
+use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Contract\ContractStateCalculatorService;
+use App\Services\Contract\ContractStateEventService;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 
 class SyncContractsWithEventSourcing extends Command
 {
@@ -25,7 +25,8 @@ class SyncContractsWithEventSourcing extends Command
 
     public function __construct(
         private readonly ContractStateEventService $stateService,
-        private readonly ContractStateCalculatorService $calculatorService
+        private readonly ContractStateCalculatorService $calculatorService,
+        private readonly ContractAuditedMutationService $contractMutations,
     ) {
         parent::__construct();
     }
@@ -63,6 +64,7 @@ class SyncContractsWithEventSourcing extends Command
 
         if ($contracts->isEmpty()) {
             $this->warn('⚠️  Контракты с Event Sourcing не найдены');
+
             return self::SUCCESS;
         }
 
@@ -79,7 +81,7 @@ class SyncContractsWithEventSourcing extends Command
                 // Пересчитываем состояние
                 $this->calculatorService->recalculateContractState($contract);
                 $contract->refresh();
-                
+
                 $currentState = $this->stateService->getCurrentState($contract);
                 $calculatedAmount = (float) $currentState['total_amount'];
                 $dbAmount = (float) ($contract->total_amount ?? 0);
@@ -88,20 +90,23 @@ class SyncContractsWithEventSourcing extends Command
                 if (abs($calculatedAmount - $dbAmount) > 0.01) {
                     $this->newLine();
                     $this->line("📝 Контракт ID {$contract->id} ({$contract->number}):");
-                    $this->line("   Текущая сумма: " . number_format($dbAmount, 2, '.', ' ') . " руб.");
-                    $this->line("   Расчет из событий: " . number_format($calculatedAmount, 2, '.', ' ') . " руб.");
-                    $this->line("   Разница: " . number_format($calculatedAmount - $dbAmount, 2, '.', ' ') . " руб.");
+                    $this->line('   Текущая сумма: '.number_format($dbAmount, 2, '.', ' ').' руб.');
+                    $this->line('   Расчет из событий: '.number_format($calculatedAmount, 2, '.', ' ').' руб.');
+                    $this->line('   Разница: '.number_format($calculatedAmount - $dbAmount, 2, '.', ' ').' руб.');
 
-                    if (!$dryRun) {
-                        DB::transaction(function () use ($contract, $calculatedAmount) {
-                            $contract->total_amount = $calculatedAmount;
-                            $contract->save();
-                        });
+                    if (! $dryRun) {
+                        $this->contractMutations->update(
+                            $contract,
+                            ['total_amount' => $calculatedAmount],
+                            'event_sourcing_total_synced',
+                            null,
+                            ['source_event_id' => 'event_sourcing_sync:'.(string) $contract->id.':'.hash('sha256', (string) $calculatedAmount)],
+                        );
 
-                        $this->info("   ✅ Синхронизировано");
+                        $this->info('   ✅ Синхронизировано');
                         $synced++;
                     } else {
-                        $this->warn("   🔍 Будет обновлено (dry-run)");
+                        $this->warn('   🔍 Будет обновлено (dry-run)');
                     }
                 } else {
                     $skipped++;
@@ -131,4 +136,3 @@ class SyncContractsWithEventSourcing extends Command
         return self::SUCCESS;
     }
 }
-

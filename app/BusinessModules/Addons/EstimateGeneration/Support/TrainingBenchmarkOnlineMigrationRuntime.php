@@ -99,6 +99,7 @@ final class TrainingBenchmarkOnlineMigrationRuntime
             throw new InvalidArgumentException('estimate_generation_online_migration_index_sql_invalid');
         }
         $expectedSchema = $matches['schema'] !== '' ? $matches['schema'] : 'public';
+        $this->assertNotContractTable($matches['table']);
 
         $catalog = DB::selectOne(
             "SELECT i.indisvalid, i.indisready, i.indisunique, ns.nspname AS schema_name, tbl.relname AS table_name,
@@ -147,6 +148,7 @@ final class TrainingBenchmarkOnlineMigrationRuntime
 
     public function ensureConstraint(string $table, string $name, string $definition, string $schema = 'public'): void
     {
+        $this->assertNotContractTable($table);
         $this->assertIdentifier($table);
         $this->assertIdentifier($name);
         $this->assertIdentifier($schema);
@@ -175,6 +177,7 @@ final class TrainingBenchmarkOnlineMigrationRuntime
 
     public function validateConstraint(string $table, string $name, string $schema = 'public'): void
     {
+        $this->assertNotContractTable($table);
         $this->assertIdentifier($table);
         $this->assertIdentifier($name);
         $this->assertIdentifier($schema);
@@ -190,6 +193,7 @@ final class TrainingBenchmarkOnlineMigrationRuntime
 
     public function swapValidatedConstraint(string $table, string $finalName, string $temporaryName, string $definition, string $schema = 'public'): void
     {
+        $this->assertNotContractTable($table);
         $this->ensureConstraint($table, $temporaryName, $definition, $schema);
         $this->validateConstraint($table, $temporaryName, $schema);
         DB::transaction(function () use ($schema, $table, $finalName, $temporaryName): void {
@@ -206,6 +210,13 @@ final class TrainingBenchmarkOnlineMigrationRuntime
     {
         if (preg_match('/^[a-z][a-z0-9_]{0,62}$/D', $identifier) !== 1) {
             throw new InvalidArgumentException('estimate_generation_online_migration_identifier_invalid');
+        }
+    }
+
+    private function assertNotContractTable(string $table): void
+    {
+        if ($table === 'contracts') {
+            throw new InvalidArgumentException('estimate_generation_online_migration_contract_table_forbidden');
         }
     }
 

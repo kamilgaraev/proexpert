@@ -21,7 +21,7 @@ class NormalizeAdminResponse
         if (
             $response instanceof BinaryFileResponse
             || $response instanceof StreamedResponse
-            || !$response instanceof JsonResponse
+            || ! $response instanceof JsonResponse
             || $response->getStatusCode() === Response::HTTP_NO_CONTENT
         ) {
             return $response;
@@ -31,11 +31,11 @@ class NormalizeAdminResponse
         $statusCode = $response->getStatusCode();
 
         if ($this->isStandardResponse($payload)) {
-            return $this->withNoCacheHeaders($this->normalizeStandardPayload($payload, $statusCode));
+            return $this->finalize($response, $this->normalizeStandardPayload($payload, $statusCode));
         }
 
         if ($statusCode >= Response::HTTP_BAD_REQUEST) {
-            return $this->withNoCacheHeaders(AdminResponse::error(
+            return $this->finalize($response, AdminResponse::error(
                 $this->resolveErrorMessage($payload, $statusCode),
                 $statusCode,
                 is_array($payload) ? ($payload['errors'] ?? null) : null
@@ -43,7 +43,7 @@ class NormalizeAdminResponse
         }
 
         if ($this->isLegacyPaginator($payload)) {
-            return $this->withNoCacheHeaders(AdminResponse::paginated(
+            return $this->finalize($response, AdminResponse::paginated(
                 $payload['data'] ?? [],
                 $this->extractLegacyMeta($payload),
                 $this->extractOptionalMessage($payload),
@@ -54,7 +54,7 @@ class NormalizeAdminResponse
         }
 
         if ($this->hasCollectionMeta($payload)) {
-            return $this->withNoCacheHeaders(AdminResponse::paginated(
+            return $this->finalize($response, AdminResponse::paginated(
                 $payload['data'] ?? [],
                 is_array($payload['meta']) ? $payload['meta'] : [],
                 $this->extractOptionalMessage($payload),
@@ -64,7 +64,7 @@ class NormalizeAdminResponse
             ));
         }
 
-        return $this->withNoCacheHeaders(AdminResponse::success(
+        return $this->finalize($response, AdminResponse::success(
             $this->extractSuccessData($payload),
             $this->extractOptionalMessage($payload),
             $statusCode
@@ -81,10 +81,14 @@ class NormalizeAdminResponse
     private function normalizeStandardPayload(array $payload, int $statusCode): JsonResponse
     {
         if (($payload['success'] ?? false) === false) {
+            $extra = $payload;
+            unset($extra['success'], $extra['message'], $extra['data'], $extra['error'], $extra['errors']);
+
             return AdminResponse::error(
                 (string) ($payload['message'] ?? Response::$statusTexts[$statusCode] ?? 'Error'),
                 $statusCode,
-                $payload['errors'] ?? null
+                $payload['errors'] ?? null,
+                $extra,
             );
         }
 
@@ -145,7 +149,7 @@ class NormalizeAdminResponse
 
     private function extractOptionalMessage(mixed $payload): ?string
     {
-        if (!is_array($payload)) {
+        if (! is_array($payload)) {
             return null;
         }
 
@@ -156,7 +160,7 @@ class NormalizeAdminResponse
 
     private function extractSuccessData(mixed $payload): mixed
     {
-        if (!is_array($payload)) {
+        if (! is_array($payload)) {
             return $payload;
         }
 
@@ -214,5 +218,15 @@ class NormalizeAdminResponse
         $response->headers->set('Expires', '0');
 
         return $response;
+    }
+
+    private function finalize(JsonResponse $original, JsonResponse $normalized): JsonResponse
+    {
+        $normalized->headers->add($original->headers->all());
+        foreach ($original->headers->getCookies() as $cookie) {
+            $normalized->headers->setCookie($cookie);
+        }
+
+        return $this->withNoCacheHeaders($normalized);
     }
 }

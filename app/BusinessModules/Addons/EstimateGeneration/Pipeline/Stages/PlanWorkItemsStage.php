@@ -4,14 +4,19 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceMaterializer;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineLeaseHeartbeat;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\AiResidentialWorkCompositionAdvisor;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\ResidentialWorkPlanReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\ResidentialScopeDecisionQuantityMaterializer;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\WorkItemQuantityResolver;
 use Illuminate\Support\Facades\Log;
 
@@ -23,7 +28,10 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private WorkPlanCompiler $compiler,
         private StageResultFactory $results,
         private AcceptedQuantityEvidenceMaterializer $acceptedEvidence,
+        private AiResidentialWorkCompositionAdvisor $compositionAdvisor,
         private WorkItemQuantityResolver $quantityResolver = new WorkItemQuantityResolver,
+        private ResidentialWorkPlanReconciler $compositionReconciler = new ResidentialWorkPlanReconciler,
+        private ResidentialScopeDecisionQuantityMaterializer $scopeDecisionQuantities = new ResidentialScopeDecisionQuantityMaterializer,
     ) {}
 
     public function stage(): ProcessingStage
@@ -32,6 +40,26 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
     }
 
     public function execute(PipelineContext $context): PipelineStageResult
+    {
+        return $this->executeStage($context);
+    }
+
+    public function executeWithHeartbeat(
+        PipelineContext $context,
+        PipelineLeaseHeartbeat $heartbeat,
+    ): PipelineStageResult
+    {
+        self::renewLease($heartbeat);
+        $result = $this->executeStage($context, $heartbeat);
+        self::renewLease($heartbeat);
+
+        return $result;
+    }
+
+    private function executeStage(
+        PipelineContext $context,
+        ?PipelineLeaseHeartbeat $heartbeat = null,
+    ): PipelineStageResult
     {
         $analysis = $context->priorOutputs->payload(ProcessingStage::UnderstandObject)['analysis'];
         $quantityOutput = $context->priorOutputs->payload(ProcessingStage::ExtractQuantities);
@@ -50,13 +78,39 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             if (! is_array($quantity)) {
                 continue;
             }
-            $typed = QuantityData::fromArray($quantity)->toArray();
-            $quantities[$typed['key']] = $typed;
+            $typed = QuantityData::fromArray($quantity);
+            $quantities[$typed->key] = $typed;
         }
         if ($quantities !== []) {
-            $analysis['document_context']['canonical_building_quantities'] = array_values($quantities);
+            $analysis['document_context']['canonical_building_quantities'] = array_map(
+                static fn (QuantityData $quantity): array => $quantity->toArray(),
+                array_values($quantities),
+            );
+        }
+        $baselinePayload = $this->compiler->compile($analysis, null, true);
+        $this->logProgress($context, 'baseline_compiled');
+        $this->renewAfterProgress($heartbeat);
+        $advice = $this->compositionAdvisor->advise($analysis, $baselinePayload, $context);
+        $this->logProgress($context, 'composition_advised');
+        $this->renewAfterProgress($heartbeat);
+        [$analysis, $quantities] = $this->materializeScopeDecisionQuantities(
+            $analysis,
+            $quantities,
+            $advice->scopeDecisions,
+        );
+        if ($advice->scopeDecisions !== []) {
+            $analysis['residential_scope_decisions'] = $advice->scopeDecisions;
+        }
+        if ($quantities !== []) {
+            $analysis['document_context']['canonical_building_quantities'] = array_map(
+                static fn (QuantityData $quantity): array => $quantity->toArray(),
+                array_values($quantities),
+            );
         }
         $payload = $this->compiler->compile($analysis, null, true);
+        $payload = $this->compositionReconciler->reconcile($payload, $advice, $baselinePayload);
+        $this->logProgress($context, 'composition_reconciled');
+        $this->renewAfterProgress($heartbeat);
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
@@ -72,18 +126,50 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
                 }
             }
         }
+        $this->logProgress($context, 'quantity_evidence_materialized');
+        $this->renewAfterProgress($heartbeat);
         $regionalContext = is_array($payload['regional_context'] ?? null) ? $payload['regional_context'] : [];
-        $payload['normative_context_pin'] = $this->compiler->resolveNormativeContextPin(
-            $regionalContext,
-            $payload['local_estimates'],
-            is_string($payload['object_profile']['object_type'] ?? null)
-                ? $payload['object_profile']['object_type']
-                : null,
-        );
+        $pinStartedAt = microtime(true);
+        $pinCompleted = false;
+        try {
+            $payload['normative_context_pin'] = $this->compiler->resolveNormativeContextPin(
+                $regionalContext,
+                $payload['local_estimates'],
+                is_string($payload['object_profile']['object_type'] ?? null)
+                    ? $payload['object_profile']['object_type']
+                    : null,
+                function (string $phase, array $metadata = []) use ($context, $heartbeat): void {
+                    $this->renewAfterProgress($heartbeat);
+                    if ($this->canLog()) {
+                        Log::info('estimate_generation.normative_context_pin_progress', [
+                            'session_id' => $context->sessionId,
+                            'project_id' => $context->projectId,
+                            'phase' => $phase,
+                            ...$this->boundedProgressMetadata($metadata),
+                        ]);
+                    }
+                },
+            );
+            $pinCompleted = true;
+        } finally {
+            if ($this->canLog()) {
+                Log::info('estimate_generation.normative_context_pin_finished', [
+                    'session_id' => $context->sessionId,
+                    'project_id' => $context->projectId,
+                    'completed' => $pinCompleted,
+                    'duration_ms' => (int) round((microtime(true) - $pinStartedAt) * 1000),
+                ]);
+            }
+        }
+        $this->logProgress($context, 'normative_context_pinned');
+        $this->renewAfterProgress($heartbeat);
         if ($this->canLog()) {
             Log::info('estimate_generation.quantity_evidence_plan_outcomes', [
                 'session_id' => $context->sessionId,
                 'project_id' => $context->projectId,
+                'composition_advice_status' => $advice->status,
+                'composition_advice_model' => $advice->model,
+                'composition_advice_decisions_count' => count($advice->decisions),
                 ...$this->quantityEvidenceSummary($payload['local_estimates']),
             ]);
         }
@@ -91,6 +177,54 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         return $this->results->make($context, $this->stage(), $payload, [
             'local_estimates_count' => count($payload['local_estimates']),
         ]);
+    }
+
+    private function renewAfterProgress(?PipelineLeaseHeartbeat $heartbeat): void
+    {
+        if ($heartbeat !== null) {
+            self::renewLease($heartbeat);
+        }
+    }
+
+    /**
+     * @param  array<string, QuantityData>  $quantities
+     * @param  array<string, array<string, mixed>>  $scopeDecisions
+     * @return array{array<string, mixed>, array<string, QuantityData>}
+     */
+    private function materializeScopeDecisionQuantities(
+        array $analysis,
+        array $quantities,
+        array $scopeDecisions,
+    ): array {
+        $normalized = $analysis['normalized_building_model'] ?? null;
+        if ($scopeDecisions === [] || ! is_array($normalized)) {
+            return [$analysis, $quantities];
+        }
+
+        $materialized = $this->scopeDecisionQuantities->materialize(
+            $scopeDecisions,
+            $quantities['floor_area'] ?? null,
+            NormalizedBuildingModelData::fromArray($normalized),
+            $quantities,
+        );
+        if ($materialized === []) {
+            return [$analysis, $quantities];
+        }
+
+        foreach ($materialized as $key => $quantity) {
+            $quantities[$key] = $quantity;
+        }
+        $resolvedKeys = array_fill_keys(array_keys($materialized), true);
+        $warnings = is_array($analysis['document_context']['quantity_coverage_warnings'] ?? null)
+            ? $analysis['document_context']['quantity_coverage_warnings']
+            : [];
+        $analysis['document_context']['quantity_coverage_warnings'] = array_values(array_filter(
+            $warnings,
+            static fn (mixed $warning): bool => ! is_array($warning)
+                || ! isset($resolvedKeys[(string) ($warning['quantity_key'] ?? '')]),
+        ));
+
+        return [$analysis, $quantities];
     }
 
     private function attachCanonicalQuantity(
@@ -182,5 +316,30 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         $application = Log::getFacadeApplication();
 
         return $application !== null && $application->bound('log') && $application->bound('config');
+    }
+
+    private function logProgress(PipelineContext $context, string $phase): void
+    {
+        if ($this->canLog()) {
+            Log::info('estimate_generation.plan_work_items_progress', [
+                'session_id' => $context->sessionId,
+                'project_id' => $context->projectId,
+                'phase' => $phase,
+            ]);
+        }
+    }
+
+    /** @param array<string, mixed> $metadata @return array<string, int> */
+    private function boundedProgressMetadata(array $metadata): array
+    {
+        $allowed = ['intents_count', 'intent_index', 'candidate_count', 'norms_count', 'resource_rows_count', 'abstract_resource_rows_count', 'requirements_count', 'supplementary_materials_count'];
+        $result = [];
+        foreach ($allowed as $key) {
+            if (is_int($metadata[$key] ?? null)) {
+                $result[$key] = max(0, min($metadata[$key], 100_000));
+            }
+        }
+
+        return $result;
     }
 }

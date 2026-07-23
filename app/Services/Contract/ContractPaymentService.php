@@ -11,14 +11,15 @@ use App\Models\Contract;
 use App\Repositories\Interfaces\ContractRepositoryInterface;
 use Exception;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 
 class ContractPaymentService
 {
     public function __construct(
         private readonly ContractPaymentDocumentService $contractPaymentDocumentService,
         private readonly ContractRepositoryInterface $contractRepository,
-    ) {
-    }
+        private readonly ContractAuditedMutationService $contractMutations,
+    ) {}
 
     protected function canAccessContract(Contract $contract, int $organizationId): bool
     {
@@ -26,7 +27,7 @@ class ContractPaymentService
             return true;
         }
 
-        if (!$contract->contractor_id) {
+        if (! $contract->contractor_id) {
             return false;
         }
 
@@ -43,11 +44,11 @@ class ContractPaymentService
     {
         $contract = $this->contractRepository->find($contractId);
 
-        if (!$contract instanceof Contract) {
+        if (! $contract instanceof Contract) {
             throw new Exception("Contract with ID {$contractId} not found.");
         }
 
-        if (!$this->canAccessContract($contract, $organizationId)) {
+        if (! $this->canAccessContract($contract, $organizationId)) {
             throw new Exception("Contract with ID {$contractId} does not belong to organization {$organizationId}.");
         }
 
@@ -56,7 +57,7 @@ class ContractPaymentService
         }
 
         if ($contract->is_multi_project) {
-            if (!$contract->projects()->where('projects.id', $projectId)->exists()) {
+            if (! $contract->projects()->where('projects.id', $projectId)->exists()) {
                 throw new Exception("Multi-project contract with ID {$contractId} is not linked to project {$projectId}.");
             }
 
@@ -70,11 +71,23 @@ class ContractPaymentService
         return $contract;
     }
 
-    protected function updateActualAdvanceAmount(int $contractId): void
+    protected function updateActualAdvanceAmount(int $contractId, int $paymentId, string $reason): void
     {
-        $this->contractRepository->update($contractId, [
-            'actual_advance_amount' => $this->contractPaymentDocumentService->getAdvancePaymentsSum($contractId),
-        ]);
+        $contract = $this->contractRepository->find($contractId);
+        if (! $contract instanceof Contract) {
+            throw new Exception("Contract with ID {$contractId} not found.");
+        }
+        $this->contractMutations->update(
+            $contract,
+            ['actual_advance_amount' => $this->contractPaymentDocumentService->getAdvancePaymentsSum($contractId)],
+            'actual_advance_amount_recalculated',
+            Auth::id(),
+            [
+                'payment_id' => $paymentId,
+                'reason' => $reason,
+                'source_event_id' => 'payment:'.(string) $paymentId.':advance_total:'.$reason,
+            ],
+        );
     }
 
     public function getAllPaymentsForContract(
@@ -98,7 +111,7 @@ class ContractPaymentService
         $payment = $this->contractPaymentDocumentService->createPaidContractPayment($contract, $paymentDTO->toArray());
 
         if ($paymentDTO->payment_type->value === 'advance') {
-            $this->updateActualAdvanceAmount($contractId);
+            $this->updateActualAdvanceAmount($contractId, (int) $payment->id, 'created');
         }
 
         return $payment;
@@ -111,13 +124,13 @@ class ContractPaymentService
             ->whereKey($paymentId)
             ->first();
 
-        if (!$payment instanceof PaymentDocument) {
+        if (! $payment instanceof PaymentDocument) {
             return null;
         }
 
         $contract = $this->contractRepository->find((int) $payment->invoiceable_id);
 
-        if (!$contract instanceof Contract || !$this->canAccessContract($contract, $organizationId)) {
+        if (! $contract instanceof Contract || ! $this->canAccessContract($contract, $organizationId)) {
             throw new Exception('Payment not found or does not belong to the organization.');
         }
 
@@ -136,7 +149,7 @@ class ContractPaymentService
     ): PaymentDocument {
         $payment = $this->getPaymentById($paymentId, $contractId, $organizationId);
 
-        if (!$payment instanceof PaymentDocument) {
+        if (! $payment instanceof PaymentDocument) {
             throw new Exception('Payment not found.');
         }
 
@@ -158,7 +171,7 @@ class ContractPaymentService
         ]);
 
         if ($oldPaymentType === 'advance' || $paymentDTO->payment_type->value === 'advance') {
-            $this->updateActualAdvanceAmount((int) $payment->invoiceable_id);
+            $this->updateActualAdvanceAmount((int) $payment->invoiceable_id, (int) $payment->id, 'updated');
         }
 
         return $payment->refresh();
@@ -168,7 +181,7 @@ class ContractPaymentService
     {
         $payment = $this->getPaymentById($paymentId, $contractId, $organizationId);
 
-        if (!$payment instanceof PaymentDocument) {
+        if (! $payment instanceof PaymentDocument) {
             throw new Exception('Payment not found.');
         }
 
@@ -182,7 +195,7 @@ class ContractPaymentService
         ]);
 
         if ($result && $wasAdvancePayment) {
-            $this->updateActualAdvanceAmount($actualContractId);
+            $this->updateActualAdvanceAmount($actualContractId, (int) $payment->id, 'cancelled');
         }
 
         return $result;

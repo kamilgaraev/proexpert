@@ -39,7 +39,8 @@ final class NormativeSemanticCompatibilityService
             || ! $this->specializationCompatible($candidateTitle, $workText, $intent)
             || ! $this->separateWorkCompatible($candidateText, $workText, $intent)
             || ! $this->objectTypeCompatible($candidateTitle, $workText, $intent)
-            || ! $this->residentialEngineeringCompatible($candidateTitle, $workText, $intent)) {
+            || ! $this->residentialEngineeringCompatible($candidateTitle, $workText, $intent)
+            || ! $this->residentialElectricalSubtypeCompatible($candidateTitle, $workText, $intent)) {
             return false;
         }
 
@@ -69,6 +70,9 @@ final class NormativeSemanticCompatibilityService
             'дизельн',
             'радиоактивн',
             'ядерн',
+            'регенераторного производства',
+            'девулканизатор',
+            'синтетического каучука',
         ]));
 
         foreach ($specializedDomains as $term) {
@@ -114,6 +118,8 @@ final class NormativeSemanticCompatibilityService
             'sewer_revision_installation',
             'sewer_riser_installation',
             'sewer_outlet_installation',
+            'electrical_panel_installation',
+            'lighting_fixture_installation',
         ], true);
     }
 
@@ -130,7 +136,8 @@ final class NormativeSemanticCompatibilityService
             'пол' => ['пол', 'покрыт', 'стяжк', 'основани под покрыт'],
             'лотк' => ['лотк'],
             'заземл' => ['заземл'],
-            'розет|выключател' => ['розет', 'выключател'],
+            'розет' => ['розет'],
+            'выключател' => ['выключател'],
             'плинтус|галтел' => ['плинтус', 'галтел'],
         ];
     }
@@ -159,12 +166,16 @@ final class NormativeSemanticCompatibilityService
             'floor_preparation' => ['подготов', 'стяжк', 'подстилающ', 'основани пола'],
             'ceiling_finishing' => ['потол', 'подвесн'],
             'baseboard_installation' => ['плинтус', 'галтел'],
-            'cable_installation' => ['кабел', 'электропровод', 'проводк', 'лотк'],
+            'cable_installation' => ['кабел', 'электропровод', 'провод', 'проводк', 'лотк'],
             'cable_tray_installation' => ['лотк'],
             'grounding_installation' => ['заземл', 'заземляющ', 'электрод'],
             'socket_installation' => ['розет', 'выключател'],
+            'electrical_panel_installation' => ['щит', 'щиток'],
+            'lighting_fixture_installation' => ['светильн', 'люстр'],
             'pipe_layout' => ['труб', 'трубопровод'],
-            'heating_equipment' => ['отопл', 'радиатор', 'котел', 'конвектор', 'теплов'],
+            'heating_equipment' => ['отопл', 'отопит', 'радиатор', 'котел', 'котл', 'конвектор', 'теплов'],
+            'electric_boiler_installation_analog' => ['оборуд', 'монтаж', 'установк'],
+            'heating_emitter_installation' => ['радиатор', 'конвектор', 'отопительн прибор'],
             'ventilation_installation' => ['вентиляц', 'воздуховод'],
             'window_installation' => ['окон', 'окн', 'двер', 'ворот'],
             'door_installation' => ['двер'],
@@ -177,6 +188,31 @@ final class NormativeSemanticCompatibilityService
 
     private function actionCompatible(string $action, string $system, string $candidateTitle, string $workText): bool
     {
+        if ($action === 'electric_boiler_installation_analog') {
+            return $this->containsAny($workText, ['электрическ'])
+                && $this->containsAny($workText, ['котел', 'котл'])
+                && $this->containsAny($candidateTitle, ['оборуд', 'монтаж', 'установк'])
+                && ! $this->containsAny($candidateTitle, ['водонагревател', 'твердотопливн', 'воздушно-теплов']);
+        }
+
+        if ($action === 'heating_emitter_installation') {
+            return $this->containsAny($candidateTitle, ['радиатор', 'конвектор', 'отопительн прибор'])
+                && ! $this->containsAny($candidateTitle, ['котел', 'котл', 'тепловой узел', 'завес']);
+        }
+
+        if ($action === 'sewer_outlet_installation') {
+            return $this->containsAny($candidateTitle, ['канализац', 'трубопровод'])
+                && ! $this->containsAny($candidateTitle, ['шприц', 'протектор', 'экструз']);
+        }
+
+        if ($action === 'electrical_panel_installation') {
+            return $this->containsAny($candidateTitle, ['щит', 'щиток']);
+        }
+
+        if ($action === 'lighting_fixture_installation') {
+            return $this->containsAny($candidateTitle, ['светильн', 'люстр']);
+        }
+
         if ($action === 'window_installation') {
             if ($this->containsAny($candidateTitle, ['откос']) && ! $this->containsAny($workText, ['откос'])) {
                 return false;
@@ -222,14 +258,26 @@ final class NormativeSemanticCompatibilityService
             $explicitInstallation = $this->containsAny($candidateTitle, ['проклад', 'прокладыв', 'уклад', 'затягив', 'протяж']);
             $catalogInstallationForm = $this->containsAny($candidateTitle, ['кабел'])
                 && $this->containsAny($candidateTitle, ['по установленн конструкц', 'по установленн лотк', 'по установленным конструкциям', 'по установленным лоткам']);
+            $catalogCableFasteningForm = $this->containsAny($candidateTitle, ['кабел'])
+                && $this->containsAny($candidateTitle, ['креплен', 'ответвительн'])
+                && $this->containsAny($candidateTitle, ['скоб', 'короб']);
+            $catalogWireNetworkForm = $this->containsAny($candidateTitle, ['провод'])
+                && $this->containsAny($candidateTitle, ['магистрал', 'силов', 'группов'])
+                && $this->containsAny($candidateTitle, ['сет', 'провод'])
+                && $this->containsAny($workText, ['магистрал', 'силов', 'группов']);
 
             if ($this->containsAny($candidateTitle, ['транше'])
                 && ! $this->containsAny($workText, ['транше', 'наружн'])) {
                 return false;
             }
 
+            if ($this->containsAny($candidateTitle, ['короб', 'лоток'])
+                && ! $this->containsAny($workText, ['короб', 'лоток'])) {
+                return false;
+            }
+
             return $this->containsAny($candidateTitle, ['кабел', 'электропровод', 'провод'])
-                && ($explicitInstallation || $catalogInstallationForm);
+                && ($explicitInstallation || $catalogInstallationForm || $catalogCableFasteningForm || $catalogWireNetworkForm);
         }
 
         if ($action === 'waterproofing'
@@ -388,6 +436,44 @@ final class NormativeSemanticCompatibilityService
                 && ! $this->containsAny($candidateTitle, ['основан', 'площад', 'дно котлован', 'дно транше'])) {
                 return false;
             }
+        }
+
+        return true;
+    }
+
+    /** @param array<string, mixed> $intent */
+    private function residentialElectricalSubtypeCompatible(string $candidateTitle, string $workText, array $intent): bool
+    {
+        $action = trim((string) ($intent['action'] ?? ''));
+        if ($action === 'socket_installation') {
+            if ($this->containsAny($workText, ['розет'])) {
+                return $this->containsAny($candidateTitle, ['розет'])
+                    && ! $this->containsAny($candidateTitle, [
+                        'колонка распределительн', 'модульн коробк', 'магистрал из провод',
+                    ]);
+            }
+            if ($this->containsAny($workText, ['выключател'])) {
+                return $this->containsAny($candidateTitle, ['выключател'])
+                    && ! $this->containsAny($candidateTitle, [
+                        'центробеж', 'тахогенератор', 'пакетн', 'автоматическ', 'рубильник',
+                    ]);
+            }
+        }
+
+        if ($action === 'electrical_panel_installation'
+            && $this->containsAny($workText, ['квартирн', 'жилого дом', 'жилом дом'])) {
+            return $this->containsAny($candidateTitle, ['щит', 'щиток'])
+                && $this->containsAny($candidateTitle, ['осветительн', 'квартирн'])
+                && ! $this->containsAny($candidateTitle, [
+                    'трансформатор', 'регулятор', 'сценическ', 'шкаф ввода',
+                ]);
+        }
+
+        if ($action === 'lighting_fixture_installation'
+            && ! $this->containsAny($workText, ['уличн', 'наружн', 'вне здан'])) {
+            return ! $this->containsAny($candidateTitle, [
+                'уличн', 'вне здан', 'солнечн панел', 'автономн питан', 'антивандальн',
+            ]);
         }
 
         return true;

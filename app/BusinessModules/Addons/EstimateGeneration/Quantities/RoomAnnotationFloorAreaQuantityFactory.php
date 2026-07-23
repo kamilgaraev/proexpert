@@ -140,7 +140,16 @@ final readonly class RoomAnnotationFloorAreaQuantityFactory
             return [];
         }
 
-        $quantities = ['floor_area' => $total];
+        $items = is_array($total->formulaInputs['items'] ?? null) ? $total->formulaInputs['items'] : [];
+        $quantities = [
+            'floor_area' => $total,
+            'ceiling_area' => $this->areaQuantity(
+                'ceiling_area',
+                'document.rooms.internal_ceiling_area_sum',
+                $items,
+                $model->modelVersion,
+            ),
+        ];
         $floorItems = [];
         foreach ($model->floors as $floor) {
             if ($this->floorSource($context, $floor->rooms, $floor->evidenceIds) === 'reference') {

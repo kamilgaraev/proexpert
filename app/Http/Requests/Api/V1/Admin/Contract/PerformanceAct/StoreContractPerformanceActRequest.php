@@ -2,17 +2,27 @@
 
 namespace App\Http\Requests\Api\V1\Admin\Contract\PerformanceAct;
 
-use Illuminate\Foundation\Http\FormRequest;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\DTOs\Contract\ContractPerformanceActDTO;
+use Illuminate\Foundation\Http\FormRequest;
 
 class StoreContractPerformanceActRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        // Проверка прав на добавление акта к контракту
-        // $contract = $this->route('contract'); // Contract model instance
-        // return Auth::user()->can('addAct', $contract);
-        return true;
+        $user = $this->user();
+        $context = [
+            'organization_id' => (int) (
+                $this->attributes->get('current_organization_id')
+                ?? $user?->current_organization_id
+            ),
+        ];
+        if ($this->route('project') !== null) {
+            $context['project_id'] = (int) $this->route('project');
+        }
+
+        return $user !== null
+            && app(AuthorizationService::class)->can($user, 'contracts.performance_acts.create', $context);
     }
 
     public function rules(): array
@@ -23,7 +33,7 @@ class StoreContractPerformanceActRequest extends FormRequest
             'description' => ['nullable', 'string', 'max:1000'],
             'is_approved' => ['sometimes', 'boolean'],
             'approval_date' => ['nullable', 'date', 'after_or_equal:act_date'],
-            
+
             // Сумма акта (если нет работ - обязательна)
             'amount' => ['nullable', 'numeric', 'min:0'],
 
@@ -53,7 +63,7 @@ class StoreContractPerformanceActRequest extends FormRequest
     {
         // Получаем project_id из маршрута
         $projectId = $this->route('project') ?? null;
-        
+
         return new ContractPerformanceActDTO(
             project_id: $projectId,
             act_document_number: $this->validated('act_document_number'),
@@ -66,4 +76,4 @@ class StoreContractPerformanceActRequest extends FormRequest
             pdf_file: $this->file('pdf_file') // PDF файл акта (если загружен)
         );
     }
-} 
+}

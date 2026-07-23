@@ -8,7 +8,18 @@ final class ObjectTypeSignalClassifier
 {
     public static function isResidential(string $text): bool
     {
-        return preg_match('/(?:^|[^\p{L}\p{N}])(?:ижс|жил\p{L}*|дом|house|residential)(?=$|[^\p{L}\p{N}])/u', mb_strtolower($text)) === 1;
+        return preg_match(
+            '/(?:^|[^\p{L}\p{N}])(?:ижс|жил\p{L}*|дом|коттедж\p{L}*|таунхаус\p{L}*|особняк\p{L}*|house|cottage|townhouse|residential)(?=$|[^\p{L}\p{N}])/u',
+            mb_strtolower($text),
+        ) === 1;
+    }
+
+    public static function isIndustrial(string $text): bool
+    {
+        return preg_match(
+            '/(?:^|[^\p{L}\p{N}])(?:производствен\p{L}*|цех\p{L}*|завод\p{L}*|industrial|factory)(?=$|[^\p{L}\p{N}])/u',
+            mb_strtolower($text),
+        ) === 1;
     }
 
     public static function canonical(string $text): string
@@ -26,6 +37,9 @@ final class ObjectTypeSignalClassifier
         }
         if (preg_match('/(?:^|[^\p{L}\p{N}])(?:склад\p{L}*|warehouse)(?=$|[^\p{L}\p{N}])/u', $normalized) === 1) {
             return 'warehouse';
+        }
+        if (self::isIndustrial($normalized)) {
+            return 'industrial';
         }
 
         return $normalized;

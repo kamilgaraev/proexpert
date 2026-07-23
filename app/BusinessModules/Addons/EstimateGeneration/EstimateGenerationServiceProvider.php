@@ -41,6 +41,26 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\LaravelEstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\EloquentTargetedPackageRebuildOperationStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\EloquentTargetedPackageRebuildSessionSource;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\RunTargetedPackageRebuildOperation;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildJobScheduler;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildJobHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildSessionSource;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildExecutor;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildCommitter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\CommitTargetedPackageRebuild;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageCommitStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\EloquentTargetedPackageCommitStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageDraftWriter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageReviewUpdater;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\AdvanceTargetedPackageReviewUpdater;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationService;
+use App\BusinessModules\Addons\EstimateGeneration\Application\TargetedRebuild\TargetedPackageRebuildOperationStore;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ShadowArbiterCoordinator;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\TargetedPackageRebuildReviewer;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkGate;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
@@ -76,6 +96,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceDocumentSourc
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\DeliverEstimateGenerationFinalizationsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\LaravelTargetedPackageRebuildJobScheduler;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
@@ -94,12 +115,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\RolloutNorm
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ApprovedNormativeDatasetLookup;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EloquentApprovedNormativeDatasetLookup;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePricePriority;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePriceUpdateService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsClient;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalCatalogService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceSynchronizationService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalPriceUpdateService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceActivationService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceImportLifecycleService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceQualityService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\RegionalPriceVersionResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateImportStatisticsService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateNormativeQualityService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateResourceClassificationService;
@@ -207,7 +232,7 @@ use Illuminate\Support\ServiceProvider;
 
 class EstimateGenerationServiceProvider extends ServiceProvider
 {
-    public const MINIMUM_PIPELINE_LEASE_SECONDS = 2100;
+    public const MINIMUM_PIPELINE_LEASE_SECONDS = 2250;
 
     public function register(): void
     {
@@ -236,6 +261,69 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(EffectiveSettingsResolver::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
         ));
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\CompletenessArbiter::class,
+            static function ($app): \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\CompletenessArbiter {
+                $settings = config('estimate-generation.completeness_arbiter');
+                $settings = is_array($settings) ? $settings : [];
+                $model = trim((string) ($settings['model'] ?? 'openai/gpt-5-mini'));
+                $promptVersion = trim((string) ($settings['prompt_version'] ?? 'completeness-arbiter:v1'));
+                if (($settings['enabled'] ?? false) !== true) {
+                    return new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\DisabledCompletenessArbiter($model, $promptVersion);
+                }
+
+                return new \App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\AttemptAwareCompletenessArbiter(
+                    $app->make(RerankWireClient::class),
+                    $app->make(AiUsageStore::class),
+                    $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
+                    $model,
+                    $promptVersion,
+                    trim((string) ($settings['schema_version'] ?? 'completeness-arbiter:v1')),
+                    max(1, min(64_000, (int) ($settings['max_input_tokens'] ?? 24_000))),
+                    max(1, min(8_000, (int) ($settings['max_output_tokens'] ?? 2_000))),
+                    max(1, min(120, (int) ($settings['timeout_seconds'] ?? 20))),
+                );
+            },
+        );
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Services\Quality\Arbiter\ShadowArbiterCoordinator::class);
+        $this->app->singleton(TargetedPackageRebuildOperationStore::class, EloquentTargetedPackageRebuildOperationStore::class);
+        $this->app->singleton(TargetedPackageRebuildSessionSource::class, EloquentTargetedPackageRebuildSessionSource::class);
+        $this->app->singleton(TargetedPackageRebuildExecutor::class, TargetedPackageRebuilder::class);
+        $this->app->singleton(TargetedPackageRebuildReviewer::class, ShadowArbiterCoordinator::class);
+        $this->app->singleton(TargetedPackageCommitStore::class, EloquentTargetedPackageCommitStore::class);
+        $this->app->singleton(TargetedPackageDraftWriter::class, \App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService::class);
+        $this->app->singleton(TargetedPackageReviewUpdater::class, AdvanceTargetedPackageReviewUpdater::class);
+        $this->app->singleton(TargetedPackageRebuildCommitter::class, CommitTargetedPackageRebuild::class);
+        $this->app->singleton(TargetedPackageRebuildJobScheduler::class, LaravelTargetedPackageRebuildJobScheduler::class);
+        $this->app->singleton(TargetedPackageRebuildJobHandler::class, static function ($app): RunTargetedPackageRebuildOperation {
+            $settings = config('estimate-generation.completeness_arbiter');
+            $settings = is_array($settings) ? $settings : [];
+
+            return new RunTargetedPackageRebuildOperation(
+                $app->make(TargetedPackageRebuildOperationStore::class),
+                $app->make(TargetedPackageRebuildSessionSource::class),
+                $app->make(TargetedPackageRebuildExecutor::class),
+                $app->make(TargetedPackageRebuildReviewer::class),
+                $app->make(TargetedPackageRebuildCommitter::class),
+                ($settings['active_targeted_rebuild_enabled'] ?? false) === true,
+            );
+        });
+        $this->app->singleton(TargetedPackageRebuildOperationFactory::class);
+        $this->app->singleton(TargetedPackageRebuildOperationService::class, static function ($app): TargetedPackageRebuildOperationService {
+            $settings = config('estimate-generation.completeness_arbiter');
+            $settings = is_array($settings) ? $settings : [];
+
+            return new TargetedPackageRebuildOperationService(
+                $app->make(TargetedPackageRebuildOperationStore::class),
+                $app->make(TargetedPackageRebuildOperationFactory::class),
+                $app->make(TargetedPackageRebuildJobScheduler::class),
+                ($settings['active_targeted_rebuild_enabled'] ?? false) === true,
+            );
+        });
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Planning\WorkCompositionLlmClient::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Planning\AttemptAwareWorkCompositionLlmClient::class,
+        );
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Monitoring\EstimateGenerationDashboardRepository::class,
             \App\BusinessModules\Addons\EstimateGeneration\Monitoring\SqlEstimateGenerationDashboardRepository::class,
@@ -538,9 +626,13 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(FgiscsRegionalCatalogService::class);
         $this->app->singleton(FgiscsRegionalPriceUpdateService::class);
         $this->app->singleton(FgiscsBuildingResourcePriceSpreadsheetParser::class);
+        $this->app->singleton(FgiscsBuildingResourcePricePriority::class);
         $this->app->singleton(FgiscsBuildingResourcePriceUpdateService::class);
+        $this->app->singleton(FgiscsRegionalPriceSynchronizationService::class);
         $this->app->singleton(RegionalPriceQualityService::class);
         $this->app->singleton(RegionalPriceActivationService::class);
+        $this->app->singleton(RegionalPriceImportLifecycleService::class);
+        $this->app->singleton(RegionalPriceVersionResolver::class);
     }
 
     public function boot(): void

@@ -32,17 +32,19 @@ class ContractSideMutationService
         private readonly SelfExecutionService $selfExecutionService,
         private readonly ContractStateEventService $stateEventService,
         private readonly ContractPartySnapshotService $contractPartySnapshotService,
-    ) {
-    }
+        private readonly ContractAuditedMutationService $contractMutations,
+    ) {}
 
     public function create(
         int $organizationId,
         ContractDTO $contractDTO,
-        ?ProjectContext $projectContext = null
+        ?ProjectContext $projectContext = null,
+        ?int $actorId = null,
+        ?string $dossierCreationKey = null,
     ): Contract {
-        if ($projectContext && !$projectContext->roleConfig->canManageContracts) {
+        if ($projectContext && ! $projectContext->roleConfig->canManageContracts) {
             throw new Exception(
-                'Ваша роль "' . $projectContext->roleConfig->displayLabel . '" не позволяет создавать договоры в этом проекте'
+                'Ваша роль "'.$projectContext->roleConfig->displayLabel.'" не позволяет создавать договоры в этом проекте'
             );
         }
 
@@ -59,15 +61,16 @@ class ContractSideMutationService
             'contract_side_type' => $contractDTO->contract_side_type?->value,
             'contract_number' => $contractDTO->number,
             'project_id' => $contractDTO->project_id,
-            'user_id' => Auth::id(),
+            'user_id' => $actorId ?? Auth::id(),
             'has_project_context' => $projectContext !== null,
             'is_self_execution' => $contractDTO->is_self_execution,
         ]);
 
         $contractData = $contractDTO->toArray();
         $contractData['organization_id'] = $targetOrganizationId;
+        $contractData['dossier_creation_key'] = $dossierCreationKey;
 
-        if (!$contractDTO->is_fixed_amount && (!isset($contractData['total_amount']) || $contractData['total_amount'] === null)) {
+        if (! $contractDTO->is_fixed_amount && (! isset($contractData['total_amount']) || $contractData['total_amount'] === null)) {
             $contractData['total_amount'] = 0;
         }
 
@@ -96,16 +99,12 @@ class ContractSideMutationService
                 }
             }
 
-            DB::commit();
+            $stateEvent = $this->stateEventService->createContractCreatedEvent($contract);
+            $this->contractMutations->recordCreated($contract, $actorId ?? Auth::id(), [
+                'source_event_id' => 'contract_state_event:'.(string) $stateEvent->id,
+            ]);
 
-            try {
-                $this->stateEventService->createContractCreatedEvent($contract);
-            } catch (Exception $exception) {
-                Log::warning('Failed to create contract state event', [
-                    'contract_id' => $contract->id,
-                    'error' => $exception->getMessage(),
-                ]);
-            }
+            DB::commit();
 
             $this->logging->business('contract.created', [
                 'organization_id' => $targetOrganizationId,
@@ -115,7 +114,7 @@ class ContractSideMutationService
                 'contractor_id' => $contract->contractor_id,
                 'supplier_id' => $contract->supplier_id,
                 'contract_side_type' => $contract->contract_side_type?->value,
-                'user_id' => Auth::id(),
+                'user_id' => $actorId ?? Auth::id(),
             ]);
 
             $this->logging->audit('contract.created', [
@@ -124,7 +123,7 @@ class ContractSideMutationService
                 'contract_id' => $contract->id,
                 'contract_number' => $contract->number,
                 'transaction_type' => 'contract_created',
-                'performed_by' => Auth::id() ?? 'system',
+                'performed_by' => $actorId ?? Auth::id() ?? 'system',
                 'contract_amount' => $contract->total_amount,
             ]);
 
@@ -136,7 +135,7 @@ class ContractSideMutationService
                 'organization_id' => $targetOrganizationId,
                 'contract_number' => $contractDTO->number ?? null,
                 'error_message' => $exception->getMessage(),
-                'user_id' => Auth::id(),
+                'user_id' => $actorId ?? Auth::id(),
             ], 'error');
 
             throw $exception;
@@ -147,7 +146,7 @@ class ContractSideMutationService
     {
         $contract = $this->contractAccessService->findAccessible($contractId, $organizationId);
 
-        if (!$contract) {
+        if (! $contract) {
             throw new Exception('Contract not found.');
         }
 
@@ -179,14 +178,14 @@ class ContractSideMutationService
         $projectIds = $updateData['project_ids'] ?? null;
         unset($updateData['project_ids']);
 
-        if (!$contractDTO->is_fixed_amount && (!isset($updateData['total_amount']) || $updateData['total_amount'] === null)) {
+        if (! $contractDTO->is_fixed_amount && (! isset($updateData['total_amount']) || $updateData['total_amount'] === null)) {
             $updateData['total_amount'] = 0;
         }
 
         try {
             DB::beginTransaction();
 
-            $contract->update($updateData);
+            $this->contractMutations->update($contract, $updateData, 'update', Auth::id());
             $this->syncProjects($contract, $contractDTO, $projectIds, $targetOrganizationId);
             $this->contractPartySnapshotService->syncParties($contract->refresh(), $shouldRefreshParties);
 
@@ -263,7 +262,7 @@ class ContractSideMutationService
             ->where('organization_id', $organizationId)
             ->first();
 
-        if (!$contract) {
+        if (! $contract) {
             throw new Exception('Contract not found.');
         }
 
@@ -276,6 +275,7 @@ class ContractSideMutationService
             subject: $contract->subject,
             work_type_category: $contract->work_type_category,
             payment_terms: $contract->payment_terms,
+            delivery_terms: $contract->delivery_terms,
             base_amount: $contract->base_amount !== null ? (float) $contract->base_amount : null,
             total_amount: $contract->total_amount !== null ? (float) $contract->total_amount : null,
             gp_percentage: $contract->gp_percentage !== null ? (float) $contract->gp_percentage : null,
@@ -317,9 +317,18 @@ class ContractSideMutationService
 
         $previousSide = $contract->contract_side_type?->value;
 
-        $contract->update($payload);
+        $this->contractMutations->update(
+            $contract,
+            $payload,
+            'side_review_resolved',
+            Auth::id(),
+            afterPersist: function (Contract $mutated): array {
+                $this->contractPartySnapshotService->syncParties($mutated->refresh(), true);
+
+                return [];
+            },
+        );
         $contract->refresh();
-        $this->contractPartySnapshotService->syncParties($contract, true);
 
         $this->logging->business('contract.side_review.resolved', [
             'organization_id' => $targetOrganizationId,
@@ -361,7 +370,7 @@ class ContractSideMutationService
 
     private function shouldRefreshContractParties(Contract $contract, ContractDTO $contractDTO): bool
     {
-        if (!$contract->parties()->exists()) {
+        if (! $contract->parties()->exists()) {
             return true;
         }
 
@@ -405,7 +414,7 @@ class ContractSideMutationService
     ): ContractDTO {
         $sideType = $contractDTO->contract_side_type;
 
-        if (!$sideType instanceof ContractSideTypeEnum) {
+        if (! $sideType instanceof ContractSideTypeEnum) {
             throw new Exception('Не указан тип договора.');
         }
 
@@ -415,7 +424,7 @@ class ContractSideMutationService
         $supplierId = $contractDTO->supplier_id;
 
         if ($sideType->requiresSupplier()) {
-            if (!$supplierId) {
+            if (! $supplierId) {
                 throw new Exception('Для договора с поставщиком нужно выбрать поставщика.');
             }
 
@@ -430,7 +439,7 @@ class ContractSideMutationService
                 $contractorId = $this->resolveSelfExecutionContractorId($organizationId);
             }
 
-            if (!$contractorId) {
+            if (! $contractorId) {
                 throw new Exception('Для договора с подрядчиком нужно выбрать подрядчика.');
             }
         }
@@ -438,7 +447,7 @@ class ContractSideMutationService
         if ($sideType === ContractSideTypeEnum::CONTRACTOR_TO_SUBCONTRACTOR) {
             $supplierId = null;
 
-            if (!$contractorId) {
+            if (! $contractorId) {
                 throw new Exception('Для договора с субподрядчиком нужно выбрать субподрядчика.');
             }
         }
@@ -467,6 +476,7 @@ class ContractSideMutationService
             subject: $contractDTO->subject,
             work_type_category: $contractDTO->work_type_category,
             payment_terms: $contractDTO->payment_terms,
+            delivery_terms: $contractDTO->delivery_terms,
             base_amount: $contractDTO->base_amount,
             total_amount: $contractDTO->total_amount,
             gp_percentage: $contractDTO->gp_percentage,
@@ -502,7 +512,7 @@ class ContractSideMutationService
     {
         $project = $this->resolvePrimaryProject($contractDTO);
 
-        if (!$project) {
+        if (! $project) {
             throw new Exception(trans_message('contract.customer_counterparty_required'));
         }
 
@@ -515,7 +525,7 @@ class ContractSideMutationService
     {
         $projectId = $contractDTO->project_id;
 
-        if ($projectId === null && is_array($contractDTO->project_ids) && !empty($contractDTO->project_ids)) {
+        if ($projectId === null && is_array($contractDTO->project_ids) && ! empty($contractDTO->project_ids)) {
             $projectId = (int) $contractDTO->project_ids[0];
         }
 
@@ -541,14 +551,14 @@ class ContractSideMutationService
             ContractSideTypeEnum::SUBCONTRACTOR_TO_SUPPLIER => ['owner', 'subcontractor'],
         };
 
-        if (!in_array($role, $allowedRoles, true)) {
+        if (! in_array($role, $allowedRoles, true)) {
             throw new Exception('Текущая роль в проекте не позволяет создать договор с выбранными сторонами.');
         }
     }
 
     private function resolveSelfExecutionContractorId(int $organizationId): int
     {
-        if (!$this->selfExecutionService->canUseSelfExecution($organizationId)) {
+        if (! $this->selfExecutionService->canUseSelfExecution($organizationId)) {
             throw new Exception('Организация не может использовать собственные силы для договора.');
         }
 
@@ -569,19 +579,19 @@ class ContractSideMutationService
             ->with('sourceOrganization')
             ->find($contractorId);
 
-        if (!$contractor instanceof Contractor || !$contractor->source_organization_id) {
+        if (! $contractor instanceof Contractor || ! $contractor->source_organization_id) {
             return $contractorId;
         }
 
         $project = $this->resolvePrimaryProject($contractDTO);
 
-        if (!$project instanceof Project) {
+        if (! $project instanceof Project) {
             return $contractorId;
         }
 
         $sourceOrganizationId = (int) $contractor->source_organization_id;
 
-        if (!$this->isProjectParticipantCompatibleWithSide($project, $sourceOrganizationId, $sideType)) {
+        if (! $this->isProjectParticipantCompatibleWithSide($project, $sourceOrganizationId, $sideType)) {
             return $contractorId;
         }
 
@@ -589,7 +599,7 @@ class ContractSideMutationService
             ? $contractor->sourceOrganization
             : Organization::find($sourceOrganizationId);
 
-        if (!$sourceOrganization instanceof Organization) {
+        if (! $sourceOrganization instanceof Organization) {
             return $contractorId;
         }
 
@@ -606,14 +616,14 @@ class ContractSideMutationService
             ->where('organizations.id', $organizationId)
             ->first();
 
-        if (!$participant instanceof Organization) {
+        if (! $participant instanceof Organization) {
             return false;
         }
 
         $roleValue = $participant->pivot->role_new ?? $participant->pivot->role;
         $role = ProjectOrganizationRole::tryFrom((string) $roleValue);
 
-        if (!$role instanceof ProjectOrganizationRole) {
+        if (! $role instanceof ProjectOrganizationRole) {
             return false;
         }
 
@@ -689,7 +699,7 @@ class ContractSideMutationService
                 ->wherePivot('is_active', true)
                 ->exists();
 
-            if (!$isActiveParticipant) {
+            if (! $isActiveParticipant) {
                 throw new Exception('Некоторые проекты не принадлежат организации-владельцу договора.');
             }
         }

@@ -25,18 +25,20 @@ final class EstimateGenerationQueueBackpressureTest extends TestCase
         self::assertStringContainsString('public function rateLimitKey(): string', $source);
     }
 
-    public function test_draft_generation_job_discards_stale_pipeline_attempts_without_failure_workflow(): void
+    public function test_draft_generation_continuation_bypasses_entry_rate_limit(): void
     {
-        $source = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Jobs/GenerateEstimateDraftJob.php'));
+        $jobSource = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Jobs/GenerateEstimateDraftJob.php'));
+        $runnerSource = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Application/Generation/RunEstimateGenerationDraft.php'));
+        $recoverySource = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Application/Generation/RecoverEstimateGenerationPipelines.php'));
 
-        self::assertIsString($source);
-        self::assertStringContainsString('use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;', $source);
-        self::assertStringContainsString('} catch (StaleEstimateGenerationState) {', $source);
-        self::assertStringContainsString('if ($error instanceof StaleEstimateGenerationState) {', $source);
-        self::assertLessThan(
-            strpos($source, 'app(HandleEstimateGenerationDraftFailure::class)->handle('),
-            strpos($source, 'if ($error instanceof StaleEstimateGenerationState) {'),
-        );
+        self::assertIsString($jobSource);
+        self::assertIsString($runnerSource);
+        self::assertIsString($recoverySource);
+        self::assertStringContainsString('private readonly bool $throttleEntry = true,', $jobSource);
+        self::assertStringContainsString('if ($this->throttleEntry) {', $jobSource);
+        self::assertStringContainsString("new RateLimited('estimate-generation-drafts')", $jobSource);
+        self::assertStringContainsString('$snapshot->nextEvent(),'."\n".'            false,', $runnerSource);
+        self::assertStringContainsString("FailureExecutionSnapshot::capture(\$session, 'recover_generation_pipeline', \$attempt),"."\n".'                false,', $recoverySource);
     }
 
     public function test_document_dispatcher_and_unit_job_have_separate_backpressure(): void

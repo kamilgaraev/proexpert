@@ -50,8 +50,8 @@ final class QuantityStatementLineParser
         $quantityPattern = '(?<quantity>\d{1,7}(?:[,.]\d{1,4})?)';
         $match = [];
 
-        if (preg_match('/^(?:\d+[.)]?\s+)?(?<name>.+?)\s+' . $unitPattern . '\s+' . $quantityPattern . '\b/iu', $line, $match) !== 1) {
-            if (preg_match('/^(?:\d+[.)]?\s+)?(?<name>.+?)\s+' . $quantityPattern . '\s+' . $unitPattern . '\b/iu', $line, $match) !== 1) {
+        if (preg_match('/^(?:\d+[.)]?\s+)?(?<name>.+?)\s+'.$unitPattern.'\s+'.$quantityPattern.'\b/iu', $line, $match) !== 1) {
+            if (preg_match('/^(?:\d+[.)]?\s+)?(?<name>.+?)\s+'.$quantityPattern.'\s+'.$unitPattern.'\b/iu', $line, $match) !== 1) {
                 return null;
             }
         }
@@ -132,8 +132,8 @@ final class QuantityStatementLineParser
             $this->containsAny($normalized, ['отоп']) && $this->containsAny($normalized, ['труб', 'трубопровод']) => 'heating.pipe',
             $this->containsAny($normalized, ['водоснаб', 'хвс', 'гвс']) && $this->containsAny($normalized, ['труб', 'трубопровод']) => 'plumbing.pipe',
             $this->containsAny($normalized, ['сантех', 'унитаз', 'раков', 'душ']) => 'sanitary.points',
+            $this->containsAny($normalized, ['решетк', 'диффузор']) => 'ventilation.distribution_devices',
             $this->containsAny($normalized, ['воздуховод', 'вентиляц']) => 'ventilation.air_exchange',
-            $this->containsAny($normalized, ['решетк', 'диффузор']) => 'ventilation.office_points',
             $this->containsAny($normalized, ['ворот']) => 'openings.gates',
             $this->containsAny($normalized, ['окн']) => 'openings.windows',
             $this->containsAny($normalized, ['двер']) => 'openings.doors',
@@ -176,7 +176,7 @@ final class QuantityStatementLineParser
     }
 
     /**
-     * @param array<int, string> $needles
+     * @param  array<int, string>  $needles
      */
     private function containsAny(string $value, array $needles): bool
     {

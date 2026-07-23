@@ -420,6 +420,55 @@ final class EstimateValidationServiceTest extends TestCase
         self::assertSame('review_required', $draft['quality_summary']['status']);
     }
 
+    public function test_distinct_technological_layers_with_same_norm_and_quantity_are_not_duplicates(): void
+    {
+        $workItem = [
+            'item_type' => 'priced_work',
+            'normative_search_text' => 'устройство прокладочной изоляции в один слой',
+            'normative_rate_code' => '12-01-015-03',
+            'unit' => 'm2',
+            'quantity' => 152.955,
+            'quantity_basis' => 'Геометрия кровли',
+            'total_cost' => 15000,
+            'materials' => [['total_price' => 10000]],
+            'labor' => [['total_price' => 4500]],
+            'machinery' => [['total_price' => 500]],
+            'pricing_status' => 'calculated',
+            'normative_match' => [
+                'status' => 'matched',
+                'decision' => ['status' => 'accepted'],
+            ],
+            'source_refs' => [['document_id' => 1, 'page_number' => 1]],
+            'validation_flags' => [],
+            'confidence' => 0.88,
+        ];
+
+        $draft = $this->service()->validate($this->draft([
+            [
+                'key' => 'roof-vapor-barrier',
+                'name' => 'Пароизоляция скатной кровли',
+                'quantity_formula' => 'roof.vapor_barrier',
+                ...$workItem,
+            ],
+            [
+                'key' => 'roof-diffusion-membrane',
+                'name' => 'Укладка подкровельной диффузионной мембраны',
+                'quantity_formula' => 'roof.membrane',
+                ...$workItem,
+            ],
+        ]));
+
+        self::assertNotContains(
+            'possible_duplicate_work_item',
+            $draft['local_estimates'][0]['sections'][0]['work_items'][0]['validation_flags'],
+        );
+        self::assertNotContains(
+            'possible_duplicate_work_item',
+            $draft['local_estimates'][0]['sections'][0]['work_items'][1]['validation_flags'],
+        );
+        self::assertSame(0, $draft['quality_summary']['duplicate_work_items']);
+    }
+
     /**
      * @param  array<int, array<string, mixed>>  $workItems
      * @return array<string, mixed>

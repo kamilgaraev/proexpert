@@ -169,8 +169,17 @@ final readonly class AcceptedNormativeDecisionData
         $isSemanticSelection = in_array($policy, [
             'regional_semantic_pipe_hard_attributes_median:v1',
             'regional_semantic_metal_gutter_family_median:v1',
+            'regional_semantic_hard_attributes_median:v2',
+            'fsbc_semantic_hard_attributes_median:v2',
+            'fsnb_semantic_hard_attributes_median:v2',
+            'regional_semantic_hard_attributes_median:v3',
+            'fsbc_semantic_hard_attributes_median:v3',
+            'fsnb_semantic_hard_attributes_median:v3',
+            'regional_semantic_hard_attributes_median:v4',
+            'fsbc_semantic_hard_attributes_median:v4',
+            'fsnb_semantic_hard_attributes_median:v4',
         ], true)
-            && ($selection['price_source'] ?? null) === 'regional_catalog'
+            && self::policyMatchesPriceSource($policy, $selection['price_source'] ?? null)
             && is_string($selectedResourceCode)
             && trim($selectedResourceCode) !== '';
         $isExactGroupSelection = is_string($groupCode)
@@ -179,12 +188,29 @@ final readonly class AcceptedNormativeDecisionData
                 'regional_child_median:v1',
                 'fsbc_base_child_median:v1',
                 'fsnb_base_child_median:v1',
+                'regional_residential_converted_child_median:v1',
                 'regional_child_hard_attributes_median:v1',
                 'fsbc_base_child_hard_attributes_median:v1',
                 'fsnb_base_child_hard_attributes_median:v1',
+                'regional_child_hard_attributes_median:v2',
+                'fsbc_base_child_hard_attributes_median:v2',
+                'fsnb_base_child_hard_attributes_median:v2',
+                'fsbc_residential_converted_child_median:v1',
+                'fsnb_2022_residential_converted_child_median:v1',
             ], true)
             && self::policyMatchesPriceSource($policy, $selection['price_source'] ?? null)
             && preg_match('/^'.preg_quote($groupCode, '/').'-\d{4}$/D', $selectedResourceCode) === 1;
+        $isConvertedSelection = is_string($policy) && str_contains($policy, '_residential_converted_');
+        $hasValidConversionProvenance = ! $isConvertedSelection || (
+            is_string($selection['conversion_assumption'] ?? null)
+            && trim($selection['conversion_assumption']) !== ''
+            && is_numeric($selection['source_unit_price'] ?? null)
+            && (float) $selection['source_unit_price'] > 0
+            && is_string($selection['source_price_unit'] ?? null)
+            && trim($selection['source_price_unit']) !== ''
+            && is_numeric($selection['conversion_factor'] ?? null)
+            && (float) $selection['conversion_factor'] > 0
+        );
         if (! is_array($selection)
             || ! is_string($groupCode)
             || preg_match('/^\d{2}\.\d\.\d{2}\.\d{2}$/D', $groupCode) !== 1
@@ -197,7 +223,8 @@ final readonly class AcceptedNormativeDecisionData
             || ! is_string($selection['price_source_version'] ?? null)
             || trim($selection['price_source_version']) === ''
             || ! is_int($selection['candidates_count'] ?? null)
-            || $selection['candidates_count'] <= 0) {
+            || $selection['candidates_count'] <= 0
+            || ! $hasValidConversionProvenance) {
             throw new InvalidArgumentException('accepted_normative_project_resource_selection_invalid');
         }
     }

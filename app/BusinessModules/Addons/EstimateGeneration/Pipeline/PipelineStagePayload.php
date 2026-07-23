@@ -14,9 +14,9 @@ final readonly class PipelineStagePayload
         'understand_object' => ['analysis'],
         'extract_quantities' => ['quantity_learning_hints', 'quantity_coverage_warnings', 'building_quantities'],
         'plan_work_items' => ['object_profile', 'package_plan', 'document_requirements', 'generation_mode', 'regional_context', 'normative_context_pin', 'local_estimates'],
-        'match_normatives' => ['regional_context', 'local_estimates'],
-        'assemble_resources' => ['regional_context', 'local_estimates'],
-        'resolve_prices' => ['regional_context', 'local_estimates'],
+        'match_normatives' => ['regional_context', 'supplementary_materials', 'local_estimates'],
+        'assemble_resources' => ['regional_context', 'supplementary_materials', 'local_estimates'],
+        'resolve_prices' => ['regional_context', 'supplementary_materials', 'local_estimates'],
         'build_draft' => ['draft'],
         'validate_draft' => ['draft', 'requires_review'],
     ];
@@ -51,6 +51,7 @@ final readonly class PipelineStagePayload
     private static function assertPricedWorkItems(array $data): void
     {
         self::assertArray($data['regional_context']);
+        self::assertList($data['supplementary_materials']);
         self::assertList($data['local_estimates']);
     }
 

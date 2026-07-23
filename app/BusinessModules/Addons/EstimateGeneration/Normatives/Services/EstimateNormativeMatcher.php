@@ -489,6 +489,7 @@ class EstimateNormativeMatcher
                 'action' => $intent->action,
                 'system' => $intent->system,
                 'object' => $intent->object,
+                'object_type' => $context['object_type'] ?? null,
                 'candidate_title' => $name,
             ],
             $profile->forbiddenDomainTerms,
@@ -550,6 +551,7 @@ class EstimateNormativeMatcher
                 'path' => $norm->section?->path,
             ],
             'work_composition' => array_slice($norm->work_composition ?? [], 0, 20),
+            'object_type' => $norm->object_type,
             'score' => round($score, 2),
             'confidence' => $confidence,
             'match_reasons' => array_values(array_unique($reasons)),
@@ -598,7 +600,6 @@ class EstimateNormativeMatcher
             ->where('estimate_norm_id', $norm->id)
             ->where('resource_type', '<>', EstimateResourceType::SUMMARY->value)
             ->orderBy('id')
-            ->limit(120)
             ->get();
 
         $regionalPriceVersionId = $this->regionalPriceVersionIdFromContext($context);
@@ -630,7 +631,14 @@ class EstimateNormativeMatcher
 
         foreach ($resources as $resource) {
             $type = $resource->resource_type?->value ?? EstimateResourceType::OTHER->value;
-            $price = $this->resolvePrice($prices->get($resource->resource_code) ?? collect(), $type, (string) ($resource->unit ?? ''));
+            $isAbstractResource = $this->isAbstractResource($resource->raw_payload);
+            $price = $isAbstractResource
+                ? null
+                : $this->resolvePrice(
+                    $prices->get($resource->resource_code) ?? collect(),
+                    $type,
+                    (string) ($resource->unit ?? ''),
+                );
             $unitPrice = $this->effectiveUnitPrice($price, $type, (string) ($resource->unit ?? ''));
             $payload = [
                 'code' => $resource->resource_code,
@@ -649,6 +657,11 @@ class EstimateNormativeMatcher
                 'price_id' => $price?->id,
                 'norm_resource_id' => $resource->id,
                 'linked_resource_id' => $resource->construction_resource_id,
+                'is_abstract_resource' => $isAbstractResource,
+                'requires_project_resource_selection' => $isAbstractResource,
+                'raw_source_tag' => is_array($resource->raw_payload)
+                    ? ($resource->raw_payload['source_tag'] ?? null)
+                    : null,
                 'pricing' => $this->pricePayload($price),
             ];
 
@@ -679,6 +692,12 @@ class EstimateNormativeMatcher
         }
 
         return $grouped;
+    }
+
+    private function isAbstractResource(mixed $rawPayload): bool
+    {
+        return is_array($rawPayload)
+            && mb_strtolower(trim((string) ($rawPayload['source_tag'] ?? ''))) === 'abstractresource';
     }
 
     /**

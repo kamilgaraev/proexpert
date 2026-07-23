@@ -125,6 +125,21 @@ class MultiOrganizationRouteInventoryTest extends TestCase
                 'name' => 'api.v1.landing.multiOrganization.contracts.show',
             ],
             [
+                'method' => 'GET',
+                'uri' => 'api/v1/landing/multi-organization/legal-archive/contracts/{contractId}',
+                'name' => 'api.v1.landing.multiOrganization.legalArchive.contracts.show',
+            ],
+            [
+                'method' => 'GET',
+                'uri' => 'api/v1/landing/multi-organization/legal-archive/contracts/{contractId}/versions/{versionId}/download',
+                'name' => 'api.v1.landing.multiOrganization.legalArchive.versions.download',
+            ],
+            [
+                'method' => 'GET',
+                'uri' => 'api/v1/landing/multi-organization/legal-archive/contracts/{contractId}/versions/{versionId}/preview',
+                'name' => 'api.v1.landing.multiOrganization.legalArchive.versions.preview',
+            ],
+            [
                 'method' => 'POST',
                 'uri' => 'api/v1/landing/multi-organization/create-holding',
                 'name' => 'api.v1.landing.multiOrganization.createHolding',

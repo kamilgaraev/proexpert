@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Geometry;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
@@ -35,12 +36,7 @@ final class ConfirmBuildingGeometry
             if ($session === null || (int) $session->organization_id !== $command->organizationId || (int) $session->project_id !== $command->projectId) {
                 throw new NotFoundHttpException;
             }
-            if (! in_array($session->status, [
-                EstimateGenerationStatus::ReadyToGenerate,
-                EstimateGenerationStatus::Generating,
-                EstimateGenerationStatus::EstimateReviewRequired,
-                EstimateGenerationStatus::ReadyToApply,
-            ], true) || $session->applied_estimate_id !== null) {
+            if (! EstimateGenerationMutationPolicy::canConfirmGeometry($session) || $session->applied_estimate_id !== null) {
                 throw new InvalidArgumentException('Geometry confirmation is not allowed.');
             }
             if ((int) $session->state_version !== $command->expectedStateVersion) {

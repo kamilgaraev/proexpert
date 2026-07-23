@@ -9,7 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineEntrypoint;
 
-final readonly class RunEstimateGenerationDraft
+readonly class RunEstimateGenerationDraft
 {
     public function __construct(private DraftPipelineEntrypoint $pipeline) {}
 
@@ -41,6 +41,7 @@ final readonly class RunEstimateGenerationDraft
             $expectedStateVersion,
             $attemptId,
             $snapshot->nextEvent(),
+            false,
         )->onQueue(GenerateEstimateDraftJob::QUEUE)->afterCommit();
     }
 }

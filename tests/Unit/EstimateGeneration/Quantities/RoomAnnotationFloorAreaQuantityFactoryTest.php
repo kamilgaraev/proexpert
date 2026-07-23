@@ -284,6 +284,8 @@ final class RoomAnnotationFloorAreaQuantityFactoryTest extends TestCase
         $quantities = (new RoomAnnotationFloorAreaQuantityFactory($evidence))->makeAll($context, $model, 2);
 
         self::assertSame('192.800000', $quantities['floor_area']->amount);
+        self::assertSame('192.800000', $quantities['ceiling_area']->amount);
+        self::assertSame('document.rooms.internal_ceiling_area_sum', $quantities['ceiling_area']->formulaKey);
         self::assertSame('113.300000', $quantities['first_floor_internal_area']->amount);
         self::assertSame('79.500000', $quantities['upper_floor_internal_area']->amount);
         self::assertCount(2, $quantities['first_floor_internal_area']->evidenceIds);

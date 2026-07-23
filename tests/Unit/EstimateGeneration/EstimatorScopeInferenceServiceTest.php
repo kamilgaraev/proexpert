@@ -11,9 +11,50 @@ use ReflectionMethod;
 
 final class EstimatorScopeInferenceServiceTest extends TestCase
 {
+    public function test_route_preposition_does_not_turn_plumbing_into_ventilation(): void
+    {
+        $inferences = (new EstimatorScopeInferenceService)->inferFromDocumentPayload([
+            'id' => 12,
+            'filename' => 'engineering-plan.dwg',
+            'drawing_elements' => [[
+                'type' => 'engineering_route',
+                'label' => 'Трубопровод в помещении санузла',
+            ]],
+        ]);
+
+        self::assertCount(1, $inferences);
+        self::assertSame('plumbing', $inferences[0]['scope_type']);
+        self::assertSame('plumbing.pipe', $inferences[0]['normalized_payload']['quantity_key']);
+    }
+
+    public function test_engineering_route_codes_are_recognized_only_as_explicit_tokens(): void
+    {
+        $service = new EstimatorScopeInferenceService;
+
+        $cases = [
+            ['В1, магистраль', 'ventilation'],
+            ['Т-2 подача', 'heating'],
+            ['Э 3 розеточная сеть', 'electrical'],
+        ];
+
+        foreach ($cases as [$label, $expectedScope]) {
+            $inferences = $service->inferFromDocumentPayload([
+                'id' => 12,
+                'filename' => 'engineering-plan.dwg',
+                'drawing_elements' => [[
+                    'type' => 'engineering_route',
+                    'label' => $label,
+                ]],
+            ]);
+
+            self::assertCount(1, $inferences);
+            self::assertSame($expectedScope, $inferences[0]['scope_type'], $label);
+        }
+    }
+
     public function test_infers_scope_from_specification_quantity_takeoff(): void
     {
-        $inferences = (new EstimatorScopeInferenceService())->inferFromDocumentPayload([
+        $inferences = (new EstimatorScopeInferenceService)->inferFromDocumentPayload([
             'id' => 12,
             'filename' => 'spec.xlsx',
             'quantity_takeoffs' => [[
@@ -43,7 +84,7 @@ final class EstimatorScopeInferenceServiceTest extends TestCase
 
     public function test_uses_source_takeoff_name_as_specification_inference_title(): void
     {
-        $inferences = (new EstimatorScopeInferenceService())->inferFromDocumentPayload([
+        $inferences = (new EstimatorScopeInferenceService)->inferFromDocumentPayload([
             'id' => 12,
             'filename' => 'spec.xlsx',
             'quantity_takeoffs' => [[
@@ -73,7 +114,7 @@ final class EstimatorScopeInferenceServiceTest extends TestCase
 
     public function test_infers_work_volume_statement_scope_from_takeoff_payload(): void
     {
-        $inferences = (new EstimatorScopeInferenceService())->inferFromDocumentPayload([
+        $inferences = (new EstimatorScopeInferenceService)->inferFromDocumentPayload([
             'id' => 12,
             'filename' => 'Ведомость объемов работ.pdf',
             'quantity_takeoffs' => [[
@@ -105,7 +146,7 @@ final class EstimatorScopeInferenceServiceTest extends TestCase
 
     public function test_infers_review_quantity_from_unmapped_specification_row_element(): void
     {
-        $inferences = (new EstimatorScopeInferenceService())->inferFromDocumentPayload([
+        $inferences = (new EstimatorScopeInferenceService)->inferFromDocumentPayload([
             'id' => 12,
             'filename' => 'Ведомость объемов работ.pdf',
             'drawing_elements' => [[
@@ -146,7 +187,7 @@ final class EstimatorScopeInferenceServiceTest extends TestCase
 
     public function test_normalizes_persisted_scope_inference_shape_for_planner(): void
     {
-        $inferences = (new EstimatorScopeInferenceService())->inferFromAnalysis([
+        $inferences = (new EstimatorScopeInferenceService)->inferFromAnalysis([
             'document_context' => [
                 'scope_inferences' => [[
                     'inference_type' => 'work_volume_takeoff',
@@ -185,8 +226,8 @@ final class EstimatorScopeInferenceServiceTest extends TestCase
 
     public function test_scope_inference_persistence_attributes_match_model_contract(): void
     {
-        $service = new EstimatorScopeInferenceService();
-        $document = new EstimateGenerationDocument();
+        $service = new EstimatorScopeInferenceService;
+        $document = new EstimateGenerationDocument;
         $document->forceFill([
             'id' => 12,
             'organization_id' => 7,
@@ -235,7 +276,7 @@ final class EstimatorScopeInferenceServiceTest extends TestCase
 
     public function test_infer_from_analysis_normalizes_persisted_scope_inference_shape(): void
     {
-        $inferences = (new EstimatorScopeInferenceService())->inferFromAnalysis([
+        $inferences = (new EstimatorScopeInferenceService)->inferFromAnalysis([
             'document_context' => [
                 'scope_inferences' => [[
                     'inference_type' => 'specification_takeoff',

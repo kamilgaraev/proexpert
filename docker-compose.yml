@@ -25,7 +25,7 @@ services:
     networks:
       - prohelper-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/up || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/ready || exit 1"]
       interval: 30s
       timeout: 15s
       retries: 5
@@ -168,6 +168,26 @@ services:
       - ./storage/logs:/var/www/html/storage/logs
     networks:
       - prohelper-network
+    logging: *json-logging
+
+  clamav:
+    image: clamav/clamav:1.4.3
+    container_name: prohelper-clamav
+    restart: unless-stopped
+    environment:
+      CLAMD_STARTUP_TIMEOUT: 300
+      FRESHCLAM_CHECKS: 12
+    volumes:
+      - clamav-data:/var/lib/clamav
+      - ./docker/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+    networks:
+      - prohelper-network
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 5m
     logging: *json-logging
 
   # --- MONITORING SERVICES ---
@@ -367,6 +387,7 @@ networks:
     driver: bridge
 
 volumes:
+  clamav-data:
   grafana-data:
   prometheus-data:
   alertmanager-data:

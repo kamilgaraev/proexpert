@@ -93,17 +93,25 @@ class PackagePlannerService
         $hasOffice = $this->containsOfficeSignal($type)
             || $this->containsOfficeSignal($description);
         $planningSignals = $this->planningSignalsFromAnalysis($analysis, $description);
+        $roofType = (new RoofTypeResolver)->resolve($analysis);
+        if ($roofType !== null) {
+            $planningSignals['roof_type'] = $roofType;
+        }
         $planningSignals['generation_mode'] = $this->generationModeFromAnalysis($analysis)->value;
 
         $hasExplicitObjectType = $objectType !== '' && $objectType !== 'custom';
         $hasExplicitBuildingType = $buildingType !== '' && $buildingType !== 'custom';
 
-        if (ObjectTypeSignalClassifier::isResidential($buildingType) || ObjectTypeSignalClassifier::isResidential($type)) {
+        if (ObjectTypeSignalClassifier::isResidential($buildingType)
+            || ObjectTypeSignalClassifier::isResidential($type)
+            || ObjectTypeSignalClassifier::isResidential($description)) {
             $type = 'house';
         } elseif (str_contains($type, 'mixed_warehouse_office') || (($hasWarehouse || $hasIndustrial) && $hasOffice)) {
             $type = 'mixed_warehouse_office';
-        } elseif ($hasWarehouse || $hasIndustrial || str_contains($type, 'industrial')) {
+        } elseif ($hasWarehouse || str_contains($type, 'warehouse')) {
             $type = 'warehouse';
+        } elseif ($hasIndustrial || str_contains($type, 'industrial')) {
+            $type = 'industrial';
         } elseif (($planningSignals['plan_only_geometry'] ?? false) === true) {
             $type = 'floor_plan_geometry';
         } elseif (! $hasExplicitObjectType && ! $hasExplicitBuildingType && $this->hasDocumentQuantityEvidence($planningSignals)) {
@@ -199,7 +207,7 @@ class PackagePlannerService
 
     private function containsIndustrialObjectSignal(string $text): bool
     {
-        return preg_match('/(?:^|[^\p{L}\p{N}])(?:производствен\p{L}*|цех\p{L}*|industrial)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
+        return ObjectTypeSignalClassifier::isIndustrial($text);
     }
 
     private function containsOfficeSignal(string $text): bool
@@ -223,6 +231,7 @@ class PackagePlannerService
             $this->package('openings', 'Окна и двери', 'openings', 14, 28),
             $this->package('facade', 'Фасад', 'facade', 18, 36),
             $this->package('electrical', 'Электрика', 'electrical', 24, 50),
+            $this->package('lighting', 'Освещение', 'electrical', 8, 20),
             $this->package('plumbing', 'Водоснабжение', 'plumbing', 16, 34),
             $this->package('sewerage', 'Канализация', 'sewerage', 12, 26),
             $this->package('heating', 'Отопление', 'heating', 18, 40),
@@ -370,6 +379,7 @@ class PackagePlannerService
                 || str_starts_with($quantityKey, 'office.ceiling')
                 || str_starts_with($quantityKey, 'sanitary.tile') => $this->package('custom-finishing', 'Отделочные работы', 'finishing', 1, 20),
             str_starts_with($quantityKey, 'electrical.')
+                || str_starts_with($quantityKey, 'lighting.')
                 || str_starts_with($quantityKey, 'warehouse.lighting')
                 || str_starts_with($quantityKey, 'warehouse.low_current') => $this->package('custom-electrical', 'Электромонтажные работы', 'electrical', 1, 20),
             str_starts_with($quantityKey, 'plumbing.')

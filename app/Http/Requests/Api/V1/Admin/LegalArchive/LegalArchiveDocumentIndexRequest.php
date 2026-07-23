@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Api\V1\Admin\LegalArchive;
 
-use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use App\Services\LegalArchive\LegalArchiveDictionary;
 use Illuminate\Foundation\Http\FormRequest;
@@ -16,10 +15,7 @@ final class LegalArchiveDocumentIndexRequest extends FormRequest
     {
         $user = $this->user();
 
-        return $user instanceof User
-            && app(AuthorizationService::class)->can($user, 'legal_archive.view', [
-                'organization_id' => (int) $this->attributes->get('current_organization_id'),
-            ]);
+        return $user instanceof User;
     }
 
     public function rules(): array
@@ -40,6 +36,8 @@ final class LegalArchiveDocumentIndexRequest extends FormRequest
             'link_type' => ['nullable', 'string', Rule::in(LegalArchiveDictionary::values('link_types'))],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:100'],
+            'sort_by' => ['nullable', Rule::in(['document_date', 'created_at', 'updated_at', 'title', 'status', 'retention_until'])],
+            'sort_direction' => ['nullable', Rule::in(['asc', 'desc'])],
         ];
     }
 }

@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeH
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeIntentCandidateRanker;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeResourceRowData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PinnedNormativeCandidateFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
 use DateTimeImmutable;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
@@ -85,6 +86,128 @@ final class NormativeContextPinResolverTest extends TestCase
             11,
             [$this->semanticPrice(931, '88.1.01.01', 'Труба стальная оцинкованная 15 мм', '100', 11)],
         ));
+    }
+
+    #[Test]
+    public function semantic_project_resource_selector_uses_approved_base_pvc_window_outside_group_children(): void
+    {
+        $selection = (new AbstractResourceSemanticPriceSelector)->select(
+            'Установка оконных блоков из ПВХ профилей двухстворчатых площадью проёма до 2 м2',
+            'Блоки оконные пластиковые',
+            'м2',
+            11,
+            [
+                (object) [
+                    'price_id' => 941, 'price_resource_code' => '09.4.03.01-1000',
+                    'price_resource_name' => 'Блок оконный дерево-алюминиевый площадью до 1,5 м2',
+                    'price_unit' => 'м2', 'base_price' => '7692.10', 'regional_price_version_id' => null,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+                (object) [
+                    'price_id' => 942, 'price_resource_code' => '09.4.02.05-0042',
+                    'price_resource_name' => 'Блок оконный из ПВХ профилей двухстворчатый',
+                    'price_unit' => 'м2', 'base_price' => '11200.50', 'regional_price_version_id' => null,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+            ],
+            [42],
+        );
+
+        self::assertSame(942, $selection['row']->price_id ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v4', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function semantic_project_resource_selector_requires_exact_galvanized_duct_attributes(): void
+    {
+        $selection = (new AbstractResourceSemanticPriceSelector)->select(
+            'Прокладка воздуховодов из листовой оцинкованной стали толщиной 0,5 мм, диаметром до 200 мм',
+            'Воздуховоды металлические',
+            'м2',
+            11,
+            [
+                (object) [
+                    'price_id' => 951, 'price_resource_code' => '19.1.01.02-0013',
+                    'price_resource_name' => 'Воздуховод из листовой стали, толщина 1,0 мм, диаметр до 250 мм',
+                    'price_unit' => 'м2', 'base_price' => '2040.98', 'regional_price_version_id' => null,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+                (object) [
+                    'price_id' => 952, 'price_resource_code' => '19.1.01.01-0052',
+                    'price_resource_name' => 'Воздуховод из листовой оцинкованной стали, толщина 0,5 мм, диаметр до 200 мм',
+                    'price_unit' => 'м2', 'base_price' => '1380.25', 'regional_price_version_id' => null,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+            ],
+            [42],
+        );
+
+        self::assertSame(952, $selection['row']->price_id ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v4', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function semantic_window_selector_rejects_incompatible_leaf_count_and_opening_area(): void
+    {
+        $selection = (new AbstractResourceSemanticPriceSelector)->select(
+            'Установка оконных блоков из ПВХ профилей поворотных (откидных, поворотно-откидных) двухстворчатых с площадью проема до 2 м2',
+            'Блоки оконные пластиковые',
+            'м2',
+            11,
+            [
+                (object) [
+                    'price_id' => 961, 'price_resource_code' => '11.3.02.04-0032',
+                    'price_resource_name' => 'Блок оконный из ПВХ-профилей, трехстворчатый, площадь от 3,01 до 3,5 м2',
+                    'price_unit' => 'м2', 'base_price' => '4000', 'regional_price_version_id' => 11,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+                (object) [
+                    'price_id' => 962, 'price_resource_code' => '11.3.02.04-0021',
+                    'price_resource_name' => 'Блок оконный из ПВХ-профилей, двустворчатый, с поворотно-откидной створкой, площадь до 2 м2',
+                    'price_unit' => 'м2', 'base_price' => '5200', 'regional_price_version_id' => 11,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+                (object) [
+                    'price_id' => 963, 'price_resource_code' => '11.3.02.04-0022',
+                    'price_resource_name' => 'Блок оконный из ПВХ-профилей, двустворчатый, глухой, площадь до 2 м2',
+                    'price_unit' => 'м2', 'base_price' => '4500', 'regional_price_version_id' => 11,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+            ],
+            [42],
+        );
+
+        self::assertSame(962, $selection['row']->price_id ?? null);
+        self::assertSame('regional_semantic_hard_attributes_median:v4', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function semantic_duct_selector_rejects_fittings_for_a_straight_duct_norm(): void
+    {
+        $selection = (new AbstractResourceSemanticPriceSelector)->select(
+            'Прокладка воздуховодов из листовой оцинкованной стали толщиной 0,5 мм, диаметром до 200 мм',
+            'Воздуховоды металлические',
+            'м2',
+            11,
+            [
+                (object) [
+                    'price_id' => 971, 'price_resource_code' => '19.1.01.09-0139',
+                    'price_resource_name' => 'Изделия фасонные для воздуховодов из оцинкованной стали, толщина 0,5 мм, диаметр 125 мм',
+                    'price_unit' => 'м2', 'base_price' => '700', 'regional_price_version_id' => 11,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+                (object) [
+                    'price_id' => 972, 'price_resource_code' => '19.1.01.01-0052',
+                    'price_resource_name' => 'Воздуховод из листовой оцинкованной стали, прямой участок, толщина 0,5 мм, диаметр до 200 мм',
+                    'price_unit' => 'м2', 'base_price' => '1400', 'regional_price_version_id' => 11,
+                    'dataset_version_id' => 42, 'price_dataset_source_type' => 'fsnb_2022',
+                ],
+            ],
+            [42],
+        );
+
+        self::assertSame(972, $selection['row']->price_id ?? null);
+        self::assertSame('regional_semantic_hard_attributes_median:v4', $selection['policy'] ?? null);
     }
 
     #[Test]
@@ -172,7 +295,106 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertNotNull($selection);
         self::assertSame(2, $selection['row']->price_id);
         self::assertSame(1, $selection['candidates_count']);
-        self::assertSame('regional_child_hard_attributes_median:v1', $selection['policy']);
+        self::assertSame('regional_child_hard_attributes_median:v2', $selection['policy']);
+    }
+
+    #[Test]
+    public function abstract_window_resource_selector_rejects_a_different_frame_material(): void
+    {
+        $selection = (new AbstractNormativeResourcePriceSelector)->select(
+            '09.4.03.01',
+            11,
+            [
+                (object) [
+                    'price_id' => 1,
+                    'price_resource_code' => '09.4.03.01-0001',
+                    'price_resource_name' => 'Блок оконный дерево-алюминиевый с двойным остеклением',
+                    'base_price' => '9000',
+                    'regional_price_version_id' => 11,
+                ],
+                (object) [
+                    'price_id' => 2,
+                    'price_resource_code' => '09.4.03.01-0002',
+                    'price_resource_name' => 'Блок оконный пластиковый двухстворчатый',
+                    'base_price' => '7000',
+                    'regional_price_version_id' => 11,
+                ],
+            ],
+            [],
+            'Установка оконных блоков из ПВХ профилей двухстворчатых',
+            'Блоки оконные',
+        );
+
+        self::assertSame(2, $selection['row']->price_id ?? null);
+        self::assertSame(1, $selection['candidates_count'] ?? null);
+        self::assertSame('regional_child_hard_attributes_median:v2', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function abstract_duct_resource_selector_matches_material_thickness_and_diameter_limit(): void
+    {
+        $selection = (new AbstractNormativeResourcePriceSelector)->select(
+            '19.1.01.02',
+            11,
+            [
+                (object) [
+                    'price_id' => 1,
+                    'price_resource_code' => '19.1.01.02-0001',
+                    'price_resource_name' => 'Воздуховоды из листовой оцинкованной стали толщиной 0,5 мм, диаметром до 200 мм',
+                    'base_price' => '1200',
+                    'regional_price_version_id' => 11,
+                ],
+                (object) [
+                    'price_id' => 2,
+                    'price_resource_code' => '19.1.01.02-0002',
+                    'price_resource_name' => 'Воздуховоды из листовой стали толщиной 2,0 мм, диаметром до 560 мм',
+                    'base_price' => '2800',
+                    'regional_price_version_id' => 11,
+                ],
+            ],
+            [],
+            'Прокладка воздуховодов из листовой оцинкованной стали и алюминия толщиной 0,5 мм, диаметром до 200 мм',
+            'Воздуховоды из листовой стали',
+        );
+
+        self::assertSame(1, $selection['row']->price_id ?? null);
+        self::assertSame(1, $selection['candidates_count'] ?? null);
+        self::assertSame('regional_child_hard_attributes_median:v2', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function abstract_window_and_duct_resource_selection_fails_closed_without_compatible_child(): void
+    {
+        $selector = new AbstractNormativeResourcePriceSelector;
+
+        self::assertNull($selector->select(
+            '09.4.03.01',
+            11,
+            [(object) [
+                'price_id' => 1,
+                'price_resource_code' => '09.4.03.01-0001',
+                'price_resource_name' => 'Блок оконный дерево-алюминиевый',
+                'base_price' => '9000',
+                'regional_price_version_id' => 11,
+            ]],
+            [],
+            'Установка оконных блоков из ПВХ профилей',
+            'Блоки оконные',
+        ));
+        self::assertNull($selector->select(
+            '19.1.01.02',
+            11,
+            [(object) [
+                'price_id' => 2,
+                'price_resource_code' => '19.1.01.02-0002',
+                'price_resource_name' => 'Воздуховоды из листовой стали толщиной 2,0 мм, диаметром до 560 мм',
+                'base_price' => '2800',
+                'regional_price_version_id' => 11,
+            ]],
+            [],
+            'Прокладка воздуховодов из листовой оцинкованной стали толщиной 0,5 мм, диаметром до 200 мм',
+            'Воздуховоды из листовой стали',
+        ));
     }
 
     #[Test]
@@ -195,25 +417,55 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
-    public function abstract_clamp_group_does_not_inherit_pipe_material_and_diameter_from_norm_title(): void
+    public function abstract_clamp_group_uses_the_pipe_diameter_without_inheriting_its_material(): void
     {
         $selection = (new AbstractNormativeResourcePriceSelector)->select(
             '24.1.02.01',
             11,
-            [(object) [
-                'price_id' => 1,
-                'price_resource_code' => '24.1.02.01-0001',
-                'price_resource_name' => 'Хомут стальной для крепления труб',
-                'base_price' => '320',
-                'regional_price_version_id' => 11,
-            ]],
+            [
+                (object) [
+                    'price_id' => 1,
+                    'price_resource_code' => '24.1.02.01-0001',
+                    'price_resource_name' => 'Хомут металлический оцинкованный для крепления труб, диаметр от 20 до 24 мм',
+                    'base_price' => '80',
+                    'regional_price_version_id' => 11,
+                ],
+                (object) [
+                    'price_id' => 2,
+                    'price_resource_code' => '24.1.02.01-0020',
+                    'price_resource_name' => 'Хомут металлический оцинкованный для крепления труб, диаметр от 68 до 73 мм',
+                    'base_price' => '120',
+                    'regional_price_version_id' => 11,
+                ],
+            ],
             [],
             'Прокладка трубопроводов из полипропиленовых труб наружным диаметром 20 мм',
             'Хомуты для крепления труб',
         );
 
         self::assertSame(1, $selection['row']->price_id ?? null);
-        self::assertSame('regional_child_median:v1', $selection['policy'] ?? null);
+        self::assertSame('regional_child_hard_attributes_median:v2', $selection['policy'] ?? null);
+    }
+
+    #[Test]
+    public function abstract_clamp_group_fails_closed_when_no_candidate_fits_the_pipe_diameter(): void
+    {
+        $selection = (new AbstractNormativeResourcePriceSelector)->select(
+            '24.1.02.01',
+            11,
+            [(object) [
+                'price_id' => 2,
+                'price_resource_code' => '24.1.02.01-0020',
+                'price_resource_name' => 'Хомут металлический для крепления труб, диаметр от 68 до 73 мм',
+                'base_price' => '120',
+                'regional_price_version_id' => 11,
+            ]],
+            [],
+            'Прокладка трубопроводов наружным диаметром 20 мм',
+            'Хомуты для крепления труб',
+        );
+
+        self::assertNull($selection);
     }
 
     #[Test]
@@ -244,7 +496,7 @@ final class NormativeContextPinResolverTest extends TestCase
         );
 
         self::assertSame(2, $selection['row']->price_id ?? null);
-        self::assertSame('regional_child_hard_attributes_median:v1', $selection['policy'] ?? null);
+        self::assertSame('regional_child_hard_attributes_median:v2', $selection['policy'] ?? null);
     }
 
     #[Test]
@@ -344,6 +596,7 @@ final class NormativeContextPinResolverTest extends TestCase
                         $requested->regionId, $requested->priceZoneId, $requested->periodId,
                         $requested->regionalPriceVersionId, $requested->priceVersion,
                         [['candidate_id' => '101']], str_repeat('a', 64),
+                        [['work_item_key' => 'electrical.power_lines', 'status' => 'price_missing', 'resource' => null]],
                     )
                     : null;
             }
@@ -366,16 +619,23 @@ final class NormativeContextPinResolverTest extends TestCase
             'source' => 'document',
             'evidence_refs' => ['doc:1'],
         ]];
+        $intents[0]['work_item_key'] = 'Roof-1';
+        $intents[] = [...$intents[0], 'work_item_key' => 'roof-1'];
         $pin = $resolver->resolve($context, $intents);
 
         self::assertSame('pinned', $pin['status']);
         self::assertSame(77, $pin['dataset_id']);
         self::assertSame(11, $pin['regional_price_version_id']);
         self::assertSame([['candidate_id' => '101']], $pin['catalog_candidates']);
+        self::assertSame('electrical.power_lines', $pin['supplementary_materials'][0]['work_item_key']);
         self::assertSame('2026-07-01', $pin['applicability_date']);
+        self::assertSame(
+            ['Roof-1', 'roof-1'],
+            array_column($source->intents, 'work_item_key'),
+        );
         self::assertSame($pin, $resolver->resolve($context, $intents));
         self::assertSame(2, $source->calls);
-        self::assertSame($intents, $source->intents);
+        self::assertEquals($intents, $source->intents);
     }
 
     #[Test]
@@ -552,7 +812,7 @@ final class NormativeContextPinResolverTest extends TestCase
         ]]);
 
         self::assertSame('review_required', $pin['status']);
-        self::assertNull($pin['catalog_candidates']);
+        self::assertArrayNotHasKey('catalog_candidates', $pin);
     }
 
     #[Test]
@@ -566,16 +826,7 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("->where('id', \$requested->datasetId)", $source);
         self::assertStringContainsString("->where('prices.regional_price_version_id', \$requested->regionalPriceVersionId)", $source);
         self::assertStringContainsString("->where('status', 'active')", $source);
-        self::assertStringContainsString('->whereExists(function ($priced) use ($requested, $basePriceDatasetIds)', $source);
-        self::assertStringContainsString("->where('pin_resources.quantity', '>', 0)", $source);
-        self::assertStringContainsString("->where('pin_prices.base_price', '>', 0)", $source);
-        self::assertStringNotContainsString("->whereColumn('pin_resources.construction_resource_id', 'pin_prices.construction_resource_id')", $source);
-        self::assertStringNotContainsString("->on('pin_prices.price_type', '=', 'pin_resources.resource_type')", $source);
-        self::assertStringContainsString('->whereNotExists(function ($unpriced) use ($requested, $basePriceDatasetIds)', $source);
-        self::assertStringContainsString('->whereNotExists(function ($validPrice) use ($requested, $basePriceDatasetIds)', $source);
-        self::assertStringContainsString("->where('required_resources.quantity', '>', 0)", $source);
-        self::assertStringContainsString("->where('required_resources.resource_type', '<>', 'summary')", $source);
-        self::assertStringContainsString("required_resources.raw_payload->>'source_tag'", $source);
+        self::assertStringContainsString('prices.id = (SELECT candidate_prices.id', $source);
         self::assertStringContainsString("resources.raw_payload->>'source_tag'", $source);
         self::assertStringContainsString("raw_payload->>'source_tag'", $source);
         self::assertStringContainsString('unpriced_abstract_resources', $source);
@@ -583,15 +834,12 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("->where('positive_resources.quantity', '>', 0)", $source);
         self::assertStringContainsString('->whereNotExists(function ($negativeQuantity)', $source);
         self::assertStringContainsString("->where('negative_resources.quantity', '<', 0)", $source);
-        self::assertStringContainsString("->whereColumn('valid_prices.resource_code', 'required_resources.resource_code')", $source);
-        self::assertStringContainsString('estimate_generation_unit_conversions as valid_conversions', $source);
-        self::assertStringContainsString("->where('valid_conversions.version', 1)", $source);
-        self::assertStringContainsString("->where('valid_conversions.is_active', true)", $source);
-        self::assertStringContainsString("->where('valid_conversions.factor', '>', 0)", $source);
-        self::assertStringContainsString('pin_prices.unit IS NOT DISTINCT FROM pin_resources.unit', $source);
-        self::assertStringContainsString("REGEXP_REPLACE(COALESCE(pin_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
-        self::assertStringContainsString('valid_prices.unit IS NOT DISTINCT FROM required_resources.unit', $source);
-        self::assertStringContainsString("REGEXP_REPLACE(COALESCE(valid_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
+        self::assertStringContainsString('estimate_generation_unit_conversions AS candidate_conversions', $source);
+        self::assertStringContainsString('candidate_conversions.version = 1', $source);
+        self::assertStringContainsString('candidate_conversions.is_active = TRUE', $source);
+        self::assertStringContainsString('candidate_conversions.factor > 0', $source);
+        self::assertStringContainsString('residentialAbstractResourcePriceSelector->supportedCandidateGroups()', $source);
+        self::assertStringContainsString('residentialAbstractResourcePriceSelector->supportedUnitPairs()', $source);
         self::assertStringContainsString('candidate_prices.unit IS NOT DISTINCT FROM resources.unit', $source);
         self::assertStringContainsString("REGEXP_REPLACE(COALESCE(candidate_prices.unit, ''), '[[:space:].,-]+', '', 'g')", $source);
         self::assertStringContainsString("table('estimate_resource_prices as semantic_project_prices')", $source);
@@ -603,6 +851,10 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString("'prices.unit as price_unit'", $source);
         self::assertStringContainsString("->where('resources.quantity', '>', 0)", $source);
         self::assertStringContainsString("->where('resources.resource_type', '<>', 'summary')", $source);
+        self::assertStringContainsString('$normalResourceRowsQuery = function (int $normId)', $source);
+        self::assertStringContainsString("->where('scoped_resources.estimate_norm_id', '=', \$normId)", $source);
+        self::assertStringContainsString("->on('scoped_resources.id', '=', 'resources.id')", $source);
+        self::assertStringNotContainsString('(clone $normalResourceRowsQuery)', $source);
         self::assertStringContainsString("->where('quantity', '>', 0)", $source);
         self::assertStringContainsString('$this->ranker->select($query->all(), [$intent])', $source);
         self::assertStringContainsString("norms.search_vector @@ websearch_to_tsquery('russian', ?)", $source);
@@ -617,8 +869,6 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertStringContainsString('$fsbcBasePriceDatasetId,', $source);
         self::assertStringContainsString('$fgisLaborPriceDatasetId,', $source);
         self::assertStringContainsString('$requested->datasetId,', $source);
-        self::assertStringContainsString("->whereIn('pin_prices.dataset_version_id', \$basePriceDatasetIds)", $source);
-        self::assertStringContainsString("->whereIn('valid_prices.dataset_version_id', \$basePriceDatasetIds)", $source);
         self::assertStringContainsString('candidate_prices.dataset_version_id IN (', $source);
         self::assertStringContainsString('$basePricePlaceholders', $source);
         self::assertStringContainsString("->whereNull('regional_price_version_id')", $source);
@@ -938,6 +1188,100 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
+    public function pinned_candidate_factory_does_not_replace_a_missing_exact_code_with_a_similar_wrong_norm(): void
+    {
+        $candidates = (new PinnedNormativeCandidateFactory)->forWorkItem([[
+            'candidate_id' => 'wrong-box', 'normative_id' => 15301, 'dataset_id' => 77,
+            'dataset_version' => 'v1', 'dataset_status' => 'parsed', 'code' => '08-02-153-01',
+            'name' => 'Короб со стойками и полками для прокладки кабелей до 35 кВ',
+            'unit' => '100 м', 'section' => ['code' => '08'],
+        ]], [
+            'name' => 'Прокладка силовых линий',
+            'normative_search_text' => 'прокладка проводов силовой сети в готовых каналах сечением до 6 мм2',
+            'normative_rate_code' => '08-02-404-01',
+            'unit' => 'м',
+        ]);
+
+        self::assertSame([], $candidates);
+    }
+
+    #[Test]
+    public function pinned_candidate_factory_selects_the_piece_heating_norm_from_a_duplicate_code_collision(): void
+    {
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('heating.unit', 'residential');
+        self::assertIsArray($scenario);
+        $catalogCandidate = static fn (
+            string $candidateId,
+            int $normativeId,
+            string $name,
+            string $unit,
+        ): array => [
+            'candidate_id' => $candidateId,
+            'normative_id' => $normativeId,
+            'dataset_id' => 77,
+            'dataset_version' => 'fsnb-2022-prod',
+            'dataset_status' => 'parsed',
+            'code' => '37-01-002-01',
+            'name' => $name,
+            'unit' => $unit,
+            'section' => ['code' => '37-01-002', 'name' => 'Сосуды и аппараты'],
+            'retrieval_metadata' => ['unit_dimension' => $unit === 'шт' ? 'piece' : 'volume'],
+            'work_composition' => [],
+        ];
+        $intent = new WorkIntentData(
+            75,
+            89,
+            58,
+            'heating.unit',
+            (string) $scenario['normative_search_text'],
+            'pcs',
+            'piece',
+            'электрический котел',
+            'electric_boiler_installation_analog',
+            'engineering',
+            '37',
+            'residential',
+            'fsnb-2022-prod',
+            'parsed',
+            'RU-TA',
+            new DateTimeImmutable('2026-07-20'),
+            ['scenario:heating.unit'],
+            ['37'],
+            '37-01-002-01',
+            'heating',
+            'electric_boiler',
+            [],
+            $scenario,
+        );
+
+        $candidates = (new PinnedNormativeCandidateFactory)->forWorkItem([
+            $catalogCandidate(
+                'concrete-collision',
+                370100299,
+                'Укладка бетонной смеси кранами башенными грузоподъемностью 25 т в железобетонные блоки высотой до 5 м',
+                '100 м3',
+            ),
+            $catalogCandidate(
+                'equipment-installation',
+                370100201,
+                'Монтаж сосудов и аппаратов без механизмов в помещении, масса сосудов и аппаратов: 0,03 т',
+                'шт',
+            ),
+        ], [
+            'name' => 'Монтаж электрического котла отопления до 30 кг',
+            'normative_search_text' => (string) $scenario['normative_search_text'],
+            'normative_rate_code' => '37-01-002-01',
+            'unit' => 'pcs',
+            'specialization_scenario' => $scenario,
+        ], ['37'], $intent);
+
+        self::assertCount(1, $candidates);
+        self::assertSame(370100201, $candidates[0]->normativeId);
+        self::assertSame('шт', $candidates[0]->canonicalUnit);
+        self::assertStringContainsString('Монтаж сосудов и аппаратов', $candidates[0]->name);
+    }
+
+    #[Test]
     public function database_resource_row_uses_the_authoritative_resource_code_relation(): void
     {
         $row = (object) [
@@ -1025,13 +1369,110 @@ final class NormativeContextPinResolverTest extends TestCase
             'price_dataset_version' => null,
             'raw_source_tag' => 'AbstractResource',
             'project_resource_candidates_count' => 1,
-            'project_resource_price_policy' => 'regional_child_hard_attributes_median:v1',
+            'project_resource_price_policy' => 'regional_child_hard_attributes_median:v2',
         ]);
 
         self::assertSame(
-            'regional_child_hard_attributes_median:v1',
+            'regional_child_hard_attributes_median:v2',
             $mapped->resource['project_resource_selection']['policy'],
         );
+    }
+
+    #[Test]
+    public function converted_residential_resource_row_preserves_source_price_and_formula(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101,
+            'norm_resource_id' => 7001,
+            'construction_resource_id' => null,
+            'price_construction_resource_id' => 502,
+            'price_id' => 9001,
+            'resource_type' => 'material',
+            'resource_code' => '12.2.05.02',
+            'price_resource_code' => '12.2.05.02-1001',
+            'resource_name' => 'Плиты теплоизоляционные по проекту',
+            'price_resource_name' => 'Плиты теплоизоляционные минераловатные',
+            'unit' => 'м2',
+            'price_unit' => 'м2',
+            'quantity' => '100.000000',
+            'unit_price' => '2000.000000',
+            'regional_price_version_id' => null,
+            'price_dataset_source_type' => 'fsnb_2022',
+            'price_dataset_version' => '2026-05-07',
+            'raw_source_tag' => 'AbstractResource',
+            'project_resource_candidates_count' => 3,
+            'project_resource_price_policy' => 'fsnb_2022_residential_converted_child_median:v1',
+            'project_resource_conversion_assumption' => 'mineral_wool_thickness_m:0.20',
+            'project_resource_source_unit_price' => 10_000,
+            'project_resource_source_price_unit' => 'м3',
+            'project_resource_conversion_factor' => 0.20,
+            'project_resource_abstract_selection_rule_key' => '12-01-013-07|12.2.05.02',
+            'project_resource_abstract_selection_rule_version' => 1,
+            'project_resource_quantity_factor' => '5',
+        ]);
+
+        self::assertSame([
+            'group_code' => '12.2.05.02',
+            'selected_resource_code' => '12.2.05.02-1001',
+            'selected_resource_name' => 'Плиты теплоизоляционные минераловатные',
+            'price_source' => 'fsnb_base',
+            'price_source_version' => '2026-05-07',
+            'policy' => 'fsnb_2022_residential_converted_child_median:v1',
+            'candidates_count' => 3,
+            'conversion_assumption' => 'mineral_wool_thickness_m:0.20',
+            'source_unit_price' => '10000',
+            'source_price_unit' => 'м3',
+            'conversion_factor' => '0.2',
+            'abstract_selection_rule_key' => '12-01-013-07|12.2.05.02',
+            'abstract_selection_rule_version' => 1,
+            'quantity_factor' => '5',
+        ], $mapped->resource['project_resource_selection']);
+    }
+
+    #[Test]
+    public function converted_regional_residential_resource_row_preserves_tatarstan_price_provenance(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101,
+            'norm_resource_id' => 7001,
+            'construction_resource_id' => null,
+            'price_construction_resource_id' => 502,
+            'price_id' => 9001,
+            'resource_type' => 'material',
+            'resource_code' => '12.2.05.02',
+            'price_resource_code' => '12.2.05.02-0006',
+            'resource_name' => 'Плиты теплоизоляционные по проекту',
+            'price_resource_name' => 'Плиты теплоизоляционные минераловатные',
+            'unit' => 'м2',
+            'price_unit' => 'м2',
+            'quantity' => '100.000000',
+            'unit_price' => '1415.600000',
+            'regional_price_version_id' => 150,
+            'regional_price_version_key' => '2026-q2-ru-ta-r1',
+            'price_dataset_source_type' => 'fgiscs',
+            'price_dataset_version' => '2026-q2',
+            'raw_source_tag' => 'AbstractResource',
+            'project_resource_candidates_count' => 1,
+            'project_resource_price_policy' => 'regional_residential_converted_child_median:v1',
+            'project_resource_conversion_assumption' => 'mineral_wool_thickness_m:0.20',
+            'project_resource_source_unit_price' => 7078,
+            'project_resource_source_price_unit' => 'м3',
+            'project_resource_conversion_factor' => 0.20,
+        ]);
+
+        self::assertSame([
+            'group_code' => '12.2.05.02',
+            'selected_resource_code' => '12.2.05.02-0006',
+            'selected_resource_name' => 'Плиты теплоизоляционные минераловатные',
+            'price_source' => 'regional_catalog',
+            'price_source_version' => '2026-q2-ru-ta-r1',
+            'policy' => 'regional_residential_converted_child_median:v1',
+            'candidates_count' => 1,
+            'conversion_assumption' => 'mineral_wool_thickness_m:0.20',
+            'source_unit_price' => '7078',
+            'source_price_unit' => 'м3',
+            'conversion_factor' => '0.2',
+        ], $mapped->resource['project_resource_selection']);
     }
 
     #[Test]
@@ -1164,6 +1605,28 @@ final class NormativeContextPinResolverTest extends TestCase
 
         self::assertSame('fgis_labor_base', $mapped->resource['price_source']);
         self::assertSame('2026.2', $mapped->resource['price_source_version']);
+    }
+
+    #[Test]
+    public function database_resource_row_accepts_semantically_selected_base_project_resource(): void
+    {
+        $mapped = NormativeResourceRowData::fromDatabaseRow((object) [
+            'estimate_norm_id' => 101, 'norm_resource_id' => 7001,
+            'construction_resource_id' => null, 'price_construction_resource_id' => 812,
+            'price_id' => 9001, 'resource_type' => 'material',
+            'resource_code' => '09.4.03.01', 'price_resource_code' => '09.4.02.05-0042',
+            'resource_name' => 'Блоки оконные пластиковые',
+            'price_resource_name' => 'Блок оконный из ПВХ профилей двухстворчатый',
+            'unit' => 'м2', 'price_unit' => 'м2', 'quantity' => '100.000000', 'unit_price' => '11200.500000',
+            'regional_price_version_id' => null, 'regional_price_version_key' => null,
+            'price_dataset_source_type' => 'fsnb_2022', 'price_dataset_version' => '2026-05-07',
+            'raw_source_tag' => 'AbstractResource', 'project_resource_candidates_count' => 2,
+            'project_resource_price_policy' => 'fsnb_semantic_hard_attributes_median:v4',
+        ]);
+
+        self::assertSame('fsnb_base', $mapped->resource['price_source']);
+        self::assertSame('09.4.02.05-0042', $mapped->resource['project_resource_selection']['selected_resource_code'] ?? null);
+        self::assertSame('fsnb_semantic_hard_attributes_median:v4', $mapped->resource['project_resource_selection']['policy'] ?? null);
     }
 
     private function semanticPrice(

@@ -4,13 +4,40 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Workflow;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionOperationalSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionSnapshotData;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReadinessResult;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class SessionOperationalSnapshotDataTest extends TestCase
 {
+    #[Test]
+    public function persisted_draft_blocker_replaces_apply_status_and_next_action(): void
+    {
+        $builder = (new \ReflectionClass(BuildSessionOperationalSnapshot::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod(BuildSessionOperationalSnapshot::class, 'withPersistedBlockingIssues');
+        $ready = new ReadinessResult(
+            'ready_to_apply', true, true, [], [], [],
+            ['code' => 'apply_draft', 'message_key' => 'apply', 'message' => 'apply'],
+        );
+
+        $result = $method->invoke($builder, $ready, [
+            'draft_blocking_issues' => json_encode([[
+                'code' => 'required_scope_unresolved',
+                'message_key' => 'estimate_generation.readiness_required_scope_unresolved',
+                'message' => 'Не учтены обязательные работы',
+            ]], JSON_THROW_ON_ERROR),
+        ]);
+
+        self::assertInstanceOf(ReadinessResult::class, $result);
+        self::assertSame('draft_needs_review', $result->status);
+        self::assertFalse($result->canApply);
+        self::assertSame('review_draft', $result->nextAction['code']);
+        self::assertSame(1, $result->metrics['gate_required_scope_unresolved']);
+    }
+
     #[Test]
     public function operational_checkpoint_queries_are_scoped_to_the_active_generation_attempt(): void
     {
@@ -83,5 +110,58 @@ final class SessionOperationalSnapshotDataTest extends TestCase
             ['pages', 'facts', 'text', 'prompt', 'payload', 'storage_path', 'provider_secret'],
             array_keys($payload),
         ));
+    }
+
+    #[Test]
+    public function scope_summary_exposes_only_the_safe_boundary_without_arbiter_context(): void
+    {
+        $builder = (new \ReflectionClass(BuildSessionOperationalSnapshot::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod(BuildSessionOperationalSnapshot::class, 'scopeSummary');
+
+        $summary = $method->invoke($builder, [
+            'scope_completeness' => json_encode([
+                'status' => 'confirmed_scope_only',
+                'scopes' => [[
+                    'key' => 'heating',
+                    'title' => 'Отопление',
+                    'state' => 'unresolved',
+                    'missing_items' => ['heating.radiators'],
+                ]],
+            ], JSON_THROW_ON_ERROR),
+            'scope_budget' => json_encode([
+                'direct_costs' => 1200.0,
+                'overhead' => ['status' => 'not_calculated', 'amount' => null],
+                'profit' => ['status' => 'not_calculated', 'amount' => null],
+                'commercial_budget' => ['status' => 'not_calculated', 'amount' => null],
+                'claim' => 'confirmed_scope_only',
+            ], JSON_THROW_ON_ERROR),
+            'scope_arbiter_review' => json_encode([
+                'mode' => 'shadow',
+                'status' => 'reviewed',
+                'outcome' => 'human_review',
+                'input_hash' => 'sha256:'.str_repeat('a', 64),
+                'prompt' => 'must never be returned to the client',
+            ], JSON_THROW_ON_ERROR),
+        ]);
+
+        self::assertSame('confirmed_scope_only', $summary['completeness']['status']);
+        self::assertSame('heating', $summary['completeness']['scopes'][0]['key']);
+        self::assertArrayNotHasKey('title', $summary['completeness']['scopes'][0]);
+        self::assertSame('not_calculated', $summary['budget_scope']['overhead']['status']);
+        self::assertSame('human_review', $summary['arbiter_review']['outcome']);
+        self::assertArrayNotHasKey('prompt', $summary['arbiter_review']);
+    }
+
+    #[Test]
+    public function operational_snapshot_reads_only_the_safe_scope_fragments_from_the_draft(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Application/Sessions/BuildSessionOperationalSnapshot.php',
+        );
+
+        self::assertIsString($source);
+        self::assertStringContainsString("draft_payload #> '{completeness}', '{}'::jsonb) AS scope_completeness", $source);
+        self::assertStringContainsString("draft_payload #> '{budget_scope}', '{}'::jsonb) AS scope_budget", $source);
+        self::assertStringContainsString("draft_payload #> '{arbiter_review}', '{}'::jsonb) AS scope_arbiter_review", $source);
     }
 }

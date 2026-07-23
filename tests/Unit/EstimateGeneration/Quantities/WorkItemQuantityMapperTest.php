@@ -82,6 +82,7 @@ final class WorkItemQuantityMapperTest extends TestCase
         self::assertContains('preliminary_structural_from_internal_area:v1', $mapper->map('earth.trench', $quantities)?->assumptions);
         self::assertSame('16.995000', $mapper->map('foundation.concrete', $quantities)?->amount);
         self::assertSame('9.540000', $mapper->map('slabs.concrete', $quantities)?->amount);
+        self::assertSame('79.500000', $mapper->map('slabs.formwork', $quantities)?->amount);
         self::assertSame('upper_floor_internal_area', $mapper->map('slabs.concrete', $quantities)?->formulaInputs['source_quantity']['key']);
         self::assertSame('192.800000', $mapper->map('finish.floor', $quantities)?->amount);
         self::assertSame('floor_area', $mapper->map('finish.floor', $quantities)?->formulaInputs['source_quantity']['key']);
@@ -98,7 +99,7 @@ final class WorkItemQuantityMapperTest extends TestCase
         foreach ([
             'earth.plan', 'earth.trench', 'earth.backfill',
             'foundation.concrete', 'foundation.formwork', 'foundation.rebar', 'foundation.waterproofing',
-            'slabs.concrete', 'slabs.rebar', 'roof.area', 'roof.flat_area', 'roof.gutter',
+            'slabs.formwork', 'slabs.concrete', 'slabs.rebar', 'roof.area', 'roof.flat_area', 'roof.gutter',
             'openings.windows', 'openings.doors',
             'electrical.main_cable', 'electrical.power_lines', 'electrical.trays', 'lighting.lines',
             'plumbing.pipe', 'sewerage.pipe', 'heating.pipe', 'sanitary.points',
@@ -173,7 +174,7 @@ final class WorkItemQuantityMapperTest extends TestCase
 
         foreach ([
             'site.setup', 'site.geodesy', 'foundation.prep', 'sanitary.tile', 'sanitary.waterproofing',
-            'heating.radiators', 'heating.unit', 'sewerage.outlets', 'sewerage.risers',
+            'heating.radiators', 'heating.unit', 'sewerage.outlet_route', 'sewerage.risers',
             'sewerage.revisions', 'ventilation.air_exchange', 'walls.lintels',
             'earth.export', 'electrical.grounding', 'rough.floor', 'stairs.flights',
             'stairs.landings',

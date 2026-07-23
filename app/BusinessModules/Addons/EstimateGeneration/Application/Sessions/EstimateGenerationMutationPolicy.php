@@ -44,6 +44,7 @@ final class EstimateGenerationMutationPolicy
             EstimateGenerationStatus::EstimateReviewRequired,
             EstimateGenerationStatus::ReadyToApply,
             EstimateGenerationStatus::Applied,
+            EstimateGenerationStatus::Cancelled,
         ], 'generate');
     }
 
@@ -69,6 +70,17 @@ final class EstimateGenerationMutationPolicy
         return in_array($session->status, self::documentStatuses(), true)
             && ($session->status !== EstimateGenerationStatus::Failed
                 || $session->resume_status === EstimateGenerationStatus::ProcessingDocuments);
+    }
+
+    public static function canConfirmGeometry(EstimateGenerationSession $session): bool
+    {
+        return in_array($session->status, [
+            EstimateGenerationStatus::InputReviewRequired,
+            EstimateGenerationStatus::ReadyToGenerate,
+            EstimateGenerationStatus::Generating,
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+        ], true);
     }
 
     /** @param list<EstimateGenerationStatus> $allowedStatuses */

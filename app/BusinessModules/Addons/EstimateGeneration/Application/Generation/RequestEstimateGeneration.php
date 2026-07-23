@@ -14,7 +14,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\SelectedRegionalPriceContext;
 use Illuminate\Support\Str;
 
 final class RequestEstimateGeneration
@@ -24,11 +26,22 @@ final class RequestEstimateGeneration
         private AdvanceEstimateGeneration $advance,
         private DocumentGenerationReadinessService $readiness,
         private EloquentSessionBuildingModelBridge $buildingModels,
+        private EstimateGenerationRegionalContextResolver $regionalContextResolver,
+        private SelectedRegionalPriceContext $selectedRegionalPriceContext,
     ) {}
 
-    public function handle(EstimateGenerationSession $session, int $expectedVersion, ?string $requestedMode): SessionActionResult
+    public function handle(
+        EstimateGenerationSession $session,
+        int $expectedVersion,
+        ?string $requestedMode,
+        ?int $selectedRegionalPriceVersionId = null,
+    ): SessionActionResult
     {
         if ($session->status === EstimateGenerationStatus::Generating) {
+            if ($selectedRegionalPriceVersionId !== null) {
+                throw new InvalidEstimateGenerationState($session->status, 'price_source_change_during_generation');
+            }
+
             if (trim((string) ($session->input_payload['generation_attempt_id'] ?? '')) === '') {
                 throw new InvalidEstimateGenerationState($session->status, 'generation_retry_without_attempt');
             }
@@ -51,9 +64,27 @@ final class RequestEstimateGeneration
                     EstimateGenerationStatus::ReadyToGenerate,
                     EstimateGenerationStatus::EstimateReviewRequired,
                     EstimateGenerationStatus::ReadyToApply,
+                    EstimateGenerationStatus::Cancelled,
                 ], ['input_payload' => [...($session->input_payload ?? []), 'generation_mode' => $generationMode]]);
             }
         }
+
+        if ($selectedRegionalPriceVersionId !== null) {
+            $session = $this->advance->update($session, [
+                EstimateGenerationStatus::Draft,
+                EstimateGenerationStatus::ProcessingDocuments,
+                EstimateGenerationStatus::ReadyToGenerate,
+                EstimateGenerationStatus::EstimateReviewRequired,
+                EstimateGenerationStatus::ReadyToApply,
+                EstimateGenerationStatus::Cancelled,
+                EstimateGenerationStatus::Applied,
+            ], ['input_payload' => $this->selectedRegionalPriceContext->replace(
+                $session->input_payload ?? [],
+                $selectedRegionalPriceVersionId,
+            )]);
+        }
+
+        $session = $this->refreshRegionalContext($session);
 
         $readiness = $this->readiness->evaluate($session->load('documents'));
         if (! $readiness['can_generate']) {
@@ -72,7 +103,7 @@ final class RequestEstimateGeneration
             return new SessionActionResult($session, false, 'estimate_generation.input_required', 422, ['documents_summary' => $readiness['summary']]);
         }
 
-        $this->buildingModels->rebuild((int) $session->getKey());
+        $this->buildingModels->rebuildForGeneration((int) $session->getKey());
         $session = $this->advance->documentsReady($session);
         $attemptId = (string) Str::uuid();
         $session = $this->advance->generationStarted($session, $attemptId, $generationInput);
@@ -86,6 +117,40 @@ final class RequestEstimateGeneration
             ->afterCommit();
 
         return new SessionActionResult($session, true, 'estimate_generation.generation_queued', 202);
+    }
+
+    private function refreshRegionalContext(EstimateGenerationSession $session): EstimateGenerationSession
+    {
+        $regionalContext = $session->input_payload['regional_context'] ?? null;
+
+        if (! is_array($regionalContext)) {
+            return $session;
+        }
+
+        $refreshedContext = [
+            ...$regionalContext,
+            ...$this->regionalContextResolver->resolve([
+                ...($session->input_payload ?? []),
+                ...$regionalContext,
+            ]),
+        ];
+
+        if ($refreshedContext === $regionalContext) {
+            return $session;
+        }
+
+        return $this->advance->update($session, [
+            EstimateGenerationStatus::Draft,
+            EstimateGenerationStatus::ProcessingDocuments,
+            EstimateGenerationStatus::ReadyToGenerate,
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+            EstimateGenerationStatus::Cancelled,
+            EstimateGenerationStatus::Applied,
+        ], ['input_payload' => [
+            ...($session->input_payload ?? []),
+            'regional_context' => $refreshedContext,
+        ]]);
     }
 
     /** @param array<string, mixed> $summary */

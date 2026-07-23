@@ -23,6 +23,7 @@ class EstimateGenerationRegionalContextResolver
         if ($selectedVersionId !== null) {
             $version = EstimateRegionalPriceVersion::query()
                 ->with(['region', 'priceZone', 'period'])
+                ->where('status', RegionalPriceStatus::ACTIVE->value)
                 ->find($selectedVersionId);
 
             if ($version !== null) {
@@ -64,6 +65,16 @@ class EstimateGenerationRegionalContextResolver
             ];
         }
 
+        $singleActiveVersion = $this->findSingleActiveVersion(
+            $priceZoneId,
+            $period?->id,
+            $period?->year,
+            $period?->quarter,
+        );
+        if ($singleActiveVersion !== null) {
+            return $this->contextFromVersion($singleActiveVersion, 'single_active');
+        }
+
         return [
             'estimate_regional_price_version_id' => null,
             'region_id' => null,
@@ -84,11 +95,7 @@ class EstimateGenerationRegionalContextResolver
         $query = EstimateRegionalPriceVersion::query()
             ->with(['region', 'priceZone', 'period'])
             ->where('region_id', $regionId)
-            ->whereIn('status', [
-                RegionalPriceStatus::ACTIVE->value,
-                RegionalPriceStatus::CHECKED->value,
-                RegionalPriceStatus::PARSED->value,
-            ]);
+            ->where('status', RegionalPriceStatus::ACTIVE->value);
 
         if ($priceZoneId !== null) {
             $query->where('price_zone_id', $priceZoneId);
@@ -103,9 +110,34 @@ class EstimateGenerationRegionalContextResolver
         }
 
         return $query
-            ->orderByRaw("CASE status WHEN 'active' THEN 0 WHEN 'checked' THEN 1 WHEN 'parsed' THEN 2 ELSE 3 END")
             ->latest('id')
             ->first();
+    }
+
+    private function findSingleActiveVersion(?int $priceZoneId, ?int $periodId, ?int $year, ?int $quarter): ?EstimateRegionalPriceVersion
+    {
+        $query = EstimateRegionalPriceVersion::query()
+            ->with(['region', 'priceZone', 'period'])
+            ->where('status', RegionalPriceStatus::ACTIVE->value);
+
+        if ($priceZoneId !== null) {
+            $query->where('price_zone_id', $priceZoneId);
+        }
+
+        if ($periodId !== null) {
+            $query->where('period_id', $periodId);
+        } elseif ($year !== null && $quarter !== null) {
+            $query->whereHas('period', static function (Builder $query) use ($year, $quarter): void {
+                $query->where('year', $year)->where('quarter', $quarter);
+            });
+        }
+
+        $versions = $query
+            ->latest('id')
+            ->limit(2)
+            ->get();
+
+        return $versions->count() === 1 ? $versions->first() : null;
     }
 
     private function detectRegion(string $text): ?EstimateRegion

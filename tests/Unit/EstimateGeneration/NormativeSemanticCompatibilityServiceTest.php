@@ -18,7 +18,83 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
         self::assertNotEmpty($service->markersForAction('insulation'));
         self::assertNotEmpty($service->markersForAction('concreting'));
         self::assertNotEmpty($service->markersForAction('fence_installation'));
+        self::assertNotEmpty($service->markersForAction('electrical_panel_installation'));
+        self::assertNotEmpty($service->markersForAction('lighting_fixture_installation'));
         self::assertSame([], $service->markersForAction('unknown_action'));
+    }
+
+    public function test_residential_electrical_devices_require_the_same_device_type(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Установка центробежных выключателей',
+            'Монтаж розеток',
+            ['scope' => 'engineering', 'system' => 'electrical', 'action' => 'socket_installation'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Установка штепсельных розеток утопленного типа',
+            'Монтаж розеток',
+            ['scope' => 'engineering', 'system' => 'electrical', 'action' => 'socket_installation'],
+        ));
+    }
+
+    public function test_panel_and_lighting_actions_reject_unrelated_electrical_equipment(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertTrue($service->isCompatible(
+            'Щиток осветительный групповой: установка и подключение',
+            'Монтаж квартирного распределительного щита',
+            ['scope' => 'engineering', 'system' => 'electrical', 'action' => 'electrical_panel_installation'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Колонка распределительная со штепсельными розетками',
+            'Монтаж квартирного распределительного щита',
+            ['scope' => 'engineering', 'system' => 'electrical', 'action' => 'electrical_panel_installation'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Светильники потолочные: установка',
+            'Установка потолочных светильников',
+            ['scope' => 'engineering', 'system' => 'electrical', 'action' => 'lighting_fixture_installation'],
+        ));
+        self::assertFalse($service->isCompatible(
+            'Муфты концевые для одножильного кабеля',
+            'Установка потолочных светильников',
+            ['scope' => 'engineering', 'system' => 'electrical', 'action' => 'lighting_fixture_installation'],
+        ));
+    }
+
+    public function test_residential_electrical_actions_reject_industrial_and_outdoor_subtypes(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        foreach ([
+            ['Щит распределительный или шкаф ввода на один трансформатор мощностью 225 кВ·А', 'Монтаж квартирного распределительного щита', 'electrical_panel_installation'],
+            ['Регуляторы электрические: щит распределительный', 'Монтаж квартирного распределительного щита', 'electrical_panel_installation'],
+            ['Колонка распределительная со штепсельными розетками на ток 25 А', 'Установка штепсельных розеток скрытой проводки', 'socket_installation'],
+            ['Тахогенераторы и центробежные выключатели: установка центробежных выключателей', 'Установка выключателей освещения скрытой проводки', 'socket_installation'],
+            ['Установка комплекта уличного светильника с автономным питанием и солнечной панелью', 'Установка потолочных светильников внутри жилого дома', 'lighting_fixture_installation'],
+        ] as [$candidate, $work, $action]) {
+            self::assertFalse($service->isCompatible(
+                $candidate,
+                $work,
+                ['scope' => 'engineering', 'system' => 'electrical', 'action' => $action, 'object_type' => 'residential'],
+            ), $candidate);
+        }
+
+        foreach ([
+            ['Щиток осветительный, устанавливаемый в нише распорными дюбелями', 'Монтаж квартирного распределительного щита', 'electrical_panel_installation'],
+            ['Розетка штепсельная утопленного типа при скрытой проводке', 'Установка штепсельных розеток скрытой проводки', 'socket_installation'],
+            ['Выключатель одноклавишный утопленного типа при скрытой проводке', 'Установка выключателей освещения скрытой проводки', 'socket_installation'],
+            ['Светильник потолочный для помещений с нормальными условиями среды', 'Установка потолочных светильников внутри жилого дома', 'lighting_fixture_installation'],
+        ] as [$candidate, $work, $action]) {
+            self::assertTrue($service->isCompatible(
+                $candidate,
+                $work,
+                ['scope' => 'engineering', 'system' => 'electrical', 'action' => $action, 'object_type' => 'residential'],
+            ), $candidate);
+        }
     }
 
     public function test_reinforced_concrete_context_does_not_turn_formwork_into_concreting(): void
@@ -1333,9 +1409,134 @@ class NormativeSemanticCompatibilityServiceTest extends TestCase
             'Прокладка магистральных кабелей',
             ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
         ));
+        self::assertFalse($service->isCompatible(
+            'Короб со стойками и полками для прокладки кабелей до 35 кВ',
+            'Прокладка силовых кабельных линий',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
         self::assertTrue($service->isCompatible(
             'Прокладка кабелей по установленным конструкциям',
             'Прокладка магистральных кабелей',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+    }
+
+    public function test_residential_heating_equipment_rejects_unrelated_industrial_process_equipment(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Оборудование регенераторного производства: девулканизатор непрерывного действия с тепловой станцией',
+            'Установка отопительного котла жилого дома',
+            [
+                'action' => 'heating_equipment',
+                'scope' => 'engineering',
+                'system' => 'heating',
+                'object_type' => 'residential',
+            ],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Установка котлов отопительных, поставляемых в сборе',
+            'Установка отопительного котла жилого дома',
+            [
+                'action' => 'heating_equipment',
+                'scope' => 'engineering',
+                'system' => 'heating',
+                'object_type' => 'residential',
+            ],
+        ));
+    }
+
+    public function test_heating_emitter_rejects_boilers_and_accepts_radiators(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $intent = [
+            'action' => 'heating_emitter_installation',
+            'scope' => 'engineering',
+            'system' => 'heating',
+            'object_type' => 'residential',
+        ];
+
+        self::assertFalse($service->isCompatible(
+            'Установка котлов отопительных, поставляемых в сборе',
+            'Установка стальных радиаторов',
+            $intent,
+        ));
+        self::assertTrue($service->isCompatible(
+            'Установка радиаторов: стальных',
+            'Установка стальных радиаторов',
+            $intent,
+        ));
+    }
+
+    public function test_electric_boiler_analog_accepts_only_generic_equipment_installation_target(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+        $intent = [
+            'action' => 'electric_boiler_installation_analog',
+            'scope' => 'engineering',
+            'system' => 'heating',
+            'object_type' => 'residential',
+        ];
+
+        self::assertTrue($service->isCompatible(
+            'Монтаж оборудования в помещении массой до 0,03 т',
+            'Монтаж электрического котла отопления до 30 кг',
+            $intent,
+        ));
+        self::assertFalse($service->isCompatible(
+            'Установка водонагревателей электрических',
+            'Монтаж электрического котла отопления до 30 кг',
+            $intent,
+        ));
+        self::assertFalse($service->isCompatible(
+            'Установка котлов отопительных твердотопливных',
+            'Монтаж электрического котла отопления до 30 кг',
+            $intent,
+        ));
+    }
+
+    public function test_sewer_outlet_rejects_industrial_product_output_norm(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertFalse($service->isCompatible(
+            'Установка из двух шприц-машин для выпуска двухслойных протекторов',
+            'Монтаж выпусков внутренней канализации',
+            [
+                'action' => 'sewer_outlet_installation',
+                'scope' => 'engineering',
+                'system' => 'sewerage',
+            ],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Прокладка трубопроводов канализации для устройства выпусков',
+            'Монтаж выпусков внутренней канализации',
+            [
+                'action' => 'sewer_outlet_installation',
+                'scope' => 'engineering',
+                'system' => 'sewerage',
+            ],
+        ));
+    }
+
+    public function test_catalog_noun_forms_are_valid_for_residential_cable_work(): void
+    {
+        $service = new NormativeSemanticCompatibilityService;
+
+        self::assertTrue($service->isCompatible(
+            'Кабели с креплением накладными скобами, полосками с установкой ответвительных коробок: Кабель трех-пятижильный сечением жилы до 16 мм2 с креплением накладными скобами, полосками с установкой ответвительных коробок',
+            'прокладка кабеля с креплением скобами и установкой ответвительных коробок',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Магистрали, стояки и силовые сети в готовых каналах или асбестоцементных трубах, количество проводов и сечение: до 2х6 мм2',
+            'прокладка проводов силовой сети в готовых каналах сечением до 6 мм2',
+            ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
+        ));
+        self::assertTrue($service->isCompatible(
+            'Провода групповых осветительных сетей в защитной оболочке под штукатурку или в бороздах',
+            'прокладка проводов групповых осветительных сетей под штукатурку или в бороздах',
             ['action' => 'cable_installation', 'scope' => 'engineering', 'system' => 'electrical'],
         ));
     }

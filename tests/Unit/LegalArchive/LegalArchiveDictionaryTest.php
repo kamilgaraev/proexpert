@@ -19,11 +19,12 @@ final class LegalArchiveDictionaryTest extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
-        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang');
         $translator = new Translator($loader, 'ru');
 
-        $container->instance('app', new class {
+        $container->instance('app', new class
+        {
             public function getLocale(): string
             {
                 return 'ru';
@@ -32,6 +33,7 @@ final class LegalArchiveDictionaryTest extends TestCase
         $container->instance('config', new Repository(['app' => ['fallback_locale' => 'ru']]));
         $container->instance('translator', $translator);
 
+        Facade::clearResolvedInstances();
         Facade::setFacadeApplication($container);
         Container::setInstance($container);
     }

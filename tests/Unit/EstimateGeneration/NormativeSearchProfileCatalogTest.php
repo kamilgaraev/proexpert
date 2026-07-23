@@ -40,6 +40,35 @@ final class NormativeSearchProfileCatalogTest extends TestCase
         $this->assertContains('оборуд', $profile->requiredTerms);
     }
 
+    public function test_electric_boiler_analog_profile_is_isolated_to_equipment_installation_collection(): void
+    {
+        $profile = (new NormativeSearchProfileCatalog)->forIntent(
+            'engineering',
+            'electric_boiler_installation_analog',
+            'heating',
+        );
+
+        self::assertSame(['37'], $profile->allowedSectionPrefixes);
+        self::assertContains('18', $profile->forbiddenSectionPrefixes);
+        self::assertContains('20', $profile->forbiddenSectionPrefixes);
+        self::assertContains('водонагревател', $profile->forbiddenDomainTerms);
+        self::assertSame(['electric_boiler_installation_analog'], $profile->allowedAnalogActions);
+    }
+
+    public function test_heating_emitter_profile_excludes_boilers(): void
+    {
+        $profile = (new NormativeSearchProfileCatalog)->forIntent(
+            'engineering',
+            'heating_emitter_installation',
+            'heating',
+        );
+
+        self::assertSame(['18'], $profile->allowedSectionPrefixes);
+        self::assertContains('радиатор', $profile->requiredTerms);
+        self::assertContains('котел', $profile->forbiddenDomainTerms);
+        self::assertSame(['heating_emitter_installation'], $profile->allowedAnalogActions);
+    }
+
     public function test_wall_masonry_profile_blocks_cross_domain_sections(): void
     {
         $profile = (new NormativeSearchProfileCatalog)->forIntent('walls', 'masonry', null);
@@ -106,6 +135,20 @@ final class NormativeSearchProfileCatalogTest extends TestCase
         self::assertSame(['08'], $profile->allowedSectionPrefixes);
         self::assertContains('заземл', $profile->requiredTerms);
         self::assertSame(['grounding_installation'], $profile->allowedAnalogActions);
+    }
+
+    public function test_panel_and_lighting_profiles_search_only_their_electrical_targets(): void
+    {
+        $catalog = new NormativeSearchProfileCatalog;
+        $panel = $catalog->forIntent('engineering', 'electrical_panel_installation', 'electrical');
+        $lighting = $catalog->forIntent('engineering', 'lighting_fixture_installation', 'electrical');
+
+        self::assertSame(['08'], $panel->allowedSectionPrefixes);
+        self::assertContains('щит', $panel->requiredTerms);
+        self::assertSame(['electrical_panel_installation'], $panel->allowedAnalogActions);
+        self::assertSame(['08'], $lighting->allowedSectionPrefixes);
+        self::assertContains('светильн', $lighting->requiredTerms);
+        self::assertSame(['lighting_fixture_installation'], $lighting->allowedAnalogActions);
     }
 
     public function test_soil_haulage_profile_requires_transport_in_earthwork_section(): void

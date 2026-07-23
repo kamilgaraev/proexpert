@@ -116,7 +116,11 @@ class PurchaseContractController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $contract = $this->contractService->createManualContract($request->validated(), $organizationId);
+            $contract = $this->contractService->createManualContract(
+                $request->safe()->except('idempotency_key'),
+                $organizationId,
+                $request->string('idempotency_key')->toString(),
+            );
 
             return AdminResponse::success(
                 new PurchaseContractResource($contract),

@@ -10,8 +10,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Pricing\MissingRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\PriceSnapshotData;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveUnitConversion;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
+use Illuminate\Support\Facades\Log;
 
 class EstimatePricingService
 {
@@ -85,7 +87,21 @@ class EstimatePricingService
                 if ($context !== null) {
                     $workItem['pricing_finalized_at'] = $workItem['price_snapshot']['captured_at'];
                 }
-            } catch (MissingRegionalPrice|\Brick\Math\Exception\MathException) {
+            } catch (MissingRegionalPrice $exception) {
+                if ($this->canLog()) {
+                    Log::warning('estimate_generation.price_snapshot_rejected', [
+                        'work_key' => $workItem['key'] ?? null,
+                        'work_name' => $workItem['name'] ?? null,
+                        'norm_code' => $workItem['normative_match']['code'] ?? null,
+                        'price_id' => $exception->priceId,
+                        'reason' => $exception->reason,
+                        ...$exception->context,
+                    ]);
+                }
+                $this->blockMissingSnapshot($workItem);
+
+                continue;
+            } catch (\Brick\Math\Exception\MathException) {
                 $this->blockMissingSnapshot($workItem);
 
                 continue;
@@ -102,6 +118,13 @@ class EstimatePricingService
         }
 
         return $workItems;
+    }
+
+    private function canLog(): bool
+    {
+        $application = Log::getFacadeApplication();
+
+        return $application !== null && $application->bound('log') && $application->bound('config');
     }
 
     public function quantityEvidenceRejectionReason(PipelineContext $context, array $workItem): ?string
@@ -123,12 +146,24 @@ class EstimatePricingService
             $costs[$group] = BigDecimal::zero();
             foreach ($workItem[$group] ?? [] as $index => $resource) {
                 if (! is_array($resource)) {
-                    throw MissingRegionalPrice::forResource(0);
+                    throw MissingRegionalPrice::forResource(0, 'resource_payload_invalid');
                 }
                 $fromUnit = trim((string) ($resource['unit'] ?? ''));
+                $projectSelection = $this->projectResourceSelection($resource, $workItem);
+                if ($this->isResidentialConvertedSelection($projectSelection)) {
+                    $resource['project_resource_selection'] = $projectSelection;
+                    $resource['price_unit'] = $fromUnit;
+                    $resource['normative_ref'] = [
+                        ...(is_array($resource['normative_ref'] ?? null) ? $resource['normative_ref'] : []),
+                        'project_resource_selection' => $projectSelection,
+                    ];
+                    $workItem[$group][$index] = $resource;
+                }
                 $toUnit = trim((string) ($resource['price_unit'] ?? $resource['pricing']['unit'] ?? $fromUnit));
                 $version = (int) ($resource['unit_conversion_version'] ?? $regionalContext['unit_conversion_version'] ?? 1);
-                $conversion = $this->unitConversion->handle($fromUnit, $toUnit, $version);
+                $conversion = $this->hasResidentialConvertedPrice($resource)
+                    ? null
+                    : $this->unitConversion->handle($fromUnit, $toUnit, $version);
                 if ($conversion !== null) {
                     $resource['quantity'] = (string) BigDecimal::of((string) ($resource['quantity'] ?? '0'))
                         ->multipliedBy($conversion->factor);
@@ -149,10 +184,69 @@ class EstimatePricingService
             }
         }
         if ($resourceSnapshots === []) {
-            throw MissingRegionalPrice::forResource(0);
+            throw MissingRegionalPrice::forResource(0, 'resource_snapshots_empty');
         }
 
         return [$workItem, $resourceSnapshots, $costs];
+    }
+
+    private function hasResidentialConvertedPrice(array $resource): bool
+    {
+        return $this->isResidentialConvertedSelection($this->projectResourceSelection($resource));
+    }
+
+    private function projectResourceSelection(array $resource, array $workItem = []): array
+    {
+        $resourceSelection = is_array($resource['project_resource_selection'] ?? null)
+            ? $resource['project_resource_selection']
+            : (is_array($resource['normative_ref']['project_resource_selection'] ?? null)
+                ? $resource['normative_ref']['project_resource_selection']
+                : []);
+        if ($this->isResidentialConvertedSelection($resourceSelection)) {
+            return $resourceSelection;
+        }
+
+        $groupCode = trim((string) ($resource['normative_ref']['resource_code'] ?? ''));
+        $priceId = (int) ($resource['normative_ref']['price_id'] ?? $resource['price_id'] ?? 0);
+        $unitPrice = (string) ($resource['unit_price'] ?? '0');
+        $resourceUnit = trim((string) ($resource['unit'] ?? ''));
+        $selections = is_array($workItem['normative_match']['project_resource_selections'] ?? null)
+            ? $workItem['normative_match']['project_resource_selections']
+            : [];
+        $matchedDecisionSelection = [];
+        foreach ($selections as $selection) {
+            if (! is_array($selection)
+                || trim((string) ($selection['group_code'] ?? '')) !== $groupCode
+                || (int) ($selection['price_id'] ?? 0) !== $priceId
+                || ! NormativeUnitNormalizer::compatible(
+                    trim((string) ($selection['price_unit'] ?? '')),
+                    $resourceUnit,
+                )
+                || ! $this->sameDecimal($selection['applied_unit_price'] ?? null, $unitPrice)) {
+                continue;
+            }
+
+            $matchedDecisionSelection = $selection;
+            if ($this->isResidentialConvertedSelection($selection)) {
+                return $selection;
+            }
+        }
+
+        return $resourceSelection !== [] ? $resourceSelection : $matchedDecisionSelection;
+    }
+
+    private function isResidentialConvertedSelection(array $selection): bool
+    {
+        return str_contains((string) ($selection['policy'] ?? ''), '_residential_converted_');
+    }
+
+    private function sameDecimal(mixed $left, mixed $right): bool
+    {
+        try {
+            return BigDecimal::of((string) $left)->isEqualTo(BigDecimal::of((string) $right));
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     private function snapshot(array $resourceSnapshots, BigDecimal $workCost, BigDecimal $total): PriceSnapshotData
@@ -165,7 +259,7 @@ class EstimatePricingService
                 || $snapshot['period_id'] !== $first['period_id']
                 || $snapshot['version_id'] !== $first['version_id']
                 || $snapshot['currency'] !== $first['currency']) {
-                throw MissingRegionalPrice::forResource(0);
+                throw MissingRegionalPrice::forResource(0, 'resource_snapshot_context_mismatch');
             }
         }
 

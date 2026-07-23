@@ -8,7 +8,7 @@ use InvalidArgumentException;
 
 final readonly class PipelineDefinitionGraph
 {
-    public const MAX_TOTAL_ARTIFACT_BYTES = 10_485_760;
+    public const MAX_TOTAL_ARTIFACT_BYTES = 33_554_432;
 
     /** @var array<string, StageDefinition> */
     private array $definitions;
@@ -35,14 +35,14 @@ final readonly class PipelineDefinitionGraph
     {
         return new self([
             new StageDefinition(ProcessingStage::UnderstandDocuments, 1, [], 131_072),
-            new StageDefinition(ProcessingStage::UnderstandObject, 6, [ProcessingStage::UnderstandDocuments], 1_048_576),
-            new StageDefinition(ProcessingStage::ExtractQuantities, 10, [ProcessingStage::UnderstandObject], 262_144),
-            new StageDefinition(ProcessingStage::PlanWorkItems, 54, [ProcessingStage::UnderstandObject, ProcessingStage::ExtractQuantities], 1_310_720),
-            new StageDefinition(ProcessingStage::MatchNormatives, 21, [ProcessingStage::PlanWorkItems], 1_310_720),
-            new StageDefinition(ProcessingStage::AssembleResources, 5, [ProcessingStage::MatchNormatives], 1_048_576),
-            new StageDefinition(ProcessingStage::ResolvePrices, 3, [ProcessingStage::AssembleResources], 1_441_792),
-            new StageDefinition(ProcessingStage::BuildDraft, 1, [ProcessingStage::UnderstandDocuments, ProcessingStage::UnderstandObject, ProcessingStage::PlanWorkItems, ProcessingStage::ResolvePrices], 1_572_864),
-            new StageDefinition(ProcessingStage::ValidateDraft, 2, [ProcessingStage::BuildDraft], 1_572_864),
+            new StageDefinition(ProcessingStage::UnderstandObject, 7, [ProcessingStage::UnderstandDocuments], 1_048_576),
+            new StageDefinition(ProcessingStage::ExtractQuantities, 15, [ProcessingStage::UnderstandObject], 524_288),
+            new StageDefinition(ProcessingStage::PlanWorkItems, 84, [ProcessingStage::UnderstandObject, ProcessingStage::ExtractQuantities], 2_097_152),
+            new StageDefinition(ProcessingStage::MatchNormatives, 30, [ProcessingStage::PlanWorkItems], 3_145_728),
+            new StageDefinition(ProcessingStage::AssembleResources, 9, [ProcessingStage::MatchNormatives], 4_194_304),
+            new StageDefinition(ProcessingStage::ResolvePrices, 14, [ProcessingStage::AssembleResources], 6_291_456),
+            new StageDefinition(ProcessingStage::BuildDraft, 2, [ProcessingStage::UnderstandDocuments, ProcessingStage::UnderstandObject, ProcessingStage::PlanWorkItems, ProcessingStage::ResolvePrices], 6_291_456),
+            new StageDefinition(ProcessingStage::ValidateDraft, 3, [ProcessingStage::BuildDraft], 6_291_456),
         ]);
     }
 

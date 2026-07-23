@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\WorkflowManagement\Services;
 
 use App\BusinessModules\Features\WorkflowManagement\DTOs\MobileWorkflowTaskPage;
 use App\Models\CompletedWork;
+use App\Services\Contract\ContractAuditedMutationService;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -13,6 +14,8 @@ use Illuminate\Support\Str;
 
 final class MobileWorkflowTaskService
 {
+    public function __construct(private readonly ContractAuditedMutationService $contractMutations) {}
+
     public const STATUSES = [
         'draft',
         'pending',
@@ -65,7 +68,7 @@ final class MobileWorkflowTaskService
             ->whereKey($taskId)
             ->first();
 
-        if (!$task) {
+        if (! $task) {
             throw new DomainException(trans_message('workflow_management.errors.task_not_found'));
         }
 
@@ -115,7 +118,7 @@ final class MobileWorkflowTaskService
     ): CompletedWork {
         $transition = self::TRANSITIONS[$action];
 
-        if (!in_array($task->status, $transition['from'], true)) {
+        if (! in_array($task->status, $transition['from'], true)) {
             throw new DomainException(trans_message('workflow_management.errors.status_transition_forbidden'));
         }
 
@@ -135,7 +138,11 @@ final class MobileWorkflowTaskService
             ])->save();
 
             if ($toStatus === 'confirmed') {
-                $task->contract?->updateStatusBasedOnCompletion();
+                if ($task->contract !== null) {
+                    $this->contractMutations->syncCompletionStatus($task->contract, $userId, [
+                        'completed_work_id' => (int) $task->id,
+                    ]);
+                }
             }
 
             return $this->findTask((int) $task->organization_id, (int) $task->id);
@@ -156,7 +163,7 @@ final class MobileWorkflowTaskService
                 $query->where('user_id', (int) $filters['assigned_to_user_id']);
             })
             ->when(isset($filters['search']), static function (Builder $query) use ($filters): void {
-                $search = '%' . str_replace(['%', '_'], ['\\%', '\\_'], (string) $filters['search']) . '%';
+                $search = '%'.str_replace(['%', '_'], ['\\%', '\\_'], (string) $filters['search']).'%';
                 $query->where(static function (Builder $searchQuery) use ($search): void {
                     $searchQuery
                         ->where('notes', 'like', $search)

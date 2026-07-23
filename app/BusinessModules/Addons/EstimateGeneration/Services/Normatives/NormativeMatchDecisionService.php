@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\NormativeMatchDecisionData;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeCandidateDecisionContextData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialSignedNormCompatibility;
 
 class NormativeMatchDecisionService
 {
@@ -19,6 +20,7 @@ class NormativeMatchDecisionService
         private readonly ?WorkIntentClassifier $workIntentClassifier = null,
         private readonly ?NormativeSearchProfileCatalog $searchProfileCatalog = null,
         private readonly ?NormativeSemanticCompatibilityService $semanticCompatibilityService = null,
+        private readonly ?ResidentialSignedNormCompatibility $signedNormCompatibility = null,
     ) {}
 
     /**
@@ -186,6 +188,20 @@ class NormativeMatchDecisionService
             return true;
         }
 
+        $scenario = is_array($workItem['specialization_scenario'] ?? null)
+            ? $workItem['specialization_scenario']
+            : (is_array($intent['specialization_scenario'] ?? null) ? $intent['specialization_scenario'] : null);
+        $objectType = (string) ($workItem['object_type'] ?? ($scenario['object_type'] ?? ''));
+        $signedCompatibility = $this->signedNormCompatibility ?? new ResidentialSignedNormCompatibility;
+        if ($signedCompatibility->matches(
+            $scenario,
+            $objectType,
+            (string) ($candidate['code'] ?? ''),
+            (string) ($candidate['name'] ?? ''),
+        )) {
+            return true;
+        }
+
         return $service->isCompatible(
             $candidateText,
             $this->workText($workItem),
@@ -284,7 +300,11 @@ class NormativeMatchDecisionService
                 return ['20'];
             }
 
-            if ($system === 'heating' && $action === 'heating_equipment') {
+            if ($action === 'electric_boiler_installation_analog') {
+                return ['37'];
+            }
+
+            if ($system === 'heating' && in_array($action, ['heating_equipment', 'heating_emitter_installation'], true)) {
                 return ['18', '20'];
             }
 

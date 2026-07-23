@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use Illuminate\Database\Eloquent\Collection;
@@ -174,9 +172,7 @@ class EstimatorReadinessServiceTest extends TestCase
 
     public function test_blocks_apply_when_review_queue_has_blocking_item(): void
     {
-        $session = $this->session([
-            $this->document('ready', facts: 4, drawingElements: 5, quantityTakeoffs: 2, scopeInferences: 3),
-        ], $this->draft([
+        $draft = $this->draft([
             'status' => 'ready',
             'level' => 'passed',
             'total_work_items' => 1,
@@ -185,29 +181,18 @@ class EstimatorReadinessServiceTest extends TestCase
             'not_calculated_work_items' => 0,
             'safe_norm_required_work_items' => 0,
             'normative_items' => ['requires_review' => 0],
-        ]));
-        $package = new EstimateGenerationPackage([
-            'key' => 'local-1',
-            'title' => 'Local estimate',
-            'scope_type' => 'site',
         ]);
-        $package->setRelation('items', new Collection([
-            new EstimateGenerationPackageItem([
-                'key' => 'package-only-blocker',
-                'item_type' => 'priced_work',
-                'name' => 'Package only blocker',
-                'unit' => 'm',
-                'quantity' => 1,
-                'total_cost' => 0,
-                'flags' => ['pricing_not_calculated'],
-                'metadata' => [
-                    'pricing_status' => 'not_calculated',
-                    'pricing_blocker' => 'normative_required',
-                    'normative_match' => ['status' => 'not_found'],
-                ],
-            ]),
-        ]));
-        $session->setRelation('packages', new Collection([$package]));
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0] = [
+            ...$draft['local_estimates'][0]['sections'][0]['work_items'][0],
+            'key' => 'draft-blocker',
+            'pricing_status' => 'not_calculated',
+            'pricing_blocker' => 'normative_required',
+            'normative_match' => ['status' => 'not_found'],
+            'validation_flags' => ['pricing_not_calculated'],
+        ];
+        $session = $this->session([
+            $this->document('ready', facts: 4, drawingElements: 5, quantityTakeoffs: 2, scopeInferences: 3),
+        ], $draft);
 
         $readiness = $this->service()->evaluate($session);
 
@@ -279,7 +264,7 @@ class EstimatorReadinessServiceTest extends TestCase
                     'key' => 'local-1',
                     'sections' => [['work_items' => [[
                         'item_type' => 'priced_work',
-                        'quantity' => ['source' => 'evidenced', 'evidence_ids' => [1]],
+                        'quantity_evidence' => ['source' => 'evidenced', 'evidence_ids' => [1]],
                         'normative_match' => ['status' => 'matched', 'decision' => ['status' => 'accepted']],
                         'price_snapshot' => ['version_id' => 1],
                         'pricing_finalized_at' => '2026-07-12T00:00:00Z',

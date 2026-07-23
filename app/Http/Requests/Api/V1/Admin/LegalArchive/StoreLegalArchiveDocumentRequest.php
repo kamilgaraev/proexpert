@@ -7,6 +7,7 @@ namespace App\Http\Requests\Api\V1\Admin\LegalArchive;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use App\Services\LegalArchive\LegalArchiveDictionary;
+use App\Services\LegalArchive\Sources\LegalDocumentSourceType;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -14,7 +15,7 @@ final class StoreLegalArchiveDocumentRequest extends FormRequest
 {
     protected function prepareForValidation(): void
     {
-        foreach (['metadata', 'links', 'version_metadata'] as $key) {
+        foreach (['metadata', 'structured_fields', 'links', 'version_metadata'] as $key) {
             $value = $this->input($key);
 
             if (! is_string($value)) {
@@ -32,11 +33,23 @@ final class StoreLegalArchiveDocumentRequest extends FormRequest
     public function authorize(): bool
     {
         $user = $this->user();
+        $organizationContext = [
+            'organization_id' => (int) $this->attributes->get('current_organization_id'),
+        ];
 
-        return $user instanceof User
-            && app(AuthorizationService::class)->can($user, 'legal_archive.create', [
-                'organization_id' => (int) $this->attributes->get('current_organization_id'),
-            ]);
+        if (! $user instanceof User) {
+            return false;
+        }
+
+        $authorization = app(AuthorizationService::class);
+        if (! $authorization->can($user, 'legal_archive.create', $organizationContext)) {
+            return false;
+        }
+
+        return ! $this->hasFile('file') || (
+            $authorization->can($user, 'legal_archive.files.upload', $organizationContext)
+            && $authorization->can($user, 'legal_archive.versions.create', $organizationContext)
+        );
     }
 
     public function rules(): array
@@ -46,9 +59,14 @@ final class StoreLegalArchiveDocumentRequest extends FormRequest
             'title' => ['required', 'string', 'max:512'],
             'document_number' => ['nullable', 'string', 'max:255'],
             'document_type' => ['required', 'string', Rule::in(LegalArchiveDictionary::values('types'))],
+            'type_profile_code' => ['nullable', 'string', 'max:128'],
             'status' => ['nullable', 'string', Rule::in(LegalArchiveDictionary::values('statuses'))],
             'direction' => ['nullable', 'string', Rule::in(LegalArchiveDictionary::values('directions'))],
             'source_system' => ['nullable', 'string', 'max:64'],
+            'source_type' => ['nullable', 'required_with:source_id,source_idempotency_key', 'string', Rule::in(LegalDocumentSourceType::values())],
+            'source_id' => ['nullable', 'required_with:source_type,source_idempotency_key', 'integer', 'min:1'],
+            'source_idempotency_key' => ['nullable', 'required_with:source_type,source_id', 'string', 'max:191'],
+            'create_operation_key' => ['bail', 'required_without:source_type', 'string', 'max:191', 'regex:/\\S/u'],
             'counterparty_name' => ['nullable', 'string', 'max:255'],
             'document_date' => ['nullable', 'date'],
             'effective_from' => ['nullable', 'date'],
@@ -57,16 +75,12 @@ final class StoreLegalArchiveDocumentRequest extends FormRequest
             'legal_significance_status' => ['nullable', 'string', Rule::in(LegalArchiveDictionary::values('legal_significance_statuses'))],
             'edo_status' => ['nullable', 'string', 'max:64'],
             'one_c_status' => ['nullable', 'string', 'max:64'],
-            'retention_policy' => ['nullable', 'string', 'max:128'],
-            'retention_basis' => ['nullable', 'string', 'max:2000'],
-            'retention_started_at' => ['nullable', 'date'],
-            'retention_until' => ['nullable', 'date'],
-            'legal_hold' => ['nullable', 'boolean'],
             'metadata' => ['nullable', 'array'],
+            'structured_fields' => ['nullable', 'array'],
             'links' => ['nullable', 'array', 'max:20'],
             'links.*.link_type' => ['required_with:links', 'string', Rule::in(LegalArchiveDictionary::values('link_types'))],
-            'links.*.linked_type' => ['nullable', 'string', 'max:255'],
-            'links.*.linked_id' => ['nullable', 'string', 'max:255'],
+            'links.*.linked_type' => ['nullable', 'required_with:links.*.linked_id', 'string', Rule::in(LegalDocumentSourceType::values())],
+            'links.*.linked_id' => ['nullable', 'required_with:links.*.linked_type', 'integer', 'min:1'],
             'links.*.external_key' => ['nullable', 'string', 'max:255'],
             'links.*.display_name' => ['required_with:links', 'string', 'max:255'],
             'links.*.url' => ['nullable', 'url', 'max:2000'],

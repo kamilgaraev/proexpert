@@ -10,12 +10,17 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\OperationalUsage
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DocumentReadinessClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessEvaluator;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateScopeMetadataProjector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\OperationalReadinessInputFactory;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReadinessResult;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Connection;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use stdClass;
+use Throwable;
+
+use function trans_message;
 
 final class BuildSessionOperationalSnapshot implements SessionOperationalSnapshotBuilder
 {
@@ -113,6 +118,10 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
                 ->selectRaw("jsonb_array_length(CASE WHEN jsonb_typeof(draft_payload->'local_estimates') = 'array' THEN draft_payload->'local_estimates' ELSE '[]'::jsonb END) > 0 AS has_draft")
                 ->selectRaw("COALESCE(draft_payload #>> '{quality_summary,status}', '') AS quality_status")
                 ->selectRaw("COALESCE(draft_payload #>> '{quality_summary,level}', '') AS quality_level")
+                ->selectRaw("COALESCE(draft_payload #> '{readiness_summary,blocking_issues}', '[]'::jsonb) AS draft_blocking_issues")
+                ->selectRaw("COALESCE(draft_payload #> '{completeness}', '{}'::jsonb) AS scope_completeness")
+                ->selectRaw("COALESCE(draft_payload #> '{budget_scope}', '{}'::jsonb) AS scope_budget")
+                ->selectRaw("COALESCE(draft_payload #> '{arbiter_review}', '{}'::jsonb) AS scope_arbiter_review")
                 ->selectRaw($this->jsonInteger('quality_total_work_items', '{quality_summary,total_work_items}'))
                 ->selectRaw($this->jsonInteger('quality_priced_work_items', '{quality_summary,priced_work_items}'))
                 ->selectRaw($this->jsonInteger('quality_operation_work_items', '{quality_summary,operation_work_items}'))
@@ -349,9 +358,9 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
         ]);
         $model->exists = true;
 
-        $readiness = $this->readinessEvaluator->evaluate(
+        $readiness = $this->withPersistedBlockingIssues($this->readinessEvaluator->evaluate(
             $this->readinessInputFactory->fromAggregates($session, $documents, $estimate, $sources),
-        );
+        ), $session);
         $base = $this->workflowSnapshot->handle(
             $model,
             $permissions,
@@ -416,6 +425,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
                 'quality_level' => (string) ($session['quality_level'] ?? ''),
                 'warnings' => count($readiness['warnings']),
             ],
+            scopeSummary: $this->scopeSummary($session),
             usageSummary: OperationalUsageSummary::fromAggregate($usage),
             failureSummary: [
                 'active' => $this->number($failures, 'active'),
@@ -427,6 +437,62 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             ],
             objectInput: $base->objectInput,
         );
+    }
+
+    /** @return array<string, mixed> */
+    private function scopeSummary(array $session): array
+    {
+        $draft = [
+            'completeness' => $this->json($session['scope_completeness'] ?? []),
+            'budget_scope' => $this->json($session['scope_budget'] ?? []),
+            'arbiter_review' => $this->json($session['scope_arbiter_review'] ?? []),
+        ];
+
+        return (new EstimateScopeMetadataProjector)->project($draft, $draft['budget_scope']);
+    }
+
+    private function withPersistedBlockingIssues(ReadinessResult $readiness, array $session): ReadinessResult
+    {
+        $persisted = $this->json($session['draft_blocking_issues'] ?? []);
+        if ($persisted === []) {
+            return $readiness;
+        }
+
+        $issues = array_column($readiness->blockingIssues, null, 'code');
+        foreach ($persisted as $issue) {
+            if (is_array($issue) && is_string($issue['code'] ?? null)) {
+                $issues[$issue['code']] = $issue;
+            }
+        }
+
+        $status = $readiness->status === 'applied' ? 'applied' : 'draft_needs_review';
+        $metrics = $readiness->metrics;
+        foreach (array_keys($issues) as $code) {
+            $metrics['gate_'.$code] = 1;
+        }
+
+        return new ReadinessResult(
+            status: $status,
+            canGenerate: $readiness->canGenerate,
+            canApply: false,
+            blockingIssues: array_values($issues),
+            warnings: $readiness->warnings,
+            metrics: $metrics,
+            nextAction: $status === 'applied' ? $readiness->nextAction : [
+                'code' => 'review_draft',
+                'message_key' => 'estimate_generation.readiness_next_review_draft',
+                'message' => $this->message('estimate_generation.readiness_next_review_draft'),
+            ],
+        );
+    }
+
+    private function message(string $key): string
+    {
+        try {
+            return trans_message($key);
+        } catch (Throwable) {
+            return $key;
+        }
     }
 
     /** @return array<string, mixed> */

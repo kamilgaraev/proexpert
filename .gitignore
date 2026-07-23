@@ -12,6 +12,10 @@
 /storage/prometheus/
 /storage/pail
 /vendor
+/tmp/
+/.codebase-memory/
+__pycache__/
+*.pyc
 .env
 .env.backup
 .env.production
@@ -62,3 +66,4 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 rr
 rr.exe
 .rr
+.worktrees/

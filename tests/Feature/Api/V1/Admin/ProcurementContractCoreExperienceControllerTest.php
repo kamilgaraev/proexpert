@@ -9,6 +9,7 @@ use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\LegalArchive\Models\LegalArchiveDocument;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\Contract\ContractStatusEnum;
@@ -102,6 +103,8 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
         $fromOrderResponse->assertCreated();
         $fromOrderResponse->assertJsonPath('data.purchase_order.id', $purchaseOrder->id);
         $fromOrderResponse->assertJsonPath('data.contract.supplier_id', $supplier->id);
+        $fromOrderResponse->assertJsonPath('data.already_exists', false);
+        $this->assertIsInt($fromOrderResponse->json('data.legal_document.id'));
 
         $purchaseOrder->refresh();
         $this->assertNotNull($purchaseOrder->contract_id);
@@ -115,13 +118,60 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
         $duplicateContractResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/create-contract");
 
-        $duplicateContractResponse->assertStatus(422);
+        $duplicateContractResponse->assertOk();
+        $duplicateContractResponse->assertJsonPath('data.already_exists', true);
+        $duplicateContractResponse->assertJsonPath('data.contract.id', $purchaseOrder->contract_id);
+        $duplicateContractResponse->assertJsonPath('data.contract.supplier.id', $supplier->id);
+        $duplicateContractResponse->assertJsonPath('data.legal_document.id', $fromOrderResponse->json('data.legal_document.id'));
 
         $foreignOrder = $this->createPurchaseOrder($foreignContext->organization->id, $this->createSupplier($foreignContext->organization->id, 'Foreign Supplier')->id);
         $foreignOrderResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$foreignOrder->id}/create-contract");
 
         $foreignOrderResponse->assertNotFound();
+    }
+
+    public function test_purchase_order_contract_creation_rejects_missing_delivery_terms_without_mutation(): void
+    {
+        $context = AdminApiTestContext::create();
+        $supplier = $this->createSupplier($context->organization->id, 'Delivery Required Supplier');
+        $purchaseOrder = $this->createPurchaseOrder($context->organization->id, $supplier->id, null);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/create-contract");
+
+        $response->assertStatus(422);
+        $this->assertNull($purchaseOrder->fresh()->contract_id);
+        $this->assertSame(0, Contract::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('contract_category', 'procurement')
+            ->count());
+    }
+
+    public function test_purchase_order_contract_replay_rejects_foreign_linked_dossier(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $supplier = $this->createSupplier($context->organization->id, 'Own Supplier');
+        $purchaseOrder = $this->createPurchaseOrder($context->organization->id, $supplier->id);
+        $foreignDocument = LegalArchiveDocument::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'title' => 'Foreign legal dossier',
+            'document_type' => 'contract',
+        ]);
+        $foreignContract = $this->createContract($foreignContext->organization->id);
+        $foreignContract->update(['legal_archive_document_id' => $foreignDocument->id]);
+        $purchaseOrder->update(['contract_id' => $foreignContract->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/create-contract");
+
+        $response->assertStatus(422);
+        $this->assertSame($foreignContract->id, $purchaseOrder->fresh()->contract_id);
     }
 
     public function test_procurement_contract_creation_rejects_foreign_supplier_and_project_without_mutation(): void
@@ -274,7 +324,7 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
             ->count());
     }
 
-    private function createPurchaseOrder(int $organizationId, int $supplierId): PurchaseOrder
+    private function createPurchaseOrder(int $organizationId, int $supplierId, ?string $deliveryDate = '2026-07-31'): PurchaseOrder
     {
         $purchaseRequest = PurchaseRequest::query()->create([
             'organization_id' => $organizationId,
@@ -291,6 +341,7 @@ class ProcurementContractCoreExperienceControllerTest extends TestCase
             'status' => PurchaseOrderStatusEnum::CONFIRMED,
             'total_amount' => 50000,
             'currency' => 'RUB',
+            'delivery_date' => $deliveryDate,
         ]);
     }
 

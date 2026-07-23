@@ -129,6 +129,7 @@ class ConstructionSemanticParser
             'zones' => [],
             'engineering_systems' => [],
             'conflicts' => [],
+            'roof_type' => null,
         ];
         $contextLines = [];
         $sourceRefs = [];
@@ -142,6 +143,7 @@ class ConstructionSemanticParser
         $hasRoomAreaTotal = false;
         $aggregateAreaCandidate = null;
         $nonPrimaryDocuments = [];
+        $roofTypes = [];
 
         foreach ($documentsPayload as $document) {
             if (! DocumentEvidencePolicy::isTrusted($document)) {
@@ -215,6 +217,15 @@ class ConstructionSemanticParser
             }
 
             $factsSummary = is_array($document['facts_summary'] ?? null) ? $document['facts_summary'] : [];
+
+            $roofType = match ($factsSummary['roof_type'] ?? null) {
+                'pitched', 'gable', 'hip' => 'pitched',
+                'flat' => 'flat',
+                default => null,
+            };
+            if ($roofType !== null) {
+                $roofTypes[$roofType] = true;
+            }
 
             if ($canUseQuantityEvidence && ($summary['total_area_m2'] ?? null) === null && isset($factsSummary['total_area_m2'])) {
                 $summary['total_area_m2'] = $factsSummary['total_area_m2'];
@@ -310,6 +321,10 @@ class ConstructionSemanticParser
             }
         }
 
+        if (count($roofTypes) === 1) {
+            $summary['roof_type'] = array_key_first($roofTypes);
+        }
+
         return [
             'facts' => $facts,
             'facts_summary' => $summary,
@@ -363,8 +378,12 @@ class ConstructionSemanticParser
             return 'mixed_warehouse_office';
         }
 
-        if ($this->containsWarehouseObjectSignal($normalized) || $this->containsIndustrialObjectSignal($normalized)) {
+        if ($this->containsWarehouseObjectSignal($normalized)) {
             return 'warehouse';
+        }
+
+        if ($this->containsIndustrialObjectSignal($normalized)) {
+            return 'industrial';
         }
 
         return null;
@@ -392,15 +411,21 @@ class ConstructionSemanticParser
 
         $hasWarehouse = $this->containsWarehouseObjectSignal($normalized)
             || $this->containsWarehouseObjectSignal($zoneText);
+        $hasIndustrial = $this->containsIndustrialObjectSignal($normalized)
+            || $this->containsIndustrialObjectSignal($zoneText);
         $hasOffice = $this->containsOfficeSignal($normalized)
             || $this->containsOfficeSignal($zoneText);
 
-        if ($hasWarehouse && $hasOffice) {
+        if (($hasWarehouse || $hasIndustrial) && $hasOffice) {
             return 'mixed_warehouse_office';
         }
 
-        if ($hasWarehouse || $this->containsIndustrialObjectSignal($normalized)) {
+        if ($hasWarehouse) {
             return 'warehouse';
+        }
+
+        if ($hasIndustrial) {
+            return 'industrial';
         }
 
         return null;
@@ -773,7 +798,7 @@ class ConstructionSemanticParser
 
     private function containsIndustrialObjectSignal(string $text): bool
     {
-        return preg_match('/(?:^|[^\p{L}\p{N}])(?:производствен\p{L}*|цех\p{L}*|industrial)(?=$|[^\p{L}\p{N}])/u', $text) === 1;
+        return ObjectTypeSignalClassifier::isIndustrial($text);
     }
 
     private function containsOfficeSignal(string $text): bool

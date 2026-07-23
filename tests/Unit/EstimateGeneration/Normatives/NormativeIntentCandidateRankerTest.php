@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeIntentCandidateRanker;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialMaterialScenarioCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ResidentialSignedNormCompatibility;
 use PHPUnit\Framework\TestCase;
 
 final class NormativeIntentCandidateRankerTest extends TestCase
@@ -263,6 +264,9 @@ final class NormativeIntentCandidateRankerTest extends TestCase
             ['foundation.waterproofing', 'm2', 'waterproofing', 'foundation', '08', 'Гидроизоляция стен, фундаментов: Гидроизоляция боковая обмазочная битумная в 2 слоя по выровненной поверхности бутовой кладки, кирпичу, бетону'],
             ['walls.external_volume', 'm3', 'masonry', 'walls', '08', 'Кладка стен из газобетонных блоков на клее без облицовки толщиной: 400 мм при высоте этажа до 4 м'],
             ['walls.internal', 'm2', 'masonry', 'walls', '08', 'Кладка перегородок из газобетонных блоков на клее толщиной: 100 мм при высоте этажа до 4 м'],
+            ['walls.lintels', 'pcs', 'general_work', 'walls', '07', 'Укладка перемычек при наибольшей массе монтажных элементов в здании: до 5 т, масса перемычки до 0,7 т'],
+            ['roof.insulation', 'm2', 'insulation', 'roof', '12', 'Утепление покрытий плитами: из минеральной ваты насухо'],
+            ['roof.covering', 'm2', 'general_work', 'roof', '12', 'Устройство кровли из металлочерепицы по готовым прогонам: простая кровля'],
             ['finish.floor', 'm2', 'floor_covering', 'finishing', '11', 'Устройство покрытий: из досок ламинированных замковым способом'],
             ['finish.baseboard', 'm', 'baseboard_installation', 'finishing', '11', 'Устройство плинтусов поливинилхлоридных: на винтах самонарезающих'],
             ['stairs.flights', 'm2', 'general_work', 'stairs', '10', 'Устройство внутриквартирных лестниц без подшивки'],
@@ -270,6 +274,9 @@ final class NormativeIntentCandidateRankerTest extends TestCase
             ['electrical.grounding', 'm', 'grounding_installation', 'engineering', '08', 'Заземлитель горизонтальный из стали круглой диаметром 12 мм'],
             ['sanitary.waterproofing', 'm2', 'waterproofing', 'finishing', '11', 'Устройство гидроизоляции обмазочной битумной мастикой в один слой толщиной 2 мм'],
             ['sanitary.tile', 'm2', 'tiling', 'finishing', '15', 'Гладкая облицовка стен керамическими плитками на клее из сухих смесей по кирпичу и бетону'],
+            ['foundation.prep', 'm3', 'concreting', 'foundation', '06', 'Устройство бетонной подготовки и фундаментов общего назначения: Устройство бетонной подготовки'],
+            ['sanitary.showers', 'pcs', 'sanitary_fixture_installation', 'engineering', '17', 'Установка кабин душевых: с пластиковыми поддонами'],
+            ['rough.floor', 'm2', 'floor_preparation', 'finishing', '11', 'Устройство стяжек: цементных толщиной 20 мм'],
         ];
 
         foreach ($cases as $index => [$workItemKey, $unit, $action, $scope, $section, $candidateName]) {
@@ -295,6 +302,83 @@ final class NormativeIntentCandidateRankerTest extends TestCase
 
             self::assertSame([9000 + $index], array_column($selected ?? [], 'id'), $workItemKey);
         }
+    }
+
+    public function test_signed_exact_scenario_rejects_a_foreign_title_with_the_same_catalog_code(): void
+    {
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('foundation.prep', 'residential');
+        self::assertIsArray($scenario);
+
+        $candidate = $this->candidate(
+            60100101,
+            (string) $scenario['normative_rate_code'],
+            'Холодильная установка с герметичным компрессором',
+            '100 m3',
+            '06-01',
+        );
+
+        self::assertNull((new NormativeIntentCandidateRanker)->select([$candidate], [[
+            'search_text' => (string) $scenario['normative_search_text'],
+            'unit' => 'm3',
+            'code' => (string) $scenario['normative_rate_code'],
+            'action' => 'concreting',
+            'scope' => 'foundation',
+            'object_type' => 'residential',
+            'normative_sections' => ['06'],
+            'specialization_scenario' => $scenario,
+        ]]));
+    }
+
+    public function test_exact_heating_equipment_code_selects_piece_installation_and_rejects_concrete_collision(): void
+    {
+        $scenario = (new ResidentialMaterialScenarioCatalog)->issue('heating.unit', 'residential');
+        self::assertIsArray($scenario);
+
+        $validInstallation = $this->candidate(
+            370100201,
+            '37-01-002-01',
+            'Монтаж сосудов и аппаратов без механизмов в помещении, масса сосудов и аппаратов: 0,03 т',
+            'шт',
+            '37-01-002',
+        );
+        $concreteCollision = $this->candidate(
+            370100299,
+            '37-01-002-01',
+            'Укладка бетонной смеси кранами башенными грузоподъемностью 25 т в железобетонные блоки высотой до 5 м',
+            '100 м3',
+            '37-01-002',
+        );
+
+        $signedCompatibility = new ResidentialSignedNormCompatibility;
+        self::assertTrue($signedCompatibility->matches(
+            $scenario,
+            'residential',
+            (string) $validInstallation->code,
+            (string) $validInstallation->name,
+        ));
+        self::assertFalse($signedCompatibility->matches(
+            $scenario,
+            'residential',
+            (string) $concreteCollision->code,
+            (string) $concreteCollision->name,
+        ));
+
+        $selected = (new NormativeIntentCandidateRanker)->select([
+            $concreteCollision,
+            $validInstallation,
+        ], [[
+            'search_text' => (string) $scenario['normative_search_text'],
+            'unit' => 'pcs',
+            'code' => '37-01-002-01',
+            'action' => 'electric_boiler_installation_analog',
+            'scope' => 'engineering',
+            'system' => 'heating',
+            'object_type' => 'residential',
+            'normative_sections' => ['37'],
+            'specialization_scenario' => $scenario,
+        ]]);
+
+        self::assertSame([370100201], array_column($selected ?? [], 'id'));
     }
 
     private function candidate(

@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Notifications\Services;
 use App\BusinessModules\Features\Notifications\Contracts\NotificationSnapshotDatabase;
 use Closure;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 final class LaravelNotificationSnapshotDatabase implements NotificationSnapshotDatabase
 {
@@ -27,6 +28,9 @@ final class LaravelNotificationSnapshotDatabase implements NotificationSnapshotD
 
     public function statement(string $sql): void
     {
+        if ($sql !== 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ') {
+            throw new InvalidArgumentException('notification_snapshot_statement_forbidden');
+        }
         DB::statement($sql);
     }
 }

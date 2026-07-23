@@ -175,6 +175,7 @@ class PackagePlannerServiceTest extends TestCase
 
         $this->assertSame('house', $profile->objectType);
         $this->assertContains('foundation', $keys);
+        $this->assertContains('lighting', $keys);
         $this->assertNotContains('industrial_floor', $keys);
     }
 
@@ -200,6 +201,29 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertContains('foundation', $keys);
         $this->assertNotContains('industrial_floor', $keys);
         $this->assertNotContains('office_partitions', $keys);
+    }
+
+    public function test_cottage_description_is_not_reclassified_by_office_and_warehouse_template_words(): void
+    {
+        $analysis = [
+            'object' => [
+                'object_type' => 'custom',
+                'building_type' => 'custom',
+                'description' => 'Двухэтажный коттедж площадью 180 м2.',
+            ],
+            'document_context' => [
+                'context_text' => 'В служебном шаблоне встречаются слова офис и склад.',
+            ],
+        ];
+
+        $profile = $this->planner()->profileFromAnalysis($analysis);
+        $keys = array_column($this->planner()->plan($profile)->packages, 'key');
+
+        self::assertSame('house', $profile->objectType);
+        self::assertContains('foundation', $keys);
+        self::assertContains('lighting', $keys);
+        self::assertNotContains('industrial_floor', $keys);
+        self::assertNotContains('office_partitions', $keys);
     }
 
     public function test_plan_only_geometry_uses_only_evidence_backed_fitout_packages(): void

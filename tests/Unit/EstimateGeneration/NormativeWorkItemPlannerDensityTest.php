@@ -51,19 +51,52 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             $pricedItems,
             static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'foundation.concrete'
         ))[0] ?? null;
-        $fallbackItems = array_values(array_filter(
-            $pricedItems,
-            static fn (array $item): bool => ($item['metadata']['quantity_source'] ?? null) === 'planner_fallback'
-        ));
-
         self::assertIsArray($concreteItem);
         self::assertNotContains('quantity_review_required', $concreteItem['validation_flags']);
         self::assertSame('document_quantity', $concreteItem['metadata']['quantity_source']);
-        self::assertNotEmpty($fallbackItems);
+        self::assertNotContains('planner_fallback', array_map(
+            static fn (array $item): string => (string) ($item['metadata']['quantity_source'] ?? ''),
+            $pricedItems,
+        ));
+    }
 
-        foreach ($fallbackItems as $fallbackItem) {
-            self::assertContains('document_takeoff_required', $fallbackItem['validation_flags']);
-        }
+    public function test_planner_does_not_create_priced_item_from_empty_planner_fallback(): void
+    {
+        $items = $this->pricedItems($this->planner()->build(
+            $local = $this->localEstimate('ventilation', 'Вентиляция', 'engineering', 12),
+            $local['sections'][0],
+            ['document_context' => []],
+        ));
+
+        self::assertNotContains('planner_fallback', array_map(
+            static fn (array $item): string => (string) ($item['metadata']['quantity_source'] ?? ''),
+            $items,
+        ));
+    }
+
+    public function test_planner_does_not_create_priced_item_from_empty_planner_fallback_for_exposed_package(): void
+    {
+        $localEstimate = $this->localEstimate('foundation', 'Фундамент', 'foundation', 12);
+        $items = $this->pricedItems($this->planner()->build($localEstimate, $localEstimate['sections'][0], [
+            'document_context' => [
+                'quantity_takeoffs' => [[
+                    'quantity_key' => 'foundation.concrete',
+                    'name' => 'Бетонирование фундаментов по ВОР',
+                    'unit' => 'м3',
+                    'quantity' => 32.5,
+                    'source_refs' => [[
+                        'type' => 'document',
+                        'filename' => 'ВОР.pdf',
+                        'page_number' => 1,
+                    ]],
+                ]],
+            ],
+        ]));
+
+        self::assertNotContains('planner_fallback', array_map(
+            static fn (array $item): string => (string) ($item['metadata']['quantity_source'] ?? ''),
+            $items,
+        ));
     }
 
     public function test_package_key_selects_specific_normative_intents_even_when_scope_is_broad(): void
@@ -170,10 +203,10 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                         'normalized_payload' => ['review_required' => false],
                     ],
                     [
-                        'quantity_key' => 'sewerage.outlets',
-                        'name' => 'Выпуски канализации по спецификации',
-                        'unit' => 'шт',
-                        'quantity' => 4,
+                        'quantity_key' => 'sewerage.outlet_route',
+                        'name' => 'Трасса канализационного выпуска по спецификации',
+                        'unit' => 'м',
+                        'quantity' => 5,
                         'source_refs' => [['type' => 'drawing', 'filename' => 'ВК.pdf', 'page_number' => 2]],
                         'normalized_payload' => ['review_required' => false],
                     ],
@@ -182,8 +215,8 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         ]));
         $names = array_column($pricedItems, 'name');
 
-        self::assertContains('Прокладка труб канализации', $names);
-        self::assertContains('Монтаж канализационных выпусков', $names);
+        self::assertContains('Прокладка внутренней канализации со стояками и ревизиями', $names);
+        self::assertContains('Прокладка канализационного выпуска из полипропиленовых труб 110 мм', $names);
         self::assertNotContains('Комплекс строительных работ', $names);
         self::assertNotContains('Прокладка магистральных кабелей', $names);
         self::assertNotContains('site.setup', array_column($pricedItems, 'quantity_formula'));
@@ -591,7 +624,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         );
         $names = array_column($items, 'name');
 
-        self::assertContains('Приточно-вытяжная вентиляция', $names);
+        self::assertContains('Монтаж вытяжных воздуховодов жилого дома', $names);
         self::assertNotContains('Воздухораспределители офиса', $names);
         self::assertNotContains('Воздухораспределители склада', $names);
     }
@@ -621,15 +654,14 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             'heating' => 'heating',
         ] as $packageKey => $scopeType) {
             $localEstimate = $this->localEstimate($packageKey, $packageKey, $scopeType, 12);
+            $items = $planner->build($localEstimate, $localEstimate['sections'][0], $analysis);
             $names = [
                 ...$names,
-                ...array_column($planner->build($localEstimate, $localEstimate['sections'][0], $analysis), 'name'),
+                ...array_column($items, 'name'),
             ];
         }
 
-        self::assertContains('Устройство внутренних перегородок', $names);
-        self::assertContains('Бетонирование монолитного перекрытия', $names);
-        self::assertContains('Армирование монолитного перекрытия', $names);
+        self::assertSame([], $names);
         self::assertNotContains('Монтаж оконных блоков', $names);
         self::assertNotContains('Монтаж дверных блоков', $names);
         self::assertNotContains('Устройство плиты пола', $names);
@@ -771,6 +803,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         foreach ($this->knownPackageScopes() as $packageKey => $scopeType) {
             $localEstimate = $this->localEstimate($packageKey, $packageKey, $scopeType, 4);
             $items = $planner->build($localEstimate, $localEstimate['sections'][0], [
+                'object' => ['object_type' => 'mixed_warehouse_office'],
                 'document_context' => [
                     'quantity_takeoffs' => [
                         $this->confirmedTakeoffForPackage($packageKey),
@@ -812,6 +845,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         foreach ($this->knownPackageScopes() as $packageKey => $scopeType) {
             $localEstimate = $this->localEstimate($packageKey, $packageKey, $scopeType, 4);
             $items = $this->pricedItems($planner->build($localEstimate, $localEstimate['sections'][0], [
+                'object' => ['object_type' => 'mixed_warehouse_office'],
                 'document_context' => [
                     'quantity_takeoffs' => [
                         $this->confirmedTakeoffForPackage($packageKey),
@@ -883,6 +917,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
     public function test_mixed_office_warehouse_uses_document_scope_and_flat_roof_quantities(): void
     {
         $analysis = [
+            'object' => ['object_type' => 'mixed_warehouse_office'],
             'document_context' => [
                 'facts' => [
                     [
@@ -1104,7 +1139,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         $cases = [
             'earthworks' => ['foundation', ['earth.export']],
             'stairs' => ['stairs', ['stairs.flights', 'stairs.landings']],
-            'roof' => ['roof', ['roof.rafters']],
+            'roof' => ['roof', ['roof.area']],
             'electrical' => ['electrical', ['electrical.grounding']],
             'rough_finishing' => ['finishing', ['rough.floor']],
         ];
@@ -1336,13 +1371,15 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
     public function test_floor_plan_rough_and_finish_packages_do_not_duplicate_finish_intents(): void
     {
         $analysis = [
+            'object' => ['object_type' => 'house'],
             'document_context' => [
                 'quantity_takeoffs' => [
                     $this->confirmedTakeoff('rough.floor', 87.14, 'м2'),
                     $this->confirmedTakeoff('rough.walls', 235.28, 'м2'),
+                    $this->confirmedTakeoff('rough.ceiling', 87.14, 'м2'),
                     $this->confirmedTakeoff('finish.floor', 87.14, 'м2'),
                     $this->confirmedTakeoff('finish.paint', 235.28, 'м2'),
-                    $this->confirmedTakeoff('office.ceiling', 87.14, 'м2'),
+                    $this->confirmedTakeoff('finish.ceiling', 87.14, 'м2'),
                 ],
             ],
         ];
@@ -1354,23 +1391,11 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         $finishItems = $this->pricedItems($planner->build($finishLocal, $finishLocal['sections'][0], $analysis));
         $roughFormulas = array_column($roughItems, 'quantity_formula');
         $finishFormulas = array_column($finishItems, 'quantity_formula');
-        $sourceBackedFinishFormulas = array_column(array_values(array_filter(
-            $finishItems,
-            static fn (array $item): bool => ($item['metadata']['quantity_source'] ?? null) !== 'planner_fallback'
-        )), 'quantity_formula');
-        $fallbackFinishItems = array_values(array_filter(
-            $finishItems,
-            static fn (array $item): bool => ($item['metadata']['quantity_source'] ?? null) === 'planner_fallback'
-        ));
 
-        self::assertSame(['rough.floor', 'rough.walls'], $roughFormulas);
-        self::assertSame(['finish.floor', 'finish.paint', 'office.ceiling'], $sourceBackedFinishFormulas);
-        self::assertContains('finish.baseboard', $finishFormulas);
+        self::assertSame(['rough.floor', 'rough.walls', 'rough.ceiling'], $roughFormulas);
+        self::assertSame(['finish.floor', 'finish.paint', 'finish.ceiling'], $finishFormulas);
+        self::assertNotContains('finish.baseboard', $finishFormulas);
         self::assertSame([], array_values(array_intersect($roughFormulas, $finishFormulas)));
-
-        foreach ($fallbackFinishItems as $fallbackItem) {
-            self::assertContains('document_takeoff_required', $fallbackItem['validation_flags']);
-        }
     }
 
     public function test_residential_preliminary_items_receive_catalog_material_scenario_and_warning(): void
@@ -1396,7 +1421,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         ))[0] ?? null;
 
         self::assertIsArray($floor);
-        self::assertSame('residential_preliminary_common:v3', $floor['specialization_scenario']['scenario_id'] ?? null);
+        self::assertSame('residential_preliminary_common:v19', $floor['specialization_scenario']['scenario_id'] ?? null);
         self::assertSame(['ламинат', 'ламинированн'], $floor['specialization_scenario']['material_markers'] ?? null);
         self::assertSame('warning', $floor['metadata']['material_assumption']['severity'] ?? null);
         self::assertTrue($floor['metadata']['material_assumption']['requires_confirmation'] ?? false);

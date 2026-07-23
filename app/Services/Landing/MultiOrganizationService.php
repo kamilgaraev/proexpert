@@ -3,21 +3,27 @@
 namespace App\Services\Landing;
 
 use App\Models\Organization;
-use App\Models\OrganizationGroup;
 use App\Models\OrganizationAccessPermission;
+use App\Models\OrganizationGroup;
 use App\Models\User;
+use App\Services\Contract\ContractAuditedMutationService;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 class MultiOrganizationService
 {
+    public function __construct(
+        private readonly ContractAuditedMutationService $contractMutations,
+    ) {}
+
     public function createOrganizationGroup(User $user, array $data): OrganizationGroup
     {
         $organization = $user->currentOrganization;
-        
-        if (!$organization) {
+
+        if (! $organization) {
             throw new \Exception('Организация не найдена');
         }
 
@@ -31,7 +37,7 @@ class MultiOrganizationService
                 'is_holding' => true,
                 'hierarchy_level' => 0,
                 'hierarchy_path' => (string) $organization->id,
-                'multi_org_settings' => $data['settings'] ?? []
+                'multi_org_settings' => $data['settings'] ?? [],
             ]);
 
             $group = OrganizationGroup::create([
@@ -51,20 +57,20 @@ class MultiOrganizationService
 
     public function addChildOrganization(OrganizationGroup $group, array $organizationData, User $creator): array
     {
-        if (!$group->canAddChildOrganization()) {
+        if (! $group->canAddChildOrganization()) {
             throw new \Exception('Достигнут лимит дочерних организаций');
         }
 
         return DB::transaction(function () use ($group, $organizationData, $creator) {
             $ownerData = $organizationData['owner'] ?? null;
-            if (!$ownerData) {
+            if (! $ownerData) {
                 throw new \Exception('Данные владельца не переданы');
             }
 
             // ищем или создаём пользователя-владельца
             $owner = \App\Models\User::where('email', $ownerData['email'])->first();
 
-            if (!$owner) {
+            if (! $owner) {
                 $owner = \App\Models\User::create([
                     'name' => $ownerData['name'],
                     'email' => $ownerData['email'],
@@ -73,10 +79,10 @@ class MultiOrganizationService
             }
 
             $parentOrg = $group->parentOrganization;
-            
+
             // Получаем имя основного бакета для всех организаций
             $mainBucket = config('filesystems.disks.s3.bucket', 'prohelper-storage');
-            
+
             $childOrg = Organization::create([
                 'name' => $organizationData['name'],
                 'description' => $organizationData['description'] ?? null,
@@ -95,7 +101,7 @@ class MultiOrganizationService
             ]);
 
             $childOrg->forceFill([
-                'hierarchy_path' => ($parentOrg->hierarchy_path ?: (string) $parentOrg->id) . '.' . $childOrg->id,
+                'hierarchy_path' => ($parentOrg->hierarchy_path ?: (string) $parentOrg->id).'.'.$childOrg->id,
             ])->save();
 
             // Папка org-{id}/ в бакете создастся автоматически при первой загрузке файла
@@ -125,11 +131,11 @@ class MultiOrganizationService
     public function getOrganizationHierarchy(int $organizationId): array
     {
         $organization = Organization::with([
-            'childOrganizations', 
+            'childOrganizations',
             'parentOrganization',
-            'organizationGroup'
+            'organizationGroup',
         ])->findOrFail($organizationId);
-        
+
         if ($organization->organization_type === 'child') {
             $organization = $organization->parentOrganization->load('organizationGroup');
         }
@@ -148,7 +154,7 @@ class MultiOrganizationService
         $userOrgId = $user->current_organization_id;
         $userOrg = Organization::find($userOrgId);
 
-        if (!$userOrg) {
+        if (! $userOrg) {
             return new Collection([]);
         }
 
@@ -168,7 +174,7 @@ class MultiOrganizationService
     public function hasAccessToOrganization(User $user, int $targetOrgId, string $permission = 'read'): bool
     {
         $userOrgId = $user->current_organization_id;
-        
+
         if ($userOrgId === $targetOrgId) {
             return true;
         }
@@ -176,7 +182,7 @@ class MultiOrganizationService
         $userOrg = Organization::find($userOrgId);
         $targetOrg = Organization::find($targetOrgId);
 
-        if (!$userOrg || !$targetOrg) {
+        if (! $userOrg || ! $targetOrg) {
             return false;
         }
 
@@ -196,14 +202,14 @@ class MultiOrganizationService
 
     public function getOrganizationData(int $organizationId, User $user): array
     {
-        if (!$this->hasAccessToOrganization($user, $organizationId)) {
+        if (! $this->hasAccessToOrganization($user, $organizationId)) {
             throw new \Exception('Нет доступа к данным организации');
         }
 
         $organization = Organization::with([
             'users',
             'projects',
-            'contracts'
+            'contracts',
         ])->findOrFail($organizationId);
 
         return [
@@ -287,12 +293,12 @@ class MultiOrganizationService
     private function getHierarchyStats(Organization $parentOrg): array
     {
         $childOrgs = $parentOrg->childOrganizations;
-        
+
         return [
             'total_organizations' => 1 + $childOrgs->count(),
-            'total_users' => $parentOrg->users()->count() + $childOrgs->sum(fn($org) => $org->users()->count()),
-            'total_projects' => $parentOrg->projects()->count() + $childOrgs->sum(fn($org) => $org->projects()->count()),
-            'total_contracts' => $parentOrg->contracts()->count() + $childOrgs->sum(fn($org) => $org->contracts()->count()),
+            'total_users' => $parentOrg->users()->count() + $childOrgs->sum(fn ($org) => $org->users()->count()),
+            'total_projects' => $parentOrg->projects()->count() + $childOrgs->sum(fn ($org) => $org->projects()->count()),
+            'total_contracts' => $parentOrg->contracts()->count() + $childOrgs->sum(fn ($org) => $org->contracts()->count()),
         ];
     }
 
@@ -308,21 +314,21 @@ class MultiOrganizationService
     public function getChildOrganizations(int $parentOrgId, array $filters = []): array
     {
         $organization = Organization::findOrFail($parentOrgId);
-        
-        if (!($organization->is_holding ?? false)) {
+
+        if (! ($organization->is_holding ?? false)) {
             throw new \Exception('Организация не является холдингом');
         }
 
         $query = $organization->childOrganizations()->with(['users']);
 
-        if (!empty($filters['search'])) {
+        if (! empty($filters['search'])) {
             $query->where(function ($q) use ($filters) {
-                $q->where('name', 'like', '%' . $filters['search'] . '%')
-                  ->orWhere('tax_number', 'like', '%' . $filters['search'] . '%');
+                $q->where('name', 'like', '%'.$filters['search'].'%')
+                    ->orWhere('tax_number', 'like', '%'.$filters['search'].'%');
             });
         }
 
-        if (!empty($filters['status']) && $filters['status'] !== 'all') {
+        if (! empty($filters['status']) && $filters['status'] !== 'all') {
             $active = $filters['status'] === 'active';
             $query->where('is_active', $active);
         }
@@ -367,7 +373,7 @@ class MultiOrganizationService
         $parentOrg = Organization::findOrFail($parentOrgId);
         $childOrg = Organization::findOrFail($childOrgId);
 
-        if (!($parentOrg->is_holding ?? false)) {
+        if (! ($parentOrg->is_holding ?? false)) {
             throw new \Exception('Родительская организация не является холдингом');
         }
 
@@ -377,7 +383,7 @@ class MultiOrganizationService
 
         $updateData = [];
         $allowedFields = ['name', 'description', 'tax_number', 'registration_number', 'address', 'phone', 'email', 'is_active'];
-        
+
         foreach ($allowedFields as $field) {
             $requestField = $field === 'tax_number' ? 'inn' : ($field === 'registration_number' ? 'kpp' : $field);
             if (array_key_exists($requestField, $data)) {
@@ -400,7 +406,7 @@ class MultiOrganizationService
         $parentOrg = Organization::findOrFail($parentOrgId);
         $childOrg = Organization::findOrFail($childOrgId);
 
-        if (!($parentOrg->is_holding ?? false)) {
+        if (! ($parentOrg->is_holding ?? false)) {
             throw new \Exception('Родительская организация не является холдингом');
         }
 
@@ -408,7 +414,7 @@ class MultiOrganizationService
             throw new \Exception('Организация не является дочерней для данного холдинга');
         }
 
-        if ($childOrg->users()->count() > 0 && !$transferDataTo) {
+        if ($childOrg->users()->count() > 0 && ! $transferDataTo) {
             throw new \Exception('Нельзя удалить организацию с пользователями без указания организации для перевода данных');
         }
 
@@ -426,12 +432,23 @@ class MultiOrganizationService
                 ) {
                     throw new \Exception('Организация для переноса данных должна входить в тот же холдинг');
                 }
-                
+
                 $childOrg->projects()->update(['organization_id' => $transferDataTo]);
-                $childOrg->contracts()->update(['organization_id' => $transferDataTo]);
-                
+                $childOrg->contracts()->orderBy('id')->each(function ($contract) use ($childOrg, $transferDataTo): void {
+                    $this->contractMutations->update(
+                        $contract,
+                        ['organization_id' => $transferDataTo],
+                        'organization_transferred',
+                        Auth::id(),
+                        [
+                            'source_organization_id' => (int) $childOrg->id,
+                            'source_event_id' => 'organization_transfer:'.(string) $childOrg->id.':'.(string) $transferDataTo.':'.(string) $contract->id,
+                        ],
+                    );
+                });
+
                 foreach ($childOrg->users as $user) {
-                    if (!$targetOrg->users()->where('user_id', $user->id)->exists()) {
+                    if (! $targetOrg->users()->where('user_id', $user->id)->exists()) {
                         $targetOrg->users()->attach($user->id, [
                             'is_owner' => false,
                             'is_active' => true,
@@ -452,7 +469,7 @@ class MultiOrganizationService
         $parentOrg = Organization::findOrFail($parentOrgId);
         $childOrg = Organization::findOrFail($childOrgId);
 
-        if (!($parentOrg->is_holding ?? false)) {
+        if (! ($parentOrg->is_holding ?? false)) {
             throw new \Exception('Родительская организация не является холдингом');
         }
 
@@ -462,14 +479,14 @@ class MultiOrganizationService
 
         $query = $childOrg->users()->withPivot(['is_owner', 'is_active', 'settings']);
 
-        if (!empty($filters['search'])) {
+        if (! empty($filters['search'])) {
             $query->where(function ($q) use ($filters) {
-                $q->where('name', 'like', '%' . $filters['search'] . '%')
-                  ->orWhere('email', 'like', '%' . $filters['search'] . '%');
+                $q->where('name', 'like', '%'.$filters['search'].'%')
+                    ->orWhere('email', 'like', '%'.$filters['search'].'%');
             });
         }
 
-        if (!empty($filters['status']) && $filters['status'] !== 'all') {
+        if (! empty($filters['status']) && $filters['status'] !== 'all') {
             $active = $filters['status'] === 'active';
             $query->wherePivot('is_active', $active);
         }
@@ -480,6 +497,7 @@ class MultiOrganizationService
         return [
             'users' => $paginated->map(function ($user) {
                 $pivotSettings = json_decode($user->pivot->settings, true) ?? [];
+
                 return [
                     'id' => $user->id,
                     'name' => $user->name,
@@ -504,7 +522,7 @@ class MultiOrganizationService
         $parentOrg = Organization::findOrFail($parentOrgId);
         $childOrg = Organization::findOrFail($childOrgId);
 
-        if (!($parentOrg->is_holding ?? false)) {
+        if (! ($parentOrg->is_holding ?? false)) {
             throw new \Exception('Родительская организация не является холдингом');
         }
 
@@ -544,7 +562,7 @@ class MultiOrganizationService
         $parentOrg = Organization::findOrFail($parentOrgId);
         $childOrg = Organization::findOrFail($childOrgId);
 
-        if (!($parentOrg->is_holding ?? false)) {
+        if (! ($parentOrg->is_holding ?? false)) {
             throw new \Exception('Родительская организация не является холдингом');
         }
 
@@ -555,7 +573,7 @@ class MultiOrganizationService
         $user = User::findOrFail($userId);
         $pivot = $childOrg->users()->where('user_id', $userId)->first();
 
-        if (!$pivot) {
+        if (! $pivot) {
             throw new \Exception('Пользователь не состоит в этой организации');
         }
 
@@ -593,7 +611,7 @@ class MultiOrganizationService
         $parentOrg = Organization::findOrFail($parentOrgId);
         $childOrg = Organization::findOrFail($childOrgId);
 
-        if (!($parentOrg->is_holding ?? false)) {
+        if (! ($parentOrg->is_holding ?? false)) {
             throw new \Exception('Родительская организация не является холдингом');
         }
 
@@ -601,7 +619,7 @@ class MultiOrganizationService
             throw new \Exception('Организация не является дочерней для данного холдинга');
         }
 
-        if (!$childOrg->users()->where('user_id', $userId)->exists()) {
+        if (! $childOrg->users()->where('user_id', $userId)->exists()) {
             throw new \Exception('Пользователь не состоит в этой организации');
         }
 
@@ -626,7 +644,7 @@ class MultiOrganizationService
         $parentOrg = Organization::findOrFail($parentOrgId);
         $childOrg = Organization::with(['users', 'projects', 'contracts'])->findOrFail($childOrgId);
 
-        if (!($parentOrg->is_holding ?? false)) {
+        if (! ($parentOrg->is_holding ?? false)) {
             throw new \Exception('Родительская организация не является холдингом');
         }
 
@@ -670,7 +688,7 @@ class MultiOrganizationService
 
         $updateData = [];
         $allowedFields = ['name', 'description', 'max_child_organizations'];
-        
+
         foreach ($allowedFields as $field) {
             if (array_key_exists($field, $data)) {
                 $updateData[$field] = $data[$field];
@@ -700,12 +718,12 @@ class MultiOrganizationService
     {
         $organization = Organization::with(['childOrganizations', 'organizationGroup'])->findOrFail($organizationId);
 
-        if (!($organization->is_holding ?? false)) {
+        if (! ($organization->is_holding ?? false)) {
             throw new \Exception('Организация не является холдингом');
         }
 
         $childOrgs = $organization->childOrganizations;
-        
+
         return [
             'holding_info' => [
                 'name' => $organization->name,
@@ -716,10 +734,10 @@ class MultiOrganizationService
                 'created_at' => $organization->created_at,
             ],
             'summary_stats' => [
-                'total_users' => $organization->users()->count() + $childOrgs->sum(fn($org) => $org->users()->count()),
-                'total_projects' => $organization->projects()->count() + $childOrgs->sum(fn($org) => $org->projects()->count()),
-                'total_contracts' => $organization->contracts()->count() + $childOrgs->sum(fn($org) => $org->contracts()->count()),
-                'total_balance' => ($organization->balance?->current_balance ?? 0) + $childOrgs->sum(fn($org) => $org->balance?->current_balance ?? 0),
+                'total_users' => $organization->users()->count() + $childOrgs->sum(fn ($org) => $org->users()->count()),
+                'total_projects' => $organization->projects()->count() + $childOrgs->sum(fn ($org) => $org->projects()->count()),
+                'total_contracts' => $organization->contracts()->count() + $childOrgs->sum(fn ($org) => $org->contracts()->count()),
+                'total_balance' => ($organization->balance?->current_balance ?? 0) + $childOrgs->sum(fn ($org) => $org->balance?->current_balance ?? 0),
             ],
             'child_organizations' => $childOrgs->map(function ($org) {
                 return [
@@ -733,7 +751,7 @@ class MultiOrganizationService
             }),
             'recent_activity' => [
                 'last_child_added' => $childOrgs->sortByDesc('created_at')->first()?->created_at,
-                'most_active_child' => $childOrgs->sortByDesc(fn($org) => $org->projects()->count())->first(),
+                'most_active_child' => $childOrgs->sortByDesc(fn ($org) => $org->projects()->count())->first(),
             ],
         ];
     }

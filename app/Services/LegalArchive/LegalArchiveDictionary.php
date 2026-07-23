@@ -58,6 +58,8 @@ final class LegalArchiveDictionary
     public const VERSION_STATUSES = [
         'uploaded',
         'reviewed',
+        'frozen',
+        'signed',
         'superseded',
     ];
 

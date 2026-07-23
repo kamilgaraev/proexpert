@@ -45,17 +45,32 @@ final readonly class NormativeResourceRowData
         $isSemanticProjectSelection = in_array($projectResourcePricePolicy, [
             'regional_semantic_pipe_hard_attributes_median:v1',
             'regional_semantic_metal_gutter_family_median:v1',
+            'regional_semantic_hard_attributes_median:v2',
+            'fsbc_semantic_hard_attributes_median:v2',
+            'fsnb_semantic_hard_attributes_median:v2',
+            'regional_semantic_hard_attributes_median:v3',
+            'fsbc_semantic_hard_attributes_median:v3',
+            'fsnb_semantic_hard_attributes_median:v3',
+            'regional_semantic_hard_attributes_median:v4',
+            'fsbc_semantic_hard_attributes_median:v4',
+            'fsnb_semantic_hard_attributes_median:v4',
         ], true)
-            && $regionalPriceVersionId !== null
+            && self::policyMatchesPriceSource($projectResourcePricePolicy, $priceSource)
             && $priceResourceCode !== ''
             && trim((string) ($row->price_resource_name ?? '')) !== '';
         $isExactGroupProjectSelection = in_array($projectResourcePricePolicy, [
             'regional_child_median:v1',
             'fsbc_base_child_median:v1',
             'fsnb_base_child_median:v1',
+            'regional_residential_converted_child_median:v1',
             'regional_child_hard_attributes_median:v1',
             'fsbc_base_child_hard_attributes_median:v1',
             'fsnb_base_child_hard_attributes_median:v1',
+            'regional_child_hard_attributes_median:v2',
+            'fsbc_base_child_hard_attributes_median:v2',
+            'fsnb_base_child_hard_attributes_median:v2',
+            'fsbc_residential_converted_child_median:v1',
+            'fsnb_2022_residential_converted_child_median:v1',
         ], true)
             && self::policyMatchesPriceSource($projectResourcePricePolicy, $priceSource)
             && preg_match('/^'.preg_quote($resourceCode, '/').'-\d{4}$/D', $priceResourceCode) === 1;
@@ -104,6 +119,28 @@ final readonly class NormativeResourceRowData
                 'policy' => $projectResourcePricePolicy,
                 'candidates_count' => $projectResourceCandidatesCount,
             ];
+            $conversionAssumption = trim((string) ($row->project_resource_conversion_assumption ?? ''));
+            if ($conversionAssumption !== '') {
+                $resource['project_resource_selection']['conversion_assumption'] = $conversionAssumption;
+                $sourceUnitPrice = $row->project_resource_source_unit_price ?? null;
+                $sourcePriceUnit = trim((string) ($row->project_resource_source_price_unit ?? ''));
+                $conversionFactor = $row->project_resource_conversion_factor ?? null;
+                if (is_numeric($sourceUnitPrice) && (float) $sourceUnitPrice > 0
+                    && $sourcePriceUnit !== ''
+                    && is_numeric($conversionFactor) && (float) $conversionFactor > 0) {
+                    $resource['project_resource_selection']['source_unit_price'] = (string) $sourceUnitPrice;
+                    $resource['project_resource_selection']['source_price_unit'] = $sourcePriceUnit;
+                    $resource['project_resource_selection']['conversion_factor'] = (string) $conversionFactor;
+                    $ruleKey = trim((string) ($row->project_resource_abstract_selection_rule_key ?? ''));
+                    $ruleVersion = $row->project_resource_abstract_selection_rule_version ?? null;
+                    $quantityFactor = $row->project_resource_quantity_factor ?? null;
+                    if ($ruleKey !== '' && self::positiveInt($ruleVersion) !== null && is_numeric($quantityFactor) && (float) $quantityFactor > 0) {
+                        $resource['project_resource_selection']['abstract_selection_rule_key'] = $ruleKey;
+                        $resource['project_resource_selection']['abstract_selection_rule_version'] = self::positiveInt($ruleVersion);
+                        $resource['project_resource_selection']['quantity_factor'] = (string) $quantityFactor;
+                    }
+                }
+            }
         }
 
         return new self($normId, $group, $resource);

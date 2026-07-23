@@ -42,7 +42,7 @@ class UserPermissionsController extends Controller
                 return AdminResponse::error(trans_message('permissions.unauthorized'), 401);
             }
 
-            $cacheKey = "user_permissions_full_effective_{$user->id}_{$organizationId}";
+            $cacheKey = "user_permissions_full_effective_{$user->id}_{$organizationId}_{$this->roleDefinitionsVersion()}";
             $data = Cache::remember($cacheKey, 300, function () use ($user, $organizationId) {
                 $context = $organizationId ? ['organization_id' => $organizationId] : null;
                 $authContext = $organizationId ? AuthorizationContext::getOrganizationContext($organizationId) : null;
@@ -166,6 +166,20 @@ class UserPermissionsController extends Controller
         return null;
     }
 
+    private function roleDefinitionsVersion(): string
+    {
+        $files = glob(config_path('RoleDefinitions/*/*.json')) ?: [];
+        $fingerprints = [];
+
+        foreach ($files as $file) {
+            $fingerprints[] = $file.':'.(string) filemtime($file).':'.(string) filesize($file);
+        }
+
+        sort($fingerprints);
+
+        return hash('sha256', implode('|', $fingerprints));
+    }
+
     protected function getAvailableInterfaces($user, ?AuthorizationContext $context): array
     {
         $interfaces = [];
@@ -265,6 +279,10 @@ class UserPermissionsController extends Controller
     protected function getModulePermissions(string $moduleSlug): array
     {
         try {
+            $moduleSlug = match ($moduleSlug) {
+                'estimate-generation' => 'ai-estimates',
+                default => $moduleSlug,
+            };
             $module = \App\Models\Module::where('slug', $moduleSlug)->first();
             if ($module && $module->permissions) {
                 return $this->normalizePermissions($module->permissions);

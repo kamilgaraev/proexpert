@@ -17,7 +17,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
         $issued = $catalog->issue('finish.floor', 'residential');
 
         self::assertIsArray($issued);
-        self::assertSame('residential_preliminary_common:v3', $issued['scenario_id']);
+        self::assertSame('residential_preliminary_common:v19', $issued['scenario_id']);
         self::assertSame('finish.floor', $issued['work_item_key']);
         self::assertSame(['ламинат', 'ламинированн'], $issued['material_markers']);
         self::assertNotSame('', $issued['signature']);
@@ -78,6 +78,7 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
 
         self::assertIsArray($issued);
         self::assertSame('20-01-001-01', $issued['normative_rate_code']);
+        self::assertSame('Монтаж вытяжных воздуховодов жилого дома', $issued['work_item_name']);
         self::assertSame('монтаж воздуховодов', $issued['normative_search_text']);
         self::assertContains('листовой оцинкованной стали', $issued['material_markers']);
         self::assertContains('диаметром до 200 мм', $issued['material_markers']);
@@ -85,6 +86,27 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             $issued,
             $catalog->resolve($issued, 'ventilation.air_exchange', 'residential'),
         );
+    }
+
+    public function test_issues_signed_intent_actions_for_residential_engineering_scenarios(): void
+    {
+        $catalog = new ResidentialMaterialScenarioCatalog;
+
+        self::assertSame('cable_installation', $catalog->issue('electrical.main_cable', 'residential')['intent_action'] ?? null);
+        self::assertSame('cable_installation', $catalog->issue('electrical.power_lines', 'residential')['intent_action'] ?? null);
+        self::assertSame('cable_installation', $catalog->issue('lighting.lines', 'residential')['intent_action'] ?? null);
+        self::assertSame('electrical_panel_installation', $catalog->issue('electrical.panel', 'residential')['intent_action'] ?? null);
+        self::assertSame('socket_installation', $catalog->issue('electrical.outlets', 'residential')['intent_action'] ?? null);
+        self::assertSame('socket_installation', $catalog->issue('electrical.switches', 'residential')['intent_action'] ?? null);
+        self::assertSame('lighting_fixture_installation', $catalog->issue('lighting.fixtures', 'residential')['intent_action'] ?? null);
+        self::assertSame('electric_boiler_installation_analog', $catalog->issue('heating.unit', 'residential')['intent_action'] ?? null);
+        self::assertSame('pipeline_installation', $catalog->issue('sewerage.outlet_route', 'residential')['intent_action'] ?? null);
+        self::assertSame('heating_emitter_installation', $catalog->issue('heating.radiators', 'residential')['intent_action'] ?? null);
+        self::assertSame('concreting', $catalog->issue('foundation.prep', 'residential')['intent_action'] ?? null);
+        self::assertSame('sanitary_fixture_installation', $catalog->issue('sanitary.showers', 'residential')['intent_action'] ?? null);
+        self::assertSame('sanitary_fixture_installation', $catalog->issue('sanitary.toilets', 'residential')['intent_action'] ?? null);
+        self::assertSame('sanitary_fixture_installation', $catalog->issue('sanitary.washbasins', 'residential')['intent_action'] ?? null);
+        self::assertSame('floor_preparation', $catalog->issue('rough.floor', 'residential')['intent_action'] ?? null);
     }
 
     #[DataProvider('verifiedNormativeSpecializations')]
@@ -105,6 +127,36 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
 
     public static function verifiedNormativeSpecializations(): iterable
     {
+        yield 'foundation concrete preparation' => [
+            'foundation.prep',
+            'устройство бетонной подготовки фундаментов общего назначения',
+            '06-01-001-01',
+        ];
+        yield 'wooden roof rafters' => [
+            'roof.rafters',
+            'установка деревянных стропил',
+            '10-01-002-01',
+        ];
+        yield 'residential shower cabin with plastic tray' => [
+            'sanitary.showers',
+            'установка душевых кабин с пластиковым поддоном',
+            '17-01-001-21',
+        ];
+        yield 'residential toilet' => [
+            'sanitary.toilets',
+            'установка унитазов с бачком непосредственно присоединенным',
+            '17-01-003-01',
+        ];
+        yield 'residential washbasin' => [
+            'sanitary.washbasins',
+            'установка умывальников одиночных с подводкой холодной и горячей воды',
+            '17-01-001-14',
+        ];
+        yield 'cement floor screed' => [
+            'rough.floor',
+            'устройство стяжек цементных толщиной 20 мм',
+            '11-01-011-01',
+        ];
         yield 'foundation coating waterproofing' => [
             'foundation.waterproofing',
             'боковая обмазочная битумная гидроизоляция',
@@ -124,6 +176,21 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'roof.insulation',
             'утепление покрытий плитами из минеральной ваты насухо',
             '12-01-013-07',
+        ];
+        yield 'single layer pitched roof vapor barrier' => [
+            'roof.vapor_barrier',
+            'устройство пароизоляции кровли прокладочной в один слой',
+            '12-01-015-03',
+        ];
+        yield 'timber battens with gaps' => [
+            'roof.battens',
+            'устройство деревянной обрешетки с прозорами из брусков',
+            '12-01-034-02',
+        ];
+        yield 'metal tile roof covering' => [
+            'roof.covering',
+            'устройство простой кровли из металлочерепицы по готовым прогонам',
+            '12-01-023-01',
         ];
         yield 'laminate floor' => [
             'finish.floor',
@@ -150,6 +217,56 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'заземлитель горизонтальный из круглой стали диаметром 12 мм',
             '08-02-472-01',
         ];
+        yield 'residential feeder cable' => [
+            'electrical.main_cable',
+            'прокладка кабеля с креплением скобами и установкой ответвительных коробок',
+            '08-02-401-01',
+        ];
+        yield 'residential power wiring' => [
+            'electrical.power_lines',
+            'прокладка проводов силовой сети в готовых каналах сечением до 6 мм2',
+            '08-02-404-01',
+        ];
+        yield 'residential lighting wiring' => [
+            'lighting.lines',
+            'прокладка проводов групповых осветительных сетей под штукатурку или в бороздах',
+            '08-02-403-03',
+        ];
+        yield 'residential recessed lighting panel' => [
+            'electrical.panel',
+            'щиток осветительный устанавливаемый в нише распорными дюбелями массой до 6 кг',
+            '08-03-599-01',
+        ];
+        yield 'residential recessed socket' => [
+            'electrical.outlets',
+            'розетка штепсельная утопленного типа при скрытой проводке',
+            '08-03-591-09',
+        ];
+        yield 'residential recessed switch' => [
+            'electrical.switches',
+            'выключатель одноклавишный утопленного типа при скрытой проводке',
+            '08-03-591-02',
+        ];
+        yield 'residential ceiling luminaire' => [
+            'lighting.fixtures',
+            'светильник потолочный с креплением винтами для помещений с нормальными условиями среды одноламповый',
+            '08-03-593-06',
+        ];
+        yield 'residential aluminium or bimetallic radiator sections' => [
+            'heating.radiators',
+            'установка алюминиевых и биметаллических секционных радиаторов',
+            '18-03-006-02',
+        ];
+        yield 'residential sewer outlet pp 110 mm' => [
+            'sewerage.outlet_route',
+            'прокладка внутренних трубопроводов канализации из полипропиленовых труб диаметром 110 мм',
+            '16-04-004-02',
+        ];
+        yield 'electric boiler installation analog up to 30 kg' => [
+            'heating.unit',
+            'монтаж оборудования в помещении массой до 0,03 т электрический котел отопления',
+            '37-01-002-01',
+        ];
         yield 'wet zone waterproofing' => [
             'sanitary.waterproofing',
             'устройство обмазочной гидроизоляции битумной мастикой в один слой толщиной 2 мм',
@@ -160,5 +277,32 @@ final class ResidentialMaterialScenarioCatalogTest extends TestCase
             'гладкая облицовка стен керамическими плитками на клее по кирпичу и бетону',
             '15-01-019-05',
         ];
+    }
+
+    public function test_uses_single_sheet_layer_rate_for_diffusion_membrane_with_explicit_material_substitution(): void
+    {
+        $issued = (new ResidentialMaterialScenarioCatalog)->issue('roof.membrane', 'residential');
+
+        self::assertIsArray($issued);
+        self::assertSame('waterproofing', $issued['intent_action']);
+        self::assertSame(
+            'устройство пароизоляции кровли прокладочной в один слой',
+            $issued['normative_search_text'],
+        );
+        self::assertSame('12-01-015-03', $issued['normative_rate_code']);
+        self::assertSame('Укладка подкровельной диффузионной мембраны', $issued['work_item_name']);
+    }
+
+    public function test_combines_internal_sewer_risers_and_revisions_under_verified_pipeline_rate(): void
+    {
+        $issued = (new ResidentialMaterialScenarioCatalog)->issue('sewerage.pipe', 'residential');
+
+        self::assertIsArray($issued);
+        self::assertSame('16-04-004-01', $issued['normative_rate_code']);
+        self::assertSame(
+            'Прокладка внутренней канализации со стояками и ревизиями',
+            $issued['work_item_name'],
+        );
+        self::assertSame('pipeline_installation', $issued['intent_action']);
     }
 }

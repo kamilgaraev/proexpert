@@ -11,7 +11,7 @@ final class QuantityStatementLineParserTest extends TestCase
 {
     public function test_parses_earthwork_row_from_work_volume_statement(): void
     {
-        $row = (new QuantityStatementLineParser())->parse('Обратная засыпка пазух м3 42', 'work_volume_statement');
+        $row = (new QuantityStatementLineParser)->parse('Обратная засыпка пазух м3 42', 'work_volume_statement');
 
         self::assertIsArray($row);
         self::assertSame('Обратная засыпка пазух', $row['name']);
@@ -26,7 +26,7 @@ final class QuantityStatementLineParserTest extends TestCase
 
     public function test_parses_finishing_row_with_quantity_before_unit(): void
     {
-        $row = (new QuantityStatementLineParser())->parse('Окраска стен 180 м2', 'work_volume_statement');
+        $row = (new QuantityStatementLineParser)->parse('Окраска стен 180 м2', 'work_volume_statement');
 
         self::assertIsArray($row);
         self::assertSame('finish.paint', $row['quantity_key']);
@@ -36,7 +36,7 @@ final class QuantityStatementLineParserTest extends TestCase
 
     public function test_parses_equipment_specification_row(): void
     {
-        $row = (new QuantityStatementLineParser())->parse('1 Светильник светодиодный шт 42');
+        $row = (new QuantityStatementLineParser)->parse('1 Светильник светодиодный шт 42');
 
         self::assertIsArray($row);
         self::assertSame('warehouse.lighting', $row['quantity_key']);
@@ -46,7 +46,7 @@ final class QuantityStatementLineParserTest extends TestCase
 
     public function test_maps_structural_work_volume_rows(): void
     {
-        $parser = new QuantityStatementLineParser();
+        $parser = new QuantityStatementLineParser;
 
         $cases = [
             ['Бетонирование фундаментов м3 12,5', 'foundation.concrete', 'foundation', 12.5],
@@ -73,7 +73,7 @@ final class QuantityStatementLineParserTest extends TestCase
 
     public function test_outer_wall_finishing_rows_are_not_structural_wall_volume(): void
     {
-        $parser = new QuantityStatementLineParser();
+        $parser = new QuantityStatementLineParser;
 
         $paint = $parser->parse('Окраска наружных стен м2 180', 'work_volume_statement');
         $plaster = $parser->parse('Штукатурка наружных стен м2 180', 'work_volume_statement');
@@ -89,7 +89,7 @@ final class QuantityStatementLineParserTest extends TestCase
 
     public function test_maps_baseboard_finishing_rows(): void
     {
-        $row = (new QuantityStatementLineParser())->parse('Монтаж плинтуса ПВХ м 77', 'work_volume_statement');
+        $row = (new QuantityStatementLineParser)->parse('Монтаж плинтуса ПВХ м 77', 'work_volume_statement');
 
         self::assertIsArray($row);
         self::assertSame('finish.baseboard', $row['quantity_key']);
@@ -100,9 +100,24 @@ final class QuantityStatementLineParserTest extends TestCase
         self::assertFalse($row['review_required']);
     }
 
+    public function test_maps_grilles_and_diffusers_to_object_neutral_ventilation_devices(): void
+    {
+        $parser = new QuantityStatementLineParser;
+
+        foreach (['Вентиляционная решетка шт 7', 'Диффузоры потолочные шт 4'] as $line) {
+            $row = $parser->parse($line);
+
+            self::assertIsArray($row, $line);
+            self::assertSame('ventilation.distribution_devices', $row['quantity_key'], $line);
+            self::assertSame('ventilation', $row['scope_type'], $line);
+            self::assertTrue($row['mapped'], $line);
+            self::assertFalse($row['review_required'], $line);
+        }
+    }
+
     public function test_unknown_quantity_row_is_not_mapped_to_takeoff(): void
     {
-        $row = (new QuantityStatementLineParser())->parse('Авторский надзор компл 1', 'work_volume_statement');
+        $row = (new QuantityStatementLineParser)->parse('Авторский надзор компл 1', 'work_volume_statement');
 
         self::assertIsArray($row);
         self::assertNull($row['quantity_key']);
@@ -113,6 +128,6 @@ final class QuantityStatementLineParserTest extends TestCase
 
     public function test_header_row_is_ignored(): void
     {
-        self::assertNull((new QuantityStatementLineParser())->parse('Поз. Наименование Ед. Количество'));
+        self::assertNull((new QuantityStatementLineParser)->parse('Поз. Наименование Ед. Количество'));
     }
 }

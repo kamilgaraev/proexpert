@@ -4,20 +4,28 @@ namespace App\Observers;
 
 use App\Models\ContractPerformanceAct;
 use App\Services\Analytics\EVMService;
+use App\Services\Contract\ContractAuditedMutationService;
+use App\Services\Contract\ContractAuditReconciliationService;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
 class ContractPerformanceActObserver
 {
+    public function __construct(
+        private readonly ContractAuditedMutationService $contractMutations,
+        private readonly ContractAuditReconciliationService $reconciliation,
+    ) {}
+
     public function created(ContractPerformanceAct $act): void
     {
-        $this->recalculateContractTotal($act);
+        $this->recalculateContractTotal($act, 'created');
         $this->invalidateEVMCache($act);
     }
 
     public function updated(ContractPerformanceAct $act): void
     {
         if ($act->wasChanged(['amount', 'is_approved'])) {
-            $this->recalculateContractTotal($act);
+            $this->recalculateContractTotal($act, 'updated');
         }
 
         if ($act->wasChanged(['amount', 'is_approved', 'project_id', 'contract_id', 'act_date', 'approval_date', 'status'])) {
@@ -27,16 +35,19 @@ class ContractPerformanceActObserver
 
     public function deleted(ContractPerformanceAct $act): void
     {
-        $this->recalculateContractTotal($act);
+        $this->recalculateContractTotal($act, 'deleted');
         $this->invalidateEVMCache($act);
     }
 
-    private function recalculateContractTotal(ContractPerformanceAct $act): void
+    private function recalculateContractTotal(ContractPerformanceAct $act, string $reason): void
     {
         try {
             $contract = $act->contract;
 
-            if (! $contract || $contract->is_fixed_amount) {
+            if (! $contract) {
+                throw new \RuntimeException('performance_act_contract_not_found');
+            }
+            if ($contract->is_fixed_amount) {
                 return;
             }
 
@@ -46,6 +57,18 @@ class ContractPerformanceActObserver
             if ($newTotalAmount === null || abs((float) $oldTotalAmount - $newTotalAmount) <= 0.01) {
                 return;
             }
+
+            $this->contractMutations->update(
+                $contract,
+                ['total_amount' => $newTotalAmount],
+                'performance_act_total_recalculated',
+                Auth::id(),
+                [
+                    'act_id' => (int) $act->id,
+                    'reason' => $reason,
+                    'source_event_id' => 'performance_act:'.(string) $act->id.':'.$reason.':'.$this->changeFingerprint($act, $reason),
+                ],
+            );
 
             $amountDelta = $newTotalAmount - $oldTotalAmount;
 
@@ -90,12 +113,27 @@ class ContractPerformanceActObserver
                 ]);
             }
         } catch (\Exception $e) {
+            $this->reconciliation->recordDebt(
+                $contract ?? null,
+                (int) $act->contract_id,
+                'performance_act',
+                (string) $act->id,
+                $this->changeFingerprint($act, $reason),
+                isset($newTotalAmount) && is_numeric($newTotalAmount) ? (float) $newTotalAmount : null,
+                $e,
+                ['reason' => $reason, 'act_id' => (int) $act->id],
+            );
             Log::warning('Failed to recalculate contract total_amount from act', [
                 'act_id' => $act->id,
                 'contract_id' => $act->contract_id,
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    private function changeFingerprint(ContractPerformanceAct $act, string $reason): string
+    {
+        return hash('sha256', json_encode([$reason, $act->getOriginal(), $act->getChanges()], JSON_THROW_ON_ERROR));
     }
 
     private function invalidateEVMCache(ContractPerformanceAct $act, bool $includeOriginal = false): void

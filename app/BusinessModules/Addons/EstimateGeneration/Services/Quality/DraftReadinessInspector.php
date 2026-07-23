@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Quality;
 
+use Throwable;
+
+use function trans_message;
+
 final class DraftReadinessInspector
 {
     private const BLOCKING_CODES = [
@@ -17,6 +21,8 @@ final class DraftReadinessInspector
 
     public function __construct(
         private readonly DraftPackageCoverageInspector $packageCoverage = new DraftPackageCoverageInspector,
+        private readonly DraftResidentialCompositionInspector $residentialComposition = new DraftResidentialCompositionInspector,
+        private readonly DraftQuantityCoverageInspector $quantityCoverage = new DraftQuantityCoverageInspector,
     ) {}
 
     public function inspect(array $draft): DraftReadinessInspection
@@ -84,30 +90,71 @@ final class DraftReadinessInspector
             $codes[] = 'blocking_review_unresolved';
         }
         $missingPackages = $this->packageCoverage->missingPackages($draft);
-        if ($missingPackages !== []) {
+        $missingComposition = $this->residentialComposition->missingRequirements($draft);
+        $unresolvedScope = $this->mergeMissingScope($missingPackages, $missingComposition);
+        $quantityCoverage = $this->quantityCoverage->inspect($draft);
+        if ($unresolvedScope !== [] || $quantityCoverage['blocking'] !== []) {
             $codes[] = 'required_scope_unresolved';
         }
 
         $codes = array_values(array_unique(array_filter($codes)));
         sort($codes, SORT_STRING);
-        $warningCodes = array_values(array_unique(array_map('strval', (array) ($draft['quality_summary']['warning_codes'] ?? []))));
+        $warningCodes = array_values(array_unique([
+            ...array_map('strval', (array) ($draft['quality_summary']['warning_codes'] ?? [])),
+            ...$this->compositionAdviceWarningCodes($draft),
+            ...($quantityCoverage['advisory'] !== [] ? ['quantity_scope_omission'] : []),
+        ]));
         sort($warningCodes, SORT_STRING);
 
         return new DraftReadinessInspection(
             array_map(
                 fn (string $code): array => $this->issue(
                     $code,
-                    $code === 'required_scope_unresolved' ? ['packages' => $missingPackages] : [],
+                    $code === 'required_scope_unresolved'
+                        ? array_filter([
+                            'packages' => $unresolvedScope,
+                            'quantity_coverage' => $quantityCoverage['blocking'],
+                        ])
+                        : [],
                 ),
                 $codes,
             ),
-            array_map($this->issue(...), $warningCodes),
+            array_map(
+                fn (string $code): array => $this->issue(
+                    $code,
+                    $code === 'quantity_scope_omission'
+                        ? ['quantity_coverage' => $quantityCoverage['advisory']]
+                        : [],
+                ),
+                $warningCodes,
+            ),
             array_merge(
                 array_fill_keys(array_map(static fn (string $code): string => 'gate_'.$code, self::BLOCKING_CODES), 0),
                 array_fill_keys(array_map(static fn (string $code): string => 'warning_'.$code, $warningCodes), 1),
                 array_fill_keys(array_map(static fn (string $code): string => 'gate_'.$code, $codes), 1),
             ),
         );
+    }
+
+    private function mergeMissingScope(array $missingPackages, array $missingComposition): array
+    {
+        $merged = [];
+        foreach ([...$missingPackages, ...$missingComposition] as $package) {
+            if (! is_array($package) || trim((string) ($package['key'] ?? '')) === '') {
+                continue;
+            }
+            $key = (string) $package['key'];
+            $current = $merged[$key] ?? ['key' => $key, 'title' => (string) ($package['title'] ?? $key)];
+            if (is_array($package['missing_items'] ?? null)) {
+                $current['missing_items'] = array_values(array_unique([
+                    ...(is_array($current['missing_items'] ?? null) ? $current['missing_items'] : []),
+                    ...array_map('strval', $package['missing_items']),
+                ]));
+            }
+            $merged[$key] = $current;
+        }
+
+        return array_values($merged);
     }
 
     private function workItems(array $draft): array
@@ -126,12 +173,39 @@ final class DraftReadinessInspector
         return $items;
     }
 
+    /** @return list<string> */
+    private function compositionAdviceWarningCodes(array $draft): array
+    {
+        $status = (string) ($draft['package_plan']['work_composition_advice']['status'] ?? '');
+        $codes = in_array($status, ['invalid', 'unavailable'], true)
+            ? ['work_composition_ai_'.$status]
+            : [];
+
+        foreach ($this->workItems($draft) as $item) {
+            $coverage = is_array($item['metadata']['composition_coverage'] ?? null)
+                ? $item['metadata']['composition_coverage']
+                : [];
+            if (in_array($coverage['ai_status'] ?? null, ['needs_data', 'not_applicable'], true)) {
+                $codes[] = 'work_composition_ai_conflict';
+            }
+        }
+
+        return array_values(array_unique($codes));
+    }
+
     private function issue(string $code, array $details = []): array
     {
+        $messageKey = 'estimate_generation.readiness_'.$code;
+        $message = $messageKey;
+        try {
+            $message = trans_message($messageKey);
+        } catch (Throwable) {
+        }
+
         return [
             'code' => $code,
-            'message_key' => 'estimate_generation.readiness_'.$code,
-            'message' => 'estimate_generation.readiness_'.$code,
+            'message_key' => $messageKey,
+            'message' => $message,
             ...($details !== [] ? ['details' => $details] : []),
         ];
     }
