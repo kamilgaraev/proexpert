@@ -57,20 +57,7 @@ final class ArbiterReviewContextFactory
                     }
                     $quantityEvidence = is_array($workItem['quantity_evidence'] ?? null) ? $workItem['quantity_evidence'] : [];
                     $evidenceRefs = [...$evidenceRefs, ...$this->references($quantityEvidence['evidence_ids'] ?? [])];
-                    $workItems[] = [
-                        'package_key' => $key,
-                        'name' => $this->shortText($workItem['name'] ?? null, 80),
-                        'quantity' => $workItem['quantity'] ?? null,
-                        'unit' => $workItem['unit'] ?? null,
-                        'total_cost' => $workItem['total_cost'] ?? null,
-                        'quantity_evidence' => $this->quantityEvidenceSummary($quantityEvidence),
-                        'normative_match' => $this->normativeMatchSummary($workItem['normative_match'] ?? null),
-                        'resource_summary' => [
-                            'materials_count' => $this->resourceCount($workItem['materials'] ?? null),
-                            'labor_count' => $this->resourceCount($workItem['labor'] ?? null),
-                            'machinery_count' => $this->resourceCount($workItem['machinery'] ?? null),
-                        ],
-                    ];
+                    $workItems[] = $this->workItemSummary($key, $workItem, $quantityEvidence);
                 }
             }
             $packages[] = ['key' => $key, 'work_keys' => array_values(array_unique($workKeys))];
@@ -178,6 +165,34 @@ final class ArbiterReviewContextFactory
     private function resourceCount(mixed $resources): int
     {
         return is_array($resources) ? count($resources) : 0;
+    }
+
+    /** @param array<string, mixed> $workItem @param array<string, mixed> $quantityEvidence @return array<string, mixed> */
+    private function workItemSummary(string $packageKey, array $workItem, array $quantityEvidence): array
+    {
+        $normativeMatch = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
+        $materialsCount = $this->resourceCount($workItem['materials'] ?? null);
+        $laborCount = $this->resourceCount($workItem['labor'] ?? null);
+        $machineryCount = $this->resourceCount($workItem['machinery'] ?? null);
+
+        return array_filter([
+            'package_key' => $packageKey,
+            'name' => $this->shortText($workItem['name'] ?? null, 56),
+            'quantity' => $this->scalar($workItem['quantity'] ?? null),
+            'unit' => $this->shortText($workItem['unit'] ?? null, 24),
+            'total_cost' => $this->scalar($workItem['total_cost'] ?? null),
+            'evidence_status' => $this->shortText($quantityEvidence['status'] ?? null, 32),
+            'evidence_confidence' => $this->scalar($quantityEvidence['confidence'] ?? null),
+            'evidence_ids' => array_slice($this->references($quantityEvidence['evidence_ids'] ?? []), 0, 3),
+            'norm_status' => $this->shortText($normativeMatch['status'] ?? null, 32),
+            'norm_code' => $this->shortText($normativeMatch['norm_code'] ?? null, 48),
+            'normative_code' => $this->shortText($normativeMatch['normative_code'] ?? null, 48),
+            'resource_counts' => array_filter([
+                'materials' => $materialsCount > 0 ? $materialsCount : null,
+                'labor' => $laborCount > 0 ? $laborCount : null,
+                'machinery' => $machineryCount > 0 ? $machineryCount : null,
+            ], static fn (?int $value): bool => $value !== null),
+        ], static fn (mixed $value): bool => $value !== null && $value !== [] && $value !== '');
     }
 
     /** @return array<string, mixed> */
