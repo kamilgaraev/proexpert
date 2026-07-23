@@ -461,6 +461,10 @@ class EstimateGenerationPackagePersistenceService implements TargetedPackageDraf
         $revision = max(1, (int) ($latest?->revision ?? 0) + 1);
         $pricing = $this->authoritativePricing($package, $workItem, $logicalKey);
         if ($latest !== null && $pricing !== null && $this->samePricingIdentity($package, $latest, $pricing)) {
+            if ($latest->pricing_finalized_at === null) {
+                $this->finalizePricing($latest, $pricing['inputs'], $workItem);
+            }
+
             return;
         }
         $payload = $this->itemPayload($package, $workItem, $index);
@@ -506,8 +510,23 @@ class EstimateGenerationPackagePersistenceService implements TargetedPackageDraf
                 'updated_at' => now(),
             ]);
         }
-        $this->reportPricingInputCardinalityMismatch($item, $pricing['inputs'], $workItem);
-        $this->reportPricingInputContractMismatch($item);
+        $this->finalizePricing($item, $pricing['inputs'], $workItem);
+    }
+
+    /** @param list<array<string, int|null>> $inputs @param array<string, mixed> $workItem */
+    private function finalizePricing(
+        EstimateGenerationPackageItem $item,
+        array $inputs,
+        array $workItem,
+    ): void {
+        if ($this->reportPricingInputCardinalityMismatch($item, $inputs, $workItem)) {
+            return;
+        }
+
+        if ($this->reportPricingInputContractMismatch($item)) {
+            return;
+        }
+
         try {
             DB::select('SELECT public.eg_finalize_package_item_price(?)', [$item->id]);
         } catch (QueryException $exception) {
@@ -527,9 +546,9 @@ class EstimateGenerationPackagePersistenceService implements TargetedPackageDraf
         EstimateGenerationPackageItem $item,
         array $inputs,
         array $workItem,
-    ): void {
+    ): bool {
         if (DB::getDriverName() !== 'pgsql') {
-            return;
+            return false;
         }
         $expectedIds = DB::table('estimate_norm_resources')
             ->where('estimate_norm_id', $item->estimate_norm_id)
@@ -543,7 +562,7 @@ class EstimateGenerationPackagePersistenceService implements TargetedPackageDraf
         sort($actualIds, SORT_NUMERIC);
 
         if ($expectedIds === $actualIds) {
-            return;
+            return false;
         }
 
         Log::warning('estimate_generation.pricing_input_cardinality_mismatch', [
@@ -556,12 +575,14 @@ class EstimateGenerationPackagePersistenceService implements TargetedPackageDraf
             'missing_norm_resource_ids' => array_values(array_diff($expectedIds, $actualIds)),
             'unexpected_norm_resource_ids' => array_values(array_diff($actualIds, $expectedIds)),
         ]);
+
+        return true;
     }
 
-    private function reportPricingInputContractMismatch(EstimateGenerationPackageItem $item): void
+    private function reportPricingInputContractMismatch(EstimateGenerationPackageItem $item): bool
     {
         if (DB::getDriverName() !== 'pgsql') {
-            return;
+            return false;
         }
 
         $mismatches = DB::table('estimate_generation_package_item_price_inputs as inputs')
@@ -627,7 +648,11 @@ class EstimateGenerationPackagePersistenceService implements TargetedPackageDraf
                 ],
                 'inputs' => $mismatches->map(static fn (object $input): array => (array) $input)->all(),
             ]);
+
+            return true;
         }
+
+        return false;
     }
 
     /** @param array{item: array<string, mixed>, inputs: list<array<string, int|null>>, project_material_inputs: list<array<string, mixed>>, formula_version: string} $pricing */
@@ -643,7 +668,8 @@ class EstimateGenerationPackagePersistenceService implements TargetedPackageDraf
             || ($metadata['pricing_calculation_identity'] ?? null) !== self::PRICING_CALCULATION_IDENTITY) {
             return false;
         }
-        if (data_get($latest->price_snapshot, 'coefficients.pricing_formula_version') !== $pricing['formula_version']) {
+        if ($latest->pricing_finalized_at !== null
+            && data_get($latest->price_snapshot, 'coefficients.pricing_formula_version') !== $pricing['formula_version']) {
             return false;
         }
         foreach (['quantity_evidence_id', 'quantity_evidence_fingerprint', 'estimate_norm_id', 'region_id', 'price_zone_id', 'period_id', 'regional_price_version_id'] as $column) {
@@ -652,11 +678,19 @@ class EstimateGenerationPackagePersistenceService implements TargetedPackageDraf
             }
         }
         $stored = DB::table('estimate_generation_package_item_price_inputs')->where('package_item_id', $latest->id)
-            ->orderBy('ordinal')->get(['norm_resource_id', 'resource_price_id', 'unit_conversion_id'])
+            ->orderBy('ordinal')->get([
+                'norm_resource_id',
+                'resource_price_id',
+                'unit_conversion_id',
+                'pinned_abstract_resource_conversion_id',
+            ])
             ->map(static fn (object $input): array => [
                 'norm_resource_id' => (int) $input->norm_resource_id,
                 'resource_price_id' => (int) $input->resource_price_id,
                 'unit_conversion_id' => $input->unit_conversion_id === null ? null : (int) $input->unit_conversion_id,
+                'pinned_abstract_resource_conversion_id' => $input->pinned_abstract_resource_conversion_id === null
+                    ? null
+                    : (int) $input->pinned_abstract_resource_conversion_id,
             ])->all();
 
         if ($stored !== $pricing['inputs']) {

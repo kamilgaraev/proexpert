@@ -56,6 +56,8 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         });
         $database->connection($this->connectionName);
         FinalizerTrackingSqliteConnection::$finalizerCalls = 0;
+        FinalizerTrackingSqliteConnection::$driverName = 'sqlite';
+        FinalizerTrackingSqliteConnection::$forceCardinalityMismatch = false;
         Schema::create('estimate_generation_sessions', function (Blueprint $table): void {
             $table->id();
             $table->unsignedBigInteger('organization_id');
@@ -135,6 +137,12 @@ final class PackagePersistenceStaleFenceTest extends TestCase
             $table->unsignedBigInteger('pinned_abstract_resource_conversion_id')->nullable();
             $table->timestamps();
         });
+        Schema::create('estimate_norm_resources', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('estimate_norm_id');
+            $table->decimal('quantity', 20, 6);
+            $table->string('resource_type');
+        });
         Schema::create('estimate_generation_project_material_rules', function (Blueprint $table): void {
             $table->id();
             $table->string('catalog_version');
@@ -170,6 +178,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
     {
         Schema::dropIfExists('estimate_generation_package_item_project_price_inputs');
         Schema::dropIfExists('estimate_generation_project_material_rules');
+        Schema::dropIfExists('estimate_norm_resources');
         Schema::dropIfExists('estimate_generation_package_item_price_inputs');
         Schema::dropIfExists('estimate_generation_package_items');
         Schema::dropIfExists('estimate_generation_packages');
@@ -237,6 +246,43 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         self::assertNotNull($package->items()->sole()->pricing_finalized_at);
         self::assertSame([7001], DB::table('estimate_generation_package_item_price_inputs')->pluck('norm_resource_id')->all());
         self::assertSame([9001], DB::table('estimate_generation_package_item_price_inputs')->pluck('resource_price_id')->all());
+    }
+
+    #[Test]
+    public function pricing_input_cardinality_mismatch_keeps_item_unfinalized_without_calling_finalizer(): void
+    {
+        FinalizerTrackingSqliteConnection::$driverName = 'pgsql';
+        FinalizerTrackingSqliteConnection::$forceCardinalityMismatch = true;
+        $current = 'sha256:'.str_repeat('b', 64);
+        [$session, , $service] = $this->fixture($current);
+
+        $service->syncFromDraft($session, $this->draft($current, [$this->acceptedWorkItem($session, $current)]));
+
+        $package = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole();
+        $item = $package->items()->sole();
+        self::assertSame(0, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertNull($item->pricing_finalized_at);
+        self::assertSame('blocked', $package->fresh()->status);
+        self::assertContains('missing_price_snapshot', $package->fresh()->quality_summary['critical_flags']);
+    }
+
+    #[Test]
+    public function unfinalized_item_retries_finalization_for_same_pricing_identity(): void
+    {
+        $current = 'sha256:'.str_repeat('b', 64);
+        [$session, , $service] = $this->fixture($current);
+        $draft = $this->draft($current, [$this->acceptedWorkItem($session, $current)]);
+
+        $service->syncFromDraft($session, $draft);
+        $package = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole();
+        $package->items()->sole()->forceFill(['pricing_finalized_at' => null])->save();
+        FinalizerTrackingSqliteConnection::$finalizerCalls = 0;
+        $service->syncFromDraft($session, $draft);
+
+        self::assertSame(1, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertNotNull($package->items()->sole()->pricing_finalized_at);
+        self::assertNotSame('blocked', $package->fresh()->status);
+        self::assertNotContains('missing_price_snapshot', $package->fresh()->quality_summary['critical_flags']);
     }
 
     #[Test]
@@ -386,7 +432,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         self::assertSame(2, $package->items()->count());
         self::assertSame(2, FinalizerTrackingSqliteConnection::$finalizerCalls);
         self::assertSame(
-            ['1:norm_measurement:v1', '2:project_resource:v3'],
+            ['1:norm_measurement:v1', '2:semantic_project_resource:v8'],
             $package->items()->orderBy('revision')->get()->map(
                 static fn ($revision): string => $revision->revision.':'.data_get($revision->price_snapshot, 'coefficients.pricing_formula_version'),
             )->all(),
@@ -556,8 +602,23 @@ final class FinalizerTrackingSqliteConnection extends SQLiteConnection
 {
     public static int $finalizerCalls = 0;
 
+    public static string $driverName = 'sqlite';
+
+    public static bool $forceCardinalityMismatch = false;
+
+    public function getDriverName()
+    {
+        return self::$driverName;
+    }
+
     public function select($query, $bindings = [], $useReadPdo = true)
     {
+        if (self::$forceCardinalityMismatch
+            && str_contains((string) $query, 'from "estimate_norm_resources"')
+            && str_contains((string) $query, '"resource_type" <> ?')) {
+            return [(object) ['id' => 7001], (object) ['id' => 7002]];
+        }
+
         if ($query === 'SELECT public.eg_finalize_package_item_price(?)') {
             self::$finalizerCalls++;
             $hasProjectMaterial = $this->table('estimate_generation_package_item_project_price_inputs')
@@ -565,7 +626,7 @@ final class FinalizerTrackingSqliteConnection extends SQLiteConnection
                 ->exists();
             $snapshot = ['coefficients' => ['pricing_formula_version' => $hasProjectMaterial
                 ? 'supplementary_project_material:v4'
-                : 'project_resource:v3']];
+                : 'semantic_project_resource:v8']];
             $this->table('estimate_generation_package_items')->where('id', (int) $bindings[0])->update([
                 'pricing_finalized_at' => '2026-07-13 00:00:00',
                 'price_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
