@@ -83,6 +83,10 @@ final readonly class AcceptedQuantityEvidenceVerifier
         if (! hash_equals($node->sourceVersion, $sourceVersion)) {
             return 'source_version_mismatch';
         }
+        $logicalKey = (string) ($workItem['logical_key'] ?? $workItem['key'] ?? '');
+        if (($node->locator['item_key'] ?? null) !== 'item:'.hash('sha256', $logicalKey)) {
+            return 'locator_mismatch';
+        }
         if (($node->value['unit'] ?? null) !== ($workItem['unit'] ?? null)) {
             return 'unit_mismatch';
         }

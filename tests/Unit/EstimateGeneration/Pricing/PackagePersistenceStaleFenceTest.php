@@ -132,6 +132,7 @@ final class PackagePersistenceStaleFenceTest extends TestCase
             $table->unsignedBigInteger('norm_resource_id');
             $table->unsignedBigInteger('resource_price_id');
             $table->unsignedBigInteger('unit_conversion_id')->nullable();
+            $table->unsignedBigInteger('pinned_abstract_resource_conversion_id')->nullable();
             $table->timestamps();
         });
         Schema::create('estimate_generation_project_material_rules', function (Blueprint $table): void {
@@ -236,6 +237,23 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         self::assertNotNull($package->items()->sole()->pricing_finalized_at);
         self::assertSame([7001], DB::table('estimate_generation_package_item_price_inputs')->pluck('norm_resource_id')->all());
         self::assertSame([9001], DB::table('estimate_generation_package_item_price_inputs')->pluck('resource_price_id')->all());
+    }
+
+    #[Test]
+    public function quantity_evidence_for_another_work_item_is_not_sent_to_database_finalizer(): void
+    {
+        $current = 'sha256:'.str_repeat('b', 64);
+        [$session, , $service] = $this->fixture($current);
+
+        $workItem = $this->acceptedWorkItem($session, $current, 'persisted-work', 'materialized-work');
+
+        $service->syncFromDraft($session, $this->draft($current, [$workItem]));
+
+        $item = EstimateGenerationPackage::query()->where('session_id', $session->id)->sole()->items()->sole();
+        self::assertSame('persisted-work', $item->logical_key);
+        self::assertNull($item->pricing_finalized_at);
+        self::assertSame(0, FinalizerTrackingSqliteConnection::$finalizerCalls);
+        self::assertSame([], DB::table('estimate_generation_package_item_price_inputs')->pluck('norm_resource_id')->all());
     }
 
     #[Test]
@@ -504,7 +522,12 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         return $draft;
     }
 
-    private function acceptedWorkItem(EstimateGenerationSession $session, string $version, string $key = 'must-not-price'): array
+    private function acceptedWorkItem(
+        EstimateGenerationSession $session,
+        string $version,
+        string $key = 'must-not-price',
+        ?string $evidenceKey = null,
+    ): array
     {
         $context = new PipelineContext((int) $session->id, 10, 20, 1, 'sha256:'.str_repeat('f', 64), 'generating', baseInputVersion: $version);
         $quantity = QuantityData::fromArray([
@@ -520,7 +543,10 @@ final class PackagePersistenceStaleFenceTest extends TestCase
             'materials' => [['normative_ref' => ['norm_resource_id' => 7001, 'price_id' => 9001]]],
             'labor' => [], 'machinery' => [], 'other_resources' => [],
         ];
-        $node = (new AcceptedQuantityEvidenceMaterializer($this->evidence))->materialize($context, $quantity, $item);
+        $node = (new AcceptedQuantityEvidenceMaterializer($this->evidence))->materialize($context, $quantity, [
+            ...$item,
+            'key' => $evidenceKey ?? $key,
+        ]);
 
         return [...$item, 'quantity_evidence_id' => $node->id, 'quantity_evidence_fingerprint' => $node->fingerprint];
     }
