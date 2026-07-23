@@ -383,6 +383,10 @@ class EstimateGenerationPackagePersistenceService
         $revision = max(1, (int) ($latest?->revision ?? 0) + 1);
         $pricing = $this->authoritativePricing($package, $workItem, $logicalKey);
         if ($latest !== null && $pricing !== null && $this->samePricingIdentity($package, $latest, $pricing)) {
+            if ($latest->pricing_finalized_at === null) {
+                $this->finalizePricing($latest, $pricing['inputs'], $workItem);
+            }
+
             return;
         }
         $payload = $this->itemPayload($package, $workItem, $index);
@@ -428,8 +432,16 @@ class EstimateGenerationPackagePersistenceService
                 'updated_at' => now(),
             ]);
         }
-        $hasCardinalityMismatch = $this->reportPricingInputCardinalityMismatch($item, $pricing['inputs'], $workItem);
-        if ($hasCardinalityMismatch) {
+        $this->finalizePricing($item, $pricing['inputs'], $workItem);
+    }
+
+    /** @param list<array<string, int|null>> $inputs @param array<string, mixed> $workItem */
+    private function finalizePricing(
+        EstimateGenerationPackageItem $item,
+        array $inputs,
+        array $workItem,
+    ): void {
+        if ($this->reportPricingInputCardinalityMismatch($item, $inputs, $workItem)) {
             return;
         }
 
@@ -571,7 +583,8 @@ class EstimateGenerationPackagePersistenceService
             || ($metadata['pricing_calculation_identity'] ?? null) !== self::PRICING_CALCULATION_IDENTITY) {
             return false;
         }
-        if (data_get($latest->price_snapshot, 'coefficients.pricing_formula_version') !== $pricing['formula_version']) {
+        if ($latest->pricing_finalized_at !== null
+            && data_get($latest->price_snapshot, 'coefficients.pricing_formula_version') !== $pricing['formula_version']) {
             return false;
         }
         foreach (['quantity_evidence_id', 'quantity_evidence_fingerprint', 'estimate_norm_id', 'region_id', 'price_zone_id', 'period_id', 'regional_price_version_id'] as $column) {
@@ -580,11 +593,19 @@ class EstimateGenerationPackagePersistenceService
             }
         }
         $stored = DB::table('estimate_generation_package_item_price_inputs')->where('package_item_id', $latest->id)
-            ->orderBy('ordinal')->get(['norm_resource_id', 'resource_price_id', 'unit_conversion_id'])
+            ->orderBy('ordinal')->get([
+                'norm_resource_id',
+                'resource_price_id',
+                'unit_conversion_id',
+                'pinned_abstract_resource_conversion_id',
+            ])
             ->map(static fn (object $input): array => [
                 'norm_resource_id' => (int) $input->norm_resource_id,
                 'resource_price_id' => (int) $input->resource_price_id,
                 'unit_conversion_id' => $input->unit_conversion_id === null ? null : (int) $input->unit_conversion_id,
+                'pinned_abstract_resource_conversion_id' => $input->pinned_abstract_resource_conversion_id === null
+                    ? null
+                    : (int) $input->pinned_abstract_resource_conversion_id,
             ])->all();
 
         if ($stored !== $pricing['inputs']) {
