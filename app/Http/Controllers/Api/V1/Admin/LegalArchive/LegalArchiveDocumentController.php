@@ -17,6 +17,7 @@ use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
 use App\Models\User;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
+use App\Services\LegalArchive\ContractLegalDocumentAccessResolver;
 use App\Services\LegalArchive\Editor\LegalDocumentEditorAvailability;
 use App\Services\LegalArchive\Files\LegalDocumentFileRejected;
 use App\Services\LegalArchive\Files\LegalDocumentScanFailed;
@@ -45,6 +46,7 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
         private readonly LegalDocumentCreateFailureReporter $createFailureReporter,
         private readonly AuthorizationService $authorization,
         private readonly LegalDocumentObligationExecutionService $obligationExecution,
+        private readonly ContractLegalDocumentAccessResolver $contractDocuments,
     ) {}
 
     public function index(LegalArchiveDocumentIndexRequest $request): JsonResponse
@@ -228,20 +230,12 @@ final class LegalArchiveDocumentController extends LegalArchiveApiController
     public function showForContract(Request $request, int $project, int $contract, string $legalDocument): JsonResponse
     {
         try {
-            $organizationId = $this->organizationId($request);
-            $linkedContract = Contract::query()->whereKey($contract)->where('project_id', $project)
-                ->where('organization_id', $organizationId)->first();
-
-            if ($linkedContract === null || (int) $linkedContract->legal_archive_document_id !== (int) $legalDocument) {
-                return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
-            }
-
-            $found = $this->registry->findForAuthorization((int) $legalDocument);
-            if ($found === null || (int) $found->organization_id !== $organizationId || (int) $found->primary_project_id !== $project) {
+            $context = $this->contractDocuments->resolveDocument($project, $contract, (int) $legalDocument);
+            if ($context === null) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
             $actor = $this->actor($request);
-            $this->access->authorize($actor, $found, 'view');
+            $found = $context->document;
             $summary = $this->actions->forMany($actor, collect([$found]))[(int) $found->id];
             $found->setAttribute(
                 'api_workflow_summary',

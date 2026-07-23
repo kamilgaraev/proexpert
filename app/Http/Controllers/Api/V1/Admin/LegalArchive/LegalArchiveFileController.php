@@ -17,6 +17,7 @@ use App\Http\Resources\Api\V1\Admin\LegalArchive\LegalArchiveFileResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
 use App\Services\LegalArchive\Access\LegalDocumentAuthorizer;
+use App\Services\LegalArchive\ContractLegalDocumentAccessResolver;
 use App\Services\LegalArchive\Editor\LegalDocumentEditorSessionService;
 use App\Services\LegalArchive\Editor\LegalDocumentBlankDraftService;
 use App\Services\LegalArchive\Files\LegalDocumentDownloadService;
@@ -42,6 +43,7 @@ final class LegalArchiveFileController extends LegalArchiveApiController
         private readonly LegalDocumentEditorSessionService $editor,
         private readonly LegalDocumentBlankDraftService $blankDrafts,
         private readonly LegalDocumentAuthorizer $access,
+        private readonly ContractLegalDocumentAccessResolver $contractDocuments,
     ) {}
 
     public function storeFile(StoreLegalArchiveFileRequest $request, string $legalDocument): JsonResponse
@@ -198,26 +200,17 @@ final class LegalArchiveFileController extends LegalArchiveApiController
     public function contractFileUrl(Request $request, int $project, int $contract, string $legalDocument, string $documentVersion, string $purpose): JsonResponse
     {
         try {
-            $organizationId = $this->organizationId($request);
-            $linkedContract = Contract::query()->whereKey($contract)->where('project_id', $project)
-                ->where('organization_id', $organizationId)->first();
-            $document = LegalArchiveDocument::query()->whereKey((int) $legalDocument)
-                ->where('organization_id', $organizationId)->where('primary_project_id', $project)->first();
-            $found = $this->version($request, $documentVersion);
-
-            if ($linkedContract === null
-                || $document === null
-                || (int) $linkedContract->legal_archive_document_id !== (int) $legalDocument
-                || (int) $found->document_id !== (int) $legalDocument) {
+            $context = $this->contractDocuments->resolveVersion($project, $contract, (int) $legalDocument, (int) $documentVersion);
+            if ($context === null || $context->version === null) {
                 return AdminResponse::error(trans_message('legal_archive.messages.document_not_found'), 404);
             }
 
-            $url = $this->downloads->temporaryUrlForContract($found, $this->actor($request), $linkedContract, $purpose);
+            $url = $this->downloads->temporaryUrlForContract($context->version, $this->actor($request), $context->contract, $purpose);
 
             return AdminResponse::success([
                 'url' => $url,
                 'expires_in_seconds' => max(60, (int) config('file-uploads.legal_archive.temporary_url_minutes', 5) * 60),
-                'version' => new LegalArchiveDocumentVersionResource($found),
+                'version' => new LegalArchiveDocumentVersionResource($context->version),
             ], trans_message('legal_archive.messages.file_url_created'))->withHeaders([
                 'Cache-Control' => 'private, no-store, max-age=0', 'Pragma' => 'no-cache',
                 'X-Content-Type-Options' => 'nosniff', 'Content-Security-Policy' => "default-src 'none'; frame-ancestors 'self'",
