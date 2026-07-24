@@ -91,14 +91,6 @@ final class WorkforcePayrollWorkflowTest extends TestCase
             ->assertJsonPath('data.0.work_order_id', $workOrderId)
             ->assertJsonPath('data.0.amount', '4000.00');
 
-        $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/production-labor/payroll-accruals/prepare', [
-                'work_order_id' => $workOrderId,
-                'period_start' => '2026-05-01',
-                'period_end' => '2026-05-31',
-            ])
-            ->assertNotFound();
-
         $this->assertSame(0, DB::table('production_labor_payroll_accruals')->count());
     }
 

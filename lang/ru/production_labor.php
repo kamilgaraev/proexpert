@@ -7,7 +7,6 @@ return [
         'work_order_created' => 'Наряд создан.',
         'output_created' => 'Факт выработки записан.',
         'timesheet_created' => 'Табель смены создан.',
-        'payroll_prepared' => 'Начисления подготовлены.',
     ],
     'errors' => [
         'organization_missing' => 'Организация не определена.',
@@ -37,8 +36,6 @@ return [
         'employee_not_found' => 'Сотрудник не найден в текущей организации.',
         'employee_inactive_for_shift' => 'Сотрудник не активен на дату смены.',
         'payroll_period_locked' => 'Нельзя изменить трудозатраты внутри закрытого расчетного периода.',
-        'payroll_invalid_status' => 'Начисления можно подготовить только по принятому или закрытому наряду.',
-        'payroll_duplicate' => 'Начисление по строке наряда за этот период уже подготовлено.',
     ],
     'validation' => [
         'work_order_required' => 'Выберите наряд.',
@@ -84,7 +81,6 @@ return [
         'accept' => 'Принять',
         'return' => 'Вернуть',
         'cancel' => 'Отменить',
-        'prepare_payroll' => 'Подготовить начисления',
         'close' => 'Закрыть',
     ],
 ];
