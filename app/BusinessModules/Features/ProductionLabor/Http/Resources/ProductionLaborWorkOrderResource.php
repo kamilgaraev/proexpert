@@ -71,7 +71,7 @@ final class ProductionLaborWorkOrderResource extends JsonResource
             'issued' => ['start', 'submit', 'cancel'],
             'in_progress' => ['submit', 'cancel'],
             'submitted' => ['accept', 'return'],
-            'accepted' => ['prepare_payroll', 'close'],
+            'accepted' => ['close'],
             default => [],
         };
     }
