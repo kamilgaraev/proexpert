@@ -13,9 +13,11 @@ use App\Models\Organization;
 use App\Models\PersonalFile;
 use App\Models\Project;
 use App\Models\User;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Services\Storage\FileService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Contracts\Filesystem\Filesystem;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Mockery;
 use Tests\Support\AdminApiTestContext;
@@ -128,6 +130,58 @@ class ActFileControllerWorkflowTest extends TestCase
         $downloadResponse->assertOk();
         $downloadResponse->assertDownload('act-scan.pdf');
         $this->assertSame('act binary content', $downloadResponse->streamedContent());
+    }
+
+    public function test_act_report_file_cannot_be_downloaded_through_another_act(): void
+    {
+        Storage::fake('s3');
+
+        $context = AdminApiTestContext::create();
+        [$organization, $user, $firstAct] = $this->createActFixture($context->organization, $context->user);
+        [, , $secondAct] = $this->createActFixture($context->organization, $context->user);
+
+        $path = "org-{$organization->id}/acts/{$secondAct->id}/documents/foreign-act-scan.pdf";
+        Storage::disk('s3')->put($path, 'foreign act content');
+        $foreignFile = File::query()->create([
+            'organization_id' => $organization->id,
+            'fileable_id' => $secondAct->id,
+            'fileable_type' => ContractPerformanceAct::class,
+            'user_id' => $user->id,
+            'name' => 'foreign-act-scan.pdf',
+            'original_name' => 'foreign-act-scan.pdf',
+            'path' => $path,
+            'mime_type' => 'application/pdf',
+            'size' => 19,
+            'disk' => 's3',
+            'type' => 'document',
+            'category' => 'act_document',
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->get("/api/v1/admin/act-reports/{$firstAct->id}/files/{$foreignFile->id}");
+
+        $response->assertNotFound();
+    }
+
+    public function test_act_report_file_upload_requires_edit_permission(): void
+    {
+        Storage::fake('s3');
+
+        $context = AdminApiTestContext::create();
+        [, , $act] = $this->createActFixture($context->organization, $context->user);
+
+        $this->mock(AuthorizationService::class, function ($mock): void {
+            $mock->shouldReceive('can')
+                ->andReturnUsing(static fn (User $user, string $permission): bool => $permission !== 'act_reports.edit');
+        });
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/files", [
+                'file' => UploadedFile::fake()->create('act-scan.pdf', 10, 'application/pdf'),
+            ]);
+
+        $response->assertForbidden();
+        $this->assertDatabaseCount('files', 0);
     }
 
     public function test_contractor_organization_can_list_files_for_owner_contract_act(): void

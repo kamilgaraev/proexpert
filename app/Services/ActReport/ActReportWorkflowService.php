@@ -9,8 +9,15 @@ use App\Exceptions\BusinessLogicException;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\PerformanceActLine;
+use App\Models\User;
+use App\Services\Acting\ActingActWizardService;
+use App\Services\Acting\ActingAvailabilityService;
+use App\Services\Acting\ActingPolicyResolver;
 use App\Services\Acting\ActingPriceService;
+use App\Services\Acting\KS3SummaryService;
+use App\Services\Workflow\WorkflowGuardService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 use function trans_message;
 
@@ -18,8 +25,135 @@ class ActReportWorkflowService
 {
     public function __construct(
         private readonly ActReportNotificationService $notificationService,
-        private readonly ActingPriceService $priceService
+        private readonly ActingPriceService $priceService,
+        private readonly ActingPolicyResolver $actingPolicyResolver,
+        private readonly ActingAvailabilityService $actingAvailabilityService,
+        private readonly KS3SummaryService $ks3SummaryService,
+        private readonly ActingActWizardService $actingActWizardService,
+        private readonly ActReportAccessService $accessService
     ) {
+    }
+
+    public function preview(int $organizationId, array $data, ?User $user): array
+    {
+        $contract = $this->accessService->findAccessibleContractOrFail($organizationId, (int) $data['contract_id']);
+        $policy = $this->actingPolicyResolver->resolveForContract($contract);
+        $policy['can_override'] = (bool) $user?->can(
+            WorkflowGuardService::PERMISSION_OVERRIDE,
+            ['organization_id' => $organizationId]
+        );
+
+        return [
+            'policy' => $policy,
+            'available_works' => $this->actingAvailabilityService->getAvailableWorks(
+                $contract->id,
+                $data['period_start'],
+                $data['period_end']
+            ),
+            'blocked_works' => $this->actingAvailabilityService->getBlockedWorks(
+                $contract->id,
+                $data['period_start'],
+                $data['period_end']
+            ),
+            'summary' => $this->ks3SummaryService->summarize(
+                $contract->id,
+                $data['period_start'],
+                $data['period_end']
+            ),
+        ];
+    }
+
+    public function createFromWizard(
+        int $organizationId,
+        array $data,
+        ?User $user,
+        bool $canManageManualLines
+    ): ContractPerformanceAct {
+        return $this->actingActWizardService->createFromWizard(
+            $organizationId,
+            $data,
+            $user?->id,
+            $canManageManualLines
+        );
+    }
+
+    public function show(ContractPerformanceAct $act): ContractPerformanceAct
+    {
+        $act = $this->recalculatePricedLines($act);
+
+        $act->load([
+            'contract.project',
+            'contract.contractor',
+            'contract.organization',
+            'completedWorks.workType',
+            'completedWorks.user',
+            'lines',
+            'files',
+        ]);
+
+        return $act;
+    }
+
+    public function getContracts(int $organizationId): array
+    {
+        return $this->accessService->accessibleContractsQuery($organizationId)
+            ->with(['project', 'contractor'])
+            ->orderByDesc('id')
+            ->get()
+            ->map(static fn (Contract $contract): array => [
+                'id' => $contract->id,
+                'number' => $contract->number,
+                'subject' => $contract->subject,
+                'status' => $contract->status,
+                'project' => $contract->project ? [
+                    'id' => $contract->project->id,
+                    'name' => $contract->project->name,
+                ] : null,
+                'contractor' => $contract->contractor ? [
+                    'id' => $contract->contractor->id,
+                    'name' => $contract->contractor->name,
+                ] : null,
+            ])
+            ->values()
+            ->all();
+    }
+
+    public function update(ContractPerformanceAct $act, array $data): ContractPerformanceAct
+    {
+        if ($act->is_approved) {
+            throw new BusinessLogicException(trans_message('act_reports.act_already_approved'), 400);
+        }
+
+        $this->assertMutable($act);
+
+        try {
+            $updatedAct = DB::transaction(function () use ($act, $data): ContractPerformanceAct {
+                $act->update([
+                    'act_document_number' => $data['act_document_number'] ?? $act->act_document_number,
+                    'act_date' => $data['act_date'] ?? $act->act_date,
+                    'description' => $data['description'] ?? $act->description,
+                ]);
+
+                return $act->fresh([
+                    'contract.project',
+                    'contract.contractor',
+                    'completedWorks',
+                ]);
+            });
+
+            Log::info('[ActReportWorkflowService] Act updated', [
+                'act_id' => $act->id,
+            ]);
+
+            return $updatedAct;
+        } catch (\Throwable $e) {
+            Log::error('[ActReportWorkflowService] Failed to update act', [
+                'act_id' => $act->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            throw new BusinessLogicException(trans_message('act_reports.update_failed'), 500, $e);
+        }
     }
 
     public function submit(ContractPerformanceAct $act, int $userId): ContractPerformanceAct
