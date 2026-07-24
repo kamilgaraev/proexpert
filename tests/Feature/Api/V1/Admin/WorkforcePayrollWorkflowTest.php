@@ -279,6 +279,23 @@ final class WorkforcePayrollWorkflowTest extends TestCase
             ]);
         }
 
+        DB::table('production_labor_output_entries')->insert([
+            'organization_id' => $organizationId,
+            'work_order_id' => $workOrderId,
+            'work_order_line_id' => $lineIds->get(4),
+            'project_id' => $project->id,
+            'recorded_by_user_id' => $context->user->id,
+            'approved_by_user_id' => $context->user->id,
+            'work_date' => '2026-05-15',
+            'quantity' => 1,
+            'hours' => 8,
+            'status' => 'accepted',
+            'approved_at' => $now,
+            'deleted_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
         $response = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")
             ->assertOk();
@@ -290,6 +307,12 @@ final class WorkforcePayrollWorkflowTest extends TestCase
         $this->assertTrue($issueCodes->contains('missing_output'));
         $this->assertTrue($issueCodes->contains('output_without_timesheet'));
         $this->assertTrue($issueCodes->contains('hours_output_mismatch'));
+        $this->assertTrue(
+            collect($response->json('data'))->contains(
+                fn (array $issue): bool => $issue['issue_code'] === 'missing_output'
+                    && json_decode($issue['payload'], true, 512, JSON_THROW_ON_ERROR)['work_date'] === '2026-05-15'
+            )
+        );
         $this->assertSame('draft', DB::table('workforce_payroll_periods')->where('id', $periodId)->value('status'));
     }
 

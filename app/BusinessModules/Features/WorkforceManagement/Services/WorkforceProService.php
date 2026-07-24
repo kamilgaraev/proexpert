@@ -503,10 +503,12 @@ final class WorkforceProService
                 ->join('production_labor_work_orders as work_order', 'work_order.id', '=', 'output.work_order_id')
                 ->where('output.organization_id', $organizationId)
                 ->where('output.status', 'accepted')
+                ->whereNull('output.deleted_at')
                 ->whereIn('work_order.status', ['accepted', 'closed'])
                 ->whereBetween('output.work_date', [$period->period_start, $period->period_end])
                 ->when($period->project_id !== null, fn (Builder $query) => $query->where('output.project_id', $period->project_id))
-                ->select('output.*')
+                ->selectRaw('output.work_order_line_id, output.work_date, MIN(output.id) as id, MIN(output.project_id) as project_id, SUM(output.hours) as hours')
+                ->groupBy('output.work_order_line_id', 'output.work_date')
                 ->get()
                 ->groupBy(static fn (object $output): string => sprintf('%d:%s', $output->work_order_line_id, $output->work_date));
 
