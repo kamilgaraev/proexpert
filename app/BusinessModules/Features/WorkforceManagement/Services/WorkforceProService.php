@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\WorkforceManagement\Services;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheetEntry;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\BusinessModules\Features\WorkforceManagement\Services\WorkforceEmployeeService;
+use App\Models\Organization;
 use App\Models\Project;
 use Carbon\CarbonImmutable;
 use DomainException;
@@ -393,13 +394,14 @@ final class WorkforceProService
 
     public function buildPayrollSource(int $organizationId, int $periodId): array
     {
-        $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+        DB::transaction(function () use ($organizationId, $periodId): void {
+            $this->lockOrganization($organizationId);
+            $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
 
-        if ($period->status === 'locked') {
-            throw new DomainException(trans_message('workforce.errors.payroll_period_locked'));
-        }
+            if ($period->status === 'locked') {
+                throw new DomainException(trans_message('workforce.errors.payroll_period_locked'));
+            }
 
-        DB::transaction(function () use ($organizationId, $periodId, $period): void {
             DB::table('workforce_payroll_source_rows')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->delete();
 
             ProductionLaborTimesheetEntry::query()
@@ -457,9 +459,14 @@ final class WorkforceProService
 
     public function validatePayrollPeriod(int $organizationId, int $periodId): array
     {
-        $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+        DB::transaction(function () use ($organizationId, $periodId): void {
+            $this->lockOrganization($organizationId);
+            $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
 
-        DB::transaction(function () use ($organizationId, $periodId, $period): void {
+            if ($period->status === 'locked') {
+                throw new DomainException(trans_message('workforce.errors.payroll_period_locked'));
+            }
+
             DB::table('workforce_payroll_validation_issues')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->delete();
 
             $rows = DB::table('workforce_payroll_source_rows')
@@ -1149,6 +1156,14 @@ final class WorkforceProService
         }
 
         return trim(implode(' ', array_filter([$employee->last_name, $employee->first_name, $employee->middle_name])));
+    }
+
+    private function lockOrganization(int $organizationId): void
+    {
+        Organization::query()
+            ->whereKey($organizationId)
+            ->lockForUpdate()
+            ->firstOrFail();
     }
 
     private function normalizeJsonPayload(array $payload): array

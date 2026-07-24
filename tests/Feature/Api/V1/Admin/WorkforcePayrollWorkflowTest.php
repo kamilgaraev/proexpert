@@ -539,6 +539,75 @@ final class WorkforcePayrollWorkflowTest extends TestCase
             ->assertCreated();
     }
 
+    public function test_locked_payroll_period_cannot_rebuild_source_or_revalidate(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+
+        $now = now();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $employee = WorkforceEmployee::query()->create([
+            'organization_id' => $context->organization->id,
+            'personnel_number' => 'EMP-LOCKED-PERIOD-001',
+            'last_name' => 'Locked',
+            'first_name' => 'Period',
+            'employment_status' => 'active',
+            'hire_date' => '2026-05-01',
+        ]);
+        $periodId = DB::table('workforce_payroll_periods')->insertGetId([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'period_start' => '2026-05-01',
+            'period_end' => '2026-05-31',
+            'status' => 'locked',
+            'source_hash' => 'locked-source-hash',
+            'created_by_user_id' => $context->user->id,
+            'locked_by_user_id' => $context->user->id,
+            'locked_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        DB::table('workforce_payroll_source_rows')->insert([
+            'organization_id' => $context->organization->id,
+            'payroll_period_id' => $periodId,
+            'employee_id' => $employee->id,
+            'project_id' => $project->id,
+            'work_date' => '2026-05-16',
+            'source_type' => 'timesheet_hours',
+            'hours' => 8,
+            'amount' => 4000,
+            'payload' => '{}',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('workforce_payroll_validation_issues')->insert([
+            'organization_id' => $context->organization->id,
+            'payroll_period_id' => $periodId,
+            'issue_code' => 'missing_assignment',
+            'message' => 'Existing issue',
+            'severity' => 'blocking',
+            'entity_type' => 'payroll_source_row',
+            'payload' => '{}',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/build-source")
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.payroll_period_locked'));
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.payroll_period_locked'));
+
+        $this->assertSame('locked', DB::table('workforce_payroll_periods')->where('id', $periodId)->value('status'));
+        $this->assertSame('locked-source-hash', DB::table('workforce_payroll_periods')->where('id', $periodId)->value('source_hash'));
+        $this->assertSame(1, DB::table('workforce_payroll_source_rows')->where('payroll_period_id', $periodId)->count());
+        $this->assertSame(1, DB::table('workforce_payroll_validation_issues')->where('payroll_period_id', $periodId)->count());
+    }
+
     private function createIssuedWorkOrderForProject(AdminApiTestContext $context, Project $project, string $orderNumber): array
     {
         $workOrder = $this->withHeaders($context->authHeaders())
