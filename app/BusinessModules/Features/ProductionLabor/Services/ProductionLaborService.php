@@ -17,6 +17,7 @@ use App\Models\Project;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 
 final class ProductionLaborService
@@ -201,6 +202,12 @@ final class ProductionLaborService
         $line = $this->findLine($organizationId, (int) $payload['work_order_line_id']);
         $workOrder = $line->workOrder;
 
+        $this->assertPayrollPeriodOpenForWorkDate(
+            $organizationId,
+            (int) $workOrder->project_id,
+            $payload['work_date']
+        );
+
         if (!in_array($workOrder->status, ['issued', 'in_progress'], true)) {
             throw new DomainException(trans_message('production_labor.errors.output_invalid_status'));
         }
@@ -240,6 +247,12 @@ final class ProductionLaborService
     public function createTimesheet(int $organizationId, int $userId, array $payload): ProductionLaborTimesheet
     {
         $workOrder = $this->findWorkOrder($organizationId, (int) $payload['work_order_id']);
+
+        $this->assertPayrollPeriodOpenForWorkDate(
+            $organizationId,
+            (int) $workOrder->project_id,
+            $payload['shift_date']
+        );
 
         if (!in_array($workOrder->status, ['issued', 'in_progress'], true)) {
             throw new DomainException(trans_message('production_labor.errors.timesheet_invalid_status'));
@@ -374,6 +387,24 @@ final class ProductionLaborService
 
         if (!$exists) {
             throw new DomainException(trans_message('production_labor.errors.project_not_found'));
+        }
+    }
+
+    private function assertPayrollPeriodOpenForWorkDate(int $organizationId, int $projectId, string $workDate): void
+    {
+        $isLocked = DB::table('workforce_payroll_periods')
+            ->where('organization_id', $organizationId)
+            ->where('status', 'locked')
+            ->whereDate('period_start', '<=', $workDate)
+            ->whereDate('period_end', '>=', $workDate)
+            ->where(function (Builder $query) use ($projectId): void {
+                $query->whereNull('project_id')
+                    ->orWhere('project_id', $projectId);
+            })
+            ->exists();
+
+        if ($isLocked) {
+            throw new DomainException(trans_message('production_labor.errors.payroll_period_locked'));
         }
     }
 

@@ -316,6 +316,157 @@ final class WorkforcePayrollWorkflowTest extends TestCase
         $this->assertSame('draft', DB::table('workforce_payroll_periods')->where('id', $periodId)->value('status'));
     }
 
+    public function test_locked_payroll_period_rejects_new_production_labor_output_and_timesheet(): void
+    {
+        $context = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $project = Project::factory()->create(['organization_id' => $organizationId]);
+        $employee = WorkforceEmployee::query()->create([
+            'organization_id' => $organizationId,
+            'personnel_number' => 'EMP-LOCKED-LABOR-001',
+            'last_name' => 'Worker',
+            'first_name' => 'Locked',
+            'employment_status' => 'active',
+            'hire_date' => '2026-05-01',
+        ]);
+        $this->allowAccess('web_admin');
+
+        $now = now();
+        $departmentId = DB::table('workforce_departments')->insertGetId([
+            'organization_id' => $organizationId,
+            'code' => 'LOCKED-LABOR',
+            'name' => 'Locked labor',
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $positionId = DB::table('workforce_positions')->insertGetId([
+            'organization_id' => $organizationId,
+            'code' => 'LOCKED-LABOR',
+            'name' => 'Locked labor',
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $staffUnitId = DB::table('workforce_staff_units')->insertGetId([
+            'organization_id' => $organizationId,
+            'department_id' => $departmentId,
+            'position_id' => $positionId,
+            'code' => 'LOCKED-LABOR',
+            'valid_from' => '2026-05-01',
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $scheduleId = DB::table('workforce_work_schedules')->insertGetId([
+            'organization_id' => $organizationId,
+            'code' => 'LOCKED-LABOR',
+            'name' => 'Locked labor',
+            'hours_per_day' => 8,
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('workforce_employee_assignments')->insert([
+            'organization_id' => $organizationId,
+            'employee_id' => $employee->id,
+            'staff_unit_id' => $staffUnitId,
+            'department_id' => $departmentId,
+            'position_id' => $positionId,
+            'project_id' => $project->id,
+            'work_schedule_id' => $scheduleId,
+            'valid_from' => '2026-05-01',
+            'status' => 'active',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $workOrder = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/work-orders', [
+                'project_id' => $project->id,
+                'order_number' => 'LOCKED-LABOR-001',
+                'title' => 'Locked labor',
+                'assignee_type' => 'brigade',
+                'lines' => [[
+                    'name' => 'Locked labor',
+                    'planned_quantity' => 10,
+                    'planned_hours' => 8,
+                    'hour_rate' => 500,
+                    'pay_basis' => 'hours',
+                ]],
+            ]);
+        $workOrder->assertCreated();
+        $workOrderId = (int) $workOrder->json('data.id');
+        $lineId = (int) $workOrder->json('data.lines.0.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/production-labor/work-orders/{$workOrderId}/issue")
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/timesheets', [
+                'work_order_id' => $workOrderId,
+                'shift_date' => '2026-05-16',
+                'entries' => [[
+                    'work_order_line_id' => $lineId,
+                    'employee_id' => $employee->id,
+                    'hours' => 8,
+                ]],
+            ])
+            ->assertCreated();
+
+        $period = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/payroll-periods', [
+                'period_start' => '2026-05-01',
+                'period_end' => '2026-05-31',
+                'project_id' => $project->id,
+            ]);
+        $period->assertCreated();
+        $periodId = (int) $period->json('data.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/build-source")
+            ->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/workforce/accounting-mappings', [
+                'scope_type' => 'project',
+                'scope_id' => $project->id,
+                'accounting_account' => '20.01',
+            ])
+            ->assertCreated();
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/lock")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'locked');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/output-entries', [
+                'work_order_line_id' => $lineId,
+                'work_date' => '2026-05-16',
+                'quantity' => 1,
+                'hours' => 1,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('production_labor.errors.payroll_period_locked'));
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/timesheets', [
+                'work_order_id' => $workOrderId,
+                'shift_date' => '2026-05-16',
+                'entries' => [[
+                    'work_order_line_id' => $lineId,
+                    'employee_id' => $employee->id,
+                    'hours' => 1,
+                ]],
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('production_labor.errors.payroll_period_locked'));
+    }
+
     private function allowAccess(string $role): void
     {
         $this->mock(AccessController::class, function (MockInterface $mock): void {
