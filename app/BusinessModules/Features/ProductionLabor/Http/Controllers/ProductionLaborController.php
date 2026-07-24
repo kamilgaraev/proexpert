@@ -195,33 +195,6 @@ final class ProductionLaborController extends Controller
         }
     }
 
-    public function preparePayroll(Request $request): JsonResponse
-    {
-        try {
-            $validated = $request->validate([
-                'work_order_id' => ['required', 'integer'],
-                'period_start' => ['required', 'date'],
-                'period_end' => ['required', 'date', 'after_or_equal:period_start'],
-            ]);
-
-            return AdminResponse::success(
-                ProductionLaborPayrollAccrualResource::collection($this->service->preparePayroll(
-                    (int) $request->attributes->get('current_organization_id'),
-                    (int) $request->user()?->id,
-                    $validated
-                )),
-                trans_message('production_labor.messages.payroll_prepared'),
-                201
-            );
-        } catch (ValidationException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
-        } catch (DomainException $exception) {
-            return AdminResponse::error($exception->getMessage(), 422);
-        } catch (\Throwable $exception) {
-            return $this->failed($request, $exception, 'payroll.prepare');
-        }
-    }
-
     public function reports(Request $request): JsonResponse
     {
         try {

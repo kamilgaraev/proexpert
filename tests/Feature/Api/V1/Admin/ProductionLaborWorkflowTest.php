@@ -22,7 +22,7 @@ final class ProductionLaborWorkflowTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_admin_manages_labor_work_order_output_timesheet_payroll_and_scope_guards(): void
+    public function test_admin_manages_labor_work_order_output_timesheet_and_scope_guards(): void
     {
         $context = AdminApiTestContext::create();
         $foreignContext = AdminApiTestContext::create();
@@ -177,30 +177,19 @@ final class ProductionLaborWorkflowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.status', 'accepted');
 
-        $payroll = $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/production-labor/payroll-accruals/prepare', [
                 'work_order_id' => $workOrderId,
                 'period_start' => now()->startOfMonth()->toDateString(),
                 'period_end' => now()->endOfMonth()->toDateString(),
-            ]);
-        $payroll->assertCreated()
-            ->assertJsonPath('data.0.amount', 7200)
-            ->assertJsonPath('data.0.payment_payload.source', 'production-labor')
-            ->assertJsonPath('data.0.project_id', $project->id);
-
-        $duplicatePayroll = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/production-labor/payroll-accruals/prepare', [
-                'work_order_id' => $workOrderId,
-                'period_start' => now()->startOfMonth()->toDateString(),
-                'period_end' => now()->endOfMonth()->toDateString(),
-            ]);
-        $duplicatePayroll->assertStatus(422);
+            ])
+            ->assertNotFound();
 
         $reports = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/production-labor/reports?project_id={$project->id}");
         $reports->assertOk()
             ->assertJsonPath('data.output_by_project.0.project_id', $project->id)
-            ->assertJsonPath('data.payroll_by_project.0.amount', '7200.00');
+            ->assertJsonCount(0, 'data.payroll_by_project');
 
         $foreignWorkOrder = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/production-labor/work-orders', [

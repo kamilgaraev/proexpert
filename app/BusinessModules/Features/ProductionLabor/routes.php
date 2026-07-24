@@ -26,7 +26,6 @@ Route::prefix('api/v1/admin/production-labor')
         Route::get('/timesheets', [$adminController, 'timesheets'])->middleware('authorize:production-labor.view');
         Route::post('/timesheets', [$adminController, 'storeTimesheet'])->middleware('authorize:production-labor.output.record');
         Route::get('/payroll-accruals', [$adminController, 'payrollAccruals'])->middleware('authorize:production-labor.view');
-        Route::post('/payroll-accruals/prepare', [$adminController, 'preparePayroll'])->middleware('authorize:production-labor.payroll.prepare');
         Route::get('/reports', [$adminController, 'reports'])->middleware('authorize:production-labor.view');
     });
 

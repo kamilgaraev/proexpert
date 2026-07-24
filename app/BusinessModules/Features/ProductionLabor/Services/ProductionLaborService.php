@@ -17,7 +17,6 @@ use App\Models\Project;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
-use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 
 final class ProductionLaborService
@@ -314,71 +313,6 @@ final class ProductionLaborService
             }
 
             return $timesheet->load(['workOrder:id,order_number,title', 'entries.line:id,name,requires_safety_permit', 'entries.employee']);
-        });
-    }
-
-    public function preparePayroll(int $organizationId, int $userId, array $payload): Collection
-    {
-        $workOrder = $this->findWorkOrder($organizationId, (int) $payload['work_order_id']);
-
-        if (!in_array($workOrder->status, ['accepted', 'closed'], true)) {
-            throw new DomainException(trans_message('production_labor.errors.payroll_invalid_status'));
-        }
-
-        return DB::transaction(function () use ($organizationId, $userId, $workOrder, $payload): Collection {
-            $created = new Collection();
-
-            foreach ($workOrder->lines as $line) {
-                $exists = ProductionLaborPayrollAccrual::query()
-                    ->where('organization_id', $organizationId)
-                    ->where('work_order_line_id', $line->id)
-                    ->whereDate('period_start', $payload['period_start'])
-                    ->whereDate('period_end', $payload['period_end'])
-                    ->exists();
-
-                if ($exists) {
-                    throw new DomainException(trans_message('production_labor.errors.payroll_duplicate'));
-                }
-
-                $hours = (float) ProductionLaborOutputEntry::query()
-                    ->where('organization_id', $organizationId)
-                    ->where('work_order_line_id', $line->id)
-                    ->whereBetween('work_date', [$payload['period_start'], $payload['period_end']])
-                    ->where('status', 'accepted')
-                    ->sum('hours');
-                $quantity = (float) $line->accepted_quantity;
-                $amount = $line->pay_basis === 'hours'
-                    ? $hours * (float) $line->hour_rate
-                    : $quantity * (float) $line->unit_rate;
-
-                $created->push(ProductionLaborPayrollAccrual::create([
-                    'organization_id' => $organizationId,
-                    'work_order_id' => $workOrder->id,
-                    'work_order_line_id' => $line->id,
-                    'project_id' => $workOrder->project_id,
-                    'schedule_task_id' => $line->schedule_task_id ?? $workOrder->schedule_task_id,
-                    'period_start' => $payload['period_start'],
-                    'period_end' => $payload['period_end'],
-                    'accepted_quantity' => $quantity,
-                    'accepted_hours' => $hours,
-                    'amount' => round($amount, 2),
-                    'status' => 'prepared',
-                    'approved_at' => now(),
-                    'approved_by_user_id' => $userId,
-                    'payment_payload' => [
-                        'source' => 'production-labor',
-                        'work_order_id' => $workOrder->id,
-                        'work_order_line_id' => $line->id,
-                        'project_id' => $workOrder->project_id,
-                        'schedule_task_id' => $line->schedule_task_id ?? $workOrder->schedule_task_id,
-                        'period_start' => $payload['period_start'],
-                        'period_end' => $payload['period_end'],
-                        'amount' => round($amount, 2),
-                    ],
-                ])->load(['workOrder:id,order_number,title', 'line:id,name,unit', 'project:id,name']));
-            }
-
-            return $created;
         });
     }
 
