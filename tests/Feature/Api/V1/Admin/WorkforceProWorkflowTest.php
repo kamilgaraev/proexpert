@@ -112,7 +112,9 @@ final class WorkforceProWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")
             ->assertOk()
-            ->assertJsonCount(0, 'data');
+            ->assertJsonPath('data.status', 'validated')
+            ->assertJsonPath('data.issues_count', 0)
+            ->assertJsonPath('data.blocking_count', 0);
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/absences/{$absenceId}/approve")
@@ -121,6 +123,12 @@ final class WorkforceProWorkflowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'draft')
+            ->assertJsonPath('data.blocking_count', 1);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validation-issues?search=absence")
             ->assertOk()
             ->assertJsonPath('data.0.issue_code', 'absence_conflict')
             ->assertJsonPath('data.0.severity', 'blocking');
@@ -165,7 +173,9 @@ final class WorkforceProWorkflowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")
-            ->assertOk();
+            ->assertOk()
+            ->assertJsonPath('data.status', 'draft')
+            ->assertJsonPath('data.blocking_count', 2);
 
         $issues = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validation-issues");
@@ -248,6 +258,12 @@ final class WorkforceProWorkflowTest extends TestCase
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'draft')
+            ->assertJsonPath('data.blocking_count', 1);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validation-issues?search=work_schedule")
             ->assertOk()
             ->assertJsonPath('data.0.issue_code', 'work_schedule_conflict');
     }

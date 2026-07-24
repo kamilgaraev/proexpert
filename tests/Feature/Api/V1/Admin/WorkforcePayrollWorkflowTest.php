@@ -295,11 +295,16 @@ final class WorkforcePayrollWorkflowTest extends TestCase
             'updated_at' => $now,
         ]);
 
-        $response = $this->withHeaders($context->authHeaders())
+        $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")
-            ->assertOk();
+            ->assertOk()
+            ->assertJsonPath('data.status', 'draft')
+            ->assertJsonPath('data.blocking_count', 6);
 
-        $issueCodes = collect($response->json('data'))->pluck('issue_code');
+        $issues = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validation-issues?per_page=100")
+            ->assertOk();
+        $issueCodes = collect($issues->json('data'))->pluck('issue_code');
         $this->assertTrue($issueCodes->contains('missing_assignment'));
         $this->assertTrue($issueCodes->contains('work_schedule_conflict'));
         $this->assertTrue($issueCodes->contains('absence_conflict'));
@@ -307,11 +312,16 @@ final class WorkforcePayrollWorkflowTest extends TestCase
         $this->assertTrue($issueCodes->contains('output_without_timesheet'));
         $this->assertTrue($issueCodes->contains('hours_output_mismatch'));
         $this->assertTrue(
-            collect($response->json('data'))->contains(
+            collect($issues->json('data'))->contains(
                 fn (array $issue): bool => $issue['issue_code'] === 'missing_output'
                     && json_decode($issue['payload'], true, 512, JSON_THROW_ON_ERROR)['work_date'] === '2026-05-15'
             )
         );
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validation-issues?per_page=2&search=output")
+            ->assertOk()
+            ->assertJsonPath('meta.per_page', 2)
+            ->assertJsonPath('meta.current_page', 1);
         $this->assertSame('draft', DB::table('workforce_payroll_periods')->where('id', $periodId)->value('status'));
     }
 
@@ -429,7 +439,9 @@ final class WorkforcePayrollWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")
             ->assertOk()
-            ->assertJsonCount(0, 'data');
+            ->assertJsonPath('data.status', 'validated')
+            ->assertJsonPath('data.issues_count', 0)
+            ->assertJsonPath('data.blocking_count', 0);
         $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/accounting-mappings', [
                 'scope_type' => 'project',

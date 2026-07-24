@@ -223,7 +223,9 @@ final class WorkforceCorporateWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")
             ->assertOk()
-            ->assertJsonCount(0, 'data');
+            ->assertJsonPath('data.status', 'validated')
+            ->assertJsonPath('data.issues_count', 0)
+            ->assertJsonPath('data.blocking_count', 0);
 
         return $periodId;
     }

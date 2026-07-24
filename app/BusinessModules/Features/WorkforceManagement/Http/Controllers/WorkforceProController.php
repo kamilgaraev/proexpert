@@ -411,7 +411,12 @@ final class WorkforceProController extends Controller
     public function payrollValidationIssues(Request $request, int $periodId): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->payrollValidationIssues($this->organizationId($request), $periodId));
+            return $this->paginated($this->service->paginatePayrollValidationIssues(
+                $this->organizationId($request),
+                $periodId,
+                $this->perPage($request),
+                $request->string('search')->trim()->value() ?: null,
+            ));
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 404);
         } catch (\Throwable $exception) {

@@ -489,7 +489,7 @@ final class WorkforceProService
 
     public function validatePayrollPeriod(int $organizationId, int $periodId): array
     {
-        DB::transaction(function () use ($organizationId, $periodId): void {
+        return DB::transaction(function () use ($organizationId, $periodId): array {
             $this->lockOrganization($organizationId);
             $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
 
@@ -499,38 +499,131 @@ final class WorkforceProService
 
             DB::table('workforce_payroll_validation_issues')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->delete();
 
+            $employeeIds = DB::table('workforce_payroll_source_rows')
+                ->where('organization_id', $organizationId)
+                ->where('payroll_period_id', $periodId)
+                ->distinct()
+                ->pluck('employee_id');
+            $assignments = DB::table('workforce_employee_assignments')
+                ->where('organization_id', $organizationId)
+                ->whereIn('employee_id', $employeeIds)
+                ->where('status', 'active')
+                ->whereDate('valid_from', '<=', $period->period_end)
+                ->where(function (Builder $query) use ($period): void {
+                    $query->whereNull('valid_to')->orWhereDate('valid_to', '>=', $period->period_start);
+                })
+                ->orderBy('valid_from')
+                ->orderByDesc('id')
+                ->get()
+                ->groupBy('employee_id');
+            $scheduleIds = $assignments
+                ->flatten(1)
+                ->pluck('work_schedule_id')
+                ->filter()
+                ->unique()
+                ->values();
+            $schedules = DB::table('workforce_work_schedules')
+                ->where('organization_id', $organizationId)
+                ->whereIn('id', $scheduleIds)
+                ->get()
+                ->keyBy('id');
+            $scheduleDays = DB::table('workforce_work_schedule_days')
+                ->where('organization_id', $organizationId)
+                ->whereIn('work_schedule_id', $scheduleIds)
+                ->whereBetween('work_date', [$period->period_start, $period->period_end])
+                ->get()
+                ->keyBy(fn (object $day): string => "{$day->work_schedule_id}:{$day->work_date}");
+            $absences = DB::table('workforce_absences')
+                ->join('workforce_absence_types', 'workforce_absence_types.id', '=', 'workforce_absences.absence_type_id')
+                ->where('workforce_absences.organization_id', $organizationId)
+                ->whereIn('workforce_absences.employee_id', $employeeIds)
+                ->where('workforce_absences.status', 'approved')
+                ->where('workforce_absence_types.affects_payroll', true)
+                ->whereDate('workforce_absences.start_date', '<=', $period->period_end)
+                ->whereDate('workforce_absences.end_date', '>=', $period->period_start)
+                ->get([
+                    'workforce_absences.employee_id',
+                    'workforce_absences.start_date',
+                    'workforce_absences.end_date',
+                ])
+                ->groupBy('employee_id');
+
             DB::table('workforce_payroll_source_rows')
                 ->where('organization_id', $organizationId)
                 ->where('payroll_period_id', $periodId)
                 ->orderBy('id')
-                ->chunkById(500, function (Collection $rows) use ($organizationId, $periodId): void {
+                ->chunkById(500, function (Collection $rows) use (
+                    $organizationId,
+                    $periodId,
+                    $assignments,
+                    $schedules,
+                    $scheduleDays,
+                    $absences,
+                ): void {
+                    $issues = [];
+
                     foreach ($rows as $row) {
-                        $assignment = $this->assignmentForDate($organizationId, (int) $row->employee_id, (string) $row->work_date);
+                        $assignment = $assignments
+                            ->get($row->employee_id, collect())
+                            ->first(fn (object $candidate): bool => $candidate->valid_from <= $row->work_date
+                                && ($candidate->valid_to === null || $candidate->valid_to >= $row->work_date));
 
                         if (!$assignment) {
-                            $this->issue($organizationId, $periodId, 'missing_assignment', trans_message('workforce.validation.missing_assignment'), $row);
+                            $issues[] = $this->validationIssueRow(
+                                $organizationId,
+                                $periodId,
+                                'missing_assignment',
+                                trans_message('workforce.validation.missing_assignment'),
+                                $row
+                            );
                             continue;
                         }
 
                         if ($assignment->work_schedule_id === null) {
-                            $this->issue($organizationId, $periodId, 'missing_work_schedule', trans_message('workforce.validation.missing_work_schedule'), $row);
-                        } elseif (!$this->workScheduleAllowsWorkDate($organizationId, (int) $assignment->work_schedule_id, (string) $row->work_date)) {
-                            $this->issue($organizationId, $periodId, 'work_schedule_conflict', trans_message('workforce.validation.work_schedule_conflict'), $row);
+                            $issues[] = $this->validationIssueRow(
+                                $organizationId,
+                                $periodId,
+                                'missing_work_schedule',
+                                trans_message('workforce.validation.missing_work_schedule'),
+                                $row
+                            );
+                        } else {
+                            $schedule = $schedules->get($assignment->work_schedule_id);
+                            $day = $scheduleDays->get("{$assignment->work_schedule_id}:{$row->work_date}");
+                            $allowsWork = $schedule
+                                && (bool) $schedule->is_active
+                                && (float) $schedule->hours_per_day > 0
+                                && (!$day || ($day->day_type === 'work' && (float) $day->planned_hours > 0));
+
+                            if (!$allowsWork) {
+                                $issues[] = $this->validationIssueRow(
+                                    $organizationId,
+                                    $periodId,
+                                    'work_schedule_conflict',
+                                    trans_message('workforce.validation.work_schedule_conflict'),
+                                    $row
+                                );
+                            }
                         }
 
-                        $absence = DB::table('workforce_absences')
-                            ->join('workforce_absence_types', 'workforce_absence_types.id', '=', 'workforce_absences.absence_type_id')
-                            ->where('workforce_absences.organization_id', $organizationId)
-                            ->where('workforce_absences.employee_id', $row->employee_id)
-                            ->where('workforce_absences.status', 'approved')
-                            ->where('workforce_absence_types.affects_payroll', true)
-                            ->whereDate('workforce_absences.start_date', '<=', $row->work_date)
-                            ->whereDate('workforce_absences.end_date', '>=', $row->work_date)
-                            ->exists();
+                        $absence = $absences
+                            ->get($row->employee_id, collect())
+                            ->contains(fn (object $candidate): bool => $candidate->start_date <= $row->work_date
+                                && $candidate->end_date >= $row->work_date);
 
                         if ($absence) {
-                            $this->issue($organizationId, $periodId, 'absence_conflict', trans_message('workforce.validation.absence_conflict'), $row);
+                            $issues[] = $this->validationIssueRow(
+                                $organizationId,
+                                $periodId,
+                                'absence_conflict',
+                                trans_message('workforce.validation.absence_conflict'),
+                                $row
+                            );
                         }
+                    }
+
+                    if ($issues !== []) {
+                        DB::table('workforce_payroll_validation_issues')->insert($issues);
                     }
                 });
 
@@ -562,15 +655,33 @@ final class WorkforceProService
                 ->selectRaw('source.*, output.hours as output_hours')
                 ->orderBy('source.id')
                 ->chunk(500, function (Collection $checks) use ($organizationId, $periodId): void {
+                    $issues = [];
+
                     foreach ($checks as $source) {
                         if ($source->output_hours === null) {
-                            $this->issue($organizationId, $periodId, 'missing_output', trans_message('workforce.validation.missing_output'), $source);
+                            $issues[] = $this->validationIssueRow(
+                                $organizationId,
+                                $periodId,
+                                'missing_output',
+                                trans_message('workforce.validation.missing_output'),
+                                $source
+                            );
                             continue;
                         }
 
                         if (round((float) $source->hours, 2) !== round((float) $source->output_hours, 2)) {
-                            $this->issue($organizationId, $periodId, 'hours_output_mismatch', trans_message('workforce.validation.hours_output_mismatch'), $source);
+                            $issues[] = $this->validationIssueRow(
+                                $organizationId,
+                                $periodId,
+                                'hours_output_mismatch',
+                                trans_message('workforce.validation.hours_output_mismatch'),
+                                $source
+                            );
                         }
+                    }
+
+                    if ($issues !== []) {
+                        DB::table('workforce_payroll_validation_issues')->insert($issues);
                     }
                 });
 
@@ -584,8 +695,8 @@ final class WorkforceProService
                 ->select('output.*')
                 ->orderBy('output.id')
                 ->chunk(500, function (Collection $outputs) use ($organizationId, $periodId): void {
-                    foreach ($outputs as $output) {
-                        $this->issue(
+                    $issues = $outputs
+                        ->map(fn (object $output): array => $this->validationIssueRow(
                             $organizationId,
                             $periodId,
                             'output_without_timesheet',
@@ -597,26 +708,40 @@ final class WorkforceProService
                                 'work_date' => $output->work_date,
                             ],
                             'production_labor_output_entry'
-                        );
+                        ))
+                        ->all();
+
+                    if ($issues !== []) {
+                        DB::table('workforce_payroll_validation_issues')->insert($issues);
                     }
                 });
 
-            $hasBlockingIssues = DB::table('workforce_payroll_validation_issues')
+            $summary = DB::table('workforce_payroll_validation_issues')
                 ->where('organization_id', $organizationId)
                 ->where('payroll_period_id', $periodId)
-                ->where('severity', 'blocking')
-                ->exists();
+                ->selectRaw(
+                    "COUNT(*) as issues_count, "
+                    . "COALESCE(SUM(CASE WHEN severity = 'blocking' THEN 1 ELSE 0 END), 0) as blocking_count"
+                )
+                ->first();
+            $blockingCount = (int) ($summary->blocking_count ?? 0);
+            $status = $blockingCount > 0 ? 'draft' : 'validated';
 
             DB::table('workforce_payroll_periods')
                 ->where('organization_id', $organizationId)
                 ->where('id', $period->id)
                 ->update([
-                    'status' => $hasBlockingIssues ? 'draft' : 'validated',
+                    'status' => $status,
                     'updated_at' => now(),
                 ]);
-        });
 
-        return $this->payrollValidationIssues($organizationId, $periodId)->all();
+            return [
+                'payroll_period_id' => $periodId,
+                'status' => $status,
+                'issues_count' => (int) ($summary->issues_count ?? 0),
+                'blocking_count' => $blockingCount,
+            ];
+        });
     }
 
     public function payrollSourceRows(int $organizationId, int $periodId): Collection
@@ -681,16 +806,56 @@ final class WorkforceProService
             });
     }
 
-    public function payrollValidationIssues(int $organizationId, int $periodId): Collection
-    {
+    public function paginatePayrollValidationIssues(
+        int $organizationId,
+        int $periodId,
+        int $perPage,
+        ?string $search = null
+    ): LengthAwarePaginator {
         $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
 
-        return DB::table('workforce_payroll_validation_issues')
-            ->where('organization_id', $organizationId)
-            ->where('payroll_period_id', $periodId)
-            ->orderBy('id')
-            ->get()
-            ->map(fn (object $record): array => $this->decorateRecord('workforce_payroll_validation_issues', $organizationId, $record));
+        $query = DB::table('workforce_payroll_validation_issues as issue')
+            ->leftJoin('workforce_employees as employee', 'employee.id', '=', 'issue.employee_id')
+            ->leftJoin('projects as project', 'project.id', '=', 'issue.project_id')
+            ->where('issue.organization_id', $organizationId)
+            ->where('issue.payroll_period_id', $periodId)
+            ->select([
+                'issue.*',
+                'employee.personnel_number',
+                'employee.last_name',
+                'employee.first_name',
+                'employee.middle_name',
+                'project.name as project_label',
+            ])
+            ->orderBy('issue.id');
+
+        if ($search !== null && $search !== '') {
+            $query->where(function (Builder $nested) use ($search): void {
+                $nested->where('issue.issue_code', 'like', "%{$search}%")
+                    ->orWhere('issue.message', 'like', "%{$search}%")
+                    ->orWhere('employee.personnel_number', 'like', "%{$search}%")
+                    ->orWhere('employee.last_name', 'like', "%{$search}%")
+                    ->orWhere('employee.first_name', 'like', "%{$search}%")
+                    ->orWhere('employee.middle_name', 'like', "%{$search}%")
+                    ->orWhere('project.name', 'like', "%{$search}%");
+            });
+        }
+
+        return $query
+            ->paginate($perPage)
+            ->through(function (object $record): array {
+                $data = (array) $record;
+                $data['employee_label'] = trim(implode(' ', array_filter([
+                    $record->last_name,
+                    $record->first_name,
+                    $record->middle_name,
+                ])));
+                $data['issue_label'] = trans_message("workforce.issue_labels.{$record->issue_code}");
+                $data['severity_label'] = trans_message("workforce.severity_labels.{$record->severity}");
+                $data['next_action_label'] = trans_message("workforce.issue_actions.{$record->issue_code}");
+
+                return $data;
+            });
     }
 
     public function payrollStatements(int $organizationId, int $periodId): Collection
@@ -1110,9 +1275,16 @@ final class WorkforceProService
         return $day->day_type === 'work' && (float) $day->planned_hours > 0;
     }
 
-    private function issue(int $organizationId, int $periodId, string $code, string $message, object $row, string $entityType = 'payroll_source_row'): void
+    private function validationIssueRow(
+        int $organizationId,
+        int $periodId,
+        string $code,
+        string $message,
+        object $row,
+        string $entityType = 'payroll_source_row'
+    ): array
     {
-        DB::table('workforce_payroll_validation_issues')->insert([
+        return [
             'organization_id' => $organizationId,
             'payroll_period_id' => $periodId,
             'severity' => 'blocking',
@@ -1125,7 +1297,7 @@ final class WorkforceProService
             'payload' => json_encode(['work_date' => $row->work_date], JSON_THROW_ON_ERROR),
             'created_at' => now(),
             'updated_at' => now(),
-        ]);
+        ];
     }
 
     private function payrollStatementPayload(int $organizationId, ?object $record): array
