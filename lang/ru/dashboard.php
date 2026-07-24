@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 return [
     'organization_required' => 'Не определен контекст организации.',
+    'request_failed' => 'Не удалось загрузить данные панели управления.',
     'access_denied' => 'Доступ к данным дашборда запрещен.',
     'evm_metrics_error' => 'Не удалось загрузить метрики EVM.',
     'evm_forecast_error' => 'Не удалось загрузить прогноз EVM.',
