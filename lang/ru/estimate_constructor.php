@@ -12,4 +12,5 @@ return [
     'indices_applied' => 'Индексы применены.',
     'catalog_items_added' => 'Позиции из справочника добавлены.',
     'estimate_recalculated' => 'Смета пересчитана.',
+    'operation_failed' => 'Операция конструктора смет не выполнена.',
 ];
