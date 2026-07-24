@@ -496,6 +496,58 @@ final class WorkforceProService
                 }
             }
 
+            $sourceRowsByLineAndDate = $rows->groupBy(
+                static fn (object $row): string => sprintf('%d:%s', $row->work_order_line_id, $row->work_date)
+            );
+            $outputEntriesByLineAndDate = DB::table('production_labor_output_entries as output')
+                ->join('production_labor_work_orders as work_order', 'work_order.id', '=', 'output.work_order_id')
+                ->where('output.organization_id', $organizationId)
+                ->where('output.status', 'accepted')
+                ->whereIn('work_order.status', ['accepted', 'closed'])
+                ->whereBetween('output.work_date', [$period->period_start, $period->period_end])
+                ->when($period->project_id !== null, fn (Builder $query) => $query->where('output.project_id', $period->project_id))
+                ->select('output.*')
+                ->get()
+                ->groupBy(static fn (object $output): string => sprintf('%d:%s', $output->work_order_line_id, $output->work_date));
+
+            foreach ($sourceRowsByLineAndDate as $key => $sourceRows) {
+                $outputEntries = $outputEntriesByLineAndDate->get($key);
+                $sourceRow = $sourceRows->first();
+
+                if ($outputEntries === null) {
+                    $this->issue($organizationId, $periodId, 'missing_output', trans_message('workforce.validation.missing_output'), $sourceRow);
+                    continue;
+                }
+
+                $sourceHours = (float) $sourceRows->sum('hours');
+                $outputHours = (float) $outputEntries->sum('hours');
+
+                if (round($sourceHours, 2) !== round($outputHours, 2)) {
+                    $this->issue($organizationId, $periodId, 'hours_output_mismatch', trans_message('workforce.validation.hours_output_mismatch'), $sourceRow);
+                }
+            }
+
+            foreach ($outputEntriesByLineAndDate as $key => $outputEntries) {
+                if ($sourceRowsByLineAndDate->has($key)) {
+                    continue;
+                }
+
+                $output = $outputEntries->first();
+                $this->issue(
+                    $organizationId,
+                    $periodId,
+                    'output_without_timesheet',
+                    trans_message('workforce.validation.output_without_timesheet'),
+                    (object) [
+                        'id' => $output->id,
+                        'employee_id' => null,
+                        'project_id' => $output->project_id,
+                        'work_date' => $output->work_date,
+                    ],
+                    'production_labor_output_entry'
+                );
+            }
+
             $hasBlockingIssues = DB::table('workforce_payroll_validation_issues')
                 ->where('organization_id', $organizationId)
                 ->where('payroll_period_id', $periodId)
@@ -955,7 +1007,7 @@ final class WorkforceProService
         return $day->day_type === 'work' && (float) $day->planned_hours > 0;
     }
 
-    private function issue(int $organizationId, int $periodId, string $code, string $message, object $row): void
+    private function issue(int $organizationId, int $periodId, string $code, string $message, object $row, string $entityType = 'payroll_source_row'): void
     {
         DB::table('workforce_payroll_validation_issues')->insert([
             'organization_id' => $organizationId,
@@ -963,7 +1015,7 @@ final class WorkforceProService
             'severity' => 'blocking',
             'issue_code' => $code,
             'message' => $message,
-            'entity_type' => 'payroll_source_row',
+            'entity_type' => $entityType,
             'entity_id' => $row->id,
             'employee_id' => $row->employee_id,
             'project_id' => $row->project_id,

@@ -127,6 +127,9 @@ return [
         'missing_work_schedule' => 'Не назначен график работы',
         'work_schedule_conflict' => 'День не входит в рабочий график',
         'absence_conflict' => 'День попадает на отсутствие',
+        'missing_output' => 'Нет принятой выработки по строке наряда и дате',
+        'output_without_timesheet' => 'Есть принятая выработка без табельных часов',
+        'hours_output_mismatch' => 'Часы табеля не совпадают с принятой выработкой',
         'missing_accounting_mapping' => 'Не настроена статья затрат',
     ],
     'issue_actions' => [
@@ -134,6 +137,9 @@ return [
         'missing_work_schedule' => 'Назначьте график работы сотруднику',
         'work_schedule_conflict' => 'Проверьте рабочий день в графике',
         'absence_conflict' => 'Проверьте отсутствие сотрудника',
+        'missing_output' => 'Добавьте принятую выработку по строке наряда и дате',
+        'output_without_timesheet' => 'Добавьте табельные часы для принятой выработки',
+        'hours_output_mismatch' => 'Сверьте часы табеля с принятой выработкой',
         'missing_accounting_mapping' => 'Настройте счет затрат',
     ],
     'file_type_labels' => [
@@ -169,6 +175,9 @@ return [
         'missing_work_schedule' => 'Нет графика работы для назначения сотрудника.',
         'work_schedule_conflict' => 'График работы не допускает начисление на дату работы.',
         'absence_conflict' => 'Есть утвержденное отсутствие на дату работы.',
+        'missing_output' => 'По строке наряда и дате нет принятой выработки.',
+        'output_without_timesheet' => 'По принятой выработке нет табельных часов для начисления.',
+        'hours_output_mismatch' => 'Часы табеля не совпадают с часами принятой выработки.',
         'missing_accounting_mapping' => 'Не настроена статья затрат или счет для начисления.',
     ],
 ];
