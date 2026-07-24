@@ -178,7 +178,17 @@ final class ProductionLaborWorkflowTest extends TestCase
             ->assertJsonPath('data.status', 'accepted');
         $acceptedWorkOrder->assertJsonPath('data.available_actions', ['close'])
             ->assertJsonPath('data.workflow_summary.available_actions', ['close'])
-            ->assertJsonPath('data.workflow_summary.next_action', 'close');
+            ->assertJsonPath('data.workflow_summary.next_action', 'close')
+            ->assertJsonMissingPath('data.available_actions.prepare_payroll')
+            ->assertJsonMissingPath('data.workflow_summary.available_actions.prepare_payroll');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/payroll-accruals/prepare', [
+                'work_order_id' => $workOrderId,
+                'period_start' => now()->startOfMonth()->toDateString(),
+                'period_end' => now()->endOfMonth()->toDateString(),
+            ])
+            ->assertNotFound();
 
         $reports = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/production-labor/reports?project_id={$project->id}");
