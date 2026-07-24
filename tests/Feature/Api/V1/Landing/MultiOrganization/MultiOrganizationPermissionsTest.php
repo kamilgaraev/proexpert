@@ -7,7 +7,11 @@ namespace Tests\Feature\Api\V1\Landing\MultiOrganization;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingContractsController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingDashboardController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingFilterController;
+use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingLegacyReportsController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingLegalArchiveController;
+use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingOrganizationRolesController;
+use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingOrganizationsController;
+use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingOrganizationUsersController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingProjectsController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingReportsController;
 use Illuminate\Routing\Route as IlluminateRoute;
@@ -84,6 +88,10 @@ class MultiOrganizationPermissionsTest extends TestCase
             HoldingReportsController::class,
             HoldingContractsController::class,
             HoldingLegalArchiveController::class,
+            HoldingOrganizationsController::class,
+            HoldingOrganizationUsersController::class,
+            HoldingOrganizationRolesController::class,
+            HoldingLegacyReportsController::class,
         ] as $controllerClass) {
             $source = file_get_contents((new ReflectionClass($controllerClass))->getFileName());
 
@@ -112,6 +120,17 @@ class MultiOrganizationPermissionsTest extends TestCase
         $this->assertSame([
             'api.v1.landing.multiOrganization.checkAvailability',
         ], $routesWithoutModuleAccess);
+    }
+
+    public function test_core_multi_organization_routes_do_not_point_to_legacy_monolith_controller(): void
+    {
+        foreach ($this->coreMultiOrganizationRoutes() as $route) {
+            $this->assertStringNotContainsString(
+                'MultiOrganizationController',
+                $route->getActionName(),
+                (string) $route->getName()
+            );
+        }
     }
 
     private function assertRouteHasMiddleware(string $routeName, string $middleware): void

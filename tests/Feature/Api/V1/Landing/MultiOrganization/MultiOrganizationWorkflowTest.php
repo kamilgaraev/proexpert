@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Services\Landing\ChildOrganizationUserService;
 use App\Services\Landing\MultiOrganizationService;
 use App\Services\Storage\OrgBucketService;
+use RuntimeException;
 use Tests\TestCase;
 
 class MultiOrganizationWorkflowTest extends TestCase
@@ -64,7 +65,7 @@ class MultiOrganizationWorkflowTest extends TestCase
         $this->assertFalse($child->is_holding);
         $this->assertSame($parent->id, $child->parent_organization_id);
         $this->assertSame(1, $child->hierarchy_level);
-        $this->assertSame($parent->hierarchy_path . '.' . $child->id, $child->hierarchy_path);
+        $this->assertSame($parent->hierarchy_path.'.'.$child->id, $child->hierarchy_path);
         $this->assertDatabaseHas('organization_user', [
             'organization_id' => $child->id,
             'user_id' => $childOwner->id,
@@ -206,6 +207,43 @@ class MultiOrganizationWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_child_user_assignment_rejects_foreign_child_organization(): void
+    {
+        [$parent, $owner] = $this->createHoldingWithOwner();
+        [$foreignParent] = $this->createHoldingWithOwner();
+        $foreignChild = $this->createChildOrganization($foreignParent);
+
+        $this->expectException(RuntimeException::class);
+
+        app(ChildOrganizationUserService::class)->createUserWithRoleForParent($parent->id, $foreignChild->id, [
+            'name' => 'Foreign Child User',
+            'email' => 'foreign-child-user@example.com',
+            'password' => 'password123',
+            'role_data' => [
+                'slug' => 'organization_user',
+            ],
+        ], $owner);
+    }
+
+    public function test_child_user_custom_role_rejects_permission_outside_allowed_template_set(): void
+    {
+        [$parent, $owner] = $this->createHoldingWithOwner();
+        $child = $this->createChildOrganization($parent);
+
+        $this->expectException(RuntimeException::class);
+
+        app(ChildOrganizationUserService::class)->createUserWithRoleForParent($parent->id, $child->id, [
+            'name' => 'Privileged Child User',
+            'email' => 'privileged-child-user@example.com',
+            'password' => 'password123',
+            'role_data' => [
+                'is_custom' => true,
+                'name' => 'Privileged Role',
+                'permissions' => ['system_admin.users.delete'],
+            ],
+        ], $owner);
+    }
+
     public function test_organization_group_active_children_use_organization_activity_flag(): void
     {
         [$parent] = $this->createHoldingWithOwner();
@@ -264,7 +302,7 @@ class MultiOrganizationWorkflowTest extends TestCase
             'organization_type' => 'child',
             'is_holding' => false,
             'hierarchy_level' => 1,
-            'hierarchy_path' => $parent->hierarchy_path . '.child',
+            'hierarchy_path' => $parent->hierarchy_path.'.child',
         ]);
     }
 }

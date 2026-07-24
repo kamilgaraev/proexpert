@@ -128,6 +128,10 @@ return [
         'child_user_removed' => 'Пользователь исключен из дочерней организации.',
         'settings_updated' => 'Настройки холдинга обновлены.',
         'users_import_result' => 'Обработано пользователей: :total, успешно: :successful, ошибок: :failed.',
+        'parent_not_holding' => 'Текущая организация не является холдингом.',
+        'child_access_denied' => 'Нет доступа к выбранной дочерней организации.',
+        'role_access_denied' => 'Выбранная роль недоступна для дочерней организации.',
+        'permission_access_denied' => 'Выбранный набор прав недоступен для дочерней организации.',
     ],
 
     'subscription_limits' => [

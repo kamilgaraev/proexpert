@@ -12,6 +12,9 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use RuntimeException;
+
+use function trans_message;
 
 class MultiOrganizationService
 {
@@ -53,6 +56,27 @@ class MultiOrganizationService
 
             return $group;
         });
+    }
+
+    public function addChildOrganizationForParent(int $parentOrgId, array $organizationData, User $creator): array
+    {
+        $group = OrganizationGroup::query()
+            ->whereKey((int) $organizationData['group_id'])
+            ->where('parent_organization_id', $parentOrgId)
+            ->firstOrFail();
+
+        return $this->addChildOrganization($group, $organizationData, $creator);
+    }
+
+    public function switchOrganizationContext(User $user, int $targetOrgId): void
+    {
+        if (! $this->hasAccessToOrganization($user, $targetOrgId)) {
+            throw new RuntimeException(trans_message('landing.multi_organization.target_access_denied'), 403);
+        }
+
+        User::query()
+            ->whereKey($user->id)
+            ->update(['current_organization_id' => $targetOrgId]);
     }
 
     public function addChildOrganization(OrganizationGroup $group, array $organizationData, User $creator): array
@@ -169,6 +193,23 @@ class MultiOrganizationService
         }
 
         return new Collection([$userOrg]);
+    }
+
+    public function ensureChildOrganizationBelongsToParent(int $parentOrgId, int $childOrgId): Organization
+    {
+        $parentOrg = Organization::findOrFail($parentOrgId);
+
+        if (! ($parentOrg->is_holding ?? false)) {
+            throw new RuntimeException(trans_message('landing.multi_organization.parent_not_holding'), 403);
+        }
+
+        $childOrg = Organization::findOrFail($childOrgId);
+
+        if ((int) $childOrg->parent_organization_id !== $parentOrgId) {
+            throw new RuntimeException(trans_message('landing.multi_organization.child_access_denied'), 403);
+        }
+
+        return $childOrg;
     }
 
     public function hasAccessToOrganization(User $user, int $targetOrgId, string $permission = 'read'): bool
@@ -530,6 +571,8 @@ class MultiOrganizationService
             throw new \Exception('Организация не является дочерней для данного холдинга');
         }
 
+        $this->assertAllowedChildUserPermissions($data['permissions'] ?? []);
+
         $user = User::where('email', $data['email'])->firstOrFail();
 
         if ($childOrg->users()->where('user_id', $user->id)->exists()) {
@@ -569,6 +612,8 @@ class MultiOrganizationService
         if ($childOrg->parent_organization_id !== $parentOrgId) {
             throw new \Exception('Организация не является дочерней для данного холдинга');
         }
+
+        $this->assertAllowedChildUserPermissions($data['permissions'] ?? []);
 
         $user = User::findOrFail($userId);
         $pivot = $childOrg->users()->where('user_id', $userId)->first();
@@ -754,5 +799,53 @@ class MultiOrganizationService
                 'most_active_child' => $childOrgs->sortByDesc(fn ($org) => $org->projects()->count())->first(),
             ],
         ];
+    }
+
+    private function assertAllowedChildUserPermissions(array $permissions): void
+    {
+        $allowedPermissions = [
+            'users.view',
+            'users.create',
+            'users.edit',
+            'users.delete',
+            'roles.view',
+            'roles.create',
+            'roles.edit',
+            'roles.delete',
+            'projects.view',
+            'projects.create',
+            'projects.edit',
+            'projects.delete',
+            'contracts.view',
+            'contracts.create',
+            'contracts.edit',
+            'contracts.delete',
+            'materials.view',
+            'materials.create',
+            'materials.edit',
+            'materials.delete',
+            'reports.view',
+            'reports.create',
+            'reports.export',
+            'finance.view',
+            'finance.edit',
+            'work_types.view',
+            'work_types.create',
+            'work_types.edit',
+            'completed_work.view',
+            'completed_work.create',
+            'completed_work.edit',
+            'clients.view',
+            'clients.create',
+            'clients.edit',
+            'time_tracking.create',
+            'time_tracking.edit',
+        ];
+
+        foreach ($permissions as $permission) {
+            if (! is_string($permission) || ! in_array($permission, $allowedPermissions, true)) {
+                throw new RuntimeException(trans_message('landing.multi_organization.permission_access_denied'), 403);
+            }
+        }
     }
 }
