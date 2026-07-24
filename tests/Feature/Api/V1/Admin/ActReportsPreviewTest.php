@@ -874,10 +874,66 @@ class ActReportsPreviewTest extends TestCase
         ]);
     }
 
+    public function test_status_workflow_requires_edit_permission(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('WORKFLOW-RBAC');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'WORKFLOW-RBAC-ACT', 1);
+
+        $this->allowPermissionsExcept('act_reports.edit');
+
+        $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/submit")
+            ->assertForbidden();
+
+        $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/approve")
+            ->assertForbidden();
+
+        $this->actingAs($user, 'api_admin')
+            ->postJson("/api/v1/admin/act-reports/{$act->id}/reject", [
+                'reason' => 'Недостаточно прав',
+            ])
+            ->assertForbidden();
+    }
+
+    public function test_export_requires_exact_export_permission_before_generating_document(): void
+    {
+        [$organization, $user, $contract, $project] = $this->createContractFixture('EXPORT-RBAC');
+        $this->withoutMiddleware();
+        $this->allowPermissions();
+        $act = $this->createActWithWork($organization->id, $user, $contract, $project, 'EXPORT-RBAC-ACT', 1);
+
+        $this->allowPermissionsExcept('act_reports.export.pdf');
+
+        $this->actingAs($user, 'api_admin')
+            ->getJson("/api/v1/admin/act-reports/{$act->id}/export/pdf")
+            ->assertForbidden();
+
+        $this->allowPermissionsExcept('act_reports.export.excel');
+
+        $this->actingAs($user, 'api_admin')
+            ->getJson("/api/v1/admin/act-reports/{$act->id}/export/excel")
+            ->assertForbidden();
+
+        $this->actingAs($user, 'api_admin')
+            ->getJson("/api/v1/admin/act-reports/{$act->id}/export/ks3")
+            ->assertForbidden();
+    }
+
     private function allowPermissions(bool $allowed = true): void
     {
         $this->mock(AuthorizationService::class, function ($mock) use ($allowed): void {
             $mock->shouldReceive('can')->andReturn($allowed);
+        });
+    }
+
+    private function allowPermissionsExcept(string $deniedPermission): void
+    {
+        $this->mock(AuthorizationService::class, function ($mock) use ($deniedPermission): void {
+            $mock->shouldReceive('can')
+                ->andReturnUsing(static fn (User $user, string $permission): bool => $permission !== $deniedPermission);
         });
     }
 
