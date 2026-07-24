@@ -4,8 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Payments\Http\Requests;
 
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\Models\Contract;
+use App\Models\ContractPerformanceAct;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
+
+use function trans_message;
 
 class StorePaymentDocumentRequest extends FormRequest
 {
@@ -126,6 +132,16 @@ class StorePaymentDocumentRequest extends FormRequest
         ];
     }
 
+    public function after(): array
+    {
+        return [
+            function (Validator $validator): void {
+                $this->validateScopedMorphReference($validator, 'source_type', 'source_id');
+                $this->validateScopedMorphReference($validator, 'invoiceable_type', 'invoiceable_id');
+            },
+        ];
+    }
+
     public function messages(): array
     {
         return [
@@ -161,6 +177,41 @@ class StorePaymentDocumentRequest extends FormRequest
     private function getCurrentOrganizationId(): int
     {
         return (int) $this->attributes->get('current_organization_id', 0);
+    }
+
+    private function validateScopedMorphReference(Validator $validator, string $typeField, string $idField): void
+    {
+        $type = $this->input($typeField);
+        $id = $this->input($idField);
+
+        if (!is_string($type) || $type === '' || $id === null || $id === '') {
+            return;
+        }
+
+        if (!is_numeric($id) || !$this->morphReferenceExists($type, (int) $id)) {
+            $validator->errors()->add($idField, trans_message('payments.validation.source_not_found'));
+        }
+    }
+
+    private function morphReferenceExists(string $type, int $id): bool
+    {
+        $organizationId = $this->getCurrentOrganizationId();
+
+        return match ($type) {
+            Contract::class => Contract::query()
+                ->whereKey($id)
+                ->where('organization_id', $organizationId)
+                ->exists(),
+            ContractPerformanceAct::class => ContractPerformanceAct::query()
+                ->whereKey($id)
+                ->whereHas('contract', fn ($query) => $query->where('organization_id', $organizationId))
+                ->exists(),
+            PaymentDocument::class => PaymentDocument::query()
+                ->whereKey($id)
+                ->where('organization_id', $organizationId)
+                ->exists(),
+            default => false,
+        };
     }
 
     private function convertToNumber(mixed $value): mixed
