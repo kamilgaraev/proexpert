@@ -10,6 +10,7 @@ use App\Exceptions\Billing\StaleCommercialOfferException;
 use App\Http\Requests\Api\V1\Landing\Billing\CommercialContourScheduleRequest;
 use App\Http\Requests\Api\V1\Landing\Billing\CommercialHistoryRequest;
 use App\Http\Requests\Api\V1\Landing\Billing\CommercialQuoteRequest;
+use App\Http\Requests\Api\V1\Landing\Billing\CommercialResourceAddonQuoteRequest;
 use App\Http\Responses\LandingResponse;
 use App\Models\Organization;
 use App\Models\User;
@@ -51,6 +52,31 @@ final class CommercialBillingController
             );
         } catch (Throwable $exception) {
             return $this->failure($request, $exception, 'quote');
+        }
+    }
+
+    public function quoteResourceAddons(CommercialResourceAddonQuoteRequest $request): JsonResponse
+    {
+        try {
+            return LandingResponse::success(
+                $this->billing->quoteResourceAddons(
+                    $this->organization($request),
+                    $request->validated('resources'),
+                ),
+                trans_message('billing.quota.quote_ready'),
+            );
+        } catch (CommercialBillingConflictException $exception) {
+            return LandingResponse::error(
+                trans_message('billing.commercial.grace_blocked'),
+                Response::HTTP_CONFLICT,
+            );
+        } catch (InvalidArgumentException $exception) {
+            return LandingResponse::error(
+                trans_message('billing.quota.invalid'),
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+            );
+        } catch (Throwable $exception) {
+            return $this->failure($request, $exception, 'resource_addons_quote');
         }
     }
 

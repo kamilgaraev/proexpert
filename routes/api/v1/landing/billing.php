@@ -36,6 +36,9 @@ Route::middleware(['interface:lk'])
         Route::post('commercial/checkout', [CommercialCheckoutController::class, 'store'])
             ->middleware(['authorize:billing.manage'])
             ->name('commercial.checkout');
+        Route::post('commercial/resource-addons/quote', [CommercialBillingController::class, 'quoteResourceAddons'])
+            ->middleware(['authorize:billing.manage'])
+            ->name('commercial.resource-addons.quote');
         Route::post('resource-addons/quote', [CommercialQuotaController::class, 'quote'])
             ->middleware(['authorize:billing.manage'])
             ->name('resource-addons.quote');

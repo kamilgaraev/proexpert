@@ -51,7 +51,7 @@ class CommercialQuotaControllerTest extends TestCase
     public function test_owner_can_quote_resource_addons(): void
     {
         $response = $this->authenticatedAs($this->owner)->postJson(
-            '/api/v1/landing/billing/resource-addons/quote',
+            '/api/v1/landing/billing/commercial/resource-addons/quote',
             ['resources' => [['slug' => 'extra_users', 'quantity' => 5]]],
         );
 

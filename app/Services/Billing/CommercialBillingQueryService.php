@@ -18,6 +18,7 @@ final class CommercialBillingQueryService
 {
     public function __construct(
         private readonly CommercialOfferCalculator $calculator,
+        private readonly CommercialQuotaService $quotas,
         private readonly CommercialReconciliationService $reconciliation,
     ) {}
 
@@ -38,6 +39,19 @@ final class CommercialBillingQueryService
             currentPeriodStartAt: $account?->current_period_start_at,
             currentPeriodEndAt: $account?->current_period_end_at,
         );
+    }
+
+    public function quoteResourceAddons(Organization $organization, array $resources): array
+    {
+        $account = OrganizationCommercialAccount::query()
+            ->where('organization_id', $organization->getKey())
+            ->first();
+
+        if ($account?->status->value === 'grace') {
+            throw new CommercialBillingConflictException('Commercial contour cannot change during grace.');
+        }
+
+        return $this->quotas->calculateResourceAddonQuote($organization, $resources);
     }
 
     public function order(Organization $organization, string $publicId): array
