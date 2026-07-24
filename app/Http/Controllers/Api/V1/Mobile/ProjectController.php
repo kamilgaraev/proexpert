@@ -7,8 +7,8 @@ namespace App\Http\Controllers\Api\V1\Mobile;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\Mobile\MobileProjectResource;
 use App\Http\Responses\MobileResponse;
-use App\Models\Project;
 use App\Services\PerformanceMonitor;
+use App\Services\Project\UserProjectAccessService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -16,12 +16,15 @@ use function trans_message;
 
 class ProjectController extends Controller
 {
+    public function __construct(
+        private readonly UserProjectAccessService $userProjectAccessService,
+    ) {
+    }
+
     /**
      * Получить список проектов, доступных пользователю.
      * 
-     * Логика:
-     * - Если пользователь Админ/Владелец организации -> видит ВСЕ проекты организации.
-     * - Иначе (Прораб/Мастер) -> видит только проекты, куда он назначен (через project_user).
+     * Список формируется по режиму доступа пользователя и активному участию организации в проекте.
      */
     public function index(Request $request): JsonResponse
     {
@@ -34,19 +37,12 @@ class ProjectController extends Controller
                 return MobileResponse::error(trans_message('project.mobile_no_organization'), 400);
             }
 
-            $query = Project::where('organization_id', $organizationId)
+            $query = $this->userProjectAccessService
+                ->queryAccessibleProjects($user, $organizationId)
+                ->with(['users' => function ($q) use ($user): void {
+                    $q->where('users.id', $user->id);
+                }])
                 ->orderBy('created_at', 'desc');
-
-            // Если НЕ админ организации — фильтруем по назначениям
-            if (!$user->isOrganizationAdmin($organizationId)) {
-                $query->whereHas('users', function($q) use ($user) {
-                    $q->where('users.id', $user->id);
-                });
-                // Подгружаем pivot, чтобы знать роль в проекте
-                $query->with(['users' => function($q) use ($user) {
-                    $q->where('users.id', $user->id);
-                }]);
-            }
 
             $projects = $query->get();
 
