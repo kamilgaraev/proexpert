@@ -125,9 +125,13 @@ class EstimateItemNumberingService
      * @param int $estimateId ID сметы
      * @param string $mode Режим нумерации
      */
-    public function recalculateAllItemNumbers(int $estimateId, string $mode = self::NUMBERING_BY_SECTION): void
+    public function recalculateAllItemNumbers(
+        int $estimateId,
+        string $mode = self::NUMBERING_BY_SECTION,
+        array $orderedItemIds = []
+    ): void
     {
-        DB::transaction(function () use ($estimateId, $mode) {
+        DB::transaction(function () use ($estimateId, $mode, $orderedItemIds) {
             Log::info('estimate.items.recalculate_numbers.start', [
                 'estimate_id' => $estimateId,
                 'mode' => $mode,
@@ -135,15 +139,15 @@ class EstimateItemNumberingService
 
             switch ($mode) {
                 case self::NUMBERING_GLOBAL:
-                    $this->recalculateGlobal($estimateId);
+                    $this->recalculateGlobal($estimateId, $orderedItemIds);
                     break;
                     
                 case self::NUMBERING_BY_SECTION:
-                    $this->recalculateBySection($estimateId);
+                    $this->recalculateBySection($estimateId, $orderedItemIds);
                     break;
                     
                 case self::NUMBERING_HIERARCHICAL:
-                    $this->recalculateHierarchical($estimateId);
+                    $this->recalculateHierarchical($estimateId, $orderedItemIds);
                     break;
             }
 
@@ -156,12 +160,14 @@ class EstimateItemNumberingService
     /**
      * Пересчет сквозной нумерации
      */
-    protected function recalculateGlobal(int $estimateId): void
+    protected function recalculateGlobal(int $estimateId, array $orderedItemIds = []): void
     {
         $items = EstimateItem::where('estimate_id', $estimateId)
             ->orderBy('estimate_section_id')
             ->orderBy('id')
             ->get();
+
+        $items = $this->applyRequestedOrder($items, $orderedItemIds);
 
         $counter = 1;
         foreach ($items as $item) {
@@ -173,13 +179,15 @@ class EstimateItemNumberingService
     /**
      * Пересчет нумерации в рамках секций
      */
-    protected function recalculateBySection(int $estimateId): void
+    protected function recalculateBySection(int $estimateId, array $orderedItemIds = []): void
     {
         // Сначала позиции без секции
         $itemsWithoutSection = EstimateItem::where('estimate_id', $estimateId)
             ->whereNull('estimate_section_id')
             ->orderBy('id')
             ->get();
+
+        $itemsWithoutSection = $this->applyRequestedOrder($itemsWithoutSection, $orderedItemIds);
 
         $counter = 1;
         foreach ($itemsWithoutSection as $item) {
@@ -198,6 +206,8 @@ class EstimateItemNumberingService
                 ->orderBy('id')
                 ->get();
 
+            $items = $this->applyRequestedOrder($items, $orderedItemIds);
+
             $counter = 1;
             foreach ($items as $item) {
                 $item->update(['position_number' => (string) $counter]);
@@ -209,13 +219,15 @@ class EstimateItemNumberingService
     /**
      * Пересчет иерархической нумерации
      */
-    protected function recalculateHierarchical(int $estimateId): void
+    protected function recalculateHierarchical(int $estimateId, array $orderedItemIds = []): void
     {
         // Позиции без секции
         $itemsWithoutSection = EstimateItem::where('estimate_id', $estimateId)
             ->whereNull('estimate_section_id')
             ->orderBy('id')
             ->get();
+
+        $itemsWithoutSection = $this->applyRequestedOrder($itemsWithoutSection, $orderedItemIds);
 
         $counter = 1;
         foreach ($itemsWithoutSection as $item) {
@@ -233,6 +245,8 @@ class EstimateItemNumberingService
                 ->where('estimate_section_id', $section->id)
                 ->orderBy('id')
                 ->get();
+
+            $items = $this->applyRequestedOrder($items, $orderedItemIds);
 
             $counter = 1;
             foreach ($items as $item) {
@@ -310,14 +324,14 @@ class EstimateItemNumberingService
         string $mode = self::NUMBERING_BY_SECTION
     ): void {
         DB::transaction(function () use ($estimateId, $itemsOrder, $mode) {
-            // Обновляем порядок для всех позиций
+            asort($itemsOrder);
+            $orderedItemIds = [];
+
             foreach ($itemsOrder as $itemId => $order) {
-                EstimateItem::where('id', $itemId)
-                    ->update(['sort_order' => $order]);
+                $orderedItemIds[] = (int) $itemId;
             }
 
-            // Пересчитываем номера
-            $this->recalculateAllItemNumbers($estimateId, $mode);
+            $this->recalculateAllItemNumbers($estimateId, $mode, $orderedItemIds);
         });
     }
 
@@ -330,6 +344,23 @@ class EstimateItemNumberingService
         // По умолчанию - нумерация по секциям
         // TODO: Можно добавить настройку на уровне сметы или организации
         return self::NUMBERING_BY_SECTION;
+    }
+
+    private function applyRequestedOrder($items, array $orderedItemIds)
+    {
+        if ($orderedItemIds === []) {
+            return $items;
+        }
+
+        $orderById = array_flip($orderedItemIds);
+
+        return $items
+            ->sortBy(static fn (EstimateItem $item): string => sprintf(
+                '%020d-%020d',
+                $orderById[$item->id] ?? PHP_INT_MAX,
+                $item->id
+            ))
+            ->values();
     }
 
     private function getCastType(): string
@@ -352,4 +383,3 @@ class EstimateItemNumberingService
         return $query->whereRaw("position_number REGEXP '^[0-9]+$'");
     }
 }
-

@@ -77,7 +77,18 @@ class EstimateItemWorkflowService
                 ]);
             }
 
-            $this->numberingService->recalculateAllItemNumbers($estimate->id, $numberingMode);
+            $orderedItemIds = collect($items)
+                ->values()
+                ->sortBy(static fn (array $item, int $index): string => sprintf(
+                    '%020d-%020d',
+                    (int) $item['sort_order'],
+                    $index
+                ))
+                ->pluck('id')
+                ->map(static fn (mixed $id): int => (int) $id)
+                ->all();
+
+            $this->numberingService->recalculateAllItemNumbers($estimate->id, $numberingMode, $orderedItemIds);
             $this->cacheService->invalidateStructure($estimate);
         });
 

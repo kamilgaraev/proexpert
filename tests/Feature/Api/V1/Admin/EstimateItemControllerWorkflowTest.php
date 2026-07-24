@@ -195,6 +195,114 @@ class EstimateItemControllerWorkflowTest extends TestCase
         $this->assertSame('9', $foreignItem->position_number);
     }
 
+    public function test_reorder_uses_request_order_for_section_numbering_and_moves_items_between_sections(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $firstSection = $this->createSection($estimate, ['section_number' => '1', 'sort_order' => 1]);
+        $secondSection = $this->createSection($estimate, ['section_number' => '2', 'sort_order' => 2]);
+
+        $firstItem = $this->createItem($estimate, $unit, [
+            'estimate_section_id' => $firstSection->id,
+            'name' => 'First item',
+            'position_number' => '1',
+        ]);
+        $secondItem = $this->createItem($estimate, $unit, [
+            'estimate_section_id' => $firstSection->id,
+            'name' => 'Second item',
+            'position_number' => '2',
+        ]);
+        $thirdItem = $this->createItem($estimate, $unit, [
+            'estimate_section_id' => $firstSection->id,
+            'name' => 'Third item',
+            'position_number' => '3',
+        ]);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items/reorder", [
+                'items' => [
+                    [
+                        'id' => $firstItem->id,
+                        'estimate_section_id' => $secondSection->id,
+                        'sort_order' => 1,
+                    ],
+                    [
+                        'id' => $thirdItem->id,
+                        'estimate_section_id' => $secondSection->id,
+                        'sort_order' => 0,
+                    ],
+                    [
+                        'id' => $secondItem->id,
+                        'estimate_section_id' => $firstSection->id,
+                        'sort_order' => 0,
+                    ],
+                ],
+                'numbering_mode' => 'section',
+            ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+
+        $firstItem->refresh();
+        $secondItem->refresh();
+        $thirdItem->refresh();
+
+        $this->assertSame($secondSection->id, $thirdItem->estimate_section_id);
+        $this->assertSame('1', $thirdItem->position_number);
+        $this->assertSame($secondSection->id, $firstItem->estimate_section_id);
+        $this->assertSame('2', $firstItem->position_number);
+        $this->assertSame($firstSection->id, $secondItem->estimate_section_id);
+        $this->assertSame('1', $secondItem->position_number);
+    }
+
+    public function test_reorder_supports_hierarchical_numbering_inside_section(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $section = $this->createSection($estimate, ['section_number' => '4', 'sort_order' => 1]);
+
+        $firstItem = $this->createItem($estimate, $unit, [
+            'estimate_section_id' => $section->id,
+            'position_number' => '4.1',
+        ]);
+        $secondItem = $this->createItem($estimate, $unit, [
+            'estimate_section_id' => $section->id,
+            'position_number' => '4.2',
+        ]);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items/reorder", [
+                'items' => [
+                    [
+                        'id' => $secondItem->id,
+                        'estimate_section_id' => $section->id,
+                        'sort_order' => 0,
+                    ],
+                    [
+                        'id' => $firstItem->id,
+                        'estimate_section_id' => $section->id,
+                        'sort_order' => 1,
+                    ],
+                ],
+                'numbering_mode' => 'hierarchical',
+            ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+
+        $firstItem->refresh();
+        $secondItem->refresh();
+
+        $this->assertSame('4.2', $firstItem->position_number);
+        $this->assertSame('4.1', $secondItem->position_number);
+    }
+
     private function createEstimate(Organization $organization, Project $project, array $overrides = []): Estimate
     {
         return Estimate::query()->create(array_merge([
