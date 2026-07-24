@@ -6,6 +6,7 @@ namespace App\Services\Contract;
 
 use App\Models\Contract;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 class ContractAccessService
 {
@@ -64,6 +65,17 @@ class ContractAccessService
                 'performanceActs',
                 'performanceActs.completedWorks',
             ]);
+        }
+
+        return $contract;
+    }
+
+    public function findAccessibleOrFail(int $contractId, int $organizationId, ?int $projectId = null): Contract
+    {
+        $contract = $this->findAccessible($contractId, $organizationId, $projectId);
+
+        if ($contract === null) {
+            throw (new ModelNotFoundException())->setModel(Contract::class, [$contractId]);
         }
 
         return $contract;
