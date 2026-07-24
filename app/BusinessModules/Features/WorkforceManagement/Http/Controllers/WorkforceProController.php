@@ -11,6 +11,7 @@ use App\Http\Responses\AdminResponse;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -394,7 +395,12 @@ final class WorkforceProController extends Controller
     public function payrollSourceRows(Request $request, int $periodId): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->payrollSourceRows($this->organizationId($request), $periodId));
+            return $this->paginated($this->service->paginatePayrollSourceRows(
+                $this->organizationId($request),
+                $periodId,
+                $this->perPage($request),
+                $request->string('search')->trim()->value() ?: null,
+            ));
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 404);
         } catch (\Throwable $exception) {
@@ -442,10 +448,30 @@ final class WorkforceProController extends Controller
     private function list(Request $request, string $table): JsonResponse
     {
         try {
-            return AdminResponse::success($this->service->list($table, $this->organizationId($request)));
+            return $this->paginated($this->service->paginateList(
+                $table,
+                $this->organizationId($request),
+                $this->perPage($request),
+                $request->string('search')->trim()->value() ?: null,
+            ));
         } catch (\Throwable $exception) {
             return $this->failed($request, $exception, "{$table}.index");
         }
+    }
+
+    private function paginated(LengthAwarePaginator $records): JsonResponse
+    {
+        return AdminResponse::paginated($records->items(), [
+            'current_page' => $records->currentPage(),
+            'per_page' => $records->perPage(),
+            'total' => $records->total(),
+            'last_page' => $records->lastPage(),
+        ]);
+    }
+
+    private function perPage(Request $request): int
+    {
+        return min(max((int) $request->input('per_page', 25), 1), 100);
     }
 
     private function store(Request $request, string $table, array $rules): JsonResponse

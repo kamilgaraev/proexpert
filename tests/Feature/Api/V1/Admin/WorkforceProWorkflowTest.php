@@ -19,6 +19,31 @@ final class WorkforceProWorkflowTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_structure_and_payroll_source_lists_apply_pagination_and_search(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAccess('web_admin');
+
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/workforce/departments', [
+            'code' => 'SEARCH-ONE',
+            'name' => 'Первый участок',
+        ])->assertCreated();
+        $this->withHeaders($context->authHeaders())->postJson('/api/v1/admin/workforce/departments', [
+            'code' => 'SEARCH-TWO',
+            'name' => 'Второй участок',
+        ])->assertCreated();
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/workforce/departments?page=1&per_page=1&search=SEARCH-TWO')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.code', 'SEARCH-TWO')
+            ->assertJsonPath('meta.current_page', 1)
+            ->assertJsonPath('meta.per_page', 1)
+            ->assertJsonPath('meta.total', 1)
+            ->assertJsonPath('meta.last_page', 1);
+    }
+
     public function test_structure_assignment_schedule_absence_and_payroll_source_validation_workflow(): void
     {
         $context = AdminApiTestContext::create();

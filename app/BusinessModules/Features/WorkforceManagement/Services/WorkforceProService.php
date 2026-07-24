@@ -12,6 +12,7 @@ use App\Models\Project;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -21,13 +22,17 @@ final class WorkforceProService
     {
     }
 
-    public function list(string $table, int $organizationId): Collection
+    public function paginateList(string $table, int $organizationId, int $perPage, ?string $search = null): LengthAwarePaginator
     {
-        return DB::table($table)
+        $query = DB::table($table)
             ->where('organization_id', $organizationId)
-            ->orderByDesc('id')
-            ->get()
-            ->map(fn (object $record): array => $this->decorateRecord($table, $organizationId, $record));
+            ->orderByDesc('id');
+
+        $this->applyListSearch($query, $table, $search);
+
+        return $query
+            ->paginate($perPage)
+            ->through(fn (object $record): array => $this->decorateRecord($table, $organizationId, $record));
     }
 
     public function store(string $table, int $organizationId, array $payload): array
@@ -587,6 +592,24 @@ final class WorkforceProService
             ->map(fn (object $record): array => $this->decorateRecord('workforce_payroll_source_rows', $organizationId, $record));
     }
 
+    public function paginatePayrollSourceRows(int $organizationId, int $periodId, int $perPage, ?string $search = null): LengthAwarePaginator
+    {
+        $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+
+        $query = DB::table('workforce_payroll_source_rows')
+            ->where('organization_id', $organizationId)
+            ->where('payroll_period_id', $periodId)
+            ->orderBy('work_date');
+
+        if ($search !== null && $search !== '') {
+            $query->where('source_type', 'like', "%{$search}%");
+        }
+
+        return $query
+            ->paginate($perPage)
+            ->through(fn (object $record): array => $this->decorateRecord('workforce_payroll_source_rows', $organizationId, $record));
+    }
+
     public function payrollValidationIssues(int $organizationId, int $periodId): Collection
     {
         $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
@@ -1114,6 +1137,35 @@ final class WorkforceProService
         }
 
         return $data;
+    }
+
+    private function applyListSearch(Builder $query, string $table, ?string $search): void
+    {
+        if ($search === null || $search === '') {
+            return;
+        }
+
+        $columns = match ($table) {
+            'workforce_departments', 'workforce_positions', 'workforce_work_schedules' => ['code', 'name'],
+            'workforce_staff_units' => ['code'],
+            'workforce_payroll_periods' => ['status', 'period_start', 'period_end'],
+            'workforce_export_packages' => ['package_number', 'status'],
+            'workforce_accounting_mappings' => ['account', 'scope_type'],
+            'workforce_absences' => ['absence_type_code', 'status'],
+            'workforce_business_trips' => ['destination', 'status'],
+            default => [],
+        };
+
+        if ($columns === []) {
+            return;
+        }
+
+        $query->where(function (Builder $nested) use ($columns, $search): void {
+            foreach ($columns as $index => $column) {
+                $method = $index === 0 ? 'where' : 'orWhere';
+                $nested->{$method}($column, 'like', "%{$search}%");
+            }
+        });
     }
 
     private function decodePayload(mixed $payload): array
