@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\Enums\EstimatePositionItemType;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
+use App\Models\EstimatePositionCatalog;
 use App\Models\EstimateSection;
 use App\Models\MeasurementUnit;
 use App\Models\Organization;
@@ -105,6 +106,62 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_add_from_catalog_and_copy_generate_next_position_numbers(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $targetEstimate = $this->createEstimate($context->organization, $project, ['number' => 'TARGET-POSITIONS']);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $section = $this->createSection($estimate);
+        $targetSection = $this->createSection($targetEstimate);
+        $catalogItem = $this->createCatalogItem($context->organization, $context->user, $unit);
+        $sourceItem = $this->createItem($estimate, $unit, ['position_number' => '10']);
+
+        $this->createItem($estimate, $unit, ['position_number' => '1']);
+        $this->createItem($estimate, $unit, [
+            'estimate_section_id' => $section->id,
+            'position_number' => '1.9',
+        ]);
+        $this->createItem($targetEstimate, $unit, ['position_number' => '2']);
+        $this->createItem($targetEstimate, $unit, [
+            'estimate_section_id' => $targetSection->id,
+            'position_number' => '1.2',
+        ]);
+
+        $addResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/estimates/constructor/{$estimate->id}/add-from-catalog", [
+                'items' => [
+                    ['catalog_item_id' => $catalogItem->id, 'quantity' => 1],
+                    ['catalog_item_id' => $catalogItem->id, 'quantity' => 1, 'section_id' => $section->id],
+                ],
+            ]);
+
+        $addResponse->assertCreated();
+        $addResponse->assertJsonPath('success', true);
+        $addResponse->assertJsonPath('data.items.0.position_number', '11');
+        $addResponse->assertJsonPath('data.items.1.position_number', '1.10');
+
+        $copyTopResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/estimates/constructor/{$estimate->id}/copy-items", [
+                'item_ids' => [$sourceItem->id],
+                'target_estimate_id' => $targetEstimate->id,
+            ]);
+
+        $copyTopResponse->assertCreated();
+        $copyTopResponse->assertJsonPath('data.items.0.position_number', '3');
+
+        $copySectionResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/estimates/constructor/{$estimate->id}/copy-items", [
+                'item_ids' => [$sourceItem->id],
+                'target_estimate_id' => $targetEstimate->id,
+                'target_section_id' => $targetSection->id,
+            ]);
+
+        $copySectionResponse->assertCreated();
+        $copySectionResponse->assertJsonPath('data.items.0.position_number', '1.3');
+    }
+
     private function createEstimate(Organization $organization, Project $project, array $overrides = []): Estimate
     {
         return Estimate::query()->create(array_merge([
@@ -149,6 +206,26 @@ class EstimateConstructorControllerWorkflowTest extends TestCase
             'name' => 'Constructor section ' . random_int(1000, 9999),
             'sort_order' => 1,
             'is_summary' => false,
+        ], $overrides));
+    }
+
+    private function createCatalogItem(
+        Organization $organization,
+        \App\Models\User $user,
+        MeasurementUnit $unit,
+        array $overrides = []
+    ): EstimatePositionCatalog {
+        return EstimatePositionCatalog::query()->create(array_merge([
+            'organization_id' => $organization->id,
+            'name' => 'Catalog item ' . random_int(1000, 9999),
+            'code' => 'catalog-' . random_int(1000, 9999),
+            'item_type' => EstimatePositionItemType::WORK->value,
+            'measurement_unit_id' => $unit->id,
+            'unit_price' => 1000,
+            'direct_costs' => 1000,
+            'is_active' => true,
+            'usage_count' => 0,
+            'created_by_user_id' => $user->id,
         ], $overrides));
     }
 

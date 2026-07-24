@@ -13,6 +13,7 @@ use App\Enums\Contract\ContractStateEventTypeEnum;
 use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractStateEventController;
 use App\Http\Controllers\Api\V1\Admin\ContractController;
+use App\Http\Requests\Api\V1\Admin\Contract\CompletedWorksRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\PerformanceAct\StoreContractPerformanceActRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\PerformanceAct\UpdateContractPerformanceActRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\StoreContractRequest;
@@ -48,6 +49,11 @@ final class ContractPermissionAndLifecycleTest extends TestCase
         $this->assertRoutePermission('DELETE', 'api/v1/admin/contracts/{contract}', 'contracts.delete');
         $this->assertRoutePermission('POST', 'api/v1/admin/contracts/{contract}/activate', 'contracts.edit');
         $this->assertRoutePermission('POST', 'api/v1/admin/contracts/{contract}/archive', 'contracts.archive');
+        $this->assertRoutePermission('GET', 'api/v1/admin/contracts/{contract}/full', 'contracts.view');
+        $this->assertRoutePermission('POST', 'api/v1/admin/contracts/{contract}/resolve-side-review', 'contracts.edit');
+        $this->assertRoutePermission('GET', 'api/v1/admin/contracts/{contract}/analytics', 'contracts.view');
+        $this->assertRoutePermission('GET', 'api/v1/admin/contracts/{contract}/completed-works', 'contracts.view');
+        $this->assertRoutePermission('GET', 'api/v1/admin/contracts/{contract}/export-ks6a', 'contracts.performance_acts.export');
 
         $this->assertRoutePermission('GET', 'api/v1/admin/projects/{project}/contracts', 'contracts.view');
         $this->assertRoutePermission('POST', 'api/v1/admin/projects/{project}/contracts', 'contracts.create');
@@ -81,6 +87,23 @@ final class ContractPermissionAndLifecycleTest extends TestCase
         $response = $middleware->handle($request, static fn () => null, 'contracts.create');
 
         self::assertSame(403, $response->status());
+    }
+
+    public function test_completed_works_request_limits_per_page(): void
+    {
+        Route::get('/__review/contracts/{contract}/completed-works', static function (CompletedWorksRequest $request) {
+            return AdminResponse::success(['per_page' => $request->perPage()]);
+        });
+
+        $this->actingAs($this->user(7))
+            ->getJson('/__review/contracts/1/completed-works?per_page=101')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('per_page');
+
+        $this->actingAs($this->user(7))
+            ->getJson('/__review/contracts/1/completed-works?per_page=100')
+            ->assertOk()
+            ->assertJsonPath('data.per_page', 100);
     }
 
     public function test_lifecycle_service_applies_the_complete_transition_matrix(): void

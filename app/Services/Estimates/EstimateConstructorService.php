@@ -348,9 +348,13 @@ class EstimateConstructorService
 
     private function nextPositionNumber(int $estimateId, ?int $sectionId): string
     {
+        Estimate::query()
+            ->whereKey($estimateId)
+            ->lockForUpdate()
+            ->firstOrFail();
+
         $query = EstimateItem::query()
-            ->where('estimate_id', $estimateId)
-            ->lockForUpdate();
+            ->where('estimate_id', $estimateId);
 
         if ($sectionId !== null) {
             $query->where('estimate_section_id', $sectionId);
@@ -358,13 +362,30 @@ class EstimateConstructorService
             $query->whereNull('estimate_section_id');
         }
 
-        $maxPosition = $query->max('position_number');
+        $positions = $query
+            ->pluck('position_number')
+            ->map(static fn ($position): string => (string) $position)
+            ->filter(static fn (string $position): bool => $position !== '')
+            ->values();
 
-        if (!$maxPosition) {
+        if ($positions->isEmpty()) {
             return $sectionId !== null ? '1.1' : '1';
         }
 
-        $parts = explode('.', (string) $maxPosition);
+        $maxPosition = $positions
+            ->sortByDesc(static function (string $position): int {
+                $parts = explode('.', $position);
+
+                return (int) end($parts);
+            })
+            ->first();
+
+        return $this->incrementPositionNumber((string) $maxPosition);
+    }
+
+    private function incrementPositionNumber(string $positionNumber): string
+    {
+        $parts = explode('.', $positionNumber);
         $lastIndex = count($parts) - 1;
         $parts[$lastIndex] = (string) (((int) $parts[$lastIndex]) + 1);
 

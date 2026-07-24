@@ -9,6 +9,7 @@ use App\DTOs\Contract\ContractDossierCreationInput;
 use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\Contract\AttachToParentContractRequest;
+use App\Http\Requests\Api\V1\Admin\Contract\CompletedWorksRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\DetachFromParentContractRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\ExportKS6aRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\ResolveContractSideReviewRequest;
@@ -350,7 +351,7 @@ class ContractController extends Controller
         }
     }
 
-    public function completedWorks(int $contract, Request $request): JsonResponse
+    public function completedWorks(int $contract, CompletedWorksRequest $request): JsonResponse
     {
         $user = $request->user();
         $organizationId = $this->organizationId($request);
@@ -365,7 +366,7 @@ class ContractController extends Controller
                 $contract,
                 $organizationId,
                 $projectId,
-                (int) $request->query('per_page', 15)
+                $request->perPage()
             ));
         } catch (ModelNotFoundException $exception) {
             $this->logFailure('contract.completed_works.not_found', $request, $exception, [

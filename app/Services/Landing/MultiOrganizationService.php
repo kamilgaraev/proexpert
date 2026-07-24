@@ -51,7 +51,7 @@ class MultiOrganizationService
                 'created_by_user_id' => $user->id,
                 'max_child_organizations' => $data['max_child_organizations'] ?? 10,
                 'settings' => $data['settings'] ?? [],
-                'permissions_config' => $data['permissions_config'] ?? $this->getDefaultPermissionsConfig(),
+                'permissions_config' => $this->getDefaultPermissionsConfig(),
             ]);
 
             return $group;
@@ -747,11 +747,6 @@ class MultiOrganizationService
         if (array_key_exists('settings', $data)) {
             $currentSettings = $group->settings ?? [];
             $updateData['settings'] = array_merge($currentSettings, $data['settings']);
-        }
-
-        if (array_key_exists('permissions_config', $data)) {
-            $currentPermissions = $group->permissions_config ?? [];
-            $updateData['permissions_config'] = array_merge($currentPermissions, $data['permissions_config']);
         }
 
         $group->update($updateData);
