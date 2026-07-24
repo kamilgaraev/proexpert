@@ -97,6 +97,10 @@ final class WorkforcePayrollWorkflowTest extends TestCase
             ->assertJsonPath('meta.total', 1)
             ->assertJsonPath('data.0.employee_id', $employee->id)
             ->assertJsonPath('data.0.work_order_id', $workOrderId);
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/source-rows?search=2026-05-16")
+            ->assertOk()
+            ->assertJsonPath('meta.total', 1);
 
         $this->assertSame(0, DB::table('production_labor_payroll_accruals')->count());
     }
@@ -303,7 +307,10 @@ final class WorkforcePayrollWorkflowTest extends TestCase
 
         $issues = $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validation-issues?per_page=100")
-            ->assertOk();
+            ->assertOk()
+            ->assertJsonPath('meta.total', 6)
+            ->assertJsonPath('meta.issues_count', 6)
+            ->assertJsonPath('meta.blocking_count', 6);
         $issueCodes = collect($issues->json('data'))->pluck('issue_code');
         $this->assertTrue($issueCodes->contains('missing_assignment'));
         $this->assertTrue($issueCodes->contains('work_schedule_conflict'));

@@ -136,8 +136,8 @@ final class WorkforceCorporateService
             $query->where(function (Builder $nested) use ($search): void {
                 $nested->where('package.package_number', 'like', "%{$search}%")
                     ->orWhere('package.status', 'like', "%{$search}%")
-                    ->orWhere('period.period_start', 'like', "%{$search}%")
-                    ->orWhere('period.period_end', 'like', "%{$search}%");
+                    ->orWhereRaw('CAST(period.period_start AS TEXT) ILIKE ?', ["%{$search}%"])
+                    ->orWhereRaw('CAST(period.period_end AS TEXT) ILIKE ?', ["%{$search}%"]);
             });
         }
 
@@ -329,6 +329,10 @@ final class WorkforceCorporateService
 
             if (!$package) {
                 throw new DomainException(trans_message('workforce.errors.record_not_found'));
+            }
+
+            if ($package->status === $status) {
+                return $this->showExportPackage($organizationId, $packageId);
             }
 
             $this->assertExportTransition((string) $package->status, $status);

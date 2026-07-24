@@ -132,6 +132,10 @@ final class WorkforceCorporateWorkflowTest extends TestCase
             ->postJson("/api/v1/admin/workforce/export-packages/{$packageId}/mark-rejected", ['reason' => 'Повторная отправка'])
             ->assertOk()
             ->assertJsonPath('data.status', 'rejected');
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/export-packages/{$packageId}/mark-rejected", ['reason' => 'Повторная отправка'])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'rejected');
 
         $replacement = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/export-packages");
@@ -143,7 +147,15 @@ final class WorkforceCorporateWorkflowTest extends TestCase
             ->postJson("/api/v1/admin/workforce/export-packages/{$replacementId}/mark-sent")
             ->assertOk()
             ->assertJsonPath('data.status', 'sent');
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/export-packages/{$replacementId}/mark-sent")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'sent');
 
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/export-packages/{$replacementId}/mark-accepted")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'accepted');
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/export-packages/{$replacementId}/mark-accepted")
             ->assertOk()
@@ -159,6 +171,10 @@ final class WorkforceCorporateWorkflowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('meta.per_page', 1)
             ->assertJsonPath('meta.current_page', 2)
+            ->assertJsonPath('meta.total', 2);
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/workforce/export-packages?search=2026-05-01')
+            ->assertOk()
             ->assertJsonPath('meta.total', 2);
     }
 

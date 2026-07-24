@@ -787,7 +787,7 @@ final class WorkforceProService
                     ->orWhere('project.name', 'like', "%{$search}%")
                     ->orWhere('work_order.order_number', 'like', "%{$search}%")
                     ->orWhere('source.source_type', 'like', "%{$search}%")
-                    ->orWhere('source.work_date', 'like', "%{$search}%");
+                    ->orWhereRaw('CAST(source.work_date AS TEXT) ILIKE ?', ["%{$search}%"]);
             });
         }
 
@@ -856,6 +856,23 @@ final class WorkforceProService
 
                 return $data;
             });
+    }
+
+    public function payrollValidationIssueCounts(int $organizationId, int $periodId): array
+    {
+        $summary = DB::table('workforce_payroll_validation_issues')
+            ->where('organization_id', $organizationId)
+            ->where('payroll_period_id', $periodId)
+            ->selectRaw(
+                "COUNT(*) as issues_count, "
+                . "COALESCE(SUM(CASE WHEN severity = 'blocking' THEN 1 ELSE 0 END), 0) as blocking_count"
+            )
+            ->first();
+
+        return [
+            'issues_count' => (int) ($summary->issues_count ?? 0),
+            'blocking_count' => (int) ($summary->blocking_count ?? 0),
+        ];
     }
 
     public function payrollStatements(int $organizationId, int $periodId): Collection
