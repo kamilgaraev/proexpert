@@ -13,6 +13,7 @@ use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\BusinessModules\Features\SafetyManagement\Services\SafetyComplianceService;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
+use App\Models\Organization;
 use App\Models\Project;
 use Carbon\CarbonImmutable;
 use DomainException;
@@ -202,12 +203,6 @@ final class ProductionLaborService
         $line = $this->findLine($organizationId, (int) $payload['work_order_line_id']);
         $workOrder = $line->workOrder;
 
-        $this->assertPayrollPeriodOpenForWorkDate(
-            $organizationId,
-            (int) $workOrder->project_id,
-            $payload['work_date']
-        );
-
         if (!in_array($workOrder->status, ['issued', 'in_progress'], true)) {
             throw new DomainException(trans_message('production_labor.errors.output_invalid_status'));
         }
@@ -221,6 +216,13 @@ final class ProductionLaborService
         }
 
         return DB::transaction(function () use ($organizationId, $userId, $payload, $line, $workOrder): ProductionLaborOutputEntry {
+            $this->lockOrganization($organizationId);
+            $this->assertPayrollPeriodOpenForWorkDate(
+                $organizationId,
+                (int) $workOrder->project_id,
+                $payload['work_date']
+            );
+
             $entry = ProductionLaborOutputEntry::create([
                 'organization_id' => $organizationId,
                 'work_order_id' => $workOrder->id,
@@ -248,17 +250,18 @@ final class ProductionLaborService
     {
         $workOrder = $this->findWorkOrder($organizationId, (int) $payload['work_order_id']);
 
-        $this->assertPayrollPeriodOpenForWorkDate(
-            $organizationId,
-            (int) $workOrder->project_id,
-            $payload['shift_date']
-        );
-
         if (!in_array($workOrder->status, ['issued', 'in_progress'], true)) {
             throw new DomainException(trans_message('production_labor.errors.timesheet_invalid_status'));
         }
 
         return DB::transaction(function () use ($organizationId, $userId, $payload, $workOrder): ProductionLaborTimesheet {
+            $this->lockOrganization($organizationId);
+            $this->assertPayrollPeriodOpenForWorkDate(
+                $organizationId,
+                (int) $workOrder->project_id,
+                $payload['shift_date']
+            );
+
             $timesheet = ProductionLaborTimesheet::create([
                 'organization_id' => $organizationId,
                 'work_order_id' => $workOrder->id,
@@ -406,6 +409,14 @@ final class ProductionLaborService
         if ($isLocked) {
             throw new DomainException(trans_message('production_labor.errors.payroll_period_locked'));
         }
+    }
+
+    private function lockOrganization(int $organizationId): void
+    {
+        Organization::query()
+            ->whereKey($organizationId)
+            ->lockForUpdate()
+            ->firstOrFail();
     }
 
     private function assertActiveSafetyPermit(

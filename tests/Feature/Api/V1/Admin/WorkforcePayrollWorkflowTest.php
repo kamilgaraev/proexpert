@@ -467,6 +467,107 @@ final class WorkforcePayrollWorkflowTest extends TestCase
             ->assertJsonPath('message', trans_message('production_labor.errors.payroll_period_locked'));
     }
 
+    public function test_organization_wide_locked_payroll_period_rejects_output_for_all_projects(): void
+    {
+        $context = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $firstProject = Project::factory()->create(['organization_id' => $organizationId]);
+        $secondProject = Project::factory()->create(['organization_id' => $organizationId]);
+        $this->allowAccess('web_admin');
+
+        $firstWorkOrder = $this->createIssuedWorkOrderForProject($context, $firstProject, 'ORG-LOCK-001');
+        $secondWorkOrder = $this->createIssuedWorkOrderForProject($context, $secondProject, 'ORG-LOCK-002');
+        $now = now();
+
+        DB::table('workforce_payroll_periods')->insert([
+            'organization_id' => $organizationId,
+            'project_id' => null,
+            'period_start' => '2026-05-01',
+            'period_end' => '2026-05-31',
+            'status' => 'locked',
+            'created_by_user_id' => $context->user->id,
+            'locked_by_user_id' => $context->user->id,
+            'locked_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        foreach ([$firstWorkOrder, $secondWorkOrder] as $workOrder) {
+            $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/production-labor/output-entries', [
+                    'work_order_line_id' => $workOrder['line_id'],
+                    'work_date' => '2026-05-16',
+                    'quantity' => 1,
+                    'hours' => 1,
+                ])
+                ->assertStatus(422)
+                ->assertJsonPath('message', trans_message('production_labor.errors.payroll_period_locked'));
+        }
+    }
+
+    public function test_project_locked_payroll_period_does_not_reject_output_for_another_project(): void
+    {
+        $context = AdminApiTestContext::create();
+        $organizationId = (int) $context->organization->id;
+        $lockedProject = Project::factory()->create(['organization_id' => $organizationId]);
+        $availableProject = Project::factory()->create(['organization_id' => $organizationId]);
+        $this->allowAccess('web_admin');
+
+        $availableWorkOrder = $this->createIssuedWorkOrderForProject($context, $availableProject, 'PROJECT-LOCK-001');
+        $now = now();
+
+        DB::table('workforce_payroll_periods')->insert([
+            'organization_id' => $organizationId,
+            'project_id' => $lockedProject->id,
+            'period_start' => '2026-05-01',
+            'period_end' => '2026-05-31',
+            'status' => 'locked',
+            'created_by_user_id' => $context->user->id,
+            'locked_by_user_id' => $context->user->id,
+            'locked_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/output-entries', [
+                'work_order_line_id' => $availableWorkOrder['line_id'],
+                'work_date' => '2026-05-16',
+                'quantity' => 1,
+                'hours' => 1,
+            ])
+            ->assertCreated();
+    }
+
+    private function createIssuedWorkOrderForProject(AdminApiTestContext $context, Project $project, string $orderNumber): array
+    {
+        $workOrder = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/production-labor/work-orders', [
+                'project_id' => $project->id,
+                'order_number' => $orderNumber,
+                'title' => 'Payroll lock test',
+                'assignee_type' => 'brigade',
+                'lines' => [[
+                    'name' => 'Payroll lock line',
+                    'planned_quantity' => 10,
+                    'planned_hours' => 8,
+                    'hour_rate' => 500,
+                    'pay_basis' => 'hours',
+                ]],
+            ]);
+        $workOrder->assertCreated();
+        $workOrderId = (int) $workOrder->json('data.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/production-labor/work-orders/{$workOrderId}/issue")
+            ->assertOk();
+
+        return [
+            'work_order_id' => $workOrderId,
+            'line_id' => (int) $workOrder->json('data.lines.0.id'),
+        ];
+    }
+
     private function allowAccess(string $role): void
     {
         $this->mock(AccessController::class, function (MockInterface $mock): void {

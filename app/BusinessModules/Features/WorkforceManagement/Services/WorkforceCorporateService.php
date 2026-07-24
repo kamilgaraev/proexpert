@@ -57,34 +57,37 @@ final class WorkforceCorporateService
 
     public function lockPayrollPeriod(int $organizationId, int $periodId, int $userId): array
     {
-        $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
+        return DB::transaction(function () use ($organizationId, $periodId, $userId): array {
+            $this->lockOrganization($organizationId);
+            $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
 
-        if ($period->status === 'locked') {
-            return (array) $period;
-        }
+            if ($period->status === 'locked') {
+                return (array) $period;
+            }
 
-        if ($period->status !== 'validated') {
-            throw new DomainException(trans_message('workforce.errors.payroll_period_not_validated'));
-        }
+            if ($period->status !== 'validated') {
+                throw new DomainException(trans_message('workforce.errors.payroll_period_not_validated'));
+            }
 
-        $this->assertSourceRows($organizationId, $periodId);
-        $this->refreshAccountingIssues($organizationId, $periodId);
-        $this->assertNoBlockingIssues($organizationId, $periodId);
+            $this->assertSourceRows($organizationId, $periodId);
+            $this->refreshAccountingIssues($organizationId, $periodId);
+            $this->assertNoBlockingIssues($organizationId, $periodId);
 
-        $sourceHash = $this->sourceHash($organizationId, $periodId);
+            $sourceHash = $this->sourceHash($organizationId, $periodId);
 
-        DB::table('workforce_payroll_periods')
-            ->where('organization_id', $organizationId)
-            ->where('id', $periodId)
-            ->update([
-                'status' => 'locked',
-                'locked_at' => now(),
-                'locked_by_user_id' => $userId,
-                'source_hash' => $sourceHash,
-                'updated_at' => now(),
-            ]);
+            DB::table('workforce_payroll_periods')
+                ->where('organization_id', $organizationId)
+                ->where('id', $periodId)
+                ->update([
+                    'status' => 'locked',
+                    'locked_at' => now(),
+                    'locked_by_user_id' => $userId,
+                    'source_hash' => $sourceHash,
+                    'updated_at' => now(),
+                ]);
 
-        return (array) DB::table('workforce_payroll_periods')->where('organization_id', $organizationId)->where('id', $periodId)->first();
+            return (array) DB::table('workforce_payroll_periods')->where('organization_id', $organizationId)->where('id', $periodId)->first();
+        });
     }
 
     public function exportPackages(int $organizationId): Collection
@@ -603,5 +606,13 @@ final class WorkforceCorporateService
     private function organization(int $organizationId): Organization
     {
         return Organization::query()->findOrFail($organizationId);
+    }
+
+    private function lockOrganization(int $organizationId): void
+    {
+        Organization::query()
+            ->whereKey($organizationId)
+            ->lockForUpdate()
+            ->firstOrFail();
     }
 }
