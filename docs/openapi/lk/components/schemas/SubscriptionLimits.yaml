@@ -1,4 +1,5 @@
 type: object
+description: Устаревшая схема лимитов прежней модели подписок. Для нового коммерческого контура используйте CommercialLimitsResponse.
 properties:
   max_users: { type: integer }
   max_projects: { type: integer }

@@ -1,0 +1,12 @@
+type: object
+properties:
+  resources:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      properties:
+        slug: { type: string, example: extra_users }
+        quantity: { type: number, minimum: 0, example: 5 }
+      required: [slug, quantity]
+required: [resources]

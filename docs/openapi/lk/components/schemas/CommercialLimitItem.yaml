@@ -1,0 +1,32 @@
+type: object
+properties:
+  key: { type: string, example: users }
+  name: { type: string, example: Пользователи }
+  unit: { type: string, example: user }
+  used: { type: number, example: 2 }
+  limit:
+    type: number
+    nullable: true
+    example: 3
+  remaining:
+    type: number
+    nullable: true
+    example: 1
+  percent: { type: integer, example: 67 }
+  status:
+    type: string
+    enum: [ok, warning, critical, exceeded]
+  enforcement:
+    type: string
+    enum: [hard, soft]
+  sources:
+    type: object
+    properties:
+      free_base: { type: number, example: 3 }
+      packages: { type: number, example: 0 }
+      paid_addons: { type: number, example: 0 }
+      corporate_override:
+        type: number
+        nullable: true
+    required: [free_base, packages, paid_addons, corporate_override]
+required: [key, name, unit, used, limit, remaining, percent, status, enforcement, sources]

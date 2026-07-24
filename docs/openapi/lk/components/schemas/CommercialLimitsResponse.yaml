@@ -1,0 +1,44 @@
+type: object
+properties:
+  account_status:
+    type: string
+    enum: [free, active, grace, suspended, corporate]
+  offer_type:
+    type: string
+    enum: [packages, full_suite, corporate]
+  monthly_package_amount_minor:
+    type: integer
+  monthly_package_amount:
+    type: string
+  monthly_resource_amount_minor:
+    type: integer
+  monthly_resource_amount:
+    type: string
+  currency:
+    type: string
+    example: RUB
+  period:
+    type: object
+    properties:
+      start_at: { type: string, nullable: true, format: date-time }
+      end_at: { type: string, nullable: true, format: date-time }
+    required: [start_at, end_at]
+  limits:
+    type: array
+    items:
+      $ref: './CommercialLimitItem.yaml'
+  resource_addons:
+    type: array
+    items:
+      $ref: './CommercialResourceAddon.yaml'
+required:
+  - account_status
+  - offer_type
+  - monthly_package_amount_minor
+  - monthly_package_amount
+  - monthly_resource_amount_minor
+  - monthly_resource_amount
+  - currency
+  - period
+  - limits
+  - resource_addons

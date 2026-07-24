@@ -1,0 +1,26 @@
+type: object
+properties:
+  amount_minor: { type: integer, example: 150000 }
+  amount: { type: string, example: '1500.00' }
+  currency: { type: string, example: RUB }
+  requires_manager: { type: boolean }
+  quote_version: { type: integer, example: 1 }
+  items:
+    type: array
+    items:
+      type: object
+      properties:
+        slug: { type: string, example: extra_users }
+        limit_key: { type: string, example: users }
+        quantity: { type: number, example: 5 }
+        amount_minor: { type: integer, example: 150000 }
+        amount: { type: string, example: '1500.00' }
+        currency: { type: string, example: RUB }
+        status:
+          type: string
+          enum: [ok, package_required, requires_manager]
+        requires_package:
+          type: string
+          nullable: true
+      required: [slug, limit_key, quantity, amount_minor, amount, currency, status, requires_package]
+required: [amount_minor, amount, currency, requires_manager, quote_version, items]

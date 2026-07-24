@@ -5,6 +5,10 @@
     "sort_order": 3,
     "schema_version": 2,
     "business_outcomes": ["Единая сметно-нормативная база", "Контролируемые расчёты стоимости", "AI-сметчик по проектной документации"],
+    "limits": {
+        "ai_estimates_month": 100,
+        "document_pages_month": 500
+    },
     "tiers": {
         "standard": {
             "label": "Сметы и нормы",

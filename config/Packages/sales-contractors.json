@@ -5,6 +5,10 @@
     "sort_order": 10,
     "schema_version": 2,
     "business_outcomes": ["Единая воронка от тендера до проекта", "Управляемая работа с подрядчиками"],
+    "limits": {
+        "contractors": 50,
+        "commercial_proposals_month": 100
+    },
     "tiers": {
         "standard": {
             "label": "Продажи и подрядчики",

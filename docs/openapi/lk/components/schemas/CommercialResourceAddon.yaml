@@ -1,0 +1,24 @@
+type: object
+properties:
+  slug: { type: string, example: extra_users }
+  limit_key: { type: string, example: users }
+  name: { type: string, example: Дополнительные пользователи }
+  unit: { type: string, example: user }
+  current_quantity: { type: number, example: 0 }
+  step: { type: number, example: 1 }
+  min: { type: number, example: 0 }
+  max_self_service: { type: number, example: 200 }
+  requires_package:
+    type: string
+    nullable: true
+    example: estimates-norms
+  available: { type: boolean }
+  pricing:
+    type: object
+    properties:
+      model: { type: string, example: linear }
+      currency: { type: string, example: RUB }
+      price_minor: { type: integer, example: 30000 }
+      amount: { type: string, example: '300.00' }
+    required: [model, currency, price_minor, amount]
+required: [slug, limit_key, name, unit, current_quantity, step, min, max_self_service, requires_package, available, pricing]

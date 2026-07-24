@@ -10,6 +10,19 @@ class PackageCatalogService
 {
     private const TIER_ORDER = ['standard'];
 
+    private const LIMIT_KEYS = [
+        'users',
+        'projects',
+        'storage_gb',
+        'contractors',
+        'holding_organizations',
+        'ai_requests_month',
+        'ai_estimates_month',
+        'document_pages_month',
+        'exports_month',
+        'commercial_proposals_month',
+    ];
+
     private ?array $packages = null;
     private ?array $modules = null;
     private ?array $settings = null;
@@ -146,6 +159,7 @@ class PackageCatalogService
         $package['business_outcomes'] = $this->uniqueStrings($package['business_outcomes'] ?? []);
         $package['data_sources'] = $this->normalizeList($package['data_sources'] ?? []);
         $package['capabilities'] = $this->normalizeList($package['capabilities'] ?? []);
+        $package['limits'] = $this->normalizeLimits($package['limits'] ?? [], (string) $package['slug']);
 
         $tiers = [];
         foreach (self::TIER_ORDER as $tierKey) {
@@ -169,6 +183,24 @@ class PackageCatalogService
     private function normalizeList(array $items): array
     {
         return array_values(array_filter($items, fn (mixed $item): bool => is_array($item) || is_string($item)));
+    }
+
+    private function normalizeLimits(array $limits, string $packageSlug): array
+    {
+        $normalized = [];
+
+        foreach ($limits as $key => $value) {
+            if (! is_string($key) || ! in_array($key, self::LIMIT_KEYS, true) || ! is_numeric($value)) {
+                throw new RuntimeException("Package '{$packageSlug}' contains an invalid limit definition.");
+            }
+
+            $number = (float) $value;
+            $normalized[$key] = fmod($number, 1.0) === 0.0 ? (int) $number : $number;
+        }
+
+        ksort($normalized);
+
+        return $normalized;
     }
 
     private function uniqueStrings(array $items): array
