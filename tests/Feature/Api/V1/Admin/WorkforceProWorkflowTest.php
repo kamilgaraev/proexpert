@@ -94,6 +94,13 @@ final class WorkforceProWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/build-source")
             ->assertOk()
+            ->assertJsonPath('data.rows_count', 1)
+            ->assertJsonPath('data.total_hours', '8.00')
+            ->assertJsonPath('data.total_amount', '4000.00');
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/source-rows")
+            ->assertOk()
             ->assertJsonPath('data.0.employee_id', $employee->id)
             ->assertJsonPath('data.0.work_order_id', $workOrderId)
             ->assertJsonPath('data.0.source_type', 'timesheet_hours');
@@ -169,7 +176,9 @@ final class WorkforceProWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/build-source")
             ->assertOk()
-            ->assertJsonCount(2, 'data');
+            ->assertJsonPath('data.rows_count', 2)
+            ->assertJsonPath('data.total_hours', '16.00')
+            ->assertJsonPath('data.total_amount', '8000.00');
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")
@@ -208,7 +217,9 @@ final class WorkforceProWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/build-source")
             ->assertOk()
-            ->assertJsonCount(0, 'data');
+            ->assertJsonPath('data.rows_count', 0)
+            ->assertJsonPath('data.total_hours', '0.00')
+            ->assertJsonPath('data.total_amount', '0.00');
     }
 
     public function test_non_working_schedule_day_blocks_payroll_source_validation(): void
@@ -254,7 +265,9 @@ final class WorkforceProWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/build-source")
             ->assertOk()
-            ->assertJsonCount(1, 'data');
+            ->assertJsonPath('data.rows_count', 1)
+            ->assertJsonPath('data.total_hours', '8.00')
+            ->assertJsonPath('data.total_amount', '4000.00');
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")
