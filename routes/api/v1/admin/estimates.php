@@ -6,15 +6,15 @@ use App\Http\Controllers\Api\Estimates\NormativeRateController;
 /*
 |--------------------------------------------------------------------------
 | Старые маршруты для estimate-sections, estimate-items, estimate-versions
-| и estimate-templates ПЕРЕНЕСЕНЫ в модуль BudgetEstimates
+| и estimate-templates перенесены в модуль BudgetEstimates
 | (app/BusinessModules/Features/BudgetEstimates/routes.php)
-| 
+|
 | Этот файл оставлен только для нормативных расценок (normative-rates),
 | которые пока не перенесены в модуль.
 |--------------------------------------------------------------------------
 */
 
-// Нормативные расценки (нормативная база для смет)
+// Нормативные расценки
 Route::prefix('normative-rates')->group(function () {
     Route::get('/', [NormativeRateController::class, 'index']);
     Route::get('/search', [NormativeRateController::class, 'search']);
@@ -25,4 +25,3 @@ Route::prefix('normative-rates')->group(function () {
     Route::get('/{id}/resources', [NormativeRateController::class, 'resources']);
     Route::get('/{id}/similar', [NormativeRateController::class, 'similar']);
 });
-

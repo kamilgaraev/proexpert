@@ -132,6 +132,69 @@ class EstimateItemControllerWorkflowTest extends TestCase
         $this->assertNull($item->estimate_section_id);
     }
 
+    public function test_project_item_routes_reject_estimate_from_another_project_in_same_organization(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $otherProject = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $otherProject);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $this->createItem($estimate, $unit);
+        $this->allowAdminAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items");
+
+        $response->assertNotFound();
+    }
+
+    public function test_reorder_rejects_foreign_items_and_sections_without_mutation(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $estimate = $this->createEstimate($context->organization, $project);
+        $unit = $this->createMeasurementUnit($context->organization);
+        $item = $this->createItem($estimate, $unit, ['position_number' => '1']);
+
+        $foreignEstimate = $this->createEstimate($context->organization, $project, ['number' => 'ITEM-FOREIGN-EST']);
+        $foreignItem = $this->createItem($foreignEstimate, $unit, ['position_number' => '9']);
+        $foreignSection = $this->createSection($foreignEstimate);
+        $this->allowAdminAccess();
+
+        $foreignItemResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items/reorder", [
+                'items' => [
+                    [
+                        'id' => $foreignItem->id,
+                        'estimate_section_id' => null,
+                        'sort_order' => 0,
+                    ],
+                ],
+            ]);
+
+        $foreignItemResponse->assertStatus(422);
+        $foreignItemResponse->assertJsonValidationErrors(['items.0.id']);
+
+        $foreignSectionResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/{$estimate->id}/items/reorder", [
+                'items' => [
+                    [
+                        'id' => $item->id,
+                        'estimate_section_id' => $foreignSection->id,
+                        'sort_order' => 0,
+                    ],
+                ],
+            ]);
+
+        $foreignSectionResponse->assertStatus(422);
+        $foreignSectionResponse->assertJsonValidationErrors(['items.0.estimate_section_id']);
+
+        $item->refresh();
+        $foreignItem->refresh();
+        $this->assertNull($item->estimate_section_id);
+        $this->assertSame('9', $foreignItem->position_number);
+    }
+
     private function createEstimate(Organization $organization, Project $project, array $overrides = []): Estimate
     {
         return Estimate::query()->create(array_merge([

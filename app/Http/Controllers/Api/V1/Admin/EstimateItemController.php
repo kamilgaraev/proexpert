@@ -2,22 +2,25 @@
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
-use App\Enums\EstimatePositionItemType;
-use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService;
-use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemService;
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\EstimateItems\BulkStoreEstimateItemsRequest;
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\EstimateItems\BulkUpdateEstimateItemsRequest;
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\EstimateItems\IndexEstimateItemsRequest;
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\EstimateItems\MoveEstimateItemRequest;
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\EstimateItems\RecalculateEstimateItemNumbersRequest;
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\EstimateItems\ReorderEstimateItemsRequest;
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\EstimateItems\StoreEstimateItemRequest;
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\EstimateItems\UpdateEstimateItemRequest;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemNumberingService;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemReadService;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemWorkflowService;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateItemResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
-use App\Models\EstimateSection;
-use App\Support\EstimatePositionOrder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rule;
 use Throwable;
 
 use function trans_message;
@@ -25,33 +28,22 @@ use function trans_message;
 class EstimateItemController extends Controller
 {
     public function __construct(
-        protected EstimateItemService $itemService,
-        protected EstimateItemNumberingService $numberingService,
-        protected EstimateCacheService $cacheService
+        private readonly EstimateItemReadService $readService,
+        private readonly EstimateItemWorkflowService $workflowService,
     ) {
-        Log::info('[EstimateItemController::__construct] Контроллер создан', [
-            'url' => request()->fullUrl(),
-            'method' => request()->method(),
-        ]);
     }
 
-    public function index(Request $request, $project, int $estimate): JsonResponse
+    public function index(IndexEstimateItemsRequest $request, $project, int $estimate): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
-        
-        $estimateModel = Estimate::where('id', $estimate)
-            ->where('organization_id', $organizationId)
-            ->firstOrFail();
-        
+        $estimateModel = $this->findProjectEstimate($request, (int) $project, $estimate);
+
         $this->authorize('view', $estimateModel);
-        
-        $items = EstimatePositionOrder::apply(
-            $estimateModel->items()
-                ->with(['workType', 'measurementUnit', 'section'])
-        )
-            ->orderBy('id', 'asc')
-            ->paginate($this->normalizePerPage($request->input('per_page', 50)));
-        
+
+        $items = $this->readService->paginate(
+            $estimateModel,
+            $this->normalizePerPage($request->input('per_page', 50))
+        );
+
         return AdminResponse::paginated(
             EstimateItemResource::collection($items),
             [
@@ -64,56 +56,14 @@ class EstimateItemController extends Controller
         );
     }
 
-    public function store(Request $request, $project, int $estimate): JsonResponse
+    public function store(StoreEstimateItemRequest $request, $project, int $estimate): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
-        
-        $estimateModel = Estimate::where('id', $estimate)
-            ->where('organization_id', $organizationId)
-            ->firstOrFail();
-        
+        $estimateModel = $this->findProjectEstimate($request, (int) $project, $estimate);
+
         $this->authorize('update', $estimateModel);
-        
-        $validated = $request->validate([
-            'estimate_section_id' => [
-                'nullable',
-                'integer',
-                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateModel->id),
-            ],
-            'item_type' => 'required|in:' . implode(',', EstimatePositionItemType::values()),
-            'position_number' => 'nullable|string|max:50',
-            'name' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'work_type_id' => [
-                'nullable',
-                'integer',
-                Rule::exists('work_types', 'id')->where('organization_id', $organizationId),
-            ],
-            'measurement_unit_id' => [
-                'nullable',
-                'integer',
-                Rule::exists('measurement_units', 'id')->where('organization_id', $organizationId),
-            ],
-            'quantity' => 'required|numeric|min:0',
-            'unit_price' => 'required|numeric|min:0',
-            'labor_hours' => 'nullable|numeric|min:0',
-            'machinery_hours' => 'nullable|numeric|min:0',
-            'materials_cost' => 'nullable|numeric|min:0',
-            'machinery_cost' => 'nullable|numeric|min:0',
-            'labor_cost' => 'nullable|numeric|min:0',
-            'equipment_cost' => 'nullable|numeric|min:0',
-            'normative_rate_id' => 'nullable|exists:normative_rates,id',
-            'overhead_amount' => 'nullable|numeric|min:0',
-            'profit_amount' => 'nullable|numeric|min:0',
-            'justification' => 'nullable|string',
-            'is_manual' => 'nullable|boolean',
-            'metadata' => 'nullable|array',
-        ]);
-        
-        $validated['estimate_id'] = $estimateModel->id;
-        
-        $item = $this->itemService->addItem($validated, $estimateModel);
-        
+
+        $item = $this->workflowService->create($estimateModel, $request->validated());
+
         return AdminResponse::success(
             new EstimateItemResource($item),
             trans_message('estimate.item_added'),
@@ -121,45 +71,14 @@ class EstimateItemController extends Controller
         );
     }
 
-    public function bulkStore(Request $request, $project, int $estimate): JsonResponse
+    public function bulkStore(BulkStoreEstimateItemsRequest $request, $project, int $estimate): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
-        
-        $estimateModel = Estimate::where('id', $estimate)
-            ->where('organization_id', $organizationId)
-            ->firstOrFail();
-        
+        $estimateModel = $this->findProjectEstimate($request, (int) $project, $estimate);
+
         $this->authorize('update', $estimateModel);
-        
-        $validated = $request->validate([
-            'items' => 'required|array',
-            'items.*.estimate_section_id' => [
-                'nullable',
-                'integer',
-                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateModel->id),
-            ],
-            'items.*.name' => 'required|string|max:255',
-            'items.*.description' => 'nullable|string',
-            'items.*.work_type_id' => [
-                'nullable',
-                'integer',
-                Rule::exists('work_types', 'id')->where('organization_id', $organizationId),
-            ],
-            'items.*.measurement_unit_id' => [
-                'nullable',
-                'integer',
-                Rule::exists('measurement_units', 'id')->where('organization_id', $organizationId),
-            ],
-            'items.*.quantity' => 'required|numeric|min:0',
-            'items.*.unit_price' => 'required|numeric|min:0',
-            'items.*.overhead_amount' => 'nullable|numeric|min:0',
-            'items.*.profit_amount' => 'nullable|numeric|min:0',
-            'items.*.justification' => 'nullable|string',
-            'items.*.is_manual' => 'nullable|boolean',
-        ]);
-        
-        $items = $this->itemService->bulkAdd($validated['items'], $estimateModel);
-        
+
+        $items = $this->workflowService->bulkCreate($estimateModel, $request->validated('items'));
+
         return AdminResponse::success(
             EstimateItemResource::collection($items),
             trans_message('estimate.items_added'),
@@ -169,262 +88,57 @@ class EstimateItemController extends Controller
 
     public function show(EstimateItem $item): JsonResponse
     {
-        // Убеждаемся, что связь estimate загружена
-        if (!$item->relationLoaded('estimate')) {
-            $item->load('estimate');
-        }
-        
+        $item->loadMissing('estimate');
+
         $this->authorize('view', $item->estimate);
-        
+
         return AdminResponse::success(
-            new EstimateItemResource($item->load(['workType', 'measurementUnit', 'resources']))
+            new EstimateItemResource($this->readService->loadDetails($item))
         );
     }
 
     public function showForProject(Request $request, $project, int $estimate, EstimateItem $item): JsonResponse
     {
-        $item = $this->resolveProjectItem($item, (int) $request->route('estimate'));
+        $item = $this->resolveProjectItem($request, (int) $project, $estimate, $item);
 
         return $this->show($item);
     }
 
-    public function update(Request $request, EstimateItem $item): JsonResponse
+    public function update(UpdateEstimateItemRequest $request, EstimateItem $item): JsonResponse
     {
-        Log::info('[EstimateItemController::update] ===== НАЧАЛО МЕТОДА =====', [
-            'timestamp' => now()->toIso8601String(),
-            'request_id' => uniqid('req_', true),
-        ]);
-        
-        Log::info('[EstimateItemController::update] Параметр $item', [
-            'item_type' => gettype($item),
-            'item_class' => is_object($item) ? get_class($item) : 'not_object',
-            'item_is_scalar' => is_scalar($item),
-            'item_value' => is_scalar($item) ? $item : 'object',
-            'item_id' => is_object($item) && isset($item->id) ? $item->id : null,
-            'item_estimate_id' => is_object($item) && isset($item->estimate_id) ? $item->estimate_id : null,
-            'item_deleted_at' => is_object($item) && isset($item->deleted_at) ? $item->deleted_at : null,
-            'item_exists' => is_object($item) && method_exists($item, 'exists') ? $item->exists : false,
-        ]);
-        
-        // Если объект пустой (не загружен из БД), значит route binding не сработал правильно
-        if (!($item instanceof EstimateItem) || !$item->exists || !$item->id) {
-            Log::error('[EstimateItemController::update] Route binding не сработал правильно!', [
-                'item_type' => gettype($item),
-                'item_class' => is_object($item) ? get_class($item) : 'not_object',
-                'item_exists' => is_object($item) && method_exists($item, 'exists') ? $item->exists : false,
-                'item_id' => is_object($item) && isset($item->id) ? $item->id : null,
-                'item_value' => is_scalar($item) ? $item : 'object',
-                'route_params' => $request->route()?->parameters(),
-            ]);
-            
-            // Пытаемся найти элемент вручную
-            $itemId = is_scalar($item) ? (int)$item : ($request->route('item') ?? null);
-            
-            if (!$itemId) {
-                Log::error('[EstimateItemController::update] Не удалось определить ID элемента', [
-                    'route_params' => $request->route()?->parameters(),
-                ]);
-                abort(404, 'Позиция сметы не найдена');
-            }
-            
-            Log::info('[EstimateItemController::update] Попытка найти элемент вручную', [
-                'item_id' => $itemId,
-            ]);
-            
-            $item = EstimateItem::withTrashed()
-                ->where('id', (int)$itemId)
-                ->first();
-            
-            if (!$item) {
-                Log::error('[EstimateItemController::update] Элемент не найден вручную', [
-                    'item_id' => $itemId,
-                ]);
-                abort(404, 'Позиция сметы не найдена');
-            }
-            
-            Log::info('[EstimateItemController::update] Элемент найден вручную', [
-                'item_id' => $item->id,
-                'item_estimate_id' => $item->estimate_id,
-            ]);
-        }
-        
-        Log::info('[EstimateItemController::update] Начало метода', [
-            'item_id' => $item->id,
-            'item_estimate_id' => $item->estimate_id,
-            'item_deleted_at' => $item->deleted_at,
-            'item_loaded' => $item->exists,
-            'request_method' => $request->method(),
-            'request_url' => $request->fullUrl(),
-            'request_data' => $request->all(),
-        ]);
-        
-        // Перезагружаем связь estimate с учетом soft deletes
-        $item->load(['estimate' => function ($query) {
-            $query->withTrashed();
-        }]);
-        
-        Log::info('[EstimateItemController::update] После загрузки estimate', [
-            'item_id' => $item->id,
-            'estimate_loaded' => $item->relationLoaded('estimate'),
-            'estimate_exists' => $item->estimate !== null,
-            'estimate_id' => $item->estimate?->id,
-            'estimate_organization_id' => $item->estimate?->organization_id,
-            'estimate_status' => $item->estimate?->status,
-            'estimate_deleted_at' => $item->estimate?->deleted_at,
-        ]);
-        
-        // Проверяем, что estimate существует
-        if (!$item->estimate) {
-            Log::error('[EstimateItemController::update] Estimate не найден', [
-                'item_id' => $item->id,
-                'item_estimate_id' => $item->estimate_id,
-            ]);
-            abort(404, 'Смета не найдена');
-        }
-        
-        $user = $request->user();
-        Log::info('[EstimateItemController::update] Перед authorize', [
-            'item_id' => $item->id,
-            'estimate_id' => $item->estimate->id,
-            'user_id' => $user?->id,
-            'user_current_organization_id' => $user?->current_organization_id,
-            'estimate_organization_id' => $item->estimate->organization_id,
-        ]);
-        
+        $item->loadMissing('estimate');
+
         $this->authorize('update', $item->estimate);
-        $organizationId = (int) $item->estimate->organization_id;
-        $estimateId = (int) $item->estimate->id;
-        
-        Log::info('[EstimateItemController::update] После authorize - успешно', [
-            'item_id' => $item->id,
-            'estimate_id' => $item->estimate->id,
-        ]);
-        
-        $validated = $request->validate([
-            'estimate_section_id' => [
-                'sometimes',
-                'nullable',
-                'integer',
-                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateId),
-            ],
-            'item_type' => 'sometimes|in:' . implode(',', EstimatePositionItemType::values()),
-            'position_number' => 'sometimes|string|max:50',
-            'name' => 'sometimes|string|max:255',
-            'description' => 'nullable|string',
-            'work_type_id' => [
-                'sometimes',
-                'nullable',
-                'integer',
-                Rule::exists('work_types', 'id')->where('organization_id', $organizationId),
-            ],
-            'measurement_unit_id' => [
-                'sometimes',
-                'nullable',
-                'integer',
-                Rule::exists('measurement_units', 'id')->where('organization_id', $organizationId),
-            ],
-            'quantity' => 'sometimes|numeric|min:0',
-            'unit_price' => 'sometimes|numeric|min:0',
-            'labor_hours' => 'sometimes|numeric|min:0',
-            'machinery_hours' => 'sometimes|numeric|min:0',
-            'materials_cost' => 'sometimes|numeric|min:0',
-            'machinery_cost' => 'sometimes|numeric|min:0',
-            'labor_cost' => 'sometimes|numeric|min:0',
-            'equipment_cost' => 'sometimes|numeric|min:0',
-            'normative_rate_id' => 'sometimes|nullable|exists:normative_rates,id',
-            'overhead_amount' => 'sometimes|numeric|min:0',
-            'profit_amount' => 'sometimes|numeric|min:0',
-            'justification' => 'nullable|string',
-            'is_manual' => 'sometimes|boolean',
-            'metadata' => 'nullable|array',
-        ]);
-        
-        $item = $this->itemService->updateItem($item, $validated);
-        
+
+        $item = $this->workflowService->update($item, $request->validated());
+
         return AdminResponse::success(
             new EstimateItemResource($item),
             trans_message('estimate.item_updated')
         );
     }
 
-    public function updateForProject(Request $request, $project, int $estimate, EstimateItem $item): JsonResponse
-    {
-        $item = $this->resolveProjectItem($item, (int) $request->route('estimate'));
+    public function updateForProject(
+        UpdateEstimateItemRequest $request,
+        $project,
+        int $estimate,
+        EstimateItem $item
+    ): JsonResponse {
+        $item = $this->resolveProjectItem($request, (int) $project, $estimate, $item);
 
         return $this->update($request, $item);
     }
 
-    public function bulkUpdate(Request $request, $project, int $estimate): JsonResponse
+    public function bulkUpdate(BulkUpdateEstimateItemsRequest $request, $project, int $estimate): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
-
-        $estimateModel = Estimate::where('id', $estimate)
-            ->where('organization_id', $organizationId)
-            ->firstOrFail();
+        $estimateModel = $this->findProjectEstimate($request, (int) $project, $estimate);
 
         $this->authorize('update', $estimateModel);
 
-        $validated = $request->validate([
-            'items' => ['required', 'array', 'min:1', 'max:200'],
-            'items.*.id' => [
-                'required',
-                'integer',
-                Rule::exists('estimate_items', 'id')->where('estimate_id', $estimateModel->id),
-            ],
-            'items.*.estimate_section_id' => [
-                'sometimes',
-                'nullable',
-                'integer',
-                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateModel->id),
-            ],
-            'items.*.section_id' => [
-                'sometimes',
-                'nullable',
-                'integer',
-                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateModel->id),
-            ],
-            'items.*.item_type' => ['sometimes', Rule::in(EstimatePositionItemType::values())],
-            'items.*.position_number' => ['sometimes', 'string', 'max:50'],
-            'items.*.name' => ['sometimes', 'string', 'max:255'],
-            'items.*.description' => ['sometimes', 'nullable', 'string'],
-            'items.*.work_type_id' => [
-                'sometimes',
-                'nullable',
-                'integer',
-                Rule::exists('work_types', 'id')->where('organization_id', $organizationId),
-            ],
-            'items.*.measurement_unit_id' => [
-                'sometimes',
-                'nullable',
-                'integer',
-                Rule::exists('measurement_units', 'id')->where('organization_id', $organizationId),
-            ],
-            'items.*.quantity' => ['sometimes', 'numeric', 'min:0'],
-            'items.*.quantity_coefficient' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.quantity_total' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.unit_price' => ['sometimes', 'numeric', 'min:0'],
-            'items.*.base_unit_price' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.price_index' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.current_unit_price' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.price_coefficient' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.current_total_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.labor_hours' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.machinery_hours' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.materials_cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.machinery_cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.labor_cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.equipment_cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'items.*.direct_costs' => ['sometimes', 'numeric', 'min:0'],
-            'items.*.overhead_amount' => ['sometimes', 'numeric', 'min:0'],
-            'items.*.profit_amount' => ['sometimes', 'numeric', 'min:0'],
-            'items.*.justification' => ['sometimes', 'nullable', 'string'],
-            'items.*.is_manual' => ['sometimes', 'boolean'],
-            'items.*.metadata' => ['sometimes', 'nullable', 'array'],
-        ]);
+        $itemsData = $request->validated('items');
 
         try {
-            $items = $this->itemService->bulkUpdate($estimateModel, $validated['items']);
-            $this->cacheService->invalidateStructure($estimateModel);
+            $items = $this->workflowService->bulkUpdate($estimateModel, $itemsData);
 
             return AdminResponse::success(
                 [
@@ -434,12 +148,9 @@ class EstimateItemController extends Controller
                 trans_message('estimate.items_updated')
             );
         } catch (Throwable $exception) {
-            Log::error('estimate.items.bulk_update.error', [
-                'estimate_id' => $estimateModel->id,
-                'project_id' => $project,
+            $this->workflowService->logFailure('bulk_update', $estimateModel, $exception, [
                 'user_id' => $request->user()?->id,
-                'item_ids' => collect($validated['items'])->pluck('id')->all(),
-                'error' => $exception->getMessage(),
+                'item_ids' => collect($itemsData)->pluck('id')->all(),
             ]);
 
             return AdminResponse::error(
@@ -451,142 +162,69 @@ class EstimateItemController extends Controller
 
     public function destroy(EstimateItem $item): JsonResponse
     {
-        // Убеждаемся, что связь estimate загружена
-        if (!$item->relationLoaded('estimate')) {
-            $item->load('estimate');
-        }
-        
+        $item->loadMissing('estimate');
+
         $this->authorize('update', $item->estimate);
-        
-        $this->itemService->deleteItem($item);
-        
+
+        $this->workflowService->delete($item);
+
         return AdminResponse::success(null, trans_message('estimate.item_deleted'));
     }
 
     public function destroyForProject(Request $request, $project, int $estimate, EstimateItem $item): JsonResponse
     {
-        $item = $this->resolveProjectItem($item, (int) $request->route('estimate'));
+        $item = $this->resolveProjectItem($request, (int) $project, $estimate, $item);
 
         return $this->destroy($item);
     }
 
-    public function move(Request $request, EstimateItem $item): JsonResponse
+    public function move(MoveEstimateItemRequest $request, EstimateItem $item): JsonResponse
     {
-        // Убеждаемся, что связь estimate загружена
-        if (!$item->relationLoaded('estimate')) {
-            $item->load('estimate');
-        }
-        
+        $item->loadMissing('estimate');
+
         $this->authorize('update', $item->estimate);
-        
-        $validated = $request->validate([
-            'section_id' => [
-                'required',
-                'integer',
-                Rule::exists('estimate_sections', 'id')->where('estimate_id', $item->estimate_id),
-            ],
-        ]);
-        
-        $item = $this->itemService->moveToSection($item, $validated['section_id']);
-        
+
+        $item = $this->workflowService->moveToSection(
+            $item,
+            (int) $request->validated('section_id')
+        );
+
         return AdminResponse::success(
             new EstimateItemResource($item),
             trans_message('estimate.item_moved')
         );
     }
 
-    public function moveForProject(Request $request, $project, int $estimate, EstimateItem $item): JsonResponse
+    public function moveForProject(MoveEstimateItemRequest $request, $project, int $estimate, EstimateItem $item): JsonResponse
     {
-        $item = $this->resolveProjectItem($item, (int) $request->route('estimate'));
+        $item = $this->resolveProjectItem($request, (int) $project, $estimate, $item);
 
         return $this->move($request, $item);
     }
 
-    /**
-     * Массовое обновление порядка позиций (для drag-and-drop)
-     * 
-     * @param Request $request
-     * @param int $project ID проекта
-     * @param int $estimate ID сметы
-     * @return JsonResponse
-     * 
-     * Формат входных данных:
-     * {
-     *   "items": [
-     *     {"id": 1, "estimate_section_id": 1, "sort_order": 0},
-     *     {"id": 2, "estimate_section_id": 1, "sort_order": 1},
-     *     {"id": 3, "estimate_section_id": 2, "sort_order": 0}
-     *   ],
-     *   "numbering_mode": "section"  // optional: global, section, hierarchical
-     * }
-     */
-    public function reorder(Request $request, $project, int $estimate): JsonResponse
+    public function reorder(ReorderEstimateItemsRequest $request, $project, int $estimate): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
-        
-        $estimateModel = Estimate::where('id', $estimate)
-            ->where('organization_id', $organizationId)
-            ->firstOrFail();
-        
-        $this->authorize('update', $estimateModel);
-        
-        $validated = $request->validate([
-            'items' => 'required|array',
-            'items.*.id' => [
-                'required',
-                'integer',
-                Rule::exists('estimate_items', 'id')->where('estimate_id', $estimateModel->id),
-            ],
-            'items.*.estimate_section_id' => [
-                'nullable',
-                'integer',
-                Rule::exists('estimate_sections', 'id')->where('estimate_id', $estimateModel->id),
-            ],
-            'items.*.sort_order' => 'required|integer|min:0',
-            'numbering_mode' => 'nullable|string|in:global,section,hierarchical',
-        ]);
+        $estimateModel = $this->findProjectEstimate($request, (int) $project, $estimate);
 
+        $this->authorize('update', $estimateModel);
+
+        $validated = $request->validated();
         $numberingMode = $validated['numbering_mode'] ?? EstimateItemNumberingService::NUMBERING_BY_SECTION;
 
         try {
-            // Обновляем порядок и секции для всех позиций
-            foreach ($validated['items'] as $itemData) {
-                $item = EstimateItem::find($itemData['id']);
-                
-                // Проверяем, что позиция принадлежит данной смете
-                if ($item->estimate_id !== $estimateModel->id) {
-                    return AdminResponse::error(
-                        trans_message('estimate.item_not_belongs_to_estimate'),
-                        Response::HTTP_UNPROCESSABLE_ENTITY
-                    );
-                }
-                
-                $item->update([
-                    'estimate_section_id' => $itemData['estimate_section_id'] ?? null,
-                    // sort_order будет использоваться для определения порядка при пересчете
-                ]);
-            }
-
-            // Пересчитываем номера всех позиций после изменения порядка
-            $this->numberingService->recalculateAllItemNumbers($estimateModel->id, $numberingMode);
-            $this->cacheService->invalidateStructure($estimateModel);
-
-            // Возвращаем обновленный список позиций
-            $items = EstimatePositionOrder::apply(
-                $estimateModel->items()
-                    ->with(['workType', 'measurementUnit', 'section'])
-                    ->orderBy('estimate_section_id')
-            )->get();
+            $items = $this->workflowService->reorder(
+                $estimateModel,
+                $validated['items'],
+                $numberingMode
+            );
 
             return AdminResponse::success(
                 EstimateItemResource::collection($items),
                 trans_message('estimate.items_reordered')
             );
-        } catch (\Exception $e) {
-            Log::error('estimate.items.reorder.error', [
-                'estimate_id' => $estimateModel->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+        } catch (Throwable $exception) {
+            $this->workflowService->logFailure('reorder', $estimateModel, $exception, [
+                'user_id' => $request->user()?->id,
             ]);
 
             return AdminResponse::error(
@@ -596,42 +234,28 @@ class EstimateItemController extends Controller
         }
     }
 
-    /**
-     * Пересчитать номера всех позиций сметы вручную
-     * 
-     * @param Request $request
-     * @param int $project ID проекта
-     * @param int $estimate ID сметы
-     * @return JsonResponse
-     */
-    public function recalculateNumbers(Request $request, $project, int $estimate): JsonResponse
-    {
-        $organizationId = $request->attributes->get('current_organization_id');
-        
-        $estimateModel = Estimate::where('id', $estimate)
-            ->where('organization_id', $organizationId)
-            ->firstOrFail();
-        
+    public function recalculateNumbers(
+        RecalculateEstimateItemNumbersRequest $request,
+        $project,
+        int $estimate
+    ): JsonResponse {
+        $estimateModel = $this->findProjectEstimate($request, (int) $project, $estimate);
+
         $this->authorize('update', $estimateModel);
 
-        $validated = $request->validate([
-            'numbering_mode' => 'nullable|string|in:global,section,hierarchical',
-        ]);
-
-        $numberingMode = $validated['numbering_mode'] ?? EstimateItemNumberingService::NUMBERING_BY_SECTION;
+        $numberingMode = $request->validated('numbering_mode')
+            ?? EstimateItemNumberingService::NUMBERING_BY_SECTION;
 
         try {
-            $this->numberingService->recalculateAllItemNumbers($estimateModel->id, $numberingMode);
-            $this->cacheService->invalidateStructure($estimateModel);
+            $this->workflowService->recalculateNumbers($estimateModel, $numberingMode);
 
             return AdminResponse::success(
                 ['numbering_mode' => $numberingMode],
                 trans_message('estimate.item_numbering_recalculated')
             );
-        } catch (\Exception $e) {
-            Log::error('estimate.items.recalculate_numbers.error', [
-                'estimate_id' => $estimateModel->id,
-                'error' => $e->getMessage(),
+        } catch (Throwable $exception) {
+            $this->workflowService->logFailure('recalculate_numbers', $estimateModel, $exception, [
+                'user_id' => $request->user()?->id,
             ]);
 
             return AdminResponse::error(
@@ -641,21 +265,24 @@ class EstimateItemController extends Controller
         }
     }
 
-    private function resolveProjectItem(EstimateItem $item, int $estimateId): EstimateItem
+    private function findProjectEstimate(Request $request, int $projectId, int $estimateId): Estimate
     {
-        $organizationId = request()->attributes->get('current_organization_id');
+        return $this->readService->findProjectEstimate(
+            (int) $request->attributes->get('current_organization_id'),
+            $projectId,
+            $estimateId
+        );
+    }
 
-        if ((int) $item->estimate_id !== $estimateId) {
-            abort(Response::HTTP_NOT_FOUND);
-        }
+    private function resolveProjectItem(
+        Request $request,
+        int $projectId,
+        int $estimateId,
+        EstimateItem $item
+    ): EstimateItem {
+        $estimate = $this->findProjectEstimate($request, $projectId, $estimateId);
 
-        $item->loadMissing('estimate');
-
-        if (!$item->estimate || (int) $item->estimate->organization_id !== (int) $organizationId) {
-            abort(Response::HTTP_NOT_FOUND);
-        }
-
-        return $item;
+        return $this->readService->resolveProjectItem($item, $estimate);
     }
 
     private function normalizePerPage(mixed $value): int
