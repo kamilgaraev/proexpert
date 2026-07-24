@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Mdm;
 
+use App\BusinessModules\Core\Mdm\Models\MdmChangeRequest;
 use App\BusinessModules\Core\Mdm\Models\MdmDuplicateGroup;
 use App\BusinessModules\Core\Mdm\Models\MdmRecord;
 use App\BusinessModules\Core\Mdm\Models\MdmRelationship;
@@ -14,6 +15,7 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
 use App\Models\Contractor;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
+use App\Models\Organization;
 use App\Models\WorkType;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
@@ -136,6 +138,55 @@ final class MdmCoreWorkflowTest extends TestCase
         $showResponse->assertOk();
         $showResponse->assertJsonPath('success', true);
         $showResponse->assertJsonPath('data.entity_type', 'contractor');
+    }
+
+    public function test_mdm_route_models_are_hidden_across_organizations(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignOrganization = Organization::factory()->verified()->create();
+
+        $foreignRecord = MdmRecord::query()->create([
+            'organization_id' => $foreignOrganization->id,
+            'entity_type' => 'contractor',
+            'entity_id' => 91001,
+            'display_name' => 'Foreign record',
+            'status' => 'active',
+        ]);
+        $foreignGroup = MdmDuplicateGroup::query()->create([
+            'organization_id' => $foreignOrganization->id,
+            'entity_type' => 'contractor',
+            'fingerprint' => 'foreign-group',
+            'status' => 'open',
+            'confidence' => 90,
+        ]);
+        $foreignChangeRequest = MdmChangeRequest::query()->create([
+            'organization_id' => $foreignOrganization->id,
+            'entity_type' => 'contractor',
+            'entity_id' => 91001,
+            'action' => 'update',
+            'status' => MdmChangeRequest::STATUS_SUBMITTED,
+            'proposed_values' => ['name' => 'Foreign'],
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/mdm/records/{$foreignRecord->id}")
+            ->assertNotFound();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/mdm/records/{$foreignRecord->id}/owner", ['owner_user_id' => $context->user->id])
+            ->assertNotFound();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/mdm/duplicates/{$foreignGroup->id}/resolve", ['decision' => 'rejected'])
+            ->assertNotFound();
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/mdm/change-requests/{$foreignChangeRequest->id}")
+            ->assertNotFound();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/mdm/change-requests/{$foreignChangeRequest->id}/approve")
+            ->assertNotFound();
     }
 
     public function test_duplicate_decision_archive_history_and_import_preview_are_available_via_admin_api(): void

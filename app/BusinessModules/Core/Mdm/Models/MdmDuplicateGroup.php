@@ -31,4 +31,18 @@ class MdmDuplicateGroup extends Model
     {
         return $this->hasMany(MdmDuplicateMember::class, 'duplicate_group_id');
     }
+
+    public function resolveRouteBinding($value, $field = null)
+    {
+        $organizationId = request()->attributes->get('current_organization_id') ?? request()->user()?->current_organization_id;
+
+        if (! $organizationId) {
+            return null;
+        }
+
+        return $this->newQuery()
+            ->where($field ?? $this->getRouteKeyName(), $value)
+            ->where('organization_id', (int) $organizationId)
+            ->first();
+    }
 }
