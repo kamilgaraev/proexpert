@@ -20,7 +20,6 @@ class CreateHoldingRequest extends FormRequest
             'description' => 'nullable|string|max:1000',
             'max_child_organizations' => 'sometimes|integer|min:1|max:50',
             'settings' => 'sometimes|array',
-            'permissions_config' => 'sometimes|array',
         ];
     }
 }

@@ -39,14 +39,19 @@ Route::post('contracts/{contract}/archive', [ContractController::class, 'transit
 // Дополнительные маршруты для контрактов
 Route::group(['prefix' => 'contracts'], function () {
     Route::get('{contract}/full', [ContractController::class, 'fullDetails'])
+        ->middleware('authorize:contracts.view')
         ->name('contracts.full-details');
     Route::post('{contract}/resolve-side-review', [ContractController::class, 'resolveSideReview'])
+        ->middleware('authorize:contracts.edit')
         ->name('contracts.resolve-side-review');
     Route::get('{contract}/analytics', [ContractController::class, 'analytics'])
+        ->middleware('authorize:contracts.view')
         ->name('contracts.analytics');
     Route::get('{contract}/completed-works', [ContractController::class, 'completedWorks'])
+        ->middleware('authorize:contracts.view')
         ->name('contracts.completed-works');
     Route::get('{contract}/export-ks6a', [ContractController::class, 'exportKS6a'])
+        ->middleware('authorize:contracts.performance_acts.export')
         ->name('contracts.export-ks6a');
     Route::get('{contract}/available-works-for-acts', [ContractPerformanceActController::class, 'availableWorks'])
         ->middleware('authorize:contracts.performance_acts.create')

@@ -37,6 +37,28 @@ class MultiOrganizationWorkflowTest extends TestCase
         $this->assertSame($owner->id, $group->created_by_user_id);
     }
 
+    public function test_create_holding_uses_server_default_permissions_config(): void
+    {
+        [$organization, $owner] = $this->createOrganizationWithOwner();
+
+        $group = app(MultiOrganizationService::class)->createOrganizationGroup($owner, [
+            'name' => 'Secure Holding',
+            'permissions_config' => [
+                'default_child_permissions' => [
+                    'users' => ['delete'],
+                ],
+                'unexpected' => ['admin'],
+            ],
+        ]);
+
+        $permissionsConfig = $group->permissions_config;
+
+        $this->assertSame($organization->id, $group->parent_organization_id);
+        $this->assertArrayHasKey('default_child_permissions', $permissionsConfig);
+        $this->assertArrayNotHasKey('unexpected', $permissionsConfig);
+        $this->assertSame(['read'], $permissionsConfig['default_child_permissions']['users']);
+    }
+
     public function test_add_child_organization_assigns_parent_group_owner_and_child_hierarchy_path(): void
     {
         [$parent, $owner] = $this->createHoldingWithOwner();

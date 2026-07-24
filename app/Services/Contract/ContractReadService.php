@@ -53,6 +53,7 @@ class ContractReadService
         ?int $projectId = null,
         int $perPage = 15
     ): LengthAwarePaginator {
+        $perPage = max(1, min(100, $perPage));
         $contract = $this->contractAccessService->findAccessibleOrFail($contractId, $organizationId, $projectId);
 
         return $contract->completedWorks()
