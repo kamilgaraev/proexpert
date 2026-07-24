@@ -12,6 +12,7 @@ use App\Models\Project;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -37,28 +38,34 @@ final class WorkforceProService
 
     public function store(string $table, int $organizationId, array $payload): array
     {
-        $id = DB::table($table)->insertGetId(array_merge($this->normalizeJsonPayload($payload), [
-            'organization_id' => $organizationId,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]));
+        return DB::transaction(function () use ($table, $organizationId, $payload): array {
+            $this->lockOrganization($organizationId);
+            $id = DB::table($table)->insertGetId(array_merge($this->normalizeJsonPayload($payload), [
+                'organization_id' => $organizationId,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]));
 
-        return $this->decorateRecord($table, $organizationId, DB::table($table)->where('id', $id)->first());
+            return $this->decorateRecord($table, $organizationId, DB::table($table)->where('id', $id)->first());
+        });
     }
 
     public function update(string $table, int $organizationId, int $id, array $payload): array
     {
-        $this->assertRecord($table, $organizationId, $id);
+        return DB::transaction(function () use ($table, $organizationId, $id, $payload): array {
+            $this->lockOrganization($organizationId);
+            $this->assertRecord($table, $organizationId, $id);
 
-        if (($payload['is_active'] ?? null) === false && in_array($table, ['workforce_departments', 'workforce_positions'], true)) {
-            $this->assertNoActiveAssignmentsForStructure($table, $organizationId, $id);
-        }
+            if (($payload['is_active'] ?? null) === false && in_array($table, ['workforce_departments', 'workforce_positions'], true)) {
+                $this->assertNoActiveAssignmentsForStructure($table, $organizationId, $id);
+            }
 
-        DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->update(array_merge($this->normalizeJsonPayload($payload), [
-            'updated_at' => now(),
-        ]));
+            DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->update(array_merge($this->normalizeJsonPayload($payload), [
+                'updated_at' => now(),
+            ]));
 
-        return $this->decorateRecord($table, $organizationId, DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first());
+            return $this->decorateRecord($table, $organizationId, DB::table($table)->where('organization_id', $organizationId)->where('id', $id)->first());
+        });
     }
 
     public function storeStaffUnit(int $organizationId, array $payload): array
@@ -421,32 +428,39 @@ final class WorkforceProService
                     $query->whereIn('status', ['accepted', 'closed'])
                         ->when($period->project_id !== null, fn ($nested) => $nested->where('project_id', $period->project_id));
                 })
-                ->get()
-                ->each(function (ProductionLaborTimesheetEntry $entry) use ($organizationId, $periodId): void {
-                    $timesheet = $entry->timesheet;
-                    $workOrder = $timesheet->workOrder;
-                    $line = $entry->line;
-                    $amount = (float) $entry->hours * (float) ($line?->hour_rate ?? 0);
+                ->orderBy('id')
+                ->chunkById(500, function (Collection $entries) use ($organizationId, $periodId): void {
+                    $timestamp = now();
+                    $rows = $entries->map(function (ProductionLaborTimesheetEntry $entry) use ($organizationId, $periodId, $timestamp): array {
+                        $timesheet = $entry->timesheet;
+                        $workOrder = $timesheet->workOrder;
+                        $line = $entry->line;
+                        $amount = (float) $entry->hours * (float) ($line?->hour_rate ?? 0);
 
-                    DB::table('workforce_payroll_source_rows')->insert([
-                        'organization_id' => $organizationId,
-                        'payroll_period_id' => $periodId,
-                        'employee_id' => $entry->employee_id,
-                        'project_id' => $timesheet->project_id,
-                        'work_order_id' => $entry->timesheet->work_order_id,
-                        'work_order_line_id' => $entry->work_order_line_id,
-                        'timesheet_entry_id' => $entry->id,
-                        'work_date' => $timesheet->shift_date?->toDateString(),
-                        'source_type' => 'timesheet_hours',
-                        'hours' => $entry->hours,
-                        'amount' => round($amount, 2),
-                        'payload' => json_encode([
-                            'source' => 'production-labor',
-                            'work_order_number' => $workOrder?->order_number,
-                        ], JSON_THROW_ON_ERROR),
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
+                        return [
+                            'organization_id' => $organizationId,
+                            'payroll_period_id' => $periodId,
+                            'employee_id' => $entry->employee_id,
+                            'project_id' => $timesheet->project_id,
+                            'work_order_id' => $timesheet->work_order_id,
+                            'work_order_line_id' => $entry->work_order_line_id,
+                            'timesheet_entry_id' => $entry->id,
+                            'work_date' => $timesheet->shift_date?->toDateString(),
+                            'source_type' => 'timesheet_hours',
+                            'hours' => $entry->hours,
+                            'amount' => round($amount, 2),
+                            'payload' => json_encode([
+                                'source' => 'production-labor',
+                                'work_order_number' => $workOrder?->order_number,
+                            ], JSON_THROW_ON_ERROR),
+                            'created_at' => $timestamp,
+                            'updated_at' => $timestamp,
+                        ];
+                    })->all();
+
+                    if ($rows !== []) {
+                        DB::table('workforce_payroll_source_rows')->insert($rows);
+                    }
                 });
 
             DB::table('workforce_payroll_periods')
@@ -459,7 +473,18 @@ final class WorkforceProService
                 ]);
         });
 
-        return $this->payrollSourceRows($organizationId, $periodId)->all();
+        $summary = DB::table('workforce_payroll_source_rows')
+            ->where('organization_id', $organizationId)
+            ->where('payroll_period_id', $periodId)
+            ->selectRaw('COUNT(*) as rows_count, COALESCE(SUM(hours), 0) as total_hours, COALESCE(SUM(amount), 0) as total_amount')
+            ->first();
+
+        return [
+            'payroll_period_id' => $periodId,
+            'rows_count' => (int) ($summary->rows_count ?? 0),
+            'total_hours' => number_format((float) ($summary->total_hours ?? 0), 2, '.', ''),
+            'total_amount' => number_format((float) ($summary->total_amount ?? 0), 2, '.', ''),
+        ];
     }
 
     public function validatePayrollPeriod(int $organizationId, int $periodId): array
@@ -474,44 +499,50 @@ final class WorkforceProService
 
             DB::table('workforce_payroll_validation_issues')->where('organization_id', $organizationId)->where('payroll_period_id', $periodId)->delete();
 
-            $rows = DB::table('workforce_payroll_source_rows')
+            DB::table('workforce_payroll_source_rows')
                 ->where('organization_id', $organizationId)
                 ->where('payroll_period_id', $periodId)
-                ->get();
+                ->orderBy('id')
+                ->chunkById(500, function (Collection $rows) use ($organizationId, $periodId): void {
+                    foreach ($rows as $row) {
+                        $assignment = $this->assignmentForDate($organizationId, (int) $row->employee_id, (string) $row->work_date);
 
-            foreach ($rows as $row) {
-                $assignment = $this->assignmentForDate($organizationId, (int) $row->employee_id, (string) $row->work_date);
+                        if (!$assignment) {
+                            $this->issue($organizationId, $periodId, 'missing_assignment', trans_message('workforce.validation.missing_assignment'), $row);
+                            continue;
+                        }
 
-                if (!$assignment) {
-                    $this->issue($organizationId, $periodId, 'missing_assignment', trans_message('workforce.validation.missing_assignment'), $row);
-                    continue;
-                }
+                        if ($assignment->work_schedule_id === null) {
+                            $this->issue($organizationId, $periodId, 'missing_work_schedule', trans_message('workforce.validation.missing_work_schedule'), $row);
+                        } elseif (!$this->workScheduleAllowsWorkDate($organizationId, (int) $assignment->work_schedule_id, (string) $row->work_date)) {
+                            $this->issue($organizationId, $periodId, 'work_schedule_conflict', trans_message('workforce.validation.work_schedule_conflict'), $row);
+                        }
 
-                if ($assignment->work_schedule_id === null) {
-                    $this->issue($organizationId, $periodId, 'missing_work_schedule', trans_message('workforce.validation.missing_work_schedule'), $row);
-                } elseif (!$this->workScheduleAllowsWorkDate($organizationId, (int) $assignment->work_schedule_id, (string) $row->work_date)) {
-                    $this->issue($organizationId, $periodId, 'work_schedule_conflict', trans_message('workforce.validation.work_schedule_conflict'), $row);
-                }
+                        $absence = DB::table('workforce_absences')
+                            ->join('workforce_absence_types', 'workforce_absence_types.id', '=', 'workforce_absences.absence_type_id')
+                            ->where('workforce_absences.organization_id', $organizationId)
+                            ->where('workforce_absences.employee_id', $row->employee_id)
+                            ->where('workforce_absences.status', 'approved')
+                            ->where('workforce_absence_types.affects_payroll', true)
+                            ->whereDate('workforce_absences.start_date', '<=', $row->work_date)
+                            ->whereDate('workforce_absences.end_date', '>=', $row->work_date)
+                            ->exists();
 
-                $absence = DB::table('workforce_absences')
-                    ->join('workforce_absence_types', 'workforce_absence_types.id', '=', 'workforce_absences.absence_type_id')
-                    ->where('workforce_absences.organization_id', $organizationId)
-                    ->where('workforce_absences.employee_id', $row->employee_id)
-                    ->where('workforce_absences.status', 'approved')
-                    ->where('workforce_absence_types.affects_payroll', true)
-                    ->whereDate('workforce_absences.start_date', '<=', $row->work_date)
-                    ->whereDate('workforce_absences.end_date', '>=', $row->work_date)
-                    ->exists();
+                        if ($absence) {
+                            $this->issue($organizationId, $periodId, 'absence_conflict', trans_message('workforce.validation.absence_conflict'), $row);
+                        }
+                    }
+                });
 
-                if ($absence) {
-                    $this->issue($organizationId, $periodId, 'absence_conflict', trans_message('workforce.validation.absence_conflict'), $row);
-                }
-            }
-
-            $sourceRowsByLineAndDate = $rows->groupBy(
-                static fn (object $row): string => sprintf('%d:%s', $row->work_order_line_id, $row->work_date)
-            );
-            $outputEntriesByLineAndDate = DB::table('production_labor_output_entries as output')
+            $sourceAggregates = DB::table('workforce_payroll_source_rows as source')
+                ->where('source.organization_id', $organizationId)
+                ->where('source.payroll_period_id', $periodId)
+                ->selectRaw(
+                    'source.work_order_line_id, source.work_date, MIN(source.id) as id, '
+                    . 'MIN(source.employee_id) as employee_id, MIN(source.project_id) as project_id, SUM(source.hours) as hours'
+                )
+                ->groupBy('source.work_order_line_id', 'source.work_date');
+            $outputAggregates = DB::table('production_labor_output_entries as output')
                 ->join('production_labor_work_orders as work_order', 'work_order.id', '=', 'output.work_order_id')
                 ->where('output.organization_id', $organizationId)
                 ->where('output.status', 'accepted')
@@ -520,47 +551,55 @@ final class WorkforceProService
                 ->whereBetween('output.work_date', [$period->period_start, $period->period_end])
                 ->when($period->project_id !== null, fn (Builder $query) => $query->where('output.project_id', $period->project_id))
                 ->selectRaw('output.work_order_line_id, output.work_date, MIN(output.id) as id, MIN(output.project_id) as project_id, SUM(output.hours) as hours')
-                ->groupBy('output.work_order_line_id', 'output.work_date')
-                ->get()
-                ->groupBy(static fn (object $output): string => sprintf('%d:%s', $output->work_order_line_id, $output->work_date));
+                ->groupBy('output.work_order_line_id', 'output.work_date');
 
-            foreach ($sourceRowsByLineAndDate as $key => $sourceRows) {
-                $outputEntries = $outputEntriesByLineAndDate->get($key);
-                $sourceRow = $sourceRows->first();
+            $sourceChecks = DB::query()
+                ->fromSub(clone $sourceAggregates, 'source')
+                ->leftJoinSub(clone $outputAggregates, 'output', function (JoinClause $join): void {
+                    $join->on('output.work_order_line_id', '=', 'source.work_order_line_id')
+                        ->on('output.work_date', '=', 'source.work_date');
+                })
+                ->selectRaw('source.*, output.hours as output_hours')
+                ->orderBy('source.id')
+                ->chunk(500, function (Collection $checks) use ($organizationId, $periodId): void {
+                    foreach ($checks as $source) {
+                        if ($source->output_hours === null) {
+                            $this->issue($organizationId, $periodId, 'missing_output', trans_message('workforce.validation.missing_output'), $source);
+                            continue;
+                        }
 
-                if ($outputEntries === null) {
-                    $this->issue($organizationId, $periodId, 'missing_output', trans_message('workforce.validation.missing_output'), $sourceRow);
-                    continue;
-                }
+                        if (round((float) $source->hours, 2) !== round((float) $source->output_hours, 2)) {
+                            $this->issue($organizationId, $periodId, 'hours_output_mismatch', trans_message('workforce.validation.hours_output_mismatch'), $source);
+                        }
+                    }
+                });
 
-                $sourceHours = (float) $sourceRows->sum('hours');
-                $outputHours = (float) $outputEntries->sum('hours');
-
-                if (round($sourceHours, 2) !== round($outputHours, 2)) {
-                    $this->issue($organizationId, $periodId, 'hours_output_mismatch', trans_message('workforce.validation.hours_output_mismatch'), $sourceRow);
-                }
-            }
-
-            foreach ($outputEntriesByLineAndDate as $key => $outputEntries) {
-                if ($sourceRowsByLineAndDate->has($key)) {
-                    continue;
-                }
-
-                $output = $outputEntries->first();
-                $this->issue(
-                    $organizationId,
-                    $periodId,
-                    'output_without_timesheet',
-                    trans_message('workforce.validation.output_without_timesheet'),
-                    (object) [
-                        'id' => $output->id,
-                        'employee_id' => null,
-                        'project_id' => $output->project_id,
-                        'work_date' => $output->work_date,
-                    ],
-                    'production_labor_output_entry'
-                );
-            }
+            $outputsWithoutSource = DB::query()
+                ->fromSub(clone $outputAggregates, 'output')
+                ->leftJoinSub(clone $sourceAggregates, 'source', function (JoinClause $join): void {
+                    $join->on('source.work_order_line_id', '=', 'output.work_order_line_id')
+                        ->on('source.work_date', '=', 'output.work_date');
+                })
+                ->whereNull('source.work_order_line_id')
+                ->select('output.*')
+                ->orderBy('output.id')
+                ->chunk(500, function (Collection $outputs) use ($organizationId, $periodId): void {
+                    foreach ($outputs as $output) {
+                        $this->issue(
+                            $organizationId,
+                            $periodId,
+                            'output_without_timesheet',
+                            trans_message('workforce.validation.output_without_timesheet'),
+                            (object) [
+                                'id' => $output->id,
+                                'employee_id' => null,
+                                'project_id' => $output->project_id,
+                                'work_date' => $output->work_date,
+                            ],
+                            'production_labor_output_entry'
+                        );
+                    }
+                });
 
             $hasBlockingIssues = DB::table('workforce_payroll_validation_issues')
                 ->where('organization_id', $organizationId)
@@ -596,18 +635,50 @@ final class WorkforceProService
     {
         $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
 
-        $query = DB::table('workforce_payroll_source_rows')
-            ->where('organization_id', $organizationId)
-            ->where('payroll_period_id', $periodId)
-            ->orderBy('work_date');
+        $query = DB::table('workforce_payroll_source_rows as source')
+            ->join('workforce_employees as employee', 'employee.id', '=', 'source.employee_id')
+            ->leftJoin('projects as project', 'project.id', '=', 'source.project_id')
+            ->leftJoin('production_labor_work_orders as work_order', 'work_order.id', '=', 'source.work_order_id')
+            ->where('source.organization_id', $organizationId)
+            ->where('source.payroll_period_id', $periodId)
+            ->select([
+                'source.*',
+                'employee.personnel_number',
+                'employee.last_name',
+                'employee.first_name',
+                'employee.middle_name',
+                'project.name as project_label',
+                'work_order.order_number as work_order_number',
+            ])
+            ->orderBy('source.work_date')
+            ->orderBy('source.id');
 
         if ($search !== null && $search !== '') {
-            $query->where('source_type', 'like', "%{$search}%");
+            $query->where(function (Builder $nested) use ($search): void {
+                $nested->where('employee.personnel_number', 'like', "%{$search}%")
+                    ->orWhere('employee.last_name', 'like', "%{$search}%")
+                    ->orWhere('employee.first_name', 'like', "%{$search}%")
+                    ->orWhere('employee.middle_name', 'like', "%{$search}%")
+                    ->orWhere('project.name', 'like', "%{$search}%")
+                    ->orWhere('work_order.order_number', 'like', "%{$search}%")
+                    ->orWhere('source.source_type', 'like', "%{$search}%")
+                    ->orWhere('source.work_date', 'like', "%{$search}%");
+            });
         }
 
         return $query
             ->paginate($perPage)
-            ->through(fn (object $record): array => $this->decorateRecord('workforce_payroll_source_rows', $organizationId, $record));
+            ->through(function (object $record): array {
+                $data = (array) $record;
+                $data['employee_label'] = trim(implode(' ', array_filter([
+                    $record->last_name,
+                    $record->first_name,
+                    $record->middle_name,
+                ])));
+                $data['source_type_label'] = trans_message("workforce.source_type_labels.{$record->source_type}");
+
+                return $data;
+            });
     }
 
     public function payrollValidationIssues(int $organizationId, int $periodId): Collection

@@ -84,16 +84,32 @@ final class WorkforceCorporateWorkflowTest extends TestCase
             ->assertStatus(422)
             ->assertJsonPath('message', trans_message('workforce.errors.payroll_period_not_locked'));
 
-        $this->withHeaders($context->authHeaders())
+        $mapping = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/workforce/accounting-mappings', [
                 'scope_type' => 'project',
                 'scope_id' => $project->id,
                 'accounting_account' => '25.01',
             ])
             ->assertCreated();
+        $mappingId = (int) $mapping->json('data.id');
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/lock")
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/workforce/accounting-mappings/{$mappingId}", [
+                'accounting_account' => '25.02',
+            ])
+            ->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/export-packages")
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('workforce.errors.payroll_source_changed'));
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/workforce/accounting-mappings/{$mappingId}", [
+                'accounting_account' => '25.01',
+            ])
             ->assertOk();
 
         $package = $this->withHeaders($context->authHeaders())
@@ -103,6 +119,11 @@ final class WorkforceCorporateWorkflowTest extends TestCase
             ->assertJsonCount(3, 'data.files');
 
         $packageId = (int) $package->json('data.id');
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/export-packages")
+            ->assertCreated()
+            ->assertJsonPath('data.id', $packageId);
+
         $jsonFile = collect($package->json('data.files'))->firstWhere('file_type', 'source_json');
         Storage::disk('s3')->assertExists($jsonFile['storage_path']);
         $this->assertStringContainsString('25.01', Storage::disk('s3')->get($jsonFile['storage_path']));
@@ -132,6 +153,13 @@ final class WorkforceCorporateWorkflowTest extends TestCase
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/export-packages")
             ->assertStatus(422)
             ->assertJsonPath('message', trans_message('workforce.errors.export_package_accepted'));
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/workforce/export-packages?per_page=1&page=2&search=WF-')
+            ->assertOk()
+            ->assertJsonPath('meta.per_page', 1)
+            ->assertJsonPath('meta.current_page', 2)
+            ->assertJsonPath('meta.total', 2);
     }
 
     public function test_payroll_statement_is_created_from_validated_source_rows(): void
@@ -190,7 +218,7 @@ final class WorkforceCorporateWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/build-source")
             ->assertOk()
-            ->assertJsonCount(1, 'data');
+            ->assertJsonPath('data.rows_count', 1);
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/validate")

@@ -152,17 +152,37 @@ final class ProductionLaborService
 
     public function acceptWorkOrder(ProductionLaborWorkOrder $workOrder, int $userId): ProductionLaborWorkOrder
     {
-        if ($workOrder->status !== 'submitted') {
-            throw new DomainException(trans_message('production_labor.errors.accept_invalid_status'));
-        }
+        return DB::transaction(function () use ($workOrder, $userId): ProductionLaborWorkOrder {
+            $this->lockOrganization((int) $workOrder->organization_id);
+            $workOrder->refresh();
 
-        $workOrder->update([
-            'status' => 'accepted',
-            'accepted_by_user_id' => $userId,
-            'accepted_at' => now(),
-        ]);
+            if ($workOrder->status !== 'submitted') {
+                throw new DomainException(trans_message('production_labor.errors.accept_invalid_status'));
+            }
 
-        return $workOrder->refresh()->load(['project:id,name', 'lines']);
+            DB::table('production_labor_timesheets as timesheet')
+                ->join('production_labor_timesheet_entries as entry', 'entry.timesheet_id', '=', 'timesheet.id')
+                ->where('timesheet.organization_id', $workOrder->organization_id)
+                ->where('timesheet.work_order_id', $workOrder->id)
+                ->where('entry.include_in_payroll', true)
+                ->whereNull('timesheet.deleted_at')
+                ->whereNull('entry.deleted_at')
+                ->distinct()
+                ->pluck('timesheet.shift_date')
+                ->each(fn (string $workDate) => $this->assertPayrollPeriodOpenForWorkDate(
+                    (int) $workOrder->organization_id,
+                    (int) $workOrder->project_id,
+                    $workDate,
+                ));
+
+            $workOrder->update([
+                'status' => 'accepted',
+                'accepted_by_user_id' => $userId,
+                'accepted_at' => now(),
+            ]);
+
+            return $workOrder->refresh()->load(['project:id,name', 'lines']);
+        });
     }
 
     public function returnWorkOrder(ProductionLaborWorkOrder $workOrder, string $reason): ProductionLaborWorkOrder

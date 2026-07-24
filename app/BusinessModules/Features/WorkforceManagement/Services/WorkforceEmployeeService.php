@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement\Services;
 
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
+use App\Models\Organization;
 use App\Models\User;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -35,23 +36,29 @@ final class WorkforceEmployeeService
 
     public function create(int $organizationId, array $payload): WorkforceEmployee
     {
-        $this->assertUserBelongsToOrganization($organizationId, $payload['user_id'] ?? null);
-        $this->assertActiveUserAssignmentIsUnique($organizationId, $payload['user_id'] ?? null);
+        return DB::transaction(function () use ($organizationId, $payload): WorkforceEmployee {
+            $this->lockOrganization($organizationId);
+            $this->assertUserBelongsToOrganization($organizationId, $payload['user_id'] ?? null);
+            $this->assertActiveUserAssignmentIsUnique($organizationId, $payload['user_id'] ?? null);
 
-        return WorkforceEmployee::create(array_merge($payload, [
-            'organization_id' => $organizationId,
-            'employment_status' => $payload['employment_status'] ?? 'active',
-        ]))->load('user:id,name,email,current_organization_id');
+            return WorkforceEmployee::create(array_merge($payload, [
+                'organization_id' => $organizationId,
+                'employment_status' => $payload['employment_status'] ?? 'active',
+            ]))->load('user:id,name,email,current_organization_id');
+        });
     }
 
     public function update(int $organizationId, int $employeeId, array $payload): WorkforceEmployee
     {
-        $employee = $this->find($organizationId, $employeeId);
-        $this->assertUserBelongsToOrganization($organizationId, $payload['user_id'] ?? null);
-        $this->assertActiveUserAssignmentIsUnique($organizationId, $payload['user_id'] ?? null, $employeeId);
-        $employee->update($payload);
+        return DB::transaction(function () use ($organizationId, $employeeId, $payload): WorkforceEmployee {
+            $this->lockOrganization($organizationId);
+            $employee = $this->find($organizationId, $employeeId);
+            $this->assertUserBelongsToOrganization($organizationId, $payload['user_id'] ?? null);
+            $this->assertActiveUserAssignmentIsUnique($organizationId, $payload['user_id'] ?? null, $employeeId);
+            $employee->update($payload);
 
-        return $employee->refresh()->load('user:id,name,email,current_organization_id');
+            return $employee->refresh()->load('user:id,name,email,current_organization_id');
+        });
     }
 
     public function dismiss(int $organizationId, int $employeeId, ?string $dismissalDate = null): WorkforceEmployee
@@ -63,9 +70,9 @@ final class WorkforceEmployeeService
             throw new DomainException(trans_message('workforce.errors.dismissal_before_hire_date'));
         }
 
-        $this->assertDismissalDoesNotChangeLockedPayrollSource($organizationId, (int) $employee->id, $date);
-
         DB::transaction(function () use ($employee, $organizationId, $date): void {
+            $this->lockOrganization($organizationId);
+            $this->assertDismissalDoesNotChangeLockedPayrollSource($organizationId, (int) $employee->id, $date);
             $employee->update([
                 'employment_status' => 'dismissed',
                 'dismissal_date' => $date,
@@ -86,6 +93,14 @@ final class WorkforceEmployeeService
         });
 
         return $employee->refresh()->load('user:id,name,email,current_organization_id');
+    }
+
+    private function lockOrganization(int $organizationId): void
+    {
+        Organization::query()
+            ->whereKey($organizationId)
+            ->lockForUpdate()
+            ->firstOrFail();
     }
 
     public function find(int $organizationId, int $employeeId): WorkforceEmployee

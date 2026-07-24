@@ -87,9 +87,16 @@ final class WorkforcePayrollWorkflowTest extends TestCase
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/build-source")
             ->assertOk()
+            ->assertJsonPath('data.rows_count', 1)
+            ->assertJsonPath('data.total_hours', '8.00')
+            ->assertJsonPath('data.total_amount', '4000.00');
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/workforce/payroll-periods/{$periodId}/source-rows?search=Worker")
+            ->assertOk()
+            ->assertJsonPath('meta.total', 1)
             ->assertJsonPath('data.0.employee_id', $employee->id)
-            ->assertJsonPath('data.0.work_order_id', $workOrderId)
-            ->assertJsonPath('data.0.amount', '4000.00');
+            ->assertJsonPath('data.0.work_order_id', $workOrderId);
 
         $this->assertSame(0, DB::table('production_labor_payroll_accruals')->count());
     }

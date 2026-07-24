@@ -82,6 +82,9 @@ return [
         'assignment' => 'По назначению',
         'employment_status' => 'По статусу сотрудника',
     ],
+    'source_type_labels' => [
+        'timesheet_hours' => 'Табельные часы по наряду',
+    ],
     'attendance' => [
         'qr_status_ready' => 'Покажите QR-код ответственному сотруднику.',
         'qr_status_confirmed' => 'Явка подтверждена.',
