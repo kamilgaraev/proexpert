@@ -79,10 +79,11 @@ class CommercialQuotaServiceTest extends TestCase
 
         $summary = $this->quota()->getQuotaSummary($this->organization);
 
-        $this->assertSame(8, $this->limit($summary, 'users')['limit']);
+        $this->assertSame(18, $this->limit($summary, 'users')['limit']);
         $this->assertSame(12, $this->limit($summary, 'projects')['limit']);
         $this->assertSame(22, $this->limit($summary, 'storage_gb')['limit']);
         $this->assertSame(550, $this->limit($summary, 'ai_requests_month')['limit']);
+        $this->assertSame(10, $this->limit($summary, 'users')['sources']['packages']);
         $this->assertSame(5, $this->limit($summary, 'users')['sources']['paid_addons']);
         $this->assertSame(10, $this->limit($summary, 'projects')['sources']['packages']);
     }

@@ -27,6 +27,7 @@ class CommercialCheckoutService
 {
     public function __construct(
         private readonly CommercialOfferCalculator $calculator,
+        private readonly CommercialQuotaService $quotas,
         private readonly PaymentGatewayInterface $gateway,
         private readonly CommercialPaymentProviderPolicy $providerPolicy,
         private readonly CommercialSelfServiceGuard $selfServiceGuard,
@@ -70,6 +71,12 @@ class CommercialCheckoutService
             }
 
             $this->calculator->assertCurrentQuoteVersion((int) $input['quote_version']);
+            $resources = $input['resources'] ?? [];
+            if ($resources !== []
+                && (int) ($input['resource_quote_version'] ?? config('commercial_limits.quote_version', 1))
+                    !== (int) config('commercial_limits.quote_version', 1)) {
+                throw new InvalidArgumentException('Resource quote version is stale.');
+            }
 
             $serverCurrent = $this->currentPackageSlugs((int) $organization->getKey());
             $clientCurrent = $this->normalizeClientSlugs($input['current_package_slugs'] ?? []);
@@ -86,7 +93,18 @@ class CommercialCheckoutService
                 currentPeriodEndAt: $account?->current_period_end_at,
             );
 
-            if ((int) $quote['amount_due_now_minor'] <= 0) {
+            $resourceQuote = $resources === []
+                ? null
+                : $this->quotas->calculateResourceAddonQuote($organization, $resources, $quote['target_package_slugs']);
+
+            if ($resourceQuote !== null && (bool) $resourceQuote['requires_manager']) {
+                throw new InvalidArgumentException('Resource addon quote requires manager.');
+            }
+
+            $resourceAmountMinor = $resourceQuote === null ? 0 : (int) $resourceQuote['amount_minor'];
+            $amountDueNowMinor = (int) $quote['amount_due_now_minor'] + $resourceAmountMinor;
+
+            if ($amountDueNowMinor <= 0) {
                 throw new CommercialCheckoutAmountException('Payment checkout requires a positive amount.');
             }
 
@@ -109,8 +127,9 @@ class CommercialCheckoutService
                 'quote_version' => $quote['quote_version'],
                 'selected_package_slugs' => $quote['target_package_slugs'],
                 'current_package_slugs' => $quote['current_package_slugs'],
-                'amount_minor' => $quote['amount_due_now_minor'],
-                'amount' => $quote['amount_due_now'],
+                'selected_resource_addons' => $resourceQuote === null ? [] : $resourceQuote['items'],
+                'amount_minor' => $amountDueNowMinor,
+                'amount' => $this->money($amountDueNowMinor),
                 'currency' => $quote['currency'],
                 'period_start_at' => $quote['period_start_at'],
                 'period_end_at' => $quote['period_end_at'],
@@ -135,7 +154,7 @@ class CommercialCheckoutService
                     $order->amount_minor,
                     trans_message('billing.checkout.balance_description'),
                     [
-                        'type' => 'commercial_package_payment',
+                        'type' => 'commercial_payment',
                         'commercial_order_id' => $order->public_id,
                     ],
                 );
@@ -219,15 +238,48 @@ class CommercialCheckoutService
                 === $this->normalizeClientSlugs($order->selected_package_slugs);
         $sameCurrent = $this->normalizeClientSlugs($input['current_package_slugs'] ?? [])
             === $this->normalizeClientSlugs($order->current_package_slugs);
+        $sameResources = $this->normalizeResourceRequest($input['resources'] ?? [])
+            === $this->normalizeResourceRequest($order->selected_resource_addons ?? []);
 
         if (! $sameTarget
             || ! $sameCurrent
+            || ! $sameResources
             || ($order->offer_type->value === 'full_suite') !== $requestedFullSuite
             || $order->quote_version !== (int) $input['quote_version']
             || $order->auto_renew_consent !== (bool) $input['auto_renew_consent']
             || ($order->latestPayment?->provider === 'balance') !== (bool) $input['use_balance']) {
             throw new CommercialCheckoutConflictException('Idempotency key belongs to another checkout request.');
         }
+    }
+
+    private function normalizeResourceRequest(array $resources): array
+    {
+        $normalized = [];
+
+        foreach ($resources as $resource) {
+            if (! is_array($resource)) {
+                continue;
+            }
+
+            $slug = trim((string) ($resource['slug'] ?? ''));
+            if ($slug === '') {
+                continue;
+            }
+
+            $normalized[$slug] = [
+                'slug' => $slug,
+                'quantity' => (float) ($resource['quantity'] ?? 0),
+            ];
+        }
+
+        ksort($normalized);
+
+        return array_values($normalized);
+    }
+
+    private function money(int $amountMinor): string
+    {
+        return sprintf('%d.%02d', intdiv($amountMinor, 100), $amountMinor % 100);
     }
 
     private function response(CommercialOrder $order, CommercialPayment $payment): array

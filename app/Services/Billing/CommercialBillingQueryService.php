@@ -19,7 +19,6 @@ final class CommercialBillingQueryService
     public function __construct(
         private readonly CommercialOfferCalculator $calculator,
         private readonly CommercialQuotaService $quotas,
-        private readonly CommercialReconciliationService $reconciliation,
     ) {}
 
     public function quote(Organization $organization, array $input): array
@@ -32,13 +31,15 @@ final class CommercialBillingQueryService
             throw new CommercialBillingConflictException('Commercial contour cannot change during grace.');
         }
 
-        return $this->calculator->preview(
+        $quote = $this->calculator->preview(
             $input['target_package_slugs'],
             $this->currentPackageSlugs((int) $organization->getKey()),
             (bool) $input['full_suite'],
             currentPeriodStartAt: $account?->current_period_start_at,
             currentPeriodEndAt: $account?->current_period_end_at,
         );
+
+        return $this->withResourceAddons($organization, $quote, $input['resources'] ?? []);
     }
 
     public function quoteResourceAddons(Organization $organization, array $resources): array
@@ -54,6 +55,33 @@ final class CommercialBillingQueryService
         return $this->quotas->calculateResourceAddonQuote($organization, $resources);
     }
 
+    private function withResourceAddons(Organization $organization, array $quote, array $resources): array
+    {
+        if ($resources === []) {
+            return $quote + [
+                'resource_addons_quote' => null,
+                'resource_quote_version' => (int) config('commercial_limits.quote_version', 1),
+            ];
+        }
+
+        $resourceQuote = $this->quotas->calculateResourceAddonQuote(
+            $organization,
+            $resources,
+            $quote['target_package_slugs'],
+        );
+        $amountDueNowMinor = (int) $quote['amount_due_now_minor'] + (int) $resourceQuote['amount_minor'];
+        $monthlyTotalMinor = (int) $quote['monthly_total_minor'] + (int) $resourceQuote['amount_minor'];
+
+        return array_replace($quote, [
+            'resource_addons_quote' => $resourceQuote,
+            'resource_quote_version' => (int) $resourceQuote['quote_version'],
+            'amount_due_now_minor' => $amountDueNowMinor,
+            'amount_due_now' => $this->money($amountDueNowMinor),
+            'monthly_total_minor' => $monthlyTotalMinor,
+            'monthly_total' => $this->money($monthlyTotalMinor),
+        ]);
+    }
+
     public function order(Organization $organization, string $publicId): array
     {
         $order = CommercialOrder::query()
@@ -67,7 +95,7 @@ final class CommercialBillingQueryService
             && $latestPayment?->provider_payment_id !== null
             && in_array($latestPayment->provider_status, ['created', 'pending', 'waiting_for_capture', 'unknown'], true)) {
             try {
-                $this->reconciliation->reconcilePayment((int) $latestPayment->getKey());
+                app(CommercialReconciliationService::class)->reconcilePayment((int) $latestPayment->getKey());
                 $order->refresh()->load(['payments', 'refunds']);
             } catch (Throwable $exception) {
                 Log::warning('Commercial payment status refresh failed.', [

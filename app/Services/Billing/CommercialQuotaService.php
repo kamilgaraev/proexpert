@@ -98,10 +98,16 @@ class CommercialQuotaService
         }
     }
 
-    public function calculateResourceAddonQuote(Organization $organization, array $requestedResources): array
+    public function calculateResourceAddonQuote(
+        Organization $organization,
+        array $requestedResources,
+        ?array $packageSlugs = null,
+    ): array
     {
         $resources = $this->configuredResources();
-        $activePackageSlugs = $this->activePackageSlugs((int) $organization->getKey());
+        $availablePackageSlugs = $packageSlugs === null
+            ? $this->activePackageSlugs((int) $organization->getKey())
+            : $this->normalizePackageSlugs($packageSlugs);
         $items = [];
         $totalMinor = 0;
         $requiresManager = false;
@@ -124,7 +130,7 @@ class CommercialQuotaService
                 throw new InvalidArgumentException('Resource quantity is invalid.');
             }
 
-            if ($resource['requires_package'] !== null && ! in_array($resource['requires_package'], $activePackageSlugs, true)) {
+            if ($resource['requires_package'] !== null && ! in_array($resource['requires_package'], $availablePackageSlugs, true)) {
                 $status = 'package_required';
                 $requiresManager = true;
             } elseif ($quantity > (float) $resource['max_self_service']) {
@@ -264,6 +270,27 @@ class CommercialQuotaService
         }
 
         return $limits;
+    }
+
+    private function normalizePackageSlugs(array $packageSlugs): array
+    {
+        $available = [];
+
+        foreach ($this->packageCatalog->allPackages() as $package) {
+            if (is_string($package['slug'] ?? null)) {
+                $available[$package['slug']] = true;
+            }
+        }
+
+        $normalized = [];
+
+        foreach ($packageSlugs as $slug) {
+            if (is_string($slug) && isset($available[$slug])) {
+                $normalized[$slug] = true;
+            }
+        }
+
+        return array_keys($normalized);
     }
 
     private function activePackageSlugs(int $organizationId): array

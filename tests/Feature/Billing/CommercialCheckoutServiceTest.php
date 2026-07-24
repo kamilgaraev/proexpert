@@ -19,6 +19,7 @@ use App\Models\Organization;
 use App\Models\OrganizationBalance;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
+use App\Models\OrganizationResourceAllocation;
 use App\Models\User;
 use App\Services\Billing\CommercialCheckoutService;
 use App\Services\Billing\CommercialWebhookService;
@@ -114,6 +115,96 @@ class CommercialCheckoutServiceTest extends TestCase
             'status' => 'active',
         ]);
         $this->assertCount(0, $this->gateway->payments);
+    }
+
+    public function test_checkout_combines_package_and_resource_addons_in_one_order(): void
+    {
+        $result = $this->checkoutPayload([
+            'target_package_slugs' => ['machinery'],
+            'resources' => [
+                ['slug' => 'extra_users', 'quantity' => 10],
+            ],
+            'client_idempotency_key' => '55555555-5555-4555-8555-555555555555',
+        ]);
+
+        $order = CommercialOrder::query()->sole();
+
+        $this->assertSame(1_090_000, $result['amount_minor']);
+        $this->assertSame(1_090_000, $order->amount_minor);
+        $this->assertSame([
+            [
+                'slug' => 'extra_users',
+                'limit_key' => 'users',
+                'quantity' => 10,
+                'amount_minor' => 300_000,
+                'amount' => '3000.00',
+                'currency' => 'RUB',
+                'status' => 'ok',
+                'requires_package' => null,
+            ],
+        ], $order->selected_resource_addons);
+        $this->assertSame(1_090_000, $this->gateway->payments[0]->amountMinor);
+    }
+
+    public function test_checkout_allows_resource_unlocked_by_package_bought_in_same_order(): void
+    {
+        $result = $this->checkoutPayload([
+            'target_package_slugs' => ['sales-contractors'],
+            'resources' => [
+                ['slug' => 'extra_contractors', 'quantity' => 10],
+            ],
+            'client_idempotency_key' => '77777777-7777-4777-8777-777777777777',
+        ]);
+
+        $order = CommercialOrder::query()->sole();
+
+        $this->assertSame(890_000, $result['amount_minor']);
+        $this->assertSame(890_000, $order->amount_minor);
+        $this->assertSame([
+            [
+                'slug' => 'extra_contractors',
+                'limit_key' => 'contractors',
+                'quantity' => 10,
+                'amount_minor' => 100_000,
+                'amount' => '1000.00',
+                'currency' => 'RUB',
+                'status' => 'ok',
+                'requires_package' => 'sales-contractors',
+            ],
+        ], $order->selected_resource_addons);
+    }
+
+    public function test_balance_payment_activates_package_and_resource_addons(): void
+    {
+        OrganizationBalance::query()->create([
+            'organization_id' => $this->organization->id,
+            'balance' => 2_000_000,
+            'currency' => 'RUB',
+        ]);
+
+        $result = $this->checkoutPayload([
+            'target_package_slugs' => ['machinery'],
+            'resources' => [
+                ['slug' => 'extra_users', 'quantity' => 10],
+            ],
+            'client_idempotency_key' => '66666666-6666-4666-8666-666666666666',
+            'use_balance' => true,
+            'auto_renew_consent' => false,
+        ]);
+
+        $this->assertSame('paid', $result['status']);
+        $this->assertSame(910_000, OrganizationBalance::query()->sole()->balance);
+        $this->assertDatabaseHas('organization_package_subscriptions', [
+            'package_slug' => 'machinery',
+            'status' => 'active',
+        ]);
+        $this->assertDatabaseHas('organization_resource_allocations', [
+            'resource_slug' => 'extra_users',
+            'limit_key' => 'users',
+            'quantity' => '10.00',
+            'source' => 'paid_addon',
+            'status' => 'active',
+        ]);
     }
 
     public function test_test_store_allowlist_denial_creates_no_checkout_state_or_provider_call(): void
@@ -428,7 +519,7 @@ class CommercialCheckoutServiceTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
-            'notifications', 'commercial_webhook_events', 'commercial_payments', 'commercial_orders', 'organization_package_subscriptions',
+            'notifications', 'commercial_webhook_events', 'commercial_payments', 'commercial_orders', 'organization_resource_allocations', 'organization_package_subscriptions',
             'balance_transactions', 'organization_balances', 'organization_commercial_accounts', 'users', 'organizations',
         ] as $table) {
             Schema::dropIfExists($table);
@@ -523,6 +614,7 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->unsignedInteger('quote_version');
             $table->json('selected_package_slugs');
             $table->json('current_package_slugs');
+            $table->json('selected_resource_addons')->nullable();
             $table->unsignedBigInteger('amount_minor');
             $table->decimal('amount', 14, 2);
             $table->string('currency', 3);
@@ -532,6 +624,20 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->string('client_idempotency_key', 100);
             $table->timestamps();
             $table->unique(['organization_id', 'client_idempotency_key']);
+        });
+        Schema::create('organization_resource_allocations', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('commercial_account_id')->nullable();
+            $table->string('resource_slug', 100);
+            $table->string('limit_key', 100);
+            $table->decimal('quantity', 14, 2)->nullable();
+            $table->string('source', 50);
+            $table->string('status', 50);
+            $table->timestamp('period_start_at')->nullable();
+            $table->timestamp('period_end_at')->nullable();
+            $table->json('metadata')->nullable();
+            $table->timestamps();
         });
         Schema::create('commercial_payments', function (Blueprint $table): void {
             $table->id();

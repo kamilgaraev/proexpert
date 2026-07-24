@@ -22,6 +22,7 @@ use App\Models\CommercialWebhookEvent;
 use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
+use App\Models\OrganizationResourceAllocation;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Contractor\ContractorReferralRewardService;
@@ -589,6 +590,52 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 'canceled_at' => null,
                 'source_order_id' => $order->id,
             ])->save();
+        }
+
+        foreach (($order->selected_resource_addons ?? []) as $resource) {
+            if (! is_array($resource) || (string) ($resource['status'] ?? '') !== 'ok') {
+                continue;
+            }
+
+            $slug = (string) ($resource['slug'] ?? '');
+            $limitKey = (string) ($resource['limit_key'] ?? '');
+            $quantity = (float) ($resource['quantity'] ?? 0);
+
+            if ($slug === '' || $limitKey === '') {
+                continue;
+            }
+
+            OrganizationResourceAllocation::query()
+                ->where('organization_id', $order->organization_id)
+                ->where('resource_slug', $slug)
+                ->where('source', 'paid_addon')
+                ->whereIn('status', ['active', 'scheduled_for_removal'])
+                ->update([
+                    'status' => 'expired',
+                    'period_end_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+            if ($quantity <= 0) {
+                continue;
+            }
+
+            OrganizationResourceAllocation::query()->create([
+                'organization_id' => $order->organization_id,
+                'commercial_account_id' => $account->id,
+                'resource_slug' => $slug,
+                'limit_key' => $limitKey,
+                'quantity' => $quantity,
+                'source' => 'paid_addon',
+                'status' => 'active',
+                'period_start_at' => $order->period_start_at,
+                'period_end_at' => $order->period_end_at,
+                'metadata' => [
+                    'commercial_order_id' => $order->public_id,
+                    'amount_minor' => (int) ($resource['amount_minor'] ?? 0),
+                    'currency' => (string) ($resource['currency'] ?? $order->currency),
+                ],
+            ]);
         }
     }
 

@@ -10,6 +10,7 @@
         "AI-помощник по проектным данным"
     ],
     "limits": {
+        "users": 10,
         "projects": 10,
         "storage_gb": 20,
         "ai_requests_month": 500

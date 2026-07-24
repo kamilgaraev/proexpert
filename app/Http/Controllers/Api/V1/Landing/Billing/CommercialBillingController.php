@@ -30,7 +30,6 @@ final class CommercialBillingController
 {
     public function __construct(
         private readonly CommercialBillingQueryService $billing,
-        private readonly CommercialContourChangeService $contourChanges,
     ) {}
 
     public function quote(CommercialQuoteRequest $request): JsonResponse
@@ -133,7 +132,7 @@ final class CommercialBillingController
             if (! $user instanceof User) {
                 throw new ModelNotFoundException;
             }
-            $result = $this->contourChanges->schedule(
+            $result = app(CommercialContourChangeService::class)->schedule(
                 $this->organization($request),
                 $user,
                 $request->validated(),

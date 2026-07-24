@@ -15,7 +15,7 @@ class CommercialOrder extends Model
 {
     protected $fillable = [
         'public_id', 'organization_id', 'commercial_account_id', 'user_id', 'status',
-        'offer_type', 'quote_version', 'selected_package_slugs', 'current_package_slugs',
+        'offer_type', 'quote_version', 'selected_package_slugs', 'current_package_slugs', 'selected_resource_addons',
         'amount_minor', 'amount', 'currency', 'period_start_at', 'period_end_at',
         'auto_renew_consent', 'client_idempotency_key', 'server_idempotency_key', 'kind',
     ];
@@ -26,6 +26,7 @@ class CommercialOrder extends Model
         'quote_version' => 'integer',
         'selected_package_slugs' => 'array',
         'current_package_slugs' => 'array',
+        'selected_resource_addons' => 'array',
         'amount_minor' => 'integer',
         'amount' => 'decimal:2',
         'period_start_at' => 'immutable_datetime',
