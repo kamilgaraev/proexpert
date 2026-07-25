@@ -194,12 +194,23 @@ final class CommercialManualPaymentService
             'currency' => $order->currency,
             'confirmation_url' => $payment->confirmation_url,
             'selected_package_slugs' => $order->selected_package_slugs,
+            'current_package_slugs' => $order->current_package_slugs,
+            'paid_package_slugs' => $this->paidPackageSlugs($order),
             'period_start_at' => $order->period_start_at?->toJSON(),
             'period_end_at' => $order->period_end_at?->toJSON(),
             'grace_deadline_at' => $order->renewalCycle?->grace_deadline_at?->toJSON(),
             'test_mode' => PaymentProviderMode::configured()->testMode(),
             '_created' => $created,
         ];
+    }
+
+    private function paidPackageSlugs(CommercialOrder $order): array
+    {
+        $selected = $order->selected_package_slugs;
+        $current = $order->current_package_slugs;
+        $paid = array_values(array_diff($selected, $current));
+
+        return $paid === [] ? $selected : $paid;
     }
 
     private function usableConfirmationUrl(?string $url): bool

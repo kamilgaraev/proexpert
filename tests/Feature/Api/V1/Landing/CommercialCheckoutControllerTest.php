@@ -502,6 +502,26 @@ class CommercialCheckoutControllerTest extends TestCase
         $this->assertNotSame($old->public_id, $response->json('data.0.order_id'));
     }
 
+    public function test_order_payload_exposes_only_packages_paid_by_current_order(): void
+    {
+        [$order] = $this->commercialOrder(
+            $this->organization,
+            $this->commercialAccount(),
+            'paid',
+        );
+        $order->forceFill([
+            'selected_package_slugs' => ['machinery', 'planning-schedules'],
+            'current_package_slugs' => ['machinery'],
+        ])->save();
+
+        $this->authenticatedAs($this->owner)
+            ->getJson('/api/v1/landing/billing/commercial/orders/'.$order->public_id)
+            ->assertOk()
+            ->assertJsonPath('data.selected_package_slugs', ['machinery', 'planning-schedules'])
+            ->assertJsonPath('data.current_package_slugs', ['machinery'])
+            ->assertJsonPath('data.paid_package_slugs', ['planning-schedules']);
+    }
+
     public function test_refunded_order_status_keeps_paid_timestamp_and_refund_summary(): void
     {
         [$order, $payment] = $this->commercialOrder(

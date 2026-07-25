@@ -171,6 +171,8 @@ final class CommercialBillingQueryService
             'amount_minor' => $order->amount_minor,
             'currency' => $order->currency,
             'selected_package_slugs' => $order->selected_package_slugs,
+            'current_package_slugs' => $order->current_package_slugs,
+            'paid_package_slugs' => $this->paidPackageSlugs($order),
             'offer_type' => $order->offer_type->value,
             'period_start_at' => $order->period_start_at?->toJSON(),
             'period_end_at' => $order->period_end_at?->toJSON(),
@@ -214,6 +216,15 @@ final class CommercialBillingQueryService
         }
 
         return $payload;
+    }
+
+    private function paidPackageSlugs(CommercialOrder $order): array
+    {
+        $selected = $order->selected_package_slugs;
+        $current = $order->current_package_slugs;
+        $paid = array_values(array_diff($selected, $current));
+
+        return $paid === [] ? $selected : $paid;
     }
 
     private function money(int $amountMinor): string
