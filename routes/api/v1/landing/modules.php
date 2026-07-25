@@ -6,7 +6,7 @@ use App\Http\Controllers\Api\V1\Landing\ModuleController;
 use App\Http\Controllers\Api\V1\Landing\OrganizationPackageController;
 use Illuminate\Support\Facades\Route;
 
-Route::middleware(['auth:api_landing', 'jwt.auth', 'verified', 'organization.context'])
+Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'verified', 'organization.context'])
     ->prefix('modules')
     ->name('modules.')
     ->group(function (): void {
@@ -18,7 +18,7 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'verified', 'organization.con
         Route::get('/bundled', [ModuleController::class, 'getBundledModules'])->name('bundled');
     });
 
-Route::middleware(['auth:api_landing', 'jwt.auth', 'verified', 'organization.context'])
+Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'verified', 'organization.context'])
     ->prefix('packages')
     ->name('packages.')
     ->group(function (): void {

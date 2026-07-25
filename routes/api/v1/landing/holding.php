@@ -27,7 +27,7 @@ Route::prefix('holding/public')
 // Холдинг определяется автоматически из контекста текущей организации (is_holding=true)
 // ============================================================================
 
-Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'module.access:multi-organization'])
+Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'module.access:multi-organization'])
     ->prefix('holding')
     ->name('holding.')
     ->group(function () {

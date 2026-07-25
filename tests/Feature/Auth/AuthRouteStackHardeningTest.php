@@ -190,6 +190,32 @@ final class AuthRouteStackHardeningTest extends TestCase
         }
     }
 
+    public function test_lk_web_token_route_groups_use_the_application_jwt_middleware(): void
+    {
+        foreach ([
+            'api/v1/landing/modules',
+            'api/v1/landing/packages',
+            'api/v1/landing/multi-organization/check-availability',
+            'api/v1/landing/holding/site',
+        ] as $uri) {
+            $route = $this->routeByUri($uri);
+
+            $this->assertNotNull($route, "Route {$uri} is missing.");
+            $middleware = $route->gatherMiddleware();
+
+            $this->assertContains(
+                'auth.jwt:api_landing',
+                $middleware,
+                "{$uri} must use the application JWT middleware that accepts LK web tokens."
+            );
+            $this->assertNotContains(
+                'jwt.auth',
+                $middleware,
+                "{$uri} must not use the vendor JWT middleware because it cannot verify LK web-token signatures."
+            );
+        }
+    }
+
     public function test_rate_limiters_are_not_left_in_load_test_mode(): void
     {
         $provider = new \App\Providers\RouteServiceProvider($this->app);

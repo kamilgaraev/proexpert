@@ -12,7 +12,7 @@ use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingProjectsC
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingReportsController;
 use Illuminate\Support\Facades\Route;
 
-Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'module.access:multi-organization'])
+Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'module.access:multi-organization'])
     ->prefix('multi-organization')
     ->name('multiOrganization.')
     ->group(function () {
