@@ -76,6 +76,7 @@ return [
             'pricing_model' => 'linear',
             'price_minor' => 100000,
             'requires_package' => null,
+            'requires_module' => 'multi-organization',
             'sort_order' => 35,
         ],
         'extra_contractors' => [
@@ -100,6 +101,7 @@ return [
             'pricing_model' => 'linear',
             'price_minor' => 500,
             'requires_package' => null,
+            'requires_module' => 'ai-assistant',
             'sort_order' => 50,
         ],
         'extra_ai_estimates' => [
@@ -112,6 +114,7 @@ return [
             'pricing_model' => 'linear',
             'price_minor' => 5000,
             'requires_package' => 'estimates-norms',
+            'requires_module' => 'ai-estimates',
             'sort_order' => 60,
         ],
         'extra_document_pages' => [

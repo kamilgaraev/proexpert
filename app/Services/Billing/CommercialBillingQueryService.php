@@ -288,8 +288,11 @@ final class CommercialBillingQueryService
 
     private function resourceName(string $slug): string
     {
+        $fallbackKeys = [
+            'extra_holding_organizations' => 'billing.quota.resource_names.extra_holding_organizations',
+        ];
         $resource = config('commercial_limits.resources.'.$slug, []);
-        $key = is_array($resource) ? ($resource['name_key'] ?? null) : null;
+        $key = is_array($resource) ? ($resource['name_key'] ?? $fallbackKeys[$slug] ?? null) : ($fallbackKeys[$slug] ?? null);
 
         return is_string($key) ? trans_message($key) : $slug;
     }

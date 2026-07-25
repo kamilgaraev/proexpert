@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace Tests\Unit\Billing;
 
 use App\Exceptions\Billing\CommercialQuotaExceededException;
+use App\Models\CommercialOrder;
 use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\OrganizationResourceAllocation;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Billing\CommercialBillingQueryService;
 use App\Services\Billing\CommercialQuotaService;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
@@ -114,12 +117,16 @@ class CommercialQuotaServiceTest extends TestCase
         }
 
         $expectedResourceSlugs = collect(config('commercial_limits.resources'))
+            ->filter(static fn (array $resource): bool => ($resource['requires_module'] ?? null) === null)
             ->sortBy('sort_order')
             ->keys()
             ->values()
             ->all();
 
         $this->assertSame($expectedResourceSlugs, array_column($summary['resource_addons'], 'slug'));
+        $this->assertNotContains('extra_holding_organizations', array_column($summary['resource_addons'], 'slug'));
+        $this->assertNotContains('extra_ai_requests', array_column($summary['resource_addons'], 'slug'));
+        $this->assertNotContains('extra_ai_estimates', array_column($summary['resource_addons'], 'slug'));
         foreach ($summary['resource_addons'] as $resource) {
             $this->assertNotSame('', trim($resource['name']));
             $this->assertNotSame($resource['slug'], $resource['name']);
@@ -143,6 +150,41 @@ class CommercialQuotaServiceTest extends TestCase
         $documentPages = $this->resourceAddon($summary, 'extra_document_pages');
         $this->assertSame('estimates-norms', $documentPages['requires_package']);
         $this->assertFalse($documentPages['available']);
+    }
+
+    public function test_module_bound_resource_addons_are_available_only_with_active_modules(): void
+    {
+        $account = $this->account('active');
+        $this->package($account, 'estimates-norms');
+
+        $withoutModules = $this->quota()->getQuotaSummary($this->organization);
+        $withoutModuleSlugs = array_column($withoutModules['resource_addons'], 'slug');
+
+        $this->assertNotContains('extra_holding_organizations', $withoutModuleSlugs);
+        $this->assertNotContains('extra_ai_requests', $withoutModuleSlugs);
+        $this->assertNotContains('extra_ai_estimates', $withoutModuleSlugs);
+
+        $this->activateModule('multi-organization');
+        $this->activateModule('ai-assistant');
+        $this->activateModule('ai-estimates');
+
+        $withModules = $this->quota()->getQuotaSummary($this->organization);
+
+        $holdingOrganizations = $this->resourceAddon($withModules, 'extra_holding_organizations');
+        $this->assertSame('multi-organization', $holdingOrganizations['requires_module']);
+        $this->assertNull($holdingOrganizations['requires_package']);
+        $this->assertTrue($holdingOrganizations['available']);
+        $this->assertSame(100000, $holdingOrganizations['pricing']['price_minor']);
+
+        $aiRequests = $this->resourceAddon($withModules, 'extra_ai_requests');
+        $this->assertSame('ai-assistant', $aiRequests['requires_module']);
+        $this->assertNull($aiRequests['requires_package']);
+        $this->assertTrue($aiRequests['available']);
+
+        $aiEstimates = $this->resourceAddon($withModules, 'extra_ai_estimates');
+        $this->assertSame('ai-estimates', $aiEstimates['requires_module']);
+        $this->assertSame('estimates-norms', $aiEstimates['requires_package']);
+        $this->assertTrue($aiEstimates['available']);
     }
 
     public function test_corporate_override_can_set_unlimited_limit(): void
@@ -186,6 +228,49 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertTrue($quote['requires_manager']);
         $this->assertSame('package_required', $quote['items'][0]['status']);
         $this->assertSame(0, $quote['amount_minor']);
+    }
+
+    public function test_quote_marks_module_required_resource_unavailable_without_module(): void
+    {
+        $quote = $this->quota()->calculateResourceAddonQuote($this->organization, [
+            ['slug' => 'extra_holding_organizations', 'quantity' => 1],
+            ['slug' => 'extra_ai_requests', 'quantity' => 100],
+        ]);
+
+        $this->assertTrue($quote['requires_manager']);
+        $this->assertSame('module_required', $quote['items'][0]['status']);
+        $this->assertSame('multi-organization', $quote['items'][0]['requires_module']);
+        $this->assertSame('module_required', $quote['items'][1]['status']);
+        $this->assertSame('ai-assistant', $quote['items'][1]['requires_module']);
+        $this->assertSame(0, $quote['amount_minor']);
+    }
+
+    public function test_paid_composition_keeps_labels_for_module_bound_resource_addons(): void
+    {
+        $order = new CommercialOrder();
+        $order->forceFill([
+            'selected_resource_addons' => [[
+                'slug' => 'extra_holding_organizations',
+                'limit_key' => 'holding_organizations',
+                'quantity' => 1,
+                'amount_minor' => 100000,
+                'amount' => '1000.00',
+                'currency' => 'RUB',
+                'status' => 'ok',
+                'requires_package' => null,
+                'requires_module' => 'multi-organization',
+            ]],
+        ]);
+
+        $method = new \ReflectionMethod(CommercialBillingQueryService::class, 'paidCompositionItems');
+        $items = $method->invoke(app(CommercialBillingQueryService::class), $order, []);
+
+        $this->assertSame([[
+            'type' => 'resource',
+            'slug' => 'extra_holding_organizations',
+            'label' => 'Дополнительные организации холдинга',
+            'quantity' => 1,
+        ]], $items);
     }
 
     private function quota(): CommercialQuotaService
@@ -261,12 +346,37 @@ class CommercialQuotaServiceTest extends TestCase
         ]);
     }
 
+    private function activateModule(string $slug): void
+    {
+        $moduleId = Schema::hasTable('modules')
+            ? (int) DB::table('modules')->insertGetId([
+                'name' => $slug,
+                'slug' => $slug,
+                'is_active' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ])
+            : 0;
+
+        DB::table('organization_module_activations')->insert([
+            'organization_id' => $this->organization->id,
+            'module_id' => $moduleId,
+            'status' => 'active',
+            'activated_at' => now(),
+            'expires_at' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
     private function createSchema(): void
     {
         foreach ([
             'organization_resource_allocations',
             'organization_package_subscriptions',
             'organization_commercial_accounts',
+            'organization_module_activations',
+            'modules',
             'projects',
             'organization_user',
             'users',
@@ -322,6 +432,23 @@ class CommercialQuotaServiceTest extends TestCase
             $table->timestamp('current_period_start_at')->nullable();
             $table->timestamp('current_period_end_at')->nullable();
             $table->boolean('auto_renew_enabled');
+            $table->timestamps();
+        });
+        Schema::create('modules', function (Blueprint $table): void {
+            $table->id();
+            $table->string('name');
+            $table->string('slug')->unique();
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
+        });
+        Schema::create('organization_module_activations', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('module_id');
+            $table->string('status')->default('active');
+            $table->timestamp('activated_at')->nullable();
+            $table->timestamp('expires_at')->nullable();
+            $table->timestamp('cancelled_at')->nullable();
             $table->timestamps();
         });
         Schema::create('organization_package_subscriptions', function (Blueprint $table): void {

@@ -108,6 +108,7 @@ class CommercialQuotaService
         $availablePackageSlugs = $packageSlugs === null
             ? $this->activePackageSlugs((int) $organization->getKey())
             : $this->normalizePackageSlugs($packageSlugs);
+        $activeModuleSlugs = $this->activeModuleSlugs((int) $organization->getKey());
         $items = [];
         $totalMinor = 0;
         $requiresManager = false;
@@ -133,6 +134,9 @@ class CommercialQuotaService
             if ($resource['requires_package'] !== null && ! in_array($resource['requires_package'], $availablePackageSlugs, true)) {
                 $status = 'package_required';
                 $requiresManager = true;
+            } elseif ($resource['requires_module'] !== null && ! in_array($resource['requires_module'], $activeModuleSlugs, true)) {
+                $status = 'module_required';
+                $requiresManager = true;
             } elseif ($quantity > (float) $resource['max_self_service']) {
                 $status = 'requires_manager';
                 $requiresManager = true;
@@ -150,6 +154,7 @@ class CommercialQuotaService
                 'currency' => (string) config('commercial_limits.currency', 'RUB'),
                 'status' => $status,
                 'requires_package' => $resource['requires_package'],
+                'requires_module' => $resource['requires_module'],
             ];
         }
 
@@ -212,10 +217,14 @@ class CommercialQuotaService
     {
         $organizationId = (int) $organization->getKey();
         $activePackages = $this->activePackageSlugs($organizationId);
+        $activeModules = $this->activeModuleSlugs($organizationId);
         $currentQuantities = $this->allocationTotals($organizationId, 'paid_addon');
         $resources = array_values($this->configuredResources());
 
         usort($resources, static fn (array $a, array $b): int => $a['sort_order'] <=> $b['sort_order']);
+        $resources = array_values(array_filter($resources, static fn (array $resource): bool => (
+            $resource['requires_module'] === null || in_array($resource['requires_module'], $activeModules, true)
+        )));
 
         return array_map(function (array $resource) use ($activePackages, $currentQuantities): array {
             $requiresPackage = $resource['requires_package'];
@@ -230,6 +239,7 @@ class CommercialQuotaService
                 'min' => $this->number((float) $resource['min']),
                 'max_self_service' => $this->number((float) $resource['max_self_service']),
                 'requires_package' => $requiresPackage,
+                'requires_module' => $resource['requires_module'],
                 'available' => $requiresPackage === null || in_array($requiresPackage, $activePackages, true),
                 'pricing' => [
                     'model' => $resource['pricing_model'],
@@ -251,7 +261,11 @@ class CommercialQuotaService
                 continue;
             }
 
-            $resources[$slug] = $resource + ['slug' => $slug];
+            $resources[$slug] = $resource + [
+                'slug' => $slug,
+                'requires_package' => null,
+                'requires_module' => null,
+            ];
         }
 
         return $resources;
@@ -316,6 +330,32 @@ class CommercialQuotaService
             })
             ->orderBy('package_slug')
             ->pluck('package_slug')
+            ->all();
+    }
+
+    private function activeModuleSlugs(int $organizationId): array
+    {
+        if (! Schema::hasTable('organization_module_activations') || ! Schema::hasTable('modules')) {
+            return [];
+        }
+
+        $query = DB::table('organization_module_activations')
+            ->join('modules', 'modules.id', '=', 'organization_module_activations.module_id')
+            ->where('organization_module_activations.organization_id', $organizationId)
+            ->where('modules.is_active', true)
+            ->whereIn('organization_module_activations.status', ['active', 'trial'])
+            ->where(function ($dates): void {
+                $dates->whereNull('organization_module_activations.expires_at')
+                    ->orWhere('organization_module_activations.expires_at', '>', now());
+            })
+            ->orderBy('modules.slug');
+
+        if (Schema::hasColumn('organization_module_activations', 'cancelled_at')) {
+            $query->whereNull('organization_module_activations.cancelled_at');
+        }
+
+        return $query
+            ->pluck('modules.slug')
             ->all();
     }
 
