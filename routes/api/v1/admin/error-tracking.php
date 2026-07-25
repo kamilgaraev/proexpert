@@ -15,7 +15,13 @@ use App\Http\Controllers\Api\ErrorTrackingController;
 
 Route::prefix('error-tracking')
     ->name('error_tracking.')
-    ->middleware(['auth:api_admin', 'auth.jwt:api_admin'])
+    ->middleware([
+        'auth:api_admin',
+        'auth.jwt:api_admin',
+        'auth.session',
+        'authorize:admin.system.monitoring,system',
+        'interface:admin,system',
+    ])
     ->group(function () {
         
         // Список ошибок
@@ -36,4 +42,3 @@ Route::prefix('error-tracking')
         // Обновить статус ошибки
         Route::patch('/{id}/status', [ErrorTrackingController::class, 'updateStatus'])->name('update_status');
     });
-

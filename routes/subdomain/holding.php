@@ -15,12 +15,14 @@ Route::get('/', [HoldingController::class, 'index'])->name('holding.home');
 
 // API для получения данных лендинга (для SPA фронтенда)
 Route::get('/api/site-data', [HoldingController::class, 'getSiteData'])->name('holding.api.siteData');
-Route::post('/api/site-leads', [SiteLeadsController::class, 'storePublic'])->name('holding.api.siteLeads');
+Route::post('/api/site-leads', [SiteLeadsController::class, 'storePublic'])
+    ->middleware('throttle:public')
+    ->name('holding.api.siteLeads');
 
 // ============================================================================
 // ЗАЩИЩЕННЫЕ РОУТЫ (требуют авторизации)
 // ============================================================================
-Route::middleware(['auth:api_landing', 'jwt.auth'])->group(function () {
+Route::middleware(['auth.web:lk', 'auth.session', 'organization.context', 'interface:lk'])->group(function () {
     
     // Дашборд холдинга на поддомене
     Route::get('/dashboard', [HoldingController::class, 'dashboard'])->name('holding.dashboard');

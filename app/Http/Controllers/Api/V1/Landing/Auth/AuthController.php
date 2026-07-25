@@ -4,26 +4,23 @@ namespace App\Http\Controllers\Api\V1\Landing\Auth;
 
 use App\DTOs\Auth\LoginDTO;
 use App\DTOs\Auth\RegisterDTO;
+use App\DTOs\Auth\WebAuthTokenPair;
+use App\DTOs\Auth\WebAuthTokenPayload;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Landing\Auth\ForgotPasswordRequest;
 use App\Http\Requests\Api\V1\Landing\Auth\LoginRequest;
 use App\Http\Requests\Api\V1\Landing\Auth\RegisterRequest;
 use App\Http\Requests\Api\V1\Landing\Auth\ResetPasswordRequest;
-use App\Http\Responses\Auth\LoginResponse;
 use App\Http\Responses\Auth\ProfileResponse;
 use App\Http\Responses\Auth\RegisterResponse;
-use App\Http\Responses\Auth\TokenResponse;
 use App\Http\Responses\LandingResponse;
-use App\Services\Auth\JwtCookieService;
 use App\Services\Auth\JwtAuthService;
+use App\Services\Auth\WebAuthenticationService;
+use App\Services\Auth\WebRefreshCookieService;
 use App\Services\PerformanceMonitor;
-use Illuminate\Contracts\Support\Responsable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
-use App\Services\LogService;
-use Illuminate\Support\Facades\Auth;
 
 class AuthController extends Controller
 {
@@ -37,7 +34,8 @@ class AuthController extends Controller
      */
     public function __construct(
         JwtAuthService $authService,
-        private readonly JwtCookieService $jwtCookieService
+        private readonly WebAuthenticationService $webAuthentication,
+        private readonly WebRefreshCookieService $refreshCookies,
     ) {
         $this->authService = $authService;
     }
@@ -104,67 +102,39 @@ class AuthController extends Controller
      */
     public function login(LoginRequest $request)
     {
-        Log::info('[LandingAuthController] Login attempt', [
-            'email' => $request->input('email'),
-            'ip' => request()->ip()
-        ]);
         try {
             $loginDTO = LoginDTO::fromRequest($request->only('email', 'password'));
-            $result = $this->authService->authenticate($loginDTO, $this->guard);
-            Log::info('[LandingAuthController] Authentication result', [
-                'success' => $result['success'] ?? 'N/A',
-                'email' => $loginDTO->email ?? 'N/A',
-                'user_id' => $result['user']->id ?? 'N/A',
-                'token_exists' => isset($result['token'])
-            ]);
+            $result = $this->webAuthentication->authenticate(
+                $loginDTO,
+                'lk',
+                $this->guard,
+                $request->boolean('remember_me'),
+            );
 
             if ($result['success']) {
-                /** @var \App\Models\User $user */
-                $user = $result['user'];
-                $organizationId = $user->current_organization_id;
+                $tokens = $result['tokens'] ?? null;
 
-                // Добавляем подробное логирование о пользователе и его ролях
-                Log::info('[LandingAuthController] User data before access check', [
-                    'user_id' => $user->id,
-                    'email' => $user->email,
-                    'current_organization_id' => $organizationId
-                ]);
-                
-                // УНИВЕРСАЛЬНОЕ РЕШЕНИЕ: пропускаем проверку Gate полностью
-                // Все пользователи имеют доступ к личному кабинету
-                Log::info('[LandingAuthController] Доступ разрешен всем пользователям', [
-                    'user_id' => $user->id,
-                    'email' => $user->email
-                ]);
-                
-                LogService::authLog('landing_login_success', [
-                    'user_id' => $user->id, 
-                    'email' => $user->email,
-                    'organization_id' => $organizationId
-                ]);
-                return $this->withTokenCookie(
-                    LoginResponse::loginSuccess($result['user'], $result['token']),
-                    $result['token'],
-                    $request
-                );
-            } else {
-                Log::warning('[LandingAuthController] Authentication failed.');
-                LogService::authLog('landing_login_failed', [
-                    'email' => $loginDTO->email ?? 'N/A',
-                    'ip' => request()->ip()
-                ]);
-                $message = (string) ($result['message'] ?? trans_message('auth.login_failed'));
-
-                if (($result['status_code'] ?? 401) === 403) {
-                    return LoginResponse::forbidden($message);
+                if (! $tokens instanceof WebAuthTokenPair) {
+                    return LandingResponse::error(trans_message('auth.login_internal_error'), 500);
                 }
 
-                return LoginResponse::unauthorized($message);
+                return LandingResponse::success([
+                    'user' => $result['user'],
+                    'token' => $tokens->accessToken,
+                    'token_type' => 'bearer',
+                    'expires_in' => max(0, $tokens->accessExpiresAt->getTimestamp() - time()),
+                    'csrf_token' => $tokens->csrfToken,
+                ], trans_message('auth.login_success'))
+                    ->withCookie($this->refreshCookies->make('lk', $tokens->refreshToken, $tokens->refreshExpiresAt));
             }
+
+            return LandingResponse::error(
+                (string) ($result['message'] ?? trans_message('auth.login_failed')),
+                (int) ($result['status_code'] ?? 401),
+            );
         } catch (\Throwable $e) {
             Log::error('[LandingAuthController] Unexpected exception', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'exception_class' => $e::class,
             ]);
             return LandingResponse::error(trans_message('auth.login_error'), 500);
         }
@@ -183,8 +153,7 @@ class AuthController extends Controller
             return LandingResponse::success(null, trans_message('auth.password_reset.email_sent'));
         } catch (\Throwable $e) {
             Log::error('[LandingAuthController] Password reset link failed', [
-                'email' => $request->input('email'),
-                'error' => $e->getMessage(),
+                'exception_class' => $e::class,
             ]);
 
             return LandingResponse::error(trans_message('auth.password_reset.email_error'), 500);
@@ -206,25 +175,22 @@ class AuthController extends Controller
             return LandingResponse::success(['reset' => true], trans_message('auth.password_reset.success'));
         } catch (\Throwable $e) {
             Log::error('[LandingAuthController] Password reset failed', [
-                'email' => $request->input('email'),
-                'error' => $e->getMessage(),
+                'exception_class' => $e::class,
             ]);
 
             return LandingResponse::error(trans_message('auth.password_reset.error'), 500);
         }
     }
 
-    public function me()
+    public function me(Request $request)
     {
-        return PerformanceMonitor::measure('landing.me', function() {
-            $result = $this->authService->me($this->guard);
+        $user = $request->user();
 
-            if (!$result['success']) {
-                return ProfileResponse::notFound($result['message']);
-            }
+        if ($user === null) {
+            return ProfileResponse::notFound(trans_message('auth.profile_not_found'));
+        }
 
-            return ProfileResponse::userProfile($result['user']);
-        });
+        return ProfileResponse::userProfile($user);
     }
 
     /**
@@ -232,21 +198,45 @@ class AuthController extends Controller
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function refresh()
+    public function refresh(Request $request)
     {
-        return PerformanceMonitor::measure('landing.refresh_token', function() {
-            $result = $this->authService->refresh($this->guard);
+        $payload = $request->attributes->get('web_refresh_payload');
+        $refreshToken = $request->attributes->get('web_refresh_token');
 
-            if (!$result['success']) {
-                return TokenResponse::tokenError($result['message'], $result['status_code']);
-            }
+        if (! $payload instanceof WebAuthTokenPayload || ! is_string($refreshToken) || $request->user() === null) {
+            return LandingResponse::error(trans_message('auth.token_error'), 401)
+                ->withCookie($this->refreshCookies->clear('lk'));
+        }
 
-            return $this->withTokenCookie(
-                TokenResponse::refreshed($result['token']),
-                $result['token'],
-                request()
-            );
-        });
+        try {
+            $tokens = $this->webAuthentication->refresh($request->user(), $payload, $refreshToken);
+
+            return LandingResponse::success([
+                'token' => $tokens->accessToken,
+                'token_type' => 'bearer',
+                'expires_in' => max(0, $tokens->accessExpiresAt->getTimestamp() - time()),
+                'csrf_token' => $tokens->csrfToken,
+            ], trans_message('auth.token_refreshed'))
+                ->withCookie($this->refreshCookies->make('lk', $tokens->refreshToken, $tokens->refreshExpiresAt));
+        } catch (\Throwable $exception) {
+            Log::warning('landing.web_auth.refresh_failed', [
+                'exception_class' => $exception::class,
+            ]);
+
+            return LandingResponse::error(trans_message('auth.token_error'), 401)
+                ->withCookie($this->refreshCookies->clear('lk'));
+        }
+    }
+
+    public function csrf(Request $request): JsonResponse
+    {
+        $payload = $request->attributes->get('web_refresh_payload');
+
+        if (! $payload instanceof WebAuthTokenPayload || ! is_string($payload->csrfToken)) {
+            return LandingResponse::error(trans_message('auth.token_error'), 401);
+        }
+
+        return LandingResponse::success(['csrf_token' => $payload->csrfToken]);
     }
 
     /**
@@ -254,27 +244,19 @@ class AuthController extends Controller
      *
      * @return \Illuminate\Http\JsonResponse
      */
-    public function logout()
+    public function logout(Request $request)
     {
-        return PerformanceMonitor::measure('landing.logout', function() {
-            $result = $this->authService->logout($this->guard);
+        $payload = $request->attributes->get('web_auth_payload');
+        $user = $request->user();
 
-            if (!$result['success']) {
-                return TokenResponse::tokenError($result['message'], $result['status_code']);
-            }
+        if (! $payload instanceof WebAuthTokenPayload || $user === null) {
+            return LandingResponse::error(trans_message('auth.token_error'), 401)
+                ->withCookie($this->refreshCookies->clear('lk'));
+        }
 
-            return TokenResponse::invalidated()
-                ->toResponse(request())
-                ->withCookie($this->jwtCookieService->makeClearCookie());
-        });
-    }
+        $this->webAuthentication->logout($user, 'lk', $payload->sessionUuid);
 
-    private function withTokenCookie(Responsable|JsonResponse $response, string $token, Request $request): JsonResponse
-    {
-        $jsonResponse = $response instanceof Responsable
-            ? $response->toResponse($request)
-            : $response;
-
-        return $jsonResponse->withCookie($this->jwtCookieService->makeTokenCookie($token));
+        return LandingResponse::success(null, trans_message('auth.logout_success'))
+            ->withCookie($this->refreshCookies->clear('lk'));
     }
 }

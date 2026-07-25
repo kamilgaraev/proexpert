@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Feature\Auth;
 
 use App\Http\Middleware\JwtMiddleware;
+use App\Http\Middleware\UseJwtCookieForAuthorization;
+use App\Services\Auth\JwtCookieService;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route as LaravelRoute;
 use Illuminate\Support\Facades\RateLimiter;
@@ -43,20 +45,56 @@ final class AuthRouteStackHardeningTest extends TestCase
         }
     }
 
-    public function test_refresh_routes_use_jwt_session_and_dashboard_throttle_without_auth_guard(): void
+    public function test_web_auth_entrypoints_require_their_own_origin(): void
     {
         foreach ([
-            'api/v1/landing/auth/refresh' => [
-                'jwt' => 'auth.jwt:api_landing',
-                'authGuard' => 'auth:api_landing',
-            ],
+            'api/v1/landing/auth/register' => 'origin.web:lk',
+            'api/v1/landing/auth/login' => 'origin.web:lk',
+            'api/v1/landing/auth/password/email' => 'origin.web:lk',
+            'api/v1/landing/auth/password/reset' => 'origin.web:lk',
+            'api/v1/admin/auth/login' => 'origin.web:admin',
+        ] as $uri => $originMiddleware) {
+            $route = $this->routeByUri($uri);
+
+            $this->assertNotNull($route, "Route {$uri} is missing.");
+            $this->assertContains($originMiddleware, $route->gatherMiddleware(), "{$uri} must validate the browser origin.");
+        }
+    }
+
+    public function test_web_refresh_routes_use_refresh_cookie_origin_csrf_and_dedicated_limiters(): void
+    {
+        foreach ([
+            'api/v1/landing/auth/refresh' => 'lk',
+            'api/v1/admin/auth/refresh' => 'admin',
+        ] as $uri => $audience) {
+            $route = $this->routeByUri($uri);
+
+            $this->assertNotNull($route, "Route {$uri} is missing.");
+            $middleware = $route->gatherMiddleware();
+
+            $this->assertContains("auth.web-refresh:{$audience}", $middleware, "{$uri} must authenticate the refresh cookie.");
+            $this->assertContains("origin.web:{$audience}", $middleware, "{$uri} must validate the browser origin.");
+            $this->assertContains("csrf.web:{$audience}", $middleware, "{$uri} must require CSRF proof.");
+            $this->assertContains('throttle:web-refresh', $middleware, "{$uri} must use the refresh limiter.");
+            $this->assertNotContains(
+                $audience === 'admin' ? 'auth:api_admin' : 'auth:api_landing',
+                $middleware,
+                "{$uri} must not run the legacy guard before refresh handling."
+            );
+            $this->assertNotContains(
+                $audience === 'admin' ? 'auth.jwt:api_admin' : 'auth.jwt:api_landing',
+                $middleware,
+                "{$uri} must not parse a legacy JWT during refresh."
+            );
+        }
+    }
+
+    public function test_legacy_refresh_routes_use_jwt_session_and_dashboard_throttle_without_auth_guard(): void
+    {
+        foreach ([
             'api/v1/customer/auth/refresh' => [
                 'jwt' => 'auth.jwt:api_landing',
                 'authGuard' => 'auth:api_landing',
-            ],
-            'api/v1/admin/auth/refresh' => [
-                'jwt' => 'auth.jwt:api_admin',
-                'authGuard' => 'auth:api_admin',
             ],
             'api/v1/mobile/auth/refresh' => [
                 'jwt' => 'auth.jwt:api_mobile',
@@ -85,14 +123,12 @@ final class AuthRouteStackHardeningTest extends TestCase
 
     public function test_jwt_middleware_recognizes_all_refresh_endpoints(): void
     {
-        $middleware = new JwtMiddleware();
+        $middleware = $this->app->make(JwtMiddleware::class);
         $method = new ReflectionMethod(JwtMiddleware::class, 'isRefreshEndpoint');
         $method->setAccessible(true);
 
         foreach ([
-            'api/v1/landing/auth/refresh',
             'api/v1/customer/auth/refresh',
-            'api/v1/admin/auth/refresh',
             'api/v1/mobile/auth/refresh',
             'api/v1/landing/landingAdminAuth/refresh',
         ] as $uri) {
@@ -116,6 +152,26 @@ final class AuthRouteStackHardeningTest extends TestCase
             $this->assertContains('auth:api_brigade', $middleware, "{$uri} must authenticate brigade user.");
             $this->assertContains('auth.jwt:api_brigade', $middleware, "{$uri} must parse JWT.");
             $this->assertContains('auth.session', $middleware, "{$uri} must enforce active auth session.");
+        }
+    }
+
+    public function test_legacy_cookie_is_never_promoted_to_authorization_on_web_interfaces(): void
+    {
+        $middleware = new UseJwtCookieForAuthorization(new JwtCookieService());
+
+        foreach ([
+            'api/v1/landing/dashboard',
+            'api/v1/admin/error-tracking',
+            'api/lk/dashboard',
+        ] as $uri) {
+            $request = Request::create('/'.$uri, 'GET');
+            $request->cookies->set('prohelper_landing_token', 'legacy-browser-token');
+
+            $middleware->handle($request, function (Request $handledRequest) use ($uri): \Symfony\Component\HttpFoundation\Response {
+                $this->assertNull($handledRequest->bearerToken(), "{$uri} must not promote a legacy cookie to Bearer authentication.");
+
+                return response('ok');
+            });
         }
     }
 

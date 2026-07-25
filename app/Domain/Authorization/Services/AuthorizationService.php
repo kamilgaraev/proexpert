@@ -72,7 +72,6 @@ class AuthorizationService
                         'permission' => $permission,
                         'user_id' => $user->id,
                         'context' => $context,
-                        'email' => $user->email
                     ], 'warning');
                 }
             }
@@ -206,7 +205,6 @@ class AuthorizationService
             if (!$this->roleScanner->roleExists($roleSlug)) {
                 $this->logging->security('auth.role.assign.failed', [
                     'target_user_id' => $user->id,
-                    'target_email' => $user->email,
                     'role_slug' => $roleSlug,
                     'role_type' => $roleType,
                     'assigned_by' => $assignedBy?->id,
@@ -230,7 +228,6 @@ class AuthorizationService
             ) {
                 $this->logging->security('auth.role.assign.failed', [
                     'target_user_id' => $user->id,
-                    'target_email' => $user->email,
                     'role_slug' => $roleSlug,
                     'role_type' => $roleType,
                     'assigned_by' => $assignedBy?->id,
@@ -247,11 +244,9 @@ class AuthorizationService
         // AUDIT: Назначение роли - критически важное событие
         $this->logging->audit('auth.role.assigned', [
             'target_user_id' => $user->id,
-            'target_email' => $user->email,
             'role_slug' => $roleSlug,
             'role_type' => $roleType,
             'assigned_by' => $assignedBy?->id,
-            'assigned_by_email' => $assignedBy?->email,
             'context_type' => $context->type,
             'context_id' => $context->id,
             'expires_at' => $expiresAt?->toISOString(),
@@ -278,11 +273,9 @@ class AuthorizationService
                 // AUDIT: Отзыв роли - критически важное событие
                 $this->logging->audit('auth.role.revoked', [
                     'target_user_id' => $user->id,
-                    'target_email' => $user->email,
                     'role_slug' => $roleSlug,
                     'role_type' => $assignment->role_type,
                     'revoked_by' => $revokedBy?->id,
-                    'revoked_by_email' => $revokedBy?->email,
                     'revoked_by_type' => $revokedBy ? 'user' : 'system',
                     'context_type' => $context->type,
                     'context_id' => $context->id,

@@ -62,7 +62,7 @@ return [
     'not_authenticated' => 'Пользователь не аутентифицирован.',
     'registration_user_exists' => 'Пользователь с таким email уже существует.',
     'registration_organization_tax_number_exists' => 'Организация с таким ИНН уже зарегистрирована в системе. Если вы являетесь сотрудником этой организации, попросите владельца добавить вас в команду.',
-    'registration_error' => 'Ошибка при регистрации пользователя: :message',
+    'registration_error' => 'Не удалось завершить регистрацию. Попробуйте позже.',
     'registration_verification_required' => 'Регистрация завершена. Подтвердите email, чтобы войти в аккаунт.',
     'registration_incomplete_data' => 'Не удалось завершить регистрацию. Попробуйте позже.',
     'validation' => [

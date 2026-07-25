@@ -13,6 +13,7 @@ return [
     'insufficient_balance' => 'Недостаточно средств на балансе.',
     'internal_server_error' => 'Произошла ошибка сервера. Попробуйте позже.',
     'server_error' => 'Произошла ошибка сервера. Попробуйте позже.',
+    'resource_not_found' => 'Ресурс не найден.',
     'excel_export_failed' => 'Не удалось экспортировать данные в Excel.',
     'report_create_failed' => 'Не удалось сформировать отчет.',
     'report_export_failed' => 'Не удалось экспортировать отчет.',

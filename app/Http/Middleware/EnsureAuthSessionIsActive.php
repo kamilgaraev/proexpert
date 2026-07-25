@@ -20,7 +20,9 @@ class EnsureAuthSessionIsActive
 
     public function handle(Request $request, Closure $next): Response
     {
-        if (!(bool) config('auth_tokens.sessions.enabled', true)) {
+        $isWebRequest = $request->attributes->has('web_auth_audience');
+
+        if (! $isWebRequest && ! (bool) config('auth_tokens.sessions.enabled', true)) {
             return $next($request);
         }
 
@@ -37,7 +39,11 @@ class EnsureAuthSessionIsActive
         $tokenUserId = $payload?->get('sub');
         $expectedUserId = $user?->id ?? (is_numeric($tokenUserId) ? (int) $tokenUserId : null);
 
-        if ($expectedUserId === null || (int) $authSession->user_id !== (int) $expectedUserId) {
+        if ($expectedUserId === null
+            || $user === null
+            || ! $user->is_active
+            || (int) $authSession->user_id !== (int) $expectedUserId
+        ) {
             return $this->error($request, trans_message('auth.security_session_expired'));
         }
 

@@ -16,18 +16,41 @@ use Tymon\JWTAuth\Exceptions\JWTException;
 use Tymon\JWTAuth\Exceptions\TokenBlacklistedException;
 use Tymon\JWTAuth\Exceptions\TokenExpiredException;
 use Tymon\JWTAuth\Exceptions\TokenInvalidException;
-use Tymon\JWTAuth\Facades\JWTAuth;
+use Tymon\JWTAuth\JWT;
 
 use function trans_message;
 
 class JwtMiddleware
 {
+    public function __construct(
+        private readonly JWT $jwt,
+    ) {
+    }
+
     public function handle(Request $request, Closure $next, ?string $guard = null): Response
     {
+        $webAudience = $request->attributes->get('web_auth_audience');
+
+        if (is_string($webAudience)) {
+            $expectedAudience = match ($guard) {
+                'api_landing' => 'lk',
+                'api_admin' => 'admin',
+                default => null,
+            };
+
+            if ($expectedAudience === null || hash_equals($expectedAudience, $webAudience)) {
+                return $next($request);
+            }
+
+            return $this->errorResponse($request, $guard, 'auth.token_invalid', Response::HTTP_UNAUTHORIZED);
+        }
+
         $isRefreshEndpoint = $this->isRefreshEndpoint($request);
 
+        $token = $this->jwt->getToken();
+
         try {
-            if (! ($token = JWTAuth::getToken())) {
+            if (! $token) {
                 LogService::authLog('auth_failed', [
                     'reason' => 'token_missing',
                     'ip' => $request->ip(),
@@ -38,7 +61,7 @@ class JwtMiddleware
             }
 
             try {
-                $payload = JWTAuth::setToken($token)->getPayload();
+                $payload = $this->jwt->setToken($token)->getPayload();
             } catch (TokenBlacklistedException) {
                 LogService::authLog('auth_failed', [
                     'reason' => 'token_blacklisted',
@@ -53,7 +76,7 @@ class JwtMiddleware
                 auth()->shouldUse($guard);
             }
 
-            $user = JWTAuth::parseToken()->authenticate();
+            $user = $this->jwt->parseToken()->authenticate();
 
             if (! $user) {
                 LogService::authLog('auth_failed', [
@@ -66,7 +89,7 @@ class JwtMiddleware
                 return $this->errorResponse($request, $guard, 'auth.not_authenticated', Response::HTTP_UNAUTHORIZED);
             }
 
-            if (JWTAuth::manager()->getBlacklist()->has($payload)) {
+            if ($this->jwt->manager()->getBlacklist()->has($payload)) {
                 LogService::authLog('auth_failed', [
                     'user_id' => $user->id,
                     'reason' => 'token_blacklisted_check',
@@ -89,7 +112,7 @@ class JwtMiddleware
         } catch (TokenExpiredException) {
             if ($isRefreshEndpoint) {
                 try {
-                    $payload = JWTAuth::manager()
+                    $payload = $this->jwt->manager()
                         ->setRefreshFlow()
                         ->decode($token);
                     $request->attributes->add(['token_payload' => $payload]);
@@ -103,7 +126,7 @@ class JwtMiddleware
 
                     return $this->errorResponse($request, $guard, 'auth.token_error', Response::HTTP_UNAUTHORIZED);
                 } finally {
-                    JWTAuth::manager()->setRefreshFlow(false);
+                    $this->jwt->manager()->setRefreshFlow(false);
                 }
 
                 LogService::authLog('token_expired_refresh', [

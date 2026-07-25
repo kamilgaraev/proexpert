@@ -235,6 +235,18 @@ class RouteServiceProvider extends ServiceProvider
                 Limit::perMinute(5)->by('identity:'.$request->ip().'|'.$identity),
             ];
         });
+
+        RateLimiter::for('web-refresh', function (Request $request) {
+            $refreshToken = $request->attributes->get('web_refresh_token');
+            $tokenKey = is_string($refreshToken) && $refreshToken !== ''
+                ? hash('sha256', $refreshToken)
+                : 'missing';
+
+            return [
+                Limit::perMinute(20)->by('web-refresh:'.$tokenKey),
+                Limit::perMinute(120)->by('web-refresh-ip:'.$request->ip()),
+            ];
+        });
     }
 
     private function completedWorkIsAccessibleThroughProjectRoute(\App\Models\CompletedWork $completedWork): bool

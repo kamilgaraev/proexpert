@@ -50,14 +50,13 @@ class InterfaceMiddleware
             // Диагностика для отладки проблем с доступом к интерфейсам
             \Log::warning('interface.access.denied', [
                 'user_id' => $user->id,
-                'user_email' => $user->email,
                 'interface' => $interface,
                 'context_type' => $contextType,
                 'context_id' => $context?->id,
                 'context_resource_id' => $context?->resource_id,
                 'current_organization_id' => $request->attributes->get('current_organization_id'),
                 'user_current_org' => $user->current_organization_id,
-                'uri' => $request->getRequestUri(),
+                'route_name' => $request->route()?->getName(),
             ]);
 
             return \App\Http\Responses\AdminResponse::fromPayload([

@@ -72,6 +72,10 @@ class AuthorizeMiddleware
         }
 
         switch ($contextType) {
+            case 'system':
+                $context['context_type'] = 'system';
+                break;
+
             case 'organization':
                 $organizationId = $this->extractContextId($request, $contextParam ?? 'organization_id', 'organization');
                 if ($organizationId) {

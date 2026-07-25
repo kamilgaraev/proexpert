@@ -18,6 +18,10 @@ class UseJwtCookieForAuthorization
 
     public function handle(Request $request, Closure $next): Response
     {
+        if ($this->usesWebInterfaceAuthentication($request)) {
+            return $next($request);
+        }
+
         if (!$request->headers->has('Authorization')) {
             $token = $this->jwtCookieService->tokenFromRequest($request);
 
@@ -27,5 +31,12 @@ class UseJwtCookieForAuthorization
         }
 
         return $next($request);
+    }
+
+    private function usesWebInterfaceAuthentication(Request $request): bool
+    {
+        return $request->is('api/v1/admin/*')
+            || $request->is('api/v1/landing/*')
+            || $request->is('api/lk/*');
     }
 }

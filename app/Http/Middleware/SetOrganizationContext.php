@@ -7,7 +7,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\Response;
-use Tymon\JWTAuth\Facades\JWTAuth;
+use Tymon\JWTAuth\JWT;
 use Tymon\JWTAuth\Exceptions\JWTException;
 use App\Models\Organization;
 use App\Models\User;
@@ -21,7 +21,10 @@ class SetOrganizationContext
 {
     protected LoggingService $logging;
     
-    public function __construct(LoggingService $logging)
+    public function __construct(
+        LoggingService $logging,
+        private readonly JWT $jwt,
+    )
     {
         $this->logging = $logging;
     }
@@ -33,6 +36,14 @@ class SetOrganizationContext
     public function handle(Request $request, Closure $next): Response
     {
         $startTime = microtime(true);
+
+        if ($request->attributes->has('web_auth_audience')) {
+            return $next($request);
+        }
+
+        if ($request->attributes->has('current_organization_id')) {
+            return $next($request);
+        }
 
         if ($this->isRefreshEndpoint($request)) {
             $this->logging->technical('organization.context.skipped', [
@@ -79,7 +90,7 @@ class SetOrganizationContext
         try {
             // ДИАГНОСТИКА: Время парсинга JWT токена
             $jwtParseStart = microtime(true);
-            $payload = JWTAuth::parseToken()->getPayload();
+            $payload = $this->jwt->parseToken()->getPayload();
             $jwtParseDuration = (microtime(true) - $jwtParseStart) * 1000;
             
             $this->logging->technical('organization.context.jwt_parsed', [

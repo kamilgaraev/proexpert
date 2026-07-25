@@ -55,7 +55,7 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
 
         // Подключение маршрутов биллинга для лендинга/ЛК
         // Эти маршруты должны быть доступны аутентифицированному владельцу организации
-        Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'verified', 'organization.context'])
+        Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'auth.session', 'verified', 'organization.context', 'interface:lk'])
             ->prefix('billing')
             ->name('billing.')
             ->group(function () {
@@ -63,7 +63,7 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
             });
 
         // Подключение маршрутов управления пользователями для лендинга/ЛК
-        Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'authorize:users.manage'])
+        Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'auth.session', 'organization.context', 'interface:lk', 'authorize:users.manage'])
             ->prefix('user-management')
             ->name('userManagement.')
             ->group(function () {
@@ -95,7 +95,7 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
         require __DIR__.'/api/v1/landing/knowledge_hub.php';
 
         // Подключение маршрутов приглашений подрядчиков для лендинга/ЛК
-        Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
+        Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'auth.session', 'organization.context', 'interface:lk'])
             ->group(function () {
                 if (file_exists(__DIR__.'/api/v1/landing/contractor_invitations.php')) {
                     require __DIR__.'/api/v1/landing/contractor_invitations.php';
@@ -106,13 +106,13 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
             });
 
         // Подключение маршрутов новой системы авторизации
-        Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
+        Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'auth.session', 'organization.context', 'interface:lk'])
             ->group(function () {
                 require __DIR__.'/api/v1/landing/authorization.php';
             });
 
         // Подключение маршрутов уведомлений для ЛК
-        Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
+        Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'auth.session', 'organization.context', 'interface:lk'])
             ->group(function () {
                 require __DIR__.'/api/v1/landing/notifications.php';
             });
@@ -140,7 +140,7 @@ Route::prefix('customer')->name('customer.')->group(function () {
 // --- LK API (Personal Cabinet) ---
 Route::prefix('lk')->name('lk.')->group(function () {
     // Подключение маршрутов для проверки прав пользователя (ЛК)
-    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
+    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'auth.session', 'organization.context', 'interface:lk'])
         ->prefix('v1')
         ->group(function () {
             if (file_exists(__DIR__.'/api/v1/permissions.php')) {
@@ -193,12 +193,12 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
     require __DIR__.'/api/v1/admin/auth.php';
 
     // Маршрут для выбора проекта (БЕЗ project context, но с organization context)
-    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])
+    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'auth.session', 'organization.context', 'authorize:admin.access', 'interface:admin'])
         ->get('/available-projects', [\App\Http\Controllers\Api\V1\Admin\ProjectSelectorController::class, 'availableProjects'])
         ->name('projects.available');
 
     // Защищенные маршруты Admin Panel
-    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])->group(function () {
+    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'auth.session', 'organization.context', 'authorize:admin.access', 'interface:admin'])->group(function () {
 
         // Маршруты для проверки прав пользователя (Admin Panel)
         if (file_exists(__DIR__.'/api/v1/permissions.php')) {
@@ -267,7 +267,7 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         require __DIR__.'/api/v1/admin/project-based.php';
     });
 
-    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context'])->group(function () {
+    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'auth.session', 'organization.context'])->group(function () {
         if (file_exists(__DIR__.'/api/v1/admin/error-tracking.php')) {
             require __DIR__.'/api/v1/admin/error-tracking.php';
         }

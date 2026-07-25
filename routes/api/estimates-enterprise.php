@@ -39,13 +39,17 @@ Route::prefix('estimates')->group(function () {
     });
 
     Route::prefix('audit')->group(function () {
-        Route::get('/{estimateId}/history', [EstimateAuditController::class, 'history']);
-        Route::get('/{estimateId}/snapshots', [EstimateAuditController::class, 'snapshots']);
-        Route::post('/{estimateId}/snapshots', [EstimateAuditController::class, 'createSnapshot']);
-        Route::post('/{estimateId}/snapshots/{snapshotId}/restore', [EstimateAuditController::class, 'restore']);
-        
-        Route::post('/compare', [EstimateAuditController::class, 'compare']);
-        Route::post('/compare-snapshots', [EstimateAuditController::class, 'compareSnapshots']);
+        Route::middleware('authorize:budget-estimates.view')->group(function () {
+            Route::get('/{estimateId}/history', [EstimateAuditController::class, 'history']);
+            Route::get('/{estimateId}/snapshots', [EstimateAuditController::class, 'snapshots']);
+            Route::post('/compare', [EstimateAuditController::class, 'compare']);
+            Route::post('/compare-snapshots', [EstimateAuditController::class, 'compareSnapshots']);
+        });
+
+        Route::middleware('authorize:budget-estimates.edit')->group(function () {
+            Route::post('/{estimateId}/snapshots', [EstimateAuditController::class, 'createSnapshot']);
+            Route::post('/{estimateId}/snapshots/{snapshotId}/restore', [EstimateAuditController::class, 'restore']);
+        });
     });
 
     Route::prefix('import')->group(function () {
@@ -74,4 +78,3 @@ Route::prefix('estimates')->group(function () {
         Route::post('/{estimateId}/recalculate', [EstimateConstructorController::class, 'recalculateEstimate']);
     });
 });
-

@@ -25,6 +25,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         // Доверяем всем прокси (решает проблему с HTTPS в Nginx -> Octane/RoadRunner для Livewire)
         $middleware->trustProxies(at: '*');
+        $middleware->remove(\Illuminate\Http\Middleware\HandleCors::class);
 
         // ============================================================
         // РЕГИСТРАЦИЯ ПСЕВДОНИМОВ MIDDLEWARE
@@ -42,6 +43,10 @@ $app = Application::configure(basePath: dirname(__DIR__))
             // === ОСТАЛЬНЫЕ MIDDLEWARE ===
             'auth.jwt' => JwtMiddleware::class,
             'jwt.auth' => JwtMiddleware::class,
+            'auth.web' => \App\Http\Middleware\WebInterfaceSecurityMiddleware::class,
+            'auth.web-refresh' => \App\Http\Middleware\AuthenticateWebRefreshToken::class,
+            'csrf.web' => \App\Http\Middleware\VerifyWebCsrfToken::class,
+            'origin.web' => \App\Http\Middleware\VerifyWebRequestOrigin::class,
             'auth.session' => \App\Http\Middleware\EnsureAuthSessionIsActive::class,
             'organization.context' => SetOrganizationContext::class,
             'organization_context' => SetOrganizationContext::class,
@@ -55,6 +60,11 @@ $app = Application::configure(basePath: dirname(__DIR__))
             'holding.subdomain' => \App\Http\Middleware\DetectHoldingSubdomain::class,
             'verified' => \App\Http\Middleware\EnsureEmailIsVerified::class,
         ]);
+
+        $middleware->prependToPriorityList(
+            \Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests::class,
+            \App\Http\Middleware\WebInterfaceSecurityMiddleware::class,
+        );
 
         // ============================================================
         // ГЛОБАЛЬНЫЕ MIDDLEWARE
@@ -75,10 +85,12 @@ $app = Application::configure(basePath: dirname(__DIR__))
         // ============================================================
         $middleware->api([
             \App\Http\Middleware\UseJwtCookieForAuthorization::class,
+            \App\Http\Middleware\WebInterfaceSecurityMiddleware::class,
             'throttle:api', // Rate limiting
             \Illuminate\Routing\Middleware\SubstituteBindings::class, // Route model binding
             \App\Http\Middleware\RequestLoggingMiddleware::class, // Структурированное логирование
             \App\Http\Middleware\SetOrganizationContext::class, // Контекст организации
+            \App\Http\Middleware\AddWebSecurityHeaders::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

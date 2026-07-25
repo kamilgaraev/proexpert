@@ -55,6 +55,7 @@ class SecurityLogger
     protected function createSecurityEntry(string $event, array $context, string $level): array
     {
         $metadata = $this->requestContext->getMetadata();
+        $route = $this->requestContext->getRouteInfo();
         
         return [
             'timestamp' => now()->toISOString(),
@@ -68,13 +69,12 @@ class SecurityLogger
             'security_context' => [
                 'ip' => $metadata['ip'] ?? null,
                 'user_agent' => $metadata['user_agent'] ?? null,
-                'referer' => $metadata['referer'] ?? null,
                 'interface' => $this->requestContext->getClientInterface(),
                 'is_authenticated' => $this->userContext->isAuthenticated(),
                 'user_type' => $this->userContext->getUserType(),
                 'user_roles' => $this->userContext->getRolesSafe(),
                 'request_method' => $metadata['method'] ?? null,
-                'request_uri' => $metadata['uri'] ?? null,
+                'route_name' => is_string($route['name'] ?? null) ? $route['name'] : null,
                 'is_ajax' => $metadata['is_ajax'] ?? false,
                 'is_json' => $metadata['is_json'] ?? false
             ],
