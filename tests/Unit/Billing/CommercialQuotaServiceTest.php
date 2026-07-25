@@ -88,6 +88,63 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertSame(10, $this->limit($summary, 'projects')['sources']['packages']);
     }
 
+    public function test_summary_returns_every_configured_limit_and_resource_addon_with_user_facing_payload(): void
+    {
+        $account = $this->account('active');
+        $this->package($account, 'projects-processes');
+        OrganizationResourceAllocation::query()->create([
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $account->id,
+            'resource_slug' => 'storage_gb',
+            'limit_key' => 'storage_gb',
+            'quantity' => 10,
+            'source' => 'paid_addon',
+            'status' => 'active',
+        ]);
+
+        $summary = $this->quota()->getQuotaSummary($this->organization);
+
+        $this->assertSame(array_keys(config('commercial_limits.limits')), array_column($summary['limits'], 'key'));
+        foreach ($summary['limits'] as $limit) {
+            $this->assertNotSame('', trim($limit['name']));
+            $this->assertNotSame($limit['key'], $limit['name']);
+            $this->assertArrayHasKey('free_base', $limit['sources']);
+            $this->assertArrayHasKey('packages', $limit['sources']);
+            $this->assertArrayHasKey('paid_addons', $limit['sources']);
+        }
+
+        $expectedResourceSlugs = collect(config('commercial_limits.resources'))
+            ->sortBy('sort_order')
+            ->keys()
+            ->values()
+            ->all();
+
+        $this->assertSame($expectedResourceSlugs, array_column($summary['resource_addons'], 'slug'));
+        foreach ($summary['resource_addons'] as $resource) {
+            $this->assertNotSame('', trim($resource['name']));
+            $this->assertNotSame($resource['slug'], $resource['name']);
+            $this->assertArrayHasKey('price_minor', $resource['pricing']);
+            $this->assertArrayHasKey('amount', $resource['pricing']);
+        }
+
+        $storageLimit = $this->limit($summary, 'storage_gb');
+        $this->assertSame(32, $storageLimit['limit']);
+        $this->assertSame(20, $storageLimit['sources']['packages']);
+        $this->assertSame(10, $storageLimit['sources']['paid_addons']);
+
+        $storageResource = $this->resourceAddon($summary, 'storage_gb');
+        $this->assertSame('Дополнительное хранилище', $storageResource['name']);
+        $this->assertSame(10, $storageResource['current_quantity']);
+        $this->assertSame(10, $storageResource['step']);
+        $this->assertSame(2000, $storageResource['pricing']['price_minor']);
+        $this->assertSame('20.00', $storageResource['pricing']['amount']);
+        $this->assertTrue($storageResource['available']);
+
+        $documentPages = $this->resourceAddon($summary, 'extra_document_pages');
+        $this->assertSame('estimates-norms', $documentPages['requires_package']);
+        $this->assertFalse($documentPages['available']);
+    }
+
     public function test_corporate_override_can_set_unlimited_limit(): void
     {
         $account = $this->account('corporate', 'corporate');
@@ -146,6 +203,18 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertCount(1, $limits);
 
         return $limits[0];
+    }
+
+    private function resourceAddon(array $summary, string $slug): array
+    {
+        $resources = array_values(array_filter(
+            $summary['resource_addons'],
+            static fn (array $resource): bool => $resource['slug'] === $slug,
+        ));
+
+        $this->assertCount(1, $resources);
+
+        return $resources[0];
     }
 
     private function user(string $email): User
