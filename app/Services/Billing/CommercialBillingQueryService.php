@@ -161,6 +161,8 @@ final class CommercialBillingQueryService
                 ? 'failed'
                 : $order->status->value;
 
+        $paidPackageSlugs = $this->paidPackageSlugs($order);
+
         $payload = [
             'order_id' => $order->public_id,
             'kind' => $order->kind,
@@ -170,10 +172,12 @@ final class CommercialBillingQueryService
             'amount' => $order->amount,
             'amount_minor' => $order->amount_minor,
             'currency' => $order->currency,
-            'selected_package_slugs' => $order->selected_package_slugs,
+            'selected_package_slugs' => $paidPackageSlugs,
+            'target_package_slugs' => $order->selected_package_slugs,
             'current_package_slugs' => $order->current_package_slugs,
-            'paid_package_slugs' => $this->paidPackageSlugs($order),
+            'paid_package_slugs' => $paidPackageSlugs,
             'selected_resource_addons' => $order->selected_resource_addons ?? [],
+            'paid_composition_items' => $this->paidCompositionItems($order, $paidPackageSlugs),
             'offer_type' => $order->offer_type->value,
             'period_start_at' => $order->period_start_at?->toJSON(),
             'period_end_at' => $order->period_end_at?->toJSON(),
@@ -230,6 +234,69 @@ final class CommercialBillingQueryService
         }
 
         return $paid === [] ? $selected : $paid;
+    }
+
+    private function paidCompositionItems(CommercialOrder $order, array $paidPackageSlugs): array
+    {
+        $items = [];
+
+        foreach ($paidPackageSlugs as $slug) {
+            $items[] = [
+                'type' => 'package',
+                'slug' => $slug,
+                'label' => $this->packageName($slug),
+                'quantity' => null,
+            ];
+        }
+
+        foreach (($order->selected_resource_addons ?? []) as $resource) {
+            $slug = (string) ($resource['slug'] ?? '');
+            $quantity = (float) ($resource['quantity'] ?? 0);
+
+            if ($slug === '' || $quantity <= 0) {
+                continue;
+            }
+
+            $items[] = [
+                'type' => 'resource',
+                'slug' => $slug,
+                'label' => $this->resourceName($slug),
+                'quantity' => $this->number($quantity),
+            ];
+        }
+
+        return $items;
+    }
+
+    private function packageName(string $slug): string
+    {
+        static $names = [];
+
+        if (array_key_exists($slug, $names)) {
+            return $names[$slug];
+        }
+
+        $path = config_path('Packages/'.$slug.'.json');
+        if (! is_file($path)) {
+            return $names[$slug] = $slug;
+        }
+
+        $payload = json_decode((string) file_get_contents($path), true);
+
+        return $names[$slug] = is_array($payload) && is_string($payload['name'] ?? null) ? $payload['name'] : $slug;
+    }
+
+    private function resourceName(string $slug): string
+    {
+        $resource = config('commercial_limits.resources.'.$slug, []);
+        $key = is_array($resource) ? ($resource['name_key'] ?? null) : null;
+
+        return is_string($key) ? trans_message($key) : $slug;
+    }
+
+    private function number(float $value): int|float
+    {
+        return fmod($value, 1.0) === 0.0 ? (int) $value : round($value, 2);
     }
 
     private function money(int $amountMinor): string

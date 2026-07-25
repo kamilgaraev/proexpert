@@ -517,9 +517,12 @@ class CommercialCheckoutControllerTest extends TestCase
         $this->authenticatedAs($this->owner)
             ->getJson('/api/v1/landing/billing/commercial/orders/'.$order->public_id)
             ->assertOk()
-            ->assertJsonPath('data.selected_package_slugs', ['machinery', 'planning-schedules'])
+            ->assertJsonPath('data.selected_package_slugs', ['planning-schedules'])
+            ->assertJsonPath('data.target_package_slugs', ['machinery', 'planning-schedules'])
             ->assertJsonPath('data.current_package_slugs', ['machinery'])
-            ->assertJsonPath('data.paid_package_slugs', ['planning-schedules']);
+            ->assertJsonPath('data.paid_package_slugs', ['planning-schedules'])
+            ->assertJsonPath('data.paid_composition_items.0.type', 'package')
+            ->assertJsonPath('data.paid_composition_items.0.label', 'Графики и планирование');
     }
 
     public function test_order_payload_exposes_resource_addons_without_current_packages_as_paid_packages(): void
@@ -533,11 +536,11 @@ class CommercialCheckoutControllerTest extends TestCase
             'selected_package_slugs' => ['machinery', 'planning-schedules'],
             'current_package_slugs' => ['machinery', 'planning-schedules'],
             'selected_resource_addons' => [[
-                'slug' => 'extra_projects',
-                'limit_key' => 'projects',
-                'quantity' => 2,
-                'amount_minor' => 100000,
-                'amount' => '1000.00',
+                'slug' => 'storage_gb',
+                'limit_key' => 'storage_gb',
+                'quantity' => 10,
+                'amount_minor' => 20000,
+                'amount' => '200.00',
                 'currency' => 'RUB',
                 'status' => 'ok',
                 'requires_package' => null,
@@ -547,11 +550,15 @@ class CommercialCheckoutControllerTest extends TestCase
         $this->authenticatedAs($this->owner)
             ->getJson('/api/v1/landing/billing/commercial/orders/'.$order->public_id)
             ->assertOk()
-            ->assertJsonPath('data.selected_package_slugs', ['machinery', 'planning-schedules'])
+            ->assertJsonPath('data.selected_package_slugs', [])
+            ->assertJsonPath('data.target_package_slugs', ['machinery', 'planning-schedules'])
             ->assertJsonPath('data.current_package_slugs', ['machinery', 'planning-schedules'])
             ->assertJsonPath('data.paid_package_slugs', [])
-            ->assertJsonPath('data.selected_resource_addons.0.slug', 'extra_projects')
-            ->assertJsonPath('data.selected_resource_addons.0.quantity', 2);
+            ->assertJsonPath('data.selected_resource_addons.0.slug', 'storage_gb')
+            ->assertJsonPath('data.selected_resource_addons.0.quantity', 10)
+            ->assertJsonPath('data.paid_composition_items.0.type', 'resource')
+            ->assertJsonPath('data.paid_composition_items.0.label', 'Дополнительное хранилище')
+            ->assertJsonPath('data.paid_composition_items.0.quantity', 10);
     }
 
     public function test_refunded_order_status_keeps_paid_timestamp_and_refund_summary(): void
