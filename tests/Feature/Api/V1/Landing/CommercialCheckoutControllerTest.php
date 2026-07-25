@@ -522,6 +522,38 @@ class CommercialCheckoutControllerTest extends TestCase
             ->assertJsonPath('data.paid_package_slugs', ['planning-schedules']);
     }
 
+    public function test_order_payload_exposes_resource_addons_without_current_packages_as_paid_packages(): void
+    {
+        [$order] = $this->commercialOrder(
+            $this->organization,
+            $this->commercialAccount(),
+            'paid',
+        );
+        $order->forceFill([
+            'selected_package_slugs' => ['machinery', 'planning-schedules'],
+            'current_package_slugs' => ['machinery', 'planning-schedules'],
+            'selected_resource_addons' => [[
+                'slug' => 'extra_projects',
+                'limit_key' => 'projects',
+                'quantity' => 2,
+                'amount_minor' => 100000,
+                'amount' => '1000.00',
+                'currency' => 'RUB',
+                'status' => 'ok',
+                'requires_package' => null,
+            ]],
+        ])->save();
+
+        $this->authenticatedAs($this->owner)
+            ->getJson('/api/v1/landing/billing/commercial/orders/'.$order->public_id)
+            ->assertOk()
+            ->assertJsonPath('data.selected_package_slugs', ['machinery', 'planning-schedules'])
+            ->assertJsonPath('data.current_package_slugs', ['machinery', 'planning-schedules'])
+            ->assertJsonPath('data.paid_package_slugs', [])
+            ->assertJsonPath('data.selected_resource_addons.0.slug', 'extra_projects')
+            ->assertJsonPath('data.selected_resource_addons.0.quantity', 2);
+    }
+
     public function test_refunded_order_status_keeps_paid_timestamp_and_refund_summary(): void
     {
         [$order, $payment] = $this->commercialOrder(
@@ -1178,6 +1210,7 @@ class CommercialCheckoutControllerTest extends TestCase
             $table->unsignedInteger('quote_version');
             $table->json('selected_package_slugs');
             $table->json('current_package_slugs');
+            $table->json('selected_resource_addons')->nullable();
             $table->unsignedBigInteger('amount_minor');
             $table->decimal('amount', 14, 2);
             $table->string('currency', 3);

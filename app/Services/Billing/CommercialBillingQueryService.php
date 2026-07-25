@@ -173,6 +173,7 @@ final class CommercialBillingQueryService
             'selected_package_slugs' => $order->selected_package_slugs,
             'current_package_slugs' => $order->current_package_slugs,
             'paid_package_slugs' => $this->paidPackageSlugs($order),
+            'selected_resource_addons' => $order->selected_resource_addons ?? [],
             'offer_type' => $order->offer_type->value,
             'period_start_at' => $order->period_start_at?->toJSON(),
             'period_end_at' => $order->period_end_at?->toJSON(),
@@ -223,6 +224,10 @@ final class CommercialBillingQueryService
         $selected = $order->selected_package_slugs;
         $current = $order->current_package_slugs;
         $paid = array_values(array_diff($selected, $current));
+
+        if ($paid === [] && ($order->selected_resource_addons ?? []) !== []) {
+            return [];
+        }
 
         return $paid === [] ? $selected : $paid;
     }
