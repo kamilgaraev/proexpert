@@ -117,7 +117,8 @@ class CommercialQuotaServiceTest extends TestCase
         }
 
         $expectedResourceSlugs = collect(config('commercial_limits.resources'))
-            ->filter(static fn (array $resource): bool => ($resource['requires_module'] ?? null) === null)
+            ->filter(static fn (array $resource): bool => ($resource['requires_module'] ?? null) === null
+                || ($resource['requires_module'] ?? null) === 'ai-assistant')
             ->sortBy('sort_order')
             ->keys()
             ->values()
@@ -125,7 +126,6 @@ class CommercialQuotaServiceTest extends TestCase
 
         $this->assertSame($expectedResourceSlugs, array_column($summary['resource_addons'], 'slug'));
         $this->assertNotContains('extra_holding_organizations', array_column($summary['resource_addons'], 'slug'));
-        $this->assertNotContains('extra_ai_requests', array_column($summary['resource_addons'], 'slug'));
         $this->assertNotContains('extra_ai_estimates', array_column($summary['resource_addons'], 'slug'));
         foreach ($summary['resource_addons'] as $resource) {
             $this->assertNotSame('', trim($resource['name']));
@@ -150,6 +150,10 @@ class CommercialQuotaServiceTest extends TestCase
         $documentPages = $this->resourceAddon($summary, 'extra_document_pages');
         $this->assertSame('estimates-norms', $documentPages['requires_package']);
         $this->assertFalse($documentPages['available']);
+
+        $aiRequests = $this->resourceAddon($summary, 'extra_ai_requests');
+        $this->assertSame('ai-assistant', $aiRequests['requires_module']);
+        $this->assertTrue($aiRequests['available']);
     }
 
     public function test_module_bound_resource_addons_are_available_only_with_active_modules(): void
@@ -157,16 +161,15 @@ class CommercialQuotaServiceTest extends TestCase
         $account = $this->account('active');
         $this->package($account, 'estimates-norms');
 
-        $withoutModules = $this->quota()->getQuotaSummary($this->organization);
-        $withoutModuleSlugs = array_column($withoutModules['resource_addons'], 'slug');
+        $withPackageModules = $this->quota()->getQuotaSummary($this->organization);
+        $withPackageModuleSlugs = array_column($withPackageModules['resource_addons'], 'slug');
 
-        $this->assertNotContains('extra_holding_organizations', $withoutModuleSlugs);
-        $this->assertNotContains('extra_ai_requests', $withoutModuleSlugs);
-        $this->assertNotContains('extra_ai_estimates', $withoutModuleSlugs);
+        $this->assertNotContains('extra_holding_organizations', $withPackageModuleSlugs);
+        $this->assertNotContains('extra_ai_requests', $withPackageModuleSlugs);
+        $this->assertContains('extra_ai_estimates', $withPackageModuleSlugs);
 
         $this->activateModule('multi-organization');
         $this->activateModule('ai-assistant');
-        $this->activateModule('ai-estimates');
 
         $withModules = $this->quota()->getQuotaSummary($this->organization);
 
@@ -243,6 +246,21 @@ class CommercialQuotaServiceTest extends TestCase
         $this->assertSame('module_required', $quote['items'][1]['status']);
         $this->assertSame('ai-assistant', $quote['items'][1]['requires_module']);
         $this->assertSame(0, $quote['amount_minor']);
+    }
+
+    public function test_quote_accepts_module_bound_resources_from_selected_packages(): void
+    {
+        $quote = $this->quota()->calculateResourceAddonQuote($this->organization, [
+            ['slug' => 'extra_ai_requests', 'quantity' => 100],
+            ['slug' => 'extra_ai_estimates', 'quantity' => 10],
+        ], ['projects-processes', 'estimates-norms']);
+
+        $this->assertFalse($quote['requires_manager']);
+        $this->assertSame('ok', $quote['items'][0]['status']);
+        $this->assertSame('ai-assistant', $quote['items'][0]['requires_module']);
+        $this->assertSame('ok', $quote['items'][1]['status']);
+        $this->assertSame('ai-estimates', $quote['items'][1]['requires_module']);
+        $this->assertSame(100000, $quote['amount_minor']);
     }
 
     public function test_paid_composition_keeps_labels_for_module_bound_resource_addons(): void

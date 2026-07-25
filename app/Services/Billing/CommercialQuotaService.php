@@ -108,7 +108,7 @@ class CommercialQuotaService
         $availablePackageSlugs = $packageSlugs === null
             ? $this->activePackageSlugs((int) $organization->getKey())
             : $this->normalizePackageSlugs($packageSlugs);
-        $activeModuleSlugs = $this->activeModuleSlugs((int) $organization->getKey());
+        $activeModuleSlugs = $this->activeModuleSlugs((int) $organization->getKey(), $availablePackageSlugs);
         $items = [];
         $totalMinor = 0;
         $requiresManager = false;
@@ -217,7 +217,7 @@ class CommercialQuotaService
     {
         $organizationId = (int) $organization->getKey();
         $activePackages = $this->activePackageSlugs($organizationId);
-        $activeModules = $this->activeModuleSlugs($organizationId);
+        $activeModules = $this->activeModuleSlugs($organizationId, $activePackages);
         $currentQuantities = $this->allocationTotals($organizationId, 'paid_addon');
         $resources = array_values($this->configuredResources());
 
@@ -333,10 +333,12 @@ class CommercialQuotaService
             ->all();
     }
 
-    private function activeModuleSlugs(int $organizationId): array
+    private function activeModuleSlugs(int $organizationId, array $packageSlugs = []): array
     {
+        $modules = $this->moduleSlugsFromPackages($packageSlugs);
+
         if (! Schema::hasTable('organization_module_activations') || ! Schema::hasTable('modules')) {
-            return [];
+            return $modules;
         }
 
         $query = DB::table('organization_module_activations')
@@ -354,9 +356,29 @@ class CommercialQuotaService
             $query->whereNull('organization_module_activations.cancelled_at');
         }
 
-        return $query
+        return array_values(array_unique(array_merge($modules, $query
             ->pluck('modules.slug')
-            ->all();
+            ->all())));
+    }
+
+    private function moduleSlugsFromPackages(array $packageSlugs): array
+    {
+        $modules = [];
+
+        foreach ($packageSlugs as $packageSlug) {
+            if (! is_string($packageSlug)) {
+                continue;
+            }
+
+            $modules = array_merge(
+                $modules,
+                $this->packageCatalog->tierModules($packageSlug, 'standard', includeFoundation: true),
+            );
+        }
+
+        sort($modules);
+
+        return array_values(array_unique($modules));
     }
 
     private function allocationTotals(int $organizationId, string $source): array
