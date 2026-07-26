@@ -61,7 +61,7 @@ CHECK (anchor IS NULL OR (jsonb_typeof(anchor) = 'object' AND anchor ?& ARRAY['t
 SQL;
 
         return [
-            'legal_documents_source_type_check' => ['legal_archive_documents', "CHECK (source_type IS NULL OR source_type IN ('project','contract','supplementary_agreement','performance_act','purchase_order','payment_document','commercial_proposal')) NOT VALID"],
+            'legal_documents_source_type_check' => ['legal_archive_documents', "CHECK (source_type IS NULL OR source_type IN ('project','contract','supplementary_agreement','performance_act','purchase_order','payment_document','commercial_proposal','crm_deal','estimate','executive_document')) NOT VALID"],
             'legal_document_party_snapshot_sets_version_fk' => ['legal_document_party_snapshot_sets', 'FOREIGN KEY (document_version_id, document_id, organization_id) REFERENCES legal_archive_document_versions (id, document_id, organization_id) ON DELETE RESTRICT NOT VALID'],
             'legal_document_party_snapshot_sets_captured_by_fk' => ['legal_document_party_snapshot_sets', 'FOREIGN KEY (captured_by_user_id) REFERENCES users (id) ON DELETE RESTRICT NOT VALID'],
             'legal_document_parties_document_fk' => ['legal_document_parties', 'FOREIGN KEY (document_id, organization_id) REFERENCES legal_archive_documents (id, organization_id) ON DELETE CASCADE NOT VALID'],
