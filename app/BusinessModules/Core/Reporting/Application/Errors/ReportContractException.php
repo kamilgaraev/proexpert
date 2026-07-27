@@ -60,6 +60,10 @@ final class ReportContractException extends RuntimeException
 
         $fields = $safeFields['fields'];
 
+        if (is_string($fields)) {
+            $fields = [$fields];
+        }
+
         if (!is_array($fields) || !array_is_list($fields) || $fields === []) {
             throw new InvalidArgumentException('report_safe_fields_invalid');
         }

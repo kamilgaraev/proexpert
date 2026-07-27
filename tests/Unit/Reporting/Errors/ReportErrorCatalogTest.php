@@ -96,6 +96,17 @@ final class ReportErrorCatalogTest extends TestCase
     }
 
     #[Test]
+    public function contract_exception_accepts_a_single_allowlisted_safe_field(): void
+    {
+        $exception = ReportContractException::fromCode(
+            ReportErrorCode::REPORT_REQUEST_INVALID,
+            ['fields' => 'as_of'],
+        );
+
+        self::assertSame(['fields' => 'as_of'], $exception->safeFields);
+    }
+
+    #[Test]
     public function contract_exception_rejects_non_allowlisted_safe_fields(): void
     {
         $this->expectException(InvalidArgumentException::class);
@@ -111,7 +122,6 @@ final class ReportErrorCatalogTest extends TestCase
     {
         foreach ([
             ['fields' => null],
-            ['fields' => 'as_of'],
             ['fields' => []],
             ['fields' => ['passport_number']],
             ['fields' => ['select * from projects']],
