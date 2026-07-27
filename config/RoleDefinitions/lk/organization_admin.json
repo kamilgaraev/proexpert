@@ -86,7 +86,13 @@
       "materials.create"
     ],
     "reports": [
-      "reports.*"
+      "reports.view",
+      "reports.run",
+      "reports.export",
+      "reports.download",
+      "reports.manage",
+      "reports.sensitive",
+      "reports.audit"
     ],
     "finance": [
       "finance.view"

@@ -23,7 +23,8 @@
       "materials.approve_requests"
     ],
     "reports": [
-      "reports.*"
+      "reports.view",
+      "reports.run"
     ],
     "finance": [
       "finance.view_project_budget",

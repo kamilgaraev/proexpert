@@ -44,7 +44,9 @@
     ],
     "reports": [
       "reports.view",
-      "reports.export"
+      "reports.run",
+      "reports.export",
+      "reports.download"
     ],
     "finance": [
       "finance.view"
