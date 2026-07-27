@@ -18,7 +18,7 @@ final readonly class ReportErrorDescriptor
             throw new InvalidArgumentException('report_error_http_status_invalid');
         }
 
-        if (!str_starts_with($translationKey, 'reports.errors.')) {
+        if (preg_match('/^reports\.errors\.[a-z0-9_]+$/', $translationKey) !== 1) {
             throw new InvalidArgumentException('report_error_translation_key_invalid');
         }
     }

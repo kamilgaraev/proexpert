@@ -5,11 +5,18 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Support;
 
 use InvalidArgumentException;
+use JsonException;
 
 final class CanonicalJson
 {
     public static function encode(array $value): string
     {
+        try {
+            json_encode($value, JSON_THROW_ON_ERROR);
+        } catch (JsonException $exception) {
+            throw new InvalidArgumentException('canonical_json_invalid_value', 0, $exception);
+        }
+
         return json_encode(
             self::normalize($value),
             JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES,

@@ -69,6 +69,7 @@ final class ReportErrorCatalogTest extends TestCase
         foreach ([
             [399, 'reports.errors.report_not_found'],
             [404, 'report.errors.report_not_found'],
+            [404, 'reports.errors.'],
         ] as [$httpStatus, $translationKey]) {
             try {
                 new ReportErrorDescriptor(ReportErrorCode::REPORT_NOT_FOUND, $httpStatus, false, $translationKey);
@@ -106,13 +107,25 @@ final class ReportErrorCatalogTest extends TestCase
     }
 
     #[Test]
-    public function contract_exception_rejects_nested_non_scalar_safe_fields(): void
+    public function contract_exception_rejects_values_outside_the_closed_safe_field_allowlist(): void
     {
-        $this->expectException(InvalidArgumentException::class);
-
-        new ReportContractException(
-            ReportErrorCode::REPORT_REQUEST_INVALID,
+        foreach ([
+            ['fields' => null],
+            ['fields' => 'as_of'],
+            ['fields' => []],
+            ['fields' => ['passport_number']],
+            ['fields' => ['select * from projects']],
+            ['fields' => ['filter.status']],
+            ['fields' => ['raw validation message']],
             ['fields' => ['field' => 'as_of']],
-        );
+            ['fields' => [['as_of']]],
+        ] as $safeFields) {
+            try {
+                new ReportContractException(ReportErrorCode::REPORT_REQUEST_INVALID, $safeFields);
+                self::fail('Недопустимое безопасное поле было принято.');
+            } catch (InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
     }
 }

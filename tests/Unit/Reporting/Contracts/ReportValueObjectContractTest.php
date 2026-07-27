@@ -98,6 +98,21 @@ final class ReportValueObjectContractTest extends TestCase
     }
 
     #[Test]
+    public function canonical_json_rejects_self_referential_arrays_without_recursing_unboundedly(): void
+    {
+        $value = [];
+        $value['self'] = &$value;
+        $previousLimit = ini_set('memory_limit', '32M');
+
+        try {
+            $this->expectException(InvalidArgumentException::class);
+            CanonicalJson::encode($value);
+        } finally {
+            ini_set('memory_limit', $previousLimit);
+        }
+    }
+
+    #[Test]
     public function reporting_enums_expose_the_stable_scalar_values(): void
     {
         self::assertSame(['asc', 'desc'], array_column(ReportSortDirection::cases(), 'value'));

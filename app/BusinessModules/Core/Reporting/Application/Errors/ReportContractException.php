@@ -10,6 +10,19 @@ use Throwable;
 
 final class ReportContractException extends RuntimeException
 {
+    private const SAFE_FIELD_NAMES = [
+        'as_of',
+        'organization_id',
+        'user_id',
+        'permission',
+        'permissions',
+        'formula_version',
+        'source_hash',
+        'snapshot_id',
+        'definition_hash',
+        'query_hash',
+    ];
+
     public readonly ReportErrorCode $errorCode;
 
     public readonly array $safeFields;
@@ -47,42 +60,14 @@ final class ReportContractException extends RuntimeException
 
         $fields = $safeFields['fields'];
 
-        if (is_array($fields) && !array_is_list($fields)) {
+        if (!is_array($fields) || !array_is_list($fields) || $fields === []) {
             throw new InvalidArgumentException('report_safe_fields_invalid');
         }
 
-        $values = is_array($fields) ? $fields : [$fields];
-
-        foreach ($values as $field) {
-            if (!is_scalar($field) && $field !== null) {
-                throw new InvalidArgumentException('report_safe_fields_invalid');
-            }
-
-            if (is_float($field) && !is_finite($field)) {
-                throw new InvalidArgumentException('report_safe_fields_invalid');
-            }
-
-            if (is_string($field) && !$this->isSafeFieldName($field)) {
+        foreach ($fields as $field) {
+            if (!is_string($field) || !in_array($field, self::SAFE_FIELD_NAMES, true)) {
                 throw new InvalidArgumentException('report_safe_fields_invalid');
             }
         }
-    }
-
-    private function isSafeFieldName(string $field): bool
-    {
-        if (preg_match('/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$/', $field) !== 1) {
-            return false;
-        }
-
-        $segments = explode('.', $field);
-
-        foreach ($segments as $segment) {
-            if (in_array($segment, ['delete', 'filter', 'from', 'insert', 'join', 'raw', 'select', 'sql', 'update', 'url', 'where'], true)
-                || str_starts_with($segment, 'raw_')) {
-                return false;
-            }
-        }
-
-        return true;
     }
 }
