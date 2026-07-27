@@ -1,0 +1,54 @@
+<?php
+
+declare(strict_types=1);
+
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportCatalogController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportDrillDownController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportExportController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRowsController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportRunController;
+use App\BusinessModules\Core\Reporting\Http\Admin\Middleware\RenderReportErrors;
+use App\Support\Routing\AdminRouteStack;
+use Illuminate\Support\Facades\Route;
+
+Route::prefix('api/v1/admin/reports')
+    ->name('admin.reports.')
+    ->middleware(AdminRouteStack::middleware(['module.access:reports', RenderReportErrors::class]))
+    ->group(function (): void {
+        Route::get('/catalog', ReportCatalogController::class)
+            ->middleware('authorize:reports.view')
+            ->name('catalog');
+        Route::post('/{reportCode}/runs', [ReportRunController::class, 'store'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.run'])
+            ->name('runs.store');
+        Route::get('/runs/{runId}', [ReportRunController::class, 'show'])
+            ->middleware('authorize:reports.view')
+            ->name('runs.show');
+        Route::get('/runs/{runId}/rows', ReportRowsController::class)
+            ->middleware('authorize:reports.view')
+            ->name('runs.rows');
+        Route::post('/runs/{runId}/drill-down', ReportDrillDownController::class)
+            ->middleware('authorize:reports.view')
+            ->name('runs.drill-down');
+        Route::post('/runs/{runId}/retry', [ReportRunController::class, 'retry'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.run'])
+            ->name('runs.retry');
+        Route::post('/runs/{runId}/cancel', [ReportRunController::class, 'cancel'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.run'])
+            ->name('runs.cancel');
+        Route::post('/runs/{runId}/exports', [ReportExportController::class, 'store'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.export'])
+            ->name('exports.store');
+        Route::get('/exports/{exportId}', [ReportExportController::class, 'show'])
+            ->middleware('authorize:reports.view')
+            ->name('exports.show');
+        Route::post('/exports/{exportId}/retry', [ReportExportController::class, 'retry'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.export'])
+            ->name('exports.retry');
+        Route::post('/exports/{exportId}/cancel', [ReportExportController::class, 'cancel'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.export'])
+            ->name('exports.cancel');
+        Route::post('/exports/{exportId}/download-link', [ReportExportController::class, 'downloadLink'])
+            ->middleware(['authorize:reports.view', 'authorize:reports.export', 'authorize:reports.download'])
+            ->name('exports.download-link');
+    });

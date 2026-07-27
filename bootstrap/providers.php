@@ -5,6 +5,7 @@ return [
     App\BusinessModules\Addons\EstimateGeneration\EstimateGenerationServiceProvider::class,
     App\BusinessModules\Core\Mdm\MdmServiceProvider::class,
     App\BusinessModules\Core\Payments\PaymentsServiceProvider::class,
+    App\BusinessModules\Core\Reporting\ReportingContractsServiceProvider::class,
     App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider::class,
     App\BusinessModules\Features\WorkflowManagement\WorkflowManagementServiceProvider::class,
     App\BusinessModules\Features\TimeTracking\TimeTrackingServiceProvider::class,

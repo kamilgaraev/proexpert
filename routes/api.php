@@ -218,7 +218,6 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         require __DIR__.'/api/v1/admin/access_recertification.php';
         require __DIR__.'/api/v1/admin/erp_controls.php';
         require __DIR__.'/api/v1/admin/legal_archive.php';
-        require __DIR__.'/api/v1/admin/reports.php';
         require __DIR__.'/api/v1/admin/report_templates.php';
         // Подключаем маршруты для подотчетных средств
         require __DIR__.'/api/v1/admin/advance_transactions.php';
