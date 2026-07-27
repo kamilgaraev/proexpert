@@ -27,6 +27,7 @@ final class ReportContractException extends RuntimeException
         'comparison',
         'locale',
         'saved_view_id',
+        'report_code',
         'run_id',
         'export_id',
         'cursor',

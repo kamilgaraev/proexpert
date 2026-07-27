@@ -135,7 +135,7 @@ final class ReportFormRequestContractTest extends TestCase
                 'as_of' => '2026-07-27T07:11:12Z',
                 'saved_view_id' => '01arz3ndektsv4rrffq69g5fav',
             ]);
-            $request->toData('project_margin');
+            $request->toData();
         } catch (ReportContractException $exception) {
             self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
             self::assertSame(['fields' => ['saved_view_id']], $exception->safeFields);
@@ -183,7 +183,7 @@ final class ReportFormRequestContractTest extends TestCase
             'saved_view_id' => '01ARZ3NDEKTSV4RRFFQ69G5FAV',
         ]);
 
-        $data = $request->toData('project_margin');
+        $data = $request->toData();
 
         self::assertSame('project_margin', $data->reportCode);
         self::assertSame(['status' => ['operator' => 'eq', 'value' => 'active']], $data->filters->values);
@@ -201,7 +201,7 @@ final class ReportFormRequestContractTest extends TestCase
             'as_of' => '2026-07-27T07:11:12Z',
         ]);
 
-        $data = $request->toData('project_margin');
+        $data = $request->toData();
 
         self::assertSame([], $data->comparison);
         self::assertSame('ru-RU', $data->locale);
@@ -221,7 +221,7 @@ final class ReportFormRequestContractTest extends TestCase
 
         self::assertSame(
             $normalizedValue,
-            $request->toData('project_margin')->asOf->format('Y-m-d\TH:i:s.vP'),
+            $request->toData()->asOf->format('Y-m-d\TH:i:s.vP'),
         );
     }
 
@@ -613,6 +613,11 @@ final class ReportFormRequestContractTest extends TestCase
         ?string $routeName = null,
         ?string $routeId = null,
     ): FormRequest {
+        if ($class === CreateReportRunRequest::class && $routeName === null) {
+            $routeName = 'reportCode';
+            $routeId = 'project_margin';
+        }
+
         /** @var FormRequest $request */
         $request = $class::create('/api/v1/admin/reports', $method, $input);
         $request->setContainer($this->app);
@@ -655,6 +660,11 @@ final class ReportFormRequestContractTest extends TestCase
         ?string $routeName,
         ?string $routeId,
     ): FormRequest {
+        if ($class === CreateReportRunRequest::class && $routeName === null) {
+            $routeName = 'reportCode';
+            $routeId = 'project_margin';
+        }
+
         $uri = '/api/v1/admin/reports';
         if ($query !== []) {
             $uri .= '?'.http_build_query($query);

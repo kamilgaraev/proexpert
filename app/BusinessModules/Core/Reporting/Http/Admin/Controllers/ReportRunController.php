@@ -27,12 +27,12 @@ final readonly class ReportRunController
     ) {
     }
 
-    public function store(CreateReportRunRequest $request, string $reportCode): JsonResponse
+    public function store(CreateReportRunRequest $request): JsonResponse
     {
         $key = new IdempotencyKey((string) $request->header('Idempotency-Key'));
         $run = $this->create->handle(
             $this->contexts->fromHttp($request),
-            $request->toData($reportCode),
+            $request->toData(),
             $key,
         );
 

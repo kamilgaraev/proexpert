@@ -41,6 +41,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Routing\Route;
 use PHPUnit\Framework\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\Reporting\FakeReportingActions;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExportBuilder;
@@ -176,11 +177,13 @@ final class ReportControllerContractTest extends TestCase
             CreateReportRunRequest::class,
             'POST',
             ['filters' => [], 'as_of' => '2026-07-27T07:11:12Z'],
+            'reportCode',
+            'project_margin',
             headers: ['Idempotency-Key' => str_repeat('a', 32)],
         );
         $route = $this->request(ReportRunRouteRequest::class, 'GET', [], 'runId', self::RUN_ID);
 
-        $created = $controller->store($create, 'project_margin');
+        $created = $controller->store($create);
         $shown = $controller->show($route);
         $retried = $controller->retry($route);
         $cancelled = $controller->cancel($route);
@@ -281,11 +284,13 @@ final class ReportControllerContractTest extends TestCase
             CreateReportRunRequest::class,
             'POST',
             ['filters' => [], 'as_of' => '2026-07-27T07:11:12Z'],
+            'reportCode',
+            'project_margin',
             headers: ['Idempotency-Key' => 'invalid'],
         );
 
         try {
-            $controller->store($invalid, 'project_margin');
+            $controller->store($invalid);
             self::fail('Expected invalid idempotency key.');
         } catch (ReportContractException $exception) {
             self::assertSame(ReportErrorCode::REPORT_IDEMPOTENCY_KEY_INVALID, $exception->errorCode);
@@ -300,12 +305,45 @@ final class ReportControllerContractTest extends TestCase
         $controller->show($route);
     }
 
+    #[DataProvider('invalidReportCodeProvider')]
+    public function test_invalid_report_code_is_rejected_before_context_and_action(mixed $reportCode): void
+    {
+        $queued = (new ReportRunBuilder())->id(self::RUN_ID)->queued();
+        $fake = new FakeReportingActions(['createRun' => $queued]);
+
+        try {
+            $this->request(
+                CreateReportRunRequest::class,
+                'POST',
+                ['filters' => [], 'as_of' => '2026-07-27T07:11:12Z'],
+                'reportCode',
+                $reportCode,
+                ['Idempotency-Key' => str_repeat('a', 32)],
+            );
+            self::fail('Expected report-code validation failure.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
+            self::assertSame(['fields' => ['report_code']], $exception->safeFields);
+            self::assertSame([], $fake->calls['createRun']);
+        }
+    }
+
+    public static function invalidReportCodeProvider(): array
+    {
+        return [
+            'too short' => ['ab'],
+            'uppercase' => ['Project_margin'],
+            'dash' => ['project-margin'],
+            'array shape' => [['project_margin']],
+        ];
+    }
+
     private function request(
         string $class,
         string $method,
         array $input = [],
         ?string $routeName = null,
-        ?string $routeId = null,
+        mixed $routeId = null,
         array $headers = [],
     ): FormRequest {
         /** @var FormRequest $request */
