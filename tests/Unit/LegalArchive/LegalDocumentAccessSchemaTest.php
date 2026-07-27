@@ -23,6 +23,17 @@ final class LegalDocumentAccessSchemaTest extends TestCase
             'estimate',
             'executive_document',
         ], array_column(LegalDocumentSourceType::cases(), 'value'));
+
+        $root = __DIR__.'/../../../';
+        $initialConstraints = file_get_contents($root.'database/migrations/2026_07_19_000520_add_legal_document_access_constraints.php');
+        $replacementConstraint = file_get_contents($root.'database/migrations/2026_07_26_000001_extend_legal_document_source_type_constraint.php');
+        self::assertIsString($initialConstraints);
+        self::assertIsString($replacementConstraint);
+
+        foreach (LegalDocumentSourceType::values() as $sourceType) {
+            self::assertStringContainsString("'{$sourceType}'", $initialConstraints);
+            self::assertStringContainsString("'{$sourceType}'", $replacementConstraint);
+        }
     }
 
     public function test_schema_is_online_safe_and_enforces_tenant_owned_composite_references(): void
