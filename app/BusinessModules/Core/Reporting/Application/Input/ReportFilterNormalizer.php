@@ -72,8 +72,7 @@ final class ReportFilterNormalizer
             $metadata = $definitions[$filter];
             $operator = $payload['operator'];
 
-            if (!in_array($metadata['type'], self::TYPES, true)
-                || !in_array($operator, self::OPERATORS, true)
+            if (!in_array($operator, self::OPERATORS, true)
                 || !in_array($operator, $metadata['operators'], true)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_UNSUPPORTED);
             }
@@ -100,6 +99,7 @@ final class ReportFilterNormalizer
         foreach ($definition->filters as $metadata) {
             if (!isset($metadata['type'], $metadata['operators'])
                 || !is_string($metadata['type'])
+                || !in_array($metadata['type'], self::TYPES, true)
                 || !is_array($metadata['operators'])
                 || !array_is_list($metadata['operators'])
                 || $metadata['operators'] === []

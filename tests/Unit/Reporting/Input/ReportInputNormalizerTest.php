@@ -80,6 +80,13 @@ final class ReportInputNormalizerTest extends TestCase
             [$this->definition(), ['missing' => ['operator' => 'eq', 'value' => 1]]],
             [$this->definition(), ['count' => ['operator' => 'contains', 'value' => 1]]],
             [$this->definition(filters: [['id' => 'broken', 'type' => 'json', 'operators' => ['eq']]]), ['broken' => ['operator' => 'eq', 'value' => 1]]],
+            [
+                $this->definition(filters: [
+                    ['id' => 'name', 'type' => 'string', 'operators' => ['eq']],
+                    ['id' => 'broken', 'type' => 'json', 'operators' => ['eq']],
+                ]),
+                ['name' => ['operator' => 'eq', 'value' => 'МОСТ']],
+            ],
         ] as [$definition, $input]) {
             $this->assertError(
                 ReportErrorCode::REPORT_FILTER_UNSUPPORTED,
@@ -147,6 +154,7 @@ final class ReportInputNormalizerTest extends TestCase
                 {
                     throw ReportContractException::fromCode(
                         ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND,
+                        ['fields' => $value === 999 ? 'columns' : 'format'],
                     );
                 }
             },
@@ -166,8 +174,10 @@ final class ReportInputNormalizerTest extends TestCase
             }
         }
 
-        self::assertSame($exceptions[0]->errorCode, $exceptions[1]->errorCode);
-        self::assertSame($exceptions[0]->safeFields, $exceptions[1]->safeFields);
+        self::assertSame(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND, $exceptions[0]->errorCode);
+        self::assertSame(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND, $exceptions[1]->errorCode);
+        self::assertSame([], $exceptions[0]->safeFields);
+        self::assertSame([], $exceptions[1]->safeFields);
     }
 
     #[Test]
