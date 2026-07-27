@@ -107,6 +107,19 @@ final class ReportErrorCatalogTest extends TestCase
     }
 
     #[Test]
+    public function contract_exception_accepts_public_export_input_field_names(): void
+    {
+        foreach (['columns', 'format'] as $field) {
+            $exception = ReportContractException::fromCode(
+                ReportErrorCode::REPORT_FILTER_UNSUPPORTED,
+                ['fields' => $field],
+            );
+
+            self::assertSame(['fields' => $field], $exception->safeFields);
+        }
+    }
+
+    #[Test]
     public function contract_exception_rejects_non_allowlisted_safe_fields(): void
     {
         $this->expectException(InvalidArgumentException::class);

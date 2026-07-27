@@ -21,6 +21,8 @@ final class ReportContractException extends RuntimeException
         'snapshot_id',
         'definition_hash',
         'query_hash',
+        'columns',
+        'format',
     ];
 
     public readonly ReportErrorCode $errorCode;
