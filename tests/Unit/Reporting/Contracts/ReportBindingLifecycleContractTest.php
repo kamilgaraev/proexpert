@@ -254,11 +254,20 @@ final class ReportBindingLifecycleContractTest extends TestCase
     #[Test]
     public function every_run_builder_setter_is_observable_in_a_valid_state(): void
     {
-        $fixture = (new ReportRunBuilder())->ready();
-        $timestamp = new \DateTimeImmutable('2026-01-01T00:01:00+00:00');
+        $timestamp = new \DateTimeImmutable('2026-01-01T00:00:30+00:00');
         $definitionHash = new Sha256Hash(str_repeat('d', 64));
         $queryHash = new Sha256Hash(str_repeat('e', 64));
         $sourceHash = new Sha256Hash(str_repeat('f', 64));
+        $defaultSourceHash = new Sha256Hash(str_repeat('c', 64));
+        $scope = (new ReportExecutionContextBuilder())->build()->scope;
+        $metadata = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata(
+            new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef('report', 'snapshot2', $scope, new Sha256Hash(str_repeat('a', 64)), '1', $defaultSourceHash, new \DateTimeImmutable('2026-01-01T00:01:00+00:00'), null, []),
+            0,
+            new \DateTimeImmutable('2026-01-01T00:01:00+00:00'),
+            null,
+        );
+        $quality = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus::PARTIAL, null, [], 1, \App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus::MISMATCH, ['metric'], []);
+        $provenance = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportProvenance('external', [new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef('external', 'report', 'snapshot2', 'v2', 'watermark2', 1, $defaultSourceHash)], $defaultSourceHash, null);
         $cases = [
             ['id', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->id('01J00000000000000000000002'), static fn ($run): string => $run->id, '01J00000000000000000000002', 'queued'],
             ['reportCode', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->reportCode('other'), static fn ($run): string => $run->reportCode, 'other', 'queued'],
@@ -272,11 +281,11 @@ final class ReportBindingLifecycleContractTest extends TestCase
             ['sourceHash', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->sourceHash($sourceHash), static fn ($run): ?Sha256Hash => $run->sourceHash, $sourceHash, 'ready'],
             ['progress', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->progress(50), static fn ($run): int => $run->progress, 50, 'queued'],
             ['rowCount', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->rowCount(7), static fn ($run): ?int => $run->rowCount, 7, 'ready'],
-            ['resultMetadata', static fn (ReportRunBuilder $builder) => $builder->resultMetadata($fixture->resultMetadata), static fn ($run) => $run->resultMetadata, $fixture->resultMetadata, 'ready'],
+            ['resultMetadata', static fn (ReportRunBuilder $builder) => $builder->resultMetadata($metadata), static fn ($run) => $run->resultMetadata, $metadata, 'ready', true],
             ['totals', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->totals(['sum' => 1]), static fn ($run): array => $run->totals, ['sum' => 1], 'ready'],
             ['freshness', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->freshness(ReportFreshnessStatus::STALE), static fn ($run) => $run->freshness, ReportFreshnessStatus::STALE, 'ready'],
-            ['quality', static fn (ReportRunBuilder $builder) => $builder->quality($fixture->quality), static fn ($run) => $run->quality, $fixture->quality, 'ready'],
-            ['provenance', static fn (ReportRunBuilder $builder) => $builder->provenance($fixture->provenance), static fn ($run) => $run->provenance, $fixture->provenance, 'ready'],
+            ['quality', static fn (ReportRunBuilder $builder) => $builder->quality($quality), static fn ($run) => $run->quality, $quality, 'ready', true],
+            ['provenance', static fn (ReportRunBuilder $builder) => $builder->provenance($provenance), static fn ($run) => $run->provenance, $provenance, 'ready', true],
             ['createdAt', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->createdAt(new \DateTimeImmutable('2025-12-31T23:00:00+00:00')), static fn ($run) => $run->createdAt, new \DateTimeImmutable('2025-12-31T23:00:00+00:00'), 'queued'],
             ['updatedAt', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->updatedAt(new \DateTimeImmutable('2026-01-01T00:02:00+00:00')), static fn ($run) => $run->updatedAt, new \DateTimeImmutable('2026-01-01T00:02:00+00:00'), 'ready'],
             ['readyAt', static fn (ReportRunBuilder $builder) => $builder->readyAt($timestamp), static fn ($run) => $run->readyAt, $timestamp, 'ready'],
@@ -286,19 +295,24 @@ final class ReportBindingLifecycleContractTest extends TestCase
             ['pollAfterMs', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->pollAfterMs(2500), static fn ($run): ?int => $run->pollAfterMs, 2500, 'queued'],
         ];
 
-        foreach ($cases as [$name, $apply, $read, $expected, $state]) {
+        foreach ($cases as $case) {
+            [$name, $apply, $read, $expected, $state, $identity] = $case + [null, null, null, null, null, false];
             $builder = new ReportRunBuilder();
             $apply($builder);
             $run = $state === 'ready' ? $builder->ready() : $builder->queued();
 
-            self::assertEquals($expected, $read($run), $name);
+            if ($identity) {
+                self::assertSame($expected, $read($run), $name);
+            } else {
+                self::assertEquals($expected, $read($run), $name);
+            }
         }
     }
 
     #[Test]
     public function every_export_builder_setter_is_observable_in_a_valid_state(): void
     {
-        $timestamp = new \DateTimeImmutable('2026-01-01T00:01:00+00:00');
+        $timestamp = new \DateTimeImmutable('2026-01-01T00:00:30+00:00');
         $exportHash = new Sha256Hash(str_repeat('a', 64));
         $checksum = new Sha256Hash(str_repeat('f', 64));
         $cases = [
