@@ -18,10 +18,6 @@ use Symfony\Component\HttpFoundation\Response as ResponseAlias;
  */
 class InterfaceMiddleware
 {
-    private const CLIENT_CURRENT_INTERFACE_SUPPLIED_ATTRIBUTE = '__most_interface_client_supplied';
-
-    private const SERVER_CURRENT_INTERFACE_DERIVED_ATTRIBUTE = '__most_interface_server_derived';
-
     protected AuthorizationService $authService;
 
     public function __construct(AuthorizationService $authService)
@@ -72,16 +68,16 @@ class InterfaceMiddleware
 
         $clientSuppliedCurrentInterface = $request->request->has('current_interface')
             || $request->query->has('current_interface');
-        $request->attributes->set(
-            self::CLIENT_CURRENT_INTERFACE_SUPPLIED_ATTRIBUTE,
-            $clientSuppliedCurrentInterface,
-        );
+        $provenance = InterfaceRequestProvenance::enter($request, $clientSuppliedCurrentInterface);
 
-        // Добавляем информацию об интерфейсе в запрос для дальнейшего использования
-        $request->merge(['current_interface' => $interface]);
-        $request->attributes->set(self::SERVER_CURRENT_INTERFACE_DERIVED_ATTRIBUTE, true);
+        try {
+            // Добавляем информацию об интерфейсе в запрос для дальнейшего использования
+            $request->merge(['current_interface' => $interface]);
 
-        return $next($request);
+            return $next($request);
+        } finally {
+            InterfaceRequestProvenance::leave($request, $provenance);
+        }
     }
 
     /**

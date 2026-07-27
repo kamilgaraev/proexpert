@@ -6,16 +6,13 @@ namespace App\BusinessModules\Core\Reporting\Http\Admin\Requests;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\Domain\Authorization\Http\Middleware\InterfaceRequestProvenance;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Validator as IlluminateValidator;
 
 abstract class ReportFormRequest extends FormRequest
 {
-    private const CLIENT_CURRENT_INTERFACE_SUPPLIED_ATTRIBUTE = '__most_interface_client_supplied';
-
-    private const SERVER_CURRENT_INTERFACE_DERIVED_ATTRIBUTE = '__most_interface_server_derived';
-
     abstract public function rules(): array;
 
     final public function authorize(): bool
@@ -92,8 +89,7 @@ abstract class ReportFormRequest extends FormRequest
     private function isTrustedServerDerivedInterface(string $field): bool
     {
         return $field === 'current_interface'
-            && $this->attributes->get(self::SERVER_CURRENT_INTERFACE_DERIVED_ATTRIBUTE) === true
-            && $this->attributes->get(self::CLIENT_CURRENT_INTERFACE_SUPPLIED_ATTRIBUTE) === false;
+            && InterfaceRequestProvenance::isTrustedServerDerived($this);
     }
 
     protected function failedValidation(Validator $validator): never

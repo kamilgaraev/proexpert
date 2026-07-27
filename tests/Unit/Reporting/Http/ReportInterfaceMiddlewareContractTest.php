@@ -17,6 +17,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Routing\Route;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 use Symfony\Component\HttpFoundation\Request as SymfonyRequest;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -136,6 +137,136 @@ final class ReportInterfaceMiddlewareContractTest extends TestCase
 
         self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
         self::assertSame([], $exception->safeFields);
+    }
+
+    public function test_direct_request_attributes_cannot_spoof_old_interface_markers(): void
+    {
+        $request = $this->reportRequest(
+            CreateReportRunRequest::class,
+            'POST',
+            [],
+            [
+                ...self::validRunBody(),
+                'current_interface' => 'admin',
+            ],
+        );
+        $request->attributes->set('__most_interface_client_supplied', false);
+        $request->attributes->set('__most_interface_server_derived', true);
+        $request->attributes->set('__most_interface_provenance', new \stdClass);
+
+        $exception = $this->validationException($request);
+
+        self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
+        self::assertSame([], $exception->safeFields);
+    }
+
+    public function test_same_request_loses_server_trust_after_middleware_returns(): void
+    {
+        $request = $this->reportRequest(CreateReportRunRequest::class, 'POST', [], self::validRunBody());
+
+        $response = $this->middleware()->handle(
+            $request,
+            static function (ReportFormRequest $request): Response {
+                $request->validateResolved();
+
+                return new Response(status: 204);
+            },
+            'admin',
+        );
+
+        self::assertSame(204, $response->getStatusCode());
+
+        $exception = $this->validationException($request);
+
+        self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
+    }
+
+    public function test_server_trust_is_cleaned_when_downstream_throws(): void
+    {
+        $request = $this->reportRequest(CreateReportRunRequest::class, 'POST', [], self::validRunBody());
+
+        try {
+            $this->middleware()->handle(
+                $request,
+                static function (): never {
+                    throw new RuntimeException('downstream-failure');
+                },
+                'admin',
+            );
+            self::fail('Expected downstream failure.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('downstream-failure', $exception->getMessage());
+        }
+
+        $exception = $this->validationException($request);
+
+        self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
+    }
+
+    public function test_different_request_identity_cannot_inherit_active_server_trust(): void
+    {
+        $trustedRequest = $this->reportRequest(CreateReportRunRequest::class, 'POST', [], self::validRunBody());
+        $untrustedRequest = $this->reportRequest(
+            CreateReportRunRequest::class,
+            'POST',
+            [],
+            [
+                ...self::validRunBody(),
+                'current_interface' => 'admin',
+            ],
+        );
+        $untrustedException = null;
+
+        $this->middleware()->handle(
+            $trustedRequest,
+            function (ReportFormRequest $request) use ($untrustedRequest, &$untrustedException): Response {
+                $request->validateResolved();
+                $untrustedException = $this->validationException($untrustedRequest);
+
+                return new Response(status: 204);
+            },
+            'admin',
+        );
+
+        self::assertInstanceOf(ReportContractException::class, $untrustedException);
+        self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $untrustedException->errorCode);
+    }
+
+    public function test_nested_middleware_keeps_outer_trust_until_outer_call_finishes(): void
+    {
+        $request = $this->reportRequest(CreateReportRunRequest::class, 'POST', [], self::validRunBody());
+        $middleware = $this->middleware();
+        $validations = 0;
+
+        $response = $middleware->handle(
+            $request,
+            function (ReportFormRequest $request) use ($middleware, &$validations): Response {
+                $innerResponse = $middleware->handle(
+                    $request,
+                    static function (ReportFormRequest $request) use (&$validations): Response {
+                        $request->validateResolved();
+                        $validations++;
+
+                        return new Response(status: 204);
+                    },
+                    'admin',
+                );
+                self::assertSame(204, $innerResponse->getStatusCode());
+
+                $request->validateResolved();
+                $validations++;
+
+                return new Response(status: 204);
+            },
+            'admin',
+        );
+
+        self::assertSame(204, $response->getStatusCode());
+        self::assertSame(2, $validations);
+
+        $exception = $this->validationException($request);
+
+        self::assertSame(ReportErrorCode::REPORT_REQUEST_INVALID, $exception->errorCode);
     }
 
     public static function validRequestProvider(): array
