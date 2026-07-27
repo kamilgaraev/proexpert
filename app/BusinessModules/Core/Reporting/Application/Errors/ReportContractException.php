@@ -23,6 +23,18 @@ final class ReportContractException extends RuntimeException
         'query_hash',
         'columns',
         'format',
+        'filters',
+        'comparison',
+        'locale',
+        'saved_view_id',
+        'run_id',
+        'export_id',
+        'cursor',
+        'limit',
+        'sort_by',
+        'sort_dir',
+        'token',
+        'timezone',
     ];
 
     public readonly ReportErrorCode $errorCode;

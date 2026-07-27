@@ -22,7 +22,7 @@ return [
     'errors' => [
         'report_not_found' => 'Отчёт не найден.',
         'report_scope_forbidden' => 'Отчёт недоступен в текущей организации.',
-        'report_request_invalid' => 'Проверьте параметры запроса отчёта.',
+        'report_request_invalid' => 'Некорректно заполнен запрос',
         'report_filter_unsupported' => 'Один из фильтров не поддерживается этим отчётом.',
         'report_filter_value_not_found' => 'Выбранное значение фильтра недоступно.',
         'report_filter_range_invalid' => 'Диапазон фильтра задан неверно.',
