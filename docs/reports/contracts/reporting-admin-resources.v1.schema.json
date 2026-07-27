@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:most:reporting:admin-resources:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["success", "message", "data"],
+  "properties": {
+    "success": {"const": true},
+    "message": {"type": ["string", "null"]},
+    "data": {
+      "oneOf": [
+        {"$ref": "#/$defs/catalog"},
+        {"$ref": "#/$defs/run"},
+        {"$ref": "#/$defs/rows"},
+        {"$ref": "#/$defs/drill_down"},
+        {"$ref": "#/$defs/export"},
+        {"$ref": "#/$defs/download_link"},
+        {"$ref": "#/$defs/saved_view"}
+      ]
+    },
+    "meta": {"type": "object"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "sort": {"type": "object", "additionalProperties": false, "required": ["field", "direction"], "properties": {"field": {"type": "string"}, "direction": {"enum": ["asc", "desc"]}}},
+    "catalog": {"type": "object", "additionalProperties": false, "required": ["contract_version", "manifest_sha256", "definitions"], "properties": {"contract_version": {"const": "1.0.0"}, "manifest_sha256": {"$ref": "#/$defs/sha256"}, "definitions": {"type": "array"}}},
+    "run": {"type": "object", "additionalProperties": false, "required": ["id", "report_code", "status", "definition_hash", "contract_version", "formula_version", "source_schema_version", "renderer_version", "query_hash", "source_hash", "progress", "row_count", "freshness", "totals", "quality", "provenance", "created_at", "updated_at", "ready_at", "expires_at", "cancel_requested_at", "poll_after_ms"], "properties": {"id": {"type": "string"}, "report_code": {"type": "string"}, "status": {"enum": ["queued", "materializing", "ready", "failed", "cancelled", "expired"]}, "definition_hash": {"$ref": "#/$defs/sha256"}, "contract_version": {"type": "string"}, "formula_version": {"type": "string"}, "source_schema_version": {"type": "string"}, "renderer_version": {"type": "string"}, "query_hash": {"$ref": "#/$defs/sha256"}, "source_hash": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}, "progress": {"type": "integer", "minimum": 0, "maximum": 100}, "row_count": {"type": ["integer", "null"], "minimum": 0}, "freshness": {"type": ["string", "null"], "enum": ["fresh", "stale", "partial", "unavailable", null]}, "totals": {"type": "object"}, "quality": {"type": ["object", "null"]}, "provenance": {"type": ["object", "null"]}, "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"}, "ready_at": {"type": ["string", "null"], "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"}, "cancel_requested_at": {"type": ["string", "null"], "format": "date-time"}, "poll_after_ms": {"type": ["integer", "null"], "minimum": 1}}},
+    "rows": {"type": "object", "additionalProperties": false, "required": ["rows", "totals", "freshness", "quality"], "properties": {"rows": {"type": "array"}, "totals": {"type": "object"}, "freshness": {"enum": ["fresh", "stale", "partial", "unavailable"]}, "quality": {"type": "object"}}},
+    "drill_down": {"type": "object", "additionalProperties": false, "required": ["rows", "next_cursor", "resource_links"], "properties": {"rows": {"type": "array"}, "next_cursor": {"type": ["string", "null"]}, "resource_links": {"type": "array"}}},
+    "export": {"type": "object", "additionalProperties": false, "required": ["id", "run_id", "status", "export_hash", "format", "columns", "sort", "locale", "timezone", "size_bytes", "checksum", "created_at", "updated_at", "ready_at", "expires_at", "cancel_requested_at", "poll_after_ms"], "properties": {"id": {"type": "string"}, "run_id": {"type": "string"}, "status": {"enum": ["queued", "running", "uploading", "ready", "failed", "cancelled", "expired"]}, "export_hash": {"$ref": "#/$defs/sha256"}, "format": {"enum": ["csv", "xlsx", "pdf"]}, "columns": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}, "sort": {"$ref": "#/$defs/sort"}, "locale": {"type": "string"}, "timezone": {"type": "string"}, "size_bytes": {"type": ["integer", "null"], "minimum": 1}, "checksum": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}, "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"}, "ready_at": {"type": ["string", "null"], "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"}, "cancel_requested_at": {"type": ["string", "null"], "format": "date-time"}, "poll_after_ms": {"type": ["integer", "null"], "minimum": 1}}},
+    "download_link": {"type": "object", "additionalProperties": false, "required": ["url", "version_id", "expires_at"], "properties": {"url": {"type": "string"}, "version_id": {"type": "string"}, "expires_at": {"type": "string", "format": "date-time"}}},
+    "saved_view": {"type": "object", "additionalProperties": false, "required": ["id", "report_code", "contract_version", "name", "visibility", "filters", "comparison", "sort", "columns", "status", "is_default", "created_at", "updated_at"], "properties": {"id": {"type": "string"}, "report_code": {"type": "string"}, "contract_version": {"type": "string"}, "name": {"type": "string", "minLength": 1, "maxLength": 120}, "visibility": {"enum": ["private", "organization"]}, "filters": {"type": "object"}, "comparison": {"type": "object"}, "sort": {"$ref": "#/$defs/sort"}, "columns": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}, "status": {"enum": ["active", "needs_migration"]}, "is_default": {"type": "boolean"}, "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"}}}
+  }
+}

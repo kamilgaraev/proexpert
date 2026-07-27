@@ -1,0 +1,27 @@
+{
+    "_readme": ["fixture"],
+    "content-hash": "834119c5373eedce5c218b3b8909d867",
+    "packages": [
+        {
+            "name": "vendor/runtime",
+            "version": "1.0.0",
+            "source": {"type": "git", "url": "https://example.invalid/runtime.git", "reference": "aaaaaaaa"}
+        }
+    ],
+    "packages-dev": [
+        {
+            "name": "vendor/tester",
+            "version": "2.0.0",
+            "require": {"php": "^8.2"}
+        }
+    ],
+    "aliases": [],
+    "minimum-stability": "stable",
+    "stability-flags": [],
+    "prefer-stable": false,
+    "prefer-lowest": false,
+    "platform": {"php": "^8.2"},
+    "platform-dev": [],
+    "platform-overrides": {"php": "8.2.29"},
+    "plugin-api-version": "2.9.0"
+}

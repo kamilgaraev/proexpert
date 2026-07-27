@@ -1,0 +1,30 @@
+{
+    "_readme": ["fixture"],
+    "content-hash": "f0d97476281a39a03d267ee63329683a",
+    "packages": [
+        {
+            "name": "vendor/runtime",
+            "version": "1.0.0",
+            "source": {"type": "git", "url": "https://example.invalid/runtime.git", "reference": "aaaaaaaa"}
+        },
+        {"name": "opis/json-schema", "version": "2.6.0"},
+        {"name": "opis/string", "version": "2.1.0"},
+        {"name": "opis/uri", "version": "1.1.0"}
+    ],
+    "packages-dev": [
+        {
+            "name": "vendor/tester",
+            "version": "2.0.0",
+            "require": {"php": "^8.2"}
+        }
+    ],
+    "aliases": [],
+    "minimum-stability": "stable",
+    "stability-flags": [],
+    "prefer-stable": false,
+    "prefer-lowest": false,
+    "platform": {"php": "^8.2"},
+    "platform-dev": [],
+    "platform-overrides": {"php": "8.2.29"},
+    "plugin-api-version": "2.9.0"
+}
