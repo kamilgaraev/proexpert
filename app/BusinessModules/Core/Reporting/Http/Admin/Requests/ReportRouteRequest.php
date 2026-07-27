@@ -19,7 +19,7 @@ abstract class ReportRouteRequest extends ReportFormRequest
     public function rules(): array
     {
         return [
-            '_route_id' => ['required', 'ulid'],
+            '_route_id' => ['required', ...$this->canonicalUlidRules()],
             ...$this->forbiddenClientFieldsRules(),
         ];
     }

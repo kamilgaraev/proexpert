@@ -34,6 +34,11 @@ abstract class ReportFormRequest extends FormRequest
         ];
     }
 
+    final protected function canonicalUlidRules(): array
+    {
+        return ['ulid', 'regex:/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/'];
+    }
+
     protected function acceptedBodyFields(): array
     {
         return [];
