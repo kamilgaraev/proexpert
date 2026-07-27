@@ -12,6 +12,10 @@ use Illuminate\Validation\Validator as IlluminateValidator;
 
 abstract class ReportFormRequest extends FormRequest
 {
+    private const CLIENT_CURRENT_INTERFACE_SUPPLIED_ATTRIBUTE = '__most_interface_client_supplied';
+
+    private const SERVER_CURRENT_INTERFACE_DERIVED_ATTRIBUTE = '__most_interface_server_derived';
+
     abstract public function rules(): array;
 
     final public function authorize(): bool
@@ -61,20 +65,35 @@ abstract class ReportFormRequest extends FormRequest
                 $forbidden = array_keys($this->forbiddenClientFieldsRules());
 
                 foreach (array_keys($this->request->all()) as $field) {
-                    if (!in_array($field, $this->acceptedBodyFields(), true)
-                        && !in_array($field, $forbidden, true)) {
+                    if ($this->isTrustedServerDerivedInterface($field)) {
+                        continue;
+                    }
+
+                    if (! in_array($field, $this->acceptedBodyFields(), true)
+                        && ! in_array($field, $forbidden, true)) {
                         $validator->errors()->add($field, trans_message('reports.errors.report_request_invalid'));
                     }
                 }
 
                 foreach (array_keys($this->query->all()) as $field) {
-                    if (!in_array($field, $this->acceptedQueryFields(), true)
-                        && !in_array($field, $forbidden, true)) {
+                    if ($this->isTrustedServerDerivedInterface($field)) {
+                        continue;
+                    }
+
+                    if (! in_array($field, $this->acceptedQueryFields(), true)
+                        && ! in_array($field, $forbidden, true)) {
                         $validator->errors()->add($field, trans_message('reports.errors.report_request_invalid'));
                     }
                 }
             },
         ];
+    }
+
+    private function isTrustedServerDerivedInterface(string $field): bool
+    {
+        return $field === 'current_interface'
+            && $this->attributes->get(self::SERVER_CURRENT_INTERFACE_DERIVED_ATTRIBUTE) === true
+            && $this->attributes->get(self::CLIENT_CURRENT_INTERFACE_SUPPLIED_ATTRIBUTE) === false;
     }
 
     protected function failedValidation(Validator $validator): never
