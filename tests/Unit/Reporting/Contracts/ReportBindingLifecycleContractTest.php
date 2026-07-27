@@ -17,6 +17,10 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBindingMap;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use LogicException;
 use PHPUnit\Framework\Attributes\Test;
@@ -100,6 +104,20 @@ final class ReportBindingLifecycleContractTest extends TestCase
     }
 
     #[Test]
+    public function empty_binding_map_is_valid_and_reports_missing_codes_as_not_found(): void
+    {
+        $map = new ReportDefinitionBindingMap([]);
+
+        self::assertSame([], $map->all());
+        try {
+            $map->get('missing');
+            self::fail('Missing binding was returned.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_NOT_FOUND, $exception->errorCode);
+        }
+    }
+
+    #[Test]
     public function fakes_record_exact_calls_and_keep_rows_repeatable(): void
     {
         $definition = (new ReportDefinitionBuilder())->payload();
@@ -126,6 +144,11 @@ final class ReportBindingLifecycleContractTest extends TestCase
         self::assertSame([$definition], $probe->definitions());
         self::assertCount(1, $dataProvider->materializeCalls());
         self::assertCount(1, $dataProvider->resultCalls());
+        self::assertSame([$context, $query, $progress], $dataProvider->materializeCalls()[0]);
+        self::assertSame([$context, $snapshot], $dataProvider->resultCalls()[0]);
+        self::assertSame([$context, $snapshot, $sort, null, 10], $rows->pageCalls()[0]);
+        self::assertSame([$context, $snapshot, $sort, 10], $rows->cursorCalls()[0]);
+        self::assertSame([$context, $snapshot, $sort, 10], $rows->cursorCalls()[1]);
         $this->expectException(LogicException::class);
         $dataProvider->result($context, new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef('report', 'other', $context->scope, $this->hash('a'), '1', $this->hash('b'), new \DateTimeImmutable('2026-01-01T00:00:00+00:00'), null, []));
     }
@@ -210,8 +233,7 @@ final class ReportBindingLifecycleContractTest extends TestCase
 
         self::assertSame($result, $provider->drillDown($context, $snapshot, $request));
         self::assertCount(1, $provider->calls());
-        self::assertSame($context, $provider->calls()[0][0]);
-        self::assertSame($request, $provider->calls()[0][2]);
+        self::assertSame([$context, $snapshot, $request], $provider->calls()[0]);
     }
 
     #[Test]
@@ -227,6 +249,97 @@ final class ReportBindingLifecycleContractTest extends TestCase
         self::assertSame('published', $published->payload()->publicationReadiness->value);
         self::assertSame(str_repeat('a', 64), $candidate->definitionHash->value);
         self::assertSame(str_repeat('a', 64), $published->definitionHash->value);
+    }
+
+    #[Test]
+    public function every_run_builder_setter_is_observable_in_a_valid_state(): void
+    {
+        $fixture = (new ReportRunBuilder())->ready();
+        $timestamp = new \DateTimeImmutable('2026-01-01T00:01:00+00:00');
+        $definitionHash = new Sha256Hash(str_repeat('d', 64));
+        $queryHash = new Sha256Hash(str_repeat('e', 64));
+        $sourceHash = new Sha256Hash(str_repeat('f', 64));
+        $cases = [
+            ['id', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->id('01J00000000000000000000002'), static fn ($run): string => $run->id, '01J00000000000000000000002', 'queued'],
+            ['reportCode', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->reportCode('other'), static fn ($run): string => $run->reportCode, 'other', 'queued'],
+            ['status', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->status(ReportRunStatus::MATERIALIZING), static fn ($run): ReportRunStatus => $run->status, ReportRunStatus::MATERIALIZING, 'queued'],
+            ['definitionHash', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->definitionHash($definitionHash), static fn ($run): Sha256Hash => $run->definitionHash, $definitionHash, 'ready'],
+            ['contractVersion', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->contractVersion('2'), static fn ($run): string => $run->contractVersion, '2', 'queued'],
+            ['formulaVersion', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->formulaVersion('2'), static fn ($run): string => $run->formulaVersion, '2', 'ready'],
+            ['sourceSchemaVersion', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->sourceSchemaVersion('2'), static fn ($run): string => $run->sourceSchemaVersion, '2', 'queued'],
+            ['rendererVersion', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->rendererVersion('2'), static fn ($run): string => $run->rendererVersion, '2', 'queued'],
+            ['queryHash', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->queryHash($queryHash), static fn ($run): Sha256Hash => $run->queryHash, $queryHash, 'queued'],
+            ['sourceHash', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->sourceHash($sourceHash), static fn ($run): ?Sha256Hash => $run->sourceHash, $sourceHash, 'ready'],
+            ['progress', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->progress(50), static fn ($run): int => $run->progress, 50, 'queued'],
+            ['rowCount', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->rowCount(7), static fn ($run): ?int => $run->rowCount, 7, 'ready'],
+            ['resultMetadata', static fn (ReportRunBuilder $builder) => $builder->resultMetadata($fixture->resultMetadata), static fn ($run) => $run->resultMetadata, $fixture->resultMetadata, 'ready'],
+            ['totals', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->totals(['sum' => 1]), static fn ($run): array => $run->totals, ['sum' => 1], 'ready'],
+            ['freshness', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->freshness(ReportFreshnessStatus::STALE), static fn ($run) => $run->freshness, ReportFreshnessStatus::STALE, 'ready'],
+            ['quality', static fn (ReportRunBuilder $builder) => $builder->quality($fixture->quality), static fn ($run) => $run->quality, $fixture->quality, 'ready'],
+            ['provenance', static fn (ReportRunBuilder $builder) => $builder->provenance($fixture->provenance), static fn ($run) => $run->provenance, $fixture->provenance, 'ready'],
+            ['createdAt', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->createdAt(new \DateTimeImmutable('2025-12-31T23:00:00+00:00')), static fn ($run) => $run->createdAt, new \DateTimeImmutable('2025-12-31T23:00:00+00:00'), 'queued'],
+            ['updatedAt', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->updatedAt(new \DateTimeImmutable('2026-01-01T00:02:00+00:00')), static fn ($run) => $run->updatedAt, new \DateTimeImmutable('2026-01-01T00:02:00+00:00'), 'ready'],
+            ['readyAt', static fn (ReportRunBuilder $builder) => $builder->readyAt($timestamp), static fn ($run) => $run->readyAt, $timestamp, 'ready'],
+            ['expiresAt', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->expiresAt(new \DateTimeImmutable('2026-01-03T00:00:00+00:00')), static fn ($run) => $run->expiresAt, new \DateTimeImmutable('2026-01-03T00:00:00+00:00'), 'queued'],
+            ['cancelRequestedAt', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->cancelRequestedAt(new \DateTimeImmutable('2026-01-01T00:00:30+00:00')), static fn ($run) => $run->cancelRequestedAt, new \DateTimeImmutable('2026-01-01T00:00:30+00:00'), 'queued'],
+            ['httpDisposition', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->httpDisposition('reused'), static fn ($run): string => $run->httpDisposition, 'reused', 'queued'],
+            ['pollAfterMs', static fn (ReportRunBuilder $builder): ReportRunBuilder => $builder->pollAfterMs(2500), static fn ($run): ?int => $run->pollAfterMs, 2500, 'queued'],
+        ];
+
+        foreach ($cases as [$name, $apply, $read, $expected, $state]) {
+            $builder = new ReportRunBuilder();
+            $apply($builder);
+            $run = $state === 'ready' ? $builder->ready() : $builder->queued();
+
+            self::assertEquals($expected, $read($run), $name);
+        }
+    }
+
+    #[Test]
+    public function every_export_builder_setter_is_observable_in_a_valid_state(): void
+    {
+        $timestamp = new \DateTimeImmutable('2026-01-01T00:01:00+00:00');
+        $exportHash = new Sha256Hash(str_repeat('a', 64));
+        $checksum = new Sha256Hash(str_repeat('f', 64));
+        $cases = [
+            ['id', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->id('01J00000000000000000000002'), static fn ($export): string => $export->id, '01J00000000000000000000002', 'queued'],
+            ['runId', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->runId('01J00000000000000000000003'), static fn ($export): string => $export->runId, '01J00000000000000000000003', 'queued'],
+            ['status', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->status(ReportExportStatus::RUNNING), static fn ($export) => $export->status, ReportExportStatus::RUNNING, 'queued'],
+            ['exportHash', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->exportHash($exportHash), static fn ($export) => $export->exportHash, $exportHash, 'queued'],
+            ['format', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->format('xlsx'), static fn ($export): string => $export->format, 'xlsx', 'queued'],
+            ['columns', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->columns(['total']), static fn ($export): array => $export->columns, ['total'], 'queued'],
+            ['sort', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->sort(new ReportWindowSort('total', ReportSortDirection::DESC)), static fn ($export) => $export->sort, new ReportWindowSort('total', ReportSortDirection::DESC), 'queued'],
+            ['locale', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->locale('en'), static fn ($export): string => $export->locale, 'en', 'queued'],
+            ['timezone', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->timezone(new \DateTimeZone('Europe/Moscow')), static fn ($export) => $export->timezone, new \DateTimeZone('Europe/Moscow'), 'queued'],
+            ['artifactPath', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->artifactPath('org-1/reports/custom.csv'), static fn ($export) => $export->artifactPath, 'org-1/reports/custom.csv', 'ready'],
+            ['versionId', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->versionId('version2'), static fn ($export) => $export->versionId, 'version2', 'ready'],
+            ['etag', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->etag('etag2'), static fn ($export) => $export->etag, 'etag2', 'ready'],
+            ['checksum', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->checksum($checksum), static fn ($export) => $export->checksum, $checksum, 'ready'],
+            ['sizeBytes', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->sizeBytes(2), static fn ($export) => $export->sizeBytes, 2, 'ready'],
+            ['rowCount', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->rowCount(7), static fn ($export) => $export->rowCount, 7, 'ready'],
+            ['createdAt', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->createdAt(new \DateTimeImmutable('2025-12-31T23:00:00+00:00')), static fn ($export) => $export->createdAt, new \DateTimeImmutable('2025-12-31T23:00:00+00:00'), 'queued'],
+            ['updatedAt', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->updatedAt(new \DateTimeImmutable('2026-01-01T00:02:00+00:00')), static fn ($export) => $export->updatedAt, new \DateTimeImmutable('2026-01-01T00:02:00+00:00'), 'ready'],
+            ['readyAt', static fn (ReportExportBuilder $builder) => $builder->readyAt($timestamp), static fn ($export) => $export->readyAt, $timestamp, 'ready'],
+            ['expiresAt', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->expiresAt(new \DateTimeImmutable('2026-01-03T00:00:00+00:00')), static fn ($export) => $export->expiresAt, new \DateTimeImmutable('2026-01-03T00:00:00+00:00'), 'queued'],
+            ['cancelRequestedAt', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->cancelRequestedAt(new \DateTimeImmutable('2026-01-01T00:00:30+00:00')), static fn ($export) => $export->cancelRequestedAt, new \DateTimeImmutable('2026-01-01T00:00:30+00:00'), 'queued'],
+            ['httpDisposition', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->httpDisposition('reused'), static fn ($export): string => $export->httpDisposition, 'reused', 'queued'],
+            ['pollAfterMs', static fn (ReportExportBuilder $builder): ReportExportBuilder => $builder->pollAfterMs(2500), static fn ($export) => $export->pollAfterMs, 2500, 'queued'],
+        ];
+
+        foreach ($cases as [$name, $apply, $read, $expected, $state]) {
+            $builder = new ReportExportBuilder();
+            $apply($builder);
+            $export = $state === 'ready' ? $builder->ready() : $builder->queued();
+
+            self::assertEquals($expected, $read($export), $name);
+        }
+    }
+
+    #[Test]
+    public function builders_reject_states_incompatible_with_the_selected_output(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        (new ReportRunBuilder())->sourceHash($this->hash('f'))->queued();
     }
 
     private function binding(string $code): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding

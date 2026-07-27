@@ -14,40 +14,80 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\CandidateReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
+use ReflectionNamedType;
+use ReflectionParameter;
 
 final class ReportPortSignatureTest extends TestCase
 {
     #[Test]
-    public function owner_ports_expose_the_exact_contracts(): void
+    public function every_owner_port_method_has_the_exact_public_signature(): void
     {
-        $this->assertSignature(ReportDataProvider::class, 'materialize', 3, 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportSnapshotRef');
-        $this->assertSignature(ReportDataProvider::class, 'result', 2, 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportResult');
-        $this->assertSignature(ReportRowQuery::class, 'page', 5, 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportPage');
-        $this->assertSignature(ReportRowQuery::class, 'cursor', 4, 'iterable');
-        $this->assertSignature(ReportDrillDownProvider::class, 'drillDown', 3, 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDrillDownResult');
-        $this->assertSignature(ReportDefinitionReadinessProbe::class, 'supports', 1, 'bool');
-        $this->assertSignature(ReportDefinitionRegistry::class, 'published', 1, PublishedReportDefinition::class);
-        $this->assertSignature(CandidateReportDefinitionRegistry::class, 'candidate', 1, CandidateReportDefinition::class);
+        $this->assertPort(ReportDataProvider::class, [
+            'materialize' => [['context', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportExecutionContext'], ['query', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportQuery'], ['progress', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportProgress'], 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportSnapshotRef'],
+            'result' => [['context', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportExecutionContext'], ['snapshot', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportSnapshotRef'], 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportResult'],
+        ]);
+        $this->assertPort(ReportRowQuery::class, [
+            'page' => [['context', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportExecutionContext'], ['snapshot', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportSnapshotRef'], ['sort', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportWindowSort'], ['cursor', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportCursor', true], ['limit', 'int'], 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportPage'],
+            'cursor' => [['context', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportExecutionContext'], ['snapshot', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportSnapshotRef'], ['sort', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportWindowSort'], ['chunkSize', 'int'], 'iterable'],
+        ]);
+        $this->assertPort(ReportDrillDownProvider::class, [
+            'drillDown' => [['context', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportExecutionContext'], ['snapshot', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportSnapshotRef'], ['request', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDrillDownRequest'], 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDrillDownResult'],
+        ]);
+        $this->assertPort(ReportDefinitionReadinessProbe::class, [
+            'supports' => [['definition', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDefinition'], 'bool'],
+        ]);
+        $this->assertPort(ReportDefinitionRegistry::class, [
+            'published' => [['code', 'string'], PublishedReportDefinition::class],
+            'publishedCodes' => ['array'],
+            'manifestSha256' => [Sha256Hash::class],
+        ]);
+        $this->assertPort(CandidateReportDefinitionRegistry::class, [
+            'candidate' => [['code', 'string'], CandidateReportDefinition::class],
+            'candidateCodes' => ['array'],
+        ]);
+        $this->assertPort(ReportDefinitionBindingAssembler::class, [
+            'register' => [['binding', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDefinitionBinding'], 'void'],
+            'assemble' => [['registry', ReportDefinitionRegistry::class], 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDefinitionBindingMap'],
+        ]);
+        $this->assertPort(ReportDefinitionCandidateValidator::class, [
+            'validate' => [['registry', CandidateReportDefinitionRegistry::class], ['bindings', 'iterable'], 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportCandidateValidationResult'],
+        ]);
     }
 
-    #[Test]
-    public function binding_lifecycle_ports_use_nominal_registries(): void
+    private function assertPort(string $port, array $methods): void
     {
-        $this->assertSignature(ReportDefinitionBindingAssembler::class, 'register', 1, 'void');
-        $this->assertSignature(ReportDefinitionBindingAssembler::class, 'assemble', 1, 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDefinitionBindingMap');
-        $this->assertSignature(ReportDefinitionCandidateValidator::class, 'validate', 2, 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportCandidateValidationResult');
-        self::assertSame(ReportDefinitionRegistry::class, (new ReflectionMethod(ReportDefinitionBindingAssembler::class, 'assemble'))->getParameters()[0]->getType()?->getName());
-        self::assertSame(CandidateReportDefinitionRegistry::class, (new ReflectionMethod(ReportDefinitionCandidateValidator::class, 'validate'))->getParameters()[0]->getType()?->getName());
+        $publicMethods = (new \ReflectionClass($port))->getMethods(ReflectionMethod::IS_PUBLIC);
+        self::assertSame(array_keys($methods), array_map(static fn (ReflectionMethod $method): string => $method->getName(), $publicMethods));
+
+        foreach ($methods as $name => $signature) {
+            $method = new ReflectionMethod($port, $name);
+            self::assertTrue($method->isPublic());
+            $returnType = array_pop($signature);
+            self::assertSame($returnType, $this->typeName($method->getReturnType()));
+            self::assertFalse($method->getReturnType()?->allowsNull() ?? true);
+            self::assertSame(count($signature), $method->getNumberOfParameters());
+
+            foreach ($signature as $index => $expected) {
+                $this->assertParameter($method->getParameters()[$index], $expected[0], $expected[1], $expected[2] ?? false);
+            }
+        }
     }
 
-    private function assertSignature(string $class, string $method, int $arity, string $returnType): void
+    private function assertParameter(ReflectionParameter $parameter, string $name, string $type, bool $nullable): void
     {
-        $reflection = new ReflectionMethod($class, $method);
+        self::assertSame($name, $parameter->getName());
+        self::assertSame($type, $this->typeName($parameter->getType()));
+        self::assertSame($nullable, $parameter->allowsNull());
+        self::assertFalse($parameter->isOptional());
+        self::assertFalse($parameter->isDefaultValueAvailable());
+    }
 
-        self::assertSame($arity, $reflection->getNumberOfParameters());
-        self::assertSame($returnType, $reflection->getReturnType()?->getName());
+    private function typeName(?ReflectionNamedType $type): ?string
+    {
+        return $type?->getName();
     }
 }

@@ -14,7 +14,7 @@ final readonly class ReportDefinitionBindingMap
 
     public function __construct(array $bindings)
     {
-        if ($bindings === [] || array_is_list($bindings)) {
+        if ($bindings !== [] && array_is_list($bindings)) {
             throw new InvalidArgumentException('report_definition_binding_map_invalid');
         }
 
