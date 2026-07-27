@@ -191,7 +191,8 @@ class AppServiceProvider extends ServiceProvider
             return new ChildOrganizationUserService(
                 $app->make(\App\Domain\Authorization\Services\CustomRoleService::class),
                 $app->make(\App\Domain\Authorization\Services\AuthorizationService::class),
-                $app->make(\App\Services\UserInvitationService::class)
+                $app->make(\App\Services\UserInvitationService::class),
+                $app->make(\App\Domain\Authorization\Services\RoleScanner::class)
             );
         });
 
