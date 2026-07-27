@@ -392,6 +392,14 @@ final class ReportWireDtoContractTest extends TestCase
     }
 
     #[Test]
+    public function download_link_accepts_case_insensitive_https_scheme(): void
+    {
+        $link = new ReportDownloadLink('HTTPS://storage.example/report.csv', 'version_1', $this->at(), $this->at('+1 minute'));
+
+        self::assertSame('HTTPS://storage.example/report.csv', $link->url);
+    }
+
+    #[Test]
     public function download_link_rejects_fractional_overflow_and_userinfo(): void
     {
         foreach ([
@@ -415,7 +423,10 @@ final class ReportWireDtoContractTest extends TestCase
             self::assertTrue($reflection->isFinal(), $class);
             self::assertTrue($reflection->isReadOnly(), $class);
 
-            $actualParameters = $reflection->getConstructor()?->getParameters() ?? [];
+            $constructor = $reflection->getConstructor();
+            self::assertNotNull($constructor, $class);
+            self::assertTrue($constructor->isPublic(), $class);
+            $actualParameters = $constructor->getParameters();
             self::assertCount(count($parameters), $actualParameters, $class);
 
             foreach ($parameters as $index => [$name, $type, $nullable]) {

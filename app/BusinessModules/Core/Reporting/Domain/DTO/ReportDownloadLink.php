@@ -17,7 +17,7 @@ final readonly class ReportDownloadLink
     ) {
         $parts = preg_match('/[\x00-\x1F\x7F]/', $url) === 1 ? false : parse_url($url);
 
-        if (!is_array($parts) || filter_var($url, FILTER_VALIDATE_URL) === false || ($parts['scheme'] ?? null) !== 'https' || !is_string($parts['host'] ?? null) || $parts['host'] === '' || isset($parts['user']) || isset($parts['pass']) || trim($versionId) === '' || $expiresAt <= $issuedAt || $expiresAt > $issuedAt->modify('+300 seconds')) {
+        if (!is_array($parts) || filter_var($url, FILTER_VALIDATE_URL) === false || strtolower((string) ($parts['scheme'] ?? '')) !== 'https' || !is_string($parts['host'] ?? null) || $parts['host'] === '' || isset($parts['user']) || isset($parts['pass']) || trim($versionId) === '' || $expiresAt <= $issuedAt || $expiresAt > $issuedAt->modify('+300 seconds')) {
             throw new InvalidArgumentException('report_download_link_invalid');
         }
     }
