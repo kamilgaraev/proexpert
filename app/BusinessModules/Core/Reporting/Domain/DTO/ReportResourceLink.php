@@ -30,15 +30,15 @@ final readonly class ReportResourceLink
     private static function hasSafeParams(array $params): bool
     {
         foreach ($params as $key => $value) {
-            if (is_string($key) && preg_match('/(?:model|class|table|url)/i', $key) === 1) {
+            if (!is_string($key) || !self::isSafeIdentifier($key)) {
                 return false;
             }
 
-            if (is_string($value) && preg_match('/(?:^[a-z][a-z0-9+.-]*:\/\/|^\/)/i', $value) === 1) {
-                return false;
+            if (is_int($value) && $value > 0) {
+                continue;
             }
 
-            if (is_array($value) && !self::hasSafeParams($value)) {
+            if (!is_string($value) || trim($value) !== $value || preg_match('/[\x00-\x1F\x7F]/', $value) === 1 || (!self::isSafeIdentifier($value) && !self::isUlid($value))) {
                 return false;
             }
         }
@@ -49,5 +49,10 @@ final readonly class ReportResourceLink
     private static function isSafeIdentifier(string $value): bool
     {
         return preg_match('/^[a-z][a-z0-9_]{0,63}$/', $value) === 1;
+    }
+
+    private static function isUlid(string $value): bool
+    {
+        return preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/', $value) === 1;
     }
 }

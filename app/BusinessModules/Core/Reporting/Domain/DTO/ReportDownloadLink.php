@@ -15,7 +15,9 @@ final readonly class ReportDownloadLink
         public DateTimeImmutable $issuedAt,
         public DateTimeImmutable $expiresAt,
     ) {
-        if (filter_var($url, FILTER_VALIDATE_URL) === false || !str_starts_with(strtolower($url), 'https://') || trim($versionId) === '' || $expiresAt <= $issuedAt || ($expiresAt->getTimestamp() - $issuedAt->getTimestamp()) > 300) {
+        $parts = preg_match('/[\x00-\x1F\x7F]/', $url) === 1 ? false : parse_url($url);
+
+        if (!is_array($parts) || filter_var($url, FILTER_VALIDATE_URL) === false || ($parts['scheme'] ?? null) !== 'https' || !is_string($parts['host'] ?? null) || $parts['host'] === '' || isset($parts['user']) || isset($parts['pass']) || trim($versionId) === '' || $expiresAt <= $issuedAt || $expiresAt > $issuedAt->modify('+300 seconds')) {
             throw new InvalidArgumentException('report_download_link_invalid');
         }
     }

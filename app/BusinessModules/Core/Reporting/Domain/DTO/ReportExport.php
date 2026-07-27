@@ -110,7 +110,7 @@ final readonly class ReportExport
         }
 
         foreach ([$readyAt, $cancelRequestedAt] as $timestamp) {
-            if ($timestamp !== null && ($timestamp < $createdAt || $timestamp > $expiresAt)) {
+            if ($timestamp !== null && ($timestamp < $createdAt || $timestamp > $updatedAt)) {
                 return false;
             }
         }

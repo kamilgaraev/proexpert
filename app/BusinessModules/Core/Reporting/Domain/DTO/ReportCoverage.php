@@ -29,6 +29,6 @@ final readonly class ReportCoverage
 
     private static function isZero(string $value): bool
     {
-        return (float) $value === 0.0;
+        return preg_match('/^0(?:\.0+)?$/', $value) === 1;
     }
 }

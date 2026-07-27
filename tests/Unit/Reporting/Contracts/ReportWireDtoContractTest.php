@@ -35,6 +35,8 @@ use DateTimeZone;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use ReflectionClass;
+use ReflectionNamedType;
 
 final class ReportWireDtoContractTest extends TestCase
 {
@@ -98,6 +100,16 @@ final class ReportWireDtoContractTest extends TestCase
     }
 
     #[Test]
+    public function coverage_uses_decimal_zero_semantics_without_float_conversion(): void
+    {
+        $zero = new ReportCoverage('0', '0.00', null);
+        self::assertSame('0.00', $zero->denominator);
+
+        $this->expectExceptionObject(new InvalidArgumentException('report_coverage_invalid'));
+        new ReportCoverage('0', '0.'.str_repeat('0', 400).'1', null);
+    }
+
+    #[Test]
     public function warning_requires_stable_code_and_safe_metric(): void
     {
         $warning = new ReportWarning('MISSING_COST', ReportWarningSeverity::WARNING, 'cost_total', 2);
@@ -156,11 +168,24 @@ final class ReportWireDtoContractTest extends TestCase
     }
 
     #[Test]
-    public function result_rejects_duplicate_schema_ids_and_dynamic_unsupported_values(): void
+    public function result_rejects_dynamic_unsupported_values_with_valid_schema(): void
     {
         $metadata = $this->metadata();
-        $this->expectException(InvalidArgumentException::class);
-        new ReportResult($metadata, ['amount' => fopen('php://memory', 'rb')], ReportFreshnessStatus::FRESH, $this->quality(), $this->provenance(), [['id' => 'amount'], ['id' => 'amount']], []);
+        $resource = fopen('php://memory', 'rb');
+
+        try {
+            $this->expectExceptionObject(new InvalidArgumentException('report_result_invalid'));
+            new ReportResult($metadata, ['amount' => $resource], ReportFreshnessStatus::FRESH, $this->quality(), $this->provenance(), [['id' => 'amount']], []);
+        } finally {
+            fclose($resource);
+        }
+    }
+
+    #[Test]
+    public function result_rejects_duplicate_schema_ids_with_json_safe_values(): void
+    {
+        $this->expectExceptionObject(new InvalidArgumentException('report_result_invalid'));
+        new ReportResult($this->metadata(), ['amount' => 1], ReportFreshnessStatus::FRESH, $this->quality(), $this->provenance(), [['id' => 'amount'], ['id' => 'amount']], []);
     }
 
     #[Test]
@@ -201,6 +226,31 @@ final class ReportWireDtoContractTest extends TestCase
     {
         $this->expectExceptionObject(new InvalidArgumentException('report_resource_link_invalid'));
         new ReportResourceLink('project', 'project_1', 'admin.reports.show', ['url' => 'https://example.test'], 'available');
+    }
+
+    #[Test]
+    public function resource_link_accepts_only_flat_safe_route_params(): void
+    {
+        $link = new ReportResourceLink('project', 'project_1', 'admin.projects.show', ['id' => 1, 'report_code' => 'sales_overview', 'run_id' => $this->ulid()], 'available');
+        self::assertSame(['id' => 1, 'report_code' => 'sales_overview', 'run_id' => $this->ulid()], $link->params);
+
+        foreach ([
+            ['id' => ['nested' => 1]],
+            ['id' => ' javascript:alert(1)'],
+            ['id' => 'data:text/plain,x'],
+            ['id' => 'mailto:user@example.test'],
+            ['id' => '//example.test'],
+            ['id' => '  value'],
+            ['id' => 0],
+            ['id' => true],
+        ] as $params) {
+            try {
+                new ReportResourceLink('project', 'project_1', 'admin.projects.show', $params, 'available');
+                self::fail('Допущен небезопасный параметр ссылки на ресурс.');
+            } catch (InvalidArgumentException $exception) {
+                self::assertSame('report_resource_link_invalid', $exception->getMessage());
+            }
+        }
     }
 
     #[Test]
@@ -260,6 +310,25 @@ final class ReportWireDtoContractTest extends TestCase
     }
 
     #[Test]
+    public function run_requires_events_not_later_than_updated_at(): void
+    {
+        self::assertInstanceOf(ReportRun::class, $this->reportRun(ReportRunStatus::READY, 'created', null, null, $this->at('-1 second')));
+        self::assertInstanceOf(ReportRun::class, $this->reportRun(ReportRunStatus::QUEUED, 'created', 1, null, null, $this->at('-1 second')));
+
+        foreach ([
+            [ReportRunStatus::READY, null, $this->at('+1 second'), null],
+            [ReportRunStatus::QUEUED, 1, null, $this->at('+1 second')],
+        ] as [$status, $pollAfterMs, $readyAt, $cancelRequestedAt]) {
+            try {
+                $this->reportRun($status, 'created', $pollAfterMs, null, $readyAt, $cancelRequestedAt);
+                self::fail('Допущено событие run после updatedAt.');
+            } catch (InvalidArgumentException $exception) {
+                self::assertSame('report_run_invalid', $exception->getMessage());
+            }
+        }
+    }
+
+    #[Test]
     public function ready_export_has_relative_location_and_complete_artifact(): void
     {
         $export = $this->export(ReportExportStatus::READY, 'created');
@@ -292,6 +361,25 @@ final class ReportWireDtoContractTest extends TestCase
     }
 
     #[Test]
+    public function export_requires_events_not_later_than_updated_at(): void
+    {
+        self::assertInstanceOf(ReportExport::class, $this->export(ReportExportStatus::READY, 'created', null, 'org-1/reports/export.csv', $this->at('-1 second')));
+        self::assertInstanceOf(ReportExport::class, $this->export(ReportExportStatus::QUEUED, 'created', 1, 'org-1/reports/export.csv', null, $this->at('-1 second')));
+
+        foreach ([
+            [ReportExportStatus::READY, null, $this->at('+1 second'), null],
+            [ReportExportStatus::QUEUED, 1, null, $this->at('+1 second')],
+        ] as [$status, $pollAfterMs, $readyAt, $cancelRequestedAt]) {
+            try {
+                $this->export($status, 'created', $pollAfterMs, 'org-1/reports/export.csv', $readyAt, $cancelRequestedAt);
+                self::fail('Допущено событие export после updatedAt.');
+            } catch (InvalidArgumentException $exception) {
+                self::assertSame('report_export_invalid', $exception->getMessage());
+            }
+        }
+    }
+
+    #[Test]
     public function download_link_requires_https_and_short_lifetime(): void
     {
         $link = new ReportDownloadLink('https://storage.example/report.csv', 'version_1', $this->at(), $this->at('+300 seconds'));
@@ -301,6 +389,51 @@ final class ReportWireDtoContractTest extends TestCase
         self::assertSame(300, $link->expiresAt->getTimestamp() - $link->issuedAt->getTimestamp());
         $this->expectException(InvalidArgumentException::class);
         new ReportDownloadLink('http://storage.example/report.csv', 'version_1', $this->at(), $this->at('+301 seconds'));
+    }
+
+    #[Test]
+    public function download_link_rejects_fractional_overflow_and_userinfo(): void
+    {
+        foreach ([
+            ['https://storage.example/report.csv', new DateTimeImmutable('2026-07-26T12:00:00.900000+00:00'), new DateTimeImmutable('2026-07-26T12:05:00.901000+00:00')],
+            ['https://user:pass@storage.example/report.csv', $this->at(), $this->at('+1 minute')],
+        ] as [$url, $issuedAt, $expiresAt]) {
+            try {
+                new ReportDownloadLink($url, 'version_1', $issuedAt, $expiresAt);
+                self::fail('Допущена недопустимая ссылка на скачивание.');
+            } catch (InvalidArgumentException $exception) {
+                self::assertSame('report_download_link_invalid', $exception->getMessage());
+            }
+        }
+    }
+
+    #[Test]
+    public function wire_dtos_expose_the_exact_reflected_constructor_contract(): void
+    {
+        foreach ($this->constructorContracts() as $class => $parameters) {
+            $reflection = new ReflectionClass($class);
+            self::assertTrue($reflection->isFinal(), $class);
+            self::assertTrue($reflection->isReadOnly(), $class);
+
+            $actualParameters = $reflection->getConstructor()?->getParameters() ?? [];
+            self::assertCount(count($parameters), $actualParameters, $class);
+
+            foreach ($parameters as $index => [$name, $type, $nullable]) {
+                $parameter = $actualParameters[$index];
+                self::assertSame($name, $parameter->getName(), $class);
+                self::assertInstanceOf(ReflectionNamedType::class, $parameter->getType(), $class);
+                self::assertSame($type, $parameter->getType()->getName(), $class);
+                self::assertSame($nullable, $parameter->getType()->allowsNull(), $class);
+                self::assertFalse($parameter->isDefaultValueAvailable(), $class);
+            }
+        }
+
+        foreach ([ReportRun::class, ReportExport::class] as $class) {
+            $method = (new ReflectionClass($class))->getMethod('responseHeaders');
+            self::assertTrue($method->isPublic(), $class);
+            self::assertSame('array', $method->getReturnType()?->getName(), $class);
+            self::assertCount(0, $method->getParameters(), $class);
+        }
     }
 
     private function snapshot(): ReportSnapshotRef
@@ -328,19 +461,41 @@ final class ReportWireDtoContractTest extends TestCase
         return new ReportQuality(ReportQualityStatus::COMPLETE, new ReportCoverage('3', '3', '1'), [], 0, ReportReconciliationStatus::MATCHED, [], []);
     }
 
-    private function reportRun(ReportRunStatus $status, string $disposition, ?int $pollAfterMs = null, ?int $rowCount = null): ReportRun
+    private function reportRun(ReportRunStatus $status, string $disposition, ?int $pollAfterMs = null, ?int $rowCount = null, ?DateTimeImmutable $readyAt = null, ?DateTimeImmutable $cancelRequestedAt = null): ReportRun
     {
         $ready = $status === ReportRunStatus::READY;
         $metadata = $ready ? $this->metadata() : null;
 
-        return new ReportRun($this->ulid(), 'sales_overview', $status, $this->hash(), 'contract_v1', 'formula_v1', 'schema_v1', 'renderer_v1', $this->hash('c'), $ready ? $this->hash('b') : null, $ready ? 100 : 0, $rowCount ?? ($ready ? 3 : null), $metadata, $ready ? ['amount' => 3] : [], $ready ? ReportFreshnessStatus::FRESH : null, $ready ? $this->quality() : null, $ready ? $this->provenance() : null, $this->at('-1 minute'), $this->at(), $ready ? $this->at() : null, $this->at('+1 hour'), null, $disposition, $pollAfterMs);
+        return new ReportRun($this->ulid(), 'sales_overview', $status, $this->hash(), 'contract_v1', 'formula_v1', 'schema_v1', 'renderer_v1', $this->hash('c'), $ready ? $this->hash('b') : null, $ready ? 100 : 0, $rowCount ?? ($ready ? 3 : null), $metadata, $ready ? ['amount' => 3] : [], $ready ? ReportFreshnessStatus::FRESH : null, $ready ? $this->quality() : null, $ready ? $this->provenance() : null, $this->at('-1 minute'), $this->at(), $ready ? ($readyAt ?? $this->at()) : null, $this->at('+1 hour'), $cancelRequestedAt, $disposition, $pollAfterMs);
     }
 
-    private function export(ReportExportStatus $status, string $disposition, ?int $pollAfterMs = null, ?string $artifactPath = 'org-1/reports/export.csv'): ReportExport
+    private function export(ReportExportStatus $status, string $disposition, ?int $pollAfterMs = null, ?string $artifactPath = 'org-1/reports/export.csv', ?DateTimeImmutable $readyAt = null, ?DateTimeImmutable $cancelRequestedAt = null): ReportExport
     {
         $ready = $status === ReportExportStatus::READY;
 
-        return new ReportExport($this->ulid(), $this->ulid(), $status, $this->hash(), 'csv', ['row_key', 'amount'], $this->sort(), 'ru', new DateTimeZone('UTC'), $ready ? $artifactPath : null, $ready ? 'version_1' : null, $ready ? 'etag_1' : null, $ready ? $this->hash('b') : null, $ready ? 10 : null, $ready ? 3 : null, $this->at('-1 minute'), $this->at(), $ready ? $this->at() : null, $this->at('+1 hour'), null, $disposition, $pollAfterMs);
+        return new ReportExport($this->ulid(), $this->ulid(), $status, $this->hash(), 'csv', ['row_key', 'amount'], $this->sort(), 'ru', new DateTimeZone('UTC'), $ready ? $artifactPath : null, $ready ? 'version_1' : null, $ready ? 'etag_1' : null, $ready ? $this->hash('b') : null, $ready ? 10 : null, $ready ? 3 : null, $this->at('-1 minute'), $this->at(), $ready ? ($readyAt ?? $this->at()) : null, $this->at('+1 hour'), $cancelRequestedAt, $disposition, $pollAfterMs);
+    }
+
+    private function constructorContracts(): array
+    {
+        return [
+            ReportSnapshotRef::class => [['kind', 'string', false], ['id', 'string', false], ['scope', ReportScope::class, false], ['definitionHash', Sha256Hash::class, false], ['formulaVersion', 'string', false], ['sourceHash', Sha256Hash::class, false], ['generatedAt', DateTimeImmutable::class, false], ['staleAt', DateTimeImmutable::class, true], ['watermarks', 'array', false]],
+            ReportSourceRef::class => [['source', 'string', false], ['snapshotKind', 'string', false], ['snapshotId', 'string', false], ['schemaVersion', 'string', false], ['watermark', 'string', false], ['rowCount', 'int', false], ['hash', Sha256Hash::class, false]],
+            ReportCoverage::class => [['numerator', 'string', false], ['denominator', 'string', false], ['ratio', 'string', true]],
+            ReportWarning::class => [['code', 'string', false], ['severity', ReportWarningSeverity::class, false], ['metric', 'string', true], ['affectedRowCount', 'int', false]],
+            ReportQuality::class => [['status', ReportQualityStatus::class, false], ['coverage', ReportCoverage::class, true], ['warnings', 'array', false], ['unmatchedCount', 'int', false], ['reconciliation', ReportReconciliationStatus::class, false], ['unknownMetrics', 'array', false], ['excludedSources', 'array', false]],
+            ReportProvenance::class => [['sourceOfTruth', 'string', false], ['sourceRefs', 'array', false], ['sourceHash', Sha256Hash::class, false], ['externalConfirmationRole', 'string', true]],
+            ReportResultMetadata::class => [['snapshot', ReportSnapshotRef::class, false], ['rowCount', 'int', false], ['generatedAt', DateTimeImmutable::class, false], ['staleAt', DateTimeImmutable::class, true]],
+            ReportResult::class => [['metadata', ReportResultMetadata::class, false], ['totals', 'array', false], ['freshness', ReportFreshnessStatus::class, false], ['quality', ReportQuality::class, false], ['provenance', ReportProvenance::class, false], ['rowSchema', 'array', false], ['capabilities', 'array', false]],
+            ReportCursor::class => [['token', 'string', false], ['runId', 'string', false], ['queryHash', Sha256Hash::class, false], ['sourceHash', Sha256Hash::class, false], ['sort', ReportWindowSort::class, false], ['expiresAt', DateTimeImmutable::class, false]],
+            ReportPage::class => [['rows', 'array', false], ['totals', 'array', false], ['freshness', ReportFreshnessStatus::class, false], ['quality', ReportQuality::class, false], ['nextCursor', 'string', true], ['limit', 'int', false], ['hasMore', 'bool', false], ['sort', ReportWindowSort::class, false]],
+            ReportDrillDownRequest::class => [['token', 'string', false], ['cursor', 'string', true], ['limit', 'int', false]],
+            ReportResourceLink::class => [['resourceType', 'string', false], ['resourceId', 'string', false], ['routeName', 'string', false], ['params', 'array', false], ['availability', 'string', false]],
+            ReportDrillDownResult::class => [['rows', 'array', false], ['nextCursor', 'string', true], ['resourceLinks', 'array', false]],
+            ReportRun::class => [['id', 'string', false], ['reportCode', 'string', false], ['status', ReportRunStatus::class, false], ['definitionHash', Sha256Hash::class, false], ['contractVersion', 'string', false], ['formulaVersion', 'string', false], ['sourceSchemaVersion', 'string', false], ['rendererVersion', 'string', false], ['queryHash', Sha256Hash::class, false], ['sourceHash', Sha256Hash::class, true], ['progress', 'int', false], ['rowCount', 'int', true], ['resultMetadata', ReportResultMetadata::class, true], ['totals', 'array', false], ['freshness', ReportFreshnessStatus::class, true], ['quality', ReportQuality::class, true], ['provenance', ReportProvenance::class, true], ['createdAt', DateTimeImmutable::class, false], ['updatedAt', DateTimeImmutable::class, false], ['readyAt', DateTimeImmutable::class, true], ['expiresAt', DateTimeImmutable::class, false], ['cancelRequestedAt', DateTimeImmutable::class, true], ['httpDisposition', 'string', false], ['pollAfterMs', 'int', true]],
+            ReportExport::class => [['id', 'string', false], ['runId', 'string', false], ['status', ReportExportStatus::class, false], ['exportHash', Sha256Hash::class, false], ['format', 'string', false], ['columns', 'array', false], ['sort', ReportWindowSort::class, false], ['locale', 'string', false], ['timezone', DateTimeZone::class, false], ['artifactPath', 'string', true], ['versionId', 'string', true], ['etag', 'string', true], ['checksum', Sha256Hash::class, true], ['sizeBytes', 'int', true], ['rowCount', 'int', true], ['createdAt', DateTimeImmutable::class, false], ['updatedAt', DateTimeImmutable::class, false], ['readyAt', DateTimeImmutable::class, true], ['expiresAt', DateTimeImmutable::class, false], ['cancelRequestedAt', DateTimeImmutable::class, true], ['httpDisposition', 'string', false], ['pollAfterMs', 'int', true]],
+            ReportDownloadLink::class => [['url', 'string', false], ['versionId', 'string', false], ['issuedAt', DateTimeImmutable::class, false], ['expiresAt', DateTimeImmutable::class, false]],
+        ];
     }
 
     private function scope(): ReportScope
