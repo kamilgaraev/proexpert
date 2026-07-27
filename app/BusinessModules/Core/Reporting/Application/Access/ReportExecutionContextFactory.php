@@ -56,8 +56,6 @@ final readonly class ReportExecutionContextFactory
                 ),
                 $authorization,
             );
-        } catch (ReportContractException $exception) {
-            throw $exception;
         } catch (Throwable $exception) {
             throw ReportContractException::fromCode(
                 ReportErrorCode::REPORT_SCOPE_FORBIDDEN,

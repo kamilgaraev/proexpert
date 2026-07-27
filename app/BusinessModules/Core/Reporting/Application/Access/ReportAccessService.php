@@ -67,9 +67,11 @@ final readonly class ReportAccessService
         }
 
         if ($operation === ReportOperation::DRILL_DOWN || ($operation === ReportOperation::VIEW && $source !== null)) {
-            if ($source === null || !$this->canAccessSource($context, $source)) {
+            if ($source === null) {
                 $this->deny();
             }
+
+            $this->assertSourceAccessible($context, $definition, $source);
         }
 
         return $visibility;
@@ -84,8 +86,6 @@ final readonly class ReportAccessService
             }
 
             return $actor;
-        } catch (ReportContractException $exception) {
-            throw $exception;
         } catch (Throwable $exception) {
             throw ReportContractException::fromCode(
                 ReportErrorCode::REPORT_SCOPE_FORBIDDEN,
@@ -105,12 +105,19 @@ final readonly class ReportAccessService
         return true;
     }
 
-    private function canAccessSource(ReportExecutionContext $context, ReportSourceRef $source): bool
+    private function assertSourceAccessible(
+        ReportExecutionContext $context,
+        ReportDefinition $definition,
+        ReportSourceRef $source,
+    ): void
     {
         try {
-            return $this->sourceAccessResolver->canAccess($context, $source);
-        } catch (Throwable) {
-            return false;
+            $this->sourceAccessResolver->assertAccessible($context, $definition, $source);
+        } catch (Throwable $exception) {
+            throw ReportContractException::fromCode(
+                ReportErrorCode::REPORT_SCOPE_FORBIDDEN,
+                previous: $exception,
+            );
         }
     }
 

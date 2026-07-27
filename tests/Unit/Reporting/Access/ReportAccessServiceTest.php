@@ -178,7 +178,11 @@ final class ReportAccessServiceTest extends TestCase
     {
         $permissions = ['definition.view', 'reports.view'];
         $resolver = new class implements ReportSourceAccessResolver {
-            public function canAccess(ReportExecutionContext $context, ReportSourceRef $source): bool
+            public function assertAccessible(
+                ReportExecutionContext $context,
+                ReportDefinition $definition,
+                ReportSourceRef $source,
+            ): void
             {
                 throw new \RuntimeException('foreign_source_identifier');
             }
@@ -214,6 +218,63 @@ final class ReportAccessServiceTest extends TestCase
         );
     }
 
+    public function test_source_access_is_bound_to_exact_context_definition_and_source(): void
+    {
+        $permissions = ['definition.view', 'reports.view'];
+        $context = $this->context($permissions);
+        $definition = $this->definition();
+        $source = $this->source();
+        $resolver = new class implements ReportSourceAccessResolver {
+            public ?ReportExecutionContext $context = null;
+            public ?ReportDefinition $definition = null;
+            public ?ReportSourceRef $source = null;
+
+            public function assertAccessible(
+                ReportExecutionContext $context,
+                ReportDefinition $definition,
+                ReportSourceRef $source,
+            ): void
+            {
+                $this->context = $context;
+                $this->definition = $definition;
+                $this->source = $source;
+            }
+        };
+        $service = new ReportAccessService($this->loader($permissions), $resolver);
+
+        $service->assertOperation($context, $definition, ReportOperation::DRILL_DOWN, $source);
+
+        self::assertSame($context, $resolver->context);
+        self::assertSame($definition, $resolver->definition);
+        self::assertSame($source, $resolver->source);
+    }
+
+    public function test_actor_loader_contract_error_is_scrubbed_at_operation_boundary(): void
+    {
+        $permissions = ['definition.export', 'reports.download', 'reports.export', 'reports.view'];
+        $loader = new class implements ReportActorLoader {
+            public function loadActive(int $actorId): ReportActor
+            {
+                throw ReportContractException::fromCode(
+                    ReportErrorCode::REPORT_NOT_FOUND,
+                    ['fields' => 'snapshot_id'],
+                );
+            }
+        };
+        $service = new ReportAccessService($loader, $this->sourceResolver(true));
+
+        $error = $this->captureDenial(fn () => $service->assertOperation(
+            $this->context($permissions),
+            $this->definition(),
+            ReportOperation::DOWNLOAD,
+            null,
+        ));
+
+        self::assertSame(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, $error->errorCode);
+        self::assertSame([], $error->safeFields);
+        self::assertInstanceOf(ReportContractException::class, $error->getPrevious());
+    }
+
     private function service(array $permissions, bool $sourceAllowed = true): ReportAccessService
     {
         return new ReportAccessService($this->loader($permissions), $this->sourceResolver($sourceAllowed));
@@ -240,9 +301,15 @@ final class ReportAccessServiceTest extends TestCase
             {
             }
 
-            public function canAccess(ReportExecutionContext $context, ReportSourceRef $source): bool
+            public function assertAccessible(
+                ReportExecutionContext $context,
+                ReportDefinition $definition,
+                ReportSourceRef $source,
+            ): void
             {
-                return $this->allowed;
+                if (!$this->allowed) {
+                    throw new \RuntimeException('source_forbidden');
+                }
             }
         };
     }

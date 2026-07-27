@@ -8,14 +8,21 @@ use App\BusinessModules\Core\Reporting\Application\Access\OrganizationReportScop
 use App\BusinessModules\Core\Reporting\Application\Access\ReportActorLoader;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCatalog;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Services\PermissionResolver;
+use App\Domain\Authorization\Services\RoleScanner;
 use App\Models\User;
 use App\Services\Logging\Context\RequestContext;
+use App\Services\Logging\LoggingService;
 use DateTimeZone;
+use Illuminate\Container\Container;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use PHPUnit\Framework\TestCase;
 
 final class OrganizationReportScopeResolverTest extends TestCase
@@ -52,7 +59,11 @@ final class OrganizationReportScopeResolverTest extends TestCase
             'reports.run',
             'reports.view',
         ]));
-        $factory = new ReportExecutionContextFactory($loader, new OrganizationReportScopeResolver(), $this->requestContext());
+        $factory = new ReportExecutionContextFactory(
+            $loader,
+            new OrganizationReportScopeResolver(),
+            $this->requestContext(),
+        );
 
         $context = $factory->create(41, $this->authorization());
 
@@ -76,6 +87,30 @@ final class OrganizationReportScopeResolverTest extends TestCase
         $this->expectScopeForbidden();
 
         $factory->create(41, $this->authorization());
+    }
+
+    public function test_factory_scrubs_actor_loader_contract_code_and_safe_fields(): void
+    {
+        $loader = new class implements ReportActorLoader {
+            public function loadActive(int $actorId): ReportActor
+            {
+                throw ReportContractException::fromCode(
+                    ReportErrorCode::REPORT_NOT_FOUND,
+                    ['fields' => 'snapshot_id'],
+                );
+            }
+        };
+        $factory = new ReportExecutionContextFactory($loader, new OrganizationReportScopeResolver(), $this->requestContext());
+
+        try {
+            $factory->create(41, $this->authorization());
+            self::fail('Expected actor boundary denial.');
+        } catch (ReportContractException $error) {
+            self::assertSame(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, $error->errorCode);
+            self::assertSame(403, ReportErrorCatalog::descriptor($error->errorCode)->httpStatus);
+            self::assertSame([], $error->safeFields);
+            self::assertInstanceOf(ReportContractException::class, $error->getPrevious());
+        }
     }
 
     public function test_from_http_ignores_client_scope_fields_and_keeps_only_route_metadata(): void
@@ -148,28 +183,35 @@ final class OrganizationReportScopeResolverTest extends TestCase
 
     public function test_authorization_bridge_forwards_queue_context_without_http_request(): void
     {
-        $service = new class extends AuthorizationService {
-            public ?array $receivedContext = null;
-
-            public function __construct()
+        $previousContainer = Container::getInstance();
+        $container = new Container();
+        $container->bind('request', static function (): never {
+            throw new \RuntimeException('ambient_request_was_resolved');
+        });
+        Container::setInstance($container);
+        $service = new class(
+            $this->createMock(RoleScanner::class),
+            $this->createMock(PermissionResolver::class),
+            $this->createMock(LoggingService::class),
+        ) extends AuthorizationService {
+            public function getUserRoles(User $user, ?AuthorizationContext $context = null): Collection
             {
+                return collect();
             }
 
-            protected function checkPermission(User $user, string $permission, ?array $context = null): bool
+            protected function resolveAuthContext(?array $context): ?AuthorizationContext
             {
-                $this->receivedContext = $context;
-
-                return $permission === 'reports.view';
+                return null;
             }
         };
+        $user = new User();
+        $user->id = 41;
 
-        self::assertTrue($service->canInContext(new User(), 'reports.view', $this->authorization()));
-        self::assertSame([
-            'channel' => 'queue',
-            'organization_id' => 7,
-            'project_ids' => [101],
-            'resource_ids' => [501],
-        ], $service->receivedContext);
+        try {
+            self::assertFalse($service->canInContext($user, 'reports.view', $this->authorization()));
+        } finally {
+            Container::setInstance($previousContainer);
+        }
     }
 
     private function actor(array $permissions = ['reports.view']): ReportActor

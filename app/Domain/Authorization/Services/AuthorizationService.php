@@ -92,7 +92,12 @@ class AuthorizationService
         string $permission,
         AuthorizationDecisionContext $context,
     ): bool {
-        return $this->checkPermission($user, $permission, $context->toAuthorizationArray());
+        return $this->evaluatePermission(
+            $user,
+            $permission,
+            $context->toAuthorizationArray(),
+            '',
+        );
     }
 
     /**
@@ -368,6 +373,21 @@ class AuthorizationService
      */
     protected function checkPermission(User $user, string $permission, ?array $context = null): bool
     {
+        return $this->evaluatePermission(
+            $user,
+            $permission,
+            $context,
+            $this->requestUserAgent(),
+        );
+    }
+
+    private function evaluatePermission(
+        User $user,
+        string $permission,
+        ?array $context,
+        string $userAgent,
+    ): bool
+    {
         // Если контекст не передан, но есть модульное право - определяем контекст организации автоматически
         if (!$context && $user->current_organization_id) {
             // Проверяем, является ли право модульным (содержит точку)
@@ -387,7 +407,6 @@ class AuthorizationService
         $roles = $this->getUserRoles($user, $authContext);
         
         if ($roles->isEmpty()) {
-            $userAgent = $this->requestUserAgent();
             if (!str_contains($userAgent, 'Prometheus')) {
                 $this->logging->security('auth.no_roles_found', [
                     'user_id' => $user->id,
@@ -398,7 +417,6 @@ class AuthorizationService
             return false;
         }
 
-        $userAgent = $this->requestUserAgent();
         if (!str_contains($userAgent, 'Prometheus')) {
             $userRoles = $roles->pluck('role_slug')->toArray();
             $this->logging->security('auth.checking_permission', [
