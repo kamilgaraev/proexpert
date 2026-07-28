@@ -169,11 +169,11 @@ final class ThinReportControllerTest extends TestCase
             'get run' => [$root.'Application\\Contracts\\GetReportRunAction', [$context, 'string'], $root.'Domain\\DTO\\ReportRun'],
             'rows' => [$root.'Application\\Contracts\\GetReportRowsAction', [$context, 'string', $root.'Domain\\DTO\\ReportRowsWindow'], $root.'Domain\\DTO\\ReportPage'],
             'drill-down' => [$root.'Application\\Contracts\\GetReportDrillDownAction', [$context, 'string', $root.'Domain\\DTO\\ReportDrillDownRequest'], $root.'Domain\\DTO\\ReportDrillDownResult'],
-            'retry run' => [$root.'Application\\Contracts\\RetryReportRunAction', [$context, 'string'], $root.'Domain\\DTO\\ReportRun'],
+            'retry run' => [$root.'Application\\Contracts\\RetryReportRunAction', [$context, 'string', $root.'Domain\\ValueObjects\\IdempotencyKey'], $root.'Domain\\DTO\\ReportRun'],
             'cancel run' => [$root.'Application\\Contracts\\CancelReportRunAction', [$context, 'string'], $root.'Domain\\DTO\\ReportRun'],
             'create export' => [$root.'Application\\Contracts\\CreateReportExportAction', [$context, 'string', $root.'Application\\Input\\CreateReportExportData', $root.'Domain\\ValueObjects\\IdempotencyKey'], $root.'Domain\\DTO\\ReportExport'],
             'get export' => [$root.'Application\\Contracts\\GetReportExportAction', [$context, 'string'], $root.'Domain\\DTO\\ReportExport'],
-            'retry export' => [$root.'Application\\Contracts\\RetryReportExportAction', [$context, 'string'], $root.'Domain\\DTO\\ReportExport'],
+            'retry export' => [$root.'Application\\Contracts\\RetryReportExportAction', [$context, 'string', $root.'Domain\\ValueObjects\\IdempotencyKey'], $root.'Domain\\DTO\\ReportExport'],
             'cancel export' => [$root.'Application\\Contracts\\CancelReportExportAction', [$context, 'string'], $root.'Domain\\DTO\\ReportExport'],
             'download' => [$root.'Application\\Contracts\\CreateReportDownloadLinkAction', [$context, $root.'Application\\Input\\CreateReportDownloadLinkData'], $root.'Domain\\DTO\\ReportDownloadLink'],
         ];

@@ -20,7 +20,7 @@ final class RunPlanOneAGatesTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (['processOverride', 'topologyOverride', 'harnessOverride', 'faultOverride', 'phpHashOverride', 'branchOverride'] as $property) {
+        foreach (['processOverride', 'topologyOverride', 'harnessOverride', 'faultOverride', 'phpHashOverride', 'phpVersionOverride', 'branchOverride'] as $property) {
             $this->setStaticProperty($property, null);
         }
         foreach (array_reverse($this->temporaryDirectories) as $directory) {
@@ -30,6 +30,8 @@ final class RunPlanOneAGatesTest extends TestCase
 
     public function test_four_gate_fixtures_validate_against_closed_schema(): void
     {
+        $this->assertStaticPathsCoverExactTaskFourAChangedPhpTests();
+
         foreach ($this->gateFixtureNames() as $file) {
             self::assertTrue($this->validates($this->decode($file)));
         }
@@ -109,6 +111,43 @@ final class RunPlanOneAGatesTest extends TestCase
         self::assertFalse($this->validates($fixture));
     }
 
+    public function test_schema_accepts_the_closed_twenty_case_retry_key_matrix(): void
+    {
+        $fixture = $this->decode('plan-1a-ci-malformed.valid.json');
+        self::assertSame([
+            'invalid_run_show_ulid',
+            'invalid_run_rows_ulid',
+            'invalid_run_drill_down_ulid',
+            'invalid_run_retry_ulid',
+            'missing_run_retry_idempotency_key',
+            'invalid_run_retry_idempotency_key',
+            'invalid_run_cancel_ulid',
+            'invalid_export_create_run_ulid',
+            'invalid_export_show_ulid',
+            'invalid_export_retry_ulid',
+            'missing_export_retry_idempotency_key',
+            'invalid_export_retry_idempotency_key',
+            'invalid_export_cancel_ulid',
+            'invalid_export_download_ulid',
+            'missing_run_as_of',
+            'rows_limit_101',
+            'missing_drill_down_token',
+            'invalid_export_format',
+            'unexpected_download_body',
+            'legacy_routes_absent',
+        ], array_column($fixture['cases'], 'case_id'));
+        self::assertSame([
+            'cases' => 20,
+            'passed' => 20,
+            'validation_cases' => 19,
+            'legacy_absence_cases' => 1,
+            'legacy_uri_count' => 19,
+            'http_requests' => 38,
+            'assertions' => 120,
+        ], $fixture['counts']);
+        self::assertTrue($this->validates($fixture));
+    }
+
     public function test_schema_rejects_ledger_command_reordering(): void
     {
         $fixture = $this->decode('plan-1a-command-ledger.valid.json');
@@ -120,7 +159,7 @@ final class RunPlanOneAGatesTest extends TestCase
     public function test_schema_rejects_ledger_count_drift(): void
     {
         $fixture = $this->decode('plan-1a-command-ledger.valid.json');
-        $fixture['commands'][0]['tests']++;
+        $fixture['commands'][0]['tests'] = 0;
 
         self::assertFalse($this->validates($fixture));
     }
@@ -331,17 +370,39 @@ final class RunPlanOneAGatesTest extends TestCase
         $this->assertEveryMutationRejected('plan-1a-command-ledger.valid.json', $mutations);
     }
 
-    public function test_contract_command_rejects_every_exit_and_summary_mutation(): void
+    public function test_real_contract_aggregate_matches_authority_and_rejects_every_exit_and_summary_mutation(): void
     {
+        $constant = (new ReflectionClass(\PlanOneAGates::class))->getReflectionConstant('CONTRACT_TESTS');
+        self::assertNotFalse($constant);
+        $process = new Process(
+            [self::PHP, '-c', self::PHP_DIR, 'vendor/bin/phpunit', ...$constant->getValue(), '--colors=never'],
+            $this->root(),
+        );
+        $process->setTimeout(180);
+        $process->mustRun();
+        $combined = $process->getOutput().$process->getErrorOutput();
+        self::assertSame(
+            1,
+            preg_match_all('/OK \\(([1-9][0-9]*) tests?, ([1-9][0-9]*) assertions?\\)/', $combined, $matches),
+        );
+        $ledger = $this->decode('plan-1a-command-ledger.valid.json');
+        $completion = $this->decode('plan-1a-completion.valid.json');
+        $actual = ['tests' => (int) $matches[1][0], 'assertions' => (int) $matches[2][0]];
+        self::assertSame(
+            ['tests' => $ledger['commands'][0]['tests'], 'assertions' => $ledger['commands'][0]['assertions']],
+            $actual,
+        );
+        self::assertSame(
+            ['tests' => $completion['commands'][0]['tests'], 'assertions' => $completion['commands'][0]['assertions']],
+            $actual,
+        );
+
         $mutations = [
             ['', '', 1, 'PLAN_1A_GATE_CONTRACT_COMMAND_FAILED'],
-            ['OK (287 tests, 2570 assertions) Skipped: 1', '', 0, 'PLAN_1A_GATE_CONTRACT_NON_PASS'],
-            ['OK (287 tests, 2570 assertions) Risky: 1', '', 0, 'PLAN_1A_GATE_CONTRACT_NON_PASS'],
+            ['OK (400 tests, 3000 assertions) Skipped: 1', '', 0, 'PLAN_1A_GATE_CONTRACT_NON_PASS'],
+            ['OK (400 tests, 3000 assertions) Risky: 1', '', 0, 'PLAN_1A_GATE_CONTRACT_NON_PASS'],
             ['', '', 0, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT'],
-            ['OK (287 tests, 2570 assertions) OK (287 tests, 2570 assertions)', '', 0, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT'],
-            ['OK (286 tests, 2570 assertions)', '', 0, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT'],
-            ['OK (40 tests, 2570 assertions)', '', 0, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT'],
-            ['OK (42 tests, 2570 assertions)', '', 0, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT'],
+            ['OK (400 tests, 3000 assertions) OK (400 tests, 3000 assertions)', '', 0, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT'],
         ];
 
         foreach ($mutations as [$stdout, $stderr, $exit, $message]) {
@@ -368,7 +429,7 @@ final class RunPlanOneAGatesTest extends TestCase
 
         foreach ($mutations as $staticResult) {
             $this->setProcessResults([
-                ['OK (287 tests, 2570 assertions)', '', 0],
+                ['OK (400 tests, 3000 assertions)', '', 0],
                 $staticResult,
             ]);
 
@@ -508,7 +569,7 @@ final class RunPlanOneAGatesTest extends TestCase
         $process = $this->runCli($repository);
 
         self::assertSame(3, $process->getExitCode());
-        self::assertStringContainsString('PLAN_1A_GATE_STAGED_DIRTY', $process->getErrorOutput());
+        self::assertStringContainsString('PLAN_1A_GATE_WORKTREE_DIRTY', $process->getErrorOutput());
         self::assertSame([], $this->gateOutputFiles($repository));
         self::assertSame([], glob($repository.'/build/reports/.plan-1a-*.tmp') ?: []);
     }
@@ -597,7 +658,7 @@ final class RunPlanOneAGatesTest extends TestCase
         $process = $this->runCli($repository, '--check');
 
         self::assertSame(3, $process->getExitCode());
-        self::assertStringContainsString('PLAN_1A_GATE_STAGED_DIRTY', $process->getErrorOutput());
+        self::assertStringContainsString('PLAN_1A_GATE_WORKTREE_DIRTY', $process->getErrorOutput());
         self::assertSame($before, $this->outputSnapshot($repository));
     }
 
@@ -691,7 +752,7 @@ final class RunPlanOneAGatesTest extends TestCase
         }
     }
 
-    public function test_precommit_exact_unstaged_task_eleven_set_is_accepted(): void
+    public function test_precommit_exact_unstaged_task_four_a_set_is_accepted(): void
     {
         [$repository, $head] = $this->precommitRepository();
 
@@ -700,10 +761,10 @@ final class RunPlanOneAGatesTest extends TestCase
         self::assertSame([], $this->gitPaths($repository, ['diff', '--cached', '--name-only']));
     }
 
-    public function test_precommit_staged_task_eleven_path_is_rejected(): void
+    public function test_precommit_partial_staged_task_four_a_set_is_rejected(): void
     {
         [$repository, $head] = $this->precommitRepository();
-        $this->git($repository, ['add', '.gitignore']);
+        $this->git($repository, ['add', $this->taskFourAPaths()[0]]);
 
         $this->expectException(\PlanOneAGatesFailure::class);
 
@@ -720,7 +781,7 @@ final class RunPlanOneAGatesTest extends TestCase
         $this->invokeStatic('validateGitState', [$repository, $head]);
     }
 
-    public function test_clean_canonical_task_eleven_commit_is_accepted(): void
+    public function test_clean_canonical_task_four_a_commit_is_accepted(): void
     {
         [$repository, $commit] = $this->canonicalRepository();
 
@@ -745,7 +806,7 @@ final class RunPlanOneAGatesTest extends TestCase
 
         $this->expectException(\PlanOneAGatesFailure::class);
 
-        $this->invokeStatic('validateCanonicalTaskElevenCommit', [$repository, $commit]);
+        $this->invokeStatic('validateCanonicalTaskFourACommit', [$repository, $commit]);
     }
 
     public function test_canonical_tracked_schema_byte_drift_is_rejected(): void
@@ -755,7 +816,7 @@ final class RunPlanOneAGatesTest extends TestCase
 
         $this->expectException(\PlanOneAGatesFailure::class);
 
-        $this->invokeStatic('validateCanonicalTaskElevenCommit', [$repository, $commit]);
+        $this->invokeStatic('validateCanonicalTaskFourACommit', [$repository, $commit]);
     }
 
     public function test_canonical_tracked_output_is_rejected(): void
@@ -768,7 +829,7 @@ final class RunPlanOneAGatesTest extends TestCase
         $trackedCommit = $this->git($repository, ['rev-parse', 'HEAD']);
 
         try {
-            $this->invokeStatic('validateCanonicalTaskElevenCommit', [$repository, $trackedCommit]);
+            $this->invokeStatic('validateCanonicalTaskFourACommit', [$repository, $trackedCommit]);
             self::fail('Expected tracked output rejection');
         } catch (\PlanOneAGatesFailure $failure) {
             self::assertSame(3, $failure->exitStatus);
@@ -880,6 +941,8 @@ final class RunPlanOneAGatesTest extends TestCase
 
     private function executeDirect(string $repository, string $commit): int
     {
+        $this->setStaticProperty('phpVersionOverride', static fn (): string => '8.2.29');
+
         return \PlanOneAGates::execute([
             'run-plan-1a-gates.php',
             '--repository-root='.$repository,
@@ -907,14 +970,7 @@ final class RunPlanOneAGatesTest extends TestCase
     private function precommitRepository(): array
     {
         $repository = $this->repository();
-        file_put_contents($repository.'/.gitignore', "base\n");
-        $this->git($repository, ['add', '.gitignore']);
-        $this->git($repository, ['commit', '-m', 'ignore base']);
-        file_put_contents($repository.'/.gitignore', $this->reportIgnoreRules());
-        foreach ($this->taskElevenPaths() as $path) {
-            if ($path === '.gitignore') {
-                continue;
-            }
+        foreach ($this->taskFourAPaths() as $path) {
             $this->write($repository.'/'.$path, $path);
         }
 
@@ -929,28 +985,49 @@ final class RunPlanOneAGatesTest extends TestCase
         $process->mustRun();
         $this->git($repository, ['config', 'user.email', 'reports@example.test']);
         $this->git($repository, ['config', 'user.name', 'Reports Test']);
-        foreach ($this->taskElevenPaths() as $path) {
+        foreach ($this->taskFourAPaths() as $path) {
             $this->write($repository.'/'.$path, (string) file_get_contents($this->root().'/'.$path));
         }
 
         return [$repository, $this->git($repository, ['rev-parse', 'HEAD'])];
     }
 
-    private function canonicalRepository(string $subject = 'test[reports]: добавлен проверяемый handoff Plan 1a'): array
+    private function canonicalRepository(string $subject = 'fix[reports]: зафиксировать классификацию и печать снимков'): array
     {
         [$repository] = $this->precommitRepository();
-        $this->git($repository, ['add', '--', ...$this->taskElevenPaths()]);
+        $this->git($repository, ['add', '--', ...$this->taskFourAPaths()]);
         $this->git($repository, ['commit', '-m', $subject]);
 
         return [$repository, $this->git($repository, ['rev-parse', 'HEAD'])];
     }
 
-    private function taskElevenPaths(): array
+    private function taskFourAPaths(): array
     {
-        $constant = (new ReflectionClass(\PlanOneAGates::class))->getReflectionConstant('TASK_ELEVEN_PATHS');
+        $constant = (new ReflectionClass(\PlanOneAGates::class))->getReflectionConstant('TASK_FOUR_A_PATHS');
         self::assertNotFalse($constant);
 
         return $constant->getValue();
+    }
+
+    private function assertStaticPathsCoverExactTaskFourAChangedPhpTests(): void
+    {
+        $reflection = new ReflectionClass(\PlanOneAGates::class);
+        $staticPaths = $reflection->getReflectionConstant('STATIC_PATHS');
+        self::assertNotFalse($staticPaths);
+
+        $expected = array_values(array_filter(
+            $this->taskFourAPaths(),
+            static fn (string $path): bool => (
+                str_starts_with($path, 'tests/Architecture/')
+                || str_starts_with($path, 'tests/Feature/')
+                || str_starts_with($path, 'tests/Unit/')
+            ) && str_ends_with($path, '.php'),
+        ));
+        $actual = array_values(array_intersect($staticPaths->getValue(), $expected));
+        sort($expected, SORT_STRING);
+        sort($actual, SORT_STRING);
+
+        self::assertSame($expected, $actual);
     }
 
     private function bundle(): array

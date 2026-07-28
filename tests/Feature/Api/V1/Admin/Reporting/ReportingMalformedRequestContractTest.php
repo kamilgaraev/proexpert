@@ -31,9 +31,10 @@ final class ReportingMalformedRequestContractTest extends TestCase
         self::assertSame($caseId, $record['case_id']);
         self::assertSame($requestCount, $record['request_count']);
         $legacy = $caseId === 'legacy_routes_absent';
+        $idempotencyCase = str_contains($caseId, '_retry_idempotency_key');
         self::assertSame([
             array_fill(0, $requestCount, $legacy ? 404 : 422),
-            array_fill(0, $requestCount, $legacy ? null : 'REPORT_REQUEST_INVALID'),
+            array_fill(0, $requestCount, $legacy ? null : ($idempotencyCase ? 'REPORT_IDEMPOTENCY_KEY_INVALID' : 'REPORT_REQUEST_INVALID')),
             0,
             0,
         ], [
@@ -52,10 +53,14 @@ final class ReportingMalformedRequestContractTest extends TestCase
         yield ['invalid_run_rows_ulid', 1, 6];
         yield ['invalid_run_drill_down_ulid', 1, 6];
         yield ['invalid_run_retry_ulid', 1, 6];
+        yield ['missing_run_retry_idempotency_key', 1, 6];
+        yield ['invalid_run_retry_idempotency_key', 1, 6];
         yield ['invalid_run_cancel_ulid', 1, 6];
         yield ['invalid_export_create_run_ulid', 1, 6];
         yield ['invalid_export_show_ulid', 1, 6];
         yield ['invalid_export_retry_ulid', 1, 6];
+        yield ['missing_export_retry_idempotency_key', 1, 6];
+        yield ['invalid_export_retry_idempotency_key', 1, 6];
         yield ['invalid_export_cancel_ulid', 1, 6];
         yield ['invalid_export_download_ulid', 1, 6];
         yield ['missing_run_as_of', 1, 6];

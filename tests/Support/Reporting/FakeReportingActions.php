@@ -88,7 +88,7 @@ final class FakeReportingActions
         };
         $this->retryRunAction = new class($this) implements RetryReportRunAction {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, string $runId): ReportRun { return $this->fake->retryRun($context, $runId); }
+            public function handle(ReportExecutionContext $context, string $runId, IdempotencyKey $key): ReportRun { return $this->fake->retryRun($context, $runId, $key); }
         };
         $this->cancelRunAction = new class($this) implements CancelReportRunAction {
             public function __construct(private readonly FakeReportingActions $fake) {}
@@ -104,7 +104,7 @@ final class FakeReportingActions
         };
         $this->retryExportAction = new class($this) implements RetryReportExportAction {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, string $exportId): ReportExport { return $this->fake->retryExport($context, $exportId); }
+            public function handle(ReportExecutionContext $context, string $exportId, IdempotencyKey $key): ReportExport { return $this->fake->retryExport($context, $exportId, $key); }
         };
         $this->cancelExportAction = new class($this) implements CancelReportExportAction {
             public function __construct(private readonly FakeReportingActions $fake) {}
@@ -162,9 +162,9 @@ final class FakeReportingActions
         return $result;
     }
 
-    public function retryRun(ReportExecutionContext $context, string $runId): ReportRun
+    public function retryRun(ReportExecutionContext $context, string $runId, IdempotencyKey $key): ReportRun
     {
-        $result = $this->record('retryRun', [$context, $runId]);
+        $result = $this->record('retryRun', [$context, $runId, $key]);
         assert($result instanceof ReportRun);
 
         return $result;
@@ -194,9 +194,9 @@ final class FakeReportingActions
         return $result;
     }
 
-    public function retryExport(ReportExecutionContext $context, string $exportId): ReportExport
+    public function retryExport(ReportExecutionContext $context, string $exportId, IdempotencyKey $key): ReportExport
     {
-        $result = $this->record('retryExport', [$context, $exportId]);
+        $result = $this->record('retryExport', [$context, $exportId, $key]);
         assert($result instanceof ReportExport);
 
         return $result;

@@ -39,6 +39,12 @@ return new class extends Migration
             $table->timestampTz('as_of', 6);
             $table->text('locale');
             $table->char('saved_view_id', 26)->nullable();
+            $table->unsignedBigInteger('saved_view_revision')->nullable();
+            $table->char('saved_view_hash', 64)->nullable();
+            $table->text('snapshot_classification');
+            $table->text('data_classification');
+            $table->jsonb('sensitive_column_ids');
+            $table->jsonb('audit_column_ids');
             $table->smallInteger('progress')->default(0);
             $table->unsignedBigInteger('row_count')->nullable();
             $table->jsonb('result_metadata')->nullable();
@@ -53,6 +59,11 @@ return new class extends Migration
             $table->timestampTz('snapshot_generated_at', 6)->nullable();
             $table->timestampTz('snapshot_stale_at', 6)->nullable();
             $table->jsonb('snapshot_watermarks')->nullable();
+            $table->text('snapshot_seal_key_id')->nullable();
+            $table->text('snapshot_seal_algorithm')->nullable();
+            $table->char('snapshot_sealed_payload_hash', 64)->nullable();
+            $table->text('snapshot_seal_signature')->nullable();
+            $table->timestampTz('snapshot_sealed_at', 6)->nullable();
             $table->text('error_code')->nullable();
             $table->timestampTz('queued_at', 6);
             $table->timestampTz('started_at', 6)->nullable();
@@ -76,6 +87,10 @@ return new class extends Migration
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_result_hash_check CHECK (result_hash IS NULL OR result_hash ~ '^[a-f0-9]{64}$')",
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_idempotency_hash_check CHECK (idempotency_key_hash ~ '^[a-f0-9]{64}$')",
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_input_fingerprint_check CHECK (input_fingerprint ~ '^[a-f0-9]{64}$')",
+            "ALTER TABLE report_runs ADD CONSTRAINT report_runs_saved_view_check CHECK ((saved_view_id IS NULL AND saved_view_revision IS NULL AND saved_view_hash IS NULL) OR (saved_view_id IS NOT NULL AND saved_view_revision IS NOT NULL AND saved_view_hash IS NOT NULL AND saved_view_id ~ '^[0-7][0-9A-HJKMNP-TV-Z]{25}$' AND saved_view_revision > 0 AND saved_view_hash ~ '^[a-f0-9]{64}$'))",
+            "ALTER TABLE report_runs ADD CONSTRAINT report_runs_classification_check CHECK (snapshot_classification IN ('operational','official') AND data_classification IN ('standard','sensitive') AND jsonb_typeof(sensitive_column_ids) = 'array' AND jsonb_typeof(audit_column_ids) = 'array')",
+            "ALTER TABLE report_runs ADD CONSTRAINT report_runs_snapshot_seal_check CHECK ((snapshot_seal_key_id IS NULL AND snapshot_seal_algorithm IS NULL AND snapshot_sealed_payload_hash IS NULL AND snapshot_seal_signature IS NULL AND snapshot_sealed_at IS NULL) OR (snapshot_seal_key_id IS NOT NULL AND snapshot_seal_algorithm IS NOT NULL AND snapshot_sealed_payload_hash IS NOT NULL AND snapshot_seal_signature IS NOT NULL AND snapshot_sealed_at IS NOT NULL AND snapshot_seal_key_id ~ '^[a-z][a-z0-9_.:-]{2,127}$' AND snapshot_seal_algorithm = 'ed25519-sha256' AND snapshot_sealed_payload_hash ~ '^[a-f0-9]{64}$' AND snapshot_seal_signature ~ '^[A-Za-z0-9_-]{86}$'))",
+            "ALTER TABLE report_runs ADD CONSTRAINT report_runs_ready_seal_classification_check CHECK (status NOT IN ('ready','expired') OR ((snapshot_classification = 'operational' AND snapshot_seal_key_id IS NULL) OR (snapshot_classification = 'official' AND snapshot_seal_key_id IS NOT NULL AND snapshot_sealed_at >= snapshot_generated_at)))",
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_error_code_check CHECK ((status = 'failed' AND error_code IN ('REPORT_NOT_FOUND','REPORT_SCOPE_FORBIDDEN','REPORT_REQUEST_INVALID','REPORT_FILTER_UNSUPPORTED','REPORT_FILTER_VALUE_NOT_FOUND','REPORT_FILTER_RANGE_INVALID','REPORT_SORT_UNSUPPORTED','REPORT_CURSOR_INVALID','REPORT_IDEMPOTENCY_KEY_INVALID','REPORT_IDEMPOTENCY_CONFLICT','REPORT_SNAPSHOT_NOT_READY','REPORT_EXPORT_NOT_READY','REPORT_OFFICIAL_SNAPSHOT_UNSEALED','REPORT_SNAPSHOT_EXPIRED','REPORT_EXPORT_EXPIRED','REPORT_EXPORT_LIMIT_EXCEEDED','REPORT_RATE_LIMITED','REPORT_SOURCE_UNAVAILABLE','REPORT_DEPENDENCY_FAILED','REPORT_INTERNAL_ERROR')) OR (status <> 'failed' AND error_code IS NULL))",
             'ALTER TABLE report_runs ADD CONSTRAINT report_runs_expiry_order_check CHECK (expires_at > created_at)',
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_ready_identity_check CHECK (status <> 'ready' OR (source_hash IS NOT NULL AND result_hash IS NOT NULL AND snapshot_kind IS NOT NULL AND snapshot_id IS NOT NULL AND snapshot_generated_at IS NOT NULL AND snapshot_watermarks IS NOT NULL AND row_count IS NOT NULL AND result_metadata IS NOT NULL AND freshness IS NOT NULL AND quality IS NOT NULL AND provenance IS NOT NULL AND row_schema IS NOT NULL AND capabilities IS NOT NULL AND ready_at IS NOT NULL AND progress = 100 AND error_code IS NULL AND (snapshot_stale_at IS NULL OR snapshot_stale_at >= snapshot_generated_at)))",

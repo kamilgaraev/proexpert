@@ -8,7 +8,10 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\CandidateReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 
 final class ReportDefinitionBuilder
@@ -24,6 +27,8 @@ final class ReportDefinitionBuilder
     private array $sorts = [['id' => 'name']];
     private array $formats = ['csv'];
     private ReportPermissionPolicy $permissionPolicy;
+    private ReportSnapshotClassification $snapshotClassification = ReportSnapshotClassification::OPERATIONAL;
+    private ReportOutputClassification $outputClassification;
     private ReportPublicationReadiness $publicationReadiness = ReportPublicationReadiness::PUBLISHED;
     private bool $supportsSubscriptions = false;
 
@@ -31,6 +36,14 @@ final class ReportDefinitionBuilder
     {
         $this->definitionHash = new Sha256Hash(str_repeat('a', 64));
         $this->permissionPolicy = new ReportPermissionPolicy(['reports.view'], ['reports.export'], [], []);
+        $this->outputClassification = new ReportOutputClassification(
+            ReportDataClassification::STANDARD,
+            [],
+            [],
+            false,
+            false,
+            false,
+        );
     }
 
     public function code(string $value): self { $this->code = $value; return $this; }
@@ -44,12 +57,14 @@ final class ReportDefinitionBuilder
     public function sorts(array $value): self { $this->sorts = $value; return $this; }
     public function formats(array $value): self { $this->formats = $value; return $this; }
     public function permissionPolicy(ReportPermissionPolicy $value): self { $this->permissionPolicy = $value; return $this; }
+    public function snapshotClassification(ReportSnapshotClassification $value): self { $this->snapshotClassification = $value; return $this; }
+    public function outputClassification(ReportOutputClassification $value): self { $this->outputClassification = $value; return $this; }
     public function publicationReadiness(ReportPublicationReadiness $value): self { $this->publicationReadiness = $value; return $this; }
     public function supportsSubscriptions(bool $value): self { $this->supportsSubscriptions = $value; return $this; }
 
     public function payload(): ReportDefinition
     {
-        return new ReportDefinition($this->code, $this->definitionHash, $this->contractVersion, $this->formulaVersion, $this->sourceSchemaVersion, $this->rendererVersion, $this->filters, $this->columns, $this->sorts, $this->formats, $this->permissionPolicy, $this->publicationReadiness, $this->supportsSubscriptions);
+        return new ReportDefinition($this->code, $this->definitionHash, $this->contractVersion, $this->formulaVersion, $this->sourceSchemaVersion, $this->rendererVersion, $this->filters, $this->columns, $this->sorts, $this->formats, $this->permissionPolicy, $this->snapshotClassification, $this->outputClassification, $this->publicationReadiness, $this->supportsSubscriptions);
     }
 
     public function candidate(): CandidateReportDefinition

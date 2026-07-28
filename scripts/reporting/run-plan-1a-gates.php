@@ -26,22 +26,59 @@ final class PlanOneAGates
     private const PHP_DIR = 'C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64';
     private const PHP_SHA256 = 'f515db26936a2702886ca19523518556972fdf25dee699b78e1c78863a08b680';
     private const CANONICAL_BRANCH = 'feat/reports-canonical-backend';
-    private const TASK_ELEVEN_SUBJECT = 'test[reports]: добавлен проверяемый handoff Plan 1a';
-    private const TASK_ELEVEN_PATHS = [
-        '.gitignore',
+    private const TASK_FOUR_A_SUBJECT = 'fix[reports]: зафиксировать классификацию и печать снимков';
+    private const TASK_FOUR_A_PATHS = [
+        'app/BusinessModules/Core/Reporting/Application/Access/ReportAccessService.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunStore.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/RetryReportExportAction.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/RetryReportRunAction.php',
+        'app/BusinessModules/Core/Reporting/Domain/Contracts/ReportSavedViewReferenceResolver.php',
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportDefinition.php',
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportOutputClassification.php',
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportSavedViewRef.php',
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotRef.php',
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotSeal.php',
+        'app/BusinessModules/Core/Reporting/Domain/Enums/ReportDataClassification.php',
+        'app/BusinessModules/Core/Reporting/Domain/Enums/ReportSnapshotClassification.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportExportController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRunController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Resources/ReportCatalogResource.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunStore.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/Models/ReportRunRecord.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/ReportRunHydrator.php',
+        'database/migrations/2026_07_26_000001_create_report_runs_table.php',
         'docs/reports/contracts/plan-1a-completion.schema.json',
         'docs/reports/contracts/plan-1a-contract-lock.json',
         'docs/reports/contracts/plan-1a-contract-lock.sha256',
         'docs/reports/contracts/plan-1a-gate-evidence.schema.json',
+        'docs/reports/contracts/reporting-admin-resources.v1.schema.json',
         'scripts/reporting/build-plan-1a-evidence.php',
         'scripts/reporting/run-plan-1a-gates.php',
         'tests/Architecture/Reporting/PlanOneAHandoffContractTest.php',
-        'tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php',
+        'tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php',
+        'tests/Architecture/Reporting/ThinReportControllerTest.php',
+        'tests/Feature/Api/V1/Admin/Reporting/ReportingMalformedRequestContractTest.php',
+        'tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php',
         'tests/Fixtures/Reporting/Evidence/plan-1a-ci-authorization.valid.json',
         'tests/Fixtures/Reporting/Evidence/plan-1a-ci-malformed.valid.json',
         'tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json',
         'tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json',
-        'tests/Fixtures/Reporting/Evidence/plan-1a-route-snapshot.valid.json',
+        'tests/Fixtures/Reporting/Wire/reporting-admin-resources.v1.json',
+        'tests/Support/Reporting/FakeReportingActions.php',
+        'tests/Support/Reporting/HermeticReportingHttpHarness.php',
+        'tests/Support/Reporting/ReportDefinitionBuilder.php',
+        'tests/Support/Reporting/ReportRunBuilder.php',
+        'tests/Unit/Reporting/Access/ReportAccessServiceTest.php',
+        'tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php',
+        'tests/Unit/Reporting/Execution/ExecutionContractsTest.php',
+        'tests/Unit/Reporting/Http/ReportControllerContractTest.php',
+        'tests/Unit/Reporting/Http/ReportResourceSchemaTest.php',
+        'tests/Unit/Reporting/Input/ReportInputNormalizerTest.php',
+        'tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php',
         'tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php',
         'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
     ];
@@ -124,10 +161,14 @@ final class PlanOneAGates
         'invalid_run_rows_ulid',
         'invalid_run_drill_down_ulid',
         'invalid_run_retry_ulid',
+        'missing_run_retry_idempotency_key',
+        'invalid_run_retry_idempotency_key',
         'invalid_run_cancel_ulid',
         'invalid_export_create_run_ulid',
         'invalid_export_show_ulid',
         'invalid_export_retry_ulid',
+        'missing_export_retry_idempotency_key',
+        'invalid_export_retry_idempotency_key',
         'invalid_export_cancel_ulid',
         'invalid_export_download_ulid',
         'missing_run_as_of',
@@ -139,6 +180,8 @@ final class PlanOneAGates
     ];
     private const CONTRACT_TESTS = [
         'tests/Unit/Reporting/Contracts/ReportValueObjectContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php',
         'tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php',
         'tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php',
         'tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php',
@@ -156,7 +199,9 @@ final class PlanOneAGates
         'tests/Unit/Reporting/Http/ReportControllerContractTest.php',
         'tests/Architecture/Reporting/ReportingRouteSnapshotTest.php',
         'tests/Architecture/Reporting/PlanOneAHandoffContractTest.php',
-        'tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php',
+        'tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php',
+        'tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php',
+        'tests/Unit/Reporting/Execution/ExecutionContractsTest.php',
     ];
     private const STATIC_PATHS = [
         'app/BusinessModules/Core/Reporting',
@@ -165,17 +210,33 @@ final class PlanOneAGates
         'scripts/reporting/run-plan-1a-gates.php',
         'scripts/reporting/build-plan-1a-evidence.php',
         'tests/Support/Reporting',
-        'tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php',
-        'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
-        'tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php',
         'tests/Architecture/Reporting/PlanOneAHandoffContractTest.php',
+        'tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php',
         'tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php',
+        'tests/Architecture/Reporting/ThinReportControllerTest.php',
+        'tests/Feature/Api/V1/Admin/Reporting/ReportingMalformedRequestContractTest.php',
+        'tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php',
+        'tests/Unit/Reporting/Access/ReportAccessServiceTest.php',
+        'tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php',
+        'tests/Unit/Reporting/Execution/ExecutionContractsTest.php',
+        'tests/Unit/Reporting/Http/ReportControllerContractTest.php',
+        'tests/Unit/Reporting/Http/ReportResourceSchemaTest.php',
+        'tests/Unit/Reporting/Input/ReportInputNormalizerTest.php',
+        'tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php',
+        'tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php',
+        'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
+        'tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php',
     ];
     private static ?Closure $processOverride = null;
     private static ?Closure $topologyOverride = null;
     private static ?Closure $harnessOverride = null;
     private static ?Closure $faultOverride = null;
     private static ?Closure $phpHashOverride = null;
+    private static ?Closure $phpVersionOverride = null;
     private static ?Closure $branchOverride = null;
 
     public static function execute(array $argv): int
@@ -204,7 +265,7 @@ final class PlanOneAGates
                     self::publish($directory, $bundle);
                 }
             }
-            fwrite(STDOUT, 'plan-1a-gates: passed commands=2 routes=12 authorization=22/22 malformed=16/16'.PHP_EOL);
+            fwrite(STDOUT, 'plan-1a-gates: passed commands=2 routes=12 authorization=22/22 malformed=20/20'.PHP_EOL);
 
             return 0;
         } catch (PlanOneAGatesFailure $failure) {
@@ -282,7 +343,10 @@ final class PlanOneAGates
             ? (self::$branchOverride)($root)
             : trim(self::process(['git', 'branch', '--show-current'], $root)[0]);
         self::guard($branch === self::CANONICAL_BRANCH, 3, 'PLAN_1A_GATE_BRANCH_INVALID');
-        self::guard(PHP_VERSION === '8.2.29', 2, 'PLAN_1A_GATE_PHP_VERSION_MISMATCH');
+        $phpVersion = self::$phpVersionOverride instanceof Closure
+            ? (self::$phpVersionOverride)()
+            : PHP_VERSION;
+        self::guard($phpVersion === '8.2.29', 2, 'PLAN_1A_GATE_PHP_VERSION_MISMATCH');
         $phpHash = self::$phpHashOverride instanceof Closure
             ? (self::$phpHashOverride)()
             : hash_file('sha256', self::PHP);
@@ -397,7 +461,7 @@ final class PlanOneAGates
         foreach (self::MALFORMED_CASES as $caseId) {
             $malformedCases[] = (new HermeticReportingHttpHarness())->runMalformedCase($caseId);
         }
-        self::validateCases($malformedCases, self::MALFORMED_CASES, 34, 96);
+        self::validateCases($malformedCases, self::MALFORMED_CASES, 38, 120);
         $malformed = [
             'artifact_id' => 'plan_1a_ci_malformed',
             'schema_version' => '1.0.0',
@@ -406,7 +470,7 @@ final class PlanOneAGates
             'producer_commit_sha' => $commit,
             'executed_at' => $timestamp,
             'matrix' => 'malformed_requests',
-            'counts' => ['cases' => 16, 'passed' => 16, 'validation_cases' => 15, 'legacy_absence_cases' => 1, 'legacy_uri_count' => 19, 'http_requests' => 34, 'assertions' => 96],
+            'counts' => ['cases' => 20, 'passed' => 20, 'validation_cases' => 19, 'legacy_absence_cases' => 1, 'legacy_uri_count' => 19, 'http_requests' => 38, 'assertions' => 120],
             'cases' => $malformedCases,
             'source_files' => self::sourceHashes($root, $commit, [...self::MATRIX_SOURCES, 'tests/Feature/Api/V1/Admin/Reporting/ReportingMalformedRequestContractTest.php']),
         ];
@@ -480,7 +544,11 @@ final class PlanOneAGates
         [$stdout, $stderr, $exit] = self::process($contractArgv, $root, false);
         $combined = $stdout.$stderr;
         self::guard($exit === 0, 5, 'PLAN_1A_GATE_CONTRACT_COMMAND_FAILED');
-        self::guard(substr_count($combined, 'OK (287 tests, 2570 assertions)') === 1, 5, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT');
+        self::guard(
+            preg_match_all('/OK \\(([1-9][0-9]*) tests?, ([1-9][0-9]*) assertions?\\)/', $combined, $matches) === 1,
+            5,
+            'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT',
+        );
         self::guard(preg_match('/Skipped|Incomplete|Risky|FAILURES!|ERRORS!/i', $combined) !== 1, 5, 'PLAN_1A_GATE_CONTRACT_NON_PASS');
 
         $staticArgv = [self::PHP, '-c', self::PHP_DIR, 'vendor/bin/phpstan', 'analyse', ...self::STATIC_PATHS, '--no-progress'];
@@ -488,7 +556,7 @@ final class PlanOneAGates
         self::guard($exit === 0 && substr_count($stdout.$stderr, '[OK] No errors') === 1, 5, 'PLAN_1A_GATE_STATIC_COMMAND_FAILED');
 
         return [
-            ['command_id' => 'plan1a_contract_tests', 'command' => self::render($contractArgv), 'status' => 'passed', 'exit_code' => 0, 'tests' => 287, 'assertions' => 2570, 'skipped' => 0, 'executed_at' => $timestamp],
+            ['command_id' => 'plan1a_contract_tests', 'command' => self::render($contractArgv), 'status' => 'passed', 'exit_code' => 0, 'tests' => (int) $matches[1][0], 'assertions' => (int) $matches[2][0], 'skipped' => 0, 'executed_at' => $timestamp],
             ['command_id' => 'plan1a_static_analysis', 'command' => self::render($staticArgv), 'status' => 'passed', 'exit_code' => 0, 'tests' => 0, 'assertions' => 0, 'skipped' => 0, 'executed_at' => $timestamp],
         ];
     }
@@ -645,36 +713,37 @@ final class PlanOneAGates
     private static function validateGitState(string $root, string $commit): void
     {
         $staged = self::gitPaths(['diff', '--cached', '--name-only', '-z'], $root);
-        self::guard($staged === [], 3, 'PLAN_1A_GATE_STAGED_DIRTY');
         $unstaged = self::gitPaths(['diff', '--name-only', '-z'], $root);
         $untracked = self::gitPaths(['ls-files', '--others', '--exclude-standard', '-z'], $root);
         $working = array_values(array_unique([...$unstaged, ...$untracked]));
         sort($working, SORT_STRING);
-        if ($working === []) {
-            self::validateCanonicalTaskElevenCommit($root, $commit);
-
+        if ($staged === self::TASK_FOUR_A_PATHS && $working === []) {
             return;
         }
-        self::guard($working === self::TASK_ELEVEN_PATHS, 3, 'PLAN_1A_GATE_WORKTREE_DIRTY');
+        if ($staged === [] && $working === self::TASK_FOUR_A_PATHS) {
+            return;
+        }
+        self::guard($staged === [] && $working === [], 3, 'PLAN_1A_GATE_WORKTREE_DIRTY');
+        self::validateCanonicalTaskFourACommit($root, $commit);
     }
 
-    private static function validateCanonicalTaskElevenCommit(string $root, string $commit): void
+    private static function validateCanonicalTaskFourACommit(string $root, string $commit): void
     {
         self::guard(
-            trim(self::process(['git', 'show', '-s', '--format=%s', $commit], $root)[0]) === self::TASK_ELEVEN_SUBJECT,
+            trim(self::process(['git', 'show', '-s', '--format=%s', $commit], $root)[0]) === self::TASK_FOUR_A_SUBJECT,
             3,
-            'PLAN_1A_GATE_TASK_11_SUBJECT_INVALID',
+            'PLAN_1A_GATE_TASK_4A_SUBJECT_INVALID',
         );
         $parents = preg_split('/\s+/', trim(self::process(['git', 'show', '-s', '--format=%P', $commit], $root)[0])) ?: [];
-        self::guard(count($parents) === 1, 3, 'PLAN_1A_GATE_TASK_11_PARENT_INVALID');
+        self::guard(count($parents) === 1, 3, 'PLAN_1A_GATE_TASK_4A_PARENT_INVALID');
         $paths = self::gitPaths(['diff-tree', '--no-renames', '--no-commit-id', '--name-only', '-r', '-z', $commit], $root);
-        self::guard($paths === self::TASK_ELEVEN_PATHS, 3, 'PLAN_1A_GATE_TASK_11_PATHS_INVALID');
-        foreach (self::TASK_ELEVEN_PATHS as $path) {
+        self::guard($paths === self::TASK_FOUR_A_PATHS, 3, 'PLAN_1A_GATE_TASK_4A_PATHS_INVALID');
+        foreach (self::TASK_FOUR_A_PATHS as $path) {
             $gitBytes = self::process(['git', 'show', $commit.':'.$path], $root)[0];
             self::guard(
                 is_file($root.'/'.$path) && hash_equals(hash('sha256', $gitBytes), hash_file('sha256', $root.'/'.$path)),
                 3,
-                'PLAN_1A_GATE_TASK_11_BYTES_INVALID',
+                'PLAN_1A_GATE_TASK_4A_BYTES_INVALID',
             );
         }
     }

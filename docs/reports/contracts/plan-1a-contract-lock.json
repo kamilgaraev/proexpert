@@ -44,6 +44,100 @@
         "legacy_aggregator_require": false,
         "legacy_route_file": false
     },
+    "task_4a": {
+        "subject": "fix[reports]: \u0437\u0430\u0444\u0438\u043a\u0441\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043a\u043b\u0430\u0441\u0441\u0438\u0444\u0438\u043a\u0430\u0446\u0438\u044e \u0438 \u043f\u0435\u0447\u0430\u0442\u044c \u0441\u043d\u0438\u043c\u043a\u043e\u0432",
+        "parent_commit_sha": "786e5f3433d04baf35c81789178e1e83012e0916",
+        "tracked_paths": [
+            "app/BusinessModules/Core/Reporting/Application/Access/ReportAccessService.php",
+            "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunStore.php",
+            "app/BusinessModules/Core/Reporting/Application/Contracts/RetryReportExportAction.php",
+            "app/BusinessModules/Core/Reporting/Application/Contracts/RetryReportRunAction.php",
+            "app/BusinessModules/Core/Reporting/Domain/Contracts/ReportSavedViewReferenceResolver.php",
+            "app/BusinessModules/Core/Reporting/Domain/DTO/ReportDefinition.php",
+            "app/BusinessModules/Core/Reporting/Domain/DTO/ReportOutputClassification.php",
+            "app/BusinessModules/Core/Reporting/Domain/DTO/ReportSavedViewRef.php",
+            "app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotRef.php",
+            "app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotSeal.php",
+            "app/BusinessModules/Core/Reporting/Domain/Enums/ReportDataClassification.php",
+            "app/BusinessModules/Core/Reporting/Domain/Enums/ReportSnapshotClassification.php",
+            "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportExportController.php",
+            "app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRunController.php",
+            "app/BusinessModules/Core/Reporting/Http/Admin/Resources/ReportCatalogResource.php",
+            "app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunStore.php",
+            "app/BusinessModules/Core/Reporting/Infrastructure/Persistence/Models/ReportRunRecord.php",
+            "app/BusinessModules/Core/Reporting/Infrastructure/Persistence/ReportRunHydrator.php",
+            "database/migrations/2026_07_26_000001_create_report_runs_table.php",
+            "docs/reports/contracts/plan-1a-completion.schema.json",
+            "docs/reports/contracts/plan-1a-contract-lock.json",
+            "docs/reports/contracts/plan-1a-contract-lock.sha256",
+            "docs/reports/contracts/plan-1a-gate-evidence.schema.json",
+            "docs/reports/contracts/reporting-admin-resources.v1.schema.json",
+            "scripts/reporting/build-plan-1a-evidence.php",
+            "scripts/reporting/run-plan-1a-gates.php",
+            "tests/Architecture/Reporting/PlanOneAHandoffContractTest.php",
+            "tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php",
+            "tests/Architecture/Reporting/ThinReportControllerTest.php",
+            "tests/Feature/Api/V1/Admin/Reporting/ReportingMalformedRequestContractTest.php",
+            "tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php",
+            "tests/Fixtures/Reporting/Evidence/plan-1a-ci-authorization.valid.json",
+            "tests/Fixtures/Reporting/Evidence/plan-1a-ci-malformed.valid.json",
+            "tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json",
+            "tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json",
+            "tests/Fixtures/Reporting/Wire/reporting-admin-resources.v1.json",
+            "tests/Support/Reporting/FakeReportingActions.php",
+            "tests/Support/Reporting/HermeticReportingHttpHarness.php",
+            "tests/Support/Reporting/ReportDefinitionBuilder.php",
+            "tests/Support/Reporting/ReportRunBuilder.php",
+            "tests/Unit/Reporting/Access/ReportAccessServiceTest.php",
+            "tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php",
+            "tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php",
+            "tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php",
+            "tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php",
+            "tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php",
+            "tests/Unit/Reporting/Execution/ExecutionContractsTest.php",
+            "tests/Unit/Reporting/Http/ReportControllerContractTest.php",
+            "tests/Unit/Reporting/Http/ReportResourceSchemaTest.php",
+            "tests/Unit/Reporting/Input/ReportInputNormalizerTest.php",
+            "tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php",
+            "tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php",
+            "tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php"
+        ],
+        "malformed_matrix": {
+            "cases": 20,
+            "requests": 38,
+            "assertions": 120
+        },
+        "contract_command_counts": {
+            "tests": 393,
+            "assertions": 3143
+        },
+        "retry_idempotency_error": "REPORT_IDEMPOTENCY_KEY_INVALID",
+        "snapshot_classifications": [
+            "operational",
+            "official"
+        ],
+        "data_classifications": [
+            "standard",
+            "sensitive"
+        ],
+        "output_classification_methods": [
+            "requiresSensitiveForRows",
+            "requiresAuditForRows",
+            "requiresSensitiveForColumns",
+            "requiresAuditForColumns",
+            "requiresSensitiveForSummary",
+            "requiresAuditForSummary"
+        ],
+        "saved_view_reference": [
+            "id",
+            "revision",
+            "hash"
+        ],
+        "retry_idempotency_ports": [
+            "RetryReportRunAction",
+            "RetryReportExportAction"
+        ]
+    },
     "composer_contract": {
         "root_constraint": "^2.6",
         "locked_opis_version": "2.6.0",

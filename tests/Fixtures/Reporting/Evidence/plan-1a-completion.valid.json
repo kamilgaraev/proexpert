@@ -11,8 +11,8 @@
       "command": "pinned phpunit aggregate",
       "status": "passed",
       "exit_code": 0,
-      "tests": 287,
-      "assertions": 2570,
+      "tests": 393,
+      "assertions": 3143,
       "skipped": 0,
       "executed_at": "2026-07-26T00:00:00Z"
     },
@@ -38,8 +38,8 @@
     "malformed_requests": {
       "status": "passed",
       "verification_mode": "hermetic_http",
-      "cases": 16,
-      "passed": 16,
+      "cases": 20,
+      "passed": 20,
       "artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     }
   }

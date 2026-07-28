@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProvenance;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
@@ -18,13 +19,16 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotSeal;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
@@ -38,7 +42,8 @@ final class ReportRunHydrator
     private const DEFINITION_KEYS = [
         'code', 'definition_hash', 'contract_version', 'formula_version',
         'source_schema_version', 'renderer_version', 'filters', 'columns',
-        'sorts', 'formats', 'permission_policy', 'publication_readiness',
+        'sorts', 'formats', 'permission_policy', 'snapshot_classification',
+        'output_classification', 'publication_readiness',
         'supports_subscriptions',
     ];
 
@@ -103,6 +108,10 @@ final class ReportRunHydrator
             $policy = $this->closedArray($snapshot['permission_policy'], [
                 'view_permissions', 'export_permissions', 'sensitive_permissions', 'audit_permissions',
             ]);
+            $outputClassification = $this->closedArray($snapshot['output_classification'], [
+                'default_classification', 'sensitive_column_ids', 'audit_column_ids',
+                'totals_sensitive', 'totals_audit', 'provenance_audit',
+            ]);
             $definition = new ReportDefinition(
                 $this->string($snapshot['code']),
                 new Sha256Hash($this->string($snapshot['definition_hash'])),
@@ -120,6 +129,15 @@ final class ReportRunHydrator
                     $this->array($policy['sensitive_permissions']),
                     $this->array($policy['audit_permissions']),
                 ),
+                ReportSnapshotClassification::from($this->string($snapshot['snapshot_classification'])),
+                new ReportOutputClassification(
+                    ReportDataClassification::from($this->string($outputClassification['default_classification'])),
+                    $this->array($outputClassification['sensitive_column_ids']),
+                    $this->array($outputClassification['audit_column_ids']),
+                    $this->boolean($outputClassification['totals_sensitive']),
+                    $this->boolean($outputClassification['totals_audit']),
+                    $this->boolean($outputClassification['provenance_audit']),
+                ),
                 ReportPublicationReadiness::from($this->string($snapshot['publication_readiness'])),
                 $this->boolean($snapshot['supports_subscriptions']),
             );
@@ -131,11 +149,18 @@ final class ReportRunHydrator
                 [$definition->formulaVersion, $record->formula_version],
                 [$definition->sourceSchemaVersion, $record->source_schema_version],
                 [$definition->rendererVersion, $record->renderer_version],
+                [$definition->snapshotClassification->value, $record->snapshot_classification],
+                [$definition->outputClassification->defaultClassification->value, $record->data_classification],
             ] as [$actual, $stored]) {
                 if (!is_string($stored) || !hash_equals($actual, $stored)) {
                     throw new \InvalidArgumentException('report_definition_snapshot_mismatch');
                 }
             }
+            if ($this->array($record->sensitive_column_ids) !== $definition->outputClassification->sensitiveColumnIds
+                || $this->array($record->audit_column_ids) !== $definition->outputClassification->auditColumnIds) {
+                throw new \InvalidArgumentException('report_definition_classification_mismatch');
+            }
+            $savedView = $this->savedViewProjection($record);
 
             $scope = new ReportScope(
                 $this->integer($record->organization_id),
@@ -157,6 +182,14 @@ final class ReportRunHydrator
                 || !hash_equals($query->canonicalJson, $this->string($record->canonical_query_json))) {
                 throw new \InvalidArgumentException('report_query_identity_mismatch');
             }
+            $fingerprint = hash('sha256', \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode([
+                'definition_snapshot_hash' => $this->string($record->definition_snapshot_hash),
+                'query' => json_decode($query->canonicalJson, true, 512, JSON_THROW_ON_ERROR),
+                'saved_view' => $savedView,
+            ]));
+            if (!hash_equals($fingerprint, $this->string($record->input_fingerprint))) {
+                throw new \InvalidArgumentException('report_input_fingerprint_mismatch');
+            }
 
             return $query;
         } catch (ReportContractException $exception) {
@@ -169,6 +202,8 @@ final class ReportRunHydrator
     private function sealed(ReportRunRecord $record, ReportScope $scope): array
     {
         $sourceHash = new Sha256Hash($this->string($record->source_hash));
+        $classification = ReportSnapshotClassification::from($this->string($record->snapshot_classification));
+        $seal = $this->hydrateSeal($record);
         $snapshot = new ReportSnapshotRef(
             $this->string($record->snapshot_kind),
             $this->string($record->snapshot_id),
@@ -179,6 +214,8 @@ final class ReportRunHydrator
             $this->dateAttribute($record, 'snapshot_generated_at'),
             $this->raw($record, 'snapshot_stale_at') === null ? null : $this->dateAttribute($record, 'snapshot_stale_at'),
             $this->array($record->snapshot_watermarks),
+            $classification,
+            $seal,
         );
         $metadataData = $this->closedArray($record->result_metadata, ['row_count', 'generated_at', 'stale_at']);
         $metadataGeneratedAt = $this->date($metadataData['generated_at']);
@@ -236,6 +273,8 @@ final class ReportRunHydrator
                     'generated_at' => $this->utc($snapshot->generatedAt),
                     'stale_at' => $snapshot->staleAt === null ? null : $this->utc($snapshot->staleAt),
                     'watermarks' => $snapshot->watermarks,
+                    'classification' => $snapshot->classification->value,
+                    'seal' => $this->sealProjection($snapshot),
                 ],
                 'row_count' => $result->metadata->rowCount,
                 'generated_at' => $this->utc($result->metadata->generatedAt),
@@ -250,13 +289,84 @@ final class ReportRunHydrator
         ];
     }
 
+    private function hydrateSeal(ReportRunRecord $record): ?ReportSnapshotSeal
+    {
+        $values = [
+            $this->raw($record, 'snapshot_seal_key_id'),
+            $this->raw($record, 'snapshot_seal_algorithm'),
+            $this->raw($record, 'snapshot_sealed_payload_hash'),
+            $this->raw($record, 'snapshot_seal_signature'),
+            $this->raw($record, 'snapshot_sealed_at'),
+        ];
+        $present = array_map(static fn (mixed $value): bool => $value !== null, $values);
+        if (!in_array(true, $present, true)) {
+            return null;
+        }
+        if (in_array(false, $present, true)) {
+            throw new \InvalidArgumentException('report_snapshot_seal_incomplete');
+        }
+
+        return new ReportSnapshotSeal(
+            $this->string($record->snapshot_seal_key_id),
+            $this->string($record->snapshot_seal_algorithm),
+            new Sha256Hash($this->string($record->snapshot_sealed_payload_hash)),
+            $this->string($record->snapshot_seal_signature),
+            $this->dateAttribute($record, 'snapshot_sealed_at'),
+        );
+    }
+
+    private function savedViewProjection(ReportRunRecord $record): ?array
+    {
+        $values = [
+            $this->raw($record, 'saved_view_id'),
+            $this->raw($record, 'saved_view_revision'),
+            $this->raw($record, 'saved_view_hash'),
+        ];
+        $present = array_map(static fn (mixed $value): bool => $value !== null, $values);
+        if (!in_array(true, $present, true)) {
+            return null;
+        }
+        if (in_array(false, $present, true)) {
+            throw new \InvalidArgumentException('report_saved_view_reference_incomplete');
+        }
+
+        $reference = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef(
+            $this->string($record->saved_view_id),
+            $this->integer($record->saved_view_revision),
+            new Sha256Hash($this->string($record->saved_view_hash)),
+        );
+
+        return [
+            'id' => $reference->id,
+            'revision' => $reference->revision,
+            'hash' => $reference->hash->value,
+        ];
+    }
+
+    private function sealProjection(ReportSnapshotRef $snapshot): ?array
+    {
+        if ($snapshot->seal === null) {
+            return null;
+        }
+
+        return [
+            'key_id' => $snapshot->seal->keyId,
+            'algorithm' => $snapshot->seal->algorithm,
+            'sealed_payload_hash' => $snapshot->seal->sealedPayloadHash->value,
+            'signature' => $snapshot->seal->signature,
+            'sealed_at' => $this->utc($snapshot->seal->sealedAt),
+        ];
+    }
+
     private function assertUnsealed(ReportRunRecord $record): void
     {
         foreach ([
             'source_hash', 'result_hash', 'row_count', 'result_metadata', 'freshness',
             'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_kind',
             'snapshot_id', 'snapshot_generated_at', 'snapshot_stale_at',
-            'snapshot_watermarks', 'ready_at',
+            'snapshot_watermarks', 'snapshot_seal_key_id', 'snapshot_seal_algorithm',
+            'snapshot_sealed_payload_hash', 'snapshot_seal_signature', 'snapshot_sealed_at',
+            'ready_at',
         ] as $attribute) {
             if ($this->raw($record, $attribute) !== null) {
                 throw new \InvalidArgumentException('report_non_ready_identity_invalid');

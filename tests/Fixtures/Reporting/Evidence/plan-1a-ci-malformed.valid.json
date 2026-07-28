@@ -7,13 +7,13 @@
   "executed_at": "2026-07-26T00:00:00Z",
   "matrix": "malformed_requests",
   "counts": {
-    "cases": 16,
-    "passed": 16,
-    "validation_cases": 15,
+    "cases": 20,
+    "passed": 20,
+    "validation_cases": 19,
     "legacy_absence_cases": 1,
     "legacy_uri_count": 19,
-    "http_requests": 34,
-    "assertions": 96
+    "http_requests": 38,
+    "assertions": 120
   },
   "cases": [
     {
@@ -73,6 +73,26 @@
       "assertions": 6
     },
     {
+      "case_id": "missing_run_retry_idempotency_key",
+      "status": 422,
+      "request_count": 1,
+      "response_statuses": [422],
+      "response_codes": ["REPORT_IDEMPOTENCY_KEY_INVALID"],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "invalid_run_retry_idempotency_key",
+      "status": 422,
+      "request_count": 1,
+      "response_statuses": [422],
+      "response_codes": ["REPORT_IDEMPOTENCY_KEY_INVALID"],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
       "case_id": "invalid_run_cancel_ulid",
       "status": 422,
       "request_count": 1,
@@ -124,6 +144,26 @@
       "response_codes": [
         "REPORT_REQUEST_INVALID"
       ],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "missing_export_retry_idempotency_key",
+      "status": 422,
+      "request_count": 1,
+      "response_statuses": [422],
+      "response_codes": ["REPORT_IDEMPOTENCY_KEY_INVALID"],
+      "action_calls": 0,
+      "actor_loads": 0,
+      "assertions": 6
+    },
+    {
+      "case_id": "invalid_export_retry_idempotency_key",
+      "status": 422,
+      "request_count": 1,
+      "response_statuses": [422],
+      "response_codes": ["REPORT_IDEMPOTENCY_KEY_INVALID"],
       "action_calls": 0,
       "actor_loads": 0,
       "assertions": 6

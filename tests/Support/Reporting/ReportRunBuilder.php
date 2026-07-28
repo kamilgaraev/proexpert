@@ -15,6 +15,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -105,7 +106,7 @@ final class ReportRunBuilder
         $sourceHash = $this->resolveRequired('sourceHash', $this->sourceHash, new Sha256Hash(str_repeat('c', 64)));
         $rowCount = $this->resolveRequired('rowCount', $this->rowCount, 0);
         $readyAt = $this->resolveRequired('readyAt', $this->readyAt, $this->updatedAt);
-        $metadata = $this->resolveRequired('resultMetadata', $this->resultMetadata, new ReportResultMetadata(new ReportSnapshotRef('report', 'snapshot', new ReportScope(1, [1], [], [], new DateTimeZone('UTC')), $this->definitionHash, $this->formulaVersion, $sourceHash, $readyAt, null, []), $rowCount, $readyAt, null));
+        $metadata = $this->resolveRequired('resultMetadata', $this->resultMetadata, new ReportResultMetadata(new ReportSnapshotRef('report', 'snapshot', new ReportScope(1, [1], [], [], new DateTimeZone('UTC')), $this->definitionHash, $this->formulaVersion, $sourceHash, $readyAt, null, [], ReportSnapshotClassification::OPERATIONAL, null), $rowCount, $readyAt, null));
         $quality = $this->resolveRequired('quality', $this->quality, new ReportQuality(ReportQualityStatus::COMPLETE, null, [], 0, ReportReconciliationStatus::MATCHED, [], []));
         $provenance = $this->resolveRequired('provenance', $this->provenance, new ReportProvenance('system', [new ReportSourceRef('system', 'report', 'snapshot', 'v1', 'watermark', $rowCount, $sourceHash)], $sourceHash, null));
         $freshness = $this->resolveRequired('freshness', $this->freshness, ReportFreshnessStatus::FRESH);

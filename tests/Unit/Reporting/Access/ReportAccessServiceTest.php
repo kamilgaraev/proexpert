@@ -161,6 +161,93 @@ final class ReportAccessServiceTest extends TestCase
         self::assertTrue($visibility->canViewAudit);
     }
 
+    public function test_sensitive_operation_requires_sensitive_visibility_independently(): void
+    {
+        $permissions = ['definition.view', 'reports.view'];
+        $this->expectScopeForbidden();
+
+        $this->service($permissions)->assertOperation(
+            $this->context($permissions),
+            $this->definition(),
+            ReportOperation::VIEW_SENSITIVE,
+            null,
+        );
+    }
+
+    public function test_audit_operation_requires_audit_visibility_independently(): void
+    {
+        $permissions = [
+            'definition.sensitive',
+            'definition.view',
+            'reports.sensitive',
+            'reports.view',
+        ];
+        $this->expectScopeForbidden();
+
+        $this->service($permissions)->assertOperation(
+            $this->context($permissions),
+            $this->definition(),
+            ReportOperation::VIEW_AUDIT,
+            null,
+        );
+    }
+
+    public function test_audit_operation_succeeds_with_exact_audit_visibility_without_sensitive_visibility(): void
+    {
+        $permissions = [
+            'definition.audit',
+            'definition.view',
+            'reports.audit',
+            'reports.view',
+        ];
+
+        $visibility = $this->service($permissions)->assertOperation(
+            $this->context($permissions),
+            $this->definition(),
+            ReportOperation::VIEW_AUDIT,
+            null,
+        );
+
+        self::assertTrue($visibility->canViewAudit);
+        self::assertFalse($visibility->canViewSensitive);
+    }
+
+    public function test_global_and_definition_halves_cannot_authorize_classified_views_independently(): void
+    {
+        foreach ([
+            [ReportOperation::VIEW_SENSITIVE, ['definition.view', 'reports.sensitive', 'reports.view']],
+            [ReportOperation::VIEW_SENSITIVE, ['definition.sensitive', 'definition.view', 'reports.view']],
+            [ReportOperation::VIEW_AUDIT, ['definition.view', 'reports.audit', 'reports.view']],
+            [ReportOperation::VIEW_AUDIT, ['definition.audit', 'definition.view', 'reports.view']],
+        ] as [$operation, $permissions]) {
+            $error = $this->captureDenial(fn () => $this->service($permissions)->assertOperation(
+                $this->context($permissions),
+                $this->definition(),
+                $operation,
+                null,
+            ));
+            self::assertSame(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, $error->errorCode);
+        }
+    }
+
+    public function test_audit_visibility_does_not_grant_sensitive_visibility(): void
+    {
+        $permissions = [
+            'definition.audit',
+            'definition.view',
+            'reports.audit',
+            'reports.view',
+        ];
+        $this->expectScopeForbidden();
+
+        $this->service($permissions)->assertOperation(
+            $this->context($permissions),
+            $this->definition(),
+            ReportOperation::VIEW_SENSITIVE,
+            null,
+        );
+    }
+
     public function test_parent_scope_without_resource_allowlist_cannot_drill_down(): void
     {
         $permissions = ['definition.view', 'reports.view'];

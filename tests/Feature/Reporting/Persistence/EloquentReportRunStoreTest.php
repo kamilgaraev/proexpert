@@ -18,12 +18,15 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotSeal;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunStore;
@@ -72,6 +75,10 @@ final class EloquentReportRunStoreTest extends TestCase
                 'report_runs_result_hash_check',
                 'report_runs_idempotency_hash_check',
                 'report_runs_input_fingerprint_check',
+                'report_runs_saved_view_check',
+                'report_runs_classification_check',
+                'report_runs_snapshot_seal_check',
+                'report_runs_ready_seal_classification_check',
                 'report_runs_error_code_check',
                 'report_runs_expiry_order_check',
                 'report_runs_ready_identity_check',
@@ -84,6 +91,7 @@ final class EloquentReportRunStoreTest extends TestCase
             ->all();
 
         self::assertSame([
+            'report_runs_classification_check',
             'report_runs_definition_hash_check',
             'report_runs_definition_snapshot_hash_check',
             'report_runs_error_code_check',
@@ -94,7 +102,10 @@ final class EloquentReportRunStoreTest extends TestCase
             'report_runs_progress_check',
             'report_runs_query_hash_check',
             'report_runs_ready_identity_check',
+            'report_runs_ready_seal_classification_check',
             'report_runs_result_hash_check',
+            'report_runs_saved_view_check',
+            'report_runs_snapshot_seal_check',
             'report_runs_source_hash_check',
             'report_runs_status_check',
             'report_runs_terminal_timestamps_check',
@@ -121,6 +132,41 @@ final class EloquentReportRunStoreTest extends TestCase
         ], $indexes);
     }
 
+    public function test_official_snapshot_persists_and_hydrates_the_complete_seal(): void
+    {
+        $context = $this->context(10, 100);
+        $store = $this->store(new FakeReportTransitionAudit());
+        $query = $this->query($context, ReportSnapshotClassification::OFFICIAL);
+        $run = $store->createOrReuse($context, $query, null, new IdempotencyKey('official-seal-key'));
+        $store->startMaterialization($context, $run->id, new DateTimeImmutable('2026-07-26T00:10:00Z'));
+        $seal = new ReportSnapshotSeal(
+            'key_1',
+            'ed25519-sha256',
+            new Sha256Hash(str_repeat('f', 64)),
+            str_repeat('A', 86),
+            new DateTimeImmutable('2026-07-26T00:30:01Z'),
+        );
+        [$snapshot, $result, $sourceHash] = $this->sealedResult(
+            $context,
+            '100.00',
+            ReportSnapshotClassification::OFFICIAL,
+            $seal,
+        );
+
+        $ready = $store->sealReady(
+            $context,
+            $run->id,
+            $snapshot,
+            $result,
+            $sourceHash,
+            new DateTimeImmutable('2026-07-26T00:31:00Z'),
+        );
+
+        self::assertSame(ReportSnapshotClassification::OFFICIAL, $ready->resultMetadata?->snapshot->classification);
+        self::assertSame('key_1', $ready->resultMetadata?->snapshot->seal?->keyId);
+        self::assertSame(str_repeat('A', 86), $ready->resultMetadata?->snapshot->seal?->signature);
+    }
+
     public function test_schema_has_closed_columns_nullability_microsecond_precision_and_real_predicates(): void
     {
         $columns = DB::table('information_schema.columns')
@@ -142,44 +188,52 @@ final class EloquentReportRunStoreTest extends TestCase
             'formula_version', 'source_schema_version', 'renderer_version',
             'definition_snapshot', 'canonical_query_json', 'scope_holding_organization_ids',
             'scope_project_ids', 'scope_resource_ids', 'scope_timezone', 'filters',
-            'comparison', 'as_of', 'locale', 'saved_view_id', 'progress', 'row_count',
+            'comparison', 'as_of', 'locale', 'saved_view_id', 'saved_view_revision',
+            'saved_view_hash', 'snapshot_classification', 'data_classification',
+            'sensitive_column_ids', 'audit_column_ids', 'progress', 'row_count',
             'result_metadata', 'totals', 'freshness', 'quality', 'provenance', 'row_schema',
             'capabilities', 'snapshot_kind', 'snapshot_id', 'snapshot_generated_at',
-            'snapshot_stale_at', 'snapshot_watermarks', 'error_code', 'queued_at',
+            'snapshot_stale_at', 'snapshot_watermarks', 'snapshot_seal_key_id',
+            'snapshot_seal_algorithm', 'snapshot_sealed_payload_hash',
+            'snapshot_seal_signature', 'snapshot_sealed_at', 'error_code', 'queued_at',
             'started_at', 'ready_at', 'failed_at', 'cancel_requested_at', 'cancelled_at',
             'expired_at', 'created_at', 'updated_at', 'expires_at',
         ], array_keys($columns));
 
         foreach ([
-            'as_of', 'snapshot_generated_at', 'snapshot_stale_at', 'queued_at', 'started_at',
+            'as_of', 'snapshot_generated_at', 'snapshot_stale_at', 'snapshot_sealed_at',
+            'queued_at', 'started_at',
             'ready_at', 'failed_at', 'cancel_requested_at', 'cancelled_at', 'expired_at',
             'created_at', 'updated_at', 'expires_at',
         ] as $timestamp) {
             self::assertSame('timestamp with time zone', $columns[$timestamp]['type']);
             self::assertSame(6, $columns[$timestamp]['precision']);
         }
-        foreach (['definition_snapshot', 'scope_holding_organization_ids', 'scope_project_ids', 'scope_resource_ids', 'filters', 'comparison', 'result_metadata', 'totals', 'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_watermarks'] as $jsonb) {
+        foreach (['definition_snapshot', 'scope_holding_organization_ids', 'scope_project_ids', 'scope_resource_ids', 'filters', 'comparison', 'sensitive_column_ids', 'audit_column_ids', 'result_metadata', 'totals', 'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_watermarks'] as $jsonb) {
             self::assertSame('jsonb', $columns[$jsonb]['type']);
         }
-        foreach (['source_hash', 'result_hash', 'saved_view_id', 'row_count', 'result_metadata', 'freshness', 'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_kind', 'snapshot_id', 'snapshot_generated_at', 'snapshot_stale_at', 'snapshot_watermarks', 'error_code', 'started_at', 'ready_at', 'failed_at', 'cancel_requested_at', 'cancelled_at', 'expired_at'] as $nullable) {
+        foreach (['source_hash', 'result_hash', 'saved_view_id', 'saved_view_revision', 'saved_view_hash', 'row_count', 'result_metadata', 'freshness', 'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_kind', 'snapshot_id', 'snapshot_generated_at', 'snapshot_stale_at', 'snapshot_watermarks', 'snapshot_seal_key_id', 'snapshot_seal_algorithm', 'snapshot_sealed_payload_hash', 'snapshot_seal_signature', 'snapshot_sealed_at', 'error_code', 'started_at', 'ready_at', 'failed_at', 'cancel_requested_at', 'cancelled_at', 'expired_at'] as $nullable) {
             self::assertTrue($columns[$nullable]['nullable'], $nullable);
         }
         $nullableNames = array_keys(array_filter($columns, static fn (array $column): bool => $column['nullable']));
         self::assertSame([
-            'source_hash', 'result_hash', 'saved_view_id', 'row_count', 'result_metadata',
+            'source_hash', 'result_hash', 'saved_view_id', 'saved_view_revision', 'saved_view_hash',
+            'row_count', 'result_metadata',
             'freshness', 'quality', 'provenance', 'row_schema', 'capabilities',
             'snapshot_kind', 'snapshot_id', 'snapshot_generated_at', 'snapshot_stale_at',
-            'snapshot_watermarks', 'error_code', 'started_at', 'ready_at', 'failed_at',
+            'snapshot_watermarks', 'snapshot_seal_key_id', 'snapshot_seal_algorithm',
+            'snapshot_sealed_payload_hash', 'snapshot_seal_signature', 'snapshot_sealed_at',
+            'error_code', 'started_at', 'ready_at', 'failed_at',
             'cancel_requested_at', 'cancelled_at', 'expired_at',
         ], $nullableNames);
-        foreach (['id', 'definition_hash', 'definition_snapshot_hash', 'query_hash', 'idempotency_key_hash', 'input_fingerprint', 'saved_view_id', 'source_hash', 'result_hash'] as $character) {
+        foreach (['id', 'definition_hash', 'definition_snapshot_hash', 'query_hash', 'idempotency_key_hash', 'input_fingerprint', 'saved_view_id', 'saved_view_hash', 'source_hash', 'result_hash', 'snapshot_sealed_payload_hash'] as $character) {
             self::assertSame('character', $columns[$character]['type']);
         }
-        foreach (['organization_id', 'requester_actor_id', 'row_count'] as $bigint) {
+        foreach (['organization_id', 'requester_actor_id', 'saved_view_revision', 'row_count'] as $bigint) {
             self::assertSame('bigint', $columns[$bigint]['type']);
         }
         self::assertSame('smallint', $columns['progress']['type']);
-        foreach (['report_code', 'status', 'contract_version', 'formula_version', 'source_schema_version', 'renderer_version', 'canonical_query_json', 'scope_timezone', 'locale', 'freshness', 'snapshot_kind', 'snapshot_id', 'error_code'] as $text) {
+        foreach (['report_code', 'status', 'contract_version', 'formula_version', 'source_schema_version', 'renderer_version', 'canonical_query_json', 'scope_timezone', 'locale', 'snapshot_classification', 'data_classification', 'freshness', 'snapshot_kind', 'snapshot_id', 'snapshot_seal_key_id', 'snapshot_seal_algorithm', 'snapshot_seal_signature', 'error_code'] as $text) {
             self::assertSame('text', $columns[$text]['type']);
         }
 
@@ -223,11 +277,11 @@ final class EloquentReportRunStoreTest extends TestCase
     {
         DB::transaction(function (): void {
             $first = DB::selectOne(
-                "INSERT INTO report_runs (id, organization_id, requester_actor_id, report_code, status, definition_hash, definition_snapshot_hash, query_hash, idempotency_key_hash, input_fingerprint, contract_version, formula_version, source_schema_version, renderer_version, definition_snapshot, canonical_query_json, scope_holding_organization_ids, scope_project_ids, scope_resource_ids, scope_timezone, filters, comparison, as_of, locale, progress, totals, queued_at, created_at, updated_at, expires_at) VALUES (?, 1, 1, 'cost_control', 'queued', ?, ?, ?, ?, ?, '1', '1', '1', '1', ?::jsonb, '{}', '[1]'::jsonb, '[]'::jsonb, '[]'::jsonb, 'UTC', '{}'::jsonb, '[]'::jsonb, now(), 'ru', 0, '[]'::jsonb, now(), now(), now(), now() + interval '1 hour') ON CONFLICT (organization_id, idempotency_key_hash) DO NOTHING RETURNING id",
+                "INSERT INTO report_runs (id, organization_id, requester_actor_id, report_code, status, definition_hash, definition_snapshot_hash, query_hash, idempotency_key_hash, input_fingerprint, contract_version, formula_version, source_schema_version, renderer_version, definition_snapshot, canonical_query_json, scope_holding_organization_ids, scope_project_ids, scope_resource_ids, scope_timezone, filters, comparison, as_of, locale, snapshot_classification, data_classification, sensitive_column_ids, audit_column_ids, progress, totals, queued_at, created_at, updated_at, expires_at) VALUES (?, 1, 1, 'cost_control', 'queued', ?, ?, ?, ?, ?, '1', '1', '1', '1', ?::jsonb, '{}', '[1]'::jsonb, '[]'::jsonb, '[]'::jsonb, 'UTC', '{}'::jsonb, '[]'::jsonb, now(), 'ru', 'operational', 'standard', '[]'::jsonb, '[]'::jsonb, 0, '[]'::jsonb, now(), now(), now(), now() + interval '1 hour') ON CONFLICT (organization_id, idempotency_key_hash) DO NOTHING RETURNING id",
                 ['01J3R6W7H8K9M0NPQRSTVWXYZ1', str_repeat('a', 64), str_repeat('f', 64), str_repeat('b', 64), str_repeat('c', 64), str_repeat('d', 64), '{}'],
             );
             $second = DB::selectOne(
-                "INSERT INTO report_runs (id, organization_id, requester_actor_id, report_code, status, definition_hash, definition_snapshot_hash, query_hash, idempotency_key_hash, input_fingerprint, contract_version, formula_version, source_schema_version, renderer_version, definition_snapshot, canonical_query_json, scope_holding_organization_ids, scope_project_ids, scope_resource_ids, scope_timezone, filters, comparison, as_of, locale, progress, totals, queued_at, created_at, updated_at, expires_at) VALUES (?, 1, 2, 'cost_control', 'queued', ?, ?, ?, ?, ?, '1', '1', '1', '1', ?::jsonb, '{}', '[1]'::jsonb, '[]'::jsonb, '[]'::jsonb, 'UTC', '{}'::jsonb, '[]'::jsonb, now(), 'ru', 0, '[]'::jsonb, now(), now(), now(), now() + interval '1 hour') ON CONFLICT (organization_id, idempotency_key_hash) DO NOTHING RETURNING id",
+                "INSERT INTO report_runs (id, organization_id, requester_actor_id, report_code, status, definition_hash, definition_snapshot_hash, query_hash, idempotency_key_hash, input_fingerprint, contract_version, formula_version, source_schema_version, renderer_version, definition_snapshot, canonical_query_json, scope_holding_organization_ids, scope_project_ids, scope_resource_ids, scope_timezone, filters, comparison, as_of, locale, snapshot_classification, data_classification, sensitive_column_ids, audit_column_ids, progress, totals, queued_at, created_at, updated_at, expires_at) VALUES (?, 1, 2, 'cost_control', 'queued', ?, ?, ?, ?, ?, '1', '1', '1', '1', ?::jsonb, '{}', '[1]'::jsonb, '[]'::jsonb, '[]'::jsonb, 'UTC', '{}'::jsonb, '[]'::jsonb, now(), 'ru', 'operational', 'standard', '[]'::jsonb, '[]'::jsonb, 0, '[]'::jsonb, now(), now(), now(), now() + interval '1 hour') ON CONFLICT (organization_id, idempotency_key_hash) DO NOTHING RETURNING id",
                 ['01J3R6W7H8K9M0NPQRSTVWXYZ2', str_repeat('a', 64), str_repeat('f', 64), str_repeat('b', 64), str_repeat('c', 64), str_repeat('d', 64), '{}'],
             );
 
@@ -262,7 +316,11 @@ final class EloquentReportRunStoreTest extends TestCase
         self::assertSame(1, ReportRunRecord::query()->count());
 
         try {
-            $store->createOrReuse($otherActor, $query, '01J3R6W7H8K9M0NPQRSTVWXYZ9', $key);
+            $store->createOrReuse($otherActor, $query, new ReportSavedViewRef(
+                '01J3R6W7H8K9M0NPQRSTVWXYZ9',
+                1,
+                new Sha256Hash(str_repeat('f', 64)),
+            ), $key);
             self::fail('Expected organization-wide idempotency conflict.');
         } catch (ReportContractException $exception) {
             self::assertSame(ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT, $exception->errorCode);
@@ -929,10 +987,13 @@ final class EloquentReportRunStoreTest extends TestCase
         );
     }
 
-    private function query(ReportExecutionContext $context): ReportQuery
+    private function query(
+        ReportExecutionContext $context,
+        ReportSnapshotClassification $classification = ReportSnapshotClassification::OPERATIONAL,
+    ): ReportQuery
     {
         return new ReportQuery(
-            (new ReportDefinitionBuilder())->code('cost_control')->payload(),
+            (new ReportDefinitionBuilder())->code('cost_control')->snapshotClassification($classification)->payload(),
             $context->scope,
             new ReportFilterSet(['period' => 'month']),
             [],
@@ -962,7 +1023,12 @@ final class EloquentReportRunStoreTest extends TestCase
             ->build();
     }
 
-    private function sealedResult(ReportExecutionContext $context, string $total = '100.00'): array
+    private function sealedResult(
+        ReportExecutionContext $context,
+        string $total = '100.00',
+        ReportSnapshotClassification $classification = ReportSnapshotClassification::OPERATIONAL,
+        ?ReportSnapshotSeal $seal = null,
+    ): array
     {
         $sourceHash = new Sha256Hash(str_repeat('e', 64));
         $snapshot = new ReportSnapshotRef(
@@ -975,6 +1041,8 @@ final class EloquentReportRunStoreTest extends TestCase
             new DateTimeImmutable('2026-07-26T00:30:00.234567Z'),
             null,
             ['ledger' => 'watermark_one'],
+            $classification,
+            $seal,
         );
         $metadata = new ReportResultMetadata(
             $snapshot,

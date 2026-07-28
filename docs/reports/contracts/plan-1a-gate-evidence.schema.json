@@ -951,10 +951,10 @@
                   "const": 0
                 },
                 "tests": {
-                  "const": 287
+                  "const": 393
                 },
                 "assertions": {
-                  "const": 2570
+                  "const": 3143
                 },
                 "skipped": {
                   "const": 0
@@ -1147,13 +1147,13 @@
           ],
           "properties": {
             "cases": {
-              "const": 16
+              "const": 20
             },
             "passed": {
-              "const": 16
+              "const": 20
             },
             "validation_cases": {
-              "const": 15
+              "const": 19
             },
             "legacy_absence_cases": {
               "const": 1
@@ -1162,10 +1162,10 @@
               "const": 19
             },
             "http_requests": {
-              "const": 34
+              "const": 38
             },
             "assertions": {
-              "const": 96
+              "const": 120
             }
           }
         },
@@ -1692,8 +1692,8 @@
     },
     "malformedCases": {
       "type": "array",
-      "minItems": 16,
-      "maxItems": 16,
+      "minItems": 20,
+      "maxItems": 20,
       "prefixItems": [
         {
           "allOf": [
@@ -1754,6 +1754,34 @@
         {
           "allOf": [
             {
+              "$ref": "#/$defs/malformedIdempotencyKey"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "missing_run_retry_idempotency_key"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedIdempotencyKey"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_run_retry_idempotency_key"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
               "$ref": "#/$defs/malformedValidation"
             },
             {
@@ -1802,6 +1830,34 @@
               "properties": {
                 "case_id": {
                   "const": "invalid_export_retry_ulid"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedIdempotencyKey"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "missing_export_retry_idempotency_key"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/malformedIdempotencyKey"
+            },
+            {
+              "properties": {
+                "case_id": {
+                  "const": "invalid_export_retry_idempotency_key"
                 }
               }
             }
@@ -2023,6 +2079,24 @@
         }
       ]
     },
+    "malformedIdempotencyKey": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/caseItem"
+        },
+        {
+          "properties": {
+            "status": {"const": 422},
+            "request_count": {"const": 1},
+            "response_statuses": {"const": [422]},
+            "response_codes": {"const": ["REPORT_IDEMPOTENCY_KEY_INVALID"]},
+            "action_calls": {"const": 0},
+            "actor_loads": {"const": 0},
+            "assertions": {"const": 6}
+          }
+        }
+      ]
+    },
     "ledgerExact": {
       "type": "object",
       "additionalProperties": false,
@@ -2078,7 +2152,7 @@
                 },
                 "command": {
                   "type": "string",
-                  "pattern": "^C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php\\.exe -c C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64 vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportValueObjectContractTest.*tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php$"
+                  "const": "C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe -c C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64 vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportValueObjectContractTest.php tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php tests/Unit/Reporting/Input/ReportInputNormalizerTest.php tests/Unit/Reporting/Access/OrganizationReportScopeResolverTest.php tests/Unit/Reporting/Access/ReportAccessServiceTest.php tests/Unit/Reporting/Access/ReportingPermissionTranslationTest.php tests/Unit/Reporting/Http/ReportResourceSchemaTest.php tests/Unit/Reporting/Http/ReportFormRequestContractTest.php tests/Unit/Reporting/Errors/ReportErrorCatalogTest.php tests/Unit/Reporting/Errors/ReportErrorResponseFactoryTest.php tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php tests/Architecture/Reporting/ReportPortSignatureTest.php tests/Architecture/Reporting/ThinReportControllerTest.php tests/Unit/Reporting/Http/ReportControllerContractTest.php tests/Architecture/Reporting/ReportingRouteSnapshotTest.php tests/Architecture/Reporting/PlanOneAHandoffContractTest.php tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php tests/Unit/Reporting/Execution/ExecutionContractsTest.php"
                 },
                 "status": {
                   "const": "passed"
@@ -2087,10 +2161,10 @@
                   "const": 0
                 },
                 "tests": {
-                  "const": 287
+                  "const": 393
                 },
                 "assertions": {
-                  "const": 2570
+                  "const": 3143
                 },
                 "skipped": {
                   "const": 0
@@ -2119,7 +2193,7 @@
                 },
                 "command": {
                   "type": "string",
-                  "pattern": "^C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php\\.exe -c C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64 vendor/bin/phpstan analyse app/BusinessModules/Core/Reporting.*tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php --no-progress$"
+                  "const": "C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe -c C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64 vendor/bin/phpstan analyse app/BusinessModules/Core/Reporting app/Domain/Authorization/Services/AuthorizationService.php scripts/reporting/verify-task-7-composer.php scripts/reporting/run-plan-1a-gates.php scripts/reporting/build-plan-1a-evidence.php tests/Support/Reporting tests/Architecture/Reporting/PlanOneAHandoffContractTest.php tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php tests/Architecture/Reporting/ThinReportControllerTest.php tests/Feature/Api/V1/Admin/Reporting/ReportingMalformedRequestContractTest.php tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php tests/Unit/Reporting/Access/ReportAccessServiceTest.php tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Execution/ExecutionContractsTest.php tests/Unit/Reporting/Http/ReportControllerContractTest.php tests/Unit/Reporting/Http/ReportResourceSchemaTest.php tests/Unit/Reporting/Input/ReportInputNormalizerTest.php tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php --no-progress"
                 },
                 "status": {
                   "const": "passed"

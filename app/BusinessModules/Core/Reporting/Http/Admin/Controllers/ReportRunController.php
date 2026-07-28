@@ -49,7 +49,8 @@ final readonly class ReportRunController
 
     public function retry(ReportRunRouteRequest $request): JsonResponse
     {
-        $run = $this->retryAction->handle($this->contexts->fromHttp($request), $request->routeId());
+        $key = new IdempotencyKey((string) $request->header('Idempotency-Key'));
+        $run = $this->retryAction->handle($this->contexts->fromHttp($request), $request->routeId(), $key);
 
         return AdminResponse::success(new ReportRunResource($run), null, $run->httpStatus)
             ->withHeaders($run->responseHeaders());

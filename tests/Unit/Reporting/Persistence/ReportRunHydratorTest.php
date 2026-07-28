@@ -46,7 +46,7 @@ final class ReportRunHydratorTest extends TestCase
                 'return' => 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun',
             ],
             'createOrReuse' => [
-                'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['query', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery'], ['savedViewId', '?string'], ['idempotencyKey', 'App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey']],
+                'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['query', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery'], ['savedView', '?App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef'], ['idempotencyKey', 'App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey']],
                 'return' => 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun',
             ],
             'fail' => [
@@ -146,12 +146,13 @@ final class ReportRunHydratorTest extends TestCase
         $blueprint = null;
         $application->instance('db.schema', $schema);
         $application->instance('db', $database);
+        Facade::clearResolvedInstances();
         Facade::setFacadeApplication($application);
         $database->shouldReceive('raw')
             ->once()
             ->with("'[]'::jsonb")
             ->andReturn(new Expression("'[]'::jsonb"));
-        $database->shouldReceive('statement')->times(18)->andReturnTrue();
+        $database->shouldReceive('statement')->times(22)->andReturnTrue();
         $schema->shouldReceive('create')
             ->once()
             ->with('report_runs', Mockery::on(static function (callable $callback) use (&$blueprint): bool {
@@ -176,6 +177,7 @@ final class ReportRunHydratorTest extends TestCase
                 'as_of' => 6,
                 'snapshot_generated_at' => 6,
                 'snapshot_stale_at' => 6,
+                'snapshot_sealed_at' => 6,
                 'queued_at' => 6,
                 'started_at' => 6,
                 'ready_at' => 6,
@@ -354,6 +356,23 @@ final class ReportRunHydratorTest extends TestCase
         yield 'definition hash drift' => [static function (ReportRunRecord $record): void {
             $record->definition_hash = str_repeat('b', 64);
         }];
+        yield 'snapshot classification drift' => [static function (ReportRunRecord $record): void {
+            $record->snapshot_classification = 'official';
+        }];
+        yield 'data classification drift' => [static function (ReportRunRecord $record): void {
+            $record->data_classification = 'sensitive';
+        }];
+        yield 'sensitive columns drift' => [static function (ReportRunRecord $record): void {
+            $record->sensitive_column_ids = ['amount'];
+        }];
+        yield 'incomplete saved view reference' => [static function (ReportRunRecord $record): void {
+            $record->saved_view_id = '01J00000000000000000000000';
+        }];
+        yield 'saved view fingerprint drift' => [static function (ReportRunRecord $record): void {
+            $record->saved_view_id = '01J00000000000000000000000';
+            $record->saved_view_revision = 1;
+            $record->saved_view_hash = str_repeat('f', 64);
+        }];
         yield 'scope drift' => [static function (ReportRunRecord $record): void {
             $record->scope_project_ids = [999];
         }];
@@ -399,6 +418,15 @@ final class ReportRunHydratorTest extends TestCase
                 'sensitive_permissions' => [],
                 'audit_permissions' => [],
             ],
+            'snapshot_classification' => 'operational',
+            'output_classification' => [
+                'default_classification' => 'standard',
+                'sensitive_column_ids' => [],
+                'audit_column_ids' => [],
+                'totals_sensitive' => false,
+                'totals_audit' => false,
+                'provenance_audit' => false,
+            ],
             'publication_readiness' => 'published',
             'supports_subscriptions' => false,
         ];
@@ -418,6 +446,12 @@ final class ReportRunHydratorTest extends TestCase
         ];
         $canonical = CanonicalJson::encode($queryData);
         $definitionSnapshotCanonical = CanonicalJson::encode($snapshot);
+        $definitionSnapshotHash = hash('sha256', $definitionSnapshotCanonical);
+        $inputFingerprint = hash('sha256', CanonicalJson::encode([
+            'definition_snapshot_hash' => $definitionSnapshotHash,
+            'query' => $queryData,
+            'saved_view' => null,
+        ]));
 
         $record = new ReportRunRecord();
         $record->setRawAttributes([
@@ -427,11 +461,11 @@ final class ReportRunHydratorTest extends TestCase
             'report_code' => 'cost_control',
             'status' => 'queued',
             'definition_hash' => $definitionHash,
-            'definition_snapshot_hash' => hash('sha256', $definitionSnapshotCanonical),
+            'definition_snapshot_hash' => $definitionSnapshotHash,
             'query_hash' => hash('sha256', $canonical),
             'source_hash' => null,
             'idempotency_key_hash' => str_repeat('c', 64),
-            'input_fingerprint' => str_repeat('d', 64),
+            'input_fingerprint' => $inputFingerprint,
             'contract_version' => '1.0.0',
             'formula_version' => '1',
             'source_schema_version' => '1',
@@ -447,6 +481,12 @@ final class ReportRunHydratorTest extends TestCase
             'as_of' => '2026-07-26T00:00:00+00:00',
             'locale' => 'ru',
             'saved_view_id' => null,
+            'saved_view_revision' => null,
+            'saved_view_hash' => null,
+            'snapshot_classification' => 'operational',
+            'data_classification' => 'standard',
+            'sensitive_column_ids' => '[]',
+            'audit_column_ids' => '[]',
             'progress' => 0,
             'totals' => '[]',
             'created_at' => '2026-07-26T00:00:00+00:00',
@@ -509,6 +549,8 @@ final class ReportRunHydratorTest extends TestCase
                     'generated_at' => '2026-07-26T00:30:00.000000Z',
                     'stale_at' => null,
                     'watermarks' => ['ledger' => 'watermark_one'],
+                    'classification' => 'operational',
+                    'seal' => null,
                 ],
                 'row_count' => 1,
                 'generated_at' => '2026-07-26T00:30:00.000000Z',
@@ -536,6 +578,11 @@ final class ReportRunHydratorTest extends TestCase
             'snapshot_generated_at' => '2026-07-26T00:30:00.000000Z',
             'snapshot_stale_at' => null,
             'snapshot_watermarks' => CanonicalJson::encode(['ledger' => 'watermark_one']),
+            'snapshot_seal_key_id' => null,
+            'snapshot_seal_algorithm' => null,
+            'snapshot_sealed_payload_hash' => null,
+            'snapshot_seal_signature' => null,
+            'snapshot_sealed_at' => null,
             'ready_at' => '2026-07-26T00:31:00.000000Z',
         ];
         $attributes['status'] = 'ready';

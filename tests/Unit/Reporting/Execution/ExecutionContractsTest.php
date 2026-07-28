@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExp
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportExecutionContextRehydrator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportMaterializationDispatcher;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunExecutionContextRehydrator;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
@@ -62,6 +63,17 @@ final class ExecutionContractsTest extends TestCase
                 'occurredAt' => DateTimeImmutable::class,
             ],
             'void',
+        );
+        $this->assertMethod(
+            ReportRunStore::class,
+            'createOrReuse',
+            [
+                'context' => \App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext::class,
+                'query' => \App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery::class,
+                'savedView' => '?'.\App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef::class,
+                'idempotencyKey' => \App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey::class,
+            ],
+            \App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun::class,
         );
     }
 

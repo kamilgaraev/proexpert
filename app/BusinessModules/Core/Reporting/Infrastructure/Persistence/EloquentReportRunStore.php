@@ -14,6 +14,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
@@ -40,11 +41,8 @@ final class EloquentReportRunStore implements ReportRunStore
         }
     }
 
-    public function createOrReuse(ReportExecutionContext $context, ReportQuery $query, ?string $savedViewId, IdempotencyKey $idempotencyKey): ReportRun
+    public function createOrReuse(ReportExecutionContext $context, ReportQuery $query, ?ReportSavedViewRef $savedView, IdempotencyKey $idempotencyKey): ReportRun
     {
-        if ($savedViewId !== null && preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/D', $savedViewId) !== 1) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID, ['fields' => 'saved_view_id']);
-        }
         if ($query->scope->organizationId !== $context->scope->organizationId) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
         }
@@ -55,7 +53,11 @@ final class EloquentReportRunStore implements ReportRunStore
         $fingerprint = hash('sha256', CanonicalJson::encode([
             'definition_snapshot_hash' => $definitionSnapshotHash,
             'query' => json_decode($query->canonicalJson, true, 512, JSON_THROW_ON_ERROR),
-            'saved_view_id' => $savedViewId,
+            'saved_view' => $savedView === null ? null : [
+                'id' => $savedView->id,
+                'revision' => $savedView->revision,
+                'hash' => $savedView->hash->value,
+            ],
         ]));
         $now = $this->clock->now();
         $id = (string) Str::ulid();
@@ -63,7 +65,7 @@ final class EloquentReportRunStore implements ReportRunStore
             $id,
             $context,
             $query,
-            $savedViewId,
+            $savedView,
             $idempotencyKey,
             $fingerprint,
             $definitionSnapshotCanonical,
@@ -287,7 +289,7 @@ final class EloquentReportRunStore implements ReportRunStore
         string $id,
         ReportExecutionContext $context,
         ReportQuery $query,
-        ?string $savedViewId,
+        ?ReportSavedViewRef $savedView,
         IdempotencyKey $key,
         string $fingerprint,
         string $definitionSnapshotCanonical,
@@ -323,7 +325,13 @@ final class EloquentReportRunStore implements ReportRunStore
             'comparison' => CanonicalJson::encode($query->comparison),
             'as_of' => $this->databaseTimestamp($query->asOf),
             'locale' => $query->locale,
-            'saved_view_id' => $savedViewId,
+            'saved_view_id' => $savedView?->id,
+            'saved_view_revision' => $savedView?->revision,
+            'saved_view_hash' => $savedView?->hash->value,
+            'snapshot_classification' => $definition->snapshotClassification->value,
+            'data_classification' => $definition->outputClassification->defaultClassification->value,
+            'sensitive_column_ids' => CanonicalJson::encode($definition->outputClassification->sensitiveColumnIds),
+            'audit_column_ids' => CanonicalJson::encode($definition->outputClassification->auditColumnIds),
             'progress' => 0,
             'totals' => '[]',
             'queued_at' => $this->databaseTimestamp($now),
@@ -350,6 +358,8 @@ final class EloquentReportRunStore implements ReportRunStore
                     'generated_at' => $this->utc($resultSnapshot->generatedAt),
                     'stale_at' => $resultSnapshot->staleAt === null ? null : $this->utc($resultSnapshot->staleAt),
                     'watermarks' => $resultSnapshot->watermarks,
+                    'classification' => $resultSnapshot->classification->value,
+                    'seal' => $this->sealProjection($resultSnapshot),
                 ],
                 'row_count' => $result->metadata->rowCount,
                 'generated_at' => $this->utc($result->metadata->generatedAt),
@@ -385,6 +395,12 @@ final class EloquentReportRunStore implements ReportRunStore
             'snapshot_generated_at' => $snapshot->generatedAt,
             'snapshot_stale_at' => $snapshot->staleAt,
             'snapshot_watermarks' => CanonicalJson::encode($snapshot->watermarks),
+            'snapshot_classification' => $snapshot->classification->value,
+            'snapshot_seal_key_id' => $snapshot->seal?->keyId,
+            'snapshot_seal_algorithm' => $snapshot->seal?->algorithm,
+            'snapshot_sealed_payload_hash' => $snapshot->seal?->sealedPayloadHash->value,
+            'snapshot_seal_signature' => $snapshot->seal?->signature,
+            'snapshot_sealed_at' => $snapshot->seal?->sealedAt,
             'ready_at' => $occurredAt,
             'updated_at' => $occurredAt,
         ];
@@ -410,6 +426,15 @@ final class EloquentReportRunStore implements ReportRunStore
                 'export_permissions' => $definition->permissionPolicy->exportPermissions,
                 'sensitive_permissions' => $definition->permissionPolicy->sensitivePermissions,
                 'audit_permissions' => $definition->permissionPolicy->auditPermissions,
+            ],
+            'snapshot_classification' => $definition->snapshotClassification->value,
+            'output_classification' => [
+                'default_classification' => $definition->outputClassification->defaultClassification->value,
+                'sensitive_column_ids' => $definition->outputClassification->sensitiveColumnIds,
+                'audit_column_ids' => $definition->outputClassification->auditColumnIds,
+                'totals_sensitive' => $definition->outputClassification->totalsSensitive,
+                'totals_audit' => $definition->outputClassification->totalsAudit,
+                'provenance_audit' => $definition->outputClassification->provenanceAudit,
             ],
             'publication_readiness' => $definition->publicationReadiness->value,
             'supports_subscriptions' => $definition->supportsSubscriptions,
@@ -468,7 +493,8 @@ final class EloquentReportRunStore implements ReportRunStore
             || !hash_equals($snapshot->definitionHash->value, (string) $record->definition_hash)
             || !hash_equals($snapshot->sourceHash->value, $sourceHash->value)
             || !hash_equals($result->provenance->sourceHash->value, $sourceHash->value)
-            || $snapshot->formulaVersion !== $record->formula_version) {
+            || $snapshot->formulaVersion !== $record->formula_version
+            || $snapshot->classification !== $query->definition->snapshotClassification) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
         }
     }
@@ -485,6 +511,23 @@ final class EloquentReportRunStore implements ReportRunStore
             'generated_at' => $this->utc($snapshot->generatedAt),
             'stale_at' => $snapshot->staleAt === null ? null : $this->utc($snapshot->staleAt),
             'watermarks' => $snapshot->watermarks,
+            'classification' => $snapshot->classification->value,
+            'seal' => $this->sealProjection($snapshot),
+        ];
+    }
+
+    private function sealProjection(ReportSnapshotRef $snapshot): ?array
+    {
+        if ($snapshot->seal === null) {
+            return null;
+        }
+
+        return [
+            'key_id' => $snapshot->seal->keyId,
+            'algorithm' => $snapshot->seal->algorithm,
+            'sealed_payload_hash' => $snapshot->seal->sealedPayloadHash->value,
+            'signature' => $snapshot->seal->signature,
+            'sealed_at' => $this->utc($snapshot->seal->sealedAt),
         ];
     }
 

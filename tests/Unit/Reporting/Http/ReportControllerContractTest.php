@@ -182,10 +182,11 @@ final class ReportControllerContractTest extends TestCase
             headers: ['Idempotency-Key' => str_repeat('a', 32)],
         );
         $route = $this->request(ReportRunRouteRequest::class, 'GET', [], 'runId', self::RUN_ID);
+        $retry = $this->request(ReportRunRouteRequest::class, 'POST', [], 'runId', self::RUN_ID, ['Idempotency-Key' => str_repeat('c', 32)]);
 
         $created = $controller->store($create);
         $shown = $controller->show($route);
-        $retried = $controller->retry($route);
+        $retried = $controller->retry($retry);
         $cancelled = $controller->cancel($route);
 
         self::assertSame(201, $created->getStatusCode());
@@ -197,6 +198,7 @@ final class ReportControllerContractTest extends TestCase
         self::assertSame('project_margin', $fake->calls['createRun'][0][1]->reportCode);
         self::assertSame(str_repeat('a', 32), $fake->calls['createRun'][0][2]->value);
         self::assertSame(self::RUN_ID, $fake->calls['getRun'][0][1]);
+        self::assertSame(str_repeat('c', 32), $fake->calls['retryRun'][0][2]->value);
         self::assertCount(1, $fake->calls['createRun']);
         self::assertCount(1, $fake->calls['getRun']);
         self::assertCount(1, $fake->calls['retryRun']);
@@ -244,11 +246,12 @@ final class ReportControllerContractTest extends TestCase
             ['Idempotency-Key' => str_repeat('b', 32)],
         );
         $route = $this->request(ReportExportRouteRequest::class, 'GET', [], 'exportId', self::EXPORT_ID);
+        $retry = $this->request(ReportExportRouteRequest::class, 'POST', [], 'exportId', self::EXPORT_ID, ['Idempotency-Key' => str_repeat('d', 32)]);
         $download = $this->request(CreateReportDownloadLinkRequest::class, 'POST', [], 'exportId', self::EXPORT_ID);
 
         $created = $controller->store($create);
         $shown = $controller->show($route);
-        $retried = $controller->retry($route);
+        $retried = $controller->retry($retry);
         $cancelled = $controller->cancel($route);
         $downloaded = $controller->downloadLink($download);
 
@@ -261,6 +264,7 @@ final class ReportControllerContractTest extends TestCase
         self::assertSame(self::RUN_ID, $fake->calls['createExport'][0][1]);
         self::assertSame('xlsx', $fake->calls['createExport'][0][2]->format);
         self::assertSame(str_repeat('b', 32), $fake->calls['createExport'][0][3]->value);
+        self::assertSame(str_repeat('d', 32), $fake->calls['retryExport'][0][2]->value);
         self::assertSame(self::EXPORT_ID, $fake->calls['downloadLink'][0][1]->exportId);
         self::assertCount(1, $fake->calls['createExport']);
         self::assertCount(1, $fake->calls['getExport']);

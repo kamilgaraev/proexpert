@@ -17,6 +17,8 @@
         "sorts": [{"id": "amount"}],
         "formats": ["csv", "xlsx", "pdf"],
         "permission_policy": {"view": ["reports.view"], "export": ["reports.export"], "sensitive": [], "audit": []},
+        "snapshot_classification": "operational",
+        "output_classification": {"default_classification": "standard", "sensitive_column_ids": [], "audit_column_ids": [], "totals_sensitive": false, "totals_audit": false, "provenance_audit": false},
         "publication_readiness": "published",
         "supports_subscriptions": true
       }]

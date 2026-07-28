@@ -150,7 +150,7 @@ final class ReportBindingLifecycleContractTest extends TestCase
         self::assertSame([$context, $snapshot, $sort, 10], $rows->cursorCalls()[0]);
         self::assertSame([$context, $snapshot, $sort, 10], $rows->cursorCalls()[1]);
         $this->expectException(LogicException::class);
-        $dataProvider->result($context, new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef('report', 'other', $context->scope, $this->hash('a'), '1', $this->hash('b'), new \DateTimeImmutable('2026-01-01T00:00:00+00:00'), null, []));
+        $dataProvider->result($context, new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef('report', 'other', $context->scope, $this->hash('a'), '1', $this->hash('b'), new \DateTimeImmutable('2026-01-01T00:00:00+00:00'), null, [], \App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification::OPERATIONAL, null));
     }
 
     #[Test]
@@ -261,7 +261,7 @@ final class ReportBindingLifecycleContractTest extends TestCase
         $defaultSourceHash = new Sha256Hash(str_repeat('c', 64));
         $scope = (new ReportExecutionContextBuilder())->build()->scope;
         $metadata = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata(
-            new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef('report', 'snapshot2', $scope, new Sha256Hash(str_repeat('a', 64)), '1', $defaultSourceHash, new \DateTimeImmutable('2026-01-01T00:01:00+00:00'), null, []),
+            new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef('report', 'snapshot2', $scope, new Sha256Hash(str_repeat('a', 64)), '1', $defaultSourceHash, new \DateTimeImmutable('2026-01-01T00:01:00+00:00'), null, [], \App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification::OPERATIONAL, null),
             0,
             new \DateTimeImmutable('2026-01-01T00:01:00+00:00'),
             null,
@@ -370,7 +370,7 @@ final class ReportBindingLifecycleContractTest extends TestCase
     private function snapshot(): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef
     {
         $context = (new ReportExecutionContextBuilder())->build();
-        return new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef('report', 'snapshot', $context->scope, $this->hash('a'), '1', $this->hash('b'), new \DateTimeImmutable('2026-01-01T00:00:00+00:00'), null, []);
+        return new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef('report', 'snapshot', $context->scope, $this->hash('a'), '1', $this->hash('b'), new \DateTimeImmutable('2026-01-01T00:00:00+00:00'), null, [], \App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification::OPERATIONAL, null);
     }
 
     private function reportResult(\App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef $snapshot): \App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult

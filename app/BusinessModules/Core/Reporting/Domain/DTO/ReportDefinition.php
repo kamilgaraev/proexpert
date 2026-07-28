@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Domain\DTO;
 
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use InvalidArgumentException;
@@ -32,6 +33,8 @@ final readonly class ReportDefinition
         array $sorts,
         array $formats,
         public ReportPermissionPolicy $permissionPolicy,
+        public ReportSnapshotClassification $snapshotClassification,
+        public ReportOutputClassification $outputClassification,
         public ReportPublicationReadiness $publicationReadiness,
         public bool $supportsSubscriptions,
     ) {
@@ -49,11 +52,43 @@ final readonly class ReportDefinition
         $this->columns = self::normalizeItems($columns);
         $this->sorts = self::normalizeItems($sorts);
         $this->formats = self::normalizeFormats($formats);
+        $columnIds = array_fill_keys(array_column($this->columns, 'id'), true);
+        foreach (array_merge(
+            $outputClassification->sensitiveColumnIds,
+            $outputClassification->auditColumnIds,
+        ) as $classifiedColumnId) {
+            if (!isset($columnIds[$classifiedColumnId])) {
+                throw new InvalidArgumentException('report_output_classification_column_invalid');
+            }
+        }
 
         if (in_array($publicationReadiness, [ReportPublicationReadiness::CANDIDATE, ReportPublicationReadiness::PUBLISHED], true)
             && ($this->filters === [] || $this->columns === [] || $this->sorts === [] || $this->formats === [])) {
             throw new InvalidArgumentException('report_definition_collections_required');
         }
+    }
+
+    public function validatedSelectedColumnIds(array $columnIds): array
+    {
+        if (!array_is_list($columnIds)) {
+            throw new InvalidArgumentException('report_selected_columns_invalid');
+        }
+
+        $definitionColumnIds = array_fill_keys(array_column($this->columns, 'id'), true);
+        $seen = [];
+        foreach ($columnIds as $columnId) {
+            if (!is_string($columnId)
+                || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $columnId) !== 1
+                || isset($seen[$columnId])
+                || !isset($definitionColumnIds[$columnId])) {
+                throw new InvalidArgumentException('report_selected_columns_invalid');
+            }
+            $seen[$columnId] = true;
+        }
+
+        sort($columnIds, SORT_STRING);
+
+        return $columnIds;
     }
 
     private static function normalizeItems(array $items): array

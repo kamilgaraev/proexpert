@@ -53,7 +53,7 @@
     "contractCommand": {
       "allOf": [
         {"$ref": "#/$defs/commandBase"},
-        {"properties": {"command_id": {"const": "plan1a_contract_tests"}, "tests": {"const": 287}, "assertions": {"const": 2570}}}
+        {"properties": {"command_id": {"const": "plan1a_contract_tests"}, "tests": {"const": 393}, "assertions": {"const": 3143}}}
       ]
     },
     "staticCommand": {
@@ -81,8 +81,8 @@
       "properties": {
         "status": {"const": "passed"},
         "verification_mode": {"const": "hermetic_http"},
-        "cases": {"const": 16},
-        "passed": {"const": 16},
+        "cases": {"const": 20},
+        "passed": {"const": 20},
         "artifact_sha256": {"$ref": "#/$defs/sha256"}
       }
     }

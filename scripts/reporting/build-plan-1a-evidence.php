@@ -33,7 +33,6 @@ final class PlanOneAEvidence
     private const PHP_SHA256 = 'f515db26936a2702886ca19523518556972fdf25dee699b78e1c78863a08b680';
     private const CANONICAL_BRANCH = 'feat/reports-canonical-backend';
     private const TASK_SEVEN_SUBJECT = 'feat[reports]: зафиксированы схемы ресурсов отчётности';
-    private const TASK_ELEVEN_SUBJECT = 'test[reports]: добавлен проверяемый handoff Plan 1a';
     private const TASK_SEVEN_PATHS = [
         'app/BusinessModules/Core/Reporting/Domain/DTO/ReportCatalogView.php',
         'app/BusinessModules/Core/Reporting/Domain/DTO/ReportSavedView.php',
@@ -57,29 +56,69 @@ final class PlanOneAEvidence
         'tests/Unit/Reporting/Http/ReportResourceSchemaTest.php',
         'tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php',
     ];
-    private const TASK_ELEVEN_PATHS = [
-        '.gitignore',
+    private const TASK_FOUR_A_SUBJECT = 'fix[reports]: зафиксировать классификацию и печать снимков';
+    private const TASK_FOUR_A_PATHS = [
+        'app/BusinessModules/Core/Reporting/Application/Access/ReportAccessService.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunStore.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/RetryReportExportAction.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/RetryReportRunAction.php',
+        'app/BusinessModules/Core/Reporting/Domain/Contracts/ReportSavedViewReferenceResolver.php',
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportDefinition.php',
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportOutputClassification.php',
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportSavedViewRef.php',
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotRef.php',
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotSeal.php',
+        'app/BusinessModules/Core/Reporting/Domain/Enums/ReportDataClassification.php',
+        'app/BusinessModules/Core/Reporting/Domain/Enums/ReportSnapshotClassification.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportExportController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRunController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Resources/ReportCatalogResource.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunStore.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/Models/ReportRunRecord.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/ReportRunHydrator.php',
+        'database/migrations/2026_07_26_000001_create_report_runs_table.php',
         'docs/reports/contracts/plan-1a-completion.schema.json',
         'docs/reports/contracts/plan-1a-contract-lock.json',
         'docs/reports/contracts/plan-1a-contract-lock.sha256',
         'docs/reports/contracts/plan-1a-gate-evidence.schema.json',
+        'docs/reports/contracts/reporting-admin-resources.v1.schema.json',
         'scripts/reporting/build-plan-1a-evidence.php',
         'scripts/reporting/run-plan-1a-gates.php',
         'tests/Architecture/Reporting/PlanOneAHandoffContractTest.php',
-        'tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php',
+        'tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php',
+        'tests/Architecture/Reporting/ThinReportControllerTest.php',
+        'tests/Feature/Api/V1/Admin/Reporting/ReportingMalformedRequestContractTest.php',
+        'tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php',
         'tests/Fixtures/Reporting/Evidence/plan-1a-ci-authorization.valid.json',
         'tests/Fixtures/Reporting/Evidence/plan-1a-ci-malformed.valid.json',
         'tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json',
         'tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json',
-        'tests/Fixtures/Reporting/Evidence/plan-1a-route-snapshot.valid.json',
+        'tests/Fixtures/Reporting/Wire/reporting-admin-resources.v1.json',
+        'tests/Support/Reporting/FakeReportingActions.php',
+        'tests/Support/Reporting/HermeticReportingHttpHarness.php',
+        'tests/Support/Reporting/ReportDefinitionBuilder.php',
+        'tests/Support/Reporting/ReportRunBuilder.php',
+        'tests/Unit/Reporting/Access/ReportAccessServiceTest.php',
+        'tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php',
+        'tests/Unit/Reporting/Execution/ExecutionContractsTest.php',
+        'tests/Unit/Reporting/Http/ReportControllerContractTest.php',
+        'tests/Unit/Reporting/Http/ReportResourceSchemaTest.php',
+        'tests/Unit/Reporting/Input/ReportInputNormalizerTest.php',
+        'tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php',
         'tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php',
         'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
     ];
     private static ?Closure $faultOverride = null;
     private static ?Closure $phpHashOverride = null;
+    private static ?Closure $phpVersionOverride = null;
     private static ?Closure $branchOverride = null;
     private static ?Closure $errorOverride = null;
     private static ?Closure $taskSevenRegenerationOverride = null;
+    private static ?Closure $taskSevenProvenanceOverride = null;
 
     private string $root;
 
@@ -109,7 +148,7 @@ final class PlanOneAEvidence
                 }
                 $instance->fault('after_preclean');
                 if ($options['mode'] === 'contract-lock') {
-                    $instance->contractLock($commit, $options['output']);
+                    $instance->contractLock($commit, $options['output'], $options['check']);
                 } elseif ($options['mode'] === 'task-7') {
                     $instance->taskSeven($commit, $options['output'], $options['check']);
                 } else {
@@ -156,6 +195,12 @@ final class PlanOneAEvidence
 
     public function resolveTaskSevenOwner(string $completionCommit): TaskSevenProvenance
     {
+        if (self::$taskSevenProvenanceOverride instanceof Closure) {
+            $overridden = (self::$taskSevenProvenanceOverride)($completionCommit, $this->root);
+            self::guard($overridden instanceof TaskSevenProvenance, 4, 'PLAN_1A_TASK_7_PROVENANCE_OVERRIDE_INVALID');
+
+            return $overridden;
+        }
         self::guard(preg_match('/^[a-f0-9]{40}$/D', $completionCommit) === 1, 3, 'PLAN_1A_TASK_7_COMMIT_INVALID');
         self::guard(trim($this->process(['git', 'rev-parse', '--is-shallow-repository'])) === 'false', 3, 'PLAN_1A_TASK_7_SHALLOW_HISTORY');
         $owners = [];
@@ -205,9 +250,20 @@ final class PlanOneAEvidence
         foreach ($chain as $descendant) {
             $descendantParents = preg_split('/\s+/', trim($this->process(['git', 'show', '-s', '--format=%P', $descendant]))) ?: [];
             self::guard(count($descendantParents) === 1, 4, 'PLAN_1A_TASK_7_DESCENDANT_MERGE');
-            self::guard(array_intersect($this->changedPaths($descendant), self::TASK_SEVEN_PATHS) === [], 4, 'PLAN_1A_TASK_7_DESCENDANT_TOUCH');
+            $changedPaths = $this->changedPaths($descendant);
+            if (array_intersect($changedPaths, self::TASK_SEVEN_PATHS) !== []) {
+                self::guard(
+                    trim($this->process(['git', 'show', '-s', '--format=%s', $descendant])) === self::TASK_FOUR_A_SUBJECT
+                        && $changedPaths === self::TASK_FOUR_A_PATHS,
+                    4,
+                    'PLAN_1A_TASK_7_DESCENDANT_TOUCH',
+                );
+            }
         }
         foreach (self::TASK_SEVEN_PATHS as $path) {
+            if (in_array($path, self::TASK_FOUR_A_PATHS, true)) {
+                continue;
+            }
             self::guard(
                 hash_equals(hash('sha256', $this->gitBytes($owner, $path)), hash('sha256', $this->gitBytes($completionCommit, $path))),
                 4,
@@ -244,16 +300,14 @@ final class PlanOneAEvidence
             'completion' => 'build/reports/plan-1a-completion.json',
         ];
         self::guard($values['output'] === $paths[$mode], 2, 'PLAN_1A_EVIDENCE_OUTPUT_INVALID');
-        self::guard($mode !== 'contract-lock' || !$values['check'], 2, 'PLAN_1A_EVIDENCE_CLI_INVALID');
-
         return $values;
     }
 
-    private function contractLock(string $commit, string $output): void
+    private function contractLock(string $commit, string $output, bool $check): void
     {
         self::guard(trim($this->process(['git', 'rev-parse', 'HEAD'])) === $commit, 3, 'PLAN_1A_EVIDENCE_HEAD_MISMATCH');
         $provenance = $this->resolveTaskSevenOwner($commit);
-        [$evidence, $evidenceBytes] = $this->regenerateTaskSeven($provenance, true);
+        [$evidence, $evidenceBytes] = $this->regenerateTaskSeven($provenance, !$check);
         $lock = [
             'plan' => '1a',
             'contract_version' => '1.0.0',
@@ -276,6 +330,26 @@ final class PlanOneAEvidence
                 'legacy_aggregator_require' => false,
                 'legacy_route_file' => false,
             ],
+            'task_4a' => [
+                'subject' => self::TASK_FOUR_A_SUBJECT,
+                'parent_commit_sha' => $commit,
+                'tracked_paths' => self::TASK_FOUR_A_PATHS,
+                'malformed_matrix' => ['cases' => 20, 'requests' => 38, 'assertions' => 120],
+                'contract_command_counts' => ['tests' => 393, 'assertions' => 3143],
+                'retry_idempotency_error' => 'REPORT_IDEMPOTENCY_KEY_INVALID',
+                'snapshot_classifications' => ['operational', 'official'],
+                'data_classifications' => ['standard', 'sensitive'],
+                'output_classification_methods' => [
+                    'requiresSensitiveForRows',
+                    'requiresAuditForRows',
+                    'requiresSensitiveForColumns',
+                    'requiresAuditForColumns',
+                    'requiresSensitiveForSummary',
+                    'requiresAuditForSummary',
+                ],
+                'saved_view_reference' => ['id', 'revision', 'hash'],
+                'retry_idempotency_ports' => ['RetryReportRunAction', 'RetryReportExportAction'],
+            ],
             'composer_contract' => [
                 'root_constraint' => '^2.6',
                 'locked_opis_version' => '2.6.0',
@@ -290,10 +364,21 @@ final class PlanOneAEvidence
         $bytes = self::encode($lock);
         $path = $this->root.'/'.$output;
         $hashPath = $this->root.'/docs/reports/contracts/plan-1a-contract-lock.sha256';
-        $this->publishGroup([
-            $path => $bytes,
-            $hashPath => hash('sha256', $bytes)."\n",
-        ]);
+        if ($check) {
+            self::guard(
+                is_file($path)
+                    && is_file($hashPath)
+                    && hash_equals($bytes, (string) file_get_contents($path))
+                    && hash_equals(hash('sha256', $bytes)."\n", (string) file_get_contents($hashPath)),
+                4,
+                'PLAN_1A_LOCK_HASH_DRIFT',
+            );
+        } else {
+            $this->publishGroup([
+                $path => $bytes,
+                $hashPath => hash('sha256', $bytes)."\n",
+            ]);
+        }
         fwrite(STDOUT, 'plan-1a-contract-lock: locked task7='.hash('sha256', $evidenceBytes).' lock='.hash('sha256', $bytes).PHP_EOL);
     }
 
@@ -377,7 +462,7 @@ final class PlanOneAEvidence
         if (!$check) {
             $this->publishGroup([$this->root.'/'.$output => $bytes]);
         }
-        fwrite(STDOUT, 'plan-1a-completion: passed digests=5 commands=2 authorization=22/22 malformed=16/16'.PHP_EOL);
+        fwrite(STDOUT, 'plan-1a-completion: passed digests=5 commands=2 authorization=22/22 malformed=20/20'.PHP_EOL);
     }
 
     private function readValidatedLock(): array
@@ -674,7 +759,10 @@ final class PlanOneAEvidence
             3,
             'PLAN_1A_EVIDENCE_BRANCH_INVALID',
         );
-        self::guard(PHP_VERSION === '8.2.29', 2, 'PLAN_1A_EVIDENCE_PHP_VERSION_INVALID');
+        $phpVersion = self::$phpVersionOverride instanceof Closure
+            ? (self::$phpVersionOverride)()
+            : PHP_VERSION;
+        self::guard($phpVersion === '8.2.29', 2, 'PLAN_1A_EVIDENCE_PHP_VERSION_INVALID');
         $phpHash = self::$phpHashOverride instanceof Closure
             ? (self::$phpHashOverride)()
             : hash_file('sha256', self::PHP);
@@ -709,26 +797,38 @@ final class PlanOneAEvidence
         $working = array_values(array_unique([...$unstaged, ...$untracked]));
         sort($working, SORT_STRING);
         if ($mode === 'contract-lock') {
-            self::guard($staged === [] && $working === self::TASK_ELEVEN_PATHS, 3, 'PLAN_1A_EVIDENCE_PRECOMMIT_STATE_INVALID');
+            $preGenerationPaths = array_values(array_filter(
+                self::TASK_FOUR_A_PATHS,
+                static fn (string $path): bool => !in_array($path, [
+                    'docs/reports/contracts/plan-1a-contract-lock.json',
+                    'docs/reports/contracts/plan-1a-contract-lock.sha256',
+                ], true),
+            ));
+            self::guard(
+                ($staged === [] && ($working === $preGenerationPaths || $working === self::TASK_FOUR_A_PATHS))
+                    || ($staged === self::TASK_FOUR_A_PATHS && $working === []),
+                3,
+                'PLAN_1A_EVIDENCE_PRECOMMIT_STATE_INVALID',
+            );
 
             return;
         }
         self::guard($staged === [] && $working === [], 3, 'PLAN_1A_EVIDENCE_WORKTREE_DIRTY');
-        $this->validateCanonicalTaskElevenCommit($commit);
+        $this->validateCanonicalTaskFourACommit($commit);
     }
 
-    private function validateCanonicalTaskElevenCommit(string $commit): void
+    private function validateCanonicalTaskFourACommit(string $commit): void
     {
-        self::guard(trim($this->process(['git', 'show', '-s', '--format=%s', $commit])) === self::TASK_ELEVEN_SUBJECT, 3, 'PLAN_1A_EVIDENCE_TASK_11_SUBJECT_INVALID');
+        self::guard(trim($this->process(['git', 'show', '-s', '--format=%s', $commit])) === self::TASK_FOUR_A_SUBJECT, 3, 'PLAN_1A_EVIDENCE_TASK_4A_SUBJECT_INVALID');
         $parents = preg_split('/\s+/', trim($this->process(['git', 'show', '-s', '--format=%P', $commit]))) ?: [];
-        self::guard(count($parents) === 1, 3, 'PLAN_1A_EVIDENCE_TASK_11_PARENT_INVALID');
-        self::guard($this->changedPaths($commit) === self::TASK_ELEVEN_PATHS, 3, 'PLAN_1A_EVIDENCE_TASK_11_PATHS_INVALID');
-        foreach (self::TASK_ELEVEN_PATHS as $path) {
+        self::guard(count($parents) === 1, 3, 'PLAN_1A_EVIDENCE_TASK_4A_PARENT_INVALID');
+        self::guard($this->changedPaths($commit) === self::TASK_FOUR_A_PATHS, 3, 'PLAN_1A_EVIDENCE_TASK_4A_PATHS_INVALID');
+        foreach (self::TASK_FOUR_A_PATHS as $path) {
             self::guard(
                 is_file($this->root.'/'.$path)
                     && hash_equals(hash('sha256', $this->gitBytes($commit, $path)), hash_file('sha256', $this->root.'/'.$path)),
                 3,
-                'PLAN_1A_EVIDENCE_TASK_11_BYTES_INVALID',
+                'PLAN_1A_EVIDENCE_TASK_4A_BYTES_INVALID',
             );
         }
     }

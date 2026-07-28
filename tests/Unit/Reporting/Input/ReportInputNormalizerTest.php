@@ -425,6 +425,8 @@ final class ReportInputNormalizerTest extends TestCase
             [['id' => 'created_at'], ['id' => 'total']],
             ['csv', 'xlsx'],
             new ReportPermissionPolicy(['reports.view'], ['reports.export'], [], []),
+            \App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification::OPERATIONAL,
+            new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification(\App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification::STANDARD, [], [], false, false, false),
             ReportPublicationReadiness::PUBLISHED,
             true,
         );

@@ -25,7 +25,7 @@ final class PlanOneAHandoffContractTest extends TestCase
         self::assertFileExists($this->lockPath());
         self::assertFileExists($this->hashPath());
         self::assertSame(hash_file('sha256', $this->lockPath())."\n", file_get_contents($this->hashPath()));
-        self::assertSame(['plan', 'contract_version', 'resources', 'permissions', 'error_count', 'definition_lifecycle', 'binding_lifecycle', 'owner_port_arity', 'route_contract', 'composer_contract'], array_keys($this->lock()));
+        self::assertSame(['plan', 'contract_version', 'resources', 'permissions', 'error_count', 'definition_lifecycle', 'binding_lifecycle', 'owner_port_arity', 'route_contract', 'task_4a', 'composer_contract'], array_keys($this->lock()));
     }
 
     public function test_contract_lock_preserves_resources_permissions_and_errors(): void
@@ -35,6 +35,21 @@ final class PlanOneAHandoffContractTest extends TestCase
         self::assertSame(['reports.view', 'reports.run', 'reports.export', 'reports.download', 'reports.manage'], $lock['permissions']);
         self::assertSame(20, $lock['error_count']);
         self::assertSame(['artifact_path', 'artifact_sha256', 'status', 'baseline_commit_sha', 'reviewed_commit_sha', 'composer_json_before_sha256', 'composer_lock_before_sha256', 'composer_json_after_sha256', 'composer_lock_after_sha256', 'root_constraint', 'locked_opis_version', 'added_packages', 'content_hash'], array_keys($lock['composer_contract']['evidence']));
+    }
+
+    public function test_contract_lock_binds_the_closed_task_four_a_manifest_and_retry_key_matrix(): void
+    {
+        $task = $this->lock()['task_4a'];
+
+        self::assertSame('fix[reports]: зафиксировать классификацию и печать снимков', $task['subject']);
+        self::assertCount(53, $task['tracked_paths']);
+        self::assertSame($task['tracked_paths'], array_values(array_unique($task['tracked_paths'])));
+        self::assertSame(['cases' => 20, 'requests' => 38, 'assertions' => 120], $task['malformed_matrix']);
+        self::assertSame(['tests' => 393, 'assertions' => 3143], $task['contract_command_counts']);
+        self::assertSame('REPORT_IDEMPOTENCY_KEY_INVALID', $task['retry_idempotency_error']);
+        self::assertSame(['operational', 'official'], $task['snapshot_classifications']);
+        self::assertSame(['standard', 'sensitive'], $task['data_classifications']);
+        self::assertCount(6, $task['output_classification_methods']);
     }
 
     public function test_definition_registries_keep_nominal_wrappers(): void
@@ -62,6 +77,7 @@ final class PlanOneAHandoffContractTest extends TestCase
         self::assertSame(5, $this->digestCount($fixture));
         self::assertArrayNotHasKey('command_ledger_sha256', $fixture);
         self::assertSame(['hermetic_http', 'hermetic_http'], [$fixture['ci_http_matrices']['authorization']['verification_mode'], $fixture['ci_http_matrices']['malformed_requests']['verification_mode']]);
+        self::assertSame([20, 20], [$fixture['ci_http_matrices']['malformed_requests']['cases'], $fixture['ci_http_matrices']['malformed_requests']['passed']]);
     }
 
     public function test_gate_schema_has_the_four_closed_discriminated_branches(): void
@@ -140,7 +156,7 @@ final class PlanOneAHandoffContractTest extends TestCase
         $reordered['commands'] = array_reverse($reordered['commands']);
         self::assertFalse($this->validates($reordered));
         $counts = $this->fixture('plan-1a-command-ledger.valid.json');
-        $counts['commands'][0]['assertions'] = 2686;
+        $counts['commands'][0]['assertions'] = 0;
         self::assertFalse($this->validates($counts));
         $command = $this->fixture('plan-1a-command-ledger.valid.json');
         $command['commands'][1]['command_id'] = 'another_command';

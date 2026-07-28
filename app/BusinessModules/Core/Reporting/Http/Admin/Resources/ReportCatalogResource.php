@@ -41,6 +41,15 @@ final class ReportCatalogResource extends JsonResource
                 'sensitive' => $definition->permissionPolicy->sensitivePermissions,
                 'audit' => $definition->permissionPolicy->auditPermissions,
             ],
+            'snapshot_classification' => $definition->snapshotClassification->value,
+            'output_classification' => [
+                'default_classification' => $definition->outputClassification->defaultClassification->value,
+                'sensitive_column_ids' => $definition->outputClassification->sensitiveColumnIds,
+                'audit_column_ids' => $definition->outputClassification->auditColumnIds,
+                'totals_sensitive' => $definition->outputClassification->totalsSensitive,
+                'totals_audit' => $definition->outputClassification->totalsAudit,
+                'provenance_audit' => $definition->outputClassification->provenanceAudit,
+            ],
             'publication_readiness' => $definition->publicationReadiness->value,
             'supports_subscriptions' => $definition->supportsSubscriptions,
         ];

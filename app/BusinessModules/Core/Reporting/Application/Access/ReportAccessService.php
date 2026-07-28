@@ -57,8 +57,8 @@ final readonly class ReportAccessService
             ReportOperation::EXPORT => $visibility->canExport,
             ReportOperation::DOWNLOAD => $visibility->canDownload,
             ReportOperation::MANAGE => $visibility->canManage,
-            ReportOperation::VIEW_SENSITIVE,
-            ReportOperation::VIEW_AUDIT => $visibility->canView,
+            ReportOperation::VIEW_SENSITIVE => $visibility->canViewSensitive,
+            ReportOperation::VIEW_AUDIT => $visibility->canViewAudit,
             ReportOperation::DRILL_DOWN => $visibility->canView,
         };
 

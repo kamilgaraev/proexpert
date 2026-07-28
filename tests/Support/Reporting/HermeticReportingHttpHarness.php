@@ -604,16 +604,22 @@ final class HermeticReportingHttpHarness
         return $routes;
     }
 
-    private function dispatch(string $method, string $uri, array $parameters = [], bool $authenticated = true): array
+    private function dispatch(
+        string $method,
+        string $uri,
+        array $parameters = [],
+        bool $authenticated = true,
+        ?string $idempotencyKey = 'reporting-test-key',
+    ): array
     {
         $user = new User();
         $user->forceFill(['id' => 1, 'current_organization_id' => null]);
         $this->auth->guard->user = $user;
 
-        $server = [
-            'HTTP_ACCEPT' => 'application/json',
-            'HTTP_IDEMPOTENCY_KEY' => 'reporting-test-key',
-        ];
+        $server = ['HTTP_ACCEPT' => 'application/json'];
+        if ($idempotencyKey !== null) {
+            $server['HTTP_IDEMPOTENCY_KEY'] = $idempotencyKey;
+        }
         $request = Request::create($uri, $method, $parameters, [], [], $server);
         $request->attributes->set('web_auth_audience', $authenticated ? 'admin' : 'invalid');
         $request->setUserResolver(fn (?string $guard = null): ?Authenticatable => $this->auth->guard($guard)->user());
@@ -755,10 +761,14 @@ final class HermeticReportingHttpHarness
             'invalid_run_rows_ulid' => [['GET', '/api/v1/admin/reports/runs/'.$invalid.'/rows?cursor&limit=50&sort_by=name&sort_dir=asc']],
             'invalid_run_drill_down_ulid' => [['POST', '/api/v1/admin/reports/runs/'.$invalid.'/drill-down', ['token' => 'x', 'cursor' => null, 'limit' => 50]]],
             'invalid_run_retry_ulid' => [['POST', '/api/v1/admin/reports/runs/'.$invalid.'/retry']],
+            'missing_run_retry_idempotency_key' => [['POST', '/api/v1/admin/reports/runs/'.self::RUN_ID.'/retry', [], true, null]],
+            'invalid_run_retry_idempotency_key' => [['POST', '/api/v1/admin/reports/runs/'.self::RUN_ID.'/retry', [], true, 'invalid']],
             'invalid_run_cancel_ulid' => [['POST', '/api/v1/admin/reports/runs/'.$invalid.'/cancel']],
             'invalid_export_create_run_ulid' => [['POST', '/api/v1/admin/reports/runs/'.$invalid.'/exports', $this->validExportBody()]],
             'invalid_export_show_ulid' => [['GET', '/api/v1/admin/reports/exports/'.$invalid]],
             'invalid_export_retry_ulid' => [['POST', '/api/v1/admin/reports/exports/'.$invalid.'/retry']],
+            'missing_export_retry_idempotency_key' => [['POST', '/api/v1/admin/reports/exports/'.self::EXPORT_ID.'/retry', [], true, null]],
+            'invalid_export_retry_idempotency_key' => [['POST', '/api/v1/admin/reports/exports/'.self::EXPORT_ID.'/retry', [], true, 'invalid']],
             'invalid_export_cancel_ulid' => [['POST', '/api/v1/admin/reports/exports/'.$invalid.'/cancel']],
             'invalid_export_download_ulid' => [['POST', '/api/v1/admin/reports/exports/'.$invalid.'/download-link']],
             'missing_run_as_of' => [['POST', '/api/v1/admin/reports/report/runs', ['filters' => []]]],

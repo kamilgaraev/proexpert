@@ -54,7 +54,8 @@ final readonly class ReportExportController
 
     public function retry(ReportExportRouteRequest $request): JsonResponse
     {
-        $export = $this->retryAction->handle($this->contexts->fromHttp($request), $request->routeId());
+        $key = new IdempotencyKey((string) $request->header('Idempotency-Key'));
+        $export = $this->retryAction->handle($this->contexts->fromHttp($request), $request->routeId(), $key);
 
         return AdminResponse::success(new ReportExportResource($export), null, $export->httpStatus)
             ->withHeaders($export->responseHeaders());

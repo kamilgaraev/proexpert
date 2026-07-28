@@ -18,6 +18,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotSeal;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
@@ -28,6 +29,7 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use DateTimeImmutable;
@@ -53,7 +55,7 @@ final class ReportWireDtoContractTest extends TestCase
         self::assertSame($this->hash('b')->value, $snapshot->sourceHash->value);
 
         try {
-            new ReportSnapshotRef('sales_snapshot', 'snapshot_1', $this->scope(), $this->hash(), 'formula_v1', $this->hash('b'), $this->at('+1 minute'), $this->at(), []);
+            new ReportSnapshotRef('sales_snapshot', 'snapshot_1', $this->scope(), $this->hash(), 'formula_v1', $this->hash('b'), $this->at('+1 minute'), $this->at(), [], ReportSnapshotClassification::OPERATIONAL, null);
             self::fail('Допущен устаревший снимок.');
         } catch (InvalidArgumentException $exception) {
             self::assertSame('snapshot_identity_invalid', $exception->getMessage());
@@ -449,7 +451,7 @@ final class ReportWireDtoContractTest extends TestCase
 
     private function snapshot(): ReportSnapshotRef
     {
-        return new ReportSnapshotRef('sales_snapshot', 'snapshot_1', $this->scope(), $this->hash(), 'formula_v1', $this->hash('b'), $this->at(), null, ['erp' => 'watermark_1']);
+        return new ReportSnapshotRef('sales_snapshot', 'snapshot_1', $this->scope(), $this->hash(), 'formula_v1', $this->hash('b'), $this->at(), null, ['erp' => 'watermark_1'], ReportSnapshotClassification::OPERATIONAL, null);
     }
 
     private function source(): ReportSourceRef
@@ -490,7 +492,7 @@ final class ReportWireDtoContractTest extends TestCase
     private function constructorContracts(): array
     {
         return [
-            ReportSnapshotRef::class => [['kind', 'string', false], ['id', 'string', false], ['scope', ReportScope::class, false], ['definitionHash', Sha256Hash::class, false], ['formulaVersion', 'string', false], ['sourceHash', Sha256Hash::class, false], ['generatedAt', DateTimeImmutable::class, false], ['staleAt', DateTimeImmutable::class, true], ['watermarks', 'array', false]],
+            ReportSnapshotRef::class => [['kind', 'string', false], ['id', 'string', false], ['scope', ReportScope::class, false], ['definitionHash', Sha256Hash::class, false], ['formulaVersion', 'string', false], ['sourceHash', Sha256Hash::class, false], ['generatedAt', DateTimeImmutable::class, false], ['staleAt', DateTimeImmutable::class, true], ['watermarks', 'array', false], ['classification', ReportSnapshotClassification::class, false], ['seal', ReportSnapshotSeal::class, true]],
             ReportSourceRef::class => [['source', 'string', false], ['snapshotKind', 'string', false], ['snapshotId', 'string', false], ['schemaVersion', 'string', false], ['watermark', 'string', false], ['rowCount', 'int', false], ['hash', Sha256Hash::class, false]],
             ReportCoverage::class => [['numerator', 'string', false], ['denominator', 'string', false], ['ratio', 'string', true]],
             ReportWarning::class => [['code', 'string', false], ['severity', ReportWarningSeverity::class, false], ['metric', 'string', true], ['affectedRowCount', 'int', false]],
