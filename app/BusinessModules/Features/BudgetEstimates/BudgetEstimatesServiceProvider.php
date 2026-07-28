@@ -11,6 +11,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionNumberingService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateService;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateTemplateService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersioningService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersionService;
@@ -106,6 +107,7 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
     protected function registerServices(): void
     {
         // Cache сервис (регистрируем первым, так как другие сервисы зависят от него)
+        $this->app->singleton(EstimateStructureSnapshotStorage::class);
         $this->app->singleton(EstimateCacheService::class);
 
         // Core сервисы

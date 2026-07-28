@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace Tests\Unit\BusinessModules\BudgetEstimates;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCacheService;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
 use App\Models\Estimate;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Storage;
 use Mockery;
 use Tests\TestCase;
 
@@ -32,22 +32,13 @@ class EstimateCacheServiceTest extends TestCase
             ->once()
             ->with('estimate_structure_42');
 
-        Storage::shouldReceive('disk')
-            ->once()
-            ->with('s3')
-            ->andReturnSelf();
-
-        Storage::shouldReceive('exists')
+        $snapshotStorage = Mockery::mock(EstimateStructureSnapshotStorage::class);
+        $snapshotStorage->shouldReceive('delete')
             ->once()
             ->with('org-7/estimates/42/structure_snapshot.json')
-            ->andReturnTrue();
+            ->andReturnNull();
 
-        Storage::shouldReceive('delete')
-            ->once()
-            ->with('org-7/estimates/42/structure_snapshot.json')
-            ->andReturnTrue();
-
-        (new EstimateCacheService())->invalidateStructure($estimate);
+        (new EstimateCacheService($snapshotStorage))->invalidateStructure($estimate);
 
         $this->assertNull($estimate->structure_cache_path);
     }

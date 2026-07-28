@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Jobs;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
 use App\Models\Estimate;
 use App\Support\EstimatePositionOrder;
 use Illuminate\Bus\Queueable;
@@ -13,7 +14,6 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 
 class GenerateEstimateSnapshotJob implements ShouldQueue
 {
@@ -28,7 +28,7 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
         $this->estimateId = $estimateId;
     }
 
-    public function handle(): void
+    public function handle(EstimateStructureSnapshotStorage $structureSnapshotStorage): void
     {
         try {
             $estimate = Estimate::find($this->estimateId);
@@ -207,7 +207,13 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             $fileName = "{$orgPrefix}/estimates/{$this->estimateId}/structure_snapshot_{$versionTimestamp}.json";
             
             // Запись огромного JSON
-            Storage::disk('s3')->put($fileName, json_encode($payload, JSON_UNESCAPED_UNICODE));
+            $snapshotJson = json_encode($payload, JSON_UNESCAPED_UNICODE);
+
+            if ($snapshotJson === false) {
+                throw new \RuntimeException('Unable to encode estimate structure snapshot.');
+            }
+
+            $structureSnapshotStorage->put($fileName, $snapshotJson);
 
             // Обновляем структуру
             $oldPath = $estimate->structure_cache_path;
@@ -216,8 +222,8 @@ class GenerateEstimateSnapshotJob implements ShouldQueue
             $estimate->save();
 
             // Удаляем старый кэш
-            if ($oldPath && $oldPath !== $fileName && Storage::disk('s3')->exists($oldPath)) {
-                Storage::disk('s3')->delete($oldPath);
+            if ($oldPath && $oldPath !== $fileName) {
+                $structureSnapshotStorage->delete($oldPath);
             }
 
             Log::info("Snapshot generated successfully", [

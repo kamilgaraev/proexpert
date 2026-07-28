@@ -4,13 +4,16 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
 use App\Models\Estimate;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Storage;
-use League\Flysystem\FilesystemException;
 
 class EstimateCacheService
 {
     private const TTL = 3600; // 1 час
     private const TAG_PREFIX = 'budget_estimates';
+
+    public function __construct(
+        private readonly EstimateStructureSnapshotStorage $structureSnapshotStorage
+    ) {
+    }
 
     /**
      * Кешировать итоговые суммы сметы
@@ -148,14 +151,7 @@ class EstimateCacheService
             $estimate->saveQuietly();
         }
 
-        $disk = Storage::disk('s3');
-
-        try {
-            if ($disk->exists($path)) {
-                $disk->delete($path);
-            }
-        } catch (FilesystemException) {
-        }
+        $this->structureSnapshotStorage->delete($path);
     }
 
     /**

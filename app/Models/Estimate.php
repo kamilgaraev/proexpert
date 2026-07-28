@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\Traits\HasOnboardingDemo;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
 
 class Estimate extends Model
 {
@@ -212,8 +213,8 @@ class Estimate extends Model
     protected static function booted()
     {
         static::deleting(function ($estimate) {
-            if ($estimate->isForceDeleting() && $estimate->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('s3')->exists($estimate->structure_cache_path)) {
-                \Illuminate\Support\Facades\Storage::disk('s3')->delete($estimate->structure_cache_path);
+            if ($estimate->isForceDeleting()) {
+                app(EstimateStructureSnapshotStorage::class)->delete($estimate->structure_cache_path);
             }
         });
     }

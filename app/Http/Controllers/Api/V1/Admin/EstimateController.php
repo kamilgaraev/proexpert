@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateStructureSnapshotStorage;
 use App\Http\Requests\Admin\Estimate\CreateEstimateRequest;
 use App\Http\Requests\Admin\Estimate\UpdateEstimateRequest;
 use App\Http\Requests\Admin\Estimate\UpdateEstimateStatusRequest;
@@ -18,6 +19,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 use function trans_message;
 
@@ -27,7 +29,8 @@ class EstimateController extends Controller
         protected EstimateService $estimateService,
         protected EstimateCalculationService $calculationService,
         protected EstimateRepository $repository,
-        protected EstimateCoverageService $coverageService
+        protected EstimateCoverageService $coverageService,
+        private readonly EstimateStructureSnapshotStorage $structureSnapshotStorage
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -98,20 +101,8 @@ class EstimateController extends Controller
         $estimateModel->load(['project', 'approvedBy']);
 
         // Если снапшот есть - стримим его с огромной экономией RAM
-        if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('s3')->exists($estimateModel->structure_cache_path)) {
-            $meta = (new EstimateResource($estimateModel))->resolve();
-            $metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE);
-            return response()->stream(function () use ($estimateModel, $metaJson) {
-                echo '{"success":true,"message":null,"data":';
-                echo $metaJson;
-                echo ',"tree":';
-                $stream = \Illuminate\Support\Facades\Storage::disk('s3')->readStream($estimateModel->structure_cache_path);
-                while (!feof($stream)) {
-                    echo fread($stream, 8192);
-                }
-                fclose($stream);
-                echo '}';
-            }, 200, ['Content-Type' => 'application/json']);
+        if ($this->structureSnapshotStorage->exists($estimateModel->structure_cache_path)) {
+            return $this->streamEstimateWithStructureSnapshot($estimateModel);
         }
 
         // Снапшот отсутствует — запускаем генерацию (синхронно или в фоне)
@@ -127,20 +118,8 @@ class EstimateController extends Controller
         }
 
         // Проверяем снова
-        if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('s3')->exists($estimateModel->structure_cache_path)) {
-            $meta = (new EstimateResource($estimateModel))->resolve();
-            $metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE);
-            return response()->stream(function () use ($estimateModel, $metaJson) {
-                echo '{"success":true,"message":null,"data":';
-                echo $metaJson;
-                echo ',"tree":';
-                $stream = \Illuminate\Support\Facades\Storage::disk('s3')->readStream($estimateModel->structure_cache_path);
-                while (!feof($stream)) {
-                    echo fread($stream, 8192);
-                }
-                fclose($stream);
-                echo '}';
-            }, 200, ['Content-Type' => 'application/json']);
+        if ($this->structureSnapshotStorage->exists($estimateModel->structure_cache_path)) {
+            return $this->streamEstimateWithStructureSnapshot($estimateModel);
         }
 
         // Финальный фолбэк (очень редкий случай, если джоба упала). 
@@ -277,10 +256,12 @@ class EstimateController extends Controller
         
         $this->authorize('view', $estimateModel);
 
-        if ($estimateModel->structure_cache_path && \Illuminate\Support\Facades\Storage::disk('local')->exists($estimateModel->structure_cache_path)) {
-            return response()->stream(function () use ($estimateModel) {
+        if ($this->structureSnapshotStorage->exists($estimateModel->structure_cache_path)) {
+            $snapshotPath = (string) $estimateModel->structure_cache_path;
+
+            return response()->stream(function () use ($snapshotPath) {
                 echo '{"success":true,"message":null,"data":';
-                $stream = \Illuminate\Support\Facades\Storage::disk('local')->readStream($estimateModel->structure_cache_path);
+                $stream = $this->structureSnapshotStorage->readStream($snapshotPath);
                 while (!feof($stream)) {
                     echo fread($stream, 8192);
                 }
@@ -336,6 +317,25 @@ class EstimateController extends Controller
             ->get();
         
         return AdminResponse::success($sections);
+    }
+
+    private function streamEstimateWithStructureSnapshot(Estimate $estimate): StreamedResponse
+    {
+        $meta = (new EstimateResource($estimate))->resolve();
+        $metaJson = json_encode($meta, JSON_UNESCAPED_UNICODE);
+        $snapshotPath = (string) $estimate->structure_cache_path;
+
+        return response()->stream(function () use ($metaJson, $snapshotPath) {
+            echo '{"success":true,"message":null,"data":';
+            echo $metaJson;
+            echo ',"tree":';
+            $stream = $this->structureSnapshotStorage->readStream($snapshotPath);
+            while (!feof($stream)) {
+                echo fread($stream, 8192);
+            }
+            fclose($stream);
+            echo '}';
+        }, 200, ['Content-Type' => 'application/json']);
     }
 
     /**
