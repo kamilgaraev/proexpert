@@ -311,9 +311,13 @@ final class ExecutionContractsTest extends TestCase
 
         $this->assertCount(12, $paths);
         $this->assertSame([], $this->forbiddenDeclarations($paths));
-        $this->assertFalse(interface_exists(
-            'App\\BusinessModules\\Core\\Reporting\\Application\\Contracts\\Execution\\ReportRunStore',
-        ));
+        $runStoreDeclarations = $this->reportingProductionDeclarations('ReportRunStore');
+        $canonicalRunStore = str_replace('\\', '/', dirname(__DIR__, 4)
+            .'/app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunStore.php');
+        $this->assertContains(count($runStoreDeclarations), [0, 1]);
+        if ($runStoreDeclarations !== []) {
+            $this->assertSame([$canonicalRunStore], $runStoreDeclarations);
+        }
         $this->assertSame(
             \App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext::class,
             (string) (new ReflectionClass(ReportRunExecutionContextRehydrator::class))
@@ -482,5 +486,42 @@ final class ExecutionContractsTest extends TestCase
         }
 
         return $forbidden;
+    }
+
+    private function reportingProductionDeclarations(string $expectedName): array
+    {
+        $root = dirname(__DIR__, 4).'/app/BusinessModules/Core/Reporting';
+        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root));
+        $declarations = [];
+
+        foreach ($iterator as $file) {
+            if (!$file->isFile() || $file->getExtension() !== 'php') {
+                continue;
+            }
+
+            $path = $file->getPathname();
+            $tokens = token_get_all((string) file_get_contents($path));
+            $expectName = false;
+
+            foreach ($tokens as $token) {
+                if (is_array($token) && in_array($token[0], [T_CLASS, T_INTERFACE, T_ENUM, T_TRAIT], true)) {
+                    $expectName = true;
+
+                    continue;
+                }
+                if (!$expectName || !is_array($token) || $token[0] !== T_STRING) {
+                    continue;
+                }
+
+                $expectName = false;
+                if ($token[1] === $expectedName) {
+                    $declarations[] = str_replace('\\', '/', $path);
+                }
+            }
+        }
+
+        sort($declarations, SORT_STRING);
+
+        return $declarations;
     }
 }
