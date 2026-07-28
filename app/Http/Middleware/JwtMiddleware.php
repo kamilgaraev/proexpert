@@ -9,6 +9,7 @@ use App\Http\Responses\LandingResponse;
 use App\Http\Responses\MobileResponse;
 use App\Services\LogService;
 use Closure;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -76,7 +77,7 @@ class JwtMiddleware
                 auth()->shouldUse($guard);
             }
 
-            $user = $this->jwt->parseToken()->authenticate();
+            $user = $this->authenticateRequestUser($request, $guard);
 
             if (! $user) {
                 LogService::authLog('auth_failed', [
@@ -91,7 +92,7 @@ class JwtMiddleware
 
             if ($this->jwt->manager()->getBlacklist()->has($payload)) {
                 LogService::authLog('auth_failed', [
-                    'user_id' => $user->id,
+                    'user_id' => $user->getAuthIdentifier(),
                     'reason' => 'token_blacklisted_check',
                     'ip' => $request->ip(),
                     'uri' => $request->getRequestUri(),
@@ -104,7 +105,7 @@ class JwtMiddleware
             $request->attributes->add(['jwt_token' => (string) $token]);
 
             LogService::authLog('auth_success', [
-                'user_id' => $user->id,
+                'user_id' => $user->getAuthIdentifier(),
                 'guard' => $guard,
                 'ip' => $request->ip(),
                 'uri' => $request->getRequestUri(),
@@ -165,6 +166,25 @@ class JwtMiddleware
         }
 
         return $next($request);
+    }
+
+    private function authenticateRequestUser(Request $request, ?string $guard): ?Authenticatable
+    {
+        $user = $guard ? auth($guard)->user() : auth()->user();
+
+        if (! $user instanceof Authenticatable) {
+            return null;
+        }
+
+        $request->setUserResolver(static function (?string $requestedGuard = null) use ($guard, $user): ?Authenticatable {
+            if ($requestedGuard === null || $requestedGuard === $guard) {
+                return $user;
+            }
+
+            return auth($requestedGuard)->user();
+        });
+
+        return $user;
     }
 
     private function errorResponse(Request $request, ?string $guard, string $messageKey, int $statusCode): JsonResponse
