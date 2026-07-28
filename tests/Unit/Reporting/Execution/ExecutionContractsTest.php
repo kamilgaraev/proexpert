@@ -10,12 +10,18 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExp
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportMaterializationDispatcher;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunExecutionContextRehydrator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportAuditIntentStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Infrastructure\Clock\SystemReportExecutionClock;
 use DateInterval;
 use DateTimeImmutable;
+use Carbon\CarbonImmutable;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -29,6 +35,38 @@ use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class ExecutionContractsTest extends TestCase
 {
+    public function test_persisted_timestamp_conversion_preserves_microseconds_and_offset(): void
+    {
+        $value = CarbonImmutable::parse('2026-07-28T13:00:00.123456+03:00');
+        foreach ([
+            [EloquentReportRunStore::class, 'immutableInstant'],
+            [EloquentReportDispatchIntentStore::class, 'instant'],
+            [EloquentReportAuditIntentStore::class, 'instant'],
+        ] as [$class, $method]) {
+            $reflection = new ReflectionClass($class);
+            $converted = $reflection->getMethod($method)->invoke(
+                $reflection->newInstanceWithoutConstructor(),
+                $value,
+            );
+
+            self::assertInstanceOf(DateTimeImmutable::class, $converted);
+            self::assertSame('2026-07-28T13:00:00.123456+03:00', $converted->format('Y-m-d\TH:i:s.uP'));
+            self::assertSame('2026-07-28T10:00:00.123456+00:00', $converted->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.uP'));
+        }
+    }
+
+    public function test_export_expiry_boundary_is_fail_closed_at_exact_microsecond(): void
+    {
+        $reflection = new ReflectionClass(EloquentReportRunStore::class);
+        $store = $reflection->newInstanceWithoutConstructor();
+        $method = $reflection->getMethod('isExpiredForExport');
+        $expiresAt = CarbonImmutable::parse('2026-07-28T10:00:00.900000Z');
+
+        self::assertFalse($method->invoke($store, $expiresAt, new DateTimeImmutable('2026-07-28T10:00:00.899999Z')));
+        self::assertTrue($method->invoke($store, $expiresAt, new DateTimeImmutable('2026-07-28T10:00:00.900000Z')));
+        self::assertTrue($method->invoke($store, $expiresAt, new DateTimeImmutable('2026-07-28T10:00:00.900001Z')));
+    }
+
     public function test_execution_ports_keep_the_exact_native_signatures(): void
     {
         $this->assertInterfaceSurface(ReportExecutionClock::class, ['now']);
@@ -74,6 +112,76 @@ final class ExecutionContractsTest extends TestCase
                 'idempotencyKey' => \App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey::class,
             ],
             \App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun::class,
+        );
+        $this->assertInterfaceSurface(ReportRunStore::class, [
+            'createOrReuse',
+            'get',
+            'queryForRun',
+            'retrySource',
+            'exportSource',
+            'claimMaterialization',
+            'persistProgress',
+            'sealReady',
+            'fail',
+            'cancel',
+        ]);
+        $this->assertMethod(ReportRunStore::class, 'retrySource', [
+            'context' => \App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext::class,
+            'runId' => 'string',
+        ], ReportRunRetrySource::class);
+        $this->assertMethod(ReportRunStore::class, 'exportSource', [
+            'context' => \App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext::class,
+            'runId' => 'string',
+        ], ReportRunExportSource::class);
+        $this->assertMethod(ReportRunStore::class, 'claimMaterialization', [
+            'context' => \App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext::class,
+            'runId' => 'string',
+            'leaseToken' => 'string',
+            'leaseExpiresAt' => DateTimeImmutable::class,
+            'occurredAt' => DateTimeImmutable::class,
+        ], \App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun::class);
+        $this->assertMethod(ReportRunStore::class, 'persistProgress', [
+            'context' => \App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext::class,
+            'runId' => 'string',
+            'leaseToken' => 'string',
+            'progress' => \App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress::class,
+            'leaseExpiresAt' => DateTimeImmutable::class,
+            'occurredAt' => DateTimeImmutable::class,
+        ], \App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun::class);
+        $this->assertMethod(ReportRunStore::class, 'sealReady', [
+            'context' => \App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext::class,
+            'runId' => 'string',
+            'leaseToken' => 'string',
+            'snapshot' => \App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef::class,
+            'result' => \App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult::class,
+            'sourceHash' => \App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash::class,
+            'occurredAt' => DateTimeImmutable::class,
+        ], \App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun::class);
+        $this->assertMethod(ReportRunStore::class, 'fail', [
+            'context' => \App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext::class,
+            'runId' => 'string',
+            'leaseToken' => '?string',
+            'errorCode' => ReportErrorCode::class,
+            'occurredAt' => DateTimeImmutable::class,
+        ], \App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun::class);
+    }
+
+    public function test_task_four_b_execution_values_and_store_constructor_are_exact(): void
+    {
+        $retry = new ReflectionClass(ReportRunRetrySource::class);
+        $this->assertSame(
+            ['run', 'query', 'savedView', 'errorCode'],
+            array_map(static fn ($parameter): string => $parameter->getName(), $retry->getConstructor()->getParameters()),
+        );
+        $export = new ReflectionClass(ReportRunExportSource::class);
+        $this->assertSame(
+            ['run', 'query', 'result', 'resultHash', 'snapshot', 'dataClassification', 'outputClassification', 'contractVersion', 'formulaVersion', 'sourceSchemaVersion', 'rendererVersion'],
+            array_map(static fn ($parameter): string => $parameter->getName(), $export->getConstructor()->getParameters()),
+        );
+        $store = new ReflectionClass(EloquentReportRunStore::class);
+        $this->assertSame(
+            ['clock', 'audit', 'hydrator', 'dispatchIntents', 'runTtlSeconds', 'pollAfterMs'],
+            array_map(static fn ($parameter): string => $parameter->getName(), $store->getConstructor()->getParameters()),
         );
     }
 

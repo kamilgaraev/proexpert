@@ -50,6 +50,8 @@ final class ReportRunRecord extends Model
         'snapshot_generated_at' => 'immutable_datetime',
         'snapshot_stale_at' => 'immutable_datetime',
         'snapshot_sealed_at' => 'immutable_datetime',
+        'execution_lease_expires_at' => 'immutable_datetime',
+        'execution_heartbeat_at' => 'immutable_datetime',
         'created_at' => 'immutable_datetime',
         'updated_at' => 'immutable_datetime',
         'expires_at' => 'immutable_datetime',

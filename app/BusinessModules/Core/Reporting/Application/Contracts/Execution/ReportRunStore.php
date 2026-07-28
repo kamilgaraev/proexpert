@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Application\Contracts\Execution;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
@@ -24,13 +26,17 @@ interface ReportRunStore
 
     public function queryForRun(ReportExecutionContext $context, string $runId): ReportQuery;
 
-    public function startMaterialization(ReportExecutionContext $context, string $runId, DateTimeImmutable $occurredAt): ReportRun;
+    public function retrySource(ReportExecutionContext $context, string $runId): ReportRunRetrySource;
 
-    public function persistProgress(ReportExecutionContext $context, string $runId, ReportProgress $progress, DateTimeImmutable $occurredAt): ReportRun;
+    public function exportSource(ReportExecutionContext $context, string $runId): ReportRunExportSource;
 
-    public function sealReady(ReportExecutionContext $context, string $runId, ReportSnapshotRef $snapshot, ReportResult $result, Sha256Hash $sourceHash, DateTimeImmutable $occurredAt): ReportRun;
+    public function claimMaterialization(ReportExecutionContext $context, string $runId, string $leaseToken, DateTimeImmutable $leaseExpiresAt, DateTimeImmutable $occurredAt): ReportRun;
 
-    public function fail(ReportExecutionContext $context, string $runId, ReportErrorCode $errorCode, DateTimeImmutable $occurredAt): ReportRun;
+    public function persistProgress(ReportExecutionContext $context, string $runId, string $leaseToken, ReportProgress $progress, DateTimeImmutable $leaseExpiresAt, DateTimeImmutable $occurredAt): ReportRun;
+
+    public function sealReady(ReportExecutionContext $context, string $runId, string $leaseToken, ReportSnapshotRef $snapshot, ReportResult $result, Sha256Hash $sourceHash, DateTimeImmutable $occurredAt): ReportRun;
+
+    public function fail(ReportExecutionContext $context, string $runId, ?string $leaseToken, ReportErrorCode $errorCode, DateTimeImmutable $occurredAt): ReportRun;
 
     public function cancel(ReportExecutionContext $context, string $runId, DateTimeImmutable $occurredAt): ReportRun;
 }

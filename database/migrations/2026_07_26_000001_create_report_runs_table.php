@@ -65,6 +65,9 @@ return new class extends Migration
             $table->text('snapshot_seal_signature')->nullable();
             $table->timestampTz('snapshot_sealed_at', 6)->nullable();
             $table->text('error_code')->nullable();
+            $table->uuid('execution_lease_token')->nullable();
+            $table->timestampTz('execution_lease_expires_at', 6)->nullable();
+            $table->timestampTz('execution_heartbeat_at', 6)->nullable();
             $table->timestampTz('queued_at', 6);
             $table->timestampTz('started_at', 6)->nullable();
             $table->timestampTz('ready_at', 6)->nullable();
@@ -92,6 +95,7 @@ return new class extends Migration
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_snapshot_seal_check CHECK ((snapshot_seal_key_id IS NULL AND snapshot_seal_algorithm IS NULL AND snapshot_sealed_payload_hash IS NULL AND snapshot_seal_signature IS NULL AND snapshot_sealed_at IS NULL) OR (snapshot_seal_key_id IS NOT NULL AND snapshot_seal_algorithm IS NOT NULL AND snapshot_sealed_payload_hash IS NOT NULL AND snapshot_seal_signature IS NOT NULL AND snapshot_sealed_at IS NOT NULL AND snapshot_seal_key_id ~ '^[a-z][a-z0-9_.:-]{2,127}$' AND snapshot_seal_algorithm = 'ed25519-sha256' AND snapshot_sealed_payload_hash ~ '^[a-f0-9]{64}$' AND snapshot_seal_signature ~ '^[A-Za-z0-9_-]{86}$'))",
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_ready_seal_classification_check CHECK (status NOT IN ('ready','expired') OR ((snapshot_classification = 'operational' AND snapshot_seal_key_id IS NULL) OR (snapshot_classification = 'official' AND snapshot_seal_key_id IS NOT NULL AND snapshot_sealed_at >= snapshot_generated_at)))",
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_error_code_check CHECK ((status = 'failed' AND error_code IN ('REPORT_NOT_FOUND','REPORT_SCOPE_FORBIDDEN','REPORT_REQUEST_INVALID','REPORT_FILTER_UNSUPPORTED','REPORT_FILTER_VALUE_NOT_FOUND','REPORT_FILTER_RANGE_INVALID','REPORT_SORT_UNSUPPORTED','REPORT_CURSOR_INVALID','REPORT_IDEMPOTENCY_KEY_INVALID','REPORT_IDEMPOTENCY_CONFLICT','REPORT_SNAPSHOT_NOT_READY','REPORT_EXPORT_NOT_READY','REPORT_OFFICIAL_SNAPSHOT_UNSEALED','REPORT_SNAPSHOT_EXPIRED','REPORT_EXPORT_EXPIRED','REPORT_EXPORT_LIMIT_EXCEEDED','REPORT_RATE_LIMITED','REPORT_SOURCE_UNAVAILABLE','REPORT_DEPENDENCY_FAILED','REPORT_INTERNAL_ERROR')) OR (status <> 'failed' AND error_code IS NULL))",
+            "ALTER TABLE report_runs ADD CONSTRAINT report_runs_execution_lease_check CHECK ((status = 'materializing' AND execution_lease_token IS NOT NULL AND execution_lease_expires_at IS NOT NULL AND execution_heartbeat_at IS NOT NULL AND execution_lease_expires_at > execution_heartbeat_at) OR (status <> 'materializing' AND execution_lease_token IS NULL AND execution_lease_expires_at IS NULL AND execution_heartbeat_at IS NULL))",
             'ALTER TABLE report_runs ADD CONSTRAINT report_runs_expiry_order_check CHECK (expires_at > created_at)',
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_ready_identity_check CHECK (status <> 'ready' OR (source_hash IS NOT NULL AND result_hash IS NOT NULL AND snapshot_kind IS NOT NULL AND snapshot_id IS NOT NULL AND snapshot_generated_at IS NOT NULL AND snapshot_watermarks IS NOT NULL AND row_count IS NOT NULL AND result_metadata IS NOT NULL AND freshness IS NOT NULL AND quality IS NOT NULL AND provenance IS NOT NULL AND row_schema IS NOT NULL AND capabilities IS NOT NULL AND ready_at IS NOT NULL AND progress = 100 AND error_code IS NULL AND (snapshot_stale_at IS NULL OR snapshot_stale_at >= snapshot_generated_at)))",
             "ALTER TABLE report_runs ADD CONSTRAINT report_runs_terminal_timestamps_check CHECK ((status = 'failed') = (failed_at IS NOT NULL) AND (status = 'cancelled') = (cancelled_at IS NOT NULL) AND (status = 'expired') = (expired_at IS NOT NULL))",
@@ -99,6 +103,7 @@ return new class extends Migration
             'CREATE UNIQUE INDEX report_runs_org_idempotency_unique ON report_runs (organization_id, idempotency_key_hash)',
             'CREATE INDEX report_runs_org_id_lookup ON report_runs (organization_id, id)',
             "CREATE INDEX report_runs_queued_idx ON report_runs (queued_at, id) WHERE status = 'queued'",
+            "CREATE INDEX report_runs_execution_lease_idx ON report_runs (execution_lease_expires_at, id) WHERE status = 'materializing'",
             "CREATE INDEX report_runs_retention_idx ON report_runs (expires_at, id) WHERE status IN ('ready','expired')",
         ] as $statement) {
             DB::statement($statement);

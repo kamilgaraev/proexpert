@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Reporting\Persistence;
 
+use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
@@ -30,8 +31,12 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportAuditIntentRecord;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportDispatchIntentRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunHydrator;
+use App\Models\Organization;
 use DateTimeImmutable;
 use DateTimeZone;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -48,6 +53,7 @@ use Tests\Support\Reporting\ReportExecutionContextBuilder;
 #[Group('postgresql')]
 final class EloquentReportRunStoreTest extends TestCase
 {
+    private const LEASE_TOKEN = '00000000-0000-4000-8000-000000000001';
     use RefreshDatabase;
 
     protected function beforeRefreshingDatabase(): void
@@ -60,6 +66,9 @@ final class EloquentReportRunStoreTest extends TestCase
         parent::setUp();
 
         self::assertSame('pgsql', DB::connection()->getDriverName(), 'Task 3 persistence tests require isolated PostgreSQL.');
+        foreach ([1, 2, 10] as $organizationId) {
+            Organization::factory()->create(['id' => $organizationId]);
+        }
     }
 
     public function test_schema_has_exact_named_constraints_and_indexes(): void
@@ -80,6 +89,7 @@ final class EloquentReportRunStoreTest extends TestCase
                 'report_runs_snapshot_seal_check',
                 'report_runs_ready_seal_classification_check',
                 'report_runs_error_code_check',
+                'report_runs_execution_lease_check',
                 'report_runs_expiry_order_check',
                 'report_runs_ready_identity_check',
                 'report_runs_terminal_timestamps_check',
@@ -95,6 +105,7 @@ final class EloquentReportRunStoreTest extends TestCase
             'report_runs_definition_hash_check',
             'report_runs_definition_snapshot_hash_check',
             'report_runs_error_code_check',
+            'report_runs_execution_lease_check',
             'report_runs_expired_seal_check',
             'report_runs_expiry_order_check',
             'report_runs_idempotency_hash_check',
@@ -117,6 +128,7 @@ final class EloquentReportRunStoreTest extends TestCase
                 'report_runs_org_idempotency_unique',
                 'report_runs_org_id_lookup',
                 'report_runs_queued_idx',
+                'report_runs_execution_lease_idx',
                 'report_runs_retention_idx',
             ])
             ->pluck('indexname')
@@ -125,6 +137,7 @@ final class EloquentReportRunStoreTest extends TestCase
             ->all();
 
         self::assertSame([
+            'report_runs_execution_lease_idx',
             'report_runs_org_id_lookup',
             'report_runs_org_idempotency_unique',
             'report_runs_queued_idx',
@@ -138,7 +151,7 @@ final class EloquentReportRunStoreTest extends TestCase
         $store = $this->store(new FakeReportTransitionAudit());
         $query = $this->query($context, ReportSnapshotClassification::OFFICIAL);
         $run = $store->createOrReuse($context, $query, null, new IdempotencyKey('official-seal-key'));
-        $store->startMaterialization($context, $run->id, new DateTimeImmutable('2026-07-26T00:10:00Z'));
+        $this->claim($store, $context, $run->id, new DateTimeImmutable('2026-07-26T00:10:00Z'));
         $seal = new ReportSnapshotSeal(
             'key_1',
             'ed25519-sha256',
@@ -156,6 +169,7 @@ final class EloquentReportRunStoreTest extends TestCase
         $ready = $store->sealReady(
             $context,
             $run->id,
+            self::LEASE_TOKEN,
             $snapshot,
             $result,
             $sourceHash,
@@ -195,13 +209,15 @@ final class EloquentReportRunStoreTest extends TestCase
             'capabilities', 'snapshot_kind', 'snapshot_id', 'snapshot_generated_at',
             'snapshot_stale_at', 'snapshot_watermarks', 'snapshot_seal_key_id',
             'snapshot_seal_algorithm', 'snapshot_sealed_payload_hash',
-            'snapshot_seal_signature', 'snapshot_sealed_at', 'error_code', 'queued_at',
+            'snapshot_seal_signature', 'snapshot_sealed_at', 'error_code',
+            'execution_lease_token', 'execution_lease_expires_at', 'execution_heartbeat_at', 'queued_at',
             'started_at', 'ready_at', 'failed_at', 'cancel_requested_at', 'cancelled_at',
             'expired_at', 'created_at', 'updated_at', 'expires_at',
         ], array_keys($columns));
 
         foreach ([
             'as_of', 'snapshot_generated_at', 'snapshot_stale_at', 'snapshot_sealed_at',
+            'execution_lease_expires_at', 'execution_heartbeat_at',
             'queued_at', 'started_at',
             'ready_at', 'failed_at', 'cancel_requested_at', 'cancelled_at', 'expired_at',
             'created_at', 'updated_at', 'expires_at',
@@ -212,7 +228,7 @@ final class EloquentReportRunStoreTest extends TestCase
         foreach (['definition_snapshot', 'scope_holding_organization_ids', 'scope_project_ids', 'scope_resource_ids', 'filters', 'comparison', 'sensitive_column_ids', 'audit_column_ids', 'result_metadata', 'totals', 'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_watermarks'] as $jsonb) {
             self::assertSame('jsonb', $columns[$jsonb]['type']);
         }
-        foreach (['source_hash', 'result_hash', 'saved_view_id', 'saved_view_revision', 'saved_view_hash', 'row_count', 'result_metadata', 'freshness', 'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_kind', 'snapshot_id', 'snapshot_generated_at', 'snapshot_stale_at', 'snapshot_watermarks', 'snapshot_seal_key_id', 'snapshot_seal_algorithm', 'snapshot_sealed_payload_hash', 'snapshot_seal_signature', 'snapshot_sealed_at', 'error_code', 'started_at', 'ready_at', 'failed_at', 'cancel_requested_at', 'cancelled_at', 'expired_at'] as $nullable) {
+        foreach (['source_hash', 'result_hash', 'saved_view_id', 'saved_view_revision', 'saved_view_hash', 'row_count', 'result_metadata', 'freshness', 'quality', 'provenance', 'row_schema', 'capabilities', 'snapshot_kind', 'snapshot_id', 'snapshot_generated_at', 'snapshot_stale_at', 'snapshot_watermarks', 'snapshot_seal_key_id', 'snapshot_seal_algorithm', 'snapshot_sealed_payload_hash', 'snapshot_seal_signature', 'snapshot_sealed_at', 'error_code', 'execution_lease_token', 'execution_lease_expires_at', 'execution_heartbeat_at', 'started_at', 'ready_at', 'failed_at', 'cancel_requested_at', 'cancelled_at', 'expired_at'] as $nullable) {
             self::assertTrue($columns[$nullable]['nullable'], $nullable);
         }
         $nullableNames = array_keys(array_filter($columns, static fn (array $column): bool => $column['nullable']));
@@ -223,7 +239,8 @@ final class EloquentReportRunStoreTest extends TestCase
             'snapshot_kind', 'snapshot_id', 'snapshot_generated_at', 'snapshot_stale_at',
             'snapshot_watermarks', 'snapshot_seal_key_id', 'snapshot_seal_algorithm',
             'snapshot_sealed_payload_hash', 'snapshot_seal_signature', 'snapshot_sealed_at',
-            'error_code', 'started_at', 'ready_at', 'failed_at',
+            'error_code', 'execution_lease_token', 'execution_lease_expires_at',
+            'execution_heartbeat_at', 'started_at', 'ready_at', 'failed_at',
             'cancel_requested_at', 'cancelled_at', 'expired_at',
         ], $nullableNames);
         foreach (['id', 'definition_hash', 'definition_snapshot_hash', 'query_hash', 'idempotency_key_hash', 'input_fingerprint', 'saved_view_id', 'saved_view_hash', 'source_hash', 'result_hash', 'snapshot_sealed_payload_hash'] as $character) {
@@ -233,6 +250,7 @@ final class EloquentReportRunStoreTest extends TestCase
             self::assertSame('bigint', $columns[$bigint]['type']);
         }
         self::assertSame('smallint', $columns['progress']['type']);
+        self::assertSame('uuid', $columns['execution_lease_token']['type']);
         foreach (['report_code', 'status', 'contract_version', 'formula_version', 'source_schema_version', 'renderer_version', 'canonical_query_json', 'scope_timezone', 'locale', 'snapshot_classification', 'data_classification', 'freshness', 'snapshot_kind', 'snapshot_id', 'snapshot_seal_key_id', 'snapshot_seal_algorithm', 'snapshot_seal_signature', 'error_code'] as $text) {
             self::assertSame('text', $columns[$text]['type']);
         }
@@ -252,6 +270,7 @@ final class EloquentReportRunStoreTest extends TestCase
             ->pluck('indexdef', 'indexname');
         self::assertStringContainsString('(organization_id, idempotency_key_hash)', $indexDefinitions['report_runs_org_idempotency_unique']);
         self::assertStringContainsString("WHERE (status = 'queued'", $indexDefinitions['report_runs_queued_idx']);
+        self::assertStringContainsString("WHERE (status = 'materializing'", $indexDefinitions['report_runs_execution_lease_idx']);
         self::assertStringContainsString("status = ANY (ARRAY['ready'::text, 'expired'::text])", $indexDefinitions['report_runs_retention_idx']);
     }
 
@@ -268,7 +287,7 @@ final class EloquentReportRunStoreTest extends TestCase
         sort($names);
 
         self::assertSame(
-            ['__construct', 'cancel', 'createOrReuse', 'fail', 'get', 'persistProgress', 'queryForRun', 'sealReady', 'startMaterialization'],
+            ['__construct', 'cancel', 'claimMaterialization', 'createOrReuse', 'exportSource', 'fail', 'get', 'persistProgress', 'queryForRun', 'retrySource', 'sealReady'],
             $names,
         );
     }
@@ -338,12 +357,13 @@ final class EloquentReportRunStoreTest extends TestCase
         $store = $this->store($audit);
         $context = (new ReportExecutionContextBuilder())->build();
         $run = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('ready-key-123'));
-        $store->startMaterialization($context, $run->id, new DateTimeImmutable('2026-07-26T00:05:00Z'));
+        $this->claim($store, $context, $run->id, new DateTimeImmutable('2026-07-26T00:30:00Z'));
         [$snapshot, $result, $sourceHash] = $this->sealedResult($context);
 
         $ready = $store->sealReady(
             $context,
             $run->id,
+            self::LEASE_TOKEN,
             $snapshot,
             $result,
             $sourceHash,
@@ -352,6 +372,7 @@ final class EloquentReportRunStoreTest extends TestCase
         $replayed = $store->sealReady(
             $context,
             $run->id,
+            self::LEASE_TOKEN,
             $snapshot,
             $result,
             $sourceHash,
@@ -364,16 +385,17 @@ final class EloquentReportRunStoreTest extends TestCase
             '2026-07-26T00:30:00.234567Z',
             $ready->resultMetadata?->snapshot->generatedAt->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.u\Z'),
         );
-        self::assertCount(1, $audit->events());
+        self::assertCount(3, $audit->events());
         $record = ReportRunRecord::query()->findOrFail($run->id);
-        self::assertSame($record->result_hash, $audit->events()[0]['subject']['result_hash']);
-        self::assertSame("reports:run:{$run->id}:ready:{$record->result_hash}", $audit->events()[0]['event_id']);
+        self::assertSame($record->result_hash, $audit->events()[2]['subject']['result_hash']);
+        self::assertSame("reports:run:{$run->id}:ready:{$record->result_hash}", $audit->events()[2]['event_id']);
 
         [$changedSnapshot, $changedResult, $changedSourceHash] = $this->sealedResult($context, '101.00');
         try {
             $store->sealReady(
                 $context,
                 $run->id,
+                self::LEASE_TOKEN,
                 $changedSnapshot,
                 $changedResult,
                 $changedSourceHash,
@@ -383,21 +405,30 @@ final class EloquentReportRunStoreTest extends TestCase
         } catch (ReportContractException $exception) {
             self::assertSame(ReportErrorCode::REPORT_INTERNAL_ERROR, $exception->errorCode);
         }
-        self::assertCount(1, $audit->events());
+        self::assertCount(3, $audit->events());
     }
 
     public function test_audit_failure_rolls_back_ready_transition(): void
     {
-        $store = $this->store(FakeReportTransitionAudit::failing());
+        $audit = new class implements ReportTransitionAudit {
+            public function append(string $eventId, string $eventType, ReportExecutionContext $context, array $subject, DateTimeImmutable $occurredAt): void
+            {
+                if ($eventType === 'report.run.ready') {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_DEPENDENCY_FAILED);
+                }
+            }
+        };
+        $store = $this->store($audit);
         $context = (new ReportExecutionContextBuilder())->build();
         $run = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('failed-audit-key'));
-        $store->startMaterialization($context, $run->id, new DateTimeImmutable('2026-07-26T00:05:00Z'));
+        $this->claim($store, $context, $run->id, new DateTimeImmutable('2026-07-26T00:05:00Z'));
         [$snapshot, $result, $sourceHash] = $this->sealedResult($context);
 
         try {
             $store->sealReady(
                 $context,
                 $run->id,
+                self::LEASE_TOKEN,
                 $snapshot,
                 $result,
                 $sourceHash,
@@ -422,22 +453,88 @@ final class EloquentReportRunStoreTest extends TestCase
         self::assertSame([], $record->totals);
     }
 
+    public function test_initial_audit_failure_rolls_back_run_dispatch_and_audit_rows_together(): void
+    {
+        $audit = new class implements ReportTransitionAudit {
+            public function append(string $eventId, string $eventType, ReportExecutionContext $context, array $subject, DateTimeImmutable $occurredAt): void
+            {
+                ReportAuditIntentRecord::query()->create([
+                    'id' => (string) \Illuminate\Support\Str::ulid(),
+                    'event_key' => $eventId,
+                    'event_type' => $eventType,
+                    'organization_id' => $context->scope->organizationId,
+                    'actor_id' => $context->actor->id,
+                    'subject' => $subject,
+                    'status' => 'pending',
+                    'attempt_count' => 0,
+                    'occurred_at' => $occurredAt,
+                    'available_at' => $occurredAt,
+                    'created_at' => $occurredAt,
+                    'updated_at' => $occurredAt,
+                ]);
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_DEPENDENCY_FAILED);
+            }
+        };
+        $store = $this->store($audit);
+        $context = (new ReportExecutionContextBuilder())->build();
+
+        try {
+            $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('atomic-outbox-rollback'));
+            self::fail('Expected audit outbox failure.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_DEPENDENCY_FAILED, $exception->errorCode);
+        }
+
+        self::assertSame(0, ReportRunRecord::query()->count());
+        self::assertSame(0, ReportDispatchIntentRecord::query()->count());
+        self::assertSame(0, ReportAuditIntentRecord::query()->count());
+    }
+
+    public function test_export_source_rejects_ready_run_at_exact_expiry_microsecond(): void
+    {
+        $now = new DateTimeImmutable('2026-07-26T00:31:00.900000Z');
+        $store = $this->store(new FakeReportTransitionAudit(), $now);
+        $context = (new ReportExecutionContextBuilder())->build();
+        $run = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('export-expiry-key'));
+        $this->claim($store, $context, $run->id, new DateTimeImmutable('2026-07-26T00:30:00Z'));
+        [$snapshot, $result, $sourceHash] = $this->sealedResult($context);
+        $store->sealReady($context, $run->id, self::LEASE_TOKEN, $snapshot, $result, $sourceHash, $now);
+        $record = ReportRunRecord::query()->findOrFail($run->id);
+
+        $record->update(['expires_at' => '2026-07-26 00:31:00.900001+00:00']);
+        self::assertSame($run->id, $store->exportSource($context, $run->id)->run->id);
+
+        foreach (['2026-07-26 00:31:00.900000+00:00', '2026-07-26 00:31:00.899999+00:00'] as $expiresAt) {
+            $record->update(['expires_at' => $expiresAt]);
+            try {
+                $store->exportSource($context, $run->id);
+                self::fail('Expired ready run was accepted as export source.');
+            } catch (ReportContractException $exception) {
+                self::assertSame(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED, $exception->errorCode);
+            }
+        }
+    }
+
     public function test_legal_transitions_progress_failure_cancellation_and_terminal_rejection(): void
     {
         $store = $this->store(new FakeReportTransitionAudit());
         $context = (new ReportExecutionContextBuilder())->build();
         $run = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('transition-key'));
         $expiresAt = $run->expiresAt;
-        $materializing = $store->startMaterialization(
+        $materializing = $store->claimMaterialization(
             $context,
             $run->id,
+            self::LEASE_TOKEN,
+            new DateTimeImmutable('2026-07-26T00:15:00.222222Z'),
             new DateTimeImmutable('2026-07-26T00:05:00.222222Z'),
         );
         self::assertSame('materializing', $materializing->status->value);
         self::assertSame(35, $store->persistProgress(
             $context,
             $run->id,
+            self::LEASE_TOKEN,
             new ReportProgress(35),
+            new DateTimeImmutable('2026-07-26T00:16:00.333333Z'),
             new DateTimeImmutable('2026-07-26T00:06:00.333333Z'),
         )->progress);
         self::assertEquals($expiresAt, $store->get($context, $run->id)->expiresAt);
@@ -446,7 +543,9 @@ final class EloquentReportRunStoreTest extends TestCase
             $store->persistProgress(
                 $context,
                 $run->id,
+                self::LEASE_TOKEN,
                 new ReportProgress(34),
+                new DateTimeImmutable('2026-07-26T00:17:00.444444Z'),
                 new DateTimeImmutable('2026-07-26T00:07:00.444444Z'),
             );
             self::fail('Expected decreasing progress rejection.');
@@ -457,6 +556,7 @@ final class EloquentReportRunStoreTest extends TestCase
         $failed = $store->fail(
             $context,
             $run->id,
+            self::LEASE_TOKEN,
             ReportErrorCode::REPORT_SOURCE_UNAVAILABLE,
             new DateTimeImmutable('2026-07-26T00:08:00.555555Z'),
         );
@@ -484,6 +584,42 @@ final class EloquentReportRunStoreTest extends TestCase
         $cancelRecord = ReportRunRecord::query()->findOrFail($cancelRun->id);
         self::assertSame($cancelRecord->cancel_requested_at, $cancelRecord->cancelled_at);
         self::assertNull($cancelRecord->error_code);
+    }
+
+    public function test_execution_lease_preserves_fractional_expiry_boundary(): void
+    {
+        $store = $this->store(new FakeReportTransitionAudit());
+        $context = (new ReportExecutionContextBuilder())->build();
+        $run = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('fractional-lease-key'));
+        $store->claimMaterialization(
+            $context,
+            $run->id,
+            self::LEASE_TOKEN,
+            new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
+            new DateTimeImmutable('2026-07-26T09:59:00.000000Z'),
+        );
+
+        self::assertSame(10, $store->persistProgress(
+            $context,
+            $run->id,
+            self::LEASE_TOKEN,
+            new ReportProgress(10),
+            new DateTimeImmutable('2026-07-26T10:00:01.000000Z'),
+            new DateTimeImmutable('2026-07-26T10:00:00.500000Z'),
+        )->progress);
+        try {
+            $store->persistProgress(
+                $context,
+                $run->id,
+                self::LEASE_TOKEN,
+                new ReportProgress(20),
+                new DateTimeImmutable('2026-07-26T10:00:02.000000Z'),
+                new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
+            );
+            self::fail('Lease remained active at its exact expiry instant.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY, $exception->errorCode);
+        }
     }
 
     public function test_database_rejects_unknown_missing_and_nonfailed_error_codes(): void
@@ -516,26 +652,31 @@ final class EloquentReportRunStoreTest extends TestCase
         $context = (new ReportExecutionContextBuilder())->build();
 
         $start = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('lock-start-key'));
-        $this->assertLockedCas(fn () => $store->startMaterialization(
+        $this->assertLockedCas(fn () => $store->claimMaterialization(
             $context,
             $start->id,
+            self::LEASE_TOKEN,
+            new DateTimeImmutable('2026-07-26T00:15:00.111111Z'),
             new DateTimeImmutable('2026-07-26T00:05:00.111111Z'),
         ));
 
         $progress = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('lock-progress-key'));
-        $store->startMaterialization($context, $progress->id, new DateTimeImmutable('2026-07-26T00:05:00.111111Z'));
+        $this->claim($store, $context, $progress->id, new DateTimeImmutable('2026-07-26T00:05:00.111111Z'));
         $this->assertLockedCas(fn () => $store->persistProgress(
             $context,
             $progress->id,
+            self::LEASE_TOKEN,
             new ReportProgress(10),
+            new DateTimeImmutable('2026-07-26T00:16:00.222222Z'),
             new DateTimeImmutable('2026-07-26T00:06:00.222222Z'),
         ));
 
         $failed = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('lock-fail-key'));
-        $store->startMaterialization($context, $failed->id, new DateTimeImmutable('2026-07-26T00:05:00.111111Z'));
+        $this->claim($store, $context, $failed->id, new DateTimeImmutable('2026-07-26T00:05:00.111111Z'));
         $this->assertLockedCas(fn () => $store->fail(
             $context,
             $failed->id,
+            self::LEASE_TOKEN,
             ReportErrorCode::REPORT_SOURCE_UNAVAILABLE,
             new DateTimeImmutable('2026-07-26T00:07:00.333333Z'),
         ));
@@ -548,11 +689,12 @@ final class EloquentReportRunStoreTest extends TestCase
         ));
 
         $ready = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('lock-ready-key'));
-        $store->startMaterialization($context, $ready->id, new DateTimeImmutable('2026-07-26T00:05:00.111111Z'));
+        $this->claim($store, $context, $ready->id, new DateTimeImmutable('2026-07-26T00:05:00.111111Z'));
         [$snapshot, $result, $sourceHash] = $this->sealedResult($context);
         $this->assertLockedCas(fn () => $store->sealReady(
             $context,
             $ready->id,
+            self::LEASE_TOKEN,
             $snapshot,
             $result,
             $sourceHash,
@@ -599,9 +741,11 @@ final class EloquentReportRunStoreTest extends TestCase
             self::assertSame(ReportErrorCode::REPORT_NOT_FOUND, $exception->errorCode);
         }
         try {
-            $store->startMaterialization(
+            $store->claimMaterialization(
                 $otherOrganization,
                 $run->id,
+                self::LEASE_TOKEN,
+                new DateTimeImmutable('2026-07-26T00:15:00.123456Z'),
                 new DateTimeImmutable('2026-07-26T00:05:00.123456Z'),
             );
             self::fail('Expected cross-tenant transition not found.');
@@ -636,11 +780,12 @@ final class EloquentReportRunStoreTest extends TestCase
         $store = $this->store(new FakeReportTransitionAudit());
         $context = (new ReportExecutionContextBuilder())->build();
         $run = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('result-corruption'));
-        $store->startMaterialization($context, $run->id, new DateTimeImmutable('2026-07-26T00:05:00.222222Z'));
+        $this->claim($store, $context, $run->id, new DateTimeImmutable('2026-07-26T00:05:00.222222Z'));
         [$snapshot, $result, $sourceHash] = $this->sealedResult($context);
         $store->sealReady(
             $context,
             $run->id,
+            self::LEASE_TOKEN,
             $snapshot,
             $result,
             $sourceHash,
@@ -976,14 +1121,33 @@ final class EloquentReportRunStoreTest extends TestCase
         }
     }
 
-    private function store(FakeReportTransitionAudit $audit): EloquentReportRunStore
+    private function store(
+        ReportTransitionAudit $audit,
+        ?DateTimeImmutable $now = null,
+    ): EloquentReportRunStore
     {
         return new EloquentReportRunStore(
-            new FakeReportExecutionClock(new DateTimeImmutable('2026-07-26T00:00:00.111111Z')),
+            new FakeReportExecutionClock($now ?? new DateTimeImmutable('2026-07-26T00:00:00.111111Z')),
             $audit,
             new ReportRunHydrator(),
+            new EloquentReportDispatchIntentStore($audit),
             3600,
             1250,
+        );
+    }
+
+    private function claim(
+        EloquentReportRunStore $store,
+        ReportExecutionContext $context,
+        string $runId,
+        DateTimeImmutable $occurredAt,
+    ): void {
+        $store->claimMaterialization(
+            $context,
+            $runId,
+            self::LEASE_TOKEN,
+            $occurredAt->modify('+10 minutes'),
+            $occurredAt,
         );
     }
 

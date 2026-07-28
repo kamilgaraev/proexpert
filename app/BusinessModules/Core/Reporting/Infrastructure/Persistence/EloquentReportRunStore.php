@@ -6,9 +6,12 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
@@ -22,6 +25,7 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
+use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -33,6 +37,7 @@ final class EloquentReportRunStore implements ReportRunStore
         private readonly ReportExecutionClock $clock,
         private readonly ReportTransitionAudit $audit,
         private readonly ReportRunHydrator $hydrator,
+        private readonly ReportDispatchIntentStore $dispatchIntents,
         private readonly int $runTtlSeconds,
         private readonly int $pollAfterMs,
     ) {
@@ -73,7 +78,7 @@ final class EloquentReportRunStore implements ReportRunStore
             $now,
         );
 
-        return DB::transaction(function () use ($context, $idempotencyKey, $fingerprint, $id, $payload): ReportRun {
+        return DB::transaction(function () use ($context, $query, $savedView, $idempotencyKey, $fingerprint, $id, $payload, $now): ReportRun {
             $columns = array_keys($payload);
             $bindings = array_values($payload);
             $sql = 'INSERT INTO report_runs ('.implode(', ', $columns).') VALUES ('.
@@ -82,6 +87,36 @@ final class EloquentReportRunStore implements ReportRunStore
             $inserted = DB::selectOne($sql, $bindings);
 
             if ($inserted !== null) {
+                $this->dispatchIntents->addRunIntent(
+                    $id,
+                    $context->scope->organizationId,
+                    "reports:run:{$id}:materialize:initial",
+                    $now,
+                );
+                $definition = $query->definition;
+                $this->audit->append(
+                    "reports:run:{$id}:queued",
+                    'report.run.queued',
+                    $context,
+                    [
+                        'run_id' => $id,
+                        'report_code' => $definition->code,
+                        'status' => ReportRunStatus::QUEUED->value,
+                        'definition_hash' => $definition->definitionHash->value,
+                        'query_hash' => $query->queryHash->value,
+                        'contract_version' => $definition->contractVersion,
+                        'formula_version' => $definition->formulaVersion,
+                        'source_schema_version' => $definition->sourceSchemaVersion,
+                        'renderer_version' => $definition->rendererVersion,
+                        'saved_view' => $savedView === null ? null : [
+                            'id' => $savedView->id,
+                            'revision' => $savedView->revision,
+                            'hash' => $savedView->hash->value,
+                        ],
+                    ],
+                    $now,
+                );
+
                 return $this->hydrator->hydrate($this->locked($context, $id), 'created', $this->pollAfterMs);
             }
 
@@ -113,24 +148,53 @@ final class EloquentReportRunStore implements ReportRunStore
         return $this->hydrator->query($this->find($context, $runId));
     }
 
-    public function startMaterialization(ReportExecutionContext $context, string $runId, DateTimeImmutable $occurredAt): ReportRun
+    public function retrySource(ReportExecutionContext $context, string $runId): ReportRunRetrySource
     {
-        return $this->transition($context, $runId, ReportRunStatus::QUEUED, ReportRunStatus::MATERIALIZING, [
-            'started_at' => $occurredAt,
-            'updated_at' => $occurredAt,
-        ]);
+        return $this->hydrator->retrySource(
+            $this->findIncludingExpired($context, $runId),
+            $this->pollAfterMs,
+        );
     }
 
-    public function persistProgress(ReportExecutionContext $context, string $runId, ReportProgress $progress, DateTimeImmutable $occurredAt): ReportRun
+    public function exportSource(ReportExecutionContext $context, string $runId): ReportRunExportSource
     {
-        return DB::transaction(function () use ($context, $runId, $progress, $occurredAt): ReportRun {
+        $record = $this->find($context, $runId);
+        if ($this->isExpiredForExport($record->expires_at, $this->clock->now())) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
+        }
+
+        return $this->hydrator->exportSource($record, $this->pollAfterMs);
+    }
+
+    public function claimMaterialization(ReportExecutionContext $context, string $runId, string $leaseToken, DateTimeImmutable $leaseExpiresAt, DateTimeImmutable $occurredAt): ReportRun
+    {
+        $this->assertLeaseInput($leaseToken, $leaseExpiresAt, $occurredAt);
+
+        return DB::transaction(function () use ($context, $runId, $leaseToken, $leaseExpiresAt, $occurredAt): ReportRun {
             $record = $this->locked($context, $runId);
             $this->hydrator->query($record);
-            if ($record->status !== ReportRunStatus::MATERIALIZING->value || $progress->percent() < (int) $record->progress || $progress->percent() >= 100) {
+            if ($record->status !== ReportRunStatus::QUEUED->value) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
-            $this->cas($record, ReportRunStatus::MATERIALIZING, [
-                'progress' => $progress->percent(),
+            $this->audit->append(
+                "reports:run:{$runId}:materializing:{$leaseToken}",
+                'report.run.materializing',
+                $context,
+                [
+                    'run_id' => $runId,
+                    'report_code' => $record->report_code,
+                    'status' => ReportRunStatus::MATERIALIZING->value,
+                    'definition_hash' => $record->definition_hash,
+                    'query_hash' => $record->query_hash,
+                ],
+                $occurredAt,
+            );
+            $this->cas($record, ReportRunStatus::QUEUED, [
+                'status' => ReportRunStatus::MATERIALIZING->value,
+                'execution_lease_token' => $leaseToken,
+                'execution_lease_expires_at' => $leaseExpiresAt,
+                'execution_heartbeat_at' => $occurredAt,
+                'started_at' => $occurredAt,
                 'updated_at' => $occurredAt,
             ]);
 
@@ -138,9 +202,30 @@ final class EloquentReportRunStore implements ReportRunStore
         });
     }
 
-    public function sealReady(ReportExecutionContext $context, string $runId, ReportSnapshotRef $snapshot, ReportResult $result, Sha256Hash $sourceHash, DateTimeImmutable $occurredAt): ReportRun
+    public function persistProgress(ReportExecutionContext $context, string $runId, string $leaseToken, ReportProgress $progress, DateTimeImmutable $leaseExpiresAt, DateTimeImmutable $occurredAt): ReportRun
     {
-        return DB::transaction(function () use ($context, $runId, $snapshot, $result, $sourceHash, $occurredAt): ReportRun {
+        $this->assertLeaseInput($leaseToken, $leaseExpiresAt, $occurredAt);
+
+        return DB::transaction(function () use ($context, $runId, $leaseToken, $progress, $leaseExpiresAt, $occurredAt): ReportRun {
+            $record = $this->locked($context, $runId);
+            $this->hydrator->query($record);
+            if (!$this->hasActiveLease($record, $leaseToken, $occurredAt) || $progress->percent() < (int) $record->progress || $progress->percent() >= 100) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
+            }
+            $this->cas($record, ReportRunStatus::MATERIALIZING, [
+                'progress' => $progress->percent(),
+                'execution_lease_expires_at' => $leaseExpiresAt,
+                'execution_heartbeat_at' => $occurredAt,
+                'updated_at' => $occurredAt,
+            ]);
+
+            return $this->hydrator->hydrate($record->fresh(), 'reused', $this->pollAfterMs);
+        });
+    }
+
+    public function sealReady(ReportExecutionContext $context, string $runId, string $leaseToken, ReportSnapshotRef $snapshot, ReportResult $result, Sha256Hash $sourceHash, DateTimeImmutable $occurredAt): ReportRun
+    {
+        return DB::transaction(function () use ($context, $runId, $leaseToken, $snapshot, $result, $sourceHash, $occurredAt): ReportRun {
             $record = $this->locked($context, $runId);
             $query = $this->hydrator->query($record);
             $identity = $this->sealedPayload($snapshot, $result, $sourceHash, $occurredAt);
@@ -154,7 +239,7 @@ final class EloquentReportRunStore implements ReportRunStore
 
                 return $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs);
             }
-            if ($record->status !== ReportRunStatus::MATERIALIZING->value) {
+            if (!$this->hasActiveLease($record, $leaseToken, $occurredAt)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
 
@@ -165,31 +250,75 @@ final class EloquentReportRunStore implements ReportRunStore
                 [
                     'run_id' => $runId,
                     'report_code' => $record->report_code,
+                    'status' => ReportRunStatus::READY->value,
                     'definition_hash' => $record->definition_hash,
                     'query_hash' => $record->query_hash,
                     'source_hash' => $sourceHash->value,
                     'result_hash' => $identity['result_hash'],
+                    'snapshot' => [
+                        'kind' => $snapshot->kind,
+                        'id' => $snapshot->id,
+                        'classification' => $snapshot->classification->value,
+                        'seal_digest' => $snapshot->seal === null ? null : hash('sha256', CanonicalJson::encode([
+                            'key_id' => $snapshot->seal->keyId,
+                            'algorithm' => $snapshot->seal->algorithm,
+                            'sealed_payload_hash' => $snapshot->seal->sealedPayloadHash->value,
+                            'sealed_at' => $this->utc($snapshot->seal->sealedAt),
+                        ])),
+                    ],
+                    'data_classification' => $record->data_classification,
                     'row_count' => $result->metadata->rowCount,
+                    'contract_version' => $record->contract_version,
+                    'formula_version' => $record->formula_version,
+                    'source_schema_version' => $record->source_schema_version,
+                    'renderer_version' => $record->renderer_version,
                 ],
                 $occurredAt,
             );
-            $this->cas($record, ReportRunStatus::MATERIALIZING, $identity);
+            $this->cas($record, ReportRunStatus::MATERIALIZING, $identity + [
+                'execution_lease_token' => null,
+                'execution_lease_expires_at' => null,
+                'execution_heartbeat_at' => null,
+            ]);
 
             return $this->hydrator->hydrate($record->fresh(), 'reused', $this->pollAfterMs);
         });
     }
 
-    public function fail(ReportExecutionContext $context, string $runId, ReportErrorCode $errorCode, DateTimeImmutable $occurredAt): ReportRun
+    public function fail(ReportExecutionContext $context, string $runId, ?string $leaseToken, ReportErrorCode $errorCode, DateTimeImmutable $occurredAt): ReportRun
     {
-        return DB::transaction(function () use ($context, $runId, $errorCode, $occurredAt): ReportRun {
+        return DB::transaction(function () use ($context, $runId, $leaseToken, $errorCode, $occurredAt): ReportRun {
             $record = $this->locked($context, $runId);
             $this->hydrator->query($record);
             if (!in_array($record->status, [ReportRunStatus::QUEUED->value, ReportRunStatus::MATERIALIZING->value], true)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
+            if (
+                ($record->status === ReportRunStatus::QUEUED->value && $leaseToken !== null)
+                || ($record->status === ReportRunStatus::MATERIALIZING->value && ($leaseToken === null || !$this->hasActiveLease($record, $leaseToken, $occurredAt)))
+            ) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
+            }
+            $this->audit->append(
+                "reports:run:{$runId}:failed:{$errorCode->value}",
+                'report.run.failed',
+                $context,
+                [
+                    'run_id' => $runId,
+                    'report_code' => $record->report_code,
+                    'status' => ReportRunStatus::FAILED->value,
+                    'definition_hash' => $record->definition_hash,
+                    'query_hash' => $record->query_hash,
+                    'error_code' => $errorCode->value,
+                ],
+                $occurredAt,
+            );
             $this->cas($record, ReportRunStatus::from((string) $record->status), [
                 'status' => ReportRunStatus::FAILED->value,
                 'error_code' => $errorCode->value,
+                'execution_lease_token' => null,
+                'execution_lease_expires_at' => null,
+                'execution_heartbeat_at' => null,
                 'failed_at' => $occurredAt,
                 'updated_at' => $occurredAt,
             ]);
@@ -206,26 +335,28 @@ final class EloquentReportRunStore implements ReportRunStore
             if (!in_array($record->status, [ReportRunStatus::QUEUED->value, ReportRunStatus::MATERIALIZING->value], true)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
+            $this->audit->append(
+                "reports:run:{$runId}:cancelled",
+                'report.run.cancelled',
+                $context,
+                [
+                    'run_id' => $runId,
+                    'report_code' => $record->report_code,
+                    'status' => ReportRunStatus::CANCELLED->value,
+                    'definition_hash' => $record->definition_hash,
+                    'query_hash' => $record->query_hash,
+                ],
+                $occurredAt,
+            );
             $this->cas($record, ReportRunStatus::from((string) $record->status), [
                 'status' => ReportRunStatus::CANCELLED->value,
                 'cancel_requested_at' => $occurredAt,
                 'cancelled_at' => $occurredAt,
+                'execution_lease_token' => null,
+                'execution_lease_expires_at' => null,
+                'execution_heartbeat_at' => null,
                 'updated_at' => $occurredAt,
             ]);
-
-            return $this->hydrator->hydrate($record->fresh(), 'reused', $this->pollAfterMs);
-        });
-    }
-
-    private function transition(ReportExecutionContext $context, string $runId, ReportRunStatus $from, ReportRunStatus $to, array $values): ReportRun
-    {
-        return DB::transaction(function () use ($context, $runId, $from, $to, $values): ReportRun {
-            $record = $this->locked($context, $runId);
-            $this->hydrator->query($record);
-            if ($record->status !== $from->value) {
-                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
-            }
-            $this->cas($record, $from, ['status' => $to->value] + $values);
 
             return $this->hydrator->hydrate($record->fresh(), 'reused', $this->pollAfterMs);
         });
@@ -256,12 +387,19 @@ final class EloquentReportRunStore implements ReportRunStore
 
     private function find(ReportExecutionContext $context, string $runId): ReportRunRecord
     {
+        $record = $this->findIncludingExpired($context, $runId);
+        if ($record->status === ReportRunStatus::EXPIRED->value) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
+        }
+
+        return $record;
+    }
+
+    private function findIncludingExpired(ReportExecutionContext $context, string $runId): ReportRunRecord
+    {
         $record = $this->scope($context)->whereKey($runId)->first();
         if (!$record instanceof ReportRunRecord) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
-        }
-        if ($record->status === ReportRunStatus::EXPIRED->value) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
         }
 
         return $record;
@@ -539,5 +677,42 @@ final class EloquentReportRunStore implements ReportRunStore
     private function databaseTimestamp(DateTimeImmutable $value): string
     {
         return $value->format('Y-m-d H:i:s.uP');
+    }
+
+    private function assertLeaseInput(string $leaseToken, DateTimeImmutable $leaseExpiresAt, DateTimeImmutable $occurredAt): void
+    {
+        if (!Str::isUuid($leaseToken) || $leaseExpiresAt <= $occurredAt) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
+        }
+    }
+
+    private function hasActiveLease(ReportRunRecord $record, string $leaseToken, DateTimeImmutable $occurredAt): bool
+    {
+        $expiresAt = $this->immutableInstant($record->execution_lease_expires_at);
+
+        return $record->status === ReportRunStatus::MATERIALIZING->value
+            && is_string($record->execution_lease_token)
+            && hash_equals($record->execution_lease_token, $leaseToken)
+            && $expiresAt instanceof DateTimeImmutable
+            && $expiresAt > $occurredAt;
+    }
+
+    private function immutableInstant(mixed $value): ?DateTimeImmutable
+    {
+        if ($value instanceof DateTimeInterface) {
+            return DateTimeImmutable::createFromInterface($value);
+        }
+        if (!is_string($value) || $value === '') {
+            return null;
+        }
+
+        return new DateTimeImmutable($value);
+    }
+
+    private function isExpiredForExport(mixed $expiresAtValue, DateTimeImmutable $now): bool
+    {
+        $expiresAt = $this->immutableInstant($expiresAtValue);
+
+        return !$expiresAt instanceof DateTimeImmutable || $expiresAt <= $now;
     }
 }

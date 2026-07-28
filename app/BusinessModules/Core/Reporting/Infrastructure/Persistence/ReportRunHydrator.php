@@ -6,6 +6,8 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
@@ -17,6 +19,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotSeal;
@@ -52,6 +55,7 @@ final class ReportRunHydrator
         try {
             $query = $this->query($record);
             $status = ReportRunStatus::from($this->string($record->status));
+            $this->assertExecutionLease($record, $status);
             $this->assertErrorCode($record, $status);
             $activePoll = in_array($status, [ReportRunStatus::QUEUED, ReportRunStatus::MATERIALIZING], true)
                 ? $pollAfterMs
@@ -199,6 +203,62 @@ final class ReportRunHydrator
         }
     }
 
+    public function retrySource(ReportRunRecord $record, int $pollAfterMs): ReportRunRetrySource
+    {
+        try {
+            $run = $this->hydrate($record, 'reused', $pollAfterMs);
+            $query = $this->query($record);
+            $saved = $this->savedViewProjection($record);
+            $savedView = $saved === null ? null : new ReportSavedViewRef(
+                $this->string($saved['id']),
+                $this->integer($saved['revision']),
+                new Sha256Hash($this->string($saved['hash'])),
+            );
+            $error = $this->raw($record, 'error_code');
+
+            return new ReportRunRetrySource(
+                $run,
+                $query,
+                $savedView,
+                $error === null ? null : ReportErrorCode::from($this->string($error)),
+            );
+        } catch (ReportContractException $exception) {
+            throw $exception;
+        } catch (Throwable $exception) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR, [], $exception);
+        }
+    }
+
+    public function exportSource(ReportRunRecord $record, int $pollAfterMs): ReportRunExportSource
+    {
+        try {
+            $run = $this->hydrate($record, 'reused', $pollAfterMs);
+            if ($run->status !== ReportRunStatus::READY) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
+            }
+            $query = $this->query($record);
+            $sealed = $this->sealed($record, $query->scope);
+
+            return new ReportRunExportSource(
+                $run,
+                $query,
+                $sealed['result'],
+                $sealed['result_hash'],
+                $sealed['snapshot'],
+                ReportDataClassification::from($this->string($record->data_classification)),
+                $query->definition->outputClassification,
+                $this->string($record->contract_version),
+                $this->string($record->formula_version),
+                $this->string($record->source_schema_version),
+                $this->string($record->renderer_version),
+            );
+        } catch (ReportContractException $exception) {
+            throw $exception;
+        } catch (Throwable $exception) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR, [], $exception);
+        }
+    }
+
     private function sealed(ReportRunRecord $record, ReportScope $scope): array
     {
         $sourceHash = new Sha256Hash($this->string($record->source_hash));
@@ -253,8 +313,12 @@ final class ReportRunHydrator
             throw new \InvalidArgumentException('report_result_digest_mismatch');
         }
 
-        return compact('sourceHash', 'metadata', 'totals', 'freshness', 'quality', 'provenance')
-            + ['source_hash' => $sourceHash, 'row_count' => $result->metadata->rowCount];
+        return compact('sourceHash', 'metadata', 'totals', 'freshness', 'quality', 'provenance', 'result', 'snapshot')
+            + [
+                'source_hash' => $sourceHash,
+                'row_count' => $result->metadata->rowCount,
+                'result_hash' => new Sha256Hash($resultHash),
+            ];
     }
 
     private function resultProjection(ReportResult $result): array
@@ -389,6 +453,30 @@ final class ReportRunHydrator
         }
         if ($errorCode !== null) {
             throw new \InvalidArgumentException('report_error_code_invalid');
+        }
+    }
+
+    private function assertExecutionLease(ReportRunRecord $record, ReportRunStatus $status): void
+    {
+        $token = $this->raw($record, 'execution_lease_token');
+        $expiresAt = $this->raw($record, 'execution_lease_expires_at');
+        $heartbeatAt = $this->raw($record, 'execution_heartbeat_at');
+        $present = [$token !== null, $expiresAt !== null, $heartbeatAt !== null];
+
+        if ($status !== ReportRunStatus::MATERIALIZING) {
+            if (in_array(true, $present, true)) {
+                throw new \InvalidArgumentException('report_run_execution_lease_invalid');
+            }
+
+            return;
+        }
+        if (
+            in_array(false, $present, true)
+            || !is_string($token)
+            || preg_match('/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/Di', $token) !== 1
+            || $this->date($expiresAt) <= $this->date($heartbeatAt)
+        ) {
+            throw new \InvalidArgumentException('report_run_execution_lease_invalid');
         }
     }
 

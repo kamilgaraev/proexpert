@@ -40,7 +40,7 @@ final class ReportRunHydratorTest extends TestCase
         }
         ksort($methods);
 
-        self::assertSame([
+        $expected = [
             'cancel' => [
                 'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['runId', 'string'], ['occurredAt', 'DateTimeImmutable']],
                 'return' => 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun',
@@ -49,8 +49,16 @@ final class ReportRunHydratorTest extends TestCase
                 'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['query', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery'], ['savedView', '?App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef'], ['idempotencyKey', 'App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey']],
                 'return' => 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun',
             ],
+            'claimMaterialization' => [
+                'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['runId', 'string'], ['leaseToken', 'string'], ['leaseExpiresAt', 'DateTimeImmutable'], ['occurredAt', 'DateTimeImmutable']],
+                'return' => 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun',
+            ],
+            'exportSource' => [
+                'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['runId', 'string']],
+                'return' => 'App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource',
+            ],
             'fail' => [
-                'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['runId', 'string'], ['errorCode', 'App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode'], ['occurredAt', 'DateTimeImmutable']],
+                'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['runId', 'string'], ['leaseToken', '?string'], ['errorCode', 'App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode'], ['occurredAt', 'DateTimeImmutable']],
                 'return' => 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun',
             ],
             'get' => [
@@ -58,22 +66,24 @@ final class ReportRunHydratorTest extends TestCase
                 'return' => 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun',
             ],
             'persistProgress' => [
-                'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['runId', 'string'], ['progress', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress'], ['occurredAt', 'DateTimeImmutable']],
+                'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['runId', 'string'], ['leaseToken', 'string'], ['progress', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress'], ['leaseExpiresAt', 'DateTimeImmutable'], ['occurredAt', 'DateTimeImmutable']],
                 'return' => 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun',
             ],
             'queryForRun' => [
                 'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['runId', 'string']],
                 'return' => 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery',
             ],
+            'retrySource' => [
+                'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['runId', 'string']],
+                'return' => 'App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource',
+            ],
             'sealReady' => [
-                'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['runId', 'string'], ['snapshot', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef'], ['result', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult'], ['sourceHash', 'App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash'], ['occurredAt', 'DateTimeImmutable']],
+                'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['runId', 'string'], ['leaseToken', 'string'], ['snapshot', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef'], ['result', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult'], ['sourceHash', 'App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash'], ['occurredAt', 'DateTimeImmutable']],
                 'return' => 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun',
             ],
-            'startMaterialization' => [
-                'parameters' => [['context', 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext'], ['runId', 'string'], ['occurredAt', 'DateTimeImmutable']],
-                'return' => 'App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun',
-            ],
-        ], $methods);
+        ];
+        ksort($expected);
+        self::assertSame($expected, $methods);
     }
 
     public function test_store_constructor_and_dependency_free_hydrator_surface_are_exact(): void
@@ -84,6 +94,7 @@ final class ReportRunHydratorTest extends TestCase
             ['clock', 'App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock'],
             ['audit', 'App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit'],
             ['hydrator', 'App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunHydrator'],
+            ['dispatchIntents', 'App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore'],
             ['runTtlSeconds', 'int'],
             ['pollAfterMs', 'int'],
         ], array_map(
@@ -98,7 +109,7 @@ final class ReportRunHydratorTest extends TestCase
             $hydrator->getMethods(\ReflectionMethod::IS_PUBLIC),
         );
         sort($methods);
-        self::assertSame(['hydrate', 'query'], $methods);
+        self::assertSame(['exportSource', 'hydrate', 'query', 'retrySource'], $methods);
         self::assertSame(
             [
                 ['record', 'App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord'],
@@ -119,6 +130,28 @@ final class ReportRunHydratorTest extends TestCase
             ),
         );
         self::assertSame('App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery', (string) $hydrator->getMethod('query')->getReturnType());
+        self::assertSame(
+            [
+                ['record', 'App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord'],
+                ['pollAfterMs', 'int'],
+            ],
+            array_map(
+                static fn ($parameter): array => [$parameter->getName(), (string) $parameter->getType()],
+                $hydrator->getMethod('retrySource')->getParameters(),
+            ),
+        );
+        self::assertSame('App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySource', (string) $hydrator->getMethod('retrySource')->getReturnType());
+        self::assertSame(
+            [
+                ['record', 'App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord'],
+                ['pollAfterMs', 'int'],
+            ],
+            array_map(
+                static fn ($parameter): array => [$parameter->getName(), (string) $parameter->getType()],
+                $hydrator->getMethod('exportSource')->getParameters(),
+            ),
+        );
+        self::assertSame('App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource', (string) $hydrator->getMethod('exportSource')->getReturnType());
     }
 
     public function test_hydrates_queued_run_and_reconstructs_exact_query(): void
@@ -152,7 +185,7 @@ final class ReportRunHydratorTest extends TestCase
             ->once()
             ->with("'[]'::jsonb")
             ->andReturn(new Expression("'[]'::jsonb"));
-        $database->shouldReceive('statement')->times(22)->andReturnTrue();
+        $database->shouldReceive('statement')->times(24)->andReturnTrue();
         $schema->shouldReceive('create')
             ->once()
             ->with('report_runs', Mockery::on(static function (callable $callback) use (&$blueprint): bool {
@@ -178,6 +211,8 @@ final class ReportRunHydratorTest extends TestCase
                 'snapshot_generated_at' => 6,
                 'snapshot_stale_at' => 6,
                 'snapshot_sealed_at' => 6,
+                'execution_lease_expires_at' => 6,
+                'execution_heartbeat_at' => 6,
                 'queued_at' => 6,
                 'started_at' => 6,
                 'ready_at' => 6,
@@ -270,6 +305,69 @@ final class ReportRunHydratorTest extends TestCase
 
         self::assertSame('ready', $run->status->value);
         self::assertSame(1, $run->rowCount);
+    }
+
+    public function test_export_source_rehydrates_complete_result_and_rederives_identity(): void
+    {
+        $record = $this->readyRecord();
+
+        $source = (new ReportRunHydrator())->exportSource($record, 1250);
+
+        self::assertSame('ready', $source->run->status->value);
+        self::assertSame($record->result_hash, $source->resultHash->value);
+        self::assertSame($record->snapshot_id, $source->snapshot->id);
+        self::assertSame([['id' => 'persisted_amount']], $source->result->rowSchema);
+        self::assertSame(['drill_down' => true], $source->result->capabilities);
+        self::assertSame('standard', $source->dataClassification->value);
+    }
+
+    public function test_retry_source_accepts_only_terminal_run_and_preserves_error(): void
+    {
+        $record = $this->record();
+        $attributes = $record->getAttributes();
+        $attributes['status'] = 'failed';
+        $attributes['error_code'] = 'REPORT_SOURCE_UNAVAILABLE';
+        $attributes['failed_at'] = '2026-07-26T00:10:00.000000Z';
+        $attributes['updated_at'] = '2026-07-26T00:10:00.000000Z';
+        $record->setRawAttributes($attributes);
+
+        $source = (new ReportRunHydrator())->retrySource($record, 1250);
+
+        self::assertSame('failed', $source->run->status->value);
+        self::assertSame('REPORT_SOURCE_UNAVAILABLE', $source->errorCode?->value);
+        self::assertNull($source->savedView);
+    }
+
+    #[DataProvider('leaseCorruptions')]
+    public function test_execution_lease_shape_fails_closed(callable $mutate): void
+    {
+        $record = $this->record();
+        $mutate($record);
+
+        $this->expectException(\Throwable::class);
+        (new ReportRunHydrator())->hydrate($record, 'reused', 1250);
+    }
+
+    public static function leaseCorruptions(): iterable
+    {
+        yield 'queued carries lease' => [static function (ReportRunRecord $record): void {
+            $record->setRawAttributes([...$record->getAttributes(),
+                'execution_lease_token' => '00000000-0000-4000-8000-000000000001',
+                'execution_lease_expires_at' => '2026-07-26T00:20:00.000000Z',
+                'execution_heartbeat_at' => '2026-07-26T00:10:00.000000Z',
+            ]);
+        }];
+        yield 'materializing missing lease' => [static function (ReportRunRecord $record): void {
+            $record->status = 'materializing';
+        }];
+        yield 'materializing expired before heartbeat' => [static function (ReportRunRecord $record): void {
+            $record->setRawAttributes([...$record->getAttributes(),
+                'status' => 'materializing',
+                'execution_lease_token' => '00000000-0000-4000-8000-000000000001',
+                'execution_lease_expires_at' => '2026-07-26T00:10:00.000000Z',
+                'execution_heartbeat_at' => '2026-07-26T00:10:00.000000Z',
+            ]);
+        }];
     }
 
     public function test_ready_capabilities_mutation_is_rejected_by_complete_result_digest(): void

@@ -1,0 +1,86 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Core\Reporting\Application\Dispatch;
+
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Infrastructure\Dispatch\LaravelReportDispatchIntentPublisher;
+use DateTimeImmutable;
+use Illuminate\Support\Str;
+use InvalidArgumentException;
+use LogicException;
+use Throwable;
+
+final class ReportDispatchIntentPublisher
+{
+    public function __construct(
+        private readonly ReportDispatchIntentStore $store,
+        private readonly LaravelReportDispatchIntentPublisher $transport,
+        private readonly ReportDispatchBackoffPolicy $backoff,
+        private readonly int $leaseSeconds,
+    ) {
+        if ($leaseSeconds < 15 || $leaseSeconds > 300) {
+            throw new InvalidArgumentException('report_dispatch_lease_seconds_invalid');
+        }
+    }
+
+    public function publishBatch(int $limit, DateTimeImmutable $occurredAt): ReportDispatchPublishSummary
+    {
+        if ($limit < 1 || $limit > 500) {
+            throw new InvalidArgumentException('report_dispatch_batch_size_invalid');
+        }
+
+        $leaseToken = (string) Str::uuid();
+        $leases = $this->store->claimDue(
+            $limit,
+            $occurredAt,
+            $occurredAt->modify("+{$this->leaseSeconds} seconds"),
+            $leaseToken,
+        );
+        $published = 0;
+        $retryScheduled = 0;
+        $deadLettered = 0;
+        $skipped = 0;
+
+        foreach ($leases as $lease) {
+            if (!$lease instanceof ReportDispatchLease) {
+                throw new LogicException('report_dispatch_claim_invalid');
+            }
+            if ($lease->leaseToken !== $leaseToken) {
+                $skipped++;
+
+                continue;
+            }
+
+            try {
+                $this->transport->publish($lease->intent);
+                $this->store->markPublished($lease->intent->id, $leaseToken, $occurredAt);
+                $published++;
+            } catch (Throwable) {
+                $this->store->markPublicationFailed(
+                    $lease->intent->id,
+                    $leaseToken,
+                    ReportErrorCode::REPORT_DEPENDENCY_FAILED,
+                    $occurredAt,
+                    $this->backoff->nextAttemptAt($lease->intent->attemptCount, $occurredAt),
+                );
+                if ($lease->intent->attemptCount === 12) {
+                    $deadLettered++;
+                } else {
+                    $retryScheduled++;
+                }
+            }
+        }
+
+        return new ReportDispatchPublishSummary(
+            count($leases),
+            count($leases) - $skipped,
+            $published,
+            $retryScheduled,
+            $deadLettered,
+            $skipped,
+        );
+    }
+}
