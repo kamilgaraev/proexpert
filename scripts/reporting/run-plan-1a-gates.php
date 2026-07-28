@@ -1,0 +1,706 @@
+<?php
+
+declare(strict_types=1);
+
+use Opis\JsonSchema\CompliantValidator;
+use Symfony\Component\Process\Process;
+use Tests\Support\Reporting\HermeticReportingHttpHarness;
+
+require dirname(__DIR__, 2).'/vendor/autoload.php';
+require_once dirname(__DIR__, 2).'/tests/Support/Reporting/FakeReportingActions.php';
+require_once dirname(__DIR__, 2).'/tests/Support/Reporting/HermeticReportingHttpHarness.php';
+
+final class PlanOneAGatesFailure extends RuntimeException
+{
+    public function __construct(
+        public readonly int $exitStatus,
+        string $message,
+    ) {
+        parent::__construct($message);
+    }
+}
+
+final class PlanOneAGates
+{
+    private const PHP = 'C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe';
+    private const PHP_DIR = 'C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64';
+    private const PHP_SHA256 = 'f515db26936a2702886ca19523518556972fdf25dee699b78e1c78863a08b680';
+    private const CANONICAL_BRANCH = 'feat/reports-canonical-backend';
+    private const TASK_ELEVEN_SUBJECT = 'test[reports]: добавлен проверяемый handoff Plan 1a';
+    private const TASK_ELEVEN_PATHS = [
+        '.gitignore',
+        'docs/reports/contracts/plan-1a-completion.schema.json',
+        'docs/reports/contracts/plan-1a-contract-lock.json',
+        'docs/reports/contracts/plan-1a-contract-lock.sha256',
+        'docs/reports/contracts/plan-1a-gate-evidence.schema.json',
+        'scripts/reporting/build-plan-1a-evidence.php',
+        'scripts/reporting/run-plan-1a-gates.php',
+        'tests/Architecture/Reporting/PlanOneAHandoffContractTest.php',
+        'tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php',
+        'tests/Fixtures/Reporting/Evidence/plan-1a-ci-authorization.valid.json',
+        'tests/Fixtures/Reporting/Evidence/plan-1a-ci-malformed.valid.json',
+        'tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json',
+        'tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json',
+        'tests/Fixtures/Reporting/Evidence/plan-1a-route-snapshot.valid.json',
+        'tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php',
+        'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
+    ];
+    private const OUTPUTS = [
+        'plan-1a-route-snapshot.json',
+        'plan-1a-ci-authorization.json',
+        'plan-1a-ci-malformed.json',
+        'plan-1a-command-ledger.json',
+    ];
+    private const ROUTE_SOURCES = [
+        'app/BusinessModules/Core/Reporting/ReportingContractsServiceProvider.php',
+        'app/BusinessModules/Core/Reporting/routes.php',
+        'app/Support/Routing/AdminRouteStack.php',
+        'bootstrap/app.php',
+        'bootstrap/providers.php',
+        'routes/api.php',
+    ];
+    private const MATRIX_SOURCES = [
+        'app/BusinessModules/Core/Reporting/Application/Access/ReportAccessService.php',
+        'app/BusinessModules/Core/Reporting/Application/Access/ReportActorLoader.php',
+        'app/BusinessModules/Core/Reporting/Application/Access/ReportExecutionContextFactory.php',
+        'app/BusinessModules/Core/Reporting/Application/Errors/ReportErrorResponseFactory.php',
+        'app/BusinessModules/Core/Reporting/Application/Input/ReportFilterReferenceResolver.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportCatalogController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportDrillDownController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportExportController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRowsController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRunController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Middleware/RenderReportErrors.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportDownloadLinkRequest.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportDrillDownRequest.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportExportRequest.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Requests/CreateReportRunRequest.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Requests/GetReportCatalogRequest.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Requests/GetReportRowsRequest.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportExportRouteRequest.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportFormRequest.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportRouteRequest.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Requests/ReportRunRouteRequest.php',
+        'app/BusinessModules/Core/Reporting/ReportingContractsServiceProvider.php',
+        'app/BusinessModules/Core/Reporting/routes.php',
+        'app/Domain/Authorization/Http/Middleware/AuthorizeMiddleware.php',
+        'app/Domain/Authorization/Http/Middleware/InterfaceMiddleware.php',
+        'app/Http/Middleware/JwtMiddleware.php',
+        'app/Http/Middleware/SetOrganizationContext.php',
+        'app/Modules/Middleware/ModuleAccessMiddleware.php',
+        'app/Support/Routing/AdminRouteStack.php',
+        'bootstrap/app.php',
+        'bootstrap/providers.php',
+        'routes/api.php',
+        'tests/Support/Reporting/FakeReportingActions.php',
+        'tests/Support/Reporting/HermeticReportingHttpHarness.php',
+    ];
+    private const AUTH_CASES = [
+        'unauthenticated_catalog_denied',
+        'non_admin_catalog_denied',
+        'module_disabled_catalog_denied',
+        'missing_global_permission_catalog_denied',
+        'view_actor_catalog_allowed',
+        'view_actor_run_status_allowed',
+        'view_actor_rows_allowed',
+        'view_actor_run_create_denied',
+        'view_actor_export_create_denied',
+        'view_actor_download_denied',
+        'runner_run_create_allowed',
+        'runner_run_retry_allowed',
+        'runner_run_cancel_allowed',
+        'runner_export_denied',
+        'exporter_export_allowed',
+        'exporter_download_denied',
+        'downloader_revoked_definition_denied',
+        'manage_does_not_expand_operational_permissions',
+        'foreign_and_nonexistent_filter_indistinguishable',
+        'foreign_and_nonexistent_source_indistinguishable',
+        'blocked_actor_denied_after_context_reload',
+        'deleted_actor_denied_after_context_reload',
+    ];
+    private const MALFORMED_CASES = [
+        'invalid_run_show_ulid',
+        'invalid_run_rows_ulid',
+        'invalid_run_drill_down_ulid',
+        'invalid_run_retry_ulid',
+        'invalid_run_cancel_ulid',
+        'invalid_export_create_run_ulid',
+        'invalid_export_show_ulid',
+        'invalid_export_retry_ulid',
+        'invalid_export_cancel_ulid',
+        'invalid_export_download_ulid',
+        'missing_run_as_of',
+        'rows_limit_101',
+        'missing_drill_down_token',
+        'invalid_export_format',
+        'unexpected_download_body',
+        'legacy_routes_absent',
+    ];
+    private const CONTRACT_TESTS = [
+        'tests/Unit/Reporting/Contracts/ReportValueObjectContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php',
+        'tests/Unit/Reporting/Input/ReportInputNormalizerTest.php',
+        'tests/Unit/Reporting/Access/OrganizationReportScopeResolverTest.php',
+        'tests/Unit/Reporting/Access/ReportAccessServiceTest.php',
+        'tests/Unit/Reporting/Access/ReportingPermissionTranslationTest.php',
+        'tests/Unit/Reporting/Http/ReportResourceSchemaTest.php',
+        'tests/Unit/Reporting/Http/ReportFormRequestContractTest.php',
+        'tests/Unit/Reporting/Errors/ReportErrorCatalogTest.php',
+        'tests/Unit/Reporting/Errors/ReportErrorResponseFactoryTest.php',
+        'tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php',
+        'tests/Architecture/Reporting/ReportPortSignatureTest.php',
+        'tests/Architecture/Reporting/ThinReportControllerTest.php',
+        'tests/Unit/Reporting/Http/ReportControllerContractTest.php',
+        'tests/Architecture/Reporting/ReportingRouteSnapshotTest.php',
+        'tests/Architecture/Reporting/PlanOneAHandoffContractTest.php',
+        'tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php',
+    ];
+    private const STATIC_PATHS = [
+        'app/BusinessModules/Core/Reporting',
+        'app/Domain/Authorization/Services/AuthorizationService.php',
+        'scripts/reporting/verify-task-7-composer.php',
+        'scripts/reporting/run-plan-1a-gates.php',
+        'scripts/reporting/build-plan-1a-evidence.php',
+        'tests/Support/Reporting',
+        'tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php',
+        'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
+        'tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php',
+        'tests/Architecture/Reporting/PlanOneAHandoffContractTest.php',
+        'tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php',
+    ];
+    private static ?Closure $processOverride = null;
+    private static ?Closure $topologyOverride = null;
+    private static ?Closure $harnessOverride = null;
+    private static ?Closure $faultOverride = null;
+    private static ?Closure $phpHashOverride = null;
+    private static ?Closure $branchOverride = null;
+
+    public static function execute(array $argv): int
+    {
+        $directory = null;
+        $normal = false;
+        try {
+            $options = self::parse(array_slice($argv, 1));
+            $root = self::resolveRepositoryRoot($options['repository-root']);
+            $directory = self::validateOutputDirectory($root, $options['output-directory'], $options['mode'] === 'normal');
+            $normal = $options['mode'] === 'normal';
+            if ($normal) {
+                self::cleanupOutputs($directory);
+            }
+            self::fault('after_preclean');
+            self::validateGeneratedOutputGovernance($root);
+            self::fault('after_output_governance');
+            self::validateRepository($root, $options);
+            self::fault('after_repository_validation');
+            if ($options['mode'] === 'verify') {
+                self::verifyExisting($root, $directory, $options['commit-sha']);
+            } else {
+                $bundle = self::build($root, $options['commit-sha'], $options['executed-at']);
+                self::fault('after_build');
+                if ($options['mode'] === 'normal') {
+                    self::publish($directory, $bundle);
+                }
+            }
+            fwrite(STDOUT, 'plan-1a-gates: passed commands=2 routes=12 authorization=22/22 malformed=16/16'.PHP_EOL);
+
+            return 0;
+        } catch (PlanOneAGatesFailure $failure) {
+            if ($normal && is_string($directory)) {
+                self::cleanupOutputs($directory);
+            }
+            fwrite(STDERR, $failure->getMessage().PHP_EOL);
+
+            return $failure->exitStatus;
+        } catch (Throwable) {
+            if ($normal && is_string($directory)) {
+                self::cleanupOutputs($directory);
+            }
+            fwrite(STDERR, 'PLAN_1A_GATE_INTERNAL_FAILURE'.PHP_EOL);
+
+            return 3;
+        }
+    }
+
+    public static function parse(array $arguments): array
+    {
+        $values = [];
+        foreach ($arguments as $argument) {
+            if ($argument === '--check' || $argument === '--verify-existing') {
+                $key = substr($argument, 2);
+                self::guard(!isset($values[$key]), 2, 'PLAN_1A_GATE_CLI_INVALID');
+                $values[$key] = true;
+                continue;
+            }
+            self::guard(str_starts_with($argument, '--') && str_contains($argument, '='), 2, 'PLAN_1A_GATE_CLI_INVALID');
+            [$key, $value] = explode('=', substr($argument, 2), 2);
+            self::guard(in_array($key, ['repository-root', 'commit-sha', 'output-directory', 'executed-at'], true), 2, 'PLAN_1A_GATE_CLI_INVALID');
+            self::guard(!array_key_exists($key, $values), 2, 'PLAN_1A_GATE_CLI_INVALID');
+            $values[$key] = $value;
+        }
+        foreach (['repository-root', 'commit-sha', 'output-directory'] as $key) {
+            self::guard(isset($values[$key]) && is_string($values[$key]), 2, 'PLAN_1A_GATE_CLI_INVALID');
+        }
+        self::guard(!isset($values['check'], $values['verify-existing']), 2, 'PLAN_1A_GATE_CLI_INVALID');
+        $verify = isset($values['verify-existing']);
+        self::guard($verify !== isset($values['executed-at']), 2, 'PLAN_1A_GATE_TIMESTAMP_MODE_INVALID');
+        if (!$verify) {
+            self::guard(
+                is_string($values['executed-at'])
+                    && preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/D', $values['executed-at']) === 1
+                    && gmdate('Y-m-d\TH:i:s\Z', strtotime($values['executed-at'])) === $values['executed-at'],
+                2,
+                'PLAN_1A_GATE_TIMESTAMP_INVALID',
+            );
+        }
+        self::guard(preg_match('/^[a-f0-9]{40}$/D', $values['commit-sha']) === 1, 2, 'PLAN_1A_GATE_COMMIT_INVALID');
+        $values['mode'] = $verify ? 'verify' : (isset($values['check']) ? 'check' : 'normal');
+
+        return $values;
+    }
+
+    private static function resolveRepositoryRoot(string $argument): string
+    {
+        $root = realpath($argument);
+        self::guard(
+            is_string($root) && (is_dir($root.'/.git') || is_file($root.'/.git')),
+            3,
+            'PLAN_1A_GATE_ROOT_INVALID',
+        );
+        $gitRoot = trim(self::process(['git', 'rev-parse', '--show-toplevel'], $root)[0]);
+        self::guard(strcasecmp(str_replace('\\', '/', $gitRoot), str_replace('\\', '/', $root)) === 0, 3, 'PLAN_1A_GATE_ROOT_INVALID');
+
+        return $root;
+    }
+
+    private static function validateRepository(string $root, array $options): void
+    {
+        self::guard(trim(self::process(['git', 'rev-parse', 'HEAD'], $root)[0]) === $options['commit-sha'], 3, 'PLAN_1A_GATE_HEAD_MISMATCH');
+        $branch = self::$branchOverride instanceof Closure
+            ? (self::$branchOverride)($root)
+            : trim(self::process(['git', 'branch', '--show-current'], $root)[0]);
+        self::guard($branch === self::CANONICAL_BRANCH, 3, 'PLAN_1A_GATE_BRANCH_INVALID');
+        self::guard(PHP_VERSION === '8.2.29', 2, 'PLAN_1A_GATE_PHP_VERSION_MISMATCH');
+        $phpHash = self::$phpHashOverride instanceof Closure
+            ? (self::$phpHashOverride)()
+            : hash_file('sha256', self::PHP);
+        self::guard($phpHash === self::PHP_SHA256, 2, 'PLAN_1A_GATE_PHP_HASH_MISMATCH');
+        self::validateGitState($root, $options['commit-sha']);
+    }
+
+    private static function validateGeneratedOutputGovernance(string $root): void
+    {
+        $paths = array_map(static fn (string $file): string => 'build/reports/'.$file, self::OUTPUTS);
+        [$tracked, , $trackedExit] = self::process(['git', 'ls-files', '--', ...$paths], $root, false);
+        self::guard($trackedExit === 0 && trim($tracked) === '', 3, 'PLAN_1A_GATE_OUTPUT_TRACKED');
+        [, , $ignoredExit] = self::process(['git', 'check-ignore', '--no-index', '--', ...$paths], $root, false);
+        self::guard($ignoredExit === 0, 3, 'PLAN_1A_GATE_OUTPUT_NOT_IGNORED');
+    }
+
+    private static function validateOutputDirectory(string $root, string $argument, bool $create): string
+    {
+        self::guard(str_replace('\\', '/', $argument) === 'build/reports', 2, 'PLAN_1A_GATE_OUTPUT_PATH_INVALID');
+        $build = $root.'/build';
+        $directory = $build.'/reports';
+        if (!file_exists($build)) {
+            self::guard($create && mkdir($build, 0777), 6, 'PLAN_1A_GATE_OUTPUT_CREATE_FAILED');
+        }
+        self::guard(is_dir($build) && !is_link($build), 2, 'PLAN_1A_GATE_OUTPUT_PATH_INVALID');
+        self::guard(self::samePath((string) realpath($build), $root.'/build'), 2, 'PLAN_1A_GATE_OUTPUT_PATH_INVALID');
+        if (!file_exists($directory)) {
+            self::guard($create && mkdir($directory, 0777), 6, 'PLAN_1A_GATE_OUTPUT_CREATE_FAILED');
+        }
+        self::guard(is_dir($directory) && !is_link($directory), 2, 'PLAN_1A_GATE_OUTPUT_PATH_INVALID');
+        self::guard(self::samePath((string) realpath($directory), $root.'/build/reports'), 2, 'PLAN_1A_GATE_OUTPUT_PATH_INVALID');
+
+        return $directory;
+    }
+
+    private static function build(string $root, string $commit, string $timestamp): array
+    {
+        $topology = self::$topologyOverride instanceof Closure
+            ? (self::$topologyOverride)($root)
+            : self::readProductionTopology($root);
+        $routeHarness = self::$harnessOverride instanceof Closure
+            ? (self::$harnessOverride)($root)
+            : new HermeticReportingHttpHarness();
+        self::guard($routeHarness instanceof HermeticReportingHttpHarness, 4, 'PLAN_1A_GATE_HARNESS_INVALID');
+        $routes = [];
+        foreach ($routeHarness->router()->getRoutes()->getRoutes() as $route) {
+            $name = $route->getName();
+            if (is_string($name) && str_starts_with($name, 'admin.reports.')) {
+                $routes[] = [
+                    'name' => $name,
+                    'methods' => $route->methods(),
+                    'uri' => $route->uri(),
+                    'middleware' => $route->middleware(),
+                ];
+            }
+        }
+        usort($routes, static fn (array $left, array $right): int => strcmp($left['name'], $right['name']));
+        $expected = HermeticReportingHttpHarness::expectedRoutes();
+        ksort($expected, SORT_STRING);
+        self::guard(
+            array_map(static fn (array $route): array => [$route['methods'], $route['uri']], $routes) === array_values($expected),
+            4,
+            'PLAN_1A_GATE_ROUTE_DRIFT',
+        );
+        self::guard($routeHarness->providerRegistrationCount() === 1, 4, 'PLAN_1A_GATE_PROVIDER_DRIFT');
+        self::guard(!$routeHarness->apiRoutesRequireLegacyReports() && !$routeHarness->legacyRouteFileExists(), 4, 'PLAN_1A_GATE_LEGACY_DRIFT');
+        $routeArtifact = [
+            'artifact_id' => 'plan_1a_route_snapshot',
+            'schema_version' => '1.0.0',
+            'status' => 'passed',
+            'verification_mode' => 'production_topology_snapshot',
+            'producer_commit_sha' => $commit,
+            'executed_at' => $timestamp,
+            'counts' => ['core_routes' => 12, 'legacy_routes' => 0, 'provider_registrations' => 1],
+            'topology' => $topology,
+            'routes' => $routes,
+            'legacy_uris' => HermeticReportingHttpHarness::legacyUris(),
+            'source_files' => self::sourceHashes($root, $commit, self::ROUTE_SOURCES),
+        ];
+        self::validateSchema(
+            $root,
+            self::encode($routeArtifact),
+            'docs/reports/contracts/plan-1a-gate-evidence.schema.json',
+            'PLAN_1A_GATE_ROUTE_SCHEMA_INVALID',
+        );
+
+        $authorizationCases = [];
+        foreach (self::AUTH_CASES as $caseId) {
+            $authorizationCases[] = (new HermeticReportingHttpHarness())->runAuthorizationCase($caseId);
+        }
+        self::validateCases($authorizationCases, self::AUTH_CASES, 28, 132);
+        $authorization = [
+            'artifact_id' => 'plan_1a_ci_authorization',
+            'schema_version' => '1.0.0',
+            'status' => 'passed',
+            'verification_mode' => 'hermetic_http',
+            'producer_commit_sha' => $commit,
+            'executed_at' => $timestamp,
+            'matrix' => 'authorization',
+            'counts' => ['cases' => 22, 'passed' => 22, 'allowed_cases' => 7, 'denied_cases' => 15, 'http_requests' => 28, 'assertions' => 132],
+            'cases' => $authorizationCases,
+            'source_files' => self::sourceHashes($root, $commit, [...self::MATRIX_SOURCES, 'tests/Feature/Api/V1/Admin/Reporting/ReportingAuthorizationMatrixTest.php']),
+        ];
+        self::validateSchema(
+            $root,
+            self::encode($authorization),
+            'docs/reports/contracts/plan-1a-gate-evidence.schema.json',
+            'PLAN_1A_GATE_AUTHORIZATION_SCHEMA_INVALID',
+        );
+
+        $malformedCases = [];
+        foreach (self::MALFORMED_CASES as $caseId) {
+            $malformedCases[] = (new HermeticReportingHttpHarness())->runMalformedCase($caseId);
+        }
+        self::validateCases($malformedCases, self::MALFORMED_CASES, 34, 96);
+        $malformed = [
+            'artifact_id' => 'plan_1a_ci_malformed',
+            'schema_version' => '1.0.0',
+            'status' => 'passed',
+            'verification_mode' => 'hermetic_http',
+            'producer_commit_sha' => $commit,
+            'executed_at' => $timestamp,
+            'matrix' => 'malformed_requests',
+            'counts' => ['cases' => 16, 'passed' => 16, 'validation_cases' => 15, 'legacy_absence_cases' => 1, 'legacy_uri_count' => 19, 'http_requests' => 34, 'assertions' => 96],
+            'cases' => $malformedCases,
+            'source_files' => self::sourceHashes($root, $commit, [...self::MATRIX_SOURCES, 'tests/Feature/Api/V1/Admin/Reporting/ReportingMalformedRequestContractTest.php']),
+        ];
+        self::validateSchema(
+            $root,
+            self::encode($malformed),
+            'docs/reports/contracts/plan-1a-gate-evidence.schema.json',
+            'PLAN_1A_GATE_MALFORMED_SCHEMA_INVALID',
+        );
+
+        $commands = self::runCommands($root, $timestamp);
+        $ledger = [
+            'artifact_id' => 'plan_1a_command_ledger',
+            'schema_version' => '1.0.0',
+            'status' => 'passed',
+            'verification_mode' => 'local_fixed_commands',
+            'producer_commit_sha' => $commit,
+            'executed_at' => $timestamp,
+            'commands' => $commands,
+        ];
+        self::validateSchema(
+            $root,
+            self::encode($ledger),
+            'docs/reports/contracts/plan-1a-gate-evidence.schema.json',
+            'PLAN_1A_GATE_LEDGER_SCHEMA_INVALID',
+        );
+        $bundle = [
+            'plan-1a-route-snapshot.json' => self::encode($routeArtifact),
+            'plan-1a-ci-authorization.json' => self::encode($authorization),
+            'plan-1a-ci-malformed.json' => self::encode($malformed),
+            'plan-1a-command-ledger.json' => self::encode($ledger),
+        ];
+        return $bundle;
+    }
+
+    private static function readProductionTopology(string $root): array
+    {
+        $previous = Illuminate\Container\Container::getInstance();
+        $application = require $root.'/bootstrap/app.php';
+        self::guard(
+            $application instanceof Illuminate\Foundation\Application
+                && !$application->isBooted()
+                && !$application->hasBeenBootstrapped(),
+            4,
+            'PLAN_1A_GATE_PRODUCTION_BOOTED',
+        );
+        $kernel = $application->make(Illuminate\Contracts\Http\Kernel::class);
+        self::guard(!$application->isBooted() && !$application->hasBeenBootstrapped(), 4, 'PLAN_1A_GATE_PRODUCTION_BOOTED');
+        $reflection = new ReflectionObject($kernel);
+        $middleware = $reflection->getProperty('middleware')->getValue($kernel);
+        $groups = $reflection->getProperty('middlewareGroups')->getValue($kernel);
+        Illuminate\Container\Container::setInstance($previous);
+        Illuminate\Support\Facades\Facade::clearResolvedInstances();
+
+        return ['global_middleware' => $middleware, 'api_middleware' => $groups['api']];
+    }
+
+    private static function validateCases(array $records, array $ids, int $requests, int $assertions): void
+    {
+        self::guard(array_column($records, 'case_id') === $ids, 4, 'PLAN_1A_GATE_CASE_ORDER_DRIFT');
+        foreach ($records as $record) {
+            self::guard(array_keys($record) === ['case_id', 'status', 'request_count', 'response_statuses', 'response_codes', 'action_calls', 'actor_loads', 'assertions'], 4, 'PLAN_1A_GATE_CASE_SHAPE_DRIFT');
+        }
+        self::guard(array_sum(array_column($records, 'request_count')) === $requests, 4, 'PLAN_1A_GATE_REQUEST_COUNT_DRIFT');
+        self::guard(array_sum(array_column($records, 'assertions')) === $assertions, 4, 'PLAN_1A_GATE_ASSERTION_COUNT_DRIFT');
+    }
+
+    private static function runCommands(string $root, string $timestamp): array
+    {
+        $contractArgv = [self::PHP, '-c', self::PHP_DIR, 'vendor/bin/phpunit', ...self::CONTRACT_TESTS];
+        [$stdout, $stderr, $exit] = self::process($contractArgv, $root, false);
+        $combined = $stdout.$stderr;
+        self::guard($exit === 0, 5, 'PLAN_1A_GATE_CONTRACT_COMMAND_FAILED');
+        self::guard(substr_count($combined, 'OK (287 tests, 2570 assertions)') === 1, 5, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT');
+        self::guard(preg_match('/Skipped|Incomplete|Risky|FAILURES!|ERRORS!/i', $combined) !== 1, 5, 'PLAN_1A_GATE_CONTRACT_NON_PASS');
+
+        $staticArgv = [self::PHP, '-c', self::PHP_DIR, 'vendor/bin/phpstan', 'analyse', ...self::STATIC_PATHS, '--no-progress'];
+        [$stdout, $stderr, $exit] = self::process($staticArgv, $root, false);
+        self::guard($exit === 0 && substr_count($stdout.$stderr, '[OK] No errors') === 1, 5, 'PLAN_1A_GATE_STATIC_COMMAND_FAILED');
+
+        return [
+            ['command_id' => 'plan1a_contract_tests', 'command' => self::render($contractArgv), 'status' => 'passed', 'exit_code' => 0, 'tests' => 287, 'assertions' => 2570, 'skipped' => 0, 'executed_at' => $timestamp],
+            ['command_id' => 'plan1a_static_analysis', 'command' => self::render($staticArgv), 'status' => 'passed', 'exit_code' => 0, 'tests' => 0, 'assertions' => 0, 'skipped' => 0, 'executed_at' => $timestamp],
+        ];
+    }
+
+    private static function verifyExisting(string $root, string $directory, string $commit): void
+    {
+        $ledgerPath = $directory.'/plan-1a-command-ledger.json';
+        self::guard(is_file($ledgerPath), 6, 'PLAN_1A_GATE_LEDGER_MISSING');
+        $ledger = json_decode((string) file_get_contents($ledgerPath), true, 512, JSON_THROW_ON_ERROR);
+        self::guard(is_array($ledger) && is_string($ledger['executed_at'] ?? null), 6, 'PLAN_1A_GATE_LEDGER_INVALID');
+        foreach ($ledger['commands'] ?? [] as $command) {
+            self::guard(($command['executed_at'] ?? null) === $ledger['executed_at'], 6, 'PLAN_1A_GATE_TIMESTAMP_DIVERGENCE');
+        }
+        $existing = [];
+        foreach (self::OUTPUTS as $file) {
+            self::guard(is_file($directory.'/'.$file), 6, 'PLAN_1A_GATE_OUTPUT_MISSING');
+            $existing[$file] = (string) file_get_contents($directory.'/'.$file);
+            $decoded = json_decode($existing[$file], true, 512, JSON_THROW_ON_ERROR);
+            self::guard(($decoded['executed_at'] ?? null) === $ledger['executed_at'], 6, 'PLAN_1A_GATE_TIMESTAMP_DIVERGENCE');
+        }
+        $rebuilt = self::build($root, $commit, $ledger['executed_at']);
+        self::guard($rebuilt === $existing, 6, 'PLAN_1A_GATE_REPLAY_DRIFT');
+    }
+
+    private static function publish(string $directory, array $bundle): void
+    {
+        try {
+            foreach (self::OUTPUTS as $file) {
+                $temporary = self::temporaryPath($directory);
+                self::guard(file_put_contents($temporary, $bundle[$file], LOCK_EX) !== false, 6, 'PLAN_1A_GATE_OUTPUT_WRITE_FAILED');
+                self::fault('after_temporary_write:'.$file);
+                self::guard(@rename($temporary, $directory.'/'.$file), 6, 'PLAN_1A_GATE_OUTPUT_WRITE_FAILED');
+                self::fault('after_publish:'.$file);
+                self::guard(
+                    hash_equals($bundle[$file], (string) file_get_contents($directory.'/'.$file)),
+                    6,
+                    'PLAN_1A_GATE_OUTPUT_REREAD_FAILED',
+                );
+                self::fault('after_reread:'.$file);
+            }
+        } catch (Throwable $failure) {
+            self::cleanupOutputs($directory);
+            throw $failure;
+        }
+    }
+
+    private static function sourceHashes(string $root, string $commit, array $paths): array
+    {
+        sort($paths, SORT_STRING);
+        $hashes = [];
+        foreach ($paths as $path) {
+            $bytes = self::process(['git', 'show', $commit.':'.$path], $root)[0];
+            $hashes[$path] = hash('sha256', $bytes);
+        }
+
+        return $hashes;
+    }
+
+    private static function validateSchema(
+        string $root,
+        string $bytes,
+        string $schemaPath,
+        string $failureCode = 'PLAN_1A_GATE_SCHEMA_INVALID',
+    ): void
+    {
+        $data = json_decode($bytes, false, 512, JSON_THROW_ON_ERROR);
+        $schema = json_decode((string) file_get_contents($root.'/'.$schemaPath), false, 512, JSON_THROW_ON_ERROR);
+        self::guard((new CompliantValidator())->validate($data, $schema)->isValid(), 3, $failureCode);
+    }
+
+    private static function encode(array $value): string
+    {
+        return json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)."\n";
+    }
+
+    private static function render(array $arguments): string
+    {
+        return implode(' ', array_map(
+            static fn (string $argument): string => preg_match('/[\s"]/', $argument) === 1
+                ? '"'.str_replace('"', '\\"', $argument).'"'
+                : $argument,
+            $arguments,
+        ));
+    }
+
+    private static function process(array $arguments, string $root, bool $mustPass = true): array
+    {
+        if (self::$processOverride instanceof Closure) {
+            $overridden = (self::$processOverride)($arguments, $root, $mustPass);
+            if (is_array($overridden)) {
+                self::guard(
+                    count($overridden) === 3
+                        && is_string($overridden[0] ?? null)
+                        && is_string($overridden[1] ?? null)
+                        && is_int($overridden[2] ?? null),
+                    3,
+                    'PLAN_1A_GATE_PROCESS_OVERRIDE_INVALID',
+                );
+                if ($mustPass) {
+                    self::guard($overridden[2] === 0, 3, 'PLAN_1A_GATE_PROCESS_FAILED');
+                }
+
+                return $overridden;
+            }
+        }
+        $process = new Process($arguments, $root);
+        $process->setTimeout(600);
+        $process->run();
+        if ($mustPass) {
+            self::guard($process->isSuccessful(), 3, 'PLAN_1A_GATE_PROCESS_FAILED');
+        }
+
+        return [$process->getOutput(), $process->getErrorOutput(), $process->getExitCode()];
+    }
+
+    private static function fault(string $boundary): void
+    {
+        if (self::$faultOverride instanceof Closure) {
+            (self::$faultOverride)($boundary);
+        }
+    }
+
+    private static function removeBounded(string $path): void
+    {
+        if (is_file($path) && !unlink($path)) {
+            throw new PlanOneAGatesFailure(6, 'PLAN_1A_GATE_OUTPUT_CLEANUP_FAILED');
+        }
+    }
+
+    private static function cleanupOutputs(string $directory): void
+    {
+        foreach (self::OUTPUTS as $file) {
+            self::removeBounded($directory.'/'.$file);
+        }
+        foreach (glob($directory.'/.plan-1a-*.tmp') ?: [] as $path) {
+            self::removeBounded($path);
+        }
+    }
+
+    private static function temporaryPath(string $directory): string
+    {
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $path = $directory.'/.plan-1a-'.bin2hex(random_bytes(8)).'.tmp';
+            $handle = @fopen($path, 'x+b');
+            if (is_resource($handle)) {
+                fclose($handle);
+
+                return $path;
+            }
+        }
+        throw new PlanOneAGatesFailure(6, 'PLAN_1A_GATE_OUTPUT_WRITE_FAILED');
+    }
+
+    private static function validateGitState(string $root, string $commit): void
+    {
+        $staged = self::gitPaths(['diff', '--cached', '--name-only', '-z'], $root);
+        self::guard($staged === [], 3, 'PLAN_1A_GATE_STAGED_DIRTY');
+        $unstaged = self::gitPaths(['diff', '--name-only', '-z'], $root);
+        $untracked = self::gitPaths(['ls-files', '--others', '--exclude-standard', '-z'], $root);
+        $working = array_values(array_unique([...$unstaged, ...$untracked]));
+        sort($working, SORT_STRING);
+        if ($working === []) {
+            self::validateCanonicalTaskElevenCommit($root, $commit);
+
+            return;
+        }
+        self::guard($working === self::TASK_ELEVEN_PATHS, 3, 'PLAN_1A_GATE_WORKTREE_DIRTY');
+    }
+
+    private static function validateCanonicalTaskElevenCommit(string $root, string $commit): void
+    {
+        self::guard(
+            trim(self::process(['git', 'show', '-s', '--format=%s', $commit], $root)[0]) === self::TASK_ELEVEN_SUBJECT,
+            3,
+            'PLAN_1A_GATE_TASK_11_SUBJECT_INVALID',
+        );
+        $parents = preg_split('/\s+/', trim(self::process(['git', 'show', '-s', '--format=%P', $commit], $root)[0])) ?: [];
+        self::guard(count($parents) === 1, 3, 'PLAN_1A_GATE_TASK_11_PARENT_INVALID');
+        $paths = self::gitPaths(['diff-tree', '--no-renames', '--no-commit-id', '--name-only', '-r', '-z', $commit], $root);
+        self::guard($paths === self::TASK_ELEVEN_PATHS, 3, 'PLAN_1A_GATE_TASK_11_PATHS_INVALID');
+        foreach (self::TASK_ELEVEN_PATHS as $path) {
+            $gitBytes = self::process(['git', 'show', $commit.':'.$path], $root)[0];
+            self::guard(
+                is_file($root.'/'.$path) && hash_equals(hash('sha256', $gitBytes), hash_file('sha256', $root.'/'.$path)),
+                3,
+                'PLAN_1A_GATE_TASK_11_BYTES_INVALID',
+            );
+        }
+    }
+
+    private static function gitPaths(array $arguments, string $root): array
+    {
+        $bytes = self::process(['git', ...$arguments], $root)[0];
+        $paths = array_values(array_filter(explode("\0", $bytes), static fn (string $path): bool => $path !== ''));
+        sort($paths, SORT_STRING);
+
+        return $paths;
+    }
+
+    private static function samePath(string $actual, string $expected): bool
+    {
+        return strcasecmp(str_replace('\\', '/', $actual), str_replace('\\', '/', $expected)) === 0;
+    }
+
+    private static function guard(bool $condition, int $exit, string $message): void
+    {
+        if (!$condition) {
+            throw new PlanOneAGatesFailure($exit, $message);
+        }
+    }
+}
+
+if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
+    exit(PlanOneAGates::execute($argv));
+}

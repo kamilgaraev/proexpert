@@ -67,3 +67,9 @@ rr
 rr.exe
 .rr
 .worktrees/
+/build/reports/task-7-composer-evidence.json
+/build/reports/plan-1a-route-snapshot.json
+/build/reports/plan-1a-command-ledger.json
+/build/reports/plan-1a-ci-authorization.json
+/build/reports/plan-1a-ci-malformed.json
+/build/reports/plan-1a-completion.json

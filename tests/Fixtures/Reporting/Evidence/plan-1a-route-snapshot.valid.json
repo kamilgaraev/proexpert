@@ -1,0 +1,292 @@
+{
+  "artifact_id": "plan_1a_route_snapshot",
+  "schema_version": "1.0.0",
+  "status": "passed",
+  "verification_mode": "production_topology_snapshot",
+  "producer_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "executed_at": "2026-07-26T00:00:00Z",
+  "counts": {
+    "core_routes": 12,
+    "legacy_routes": 0,
+    "provider_registrations": 1
+  },
+  "topology": {
+    "global_middleware": [
+      "GlobalOne"
+    ],
+    "api_middleware": [
+      "ApiOne"
+    ]
+  },
+  "routes": [
+    {
+      "name": "admin.reports.catalog",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "uri": "api/v1/admin/reports/catalog",
+      "middleware": [
+        "api",
+        "admin.response",
+        "auth:api_admin",
+        "auth.jwt:api_admin",
+        "organization.context",
+        "authorize:admin.access",
+        "interface:admin",
+        "module.access:reports",
+        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+        "authorize:reports.view"
+      ]
+    },
+    {
+      "name": "admin.reports.exports.cancel",
+      "methods": [
+        "POST"
+      ],
+      "uri": "api/v1/admin/reports/exports/{exportId}/cancel",
+      "middleware": [
+        "api",
+        "admin.response",
+        "auth:api_admin",
+        "auth.jwt:api_admin",
+        "organization.context",
+        "authorize:admin.access",
+        "interface:admin",
+        "module.access:reports",
+        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+        "authorize:reports.view",
+        "authorize:reports.export"
+      ]
+    },
+    {
+      "name": "admin.reports.exports.download-link",
+      "methods": [
+        "POST"
+      ],
+      "uri": "api/v1/admin/reports/exports/{exportId}/download-link",
+      "middleware": [
+        "api",
+        "admin.response",
+        "auth:api_admin",
+        "auth.jwt:api_admin",
+        "organization.context",
+        "authorize:admin.access",
+        "interface:admin",
+        "module.access:reports",
+        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+        "authorize:reports.view",
+        "authorize:reports.export",
+        "authorize:reports.download"
+      ]
+    },
+    {
+      "name": "admin.reports.exports.retry",
+      "methods": [
+        "POST"
+      ],
+      "uri": "api/v1/admin/reports/exports/{exportId}/retry",
+      "middleware": [
+        "api",
+        "admin.response",
+        "auth:api_admin",
+        "auth.jwt:api_admin",
+        "organization.context",
+        "authorize:admin.access",
+        "interface:admin",
+        "module.access:reports",
+        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+        "authorize:reports.view",
+        "authorize:reports.export"
+      ]
+    },
+    {
+      "name": "admin.reports.exports.show",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "uri": "api/v1/admin/reports/exports/{exportId}",
+      "middleware": [
+        "api",
+        "admin.response",
+        "auth:api_admin",
+        "auth.jwt:api_admin",
+        "organization.context",
+        "authorize:admin.access",
+        "interface:admin",
+        "module.access:reports",
+        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+        "authorize:reports.view"
+      ]
+    },
+    {
+      "name": "admin.reports.exports.store",
+      "methods": [
+        "POST"
+      ],
+      "uri": "api/v1/admin/reports/runs/{runId}/exports",
+      "middleware": [
+        "api",
+        "admin.response",
+        "auth:api_admin",
+        "auth.jwt:api_admin",
+        "organization.context",
+        "authorize:admin.access",
+        "interface:admin",
+        "module.access:reports",
+        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+        "authorize:reports.view",
+        "authorize:reports.export"
+      ]
+    },
+    {
+      "name": "admin.reports.runs.cancel",
+      "methods": [
+        "POST"
+      ],
+      "uri": "api/v1/admin/reports/runs/{runId}/cancel",
+      "middleware": [
+        "api",
+        "admin.response",
+        "auth:api_admin",
+        "auth.jwt:api_admin",
+        "organization.context",
+        "authorize:admin.access",
+        "interface:admin",
+        "module.access:reports",
+        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+        "authorize:reports.view",
+        "authorize:reports.run"
+      ]
+    },
+    {
+      "name": "admin.reports.runs.drill-down",
+      "methods": [
+        "POST"
+      ],
+      "uri": "api/v1/admin/reports/runs/{runId}/drill-down",
+      "middleware": [
+        "api",
+        "admin.response",
+        "auth:api_admin",
+        "auth.jwt:api_admin",
+        "organization.context",
+        "authorize:admin.access",
+        "interface:admin",
+        "module.access:reports",
+        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+        "authorize:reports.view"
+      ]
+    },
+    {
+      "name": "admin.reports.runs.retry",
+      "methods": [
+        "POST"
+      ],
+      "uri": "api/v1/admin/reports/runs/{runId}/retry",
+      "middleware": [
+        "api",
+        "admin.response",
+        "auth:api_admin",
+        "auth.jwt:api_admin",
+        "organization.context",
+        "authorize:admin.access",
+        "interface:admin",
+        "module.access:reports",
+        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+        "authorize:reports.view",
+        "authorize:reports.run"
+      ]
+    },
+    {
+      "name": "admin.reports.runs.rows",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "uri": "api/v1/admin/reports/runs/{runId}/rows",
+      "middleware": [
+        "api",
+        "admin.response",
+        "auth:api_admin",
+        "auth.jwt:api_admin",
+        "organization.context",
+        "authorize:admin.access",
+        "interface:admin",
+        "module.access:reports",
+        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+        "authorize:reports.view"
+      ]
+    },
+    {
+      "name": "admin.reports.runs.show",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "uri": "api/v1/admin/reports/runs/{runId}",
+      "middleware": [
+        "api",
+        "admin.response",
+        "auth:api_admin",
+        "auth.jwt:api_admin",
+        "organization.context",
+        "authorize:admin.access",
+        "interface:admin",
+        "module.access:reports",
+        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+        "authorize:reports.view"
+      ]
+    },
+    {
+      "name": "admin.reports.runs.store",
+      "methods": [
+        "POST"
+      ],
+      "uri": "api/v1/admin/reports/{reportCode}/runs",
+      "middleware": [
+        "api",
+        "admin.response",
+        "auth:api_admin",
+        "auth.jwt:api_admin",
+        "organization.context",
+        "authorize:admin.access",
+        "interface:admin",
+        "module.access:reports",
+        "App\\BusinessModules\\Core\\Reporting\\Http\\Admin\\Middleware\\RenderReportErrors",
+        "authorize:reports.view",
+        "authorize:reports.run"
+      ]
+    }
+  ],
+  "legacy_uris": [
+    "api/v1/admin/reports/check-basic-availability",
+    "api/v1/admin/reports/check-advanced-availability",
+    "api/v1/admin/reports/check-availability",
+    "api/v1/admin/reports/material-usage",
+    "api/v1/admin/reports/work-completion",
+    "api/v1/admin/reports/project-status-summary",
+    "api/v1/admin/reports/contract-payments",
+    "api/v1/admin/reports/act-reports",
+    "api/v1/admin/reports/contractor-settlements",
+    "api/v1/admin/reports/warehouse-stock",
+    "api/v1/admin/reports/material-movements",
+    "api/v1/admin/reports/time-tracking",
+    "api/v1/admin/reports/project-profitability",
+    "api/v1/admin/reports/project-timelines",
+    "api/v1/admin/reports/contractor-summary",
+    "api/v1/admin/reports/contractor-detail",
+    "api/v1/admin/reports/contractor-detail/{contractorId}",
+    "api/v1/admin/reports/foreman-activity",
+    "api/v1/admin/reports/official-material-usage"
+  ],
+  "source_files": {
+    "app/BusinessModules/Core/Reporting/ReportingContractsServiceProvider.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/BusinessModules/Core/Reporting/routes.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "app/Support/Routing/AdminRouteStack.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "bootstrap/app.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "bootstrap/providers.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "routes/api.php": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}

@@ -1,0 +1,75 @@
+{
+    "plan": "1a",
+    "contract_version": "1.0.0",
+    "resources": [
+        "ReportCatalogResource",
+        "ReportRunResource",
+        "ReportRowsResource",
+        "ReportDrillDownResource",
+        "ReportExportResource",
+        "ReportDownloadLinkResource",
+        "ReportSavedViewResource"
+    ],
+    "permissions": [
+        "reports.view",
+        "reports.run",
+        "reports.export",
+        "reports.download",
+        "reports.manage"
+    ],
+    "error_count": 20,
+    "definition_lifecycle": {
+        "payload": "ReportDefinition",
+        "candidate": "CandidateReportDefinition",
+        "published": "PublishedReportDefinition",
+        "published_registry_return": "PublishedReportDefinition",
+        "candidate_registry_return": "CandidateReportDefinition"
+    },
+    "binding_lifecycle": {
+        "candidate_validation_returns_runtime_map": false,
+        "runtime_registry": "published",
+        "binding_constructor_fields": 7
+    },
+    "owner_port_arity": {
+        "materialize": 3,
+        "result": 2,
+        "page": 5,
+        "cursor": 4,
+        "drill_down": 3
+    },
+    "route_contract": {
+        "provider": "App\\BusinessModules\\Core\\Reporting\\ReportingContractsServiceProvider",
+        "provider_registration": "bootstrap/providers.php",
+        "core_route_count": 12,
+        "legacy_aggregator_require": false,
+        "legacy_route_file": false
+    },
+    "composer_contract": {
+        "root_constraint": "^2.6",
+        "locked_opis_version": "2.6.0",
+        "added_packages": [
+            "opis/json-schema",
+            "opis/string",
+            "opis/uri"
+        ],
+        "evidence": {
+            "artifact_path": "build/reports/task-7-composer-evidence.json",
+            "artifact_sha256": "2d131e843fdb397d7511fbd1db50d8cfe4b4a57bd7c7f237fb7c1d4ae78fa498",
+            "status": "task_7_composer_contract_passed",
+            "baseline_commit_sha": "006041a6375cb6100e6104d174af2a86042dcd1c",
+            "reviewed_commit_sha": "40de9f01026c4ee6f1e9b90e977978bd91fbd90e",
+            "composer_json_before_sha256": "3858f3bb26a55e02cf98f41215286a60e1e3fbad31f3342566172b5df006cbb0",
+            "composer_lock_before_sha256": "18afc3eabb4d6ec62ed876b7d731713bd71ae2ea78be0fab25c913781146179b",
+            "composer_json_after_sha256": "a30bd19506f9ca4fb5c927452c5a54cd80183b2194dad9a57cd922e669dae998",
+            "composer_lock_after_sha256": "8ecc4ac9d32f476028eb80a1c54d8f0fb40fe2d25fd8a5365db02a7354af3e89",
+            "root_constraint": "^2.6",
+            "locked_opis_version": "2.6.0",
+            "added_packages": [
+                "opis/json-schema",
+                "opis/string",
+                "opis/uri"
+            ],
+            "content_hash": "b5fc148f277f0afc38a77bb3ccd8024d"
+        }
+    }
+}

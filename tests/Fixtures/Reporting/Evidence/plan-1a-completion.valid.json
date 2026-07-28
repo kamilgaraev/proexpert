@@ -1,0 +1,46 @@
+{
+  "plan": "1a",
+  "status": "passed",
+  "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "contract_lock_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "resource_schema_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "route_snapshot_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "commands": [
+    {
+      "command_id": "plan1a_contract_tests",
+      "command": "pinned phpunit aggregate",
+      "status": "passed",
+      "exit_code": 0,
+      "tests": 287,
+      "assertions": 2570,
+      "skipped": 0,
+      "executed_at": "2026-07-26T00:00:00Z"
+    },
+    {
+      "command_id": "plan1a_static_analysis",
+      "command": "pinned phpstan analyse",
+      "status": "passed",
+      "exit_code": 0,
+      "tests": 0,
+      "assertions": 0,
+      "skipped": 0,
+      "executed_at": "2026-07-26T00:00:00Z"
+    }
+  ],
+  "ci_http_matrices": {
+    "authorization": {
+      "status": "passed",
+      "verification_mode": "hermetic_http",
+      "cases": 22,
+      "passed": 22,
+      "artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "malformed_requests": {
+      "status": "passed",
+      "verification_mode": "hermetic_http",
+      "cases": 16,
+      "passed": 16,
+      "artifact_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  }
+}

@@ -1,0 +1,1103 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\Reporting\Tooling;
+
+use Opis\JsonSchema\CompliantValidator;
+use PHPUnit\Framework\TestCase;
+use ReflectionClass;
+use Symfony\Component\Process\Process;
+
+require_once dirname(__DIR__, 4).'/scripts/reporting/run-plan-1a-gates.php';
+
+final class RunPlanOneAGatesTest extends TestCase
+{
+    private const PHP = 'C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe';
+    private const PHP_DIR = 'C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64';
+
+    private array $temporaryDirectories = [];
+
+    protected function tearDown(): void
+    {
+        foreach (['processOverride', 'topologyOverride', 'harnessOverride', 'faultOverride', 'phpHashOverride', 'branchOverride'] as $property) {
+            $this->setStaticProperty($property, null);
+        }
+        foreach (array_reverse($this->temporaryDirectories) as $directory) {
+            $this->removeTree($directory);
+        }
+    }
+
+    public function test_four_gate_fixtures_validate_against_closed_schema(): void
+    {
+        foreach ($this->gateFixtureNames() as $file) {
+            self::assertTrue($this->validates($this->decode($file)));
+        }
+    }
+
+    public function test_schema_rejects_route_source_key_substitution(): void
+    {
+        $fixture = $this->decode('plan-1a-route-snapshot.valid.json');
+        $value = array_shift($fixture['source_files']);
+        $fixture['source_files']['foreign.php'] = $value;
+
+        self::assertFalse($this->validates($fixture));
+    }
+
+    public function test_schema_rejects_reordered_routes(): void
+    {
+        $fixture = $this->decode('plan-1a-route-snapshot.valid.json');
+        [$fixture['routes'][0], $fixture['routes'][1]] = [$fixture['routes'][1], $fixture['routes'][0]];
+
+        self::assertFalse($this->validates($fixture));
+    }
+
+    public function test_schema_rejects_route_method_drift(): void
+    {
+        $fixture = $this->decode('plan-1a-route-snapshot.valid.json');
+        $fixture['routes'][0]['methods'] = ['GET'];
+
+        self::assertFalse($this->validates($fixture));
+    }
+
+    public function test_schema_rejects_route_middleware_drift(): void
+    {
+        $fixture = $this->decode('plan-1a-route-snapshot.valid.json');
+        $fixture['routes'][0]['middleware'][1] = 'reports';
+
+        self::assertFalse($this->validates($fixture));
+    }
+
+    public function test_schema_rejects_authorization_source_substitution(): void
+    {
+        $fixture = $this->decode('plan-1a-ci-authorization.valid.json');
+        $value = array_shift($fixture['source_files']);
+        $fixture['source_files']['foreign.php'] = $value;
+
+        self::assertFalse($this->validates($fixture));
+    }
+
+    public function test_schema_rejects_reordered_authorization_cases(): void
+    {
+        $fixture = $this->decode('plan-1a-ci-authorization.valid.json');
+        [$fixture['cases'][0], $fixture['cases'][1]] = [$fixture['cases'][1], $fixture['cases'][0]];
+
+        self::assertFalse($this->validates($fixture));
+    }
+
+    public function test_schema_rejects_authorization_execution_record_drift(): void
+    {
+        $fixture = $this->decode('plan-1a-ci-authorization.valid.json');
+        $fixture['cases'][0]['status'] = 403;
+
+        self::assertFalse($this->validates($fixture));
+    }
+
+    public function test_schema_rejects_malformed_case_id_drift(): void
+    {
+        $fixture = $this->decode('plan-1a-ci-malformed.valid.json');
+        $fixture['cases'][0]['case_id'] = 'foreign_case';
+
+        self::assertFalse($this->validates($fixture));
+    }
+
+    public function test_schema_rejects_malformed_execution_record_drift(): void
+    {
+        $fixture = $this->decode('plan-1a-ci-malformed.valid.json');
+        $fixture['cases'][0]['response_codes'][0] = 'FOREIGN_CODE';
+
+        self::assertFalse($this->validates($fixture));
+    }
+
+    public function test_schema_rejects_ledger_command_reordering(): void
+    {
+        $fixture = $this->decode('plan-1a-command-ledger.valid.json');
+        [$fixture['commands'][0], $fixture['commands'][1]] = [$fixture['commands'][1], $fixture['commands'][0]];
+
+        self::assertFalse($this->validates($fixture));
+    }
+
+    public function test_schema_rejects_ledger_count_drift(): void
+    {
+        $fixture = $this->decode('plan-1a-command-ledger.valid.json');
+        $fixture['commands'][0]['tests']++;
+
+        self::assertFalse($this->validates($fixture));
+    }
+
+    public function test_route_contract_rejects_every_topology_mutation_family(): void
+    {
+        $mutations = [
+            static function (array &$value): void {
+                $value['routes'][] = $value['routes'][0];
+            },
+            static function (array &$value): void {
+                array_pop($value['routes']);
+            },
+            static function (array &$value): void {
+                $value['routes'][0]['uri'] .= '/drift';
+            },
+            static function (array &$value): void {
+                $value['routes'][0]['methods'] = ['GET'];
+            },
+            static function (array &$value): void {
+                $value['routes'][1]['methods'] = ['POST', 'OPTIONS'];
+            },
+            static function (array &$value): void {
+                $value['counts']['provider_registrations'] = 2;
+            },
+            static function (array &$value): void {
+                $value['counts']['legacy_routes'] = 1;
+            },
+            static function (array &$value): void {
+                $value['legacy_uris'][0] .= '/present';
+            },
+        ];
+
+        $this->assertEveryMutationRejected('plan-1a-route-snapshot.valid.json', $mutations);
+    }
+
+    public function test_authorization_contract_rejects_case_shape_status_and_count_mutations(): void
+    {
+        $mutations = [
+            static function (array &$value): void {
+                array_pop($value['cases']);
+            },
+            static function (array &$value): void {
+                $value['cases'][] = $value['cases'][0];
+            },
+            static function (array &$value): void {
+                $value['counts']['passed']--;
+            },
+            static function (array &$value): void {
+                [$value['cases'][5], $value['cases'][6]] = [$value['cases'][6], $value['cases'][5]];
+            },
+            static function (array &$value): void {
+                $value['status'] = 'failed';
+            },
+            static function (array &$value): void {
+                $value['cases'][4]['status'] = 201;
+            },
+            static function (array &$value): void {
+                $value['counts']['cases'] = 21;
+            },
+            static function (array &$value): void {
+                $value['counts']['http_requests'] = 27;
+            },
+        ];
+
+        $this->assertEveryMutationRejected('plan-1a-ci-authorization.valid.json', $mutations);
+    }
+
+    public function test_authorization_contract_rejects_cache_reuse_and_indistinguishability_mutations(): void
+    {
+        $mutations = [
+            static function (array &$value): void {
+                $value['cases'][20]['actor_loads'] = 1;
+            },
+            static function (array &$value): void {
+                $value['cases'][21]['actor_loads'] = 1;
+            },
+            static function (array &$value): void {
+                $value['cases'][18]['response_statuses'][1] = 404;
+            },
+            static function (array &$value): void {
+                $value['cases'][18]['response_codes'][1] = 'REPORT_SCOPE_FORBIDDEN';
+            },
+            static function (array &$value): void {
+                $value['cases'][19]['response_statuses'][1] = 404;
+            },
+            static function (array &$value): void {
+                $value['cases'][19]['response_codes'][1] = 'REPORT_SCOPE_FORBIDDEN';
+            },
+        ];
+
+        $this->assertEveryMutationRejected('plan-1a-ci-authorization.valid.json', $mutations);
+    }
+
+    public function test_http_contract_rejects_every_forbidden_side_effect_sentinel(): void
+    {
+        $mutations = [];
+        foreach (['db_writes', 'network_calls', 'action_dispatches', 'queue_jobs', 'mail_sends', 'storage_writes'] as $sentinel) {
+            $mutations[] = static function (array &$value) use ($sentinel): void {
+                $value['cases'][0][$sentinel] = 1;
+            };
+        }
+
+        $this->assertEveryMutationRejected('plan-1a-ci-authorization.valid.json', $mutations);
+    }
+
+    public function test_hermetic_boundary_sentinels_fail_closed_for_every_external_side_effect_family(): void
+    {
+        foreach (['database', 'network', 'queue', 'mail', 'storage', 'filesystem'] as $boundary) {
+            $ledger = new \Tests\Support\Reporting\HermeticBoundaryLedger();
+
+            try {
+                $ledger->breach($boundary);
+                self::fail('Expected '.$boundary.' boundary breach');
+            } catch (\LogicException $failure) {
+                self::assertSame('REPORT_HERMETIC_'.strtoupper($boundary).'_ACCESS_FORBIDDEN', $failure->getMessage());
+                self::assertSame([$boundary], $ledger->breaches());
+            }
+        }
+    }
+
+    public function test_case_validator_rejects_missing_extra_reordered_and_count_drift_with_stable_failures(): void
+    {
+        $records = $this->decode('plan-1a-ci-authorization.valid.json')['cases'];
+        $ids = array_column($records, 'case_id');
+        $mutations = [
+            'PLAN_1A_GATE_CASE_ORDER_DRIFT' => [
+                static function (array $value): array {
+                    array_pop($value);
+
+                    return $value;
+                },
+                static function (array $value): array {
+                    $value[] = $value[0];
+
+                    return $value;
+                },
+                static function (array $value): array {
+                    [$value[0], $value[1]] = [$value[1], $value[0]];
+
+                    return $value;
+                },
+            ],
+            'PLAN_1A_GATE_REQUEST_COUNT_DRIFT' => [
+                static function (array $value): array {
+                    $value[0]['request_count']++;
+
+                    return $value;
+                },
+            ],
+            'PLAN_1A_GATE_ASSERTION_COUNT_DRIFT' => [
+                static function (array $value): array {
+                    $value[0]['assertions']--;
+
+                    return $value;
+                },
+            ],
+        ];
+
+        foreach ($mutations as $message => $family) {
+            foreach ($family as $mutate) {
+                try {
+                    $this->invokeStatic('validateCases', [$mutate($records), $ids, 28, 132]);
+                    self::fail('Expected '.$message);
+                } catch (\PlanOneAGatesFailure $failure) {
+                    self::assertSame($message, $failure->getMessage());
+                    self::assertSame(4, $failure->exitStatus);
+                }
+            }
+        }
+    }
+
+    public function test_ledger_rejects_command_result_summary_and_aggregate_mutations(): void
+    {
+        $mutations = [
+            static function (array &$value): void {
+                $value['commands'][0]['exit_code'] = 1;
+            },
+            static function (array &$value): void {
+                $value['commands'][0]['status'] = 'skipped';
+            },
+            static function (array &$value): void {
+                $value['commands'][0]['status'] = 'risky';
+            },
+            static function (array &$value): void {
+                unset($value['commands'][0]['tests']);
+            },
+            static function (array &$value): void {
+                $value['commands'][] = $value['commands'][0];
+            },
+            static function (array &$value): void {
+                $value['commands'][1] = $value['commands'][0];
+            },
+            static function (array &$value): void {
+                $value['commands'][0]['command'] .= ' --wrong-summary';
+            },
+            static function (array &$value): void {
+                $value['commands'][0]['tests'] = 40;
+            },
+            static function (array &$value): void {
+                $value['commands'][0]['tests'] = 42;
+            },
+            static function (array &$value): void {
+                array_pop($value['commands']);
+            },
+        ];
+
+        $this->assertEveryMutationRejected('plan-1a-command-ledger.valid.json', $mutations);
+    }
+
+    public function test_contract_command_rejects_every_exit_and_summary_mutation(): void
+    {
+        $mutations = [
+            ['', '', 1, 'PLAN_1A_GATE_CONTRACT_COMMAND_FAILED'],
+            ['OK (287 tests, 2570 assertions) Skipped: 1', '', 0, 'PLAN_1A_GATE_CONTRACT_NON_PASS'],
+            ['OK (287 tests, 2570 assertions) Risky: 1', '', 0, 'PLAN_1A_GATE_CONTRACT_NON_PASS'],
+            ['', '', 0, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT'],
+            ['OK (287 tests, 2570 assertions) OK (287 tests, 2570 assertions)', '', 0, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT'],
+            ['OK (286 tests, 2570 assertions)', '', 0, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT'],
+            ['OK (40 tests, 2570 assertions)', '', 0, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT'],
+            ['OK (42 tests, 2570 assertions)', '', 0, 'PLAN_1A_GATE_CONTRACT_COUNT_DRIFT'],
+        ];
+
+        foreach ($mutations as [$stdout, $stderr, $exit, $message]) {
+            $this->setProcessResults([[$stdout, $stderr, $exit]]);
+
+            try {
+                $this->invokeStatic('runCommands', [$this->root(), '2026-07-26T00:00:00Z']);
+                self::fail('Expected '.$message);
+            } catch (\PlanOneAGatesFailure $failure) {
+                self::assertSame($message, $failure->getMessage());
+                self::assertSame(5, $failure->exitStatus);
+            }
+        }
+    }
+
+    public function test_static_command_rejects_nonzero_absent_duplicate_and_wrong_summaries(): void
+    {
+        $mutations = [
+            ['', '', 1],
+            ['', '', 0],
+            ['[OK] No errors [OK] No errors', '', 0],
+            ['[OK] One error', '', 0],
+        ];
+
+        foreach ($mutations as $staticResult) {
+            $this->setProcessResults([
+                ['OK (287 tests, 2570 assertions)', '', 0],
+                $staticResult,
+            ]);
+
+            try {
+                $this->invokeStatic('runCommands', [$this->root(), '2026-07-26T00:00:00Z']);
+                self::fail('Expected static command rejection');
+            } catch (\PlanOneAGatesFailure $failure) {
+                self::assertSame('PLAN_1A_GATE_STATIC_COMMAND_FAILED', $failure->getMessage());
+                self::assertSame(5, $failure->exitStatus);
+            }
+        }
+    }
+
+    public function test_process_override_rejects_caller_authored_result_shape(): void
+    {
+        $this->setStaticProperty('processOverride', static fn (): array => ['forged']);
+
+        try {
+            $this->invokeStatic('runCommands', [$this->root(), '2026-07-26T00:00:00Z']);
+            self::fail('Expected invalid process result rejection');
+        } catch (\PlanOneAGatesFailure $failure) {
+            self::assertSame('PLAN_1A_GATE_PROCESS_OVERRIDE_INVALID', $failure->getMessage());
+            self::assertSame(3, $failure->exitStatus);
+        }
+    }
+
+    public function test_static_topology_substitution_is_rejected_by_closed_schema(): void
+    {
+        $this->setStaticProperty('topologyOverride', static fn (): array => [
+            'global_middleware' => ['StaticSubstitute'],
+        ]);
+
+        try {
+            $this->invokeStatic('build', [
+                $this->root(),
+                $this->git($this->root(), ['rev-parse', 'HEAD']),
+                '2026-07-26T00:00:00Z',
+            ]);
+            self::fail('Expected substituted topology rejection');
+        } catch (\PlanOneAGatesFailure $failure) {
+            self::assertSame('PLAN_1A_GATE_ROUTE_SCHEMA_INVALID', $failure->getMessage());
+            self::assertSame(3, $failure->exitStatus);
+        }
+    }
+
+    public function test_reflection_harness_substitution_is_rejected_before_execution(): void
+    {
+        $this->setStaticProperty('harnessOverride', static fn (): \stdClass => new \stdClass());
+
+        try {
+            $this->invokeStatic('build', [
+                $this->root(),
+                $this->git($this->root(), ['rev-parse', 'HEAD']),
+                '2026-07-26T00:00:00Z',
+            ]);
+            self::fail('Expected substituted harness rejection');
+        } catch (\PlanOneAGatesFailure $failure) {
+            self::assertSame('PLAN_1A_GATE_HARNESS_INVALID', $failure->getMessage());
+            self::assertSame(4, $failure->exitStatus);
+        }
+    }
+
+    public function test_contract_rejects_caller_authored_mode_status_count_and_result_inputs(): void
+    {
+        $mutations = [
+            static function (array &$value): void {
+                $value['verification_mode'] = 'caller_authored';
+            },
+            static function (array &$value): void {
+                $value['status'] = 'passed_by_caller';
+            },
+            static function (array &$value): void {
+                $value['counts']['assertions'] = 1;
+            },
+            static function (array &$value): void {
+                $value['cases'][0]['action_calls'] = 1;
+            },
+        ];
+
+        $this->assertEveryMutationRejected('plan-1a-ci-authorization.valid.json', $mutations);
+    }
+
+    public function test_normal_cli_requires_canonical_timestamp(): void
+    {
+        $options = \PlanOneAGates::parse($this->arguments('2026-07-26T00:00:00Z'));
+
+        self::assertSame('normal', $options['mode']);
+        self::assertSame('2026-07-26T00:00:00Z', $options['executed-at']);
+    }
+
+    public function test_check_cli_is_closed(): void
+    {
+        $options = \PlanOneAGates::parse([...$this->arguments('2026-07-26T00:00:00Z'), '--check']);
+
+        self::assertSame('check', $options['mode']);
+    }
+
+    public function test_verify_existing_rejects_caller_timestamp(): void
+    {
+        $this->expectException(\PlanOneAGatesFailure::class);
+
+        \PlanOneAGates::parse([...$this->arguments('2026-07-26T00:00:00Z'), '--verify-existing']);
+    }
+
+    public function test_unknown_cli_argument_is_rejected(): void
+    {
+        $this->expectException(\PlanOneAGatesFailure::class);
+
+        \PlanOneAGates::parse(['--unknown=value']);
+    }
+
+    public function test_duplicate_cli_argument_is_rejected(): void
+    {
+        $this->expectException(\PlanOneAGatesFailure::class);
+
+        \PlanOneAGates::parse([...$this->arguments('2026-07-26T00:00:00Z'), '--commit-sha='.str_repeat('a', 40)]);
+    }
+
+    public function test_check_with_missing_build_directory_performs_no_write(): void
+    {
+        $repository = $this->repository();
+        $before = $this->snapshot($repository);
+        $process = $this->runCli($repository, '--check');
+
+        self::assertSame(6, $process->getExitCode());
+        self::assertStringContainsString('PLAN_1A_GATE_OUTPUT_CREATE_FAILED', $process->getErrorOutput());
+        self::assertSame($before, $this->snapshot($repository));
+        self::assertDirectoryDoesNotExist($repository.'/build');
+    }
+
+    public function test_normal_precleans_stale_outputs_before_staged_failure(): void
+    {
+        $repository = $this->repository();
+        $this->createStaleGateOutputs($repository);
+        file_put_contents($repository.'/seed.txt', 'dirty');
+        $this->git($repository, ['add', 'seed.txt']);
+        $process = $this->runCli($repository);
+
+        self::assertSame(3, $process->getExitCode());
+        self::assertStringContainsString('PLAN_1A_GATE_STAGED_DIRTY', $process->getErrorOutput());
+        self::assertSame([], $this->gateOutputFiles($repository));
+        self::assertSame([], glob($repository.'/build/reports/.plan-1a-*.tmp') ?: []);
+    }
+
+    public function test_normal_cleans_stale_outputs_on_head_mismatch(): void
+    {
+        [$repository] = $this->precommitRepository();
+        $this->createStaleGateOutputs($repository);
+
+        $exit = $this->executeDirect($repository, str_repeat('f', 40));
+
+        self::assertSame(3, $exit);
+        self::assertSame([], $this->gateOutputFiles($repository));
+        self::assertSame([], glob($repository.'/build/reports/.plan-1a-*.tmp') ?: []);
+    }
+
+    public function test_normal_cleans_stale_outputs_on_branch_mismatch(): void
+    {
+        [$repository, $head] = $this->precommitRepository();
+        $this->createStaleGateOutputs($repository);
+        $this->setStaticProperty('branchOverride', static fn (): string => 'feat/foreign-branch');
+
+        $exit = $this->executeDirect($repository, $head);
+
+        self::assertSame(3, $exit);
+        self::assertSame([], $this->gateOutputFiles($repository));
+        self::assertSame([], glob($repository.'/build/reports/.plan-1a-*.tmp') ?: []);
+    }
+
+    public function test_normal_cleans_stale_outputs_on_detached_head(): void
+    {
+        [$repository, $head] = $this->precommitRepository();
+        $this->git($repository, ['checkout', '--detach', $head]);
+        $this->createStaleGateOutputs($repository);
+
+        $exit = $this->executeDirect($repository, $head);
+
+        self::assertSame(3, $exit);
+        self::assertSame([], $this->gateOutputFiles($repository));
+        self::assertSame([], glob($repository.'/build/reports/.plan-1a-*.tmp') ?: []);
+    }
+
+    public function test_normal_cleans_stale_outputs_on_php_hash_mismatch(): void
+    {
+        [$repository, $head] = $this->precommitRepository();
+        $this->createStaleGateOutputs($repository);
+        $this->setStaticProperty('phpHashOverride', static fn (): string => str_repeat('0', 64));
+
+        $exit = $this->executeDirect($repository, $head);
+
+        self::assertSame(2, $exit);
+        self::assertSame([], $this->gateOutputFiles($repository));
+        self::assertSame([], glob($repository.'/build/reports/.plan-1a-*.tmp') ?: []);
+    }
+
+    public function test_normal_cleans_stale_outputs_on_schema_and_bootstrap_failures(): void
+    {
+        $failures = [
+            static fn (): array => ['global_middleware' => ['substituted']],
+            static function (): never {
+                throw new \LogicException('bootstrap failed');
+            },
+        ];
+
+        foreach ($failures as $failure) {
+            [$repository, $head] = $this->executablePrecommitRepository();
+            $this->createStaleGateOutputs($repository);
+            $this->setStaticProperty('topologyOverride', $failure);
+
+            $exit = $this->executeDirect($repository, $head);
+
+            self::assertSame(3, $exit);
+            self::assertSame([], $this->gateOutputFiles($repository));
+            self::assertSame([], glob($repository.'/build/reports/.plan-1a-*.tmp') ?: []);
+            $this->setStaticProperty('topologyOverride', null);
+        }
+    }
+
+    public function test_check_rejects_staged_state_without_mutating_outputs(): void
+    {
+        $repository = $this->repository();
+        $this->createStaleGateOutputs($repository);
+        $before = $this->outputSnapshot($repository);
+        file_put_contents($repository.'/seed.txt', 'dirty');
+        $this->git($repository, ['add', 'seed.txt']);
+        $process = $this->runCli($repository, '--check');
+
+        self::assertSame(3, $process->getExitCode());
+        self::assertStringContainsString('PLAN_1A_GATE_STAGED_DIRTY', $process->getErrorOutput());
+        self::assertSame($before, $this->outputSnapshot($repository));
+    }
+
+    public function test_verify_existing_rejects_timestamp_divergence_without_writes(): void
+    {
+        [$repository] = $this->precommitRepository();
+        mkdir($repository.'/build/reports', 0777, true);
+        $timestamp = '2026-07-26T00:00:00Z';
+        foreach (array_keys($this->bundle()) as $file) {
+            $value = [
+                'executed_at' => $timestamp,
+                'commands' => $file === 'plan-1a-command-ledger.json'
+                    ? [['executed_at' => '2026-07-26T00:00:01Z']]
+                    : [],
+            ];
+            file_put_contents(
+                $repository.'/build/reports/'.$file,
+                json_encode($value, JSON_THROW_ON_ERROR)."\n",
+            );
+        }
+        $before = $this->outputSnapshot($repository);
+        $process = $this->runCli($repository, '--verify-existing');
+
+        self::assertSame(6, $process->getExitCode());
+        self::assertStringContainsString('PLAN_1A_GATE_TIMESTAMP_DIVERGENCE', $process->getErrorOutput());
+        self::assertSame($before, $this->outputSnapshot($repository));
+    }
+
+    public function test_publish_writes_exact_bundle_with_ledger_last(): void
+    {
+        $directory = $this->temporaryDirectory().'/reports';
+        mkdir($directory);
+        $bundle = $this->bundle();
+
+        $this->invokeStatic('publish', [$directory, $bundle]);
+
+        self::assertSame(array_keys($bundle), array_map('basename', $this->gateOutputFilesFromDirectory($directory)));
+        foreach ($bundle as $file => $bytes) {
+            self::assertSame($bytes, file_get_contents($directory.'/'.$file));
+        }
+        self::assertFileExists($directory.'/plan-1a-command-ledger.json');
+        self::assertSame([], glob($directory.'/.plan-1a-*.tmp') ?: []);
+    }
+
+    public function test_publish_failure_removes_every_output_and_temp(): void
+    {
+        $directory = $this->temporaryDirectory().'/reports';
+        mkdir($directory);
+        mkdir($directory.'/plan-1a-ci-authorization.json');
+
+        try {
+            $this->invokeStatic('publish', [$directory, $this->bundle()]);
+            self::fail('Expected publication failure');
+        } catch (\PlanOneAGatesFailure $failure) {
+            self::assertSame(6, $failure->exitStatus);
+        }
+
+        self::assertSame([], $this->gateOutputFilesFromDirectory($directory));
+        self::assertSame([], glob($directory.'/.plan-1a-*.tmp') ?: []);
+    }
+
+    public function test_every_publish_write_and_reread_fault_cleans_all_outputs_and_temps(): void
+    {
+        $boundaries = [];
+        foreach (array_keys($this->bundle()) as $file) {
+            foreach (['after_temporary_write', 'after_publish', 'after_reread'] as $stage) {
+                $boundaries[] = $stage.':'.$file;
+            }
+        }
+
+        foreach ($boundaries as $boundary) {
+            $directory = $this->temporaryDirectory().'/reports';
+            mkdir($directory);
+            $this->setStaticProperty('faultOverride', static function (string $actual) use ($boundary): void {
+                if ($actual === $boundary) {
+                    throw new \PlanOneAGatesFailure(6, 'PLAN_1A_GATE_INJECTED_'.$boundary);
+                }
+            });
+
+            try {
+                $this->invokeStatic('publish', [$directory, $this->bundle()]);
+                self::fail('Expected '.$boundary);
+            } catch (\PlanOneAGatesFailure $failure) {
+                self::assertSame('PLAN_1A_GATE_INJECTED_'.$boundary, $failure->getMessage());
+                self::assertSame(6, $failure->exitStatus);
+            }
+
+            self::assertSame([], $this->gateOutputFilesFromDirectory($directory));
+            self::assertSame([], glob($directory.'/.plan-1a-*.tmp') ?: []);
+            $this->setStaticProperty('faultOverride', null);
+        }
+    }
+
+    public function test_precommit_exact_unstaged_task_eleven_set_is_accepted(): void
+    {
+        [$repository, $head] = $this->precommitRepository();
+
+        $this->invokeStatic('validateGitState', [$repository, $head]);
+
+        self::assertSame([], $this->gitPaths($repository, ['diff', '--cached', '--name-only']));
+    }
+
+    public function test_precommit_staged_task_eleven_path_is_rejected(): void
+    {
+        [$repository, $head] = $this->precommitRepository();
+        $this->git($repository, ['add', '.gitignore']);
+
+        $this->expectException(\PlanOneAGatesFailure::class);
+
+        $this->invokeStatic('validateGitState', [$repository, $head]);
+    }
+
+    public function test_precommit_extra_untracked_path_is_rejected(): void
+    {
+        [$repository, $head] = $this->precommitRepository();
+        file_put_contents($repository.'/foreign.txt', 'foreign');
+
+        $this->expectException(\PlanOneAGatesFailure::class);
+
+        $this->invokeStatic('validateGitState', [$repository, $head]);
+    }
+
+    public function test_clean_canonical_task_eleven_commit_is_accepted(): void
+    {
+        [$repository, $commit] = $this->canonicalRepository();
+
+        $this->invokeStatic('validateGitState', [$repository, $commit]);
+
+        self::assertSame([], $this->gitPaths($repository, ['status', '--porcelain']));
+    }
+
+    public function test_wrong_canonical_subject_is_rejected(): void
+    {
+        [$repository, $commit] = $this->canonicalRepository('wrong subject');
+
+        $this->expectException(\PlanOneAGatesFailure::class);
+
+        $this->invokeStatic('validateGitState', [$repository, $commit]);
+    }
+
+    public function test_canonical_worktree_byte_drift_is_rejected(): void
+    {
+        [$repository, $commit] = $this->canonicalRepository();
+        file_put_contents($repository.'/scripts/reporting/run-plan-1a-gates.php', 'drift');
+
+        $this->expectException(\PlanOneAGatesFailure::class);
+
+        $this->invokeStatic('validateCanonicalTaskElevenCommit', [$repository, $commit]);
+    }
+
+    public function test_canonical_tracked_schema_byte_drift_is_rejected(): void
+    {
+        [$repository, $commit] = $this->canonicalRepository();
+        file_put_contents($repository.'/docs/reports/contracts/plan-1a-gate-evidence.schema.json', 'drift');
+
+        $this->expectException(\PlanOneAGatesFailure::class);
+
+        $this->invokeStatic('validateCanonicalTaskElevenCommit', [$repository, $commit]);
+    }
+
+    public function test_canonical_tracked_output_is_rejected(): void
+    {
+        [$repository, $commit] = $this->canonicalRepository();
+        mkdir($repository.'/build/reports', 0777, true);
+        file_put_contents($repository.'/build/reports/plan-1a-route-snapshot.json', 'tracked');
+        $this->git($repository, ['add', '-f', 'build/reports/plan-1a-route-snapshot.json']);
+        $this->git($repository, ['commit', '-m', 'track forbidden output']);
+        $trackedCommit = $this->git($repository, ['rev-parse', 'HEAD']);
+
+        try {
+            $this->invokeStatic('validateCanonicalTaskElevenCommit', [$repository, $trackedCommit]);
+            self::fail('Expected tracked output rejection');
+        } catch (\PlanOneAGatesFailure $failure) {
+            self::assertSame(3, $failure->exitStatus);
+        }
+
+        self::assertNotSame($commit, $trackedCommit);
+    }
+
+    public function test_junction_escape_is_rejected_without_touching_target(): void
+    {
+        $repository = $this->repository();
+        $outside = $this->temporaryDirectory();
+        $junction = $repository.'/build';
+        $process = new Process([
+            'powershell',
+            '-NoProfile',
+            '-Command',
+            "New-Item -ItemType Junction -Path '".$junction."' -Target '".$outside."' | Out-Null",
+        ]);
+        $process->run();
+        self::assertSame(0, $process->getExitCode(), $process->getErrorOutput());
+        $before = $this->snapshot($outside);
+        try {
+            $result = $this->runCli($repository, '--check');
+
+            self::assertSame(2, $result->getExitCode());
+            self::assertStringContainsString('PLAN_1A_GATE_OUTPUT_PATH_INVALID', $result->getErrorOutput());
+            self::assertSame($before, $this->snapshot($outside));
+        } finally {
+            if (is_dir($junction)) {
+                rmdir($junction);
+            }
+        }
+    }
+
+    private function validates(array $value): bool
+    {
+        $schema = json_decode((string) file_get_contents($this->root().'/docs/reports/contracts/plan-1a-gate-evidence.schema.json'));
+
+        return (new CompliantValidator())->validate(json_decode(json_encode($value, JSON_THROW_ON_ERROR)), $schema)->isValid();
+    }
+
+    private function assertEveryMutationRejected(string $fixture, array $mutations): void
+    {
+        foreach ($mutations as $index => $mutate) {
+            $value = $this->decode($fixture);
+            $mutate($value);
+
+            self::assertFalse($this->validates($value), $fixture.' mutation '.$index.' was accepted');
+        }
+    }
+
+    private function decode(string $file): array
+    {
+        return json_decode((string) file_get_contents($this->fixtureDirectory().'/'.$file), true, 512, JSON_THROW_ON_ERROR);
+    }
+
+    private function invokeStatic(string $method, array $arguments): mixed
+    {
+        return (new ReflectionClass(\PlanOneAGates::class))->getMethod($method)->invoke(null, ...$arguments);
+    }
+
+    private function setStaticProperty(string $property, mixed $value): void
+    {
+        (new ReflectionClass(\PlanOneAGates::class))->getProperty($property)->setValue(null, $value);
+    }
+
+    private function setProcessResults(array $results): void
+    {
+        $this->setStaticProperty('processOverride', static function () use (&$results): array {
+            $result = array_shift($results);
+            self::assertIsArray($result);
+
+            return $result;
+        });
+    }
+
+    private function arguments(string $timestamp): array
+    {
+        return [
+            '--repository-root='.$this->root(),
+            '--commit-sha='.str_repeat('a', 40),
+            '--output-directory=build/reports',
+            '--executed-at='.$timestamp,
+        ];
+    }
+
+    private function runCli(string $repository, string ...$extra): Process
+    {
+        $arguments = [
+            self::PHP,
+            '-c',
+            self::PHP_DIR,
+            $this->root().'/scripts/reporting/run-plan-1a-gates.php',
+            '--repository-root='.$repository,
+            '--commit-sha='.$this->git($repository, ['rev-parse', 'HEAD']),
+            '--output-directory=build/reports',
+        ];
+        if (!in_array('--verify-existing', $extra, true)) {
+            $arguments[] = '--executed-at=2026-07-26T00:00:00Z';
+        }
+        $arguments = [...$arguments, ...$extra];
+        $process = new Process($arguments, $this->root());
+        $process->setTimeout(30);
+        $process->run();
+
+        return $process;
+    }
+
+    private function executeDirect(string $repository, string $commit): int
+    {
+        return \PlanOneAGates::execute([
+            'run-plan-1a-gates.php',
+            '--repository-root='.$repository,
+            '--commit-sha='.$commit,
+            '--output-directory=build/reports',
+            '--executed-at=2026-07-26T00:00:00Z',
+        ]);
+    }
+
+    private function repository(): string
+    {
+        $repository = $this->temporaryDirectory();
+        $this->git($repository, ['init']);
+        $this->git($repository, ['checkout', '-b', 'feat/reports-canonical-backend']);
+        $this->git($repository, ['config', 'user.email', 'reports@example.test']);
+        $this->git($repository, ['config', 'user.name', 'Reports Test']);
+        file_put_contents($repository.'/seed.txt', 'seed');
+        file_put_contents($repository.'/.gitignore', $this->reportIgnoreRules());
+        $this->git($repository, ['add', 'seed.txt', '.gitignore']);
+        $this->git($repository, ['commit', '-m', 'base']);
+
+        return $repository;
+    }
+
+    private function precommitRepository(): array
+    {
+        $repository = $this->repository();
+        file_put_contents($repository.'/.gitignore', "base\n");
+        $this->git($repository, ['add', '.gitignore']);
+        $this->git($repository, ['commit', '-m', 'ignore base']);
+        file_put_contents($repository.'/.gitignore', $this->reportIgnoreRules());
+        foreach ($this->taskElevenPaths() as $path) {
+            if ($path === '.gitignore') {
+                continue;
+            }
+            $this->write($repository.'/'.$path, $path);
+        }
+
+        return [$repository, $this->git($repository, ['rev-parse', 'HEAD'])];
+    }
+
+    private function executablePrecommitRepository(): array
+    {
+        $repository = $this->temporaryDirectory().'/repository';
+        $process = new Process(['git', 'clone', '--no-hardlinks', '--quiet', $this->root(), $repository]);
+        $process->setTimeout(30);
+        $process->mustRun();
+        $this->git($repository, ['config', 'user.email', 'reports@example.test']);
+        $this->git($repository, ['config', 'user.name', 'Reports Test']);
+        foreach ($this->taskElevenPaths() as $path) {
+            $this->write($repository.'/'.$path, (string) file_get_contents($this->root().'/'.$path));
+        }
+
+        return [$repository, $this->git($repository, ['rev-parse', 'HEAD'])];
+    }
+
+    private function canonicalRepository(string $subject = 'test[reports]: добавлен проверяемый handoff Plan 1a'): array
+    {
+        [$repository] = $this->precommitRepository();
+        $this->git($repository, ['add', '--', ...$this->taskElevenPaths()]);
+        $this->git($repository, ['commit', '-m', $subject]);
+
+        return [$repository, $this->git($repository, ['rev-parse', 'HEAD'])];
+    }
+
+    private function taskElevenPaths(): array
+    {
+        $constant = (new ReflectionClass(\PlanOneAGates::class))->getReflectionConstant('TASK_ELEVEN_PATHS');
+        self::assertNotFalse($constant);
+
+        return $constant->getValue();
+    }
+
+    private function bundle(): array
+    {
+        return [
+            'plan-1a-route-snapshot.json' => "route\n",
+            'plan-1a-ci-authorization.json' => "authorization\n",
+            'plan-1a-ci-malformed.json' => "malformed\n",
+            'plan-1a-command-ledger.json' => "ledger\n",
+        ];
+    }
+
+    private function createStaleGateOutputs(string $repository): void
+    {
+        mkdir($repository.'/build/reports', 0777, true);
+        foreach ($this->bundle() as $file => $bytes) {
+            file_put_contents($repository.'/build/reports/'.$file, $bytes);
+        }
+    }
+
+    private function gateOutputFiles(string $repository): array
+    {
+        return $this->gateOutputFilesFromDirectory($repository.'/build/reports');
+    }
+
+    private function gateOutputFilesFromDirectory(string $directory): array
+    {
+        $files = [];
+        foreach (array_keys($this->bundle()) as $file) {
+            if (is_file($directory.'/'.$file)) {
+                $files[] = $directory.'/'.$file;
+            }
+        }
+
+        return $files;
+    }
+
+    private function outputSnapshot(string $repository): array
+    {
+        $snapshot = [];
+        foreach ($this->gateOutputFiles($repository) as $path) {
+            $snapshot[basename($path)] = [hash_file('sha256', $path), filemtime($path)];
+        }
+
+        return $snapshot;
+    }
+
+    private function snapshot(string $directory): array
+    {
+        $snapshot = [];
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS),
+        );
+        foreach ($iterator as $item) {
+            $relative = str_replace('\\', '/', substr($item->getPathname(), strlen($directory) + 1));
+            $snapshot[$relative] = $item->isFile() ? hash_file('sha256', $item->getPathname()) : 'directory';
+        }
+        ksort($snapshot, SORT_STRING);
+
+        return $snapshot;
+    }
+
+    private function git(string $repository, array $arguments): string
+    {
+        $process = new Process(['git', ...$arguments], $repository);
+        $process->mustRun();
+
+        return trim($process->getOutput());
+    }
+
+    private function gitPaths(string $repository, array $arguments): array
+    {
+        $output = $this->git($repository, $arguments);
+
+        return $output === '' ? [] : preg_split('/\R/', $output);
+    }
+
+    private function write(string $path, string $bytes): void
+    {
+        $directory = dirname($path);
+        if (!is_dir($directory)) {
+            mkdir($directory, 0777, true);
+        }
+        file_put_contents($path, $bytes);
+    }
+
+    private function temporaryDirectory(): string
+    {
+        $directory = sys_get_temp_dir().'/most-plan1a-runner-'.bin2hex(random_bytes(8));
+        mkdir($directory);
+        $this->temporaryDirectories[] = $directory;
+
+        return $directory;
+    }
+
+    private function removeTree(string $directory): void
+    {
+        if (!is_dir($directory)) {
+            return;
+        }
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST,
+        );
+        foreach ($iterator as $item) {
+            if ($item->isDir() && !$item->isLink()) {
+                chmod($item->getPathname(), 0777);
+                rmdir($item->getPathname());
+            } else {
+                chmod($item->getPathname(), 0666);
+                unlink($item->getPathname());
+            }
+        }
+        chmod($directory, 0777);
+        rmdir($directory);
+    }
+
+    private function gateFixtureNames(): array
+    {
+        return [
+            'plan-1a-route-snapshot.valid.json',
+            'plan-1a-command-ledger.valid.json',
+            'plan-1a-ci-authorization.valid.json',
+            'plan-1a-ci-malformed.valid.json',
+        ];
+    }
+
+    private function reportIgnoreRules(): string
+    {
+        return implode("\n", [
+            '/build/reports/task-7-composer-evidence.json',
+            '/build/reports/plan-1a-route-snapshot.json',
+            '/build/reports/plan-1a-command-ledger.json',
+            '/build/reports/plan-1a-ci-authorization.json',
+            '/build/reports/plan-1a-ci-malformed.json',
+            '/build/reports/plan-1a-completion.json',
+            '',
+        ]);
+    }
+
+    private function fixtureDirectory(): string
+    {
+        return $this->root().'/tests/Fixtures/Reporting/Evidence';
+    }
+
+    private function root(): string
+    {
+        return dirname(__DIR__, 4);
+    }
+}
