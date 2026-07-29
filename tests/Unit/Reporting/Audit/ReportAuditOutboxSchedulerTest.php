@@ -31,8 +31,8 @@ final class ReportAuditOutboxSchedulerTest extends TestCase
         self::assertSame(2, $count);
         self::assertSame($store->ids, $dispatcher->ids);
         self::assertSame([['limit' => 20, 'now' => $now]], $store->dueCalls);
-        self::assertSame([['limit' => 20, 'occurredAt' => $now]], $store->reclaimCalls);
-        self::assertSame(1, $store->mutationCalls);
+        self::assertSame([], $store->reclaimCalls);
+        self::assertSame(0, $store->mutationCalls);
     }
 
     public function test_rejects_invalid_batches_and_malformed_ids_before_dispatch(): void

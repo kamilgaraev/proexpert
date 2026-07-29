@@ -12,6 +12,8 @@ use InvalidArgumentException;
 
 final readonly class CoreReportAuditIntentConsumer
 {
+    private const SOURCE_EVENT_ID_MAX_LENGTH = 191;
+
     private const SUBJECT_KEYS = [
         'report.run.queued' => ['run_id', 'report_code', 'status', 'definition_hash', 'query_hash', 'contract_version', 'formula_version', 'source_schema_version', 'renderer_version', 'saved_view'],
         'report.run.materializing' => ['run_id', 'report_code', 'status', 'definition_hash', 'query_hash'],
@@ -61,13 +63,22 @@ final readonly class CoreReportAuditIntentConsumer
             source: 'reporting',
             actorType: 'user',
             actorUserId: $intent->actorId,
-            sourceEventId: $intent->eventKey,
+            sourceEventId: $this->sourceEventId($intent->eventKey),
             subjectType: $subjectType,
             subjectId: $subjectId,
             domainContext: $subject,
             chainScope: "organization:{$intent->organizationId}:reporting",
             occurredAt: Carbon::instance($intent->occurredAt),
         );
+    }
+
+    private function sourceEventId(string $eventKey): string
+    {
+        if (strlen($eventKey) <= self::SOURCE_EVENT_ID_MAX_LENGTH) {
+            return $eventKey;
+        }
+
+        return 'reporting:sha256:'.hash('sha256', $eventKey);
     }
 
     private function validatedSubject(ReportAuditIntent $intent): array

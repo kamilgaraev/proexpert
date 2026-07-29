@@ -23,7 +23,6 @@ final readonly class ReportAuditOutboxScheduler
             throw new InvalidArgumentException('report_audit_batch_size_invalid');
         }
 
-        $this->store->reclaimExpired($limit, $occurredAt);
         $ids = $this->store->dueIds($limit, $occurredAt);
         $dispatched = 0;
         foreach ($ids as $intentId) {

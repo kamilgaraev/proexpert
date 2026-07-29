@@ -49,6 +49,41 @@ final class CoreReportAuditIntentConsumerTest extends TestCase
         self::assertSame('1', $data->domainContext['renderer_version']);
     }
 
+    public function test_long_exact_version_event_key_has_bounded_stable_core_identity(): void
+    {
+        $consumer = (new ReflectionClass(CoreReportAuditIntentConsumer::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod($consumer, 'eventData');
+        $versionId = str_repeat('v', 255);
+        $eventKey = 'reports:export:01J00000000000000000000002:artifact-deleted:'.$versionId;
+        $intent = new ReportAuditIntent(
+            '01J00000000000000000000001',
+            $eventKey,
+            'report.export.artifact_deleted',
+            10,
+            20,
+            [
+                'export_id' => '01J00000000000000000000002',
+                'run_id' => '01J00000000000000000000003',
+                'report_code' => 'cost_control',
+                'status' => 'expired',
+                'format' => 'xlsx',
+                'version_id' => $versionId,
+                'occurred_at' => '2026-07-30T09:00:00.123456Z',
+            ],
+            1,
+            new DateTimeImmutable('2026-07-30T09:00:00.123456Z'),
+            new DateTimeImmutable('2026-07-30T09:00:00.123456Z'),
+        );
+
+        $first = $method->invoke($consumer, $intent);
+        $second = $method->invoke($consumer, $intent);
+
+        self::assertSame('reporting:sha256:'.hash('sha256', $eventKey), $first->sourceEventId);
+        self::assertSame($first->sourceEventId, $second->sourceEventId);
+        self::assertLessThanOrEqual(191, strlen((string) $first->sourceEventId));
+        self::assertSame($versionId, $first->domainContext['version_id']);
+    }
+
     private function intent(string $eventType, array $subject): ReportAuditIntent
     {
         return new ReportAuditIntent(

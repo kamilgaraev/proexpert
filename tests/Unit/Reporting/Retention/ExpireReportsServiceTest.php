@@ -69,6 +69,30 @@ final class ExpireReportsServiceTest extends TestCase
             'sealReady',
         ], $methods);
     }
+
+    public function test_expiry_contract_fences_eligibility_tenant_state_version_and_replay(): void
+    {
+        $source = (string) file_get_contents((new ReflectionClass(ExpireReportsService::class))->getFileName());
+
+        foreach ([
+            "->where('status', ReportRunStatus::READY->value)",
+            "->where('status', ReportExportStatus::READY->value)",
+            "->where('expires_at', '<=', \$timestamp)",
+            "->where('organization_id', \$organizationId)",
+            '->lockForUpdate()',
+            "->where('expires_at', '<=', \$this->timestamp(\$occurredAt))",
+            "'status' => ReportRunStatus::EXPIRED->value",
+            "'status' => ReportExportStatus::EXPIRED->value",
+            "'expired_at' => \$this->timestamp(\$occurredAt)",
+        ] as $requiredFence) {
+            self::assertStringContainsString($requiredFence, $source);
+        }
+
+        self::assertSame(2, substr_count($source, 'if ($updated !== 1)'));
+        self::assertDoesNotMatchRegularExpression('/->update\\(\\[\\s*[\'"]expires_at[\'"]\\s*=>/', $source);
+        self::assertStringNotContainsString("'source_hash' => null", $source);
+        self::assertStringNotContainsString("'artifact_version_id' => null", $source);
+    }
 }
 
 final class RecordingRetentionAudit implements ReportTransitionAudit

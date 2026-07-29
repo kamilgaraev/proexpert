@@ -82,6 +82,57 @@ final class DeleteExpiredReportArtifactsServiceTest extends TestCase
             $method->invoke($service, '01J00000000000000000000001', 'version-two'),
         );
     }
+
+    public function test_deletion_contract_fences_grace_tenant_state_exact_version_and_idempotency_before_io(): void
+    {
+        $source = (string) file_get_contents(
+            (new \ReflectionClass(DeleteExpiredReportArtifactsService::class))->getFileName(),
+        );
+
+        foreach ([
+            "->where('status', ReportExportStatus::EXPIRED->value)",
+            "->where('expired_at', '<=', \$this->timestamp(\$cutoff))",
+            "->where('organization_id', \$organizationId)",
+            '->lockForUpdate()',
+            '$record->artifact_path !== $expectedPath',
+            '$record->artifact_version_id !== $expectedVersionId',
+            "ReportAuditIntentRecord::query()->where('event_key', \$eventKey)->exists()",
+            '$this->files->deleteVersion($path, $versionId);',
+            "'version_id' => \$versionId",
+        ] as $requiredFence) {
+            self::assertStringContainsString($requiredFence, $source);
+        }
+
+        $lock = strpos($source, '->lockForUpdate()');
+        $identity = strpos($source, '$this->assertDeletable($record, $cutoff);');
+        $deduplication = strpos($source, "ReportAuditIntentRecord::query()->where('event_key', \$eventKey)->exists()");
+        $delete = strpos($source, '$this->files->deleteVersion($path, $versionId);');
+        $audit = strpos($source, '$this->audit->append(');
+
+        self::assertIsInt($lock);
+        self::assertIsInt($identity);
+        self::assertIsInt($deduplication);
+        self::assertIsInt($delete);
+        self::assertIsInt($audit);
+        self::assertLessThan($identity, $lock);
+        self::assertLessThan($deduplication, $identity);
+        self::assertLessThan($delete, $deduplication);
+        self::assertLessThan($audit, $delete);
+        self::assertStringNotContainsString("'artifact_path' => null", $source);
+        self::assertStringNotContainsString("'artifact_version_id' => null", $source);
+    }
+
+    public function test_storage_failure_remains_retryable_and_is_counted_without_false_deletion(): void
+    {
+        $source = (string) file_get_contents(
+            (new \ReflectionClass(DeleteExpiredReportArtifactsService::class))->getFileName(),
+        );
+
+        self::assertStringContainsString('catch (Throwable $throwable)', $source);
+        self::assertStringContainsString("\$summary['failed']++;", $source);
+        self::assertStringContainsString("\$summary[\$deleted ? 'deleted' : 'skipped']++;", $source);
+        self::assertStringNotContainsString('->update([', $source);
+    }
 }
 
 final class RecordingArtifactDeletionAudit implements ReportTransitionAudit

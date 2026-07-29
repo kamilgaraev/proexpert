@@ -61,29 +61,15 @@ final readonly class DeleteExpiredReportArtifactsService
 
         foreach ($records as $record) {
             try {
-                $eventKey = $this->deletionEventKey(
-                    (string) $record->id,
-                    (string) $record->artifact_version_id,
-                );
-                if (ReportAuditIntentRecord::query()->where('event_key', $eventKey)->exists()) {
-                    $summary['skipped']++;
-
-                    continue;
-                }
-
-                $this->assertDeletable($record, $cutoff);
-                $path = (string) $record->artifact_path;
-                $versionId = (string) $record->artifact_version_id;
-                $this->files->deleteVersion($path, $versionId);
-                $recorded = $this->recordDeletion(
+                $deleted = $this->deleteArtifact(
                     (string) $record->id,
                     (int) $record->organization_id,
-                    $path,
-                    $versionId,
+                    (string) $record->artifact_path,
+                    (string) $record->artifact_version_id,
                     $cutoff,
                     $occurredAt,
                 );
-                $summary[$recorded ? 'deleted' : 'skipped']++;
+                $summary[$deleted ? 'deleted' : 'skipped']++;
             } catch (Throwable $throwable) {
                 $summary['failed']++;
                 Log::error('report_artifact_retention_deletion_failed', [
@@ -97,19 +83,19 @@ final readonly class DeleteExpiredReportArtifactsService
         return $summary;
     }
 
-    private function recordDeletion(
+    private function deleteArtifact(
         string $exportId,
         int $organizationId,
-        string $path,
-        string $versionId,
+        string $expectedPath,
+        string $expectedVersionId,
         DateTimeImmutable $cutoff,
         DateTimeImmutable $occurredAt,
     ): bool {
         return DB::transaction(function () use (
             $exportId,
             $organizationId,
-            $path,
-            $versionId,
+            $expectedPath,
+            $expectedVersionId,
             $cutoff,
             $occurredAt,
         ): bool {
@@ -121,17 +107,20 @@ final readonly class DeleteExpiredReportArtifactsService
             if (! $record instanceof ReportExportRecord
                 || $record->status !== ReportExportStatus::EXPIRED->value
                 || $this->instant($record->expired_at) > $cutoff
-                || $record->artifact_path !== $path
-                || $record->artifact_version_id !== $versionId) {
+                || $record->artifact_path !== $expectedPath
+                || $record->artifact_version_id !== $expectedVersionId) {
                 return false;
             }
 
+            $this->assertDeletable($record, $cutoff);
+            $path = (string) $record->artifact_path;
+            $versionId = (string) $record->artifact_version_id;
             $eventKey = $this->deletionEventKey($exportId, $versionId);
             if (ReportAuditIntentRecord::query()->where('event_key', $eventKey)->exists()) {
                 return false;
             }
 
-            $this->assertDeletable($record, $cutoff);
+            $this->files->deleteVersion($path, $versionId);
             $this->audit->append(
                 $eventKey,
                 'report.export.artifact_deleted',
