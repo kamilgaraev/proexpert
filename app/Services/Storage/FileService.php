@@ -2,11 +2,17 @@
 
 namespace App\Services\Storage;
 
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
+use App\Services\Storage\DTO\MultipartPart;
+use App\Services\Storage\DTO\MultipartUpload;
+use App\Services\Storage\DTO\StoredFile;
+use App\Services\Storage\DTO\TemporaryFileLink;
 use App\Services\Storage\Exceptions\VersionedObjectIntegrityException;
 use App\Services\Storage\Exceptions\VersionedObjectTransportException;
 use Aws\Exception\AwsException;
+use DateTimeImmutable;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
@@ -17,6 +23,21 @@ use Illuminate\Support\Str;
 
 class FileService
 {
+    private const REPORT_METADATA_KEYS = [
+        'organization_id',
+        'export_id',
+        'export_hash',
+        'run_id',
+        'result_hash',
+        'snapshot_id',
+        'snapshot_classification',
+        'data_classification',
+        'contract_version',
+        'formula_version',
+        'source_schema_version',
+        'renderer_version',
+    ];
+
     private const S3_CONNECT_TIMEOUT_SECONDS = 5.0;
 
     private const S3_REQUEST_TIMEOUT_SECONDS = 60.0;
@@ -35,6 +56,292 @@ class FileService
     {
         // Используем единый общий S3 бакет для всех организаций
         return Storage::disk('s3');
+    }
+
+    public function startMultipart(
+        string $organizationPath,
+        string $mime,
+        int $partSizeBytes,
+        array $metadata,
+    ): MultipartUpload {
+        $this->assertOrganizationPath($organizationPath);
+        $this->assertSafeStorageString($mime, 255, 'multipart_upload_invalid');
+        if (
+            $partSizeBytes < MultipartUpload::MIN_PART_SIZE_BYTES
+            || $partSizeBytes > MultipartUpload::MAX_PART_SIZE_BYTES
+        ) {
+            throw new \InvalidArgumentException('multipart_upload_invalid');
+        }
+        $this->assertStorageMetadata($metadata);
+
+        try {
+            $result = $this->reportS3Client()->createMultipartUpload([
+                'Bucket' => $this->reportBucket(),
+                'Key' => $organizationPath,
+                'ContentType' => $mime,
+                'Metadata' => $metadata,
+                'ChecksumAlgorithm' => 'SHA256',
+                '@http' => $this->s3HttpOptions(),
+            ]);
+        } catch (AwsException $exception) {
+            throw $this->versionedAwsException($exception);
+        } catch (\InvalidArgumentException $exception) {
+            throw new VersionedObjectTransportException('s3_multipart_unavailable', 0, $exception);
+        }
+
+        $uploadId = is_string($result['UploadId'] ?? null) ? trim($result['UploadId']) : '';
+        if ($uploadId === '') {
+            throw new VersionedObjectIntegrityException('s3_multipart_identity_invalid');
+        }
+        if (
+            isset($result['Key'])
+            && (! is_string($result['Key']) || ! hash_equals($organizationPath, $result['Key']))
+        ) {
+            throw new VersionedObjectIntegrityException('s3_multipart_identity_invalid');
+        }
+
+        return new MultipartUpload($organizationPath, $uploadId, $mime, $partSizeBytes, $metadata);
+    }
+
+    public function uploadPart(
+        MultipartUpload $upload,
+        int $partNumber,
+        string $bytes,
+        string $checksumSha256,
+    ): MultipartPart {
+        if (
+            $partNumber < 1
+            || $partNumber > 10000
+            || $bytes === ''
+            || strlen($bytes) > $upload->partSizeBytes
+            || preg_match('/^[a-f0-9]{64}$/D', $checksumSha256) !== 1
+        ) {
+            throw new \InvalidArgumentException('multipart_part_invalid');
+        }
+        if (! hash_equals($checksumSha256, hash('sha256', $bytes))) {
+            throw new \InvalidArgumentException('multipart_part_checksum_mismatch');
+        }
+
+        $checksum = base64_encode(hex2bin($checksumSha256));
+        try {
+            $result = $this->reportS3Client()->uploadPart([
+                'Bucket' => $this->reportBucket(),
+                'Key' => $upload->organizationPath,
+                'UploadId' => $upload->uploadId,
+                'PartNumber' => $partNumber,
+                'Body' => $bytes,
+                'ContentLength' => strlen($bytes),
+                'ChecksumSHA256' => $checksum,
+                '@http' => $this->s3HttpOptions(),
+            ]);
+        } catch (AwsException $exception) {
+            throw $this->versionedAwsException($exception);
+        } catch (\InvalidArgumentException $exception) {
+            throw new VersionedObjectTransportException('s3_multipart_unavailable', 0, $exception);
+        }
+
+        $etag = is_string($result['ETag'] ?? null) ? trim($result['ETag']) : '';
+        if ($etag === '') {
+            throw new VersionedObjectIntegrityException('s3_multipart_part_identity_invalid');
+        }
+        if (
+            isset($result['ChecksumSHA256'])
+            && (! is_string($result['ChecksumSHA256']) || ! hash_equals($checksum, $result['ChecksumSHA256']))
+        ) {
+            throw new VersionedObjectIntegrityException('s3_multipart_part_checksum_mismatch');
+        }
+
+        return new MultipartPart(
+            $upload->organizationPath,
+            $upload->uploadId,
+            $partNumber,
+            $etag,
+            strlen($bytes),
+            $checksumSha256,
+        );
+    }
+
+    public function completeMultipart(
+        MultipartUpload $upload,
+        array $orderedParts,
+        array $conditions,
+    ): StoredFile {
+        $sizeBytes = $this->assertMultipartParts($upload, $orderedParts);
+        $checksumSha256 = $this->assertMultipartConditions($conditions, $sizeBytes);
+        $completedParts = array_map(
+            static fn (MultipartPart $part): array => [
+                'PartNumber' => $part->number,
+                'ETag' => $part->etag,
+                'ChecksumSHA256' => base64_encode(hex2bin($part->checksumSha256)),
+            ],
+            $orderedParts,
+        );
+
+        try {
+            $result = $this->reportS3Client()->completeMultipartUpload([
+                'Bucket' => $this->reportBucket(),
+                'Key' => $upload->organizationPath,
+                'UploadId' => $upload->uploadId,
+                'MultipartUpload' => ['Parts' => $completedParts],
+                'IfNoneMatch' => '*',
+                'ChecksumSHA256' => $conditions['ChecksumSHA256'],
+                'MpuObjectSize' => $sizeBytes,
+                '@http' => $this->s3HttpOptions(),
+            ]);
+        } catch (AwsException $exception) {
+            throw $this->versionedAwsException($exception);
+        } catch (\InvalidArgumentException $exception) {
+            throw new VersionedObjectTransportException('s3_multipart_unavailable', 0, $exception);
+        }
+
+        $versionId = is_string($result['VersionId'] ?? null) ? trim($result['VersionId']) : '';
+        $etag = is_string($result['ETag'] ?? null) ? trim($result['ETag'], " \t\n\r\0\x0B\"") : '';
+        if (
+            $versionId === ''
+            || $etag === ''
+            || (isset($result['Key'])
+                && (! is_string($result['Key'])
+                    || ! hash_equals($upload->organizationPath, $result['Key'])))
+            || (isset($result['Bucket'])
+                && (! is_string($result['Bucket'])
+                    || ! hash_equals($this->reportBucket(), $result['Bucket'])))
+        ) {
+            throw new VersionedObjectIntegrityException('s3_multipart_completion_identity_invalid');
+        }
+        if (
+            isset($result['ChecksumSHA256'])
+            && (! is_string($result['ChecksumSHA256'])
+                || ! hash_equals($conditions['ChecksumSHA256'], $result['ChecksumSHA256']))
+        ) {
+            throw new VersionedObjectIntegrityException('s3_multipart_completion_checksum_mismatch');
+        }
+
+        return new StoredFile(
+            $upload->organizationPath,
+            $versionId,
+            $etag,
+            $sizeBytes,
+            new Sha256Hash($checksumSha256),
+            $upload->mime,
+        );
+    }
+
+    public function abortMultipart(MultipartUpload $upload): void
+    {
+        try {
+            $this->reportS3Client()->abortMultipartUpload([
+                'Bucket' => $this->reportBucket(),
+                'Key' => $upload->organizationPath,
+                'UploadId' => $upload->uploadId,
+                '@http' => $this->s3HttpOptions(),
+            ]);
+        } catch (AwsException $exception) {
+            if (
+                $exception->getStatusCode() === 404
+                || in_array($exception->getAwsErrorCode(), ['NoSuchUpload', 'NotFound'], true)
+            ) {
+                return;
+            }
+
+            throw $this->versionedAwsException($exception);
+        } catch (\InvalidArgumentException $exception) {
+            throw new VersionedObjectTransportException('s3_multipart_unavailable', 0, $exception);
+        }
+    }
+
+    public function headVersion(string $organizationPath, string $versionId): StoredFile
+    {
+        $organizationId = $this->assertOrganizationPath($organizationPath);
+        $this->assertSafeStorageString($versionId, 255, 's3_versioned_read_requires_version');
+
+        try {
+            $head = $this->reportS3Client()->headObject([
+                'Bucket' => $this->reportBucket(),
+                'Key' => $organizationPath,
+                'VersionId' => $versionId,
+                'ChecksumMode' => 'ENABLED',
+                '@http' => $this->s3HttpOptions(),
+            ]);
+        } catch (AwsException $exception) {
+            throw $this->versionedAwsException($exception);
+        } catch (\InvalidArgumentException $exception) {
+            throw new VersionedObjectTransportException('s3_versioned_read_unavailable', 0, $exception);
+        }
+
+        $resolvedVersion = is_string($head['VersionId'] ?? null) ? trim($head['VersionId']) : '';
+        $etag = is_string($head['ETag'] ?? null) ? trim($head['ETag'], " \t\n\r\0\x0B\"") : '';
+        $sizeBytes = $head['ContentLength'] ?? null;
+        $mime = is_string($head['ContentType'] ?? null) ? trim($head['ContentType']) : '';
+        $checksum = is_string($head['ChecksumSHA256'] ?? null) ? $head['ChecksumSHA256'] : '';
+        $metadata = is_array($head['Metadata'] ?? null) ? $head['Metadata'] : [];
+
+        if (
+            ! hash_equals($versionId, $resolvedVersion)
+            || $etag === ''
+            || ! is_numeric($sizeBytes)
+            || (int) $sizeBytes < 1
+            || $mime === ''
+        ) {
+            throw new VersionedObjectIntegrityException('s3_object_version_mismatch');
+        }
+        $checksumSha256 = $this->decodeSha256Checksum($checksum);
+        $this->assertClosedReportMetadata($metadata, $organizationId);
+
+        return new StoredFile(
+            $organizationPath,
+            $resolvedVersion,
+            $etag,
+            (int) $sizeBytes,
+            new Sha256Hash($checksumSha256),
+            $mime,
+        );
+    }
+
+    public function createTemporaryLink(
+        string $organizationPath,
+        string $versionId,
+        int $ttlSeconds,
+    ): TemporaryFileLink {
+        $this->assertOrganizationPath($organizationPath);
+        $this->assertSafeStorageString($versionId, 255, 's3_versioned_read_requires_version');
+        if ($ttlSeconds < 1 || $ttlSeconds > 300) {
+            throw new \InvalidArgumentException('temporary_link_ttl_invalid');
+        }
+
+        $expiresAt = new DateTimeImmutable('+'.$ttlSeconds.' seconds');
+        try {
+            $command = $this->reportS3Client()->getCommand('GetObject', [
+                'Bucket' => $this->reportBucket(),
+                'Key' => $organizationPath,
+                'VersionId' => $versionId,
+            ]);
+            $request = $this->reportS3Client()->createPresignedRequest($command, $expiresAt);
+        } catch (AwsException $exception) {
+            throw $this->versionedAwsException($exception);
+        } catch (\InvalidArgumentException $exception) {
+            throw new VersionedObjectTransportException('s3_presigned_link_unavailable', 0, $exception);
+        }
+
+        return new TemporaryFileLink((string) $request->getUri(), $versionId, $expiresAt);
+    }
+
+    public function deleteVersion(string $organizationPath, string $versionId): void
+    {
+        $this->assertOrganizationPath($organizationPath);
+        $this->assertSafeStorageString($versionId, 255, 's3_versioned_delete_requires_version');
+
+        try {
+            $this->reportS3Client()->deleteObject([
+                'Bucket' => $this->reportBucket(),
+                'Key' => $organizationPath,
+                'VersionId' => $versionId,
+                '@http' => $this->s3HttpOptions(),
+            ]);
+        } catch (AwsException $exception) {
+            throw $this->versionedAwsException($exception);
+        } catch (\InvalidArgumentException $exception) {
+            throw new VersionedObjectTransportException('s3_versioned_delete_unavailable', 0, $exception);
+        }
     }
 
     /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,created:bool} */
@@ -227,6 +534,35 @@ class FileService
         $this->s3Client()->deleteObject([...$arguments, '@http' => $this->s3HttpOptions()]);
     }
 
+    protected function reportDisk(): FilesystemAdapter|Filesystem
+    {
+        return Storage::disk('reports');
+    }
+
+    protected function reportS3Client(): \Aws\S3\S3ClientInterface
+    {
+        $disk = $this->reportDisk();
+        if (! method_exists($disk, 'getClient')) {
+            throw new VersionedObjectTransportException('s3_multipart_unavailable');
+        }
+        $client = $disk->getClient();
+        if (! $client instanceof \Aws\S3\S3ClientInterface) {
+            throw new VersionedObjectTransportException('s3_multipart_unavailable');
+        }
+
+        return $client;
+    }
+
+    protected function reportBucket(): string
+    {
+        $bucket = $this->reportDisk()->getConfig()['bucket'] ?? null;
+        if (! is_string($bucket) || trim($bucket) === '') {
+            throw new VersionedObjectTransportException('s3_multipart_unavailable');
+        }
+
+        return $bucket;
+    }
+
     protected function s3Client(): \Aws\S3\S3ClientInterface
     {
         $disk = $this->disk();
@@ -239,6 +575,137 @@ class FileService
         }
 
         return $client;
+    }
+
+    private function assertOrganizationPath(string $path): int
+    {
+        if (
+            preg_match('#^org-([1-9][0-9]*)/[^\\\\\x00-\x1F\x7F]+$#D', $path, $matches) !== 1
+            || strlen($path) > 1024
+            || str_contains($path, '://')
+            || preg_match('#(?:^|/)\.\.(?:/|$)#', $path) === 1
+        ) {
+            throw new \InvalidArgumentException('organization_storage_path_invalid');
+        }
+
+        return (int) $matches[1];
+    }
+
+    private function assertSafeStorageString(string $value, int $maxLength, string $error): void
+    {
+        if (
+            $value === ''
+            || strlen($value) > $maxLength
+            || preg_match('/[\x00-\x1F\x7F]/', $value) === 1
+        ) {
+            throw new \InvalidArgumentException($error);
+        }
+    }
+
+    private function assertStorageMetadata(array $metadata): void
+    {
+        foreach ($metadata as $key => $value) {
+            if (
+                ! is_string($key)
+                || preg_match('/^[a-z0-9][a-z0-9_-]{0,63}$/D', $key) !== 1
+                || ! is_string($value)
+                || $value === ''
+                || strlen($value) > 2048
+                || preg_match('/[\x00-\x1F\x7F]/', $value) === 1
+            ) {
+                throw new \InvalidArgumentException('multipart_upload_invalid');
+            }
+        }
+    }
+
+    private function assertMultipartParts(MultipartUpload $upload, array $orderedParts): int
+    {
+        if (! array_is_list($orderedParts) || $orderedParts === []) {
+            throw new \InvalidArgumentException('multipart_parts_invalid');
+        }
+
+        $sizeBytes = 0;
+        $lastIndex = count($orderedParts) - 1;
+        foreach ($orderedParts as $index => $part) {
+            if (
+                ! $part instanceof MultipartPart
+                || ! hash_equals($upload->organizationPath, $part->organizationPath)
+                || ! hash_equals($upload->uploadId, $part->uploadId)
+                || $part->number !== $index + 1
+                || $part->sizeBytes > $upload->partSizeBytes
+                || ($index !== $lastIndex && $part->sizeBytes !== $upload->partSizeBytes)
+            ) {
+                throw new \InvalidArgumentException('multipart_parts_invalid');
+            }
+
+            $sizeBytes += $part->sizeBytes;
+        }
+
+        return $sizeBytes;
+    }
+
+    private function assertMultipartConditions(array $conditions, int $sizeBytes): string
+    {
+        $keys = array_keys($conditions);
+        sort($keys, SORT_STRING);
+        if (
+            $keys !== ['ChecksumSHA256', 'IfNoneMatch', 'MpuObjectSize']
+            || ($conditions['IfNoneMatch'] ?? null) !== '*'
+            || ! is_int($conditions['MpuObjectSize'] ?? null)
+            || $conditions['MpuObjectSize'] !== $sizeBytes
+            || ! is_string($conditions['ChecksumSHA256'] ?? null)
+        ) {
+            throw new \InvalidArgumentException('multipart_conditions_invalid');
+        }
+
+        return $this->decodeSha256Checksum($conditions['ChecksumSHA256']);
+    }
+
+    private function decodeSha256Checksum(string $checksum): string
+    {
+        $decoded = base64_decode($checksum, true);
+        if (
+            ! is_string($decoded)
+            || strlen($decoded) !== 32
+            || ! hash_equals($checksum, base64_encode($decoded))
+        ) {
+            throw new VersionedObjectIntegrityException('s3_checksum_invalid');
+        }
+
+        return bin2hex($decoded);
+    }
+
+    private function assertClosedReportMetadata(array $metadata, int $organizationId): void
+    {
+        $keys = array_keys($metadata);
+        sort($keys, SORT_STRING);
+        $expected = self::REPORT_METADATA_KEYS;
+        sort($expected, SORT_STRING);
+
+        if (
+            $keys !== $expected
+            || ($metadata['organization_id'] ?? null) !== (string) $organizationId
+            || preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/D', $metadata['export_id'] ?? '') !== 1
+            || preg_match('/^[a-f0-9]{64}$/D', $metadata['export_hash'] ?? '') !== 1
+            || preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/D', $metadata['run_id'] ?? '') !== 1
+            || preg_match('/^[a-f0-9]{64}$/D', $metadata['result_hash'] ?? '') !== 1
+            || preg_match('/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/D', $metadata['snapshot_id'] ?? '') !== 1
+            || ! in_array($metadata['snapshot_classification'] ?? null, ['operational', 'official'], true)
+            || ! in_array($metadata['data_classification'] ?? null, ['standard', 'sensitive'], true)
+        ) {
+            throw new VersionedObjectIntegrityException('s3_report_metadata_invalid');
+        }
+
+        foreach (['contract_version', 'formula_version', 'source_schema_version', 'renderer_version'] as $key) {
+            if (
+                ! is_string($metadata[$key] ?? null)
+                || $metadata[$key] === ''
+                || strlen($metadata[$key]) > 255
+                || preg_match('/[\x00-\x1F\x7F]/', $metadata[$key]) === 1
+            ) {
+                throw new VersionedObjectIntegrityException('s3_report_metadata_invalid');
+            }
+        }
     }
 
     private function tagEstimateGenerationObject(
