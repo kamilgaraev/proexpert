@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportAuditIntentRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportDispatchIntentRecord;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportExportRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\Models\Organization;
 use DateTimeImmutable;
@@ -358,10 +359,228 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
         self::assertFalse($reflection->getMethod('failQueuedExport')->isPublic());
     }
 
+    public function test_attempt_twelve_export_publication_failure_dead_letters_queued_export_and_audits_atomically(): void
+    {
+        $store = $this->store();
+        $now = new DateTimeImmutable('2026-07-28T10:00:00Z');
+        $export = $this->createQueuedExport($now);
+        $lease = $this->leaseTwelfthExportIntent($store, $export, $now);
+
+        $store->markPublicationFailed(
+            $lease->intent->id,
+            '00000000-0000-4000-8000-000000000099',
+            ReportErrorCode::REPORT_DEPENDENCY_FAILED,
+            $now,
+            $now,
+        );
+
+        self::assertSame('leased', $lease->intent->fresh()->status);
+        self::assertSame('queued', $export->fresh()->status);
+        self::assertSame(0, ReportAuditIntentRecord::query()->count());
+
+        $store->markPublicationFailed(
+            $lease->intent->id,
+            $lease->leaseToken,
+            ReportErrorCode::REPORT_DEPENDENCY_FAILED,
+            $now,
+            $now,
+        );
+
+        self::assertSame('dead_letter', $lease->intent->fresh()->status);
+        self::assertSame('failed', $export->fresh()->status);
+        self::assertSame(ReportErrorCode::REPORT_DEPENDENCY_FAILED->value, $export->fresh()->error_code);
+        self::assertSame(1, ReportAuditIntentRecord::query()
+            ->where('event_type', 'report.export.failed')
+            ->where('event_key', "reports:export:{$export->id}:failed:REPORT_DEPENDENCY_FAILED")
+            ->count());
+    }
+
+    public function test_reclaiming_expired_twelfth_export_lease_dead_letters_queued_export_and_audits_atomically(): void
+    {
+        $store = $this->store();
+        $now = new DateTimeImmutable('2026-07-28T10:00:00Z');
+        $export = $this->createQueuedExport($now);
+        $lease = $this->leaseTwelfthExportIntent($store, $export, $now);
+
+        self::assertSame(1, $store->reclaimExpiredLeases(1, $now->modify('+31 seconds')));
+        self::assertSame('dead_letter', $lease->intent->fresh()->status);
+        self::assertSame('failed', $export->fresh()->status);
+        self::assertSame(ReportErrorCode::REPORT_DEPENDENCY_FAILED->value, $export->fresh()->error_code);
+        self::assertSame(1, ReportAuditIntentRecord::query()
+            ->where('event_type', 'report.export.failed')
+            ->where('event_key', "reports:export:{$export->id}:failed:REPORT_DEPENDENCY_FAILED")
+            ->count());
+    }
+
+    public function test_export_terminal_transition_rolls_back_when_outbox_audit_append_fails(): void
+    {
+        $now = new DateTimeImmutable('2026-07-28T10:00:00Z');
+        $export = $this->createQueuedExport($now);
+        $store = $this->store();
+        $lease = $this->leaseTwelfthExportIntent($store, $export, $now);
+        ReportAuditIntentRecord::query()->create([
+            'id' => '01J00000000000000000000005',
+            'event_key' => "reports:export:{$export->id}:failed:REPORT_DEPENDENCY_FAILED",
+            'event_type' => 'report.export.cancelled',
+            'organization_id' => 1,
+            'actor_id' => 1,
+            'subject' => [],
+            'status' => 'pending',
+            'attempt_count' => 0,
+            'occurred_at' => $now,
+            'available_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        try {
+            $store->markPublicationFailed(
+                $lease->intent->id,
+                $lease->leaseToken,
+                ReportErrorCode::REPORT_DEPENDENCY_FAILED,
+                $now,
+                $now,
+            );
+            self::fail('Expected outbox audit conflict to abort the transaction.');
+        } catch (LogicException) {
+        }
+
+        self::assertSame('leased', $lease->intent->fresh()->status);
+        self::assertSame('queued', $export->fresh()->status);
+        self::assertSame(1, ReportAuditIntentRecord::query()->count());
+        self::assertSame(0, ReportAuditIntentRecord::query()->where('event_type', 'report.export.failed')->count());
+    }
+
+    public function test_non_queued_export_is_not_mutated_by_terminal_dispatch_failure(): void
+    {
+        $store = $this->store();
+        $now = new DateTimeImmutable('2026-07-28T10:00:00Z');
+        $export = $this->createQueuedExport($now);
+        $export->update([
+            'status' => 'failed',
+            'error_code' => ReportErrorCode::REPORT_DEPENDENCY_FAILED->value,
+            'failed_at' => $now,
+        ]);
+        $lease = $this->leaseTwelfthExportIntent($store, $export, $now);
+
+        $store->markPublicationFailed(
+            $lease->intent->id,
+            $lease->leaseToken,
+            ReportErrorCode::REPORT_DEPENDENCY_FAILED,
+            $now,
+            $now,
+        );
+
+        self::assertSame('failed', $export->fresh()->status);
+        self::assertSame(ReportErrorCode::REPORT_DEPENDENCY_FAILED->value, $export->fresh()->error_code);
+        self::assertSame(0, ReportAuditIntentRecord::query()->count());
+    }
+
     private function store(): EloquentReportDispatchIntentStore
     {
         return new EloquentReportDispatchIntentStore(
             new OutboxReportTransitionAudit(new EloquentReportAuditIntentStore),
         );
+    }
+
+    private function createQueuedExport(DateTimeImmutable $now): ReportExportRecord
+    {
+        $runId = '01J00000000000000000000003';
+        $exportId = '01J00000000000000000000004';
+        ReportRunRecord::query()->create([
+            'id' => $runId,
+            'organization_id' => 1,
+            'requester_actor_id' => 1,
+            'report_code' => 'cost_control',
+            'status' => 'queued',
+            'definition_hash' => str_repeat('a', 64),
+            'definition_snapshot_hash' => str_repeat('b', 64),
+            'query_hash' => str_repeat('c', 64),
+            'idempotency_key_hash' => str_repeat('d', 64),
+            'input_fingerprint' => str_repeat('e', 64),
+            'contract_version' => '1',
+            'formula_version' => '1',
+            'source_schema_version' => '1',
+            'renderer_version' => '1',
+            'definition_snapshot' => [],
+            'canonical_query_json' => '{}',
+            'scope_holding_organization_ids' => [1],
+            'scope_project_ids' => [],
+            'scope_resources' => [],
+            'scope_timezone' => 'UTC',
+            'filters' => [],
+            'comparison' => [],
+            'as_of' => $now,
+            'locale' => 'ru',
+            'snapshot_classification' => 'operational',
+            'data_classification' => 'standard',
+            'sensitive_column_ids' => [],
+            'audit_column_ids' => [],
+            'progress' => 0,
+            'totals' => [],
+            'queued_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+            'expires_at' => $now->modify('+1 hour'),
+        ]);
+
+        return ReportExportRecord::query()->create([
+            'id' => $exportId,
+            'run_id' => $runId,
+            'organization_id' => 1,
+            'requester_actor_id' => 1,
+            'report_code' => 'cost_control',
+            'status' => 'queued',
+            'definition_hash' => str_repeat('a', 64),
+            'query_hash' => str_repeat('c', 64),
+            'source_hash' => str_repeat('d', 64),
+            'result_hash' => str_repeat('e', 64),
+            'export_hash' => str_repeat('f', 64),
+            'idempotency_key_hash' => str_repeat('1', 64),
+            'input_fingerprint' => str_repeat('2', 64),
+            'scope_holding_organization_ids' => [1],
+            'scope_project_ids' => [],
+            'scope_resources' => [],
+            'scope_timezone' => 'UTC',
+            'snapshot_kind' => 'report_run',
+            'snapshot_id' => 'snapshot-1',
+            'snapshot_generated_at' => $now,
+            'snapshot_watermarks' => [],
+            'snapshot_classification' => 'operational',
+            'data_classification' => 'standard',
+            'sensitive_column_ids' => [],
+            'audit_column_ids' => [],
+            'totals_sensitive' => false,
+            'totals_audit' => false,
+            'provenance_audit' => false,
+            'contract_version' => '1',
+            'formula_version' => '1',
+            'source_schema_version' => '1',
+            'renderer_version' => '1',
+            'format' => 'csv',
+            'selected_columns' => [],
+            'sort_field' => 'name',
+            'sort_direction' => 'asc',
+            'locale' => 'ru',
+            'render_timezone' => 'UTC',
+            'queued_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+            'expires_at' => $now->modify('+1 hour'),
+        ]);
+    }
+
+    private function leaseTwelfthExportIntent(EloquentReportDispatchIntentStore $store, ReportExportRecord $export, DateTimeImmutable $now): \App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchLease
+    {
+        DB::transaction(fn () => $store->addExportIntent(
+            (string) $export->id,
+            (int) $export->organization_id,
+            "reports:export:{$export->id}:generate:initial",
+            $now,
+        ));
+        $intent = ReportDispatchIntentRecord::query()->where('aggregate_id', $export->id)->firstOrFail();
+        $intent->update(['attempt_count' => 11]);
+
+        return $store->claimDue(1, $now, $now->modify('+30 seconds'), '00000000-0000-4000-8000-000000000012')[0];
     }
 }
