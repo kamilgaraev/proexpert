@@ -17,7 +17,6 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use Opis\JsonSchema\CompliantValidator;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
-use Symfony\Component\Process\Process;
 
 require_once dirname(__DIR__, 3).'/scripts/reporting/build-plan-1a-evidence.php';
 
@@ -28,7 +27,7 @@ final class PlanOneAHandoffContractTest extends TestCase
         self::assertFileExists($this->lockPath());
         self::assertFileExists($this->hashPath());
         self::assertSame(hash_file('sha256', $this->lockPath())."\n", file_get_contents($this->hashPath()));
-        self::assertSame(['plan', 'contract_version', 'resources', 'permissions', 'error_count', 'definition_lifecycle', 'binding_lifecycle', 'owner_port_arity', 'route_contract', 'task_4a', 'task_4a2', 'task_4e', 'composer_contract'], array_keys($this->lock()));
+        self::assertSame(['plan', 'contract_version', 'resources', 'permissions', 'error_count', 'definition_lifecycle', 'execution_phases', 'binding_lifecycle', 'owner_port_arity', 'route_contract', 'task_4a', 'task_4a2', 'task_4e', 'composer_contract'], array_keys($this->lock()));
     }
 
     public function test_contract_lock_preserves_resources_permissions_and_errors(): void
@@ -87,47 +86,28 @@ final class PlanOneAHandoffContractTest extends TestCase
         self::assertSame($task['tracked_paths'], array_values(array_unique($task['tracked_paths'])));
         self::assertSame(['Task 4a exact53', 'Task 4b exact39', 'Task 4a2 exact16', 'Task 4c exact15', 'Task 4d exact6', 'Task 4e exact78'], $task['lineage']);
 
-        $constants = (new ReflectionClass(\PlanOneAEvidence::class))->getConstants();
-        $taskFourE = $constants['TASK_FOUR_E_PATHS'];
-        $taskFive = $constants['TASK_FIVE_PATHS'];
+        $taskFourE = \PlanOneAEvidence::taskFourEPaths();
+        $taskFive = \PlanOneAExecutionPhaseAuthority::taskFivePaths();
         self::assertCount(78, $taskFourE);
         self::assertCount(30, $taskFive);
         self::assertSame([], array_values(array_intersect($taskFourE, $taskFive)));
         $owned = array_values(array_unique([...$taskFourE, ...$taskFive]));
         sort($owned, SORT_STRING);
         self::assertCount(108, $owned);
-        self::assertSame($owned, $this->changedPathsFromTaskFourEParent());
+        $phase = \PlanOneAExecutionPhaseAuthority::trackedContract();
+        self::assertCount(13, $phase['task_4f']['tracked_paths']);
+        self::assertSame(108, $phase['ownership']['product_union']);
+        self::assertSame(0, $phase['ownership']['product_overlap']);
+        self::assertSame(
+            ['POST_TASK_4E_PRE_TASK_5', 'POST_TASK_5'],
+            array_keys($phase['phases']),
+        );
+        self::assertSame($phase, $this->lock()['execution_phases']);
         self::assertSame('resources', $task['typed_resources']['scope_key']);
         self::assertTrue($task['queue_authorization']['uncached']);
         self::assertSame('ACCESS EXCLUSIVE', $task['migration_cutover']['lock']);
         self::assertSame('allowed', $task['resource_registry']['empty_registry_empty_scope']);
         self::assertSame('denied', $task['resource_registry']['empty_registry_non_empty_scope']);
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function changedPathsFromTaskFourEParent(): array
-    {
-        $root = dirname(__DIR__, 3);
-        $tracked = new Process([
-            'git',
-            'diff',
-            '--name-only',
-            '-z',
-            '1934f947a44aa5221b5aa4cbd8c03963f5f1c005',
-            '--',
-        ], $root);
-        $tracked->mustRun();
-        $untracked = new Process(['git', 'ls-files', '--others', '--exclude-standard', '-z'], $root);
-        $untracked->mustRun();
-        $paths = array_values(array_unique([
-            ...array_filter(explode("\0", $tracked->getOutput())),
-            ...array_filter(explode("\0", $untracked->getOutput())),
-        ]));
-        sort($paths, SORT_STRING);
-
-        return $paths;
     }
 
     public function test_definition_registries_keep_nominal_wrappers(): void
@@ -151,8 +131,8 @@ final class PlanOneAHandoffContractTest extends TestCase
     public function test_completion_fixture_has_only_the_five_plan_one_c_digest_leaves(): void
     {
         $fixture = $this->fixture('plan-1a-completion.valid.json');
-        self::assertSame(['plan', 'status', 'commit_sha', 'contract_lock_sha256', 'resource_schema_sha256', 'route_snapshot_sha256', 'commands', 'ci_http_matrices', 'task_4e'], array_keys($fixture));
-        self::assertSame(5, $this->digestCount($fixture));
+        self::assertSame(['plan', 'status', 'commit_sha', 'contract_lock_sha256', 'resource_schema_sha256', 'route_snapshot_sha256', 'commands', 'ci_http_matrices', 'task_4e', 'execution_phase'], array_keys($fixture));
+        self::assertSame(6, $this->digestCount($fixture));
         self::assertArrayNotHasKey('command_ledger_sha256', $fixture);
         self::assertSame(['hermetic_http', 'hermetic_http'], [$fixture['ci_http_matrices']['authorization']['verification_mode'], $fixture['ci_http_matrices']['malformed_requests']['verification_mode']]);
         self::assertSame([20, 20], [$fixture['ci_http_matrices']['malformed_requests']['cases'], $fixture['ci_http_matrices']['malformed_requests']['passed']]);

@@ -19,6 +19,20 @@ final class RunPlanOneAGatesTest extends TestCase
 
     private array $temporaryDirectories = [];
 
+    public function test_runner_consumes_the_same_closed_execution_phase_contract_as_the_builder(): void
+    {
+        $contract = \PlanOneAExecutionPhaseAuthority::trackedContract();
+
+        self::assertSame(
+            ['POST_TASK_4E_PRE_TASK_5', 'POST_TASK_5'],
+            array_keys($contract['phases']),
+        );
+        self::assertCount(4, $contract['phases']['POST_TASK_4E_PRE_TASK_5']['dispatch_allowlist']);
+        self::assertCount(5, $contract['phases']['POST_TASK_5']['dispatch_allowlist']);
+        self::assertSame('pending', $contract['phases']['POST_TASK_4E_PRE_TASK_5']['task_5_state']);
+        self::assertSame('present', $contract['phases']['POST_TASK_5']['task_5_state']);
+    }
+
     public function test_runner_declares_the_exact_task_four_a2_subject_parent_manifest_and_lineage(): void
     {
         $constants = (new ReflectionClass(\PlanOneAGates::class))->getConstants();
@@ -120,7 +134,7 @@ final class RunPlanOneAGatesTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (['processOverride', 'topologyOverride', 'harnessOverride', 'faultOverride', 'phpHashOverride', 'phpVersionOverride', 'branchOverride', 'historicalPredicateOverride'] as $property) {
+        foreach (['processOverride', 'topologyOverride', 'harnessOverride', 'faultOverride', 'phpHashOverride', 'phpVersionOverride', 'branchOverride', 'historicalPredicateOverride', 'executionPhase', 'cleanHead'] as $property) {
             $this->setStaticProperty($property, null);
         }
         foreach (array_reverse($this->temporaryDirectories) as $directory) {
@@ -660,35 +674,35 @@ final class RunPlanOneAGatesTest extends TestCase
         self::assertDirectoryDoesNotExist($repository.'/build');
     }
 
-    public function test_normal_precleans_stale_outputs_before_staged_failure(): void
+    public function test_normal_dirty_preflight_leaves_stale_outputs_untouched(): void
     {
         $repository = $this->repository();
         $this->createStaleGateOutputs($repository);
+        $before = $this->outputSnapshot($repository);
         file_put_contents($repository.'/seed.txt', 'dirty');
         $this->git($repository, ['add', 'seed.txt']);
         $process = $this->runCli($repository);
 
         self::assertSame(3, $process->getExitCode());
         self::assertStringContainsString('PLAN_1A_GATE_WORKTREE_DIRTY', $process->getErrorOutput());
-        self::assertSame([], $this->gateOutputFiles($repository));
-        self::assertSame([], glob($repository.'/build/reports/.plan-1a-*.tmp') ?: []);
+        self::assertSame($before, $this->outputSnapshot($repository));
     }
 
-    public function test_normal_cleans_stale_outputs_on_head_mismatch(): void
+    public function test_normal_head_mismatch_preflight_leaves_stale_outputs_untouched(): void
     {
         [$repository] = $this->precommitRepository();
         $this->createStaleGateOutputs($repository);
+        $before = $this->outputSnapshot($repository);
 
         $exit = $this->executeDirect($repository, str_repeat('f', 40));
 
         self::assertSame(3, $exit);
-        self::assertSame([], $this->gateOutputFiles($repository));
-        self::assertSame([], glob($repository.'/build/reports/.plan-1a-*.tmp') ?: []);
+        self::assertSame($before, $this->outputSnapshot($repository));
     }
 
     public function test_normal_cleans_stale_outputs_on_branch_mismatch(): void
     {
-        [$repository, $head] = $this->precommitRepository();
+        [$repository, $head] = $this->executablePrecommitRepository();
         $this->createStaleGateOutputs($repository);
         $this->setStaticProperty('branchOverride', static fn (): string => 'feat/foreign-branch');
 
@@ -701,7 +715,7 @@ final class RunPlanOneAGatesTest extends TestCase
 
     public function test_normal_cleans_stale_outputs_on_detached_head(): void
     {
-        [$repository, $head] = $this->precommitRepository();
+        [$repository, $head] = $this->executablePrecommitRepository();
         $this->git($repository, ['checkout', '--detach', $head]);
         $this->createStaleGateOutputs($repository);
 
@@ -714,7 +728,7 @@ final class RunPlanOneAGatesTest extends TestCase
 
     public function test_normal_cleans_stale_outputs_on_php_hash_mismatch(): void
     {
-        [$repository, $head] = $this->precommitRepository();
+        [$repository, $head] = $this->executablePrecommitRepository();
         $this->createStaleGateOutputs($repository);
         $this->setStaticProperty('phpHashOverride', static fn (): string => str_repeat('0', 64));
 
@@ -764,7 +778,7 @@ final class RunPlanOneAGatesTest extends TestCase
 
     public function test_verify_existing_rejects_timestamp_divergence_without_writes(): void
     {
-        [$repository] = $this->precommitRepository();
+        [$repository] = $this->executablePrecommitRepository();
         mkdir($repository.'/build/reports', 0777, true);
         $timestamp = '2026-07-26T00:00:00Z';
         foreach (array_keys($this->bundle()) as $file) {
@@ -852,13 +866,13 @@ final class RunPlanOneAGatesTest extends TestCase
         }
     }
 
-    public function test_precommit_exact_unstaged_task_four_a2_set_is_accepted(): void
+    public function test_precommit_exact_unstaged_task_four_a2_set_is_rejected_globally(): void
     {
         [$repository, $head] = $this->precommitRepository();
 
+        $this->expectException(\PlanOneAGatesFailure::class);
+        $this->expectExceptionMessage('PLAN_1A_GATE_WORKTREE_DIRTY');
         $this->invokeStatic('validateGitState', [$repository, $head]);
-
-        self::assertSame([], $this->gitPaths($repository, ['diff', '--cached', '--name-only']));
     }
 
     public function test_precommit_partial_staged_task_four_a2_set_is_rejected(): void
@@ -881,13 +895,13 @@ final class RunPlanOneAGatesTest extends TestCase
         $this->invokeStatic('validateGitState', [$repository, $head]);
     }
 
-    public function test_clean_canonical_task_four_a2_commit_is_accepted(): void
+    public function test_clean_historical_task_four_a2_commit_is_not_a_supported_execution_phase(): void
     {
         [$repository, $commit] = $this->canonicalRepository();
 
+        $this->expectException(\PlanOneAGatesFailure::class);
+        $this->expectExceptionMessage('PLAN_1A_EXECUTION_PHASE_INVALID');
         $this->invokeStatic('validateGitState', [$repository, $commit]);
-
-        self::assertSame([], $this->gitPaths($repository, ['status', '--porcelain']));
     }
 
     public function test_wrong_canonical_subject_is_rejected(): void
@@ -1090,9 +1104,14 @@ final class RunPlanOneAGatesTest extends TestCase
         $process->mustRun();
         $this->git($repository, ['config', 'user.email', 'reports@example.test']);
         $this->git($repository, ['config', 'user.name', 'Reports Test']);
-        foreach ($this->taskFourA2Paths() as $path) {
+        $this->git($repository, ['checkout', '--detach', '57b9e1b5eb3d646f5d24f78e00165ca9b272e93d']);
+        foreach (\PlanOneAExecutionPhaseAuthority::taskFourFPaths() as $path) {
             $this->write($repository.'/'.$path, (string) file_get_contents($this->root().'/'.$path));
         }
+        $this->git($repository, ['add', '--', ...\PlanOneAExecutionPhaseAuthority::taskFourFPaths()]);
+        $this->git($repository, ['commit', '-m', 'fix[reports]: разделить evidence по фазам исполнения']);
+        $this->git($repository, ['branch', '-f', 'feat/reports-canonical-backend', 'HEAD']);
+        $this->git($repository, ['checkout', 'feat/reports-canonical-backend']);
 
         return [$repository, $this->git($repository, ['rev-parse', 'HEAD'])];
     }

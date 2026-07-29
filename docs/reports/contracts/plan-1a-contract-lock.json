@@ -25,6 +25,96 @@
         "published_registry_return": "PublishedReportDefinition",
         "candidate_registry_return": "CandidateReportDefinition"
     },
+    "execution_phases": {
+        "task_4e": {
+            "commit_sha": "57b9e1b5eb3d646f5d24f78e00165ca9b272e93d",
+            "subject": "feat[reports]: \u0442\u0438\u043f\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0440\u0435\u0441\u0443\u0440\u0441\u044b \u0438 \u0442\u0435\u043a\u0443\u0449\u0443\u044e \u0430\u0432\u0442\u043e\u0440\u0438\u0437\u0430\u0446\u0438\u044e",
+            "parent_commit_sha": "1934f947a44aa5221b5aa4cbd8c03963f5f1c005",
+            "manifest_count": 78
+        },
+        "task_4f": {
+            "subject": "fix[reports]: \u0440\u0430\u0437\u0434\u0435\u043b\u0438\u0442\u044c evidence \u043f\u043e \u0444\u0430\u0437\u0430\u043c \u0438\u0441\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u044f",
+            "parent_commit_sha": "57b9e1b5eb3d646f5d24f78e00165ca9b272e93d",
+            "tracked_paths": [
+                "tests/Architecture/Reporting/PlanOneAHandoffContractTest.php",
+                "tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php",
+                "docs/reports/contracts/plan-1a-completion.schema.json",
+                "docs/reports/contracts/plan-1a-contract-lock.json",
+                "docs/reports/contracts/plan-1a-contract-lock.sha256",
+                "docs/reports/contracts/plan-1a-gate-evidence.schema.json",
+                "scripts/reporting/build-plan-1a-evidence.php",
+                "scripts/reporting/run-plan-1a-gates.php",
+                "tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php",
+                "tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json",
+                "tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json",
+                "tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php",
+                "tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php"
+            ]
+        },
+        "task_5": {
+            "subject": "feat[reports]: \u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b\u0438\u0437\u043e\u0432\u0430\u0442\u044c \u0441\u043d\u0438\u043c\u043a\u0438 \u0441 \u0442\u0435\u043a\u0443\u0449\u0435\u0439 \u0430\u0432\u0442\u043e\u0440\u0438\u0437\u0430\u0446\u0438\u0435\u0439",
+            "tracked_paths": [
+                "app/BusinessModules/Core/Reporting/Application/Execution/ReportProgressWritePolicy.php",
+                "app/BusinessModules/Core/Reporting/Application/Execution/ReportAsyncContextSeed.php",
+                "app/BusinessModules/Core/Reporting/Application/Execution/ReportExpiredExecutionLease.php",
+                "app/BusinessModules/Core/Reporting/Application/Execution/ReportExecutionWatchdogSummary.php",
+                "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunAsyncContextSeedReader.php",
+                "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunLeaseRecoveryStore.php",
+                "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunAttemptLifecycleStore.php",
+                "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExecutionTelemetry.php",
+                "app/BusinessModules/Core/Reporting/Infrastructure/Execution/LaravelReportRunExecutionContextRehydrator.php",
+                "app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunAsyncContextSeedReader.php",
+                "app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunLeaseRecoveryStore.php",
+                "app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunAttemptLifecycleStore.php",
+                "app/BusinessModules/Core/Reporting/Infrastructure/Jobs/MaterializeReportRunJob.php",
+                "app/BusinessModules/Core/Reporting/Infrastructure/Queue/LaravelReportMaterializationDispatcher.php",
+                "app/BusinessModules/Core/Reporting/Infrastructure/Listeners/FinalizeFailedReportRunAttempt.php",
+                "app/BusinessModules/Core/Reporting/Application/Execution/ReportRunExecutionWatchdog.php",
+                "app/BusinessModules/Core/Reporting/Application/Execution/ReportRunAttemptFinalizer.php",
+                "app/BusinessModules/Core/Reporting/Infrastructure/Console/ReconcileReportRunExecutionLeasesCommand.php",
+                "tests/Unit/Reporting/Execution/ReportProgressWritePolicyTest.php",
+                "tests/Unit/Reporting/Execution/ReportRunAsyncContextSeedReaderContractTest.php",
+                "tests/Unit/Reporting/Execution/ReportRunLeaseRecoveryStoreContractTest.php",
+                "tests/Unit/Reporting/Execution/ReportRunExecutionWatchdogTest.php",
+                "tests/Unit/Reporting/Execution/ReportRunAttemptFinalizerTest.php",
+                "tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php",
+                "tests/Feature/Reporting/Persistence/EloquentReportRunAsyncContextSeedReaderTest.php",
+                "tests/Feature/Reporting/Persistence/EloquentReportRunLeaseRecoveryStoreTest.php",
+                "tests/Feature/Reporting/Persistence/EloquentReportRunAttemptLifecycleStoreTest.php",
+                "tests/Unit/Reporting/Execution/LaravelReportRunExecutionContextRehydratorTest.php",
+                "tests/Support/Reporting/PostgresProcessRaceHarness.php",
+                "tests/Architecture/Reporting/ReportQueueRuntimeContractTest.php"
+            ]
+        },
+        "phases": {
+            "POST_TASK_4E_PRE_TASK_5": {
+                "task_5_state": "pending",
+                "dispatch_allowlist": [
+                    "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",
+                    "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php",
+                    "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php",
+                    "app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php"
+                ]
+            },
+            "POST_TASK_5": {
+                "task_5_state": "present",
+                "dispatch_allowlist": [
+                    "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",
+                    "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php",
+                    "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php",
+                    "app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php",
+                    "app/BusinessModules/Core/Reporting/Infrastructure/Queue/LaravelReportMaterializationDispatcher.php"
+                ]
+            }
+        },
+        "ownership": {
+            "task_4e": 78,
+            "task_4f": 13,
+            "task_5": 30,
+            "product_union": 108,
+            "product_overlap": 0
+        }
+    },
     "binding_lifecycle": {
         "candidate_validation_returns_runtime_map": false,
         "runtime_registry": "published",

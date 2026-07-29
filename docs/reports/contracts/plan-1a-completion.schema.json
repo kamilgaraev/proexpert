@@ -3,7 +3,7 @@
   "$id": "urn:most:reporting:plan-1a-completion:v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["plan", "status", "commit_sha", "contract_lock_sha256", "resource_schema_sha256", "route_snapshot_sha256", "commands", "ci_http_matrices", "task_4e"],
+  "required": ["plan", "status", "commit_sha", "contract_lock_sha256", "resource_schema_sha256", "route_snapshot_sha256", "commands", "ci_http_matrices", "task_4e", "execution_phase"],
   "properties": {
     "plan": {"const": "1a"},
     "status": {"const": "passed"},
@@ -57,7 +57,8 @@
         "untyped_compatibility_absent": {"const": true},
         "request_global_authority_absent": {"const": true}
       }
-    }
+    },
+    "execution_phase": {"$ref": "#/$defs/executionPhase"}
   },
   "$defs": {
     "organizationMatrix": {"type": "array", "minItems": 11, "maxItems": 11, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
@@ -66,6 +67,50 @@
     "resourceMatrix": {"type": "array", "minItems": 17, "maxItems": 17, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "raceMatrix": {"type": "array", "minItems": 8, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "ownershipAudit": {"type": "object", "additionalProperties": false, "required": ["task_4e", "task_5", "union", "overlap", "unowned", "extra"], "properties": {"task_4e": {"const": 78}, "task_5": {"const": 30}, "union": {"const": 108}, "overlap": {"const": 0}, "unowned": {"const": 0}, "extra": {"const": 0}}},
+    "executionPhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "head_commit_sha", "task_4e_commit_sha", "task_4f_commit_sha", "task_5_commit_sha", "task_5_state", "dispatch_allowlist", "committed_tree_projection_sha256"],
+      "properties": {
+        "name": {"enum": ["POST_TASK_4E_PRE_TASK_5", "POST_TASK_5"]},
+        "head_commit_sha": {"$ref": "#/$defs/sha1"},
+        "task_4e_commit_sha": {"const": "57b9e1b5eb3d646f5d24f78e00165ca9b272e93d"},
+        "task_4f_commit_sha": {"$ref": "#/$defs/sha1"},
+        "task_5_commit_sha": {"type": ["string", "null"], "pattern": "^[a-f0-9]{40}$"},
+        "task_5_state": {"enum": ["pending", "present"]},
+        "dispatch_allowlist": {"type": "array", "minItems": 4, "maxItems": 5, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "committed_tree_projection_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "name": {"const": "POST_TASK_4E_PRE_TASK_5"},
+            "task_5_commit_sha": {"type": "null"},
+            "task_5_state": {"const": "pending"},
+            "dispatch_allowlist": {"const": [
+              "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",
+              "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php",
+              "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php",
+              "app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php"
+            ]}
+          }
+        },
+        {
+          "properties": {
+            "name": {"const": "POST_TASK_5"},
+            "task_5_commit_sha": {"$ref": "#/$defs/sha1"},
+            "task_5_state": {"const": "present"},
+            "dispatch_allowlist": {"const": [
+              "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",
+              "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php",
+              "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php",
+              "app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php",
+              "app/BusinessModules/Core/Reporting/Infrastructure/Queue/LaravelReportMaterializationDispatcher.php"
+            ]}
+          }
+        }
+      ]
+    },
     "sha1": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
     "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "timestamp": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
@@ -87,7 +132,7 @@
     "contractCommand": {
       "allOf": [
         {"$ref": "#/$defs/commandBase"},
-        {"properties": {"command_id": {"const": "plan1a_contract_tests"}, "tests": {"const": 505}, "assertions": {"const": 9800}}}
+        {"properties": {"command_id": {"const": "plan1a_contract_tests"}, "tests": {"const": 503}, "assertions": {"const": 5062}}}
       ]
     },
     "staticCommand": {

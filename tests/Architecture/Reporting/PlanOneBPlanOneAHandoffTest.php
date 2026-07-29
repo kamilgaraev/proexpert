@@ -32,8 +32,28 @@ use ReflectionMethod;
 use ReflectionNamedType;
 use ReflectionParameter;
 
+require_once dirname(__DIR__, 3).'/scripts/reporting/build-plan-1a-evidence.php';
+
 final class PlanOneBPlanOneAHandoffTest extends TestCase
 {
+    public function test_plan_one_a_execution_phase_handoff_is_closed_and_forward_only(): void
+    {
+        $contract = \PlanOneAExecutionPhaseAuthority::trackedContract();
+
+        self::assertSame(
+            ['task_4e', 'task_4f', 'task_5', 'phases', 'ownership'],
+            array_keys($contract),
+        );
+        self::assertSame(
+            '57b9e1b5eb3d646f5d24f78e00165ca9b272e93d',
+            $contract['task_4f']['parent_commit_sha'],
+        );
+        self::assertSame(13, count($contract['task_4f']['tracked_paths']));
+        self::assertSame(30, count($contract['task_5']['tracked_paths']));
+        self::assertSame(108, $contract['ownership']['product_union']);
+        self::assertSame(0, $contract['ownership']['product_overlap']);
+    }
+
     public function test_verifier_has_exact_required_five_argument_signature(): void
     {
         $method = new ReflectionMethod(PlanOneACompletionVerifier::class, 'assertReady');

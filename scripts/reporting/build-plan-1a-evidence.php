@@ -17,6 +17,402 @@ final class PlanOneAEvidenceFailure extends RuntimeException
     }
 }
 
+final class PlanOneAExecutionPhaseAuthority
+{
+    public const PRE5 = 'POST_TASK_4E_PRE_TASK_5';
+
+    public const POST5 = 'POST_TASK_5';
+
+    private const TASK_FOUR_E_COMMIT = '57b9e1b5eb3d646f5d24f78e00165ca9b272e93d';
+
+    private const TASK_FOUR_E_PARENT = '1934f947a44aa5221b5aa4cbd8c03963f5f1c005';
+
+    private const TASK_FOUR_E_SUBJECT = 'feat[reports]: типизировать ресурсы и текущую авторизацию';
+
+    private const TASK_FOUR_F_SUBJECT = 'fix[reports]: разделить evidence по фазам исполнения';
+
+    private const TASK_FIVE_SUBJECT = 'feat[reports]: материализовать снимки с текущей авторизацией';
+
+    private const TASK_FIVE_RUNTIME_CONTRACT_PATH = 'tests/Architecture/Reporting/ReportQueueRuntimeContractTest.php';
+
+    private const TASK_FIVE_RUNTIME_CONTRACT_BASELINE_BLOB = 'e366f714d24672b1ac457df93eba12275a456040';
+
+    private const TASK_FOUR_F_PATHS = [
+        'tests/Architecture/Reporting/PlanOneAHandoffContractTest.php',
+        'tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php',
+        'docs/reports/contracts/plan-1a-completion.schema.json',
+        'docs/reports/contracts/plan-1a-contract-lock.json',
+        'docs/reports/contracts/plan-1a-contract-lock.sha256',
+        'docs/reports/contracts/plan-1a-gate-evidence.schema.json',
+        'scripts/reporting/build-plan-1a-evidence.php',
+        'scripts/reporting/run-plan-1a-gates.php',
+        'tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php',
+        'tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json',
+        'tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json',
+        'tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php',
+        'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
+    ];
+
+    private const TASK_FIVE_PATHS = [
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportProgressWritePolicy.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportAsyncContextSeed.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportExpiredExecutionLease.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportExecutionWatchdogSummary.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunAsyncContextSeedReader.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunLeaseRecoveryStore.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunAttemptLifecycleStore.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExecutionTelemetry.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Execution/LaravelReportRunExecutionContextRehydrator.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunAsyncContextSeedReader.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunLeaseRecoveryStore.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunAttemptLifecycleStore.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Jobs/MaterializeReportRunJob.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Queue/LaravelReportMaterializationDispatcher.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Listeners/FinalizeFailedReportRunAttempt.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportRunExecutionWatchdog.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportRunAttemptFinalizer.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Console/ReconcileReportRunExecutionLeasesCommand.php',
+        'tests/Unit/Reporting/Execution/ReportProgressWritePolicyTest.php',
+        'tests/Unit/Reporting/Execution/ReportRunAsyncContextSeedReaderContractTest.php',
+        'tests/Unit/Reporting/Execution/ReportRunLeaseRecoveryStoreContractTest.php',
+        'tests/Unit/Reporting/Execution/ReportRunExecutionWatchdogTest.php',
+        'tests/Unit/Reporting/Execution/ReportRunAttemptFinalizerTest.php',
+        'tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php',
+        'tests/Feature/Reporting/Persistence/EloquentReportRunAsyncContextSeedReaderTest.php',
+        'tests/Feature/Reporting/Persistence/EloquentReportRunLeaseRecoveryStoreTest.php',
+        'tests/Feature/Reporting/Persistence/EloquentReportRunAttemptLifecycleStoreTest.php',
+        'tests/Unit/Reporting/Execution/LaravelReportRunExecutionContextRehydratorTest.php',
+        'tests/Support/Reporting/PostgresProcessRaceHarness.php',
+        'tests/Architecture/Reporting/ReportQueueRuntimeContractTest.php',
+    ];
+
+    private const PRE5_DISPATCH = [
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php',
+    ];
+
+    private const POST5_DISPATCH = [
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Queue/LaravelReportMaterializationDispatcher.php',
+    ];
+
+    private static array $treeEntries = [];
+
+    public static function taskFourFPaths(): array
+    {
+        return self::TASK_FOUR_F_PATHS;
+    }
+
+    public static function taskFivePaths(): array
+    {
+        return self::TASK_FIVE_PATHS;
+    }
+
+    public static function trackedContract(): array
+    {
+        self::guard(
+            count(self::TASK_FOUR_F_PATHS) === 13
+                && count(array_unique(self::TASK_FOUR_F_PATHS)) === 13
+                && count(self::TASK_FIVE_PATHS) === 30
+                && count(array_unique(self::TASK_FIVE_PATHS)) === 30
+                && count(PlanOneAEvidence::taskFourEPaths()) === 78
+                && array_intersect(PlanOneAEvidence::taskFourEPaths(), self::TASK_FIVE_PATHS) === [],
+        );
+
+        return [
+            'task_4e' => [
+                'commit_sha' => self::TASK_FOUR_E_COMMIT,
+                'subject' => self::TASK_FOUR_E_SUBJECT,
+                'parent_commit_sha' => self::TASK_FOUR_E_PARENT,
+                'manifest_count' => 78,
+            ],
+            'task_4f' => [
+                'subject' => self::TASK_FOUR_F_SUBJECT,
+                'parent_commit_sha' => self::TASK_FOUR_E_COMMIT,
+                'tracked_paths' => self::TASK_FOUR_F_PATHS,
+            ],
+            'task_5' => [
+                'subject' => self::TASK_FIVE_SUBJECT,
+                'tracked_paths' => self::TASK_FIVE_PATHS,
+            ],
+            'phases' => [
+                self::PRE5 => [
+                    'task_5_state' => 'pending',
+                    'dispatch_allowlist' => self::PRE5_DISPATCH,
+                ],
+                self::POST5 => [
+                    'task_5_state' => 'present',
+                    'dispatch_allowlist' => self::POST5_DISPATCH,
+                ],
+            ],
+            'ownership' => [
+                'task_4e' => 78,
+                'task_4f' => 13,
+                'task_5' => 30,
+                'product_union' => 108,
+                'product_overlap' => 0,
+            ],
+        ];
+    }
+
+    public static function discover(string $root, string $head): array
+    {
+        self::guard(preg_match('/^[a-f0-9]{40}$/D', $head) === 1);
+        self::verifyTaskFourE($root);
+        self::guard(
+            $head !== self::TASK_FOUR_E_COMMIT,
+            'PLAN_1A_EXECUTION_PHASE_HISTORICAL_RED',
+        );
+        $headMetadata = self::commitMetadata($root, $head);
+        $taskFourF = null;
+        $taskFive = null;
+        $phase = null;
+
+        if ($headMetadata['subject'] === self::TASK_FOUR_F_SUBJECT) {
+            self::guard($headMetadata['parents'] === [self::TASK_FOUR_E_COMMIT]);
+            self::verifyManifestCommit($root, $head, self::TASK_FOUR_F_PATHS);
+            self::verifyPre5TaskFiveState($root, $head);
+            $taskFourF = $head;
+            $phase = self::PRE5;
+        } elseif ($headMetadata['subject'] === self::TASK_FIVE_SUBJECT) {
+            self::guard(count($headMetadata['parents']) === 1);
+            $taskFourF = $headMetadata['parents'][0];
+            $taskFourFMetadata = self::commitMetadata($root, $taskFourF);
+            self::guard(
+                $taskFourFMetadata['subject'] === self::TASK_FOUR_F_SUBJECT
+                    && $taskFourFMetadata['parents'] === [self::TASK_FOUR_E_COMMIT],
+            );
+            self::verifyManifestCommit($root, $taskFourF, self::TASK_FOUR_F_PATHS);
+            self::verifyPre5TaskFiveState($root, $taskFourF);
+            self::verifyManifestCommit($root, $head, self::TASK_FIVE_PATHS);
+            self::verifyTaskFiveTransition($root, $taskFourF, $head);
+            $taskFive = $head;
+            $phase = self::POST5;
+        }
+
+        self::guard(is_string($phase) && is_string($taskFourF));
+        $contract = self::trackedContract();
+
+        return [
+            'name' => $phase,
+            'head_commit_sha' => $head,
+            'task_4e_commit_sha' => self::TASK_FOUR_E_COMMIT,
+            'task_4f_commit_sha' => $taskFourF,
+            'task_5_commit_sha' => $taskFive,
+            'task_5_state' => $contract['phases'][$phase]['task_5_state'],
+            'dispatch_allowlist' => $contract['phases'][$phase]['dispatch_allowlist'],
+            'committed_tree_projection_sha256' => self::reportingProjectionHash($root, $head),
+        ];
+    }
+
+    public static function assertNoPendingOccupants(string $root): void
+    {
+        $output = self::git(
+            $root,
+            ['ls-files', '--others', '--ignored', '--exclude-standard', '-z', '--', ...self::TASK_FIVE_PATHS],
+        );
+        self::guard($output === '');
+        $baseline = self::taskFiveRuntimeContractBaseline($root);
+        foreach (self::TASK_FIVE_PATHS as $path) {
+            $absolute = $root.'/'.$path;
+            if ($path === self::TASK_FIVE_RUNTIME_CONTRACT_PATH) {
+                $stat = lstat($absolute);
+                self::guard(
+                    $stat !== false
+                        && ! is_link($absolute)
+                        && (($stat['mode'] & 0170000) === 0100000)
+                        && trim(self::git($root, ['hash-object', '--no-filters', '--', $path])) === $baseline['oid'],
+                    'PLAN_1A_EXECUTION_PENDING_OCCUPANT',
+                );
+
+                continue;
+            }
+            if (! file_exists($absolute) && ! is_link($absolute)) {
+                continue;
+            }
+            $stat = lstat($absolute);
+            self::guard(
+                $stat !== false
+                    && ! is_link($absolute)
+                    && (($stat['mode'] & 0170000) === 0100000),
+                'PLAN_1A_EXECUTION_PENDING_OCCUPANT',
+            );
+        }
+    }
+
+    private static function verifyTaskFourE(string $root): void
+    {
+        $metadata = self::commitMetadata($root, self::TASK_FOUR_E_COMMIT);
+        self::guard(
+            $metadata['commit'] === self::TASK_FOUR_E_COMMIT
+                && $metadata['parents'] === [self::TASK_FOUR_E_PARENT]
+                && $metadata['subject'] === self::TASK_FOUR_E_SUBJECT,
+        );
+        self::verifyManifestCommit($root, self::TASK_FOUR_E_COMMIT, PlanOneAEvidence::taskFourEPaths());
+    }
+
+    private static function verifyPre5TaskFiveState(string $root, string $head): void
+    {
+        $baseline = self::taskFiveRuntimeContractBaseline($root);
+        foreach (self::TASK_FIVE_PATHS as $path) {
+            if ($path === self::TASK_FIVE_RUNTIME_CONTRACT_PATH) {
+                self::guard(self::regularBlob($root, $head, $path) === $baseline);
+
+                continue;
+            }
+            self::guard(self::gitExit($root, ['cat-file', '-e', $head.':'.$path]) !== 0);
+        }
+    }
+
+    private static function verifyTaskFiveTransition(string $root, string $taskFourF, string $taskFive): void
+    {
+        $baseline = self::taskFiveRuntimeContractBaseline($root);
+        self::guard(self::regularBlob($root, $taskFourF, self::TASK_FIVE_RUNTIME_CONTRACT_PATH) === $baseline);
+        self::guard(self::regularBlob($root, $taskFive, self::TASK_FIVE_RUNTIME_CONTRACT_PATH)['oid'] !== $baseline['oid']);
+        foreach (self::TASK_FIVE_PATHS as $path) {
+            if ($path === self::TASK_FIVE_RUNTIME_CONTRACT_PATH) {
+                continue;
+            }
+            self::guard(self::gitExit($root, ['cat-file', '-e', $taskFourF.':'.$path]) !== 0);
+        }
+    }
+
+    private static function taskFiveRuntimeContractBaseline(string $root): array
+    {
+        $baseline = self::regularBlob($root, self::TASK_FOUR_E_COMMIT, self::TASK_FIVE_RUNTIME_CONTRACT_PATH);
+        self::guard(
+            $baseline['mode'] === '100644'
+                && $baseline['oid'] === self::TASK_FIVE_RUNTIME_CONTRACT_BASELINE_BLOB,
+        );
+
+        return $baseline;
+    }
+
+    private static function verifyManifestCommit(string $root, string $commit, array $expectedPaths): void
+    {
+        $actualPaths = self::nulPaths(self::git(
+            $root,
+            ['--no-replace-objects', 'diff-tree', '--no-renames', '--no-commit-id', '--name-only', '-r', '-z', $commit],
+        ));
+        $expected = $expectedPaths;
+        sort($expected, SORT_STRING);
+        self::guard($actualPaths === $expected);
+        foreach ($expected as $path) {
+            self::regularBlob($root, $commit, $path);
+        }
+    }
+
+    private static function regularBlob(string $root, string $commit, string $path): array
+    {
+        $entry = self::treeEntries($root, $commit)[$path] ?? null;
+        self::guard(
+            is_array($entry)
+                && in_array($entry['mode'] ?? null, ['100644', '100755'], true)
+                && ($entry['type'] ?? null) === 'blob'
+                && preg_match('/^[a-f0-9]{40}$/D', $entry['oid'] ?? '') === 1,
+            'PLAN_1A_EXECUTION_PHASE_BLOB_INVALID',
+        );
+
+        return ['mode' => $entry['mode'], 'oid' => $entry['oid']];
+    }
+
+    private static function reportingProjectionHash(string $root, string $commit): string
+    {
+        $paths = array_values(array_filter(
+            array_keys(self::treeEntries($root, $commit)),
+            static fn (string $path): bool => str_starts_with(
+                $path,
+                'app/BusinessModules/Core/Reporting/',
+            ),
+        ));
+        sort($paths, SORT_STRING);
+        $projection = '';
+        foreach ($paths as $path) {
+            $blob = self::regularBlob($root, $commit, $path);
+            $projection .= $path."\0".$blob['mode']."\0".$blob['oid']."\n";
+        }
+
+        return hash('sha256', $projection);
+    }
+
+    private static function treeEntries(string $root, string $commit): array
+    {
+        $key = str_replace('\\', '/', $root).':'.$commit;
+        if (isset(self::$treeEntries[$key])) {
+            return self::$treeEntries[$key];
+        }
+        $entries = [];
+        foreach (array_filter(explode("\0", self::git(
+            $root,
+            ['--no-replace-objects', 'ls-tree', '-r', '-z', $commit],
+        ))) as $line) {
+            self::guard(
+                preg_match('/\A([0-9]{6}) ([a-z]+) ([a-f0-9]{40})\t(.+)\z/sD', $line, $match) === 1,
+                'PLAN_1A_EXECUTION_PHASE_BLOB_INVALID',
+            );
+            $entries[$match[4]] = ['mode' => $match[1], 'type' => $match[2], 'oid' => $match[3]];
+        }
+
+        return self::$treeEntries[$key] = $entries;
+    }
+
+    private static function commitMetadata(string $root, string $commit): array
+    {
+        self::guard(trim(self::git($root, ['--no-replace-objects', 'cat-file', '-t', $commit])) === 'commit');
+        $parts = explode("\0", rtrim(self::git(
+            $root,
+            ['--no-replace-objects', 'show', '-s', '--format=%H%x00%P%x00%s', $commit],
+        ), "\r\n"));
+
+        return [
+            'commit' => $parts[0] ?? null,
+            'parents' => ($parts[1] ?? '') === '' ? [] : preg_split('/\s+/', $parts[1]),
+            'subject' => $parts[2] ?? null,
+        ];
+    }
+
+    private static function nulPaths(string $bytes): array
+    {
+        $paths = array_values(array_filter(explode("\0", $bytes), static fn (string $path): bool => $path !== ''));
+        sort($paths, SORT_STRING);
+
+        return $paths;
+    }
+
+    private static function git(string $root, array $arguments): string
+    {
+        $process = new Process(['git', ...$arguments], $root);
+        $process->setTimeout(30);
+        $process->run();
+        self::guard($process->isSuccessful());
+
+        return $process->getOutput();
+    }
+
+    private static function gitExit(string $root, array $arguments): int
+    {
+        $process = new Process(['git', ...$arguments], $root);
+        $process->setTimeout(30);
+        $process->run();
+
+        return $process->getExitCode() ?? 1;
+    }
+
+    private static function guard(
+        bool $condition,
+        string $message = 'PLAN_1A_EXECUTION_PHASE_INVALID',
+    ): void {
+        if (! $condition) {
+            throw new PlanOneAEvidenceFailure(3, $message);
+        }
+    }
+}
+
 final readonly class TaskSevenProvenance
 {
     public function __construct(
@@ -391,12 +787,38 @@ final class PlanOneAEvidence
 
     private string $root;
 
+    private ?array $executionPhase = null;
+
+    private ?string $cleanHead = null;
+
+    public static function taskFourEPaths(): array
+    {
+        return self::TASK_FOUR_E_PATHS;
+    }
+
+    public static function renderPhaseAwareTrackedLock(array $legacyLock): array
+    {
+        self::guard(! array_key_exists('execution_phases', $legacyLock), 4, 'PLAN_1A_EXECUTION_PHASE_LOCK_INPUT_INVALID');
+        $lock = [];
+        foreach ($legacyLock as $key => $value) {
+            $lock[$key] = $value;
+            if ($key === 'definition_lifecycle') {
+                $lock['execution_phases'] = PlanOneAExecutionPhaseAuthority::trackedContract();
+            }
+        }
+        self::guard(isset($lock['execution_phases']), 4, 'PLAN_1A_EXECUTION_PHASE_LOCK_INPUT_INVALID');
+        $bytes = self::encode($lock);
+
+        return [$lock, $bytes, hash('sha256', $bytes)."\n"];
+    }
+
     public static function execute(array $argv): int
     {
         try {
             $options = self::parse(array_slice($argv, 1));
             $instance = new self($options['repository-root']);
             $commit = $options['commit-sha'];
+            $instance->beginCleanSnapshot($commit);
             $mutating = ! $options['check'];
             if ($mutating) {
                 $instance->ensureDirectory('build/reports');
@@ -424,6 +846,7 @@ final class PlanOneAEvidence
                     $instance->completion($commit, $options['output'], $options['check']);
                 }
                 $instance->fault('after_mode');
+                $instance->endCleanSnapshot();
             } catch (Throwable $failure) {
                 if ($mutating) {
                     $instance->cleanup($outputs);
@@ -457,8 +880,11 @@ final class PlanOneAEvidence
     {
         $resolved = realpath($root);
         self::guard(is_string($resolved), 2, 'PLAN_1A_EVIDENCE_ROOT_INVALID');
-        $gitRoot = trim($this->process(['git', 'rev-parse', '--show-toplevel'], $resolved));
-        self::guard(strcasecmp(str_replace('\\', '/', $gitRoot), str_replace('\\', '/', $resolved)) === 0, 2, 'PLAN_1A_EVIDENCE_ROOT_INVALID');
+        self::guard(
+            is_dir($resolved.'/.git') || is_file($resolved.'/.git'),
+            2,
+            'PLAN_1A_EVIDENCE_ROOT_INVALID',
+        );
         $this->root = $resolved;
     }
 
@@ -647,7 +1073,7 @@ final class PlanOneAEvidence
                 ],
             ],
         ];
-        $bytes = self::encode($lock);
+        [$lock, $bytes, $sidecarBytes] = self::renderPhaseAwareTrackedLock($lock);
         $path = $this->root.'/'.$output;
         $hashPath = $this->root.'/docs/reports/contracts/plan-1a-contract-lock.sha256';
         if ($check) {
@@ -655,14 +1081,14 @@ final class PlanOneAEvidence
                 is_file($path)
                     && is_file($hashPath)
                     && hash_equals($bytes, (string) file_get_contents($path))
-                    && hash_equals(hash('sha256', $bytes)."\n", (string) file_get_contents($hashPath)),
+                    && hash_equals($sidecarBytes, (string) file_get_contents($hashPath)),
                 4,
                 'PLAN_1A_LOCK_HASH_DRIFT',
             );
         } else {
             $this->publishGroup([
                 $path => $bytes,
-                $hashPath => hash('sha256', $bytes)."\n",
+                $hashPath => $sidecarBytes,
             ]);
         }
         fwrite(STDOUT, 'plan-1a-contract-lock: locked task7='.hash('sha256', $evidenceBytes).' lock='.hash('sha256', $bytes).PHP_EOL);
@@ -745,7 +1171,7 @@ final class PlanOneAEvidence
             'task_4e' => [
                 'subject' => self::TASK_FOUR_E_SUBJECT,
                 'parent_commit_sha' => self::TASK_FOUR_E_PARENT,
-                'commit_sha' => $commit,
+                'commit_sha' => '57b9e1b5eb3d646f5d24f78e00165ca9b272e93d',
                 'lineage' => self::TASK_FOUR_E_LINEAGE,
                 'manifest_count' => count(self::TASK_FOUR_E_PATHS),
                 'authorization_matrices' => self::taskFourEMatrixInventories(),
@@ -754,13 +1180,14 @@ final class PlanOneAEvidence
                 'untyped_compatibility_absent' => true,
                 'request_global_authority_absent' => true,
             ],
+            'execution_phase' => $this->requireExecutionPhase(),
         ];
         $bytes = self::encode($completion);
         $this->validateSchema($bytes, 'docs/reports/contracts/plan-1a-completion.schema.json');
         if (! $check) {
             $this->publishGroup([$this->root.'/'.$output => $bytes]);
         }
-        fwrite(STDOUT, 'plan-1a-completion: passed digests=5 commands=2 authorization=22/22 malformed=20/20'.PHP_EOL);
+        fwrite(STDOUT, 'plan-1a-completion: passed digests=6 commands=2 authorization=22/22 malformed=20/20'.PHP_EOL);
     }
 
     private function readValidatedLock(): array
@@ -795,6 +1222,7 @@ final class PlanOneAEvidence
                 'permissions',
                 'error_count',
                 'definition_lifecycle',
+                'execution_phases',
                 'binding_lifecycle',
                 'owner_port_arity',
                 'route_contract',
@@ -833,10 +1261,18 @@ final class PlanOneAEvidence
     private function validateTaskFourELock(array $lock): void
     {
         self::guard(
-            ($lock['task_4e'] ?? null) === self::taskFourEContract(),
+            ($lock['task_4e'] ?? null) === self::taskFourEContract()
+                && ($lock['execution_phases'] ?? null) === PlanOneAExecutionPhaseAuthority::trackedContract(),
             4,
             'PLAN_1A_TASK_4E_LOCK_INVALID',
         );
+    }
+
+    private function requireExecutionPhase(): array
+    {
+        self::guard(is_array($this->executionPhase), 3, 'PLAN_1A_EXECUTION_PHASE_INVALID');
+
+        return $this->executionPhase;
     }
 
     private static function taskFourEContract(): array
@@ -1342,37 +1778,40 @@ final class PlanOneAEvidence
         }
     }
 
+    private function beginCleanSnapshot(string $expectedHead): void
+    {
+        $porcelain = $this->process(['git', 'status', '--porcelain=v1', '--untracked-files=all']);
+        self::guard($porcelain === '', 3, 'PLAN_1A_EVIDENCE_WORKTREE_DIRTY');
+        $head = trim($this->process(['git', 'rev-parse', 'HEAD']));
+        self::guard($head === $expectedHead, 3, 'PLAN_1A_EVIDENCE_HEAD_MISMATCH');
+        $this->cleanHead = $head;
+    }
+
+    private function endCleanSnapshot(): void
+    {
+        self::guard(is_string($this->cleanHead), 3, 'PLAN_1A_EVIDENCE_HEAD_MISMATCH');
+        self::guard(
+            trim($this->process(['git', 'rev-parse', 'HEAD'])) === $this->cleanHead,
+            3,
+            'PLAN_1A_EVIDENCE_HEAD_MISMATCH',
+        );
+        self::guard(
+            $this->process(['git', 'status', '--porcelain=v1', '--untracked-files=all']) === '',
+            3,
+            'PLAN_1A_EVIDENCE_WORKTREE_DIRTY',
+        );
+    }
+
     private function validateModeGitState(string $mode, string $commit): void
     {
-        self::guard(trim($this->process(['git', 'rev-parse', 'HEAD'])) === $commit, 3, 'PLAN_1A_EVIDENCE_HEAD_MISMATCH');
-        $staged = $this->gitPaths(['diff', '--cached', '--name-only', '-z']);
-        $unstaged = $this->gitPaths(['diff', '--name-only', '-z']);
-        $untracked = $this->gitPaths(['ls-files', '--others', '--exclude-standard', '-z']);
-        $working = array_values(array_unique([...$unstaged, ...$untracked]));
-        sort($working, SORT_STRING);
-        if ($mode === 'contract-lock') {
-            $taskFourEPaths = self::TASK_FOUR_E_PATHS;
-            sort($taskFourEPaths, SORT_STRING);
-            $preGenerationPaths = array_values(array_filter(
-                $taskFourEPaths,
-                static fn (string $path): bool => ! in_array($path, [
-                    'docs/reports/contracts/plan-1a-contract-lock.json',
-                    'docs/reports/contracts/plan-1a-contract-lock.sha256',
-                ], true),
-            ));
-            self::guard(
-                $commit === self::TASK_FOUR_E_PARENT
-                    && (($staged === [] && ($working === $preGenerationPaths || $working === $taskFourEPaths))
-                        || ($staged === $taskFourEPaths && $working === [])),
-                3,
-                'PLAN_1A_EVIDENCE_PRECOMMIT_STATE_INVALID',
-            );
-            $this->validateHistoricalTaskLineage();
-
-            return;
+        if ($this->cleanHead === null) {
+            $this->beginCleanSnapshot($commit);
         }
-        self::guard($staged === [] && $working === [], 3, 'PLAN_1A_EVIDENCE_WORKTREE_DIRTY');
-        $this->validateCanonicalTaskFourECommit($commit);
+        self::guard($this->cleanHead === $commit, 3, 'PLAN_1A_EVIDENCE_HEAD_MISMATCH');
+        $this->executionPhase = PlanOneAExecutionPhaseAuthority::discover($this->root, $commit);
+        if ($this->executionPhase['name'] === PlanOneAExecutionPhaseAuthority::PRE5) {
+            PlanOneAExecutionPhaseAuthority::assertNoPendingOccupants($this->root);
+        }
     }
 
     private function validateHistoricalTaskLineage(): void

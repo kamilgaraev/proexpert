@@ -5,67 +5,67 @@ declare(strict_types=1);
 namespace Tests\Architecture\Reporting;
 
 use PHPUnit\Framework\TestCase;
-use RecursiveDirectoryIterator;
-use RecursiveIteratorIterator;
-use SplFileInfo;
+use Symfony\Component\Process\Process;
+
+require_once dirname(__DIR__, 3).'/scripts/reporting/build-plan-1a-evidence.php';
 
 final class PlanOneAScopeBoundaryTest extends TestCase
 {
-    private const DISPATCH_BOUNDARY_PATHS = [
-        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php',
-        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php',
-        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php',
-        'app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php',
-        'app/BusinessModules/Core/Reporting/Infrastructure/Queue/LaravelReportMaterializationDispatcher.php',
-    ];
+    private static array $sourceCache = [];
 
-    public function test_plan_one_a_has_only_the_declared_dispatch_boundaries(): void
+    public function test_plan_one_a_has_only_the_phase_declared_committed_dispatch_boundaries(): void
     {
-        self::assertFalse(is_dir($this->reportingRoot().'/Jobs'));
-        self::assertSame(self::DISPATCH_BOUNDARY_PATHS, $this->dispatchBoundaryPaths());
+        $phase = $this->phase();
+        $sources = $this->phpSources($phase['verified_commit']);
 
-        foreach (self::DISPATCH_BOUNDARY_PATHS as $path) {
-            self::assertFileExists($this->root().'/'.$path);
-        }
+        self::assertFalse($this->hasPathPrefix($sources, 'app/BusinessModules/Core/Reporting/Jobs/'));
+        self::assertSame($phase['dispatch_allowlist'], $this->dispatchBoundaryPaths($sources));
 
-        foreach (array_slice(self::DISPATCH_BOUNDARY_PATHS, 0, 3) as $path) {
-            $source = $this->source($path);
-
+        foreach (array_slice($phase['dispatch_allowlist'], 0, 3) as $path) {
+            self::assertArrayHasKey($path, $sources);
             self::assertMatchesRegularExpression(
                 '/namespace App\\\\BusinessModules\\\\Core\\\\Reporting\\\\Application\\\\Contracts\\\\Execution;/',
-                $source,
+                $sources[$path],
             );
-            self::assertMatchesRegularExpression('/\binterface\s+Report\w+Dispatcher\b/', $source);
-            self::assertMatchesRegularExpression('/public function dispatch\s*\([^)]*\): void;/', $source);
+            self::assertMatchesRegularExpression('/\binterface\s+Report\w+Dispatcher\b/', $sources[$path]);
+            self::assertMatchesRegularExpression('/public function dispatch\s*\([^)]*\): void;/', $sources[$path]);
         }
 
-        $publisher = $this->source(self::DISPATCH_BOUNDARY_PATHS[3]);
+        $publisherPath = $phase['dispatch_allowlist'][3];
         self::assertMatchesRegularExpression(
-            '/namespace App\\\\BusinessModules\\\\Core\\\\Reporting\\\\Infrastructure\\\\Dispatch;/',
-            $publisher,
+            '/\bfinal class LaravelReportDispatchIntentPublisher\b/',
+            $sources[$publisherPath],
         );
-        self::assertMatchesRegularExpression('/\bfinal class LaravelReportDispatchIntentPublisher\b/', $publisher);
-        self::assertMatchesRegularExpression('/->dispatch\s*\(/', $publisher);
+        self::assertMatchesRegularExpression('/->dispatch\s*\(/', $sources[$publisherPath]);
 
-        $queueAdapter = $this->source(self::DISPATCH_BOUNDARY_PATHS[4]);
-        self::assertMatchesRegularExpression(
-            '/namespace App\\\\BusinessModules\\\\Core\\\\Reporting\\\\Infrastructure\\\\Queue;/',
-            $queueAdapter,
-        );
+        $queuePath = 'app/BusinessModules/Core/Reporting/Infrastructure/Queue/LaravelReportMaterializationDispatcher.php';
+        if ($phase['name'] === \PlanOneAExecutionPhaseAuthority::PRE5) {
+            self::assertArrayNotHasKey($queuePath, $sources);
+            self::assertFalse($this->hasPathPrefix(
+                $sources,
+                'app/BusinessModules/Core/Reporting/Infrastructure/Jobs/',
+            ));
+
+            return;
+        }
+
+        self::assertArrayHasKey($queuePath, $sources);
         self::assertMatchesRegularExpression(
             '/\bfinal class LaravelReportMaterializationDispatcher implements ReportMaterializationDispatcher\b/',
-            $queueAdapter,
+            $sources[$queuePath],
         );
-        self::assertMatchesRegularExpression('/MaterializeReportRunJob::dispatch\s*\(/', $queueAdapter);
+        self::assertMatchesRegularExpression('/MaterializeReportRunJob::dispatch\s*\(/', $sources[$queuePath]);
+        self::assertTrue($this->hasPathPrefix(
+            $sources,
+            'app/BusinessModules/Core/Reporting/Infrastructure/Jobs/',
+        ));
     }
 
     public function test_reporting_jobs_are_consumers_and_not_undeclared_dispatch_boundaries(): void
     {
-        $jobsRoot = $this->reportingRoot().'/Infrastructure/Jobs';
-        self::assertDirectoryExists($jobsRoot);
-
-        foreach ($this->phpSources() as $path => $source) {
-            if (in_array($path, self::DISPATCH_BOUNDARY_PATHS, true)) {
+        $phase = $this->phase();
+        foreach ($this->phpSources($phase['verified_commit']) as $path => $source) {
+            if (in_array($path, $phase['dispatch_allowlist'], true)) {
                 continue;
             }
 
@@ -92,41 +92,115 @@ PHP;
         self::assertContains('job_construction', $this->dispatchLeakViolations($source));
     }
 
-    public function test_plan_one_a_contains_no_persistence_or_storage_implementation(): void
+    public function test_committed_reporting_scope_contains_no_forbidden_plan_one_a_implementation(): void
     {
-        self::assertFalse(
-            is_dir($this->reportingRoot().'/Persistence')
-                || is_dir($this->reportingRoot().'/Storage'),
+        $phase = $this->phase();
+        $sources = $this->phpSources($phase['verified_commit']);
+        self::assertFalse($this->hasPathPrefix($sources, 'app/BusinessModules/Core/Reporting/Persistence/'));
+        self::assertFalse($this->hasPathPrefix($sources, 'app/BusinessModules/Core/Reporting/Storage/'));
+        self::assertFalse($this->sourceContains($sources, 'yaml_parse'));
+        self::assertFalse($this->sourceContains($sources, 'ManifestLoader'));
+        self::assertFalse($this->sourceContains($sources, 'FormulaProvider'));
+        self::assertFalse($this->sourceContains($sources, '<script'));
+        self::assertFalse($this->sourceContains($sources, 'React.'));
+        self::assertFalse($this->sourceContains($sources, 'flutter'));
+        self::assertSame(
+            [],
+            array_values(array_filter(
+                $this->committedPaths($phase['verified_commit'], 'database/migrations'),
+                static fn (string $path): bool => str_contains(basename($path), 'reporting'),
+            )),
         );
     }
 
-    public function test_plan_one_a_contains_no_catalog_loader_or_manifest_yaml(): void
+    public function test_filesystem_overlay_cannot_change_committed_scope_projection(): void
     {
-        self::assertFalse($this->reportingSourceContains('yaml_parse') || $this->reportingSourceContains('ManifestLoader'));
+        $phase = $this->phase();
+        $before = $this->dispatchBoundaryPaths($this->phpSources($phase['verified_commit']));
+        $overlay = dirname(__DIR__, 3).'/app/BusinessModules/Core/Reporting/OverlayDispatcher.php';
+        file_put_contents($overlay, "<?php\nfinal class OverlayDispatcher { public function dispatch(): void {} }\n");
+        try {
+            self::assertSame(
+                $before,
+                $this->dispatchBoundaryPaths($this->phpSources($phase['verified_commit'])),
+            );
+        } finally {
+            unlink($overlay);
+        }
     }
 
-    public function test_plan_one_a_contains_no_provider_formula_implementation(): void
+    private function phase(): array
     {
-        self::assertFalse($this->reportingSourceContains('FormulaProvider'));
+        $root = dirname(__DIR__, 3);
+        $head = trim($this->git(['rev-parse', 'HEAD']));
+        if ($head === '57b9e1b5eb3d646f5d24f78e00165ca9b272e93d') {
+            $contract = \PlanOneAExecutionPhaseAuthority::trackedContract();
+
+            return [
+                'name' => \PlanOneAExecutionPhaseAuthority::PRE5,
+                'verified_commit' => $head,
+                'dispatch_allowlist' => $contract['phases'][\PlanOneAExecutionPhaseAuthority::PRE5]['dispatch_allowlist'],
+            ];
+        }
+        $phase = \PlanOneAExecutionPhaseAuthority::discover($root, $head);
+        $phase['verified_commit'] = $head;
+
+        return $phase;
     }
 
-    public function test_plan_one_a_contains_no_migration_owned_by_reporting(): void
+    private function dispatchBoundaryPaths(array $sources): array
     {
-        self::assertSame([], glob($this->root().'/database/migrations/*reporting*') ?: []);
+        $paths = [];
+        foreach ($sources as $path => $source) {
+            $dispatcher = preg_match('/\binterface\s+Report\w+Dispatcher\b/', $source) === 1
+                && preg_match('/public function dispatch\s*\([^)]*\): void;/', $source) === 1;
+            $publisher = preg_match('/\bclass\s+\w*Publisher\b/', $source) === 1
+                && preg_match('/->dispatch\s*\(/', $source) === 1;
+            $queue = preg_match('/\bclass\s+\w*Dispatcher\b/', $source) === 1
+                && preg_match('/::dispatch\s*\(/', $source) === 1;
+            if ($dispatcher || $publisher || $queue) {
+                $paths[] = $path;
+            }
+        }
+        sort($paths, SORT_STRING);
+
+        return $paths;
     }
 
-    public function test_plan_one_a_contains_no_ui_code(): void
+    private function phpSources(string $commit): array
     {
-        self::assertFalse(
-            $this->reportingSourceContains('<script')
-                || $this->reportingSourceContains('React.')
-                || $this->reportingSourceContains('flutter'),
+        if (isset(self::$sourceCache[$commit])) {
+            return self::$sourceCache[$commit];
+        }
+        $sources = [];
+        foreach ($this->committedPaths($commit, 'app/BusinessModules/Core/Reporting') as $path) {
+            if (! str_ends_with($path, '.php')) {
+                continue;
+            }
+            $entry = rtrim($this->git(['--no-replace-objects', 'ls-tree', '-z', $commit, '--', $path]), "\0");
+            self::assertMatchesRegularExpression('/\A(?:100644|100755) blob [a-f0-9]{40}\t/sD', $entry);
+            $sources[$path] = $this->git(['--no-replace-objects', 'show', $commit.':'.$path], false);
+        }
+        ksort($sources, SORT_STRING);
+
+        return self::$sourceCache[$commit] = $sources;
+    }
+
+    private function committedPaths(string $commit, string $prefix): array
+    {
+        $bytes = $this->git(
+            ['--no-replace-objects', 'ls-tree', '-r', '--name-only', '-z', $commit, '--', $prefix],
+            false,
         );
+        $paths = array_values(array_filter(explode("\0", $bytes)));
+        sort($paths, SORT_STRING);
+
+        return $paths;
     }
 
-    private function reportingSourceContains(string $needle): bool
+    private function sourceContains(array $sources, string $needle): bool
     {
-        foreach ($this->phpSources() as $source) {
+        foreach ($sources as $source) {
             if (str_contains($source, $needle)) {
                 return true;
             }
@@ -135,73 +209,17 @@ PHP;
         return false;
     }
 
-    /**
-     * @return list<string>
-     */
-    private function dispatchBoundaryPaths(): array
+    private function hasPathPrefix(array $sources, string $prefix): bool
     {
-        $paths = [];
-
-        foreach ($this->phpSources() as $path => $source) {
-            $isDispatcherInterface = preg_match('/\binterface\s+Report\w+Dispatcher\b/', $source) === 1
-                && preg_match('/public function dispatch\s*\([^)]*\): void;/', $source) === 1;
-            $isDispatchPublisher = preg_match('/\bclass\s+\w*Publisher\b/', $source) === 1
-                && preg_match('/->dispatch\s*\(/', $source) === 1;
-            $isQueueAdapter = preg_match('/\bclass\s+\w*Dispatcher\b/', $source) === 1
-                && preg_match('/::dispatch\s*\(/', $source) === 1;
-
-            if ($isDispatcherInterface || $isDispatchPublisher || $isQueueAdapter) {
-                $paths[] = $path;
+        foreach (array_keys($sources) as $path) {
+            if (str_starts_with($path, $prefix)) {
+                return true;
             }
         }
 
-        sort($paths, SORT_STRING);
-
-        return $paths;
+        return false;
     }
 
-    /**
-     * @return array<string, string>
-     */
-    private function phpSources(): array
-    {
-        $sources = [];
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($this->reportingRoot(), RecursiveDirectoryIterator::SKIP_DOTS),
-        );
-
-        foreach ($iterator as $file) {
-            if (! $file instanceof SplFileInfo || ! $file->isFile() || $file->getExtension() !== 'php') {
-                continue;
-            }
-
-            $absolutePath = str_replace('\\', '/', $file->getPathname());
-            $root = rtrim(str_replace('\\', '/', $this->root()), '/').'/';
-            self::assertStringStartsWith($root, $absolutePath);
-            $relativePath = substr($absolutePath, strlen($root));
-            self::assertIsString($relativePath);
-
-            $source = file_get_contents($file->getPathname());
-            self::assertIsString($source);
-            $sources[$relativePath] = $source;
-        }
-
-        ksort($sources, SORT_STRING);
-
-        return $sources;
-    }
-
-    private function source(string $path): string
-    {
-        $source = file_get_contents($this->root().'/'.$path);
-        self::assertIsString($source);
-
-        return $source;
-    }
-
-    /**
-     * @return list<string>
-     */
     private function dispatchLeakViolations(string $source): array
     {
         $patterns = [
@@ -213,7 +231,6 @@ PHP;
             'job_construction' => '/\bnew\s+(?:\\\\?[A-Z]\w*\\\\)*[A-Z]\w*Job\s*\(/',
         ];
         $violations = [];
-
         foreach ($patterns as $name => $pattern) {
             if (preg_match($pattern, $source) === 1) {
                 $violations[] = $name;
@@ -223,13 +240,12 @@ PHP;
         return $violations;
     }
 
-    private function reportingRoot(): string
+    private function git(array $arguments, bool $trim = true): string
     {
-        return $this->root().'/app/BusinessModules/Core/Reporting';
-    }
+        $process = new Process(['git', ...$arguments], dirname(__DIR__, 3));
+        $process->setTimeout(30);
+        $process->mustRun();
 
-    private function root(): string
-    {
-        return dirname(__DIR__, 3);
+        return $trim ? trim($process->getOutput()) : $process->getOutput();
     }
 }

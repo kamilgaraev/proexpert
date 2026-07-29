@@ -85,6 +85,36 @@
     "resourceMatrix": {"type": "array", "minItems": 17, "maxItems": 17, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "raceMatrix": {"type": "array", "minItems": 8, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
     "ownershipAudit": {"type": "object", "additionalProperties": false, "required": ["task_4e", "task_5", "union", "overlap", "unowned", "extra"], "properties": {"task_4e": {"const": 78}, "task_5": {"const": 30}, "union": {"const": 108}, "overlap": {"const": 0}, "unowned": {"const": 0}, "extra": {"const": 0}}},
+    "executionPhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "head_commit_sha", "task_4e_commit_sha", "task_4f_commit_sha", "task_5_commit_sha", "task_5_state", "dispatch_allowlist", "committed_tree_projection_sha256"],
+      "properties": {
+        "name": {"enum": ["POST_TASK_4E_PRE_TASK_5", "POST_TASK_5"]},
+        "head_commit_sha": {"$ref": "#/$defs/sha1"},
+        "task_4e_commit_sha": {"const": "57b9e1b5eb3d646f5d24f78e00165ca9b272e93d"},
+        "task_4f_commit_sha": {"$ref": "#/$defs/sha1"},
+        "task_5_commit_sha": {"type": ["string", "null"], "pattern": "^[a-f0-9]{40}$"},
+        "task_5_state": {"enum": ["pending", "present"]},
+        "dispatch_allowlist": {"type": "array", "minItems": 4, "maxItems": 5, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "committed_tree_projection_sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "oneOf": [
+        {"properties": {"name": {"const": "POST_TASK_4E_PRE_TASK_5"}, "task_5_commit_sha": {"type": "null"}, "task_5_state": {"const": "pending"}, "dispatch_allowlist": {"const": [
+          "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",
+          "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php",
+          "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php",
+          "app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php"
+        ]}}},
+        {"properties": {"name": {"const": "POST_TASK_5"}, "task_5_commit_sha": {"$ref": "#/$defs/sha1"}, "task_5_state": {"const": "present"}, "dispatch_allowlist": {"const": [
+          "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",
+          "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php",
+          "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php",
+          "app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php",
+          "app/BusinessModules/Core/Reporting/Infrastructure/Queue/LaravelReportMaterializationDispatcher.php"
+        ]}}}
+      ]
+    },
     "routeItem": {
       "type": "object",
       "additionalProperties": false,
@@ -949,7 +979,8 @@
         "producer_commit_sha",
         "executed_at",
         "commands",
-        "task_4e"
+        "task_4e",
+        "execution_phase"
       ],
       "properties": {
         "artifact_id": {
@@ -972,6 +1003,9 @@
         },
         "task_4e": {
           "$ref": "#/$defs/taskFourEEvidence"
+        },
+        "execution_phase": {
+          "$ref": "#/$defs/executionPhase"
         },
         "commands": {
           "type": "array",
@@ -1006,10 +1040,10 @@
                   "const": 0
                 },
                 "tests": {
-                  "const": 505
+                  "const": 503
                 },
                 "assertions": {
-                  "const": 9800
+                  "const": 5062
                 },
                 "skipped": {
                   "const": 0
@@ -2163,7 +2197,8 @@
         "producer_commit_sha",
         "executed_at",
         "commands",
-        "task_4e"
+        "task_4e",
+        "execution_phase"
       ],
       "properties": {
         "artifact_id": {
@@ -2186,6 +2221,9 @@
         },
         "task_4e": {
           "$ref": "#/$defs/taskFourEEvidence"
+        },
+        "execution_phase": {
+          "$ref": "#/$defs/executionPhase"
         },
         "commands": {
           "type": "array",
@@ -2220,10 +2258,10 @@
                   "const": 0
                 },
                 "tests": {
-                  "const": 505
+                  "const": 503
                 },
                 "assertions": {
-                  "const": 9800
+                  "const": 5062
                 },
                 "skipped": {
                   "const": 0

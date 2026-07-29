@@ -11,8 +11,8 @@
       "command": "pinned phpunit aggregate",
       "status": "passed",
       "exit_code": 0,
-      "tests": 505,
-      "assertions": 9800,
+      "tests": 503,
+      "assertions": 5062,
       "skipped": 0,
       "executed_at": "2026-07-26T00:00:00Z"
     },
@@ -60,5 +60,20 @@
     "migration_cutover": "static_contract_passed_not_executed_locally",
     "untyped_compatibility_absent": true,
     "request_global_authority_absent": true
+  },
+  "execution_phase": {
+    "name": "POST_TASK_4E_PRE_TASK_5",
+    "head_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "task_4e_commit_sha": "57b9e1b5eb3d646f5d24f78e00165ca9b272e93d",
+    "task_4f_commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "task_5_commit_sha": null,
+    "task_5_state": "pending",
+    "dispatch_allowlist": [
+      "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",
+      "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php",
+      "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php",
+      "app/BusinessModules/Core/Reporting/Infrastructure/Dispatch/LaravelReportDispatchIntentPublisher.php"
+    ],
+    "committed_tree_projection_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
   }
 }

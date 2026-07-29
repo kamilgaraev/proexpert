@@ -7,6 +7,7 @@ use Symfony\Component\Process\Process;
 use Tests\Support\Reporting\HermeticReportingHttpHarness;
 
 require dirname(__DIR__, 2).'/vendor/autoload.php';
+require_once __DIR__.'/build-plan-1a-evidence.php';
 require_once dirname(__DIR__, 2).'/tests/Support/Reporting/FakeReportingActions.php';
 require_once dirname(__DIR__, 2).'/tests/Support/Reporting/HermeticReportingHttpHarness.php';
 
@@ -517,6 +518,10 @@ final class PlanOneAGates
 
     private static ?Closure $historicalPredicateOverride = null;
 
+    private static ?array $executionPhase = null;
+
+    private static ?string $cleanHead = null;
+
     public static function execute(array $argv): int
     {
         $directory = null;
@@ -524,6 +529,7 @@ final class PlanOneAGates
         try {
             $options = self::parse(array_slice($argv, 1));
             $root = self::resolveRepositoryRoot($options['repository-root']);
+            self::beginCleanSnapshot($root, $options['commit-sha']);
             $directory = self::validateOutputDirectory($root, $options['output-directory'], $options['mode'] === 'normal');
             $normal = $options['mode'] === 'normal';
             if ($normal) {
@@ -543,6 +549,7 @@ final class PlanOneAGates
                     self::publish($directory, $bundle);
                 }
             }
+            self::endCleanSnapshot($root);
             fwrite(STDOUT, 'plan-1a-gates: passed commands=2 routes=12 authorization=22/22 malformed=20/20'.PHP_EOL);
 
             return 0;
@@ -609,15 +616,13 @@ final class PlanOneAGates
             3,
             'PLAN_1A_GATE_ROOT_INVALID',
         );
-        $gitRoot = trim(self::process(['git', 'rev-parse', '--show-toplevel'], $root)[0]);
-        self::guard(strcasecmp(str_replace('\\', '/', $gitRoot), str_replace('\\', '/', $root)) === 0, 3, 'PLAN_1A_GATE_ROOT_INVALID');
 
         return $root;
     }
 
     private static function validateRepository(string $root, array $options): void
     {
-        self::guard(trim(self::process(['git', 'rev-parse', 'HEAD'], $root)[0]) === $options['commit-sha'], 3, 'PLAN_1A_GATE_HEAD_MISMATCH');
+        self::guard(self::$cleanHead === $options['commit-sha'], 3, 'PLAN_1A_GATE_HEAD_MISMATCH');
         $branch = self::$branchOverride instanceof Closure
             ? (self::$branchOverride)($root)
             : trim(self::process(['git', 'branch', '--show-current'], $root)[0]);
@@ -769,6 +774,7 @@ final class PlanOneAGates
             'producer_commit_sha' => $commit,
             'executed_at' => $timestamp,
             'task_4e' => self::taskFourEEvidence(),
+            'execution_phase' => self::requireExecutionPhase(),
             'commands' => $commands,
         ];
         self::validateSchema(
@@ -1130,6 +1136,33 @@ final class PlanOneAGates
         }
     }
 
+    private static function beginCleanSnapshot(string $root, string $expectedHead): void
+    {
+        self::guard(
+            self::process(['git', 'status', '--porcelain=v1', '--untracked-files=all'], $root)[0] === '',
+            3,
+            'PLAN_1A_GATE_WORKTREE_DIRTY',
+        );
+        $head = trim(self::process(['git', 'rev-parse', 'HEAD'], $root)[0]);
+        self::guard($head === $expectedHead, 3, 'PLAN_1A_GATE_HEAD_MISMATCH');
+        self::$cleanHead = $head;
+    }
+
+    private static function endCleanSnapshot(string $root): void
+    {
+        self::guard(is_string(self::$cleanHead), 3, 'PLAN_1A_GATE_HEAD_MISMATCH');
+        self::guard(
+            trim(self::process(['git', 'rev-parse', 'HEAD'], $root)[0]) === self::$cleanHead,
+            3,
+            'PLAN_1A_GATE_HEAD_MISMATCH',
+        );
+        self::guard(
+            self::process(['git', 'status', '--porcelain=v1', '--untracked-files=all'], $root)[0] === '',
+            3,
+            'PLAN_1A_GATE_WORKTREE_DIRTY',
+        );
+    }
+
     private static function temporaryPath(string $directory): string
     {
         for ($attempt = 0; $attempt < 10; $attempt++) {
@@ -1146,29 +1179,25 @@ final class PlanOneAGates
 
     private static function validateGitState(string $root, string $commit): void
     {
-        $staged = self::gitPaths(['diff', '--cached', '--name-only', '-z'], $root);
-        $unstaged = self::gitPaths(['diff', '--name-only', '-z'], $root);
-        $untracked = self::gitPaths(['ls-files', '--others', '--exclude-standard', '-z'], $root);
-        $working = array_values(array_unique([...$unstaged, ...$untracked]));
-        sort($working, SORT_STRING);
-        $taskFourEPaths = self::TASK_FOUR_E_PATHS;
-        sort($taskFourEPaths, SORT_STRING);
-        if ($commit === self::TASK_FOUR_E_PARENT
-            && $staged === $taskFourEPaths
-            && $working === []) {
-            self::validateHistoricalTaskLineage($root);
-
-            return;
+        if (self::$cleanHead === null) {
+            self::beginCleanSnapshot($root, $commit);
         }
-        if ($commit === self::TASK_FOUR_E_PARENT
-            && $staged === []
-            && $working === $taskFourEPaths) {
-            self::validateHistoricalTaskLineage($root);
-
-            return;
+        self::guard(self::$cleanHead === $commit, 3, 'PLAN_1A_GATE_HEAD_MISMATCH');
+        try {
+            self::$executionPhase = PlanOneAExecutionPhaseAuthority::discover($root, $commit);
+            if (self::$executionPhase['name'] === PlanOneAExecutionPhaseAuthority::PRE5) {
+                PlanOneAExecutionPhaseAuthority::assertNoPendingOccupants($root);
+            }
+        } catch (PlanOneAEvidenceFailure $failure) {
+            throw new PlanOneAGatesFailure($failure->exitStatus, $failure->getMessage());
         }
-        self::guard($staged === [] && $working === [], 3, 'PLAN_1A_GATE_WORKTREE_DIRTY');
-        self::validateCanonicalTaskFourECommit($root, $commit);
+    }
+
+    private static function requireExecutionPhase(): array
+    {
+        self::guard(is_array(self::$executionPhase), 3, 'PLAN_1A_EXECUTION_PHASE_INVALID');
+
+        return self::$executionPhase;
     }
 
     private static function validateHistoricalTaskLineage(string $root): void
