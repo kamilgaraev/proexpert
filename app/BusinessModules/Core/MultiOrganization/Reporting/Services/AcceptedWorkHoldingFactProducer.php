@@ -38,15 +38,14 @@ final readonly class AcceptedWorkHoldingFactProducer
         $contract = $act->contract;
         $organizationId = (int) ($contract?->organization_id ?? 0);
         $projectId = (int) $act->project_id;
-        $sourceVersion = $this->sourceVersion($act);
-        if (! $contract instanceof Contract || min($organizationId, $projectId, $sourceVersion) < 1) {
-            return null;
-        }
-
         $recognizedAt = $occurredAt
             ?? $act->approval_date
             ?? $act->signed_at
             ?? $act->updated_at;
+        $sourceVersion = $this->sourceVersion($act, $recognizedAt);
+        if (! $contract instanceof Contract || min($organizationId, $projectId, $sourceVersion) < 1) {
+            return null;
+        }
         $allocation = ContractProjectAllocation::withTrashed()
             ->where('contract_id', $contract->getKey())
             ->where('project_id', $projectId)
@@ -84,7 +83,7 @@ final readonly class AcceptedWorkHoldingFactProducer
                 'holding_id' => $hierarchy?->holdingId,
                 'hierarchy_version' => $hierarchy?->version,
                 'source_type' => 'performance_act',
-                'source_id' => $sourceVersion,
+                'source_id' => (int) $act->getKey(),
                 'source_version' => $sourceVersion,
                 'monetary_basis' => 'accepted_accrual',
             ], $missing);
@@ -96,16 +95,9 @@ final readonly class AcceptedWorkHoldingFactProducer
             ? null
             : Contractor::query()->whereKey($contract->contractor_id)->value('source_organization_id');
         $sourceRefs = [
-            ['type' => 'approved_act', 'id' => $sourceVersion, 'version' => $sourceVersion],
+            ['type' => 'approved_act', 'id' => (int) $act->getKey(), 'version' => $sourceVersion],
             ['type' => 'contract_allocation', 'id' => (int) $allocation->getKey(), 'version' => (int) $history->getKey()],
         ];
-        foreach ($act->lines as $line) {
-            $sourceRefs[] = ['type' => 'performance_act_line', 'id' => (int) $line->getKey()];
-        }
-        foreach ($act->completedWorks as $work) {
-            $sourceRefs[] = ['type' => 'completed_work', 'id' => (int) $work->getKey()];
-        }
-
         $source = [
             'organization_id' => $organizationId,
             'holding_id' => $hierarchy->holdingId,
@@ -118,7 +110,7 @@ final readonly class AcceptedWorkHoldingFactProducer
             'allocation_id' => (int) $allocation->getKey(),
             ...$this->linkedEvidence($contract, $projectId, $recognizedAt),
             'source_type' => 'performance_act',
-            'source_id' => $sourceVersion,
+            'source_id' => (int) $act->getKey(),
             'source_version' => $sourceVersion,
             'monetary_basis' => 'accepted_accrual',
             'allocated_amount_minor' => $active ? $this->moneyToMinor((string) $act->amount) : 0,
@@ -130,16 +122,30 @@ final readonly class AcceptedWorkHoldingFactProducer
             'recognized_on' => $recognizedAt->format('Y-m-d'),
             'source_refs' => [
                 ...$sourceRefs,
-                ['type' => 'performance_act_state', 'id' => $active ? 'active' : 'reversed'],
             ],
         ];
+        $missing = $this->projector->missingEvidence($source);
+        if ($missing !== []) {
+            $this->projector->recordGap($source, $missing);
+
+            return null;
+        }
 
         return $this->projector->persist($this->projector->project($source), $source);
     }
 
-    private function sourceVersion(ContractPerformanceAct $act): int
+    private function sourceVersion(ContractPerformanceAct $act, ?DateTimeInterface $occurredAt): int
     {
-        $versionAt = $act->updated_at ?? $act->created_at;
+        $candidates = array_values(array_filter([
+            $occurredAt,
+            $act->updated_at,
+            $act->created_at,
+        ], static fn (mixed $value): bool => $value instanceof DateTimeInterface));
+        usort(
+            $candidates,
+            static fn (DateTimeInterface $left, DateTimeInterface $right): int => $left <=> $right,
+        );
+        $versionAt = $candidates[array_key_last($candidates)] ?? null;
         if ($versionAt instanceof DateTimeInterface) {
             return (int) $versionAt->format('Uu');
         }
@@ -158,7 +164,6 @@ final readonly class AcceptedWorkHoldingFactProducer
             ];
         }
 
-        $parent = Contract::query()->find($parentContractId);
         $parentAllocation = ContractProjectAllocation::withTrashed()
             ->where('contract_id', $parentContractId)
             ->where('project_id', $projectId)
@@ -170,8 +175,7 @@ final readonly class AcceptedWorkHoldingFactProducer
             ->where('project_id', $projectId)
             ->latest('id')
             ->first();
-        if (! $parent instanceof Contract
-            || ! $parentAllocation instanceof ContractProjectAllocation
+        if (! $parentAllocation instanceof ContractProjectAllocation
             || ! $childAllocation instanceof ContractProjectAllocation) {
             return [
                 'linked_parent_allocation_id' => null,
@@ -179,11 +183,31 @@ final readonly class AcceptedWorkHoldingFactProducer
                 'linked_outgoing_minor' => null,
             ];
         }
+        $parentFact = HoldingAllocationFactVersion::query()
+            ->where('allocation_id', $parentAllocation->getKey())
+            ->where('monetary_basis', 'contracted')
+            ->whereDate('recognized_on', '<=', $recognizedAt)
+            ->orderByDesc('source_version')
+            ->first();
+        $childFact = HoldingAllocationFactVersion::query()
+            ->where('allocation_id', $childAllocation->getKey())
+            ->where('monetary_basis', 'contracted')
+            ->whereDate('recognized_on', '<=', $recognizedAt)
+            ->orderByDesc('source_version')
+            ->first();
+        if (! $parentFact instanceof HoldingAllocationFactVersion
+            || ! $childFact instanceof HoldingAllocationFactVersion) {
+            return [
+                'linked_parent_allocation_id' => (int) $parentAllocation->getKey(),
+                'linked_incoming_minor' => null,
+                'linked_outgoing_minor' => null,
+            ];
+        }
 
         return [
             'linked_parent_allocation_id' => (int) $parentAllocation->getKey(),
-            'linked_incoming_minor' => $this->moneyToMinor((string) $parentAllocation->calculateAllocatedAmount()),
-            'linked_outgoing_minor' => $this->moneyToMinor((string) $childAllocation->calculateAllocatedAmount()),
+            'linked_incoming_minor' => (int) $parentFact->amount_minor,
+            'linked_outgoing_minor' => (int) $childFact->amount_minor,
         ];
     }
 

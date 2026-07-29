@@ -128,10 +128,10 @@ final class CashGapForecastService
         if (
             $context->stressInflowDelayDays < 0
             || $context->optimisticInflowAdvanceDays < 0
-            || $context->stressInflowProbabilityFactor < 0.0
-            || $context->stressInflowProbabilityFactor > 1.0
-            || $context->optimisticInflowProbabilityLift < 0.0
-            || $context->optimisticInflowProbabilityLift > 1.0
+            || PortfolioDecimal::compare($context->stressInflowProbabilityFactor, '0') < 0
+            || PortfolioDecimal::compare($context->stressInflowProbabilityFactor, '1') > 0
+            || PortfolioDecimal::compare($context->optimisticInflowProbabilityLift, '0') < 0
+            || PortfolioDecimal::compare($context->optimisticInflowProbabilityLift, '1') > 0
         ) {
             throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.scenario_policy_invalid'));
         }
@@ -473,10 +473,10 @@ final class CashGapForecastService
         return $this->multiply($amount, $this->effectiveProbability($context, $item));
     }
 
-    private function effectiveProbability(CashGapForecastContext $context, CashGapForecastItem $item): float
+    private function effectiveProbability(CashGapForecastContext $context, CashGapForecastItem $item): string
     {
         if ($item->isOutflow() || $item->isActual()) {
-            return 1.0;
+            return '1.00000000';
         }
 
         $probability = $this->probability($item->probability);
@@ -486,11 +486,17 @@ final class CashGapForecastService
         }
 
         if ($context->scenario === CashGapForecastContext::SCENARIO_OPTIMISTIC) {
-            $probability = min(1.0, $probability + $context->optimisticInflowProbabilityLift);
+            $probability = BigDecimal::of($probability)
+                ->plus($this->probability($context->optimisticInflowProbabilityLift))
+                ->isGreaterThan(BigDecimal::one())
+                    ? '1.00000000'
+                    : (string) BigDecimal::of($probability)
+                        ->plus($this->probability($context->optimisticInflowProbabilityLift));
         }
 
         if ($this->isPessimisticScenario($context)) {
-            $probability *= $context->stressInflowProbabilityFactor;
+            $probability = (string) BigDecimal::of($probability)
+                ->multipliedBy($this->probability($context->stressInflowProbabilityFactor));
         }
 
         return $this->probability($probability);
@@ -501,7 +507,7 @@ final class CashGapForecastService
         CashGapForecastItem $item,
         string $amount,
         string $date,
-        float $effectiveProbability,
+        string $effectiveProbability,
         ?string $originalDate,
     ): void {
         if ($item->isOverdueInflow()) {
@@ -541,7 +547,7 @@ final class CashGapForecastService
         string $amount,
         string $balanceImpact,
         string $date,
-        float $effectiveProbability,
+        string $effectiveProbability,
         ?string $originalDate,
     ): array {
         return [
@@ -846,9 +852,18 @@ final class CashGapForecastService
         return $sum;
     }
 
-    private function probability(float $probability): float
+    private function probability(float|string $probability): string
     {
-        return round(min(1.0, max(0.0, $probability)), 6);
+        $value = BigDecimal::of(is_float($probability)
+            ? rtrim(rtrim(sprintf('%.14F', $probability), '0'), '.')
+            : $probability);
+        if ($value->isNegative()) {
+            $value = BigDecimal::zero();
+        } elseif ($value->isGreaterThan(BigDecimal::one())) {
+            $value = BigDecimal::one();
+        }
+
+        return (string) $value->toScale(8, RoundingMode::HalfUp);
     }
 
     private function money(string|int|float $amount): string
@@ -860,12 +875,10 @@ final class CashGapForecastService
         return PortfolioDecimal::money($amount);
     }
 
-    private function multiply(string $amount, float $factor): string
+    private function multiply(string $amount, string $factor): string
     {
-        $factorDecimal = rtrim(rtrim(sprintf('%.8F', $factor), '0'), '.');
-
         return (string) BigDecimal::of($amount)
-            ->multipliedBy($factorDecimal === '' ? '0' : $factorDecimal)
+            ->multipliedBy($factor)
             ->toScale(2, RoundingMode::HalfUp);
     }
 

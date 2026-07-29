@@ -806,6 +806,21 @@ final readonly class BudgetingPortfolioProjectionService
         if (($margin['available'] ?? true) === false || ($wip['available'] ?? true) === false) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
         }
+        foreach ([
+            $margin['sources_coverage'] ?? null,
+            $wip['source_coverage'] ?? null,
+        ] as $coverage) {
+            if (! is_array($coverage) || $coverage === []) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+            }
+            foreach ($coverage as $source) {
+                if (! is_array($source)
+                    || ($source['available'] ?? false) !== true
+                    || ! array_key_exists('included_source_rows', $source)) {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+                }
+            }
+        }
     }
 
     private function sourceRefs(array $payloads): array

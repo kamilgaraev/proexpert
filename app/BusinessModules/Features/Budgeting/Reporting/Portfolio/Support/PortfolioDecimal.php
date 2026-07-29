@@ -61,6 +61,20 @@ final class PortfolioDecimal
         }
     }
 
+    public static function ratio(string|int $value): string
+    {
+        try {
+            $ratio = BigDecimal::of((string) $value);
+            if ($ratio->isNegative() || $ratio->isGreaterThan(BigDecimal::one())) {
+                throw new InvalidArgumentException('portfolio_ratio_invalid');
+            }
+
+            return (string) $ratio->toScale(8, RoundingMode::HalfUp);
+        } catch (MathException) {
+            throw new InvalidArgumentException('portfolio_ratio_invalid');
+        }
+    }
+
     public static function isNegative(string $value): bool
     {
         try {

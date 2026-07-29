@@ -11,6 +11,7 @@ use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingHierarc
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\IntercompanyContractFlowSnapshotMaterializer;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionReadinessProbe;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
+use App\Models\ContractAllocationHistory;
 
 final readonly class IntercompanyContractFlowReadinessProbe implements ReportDefinitionReadinessProbe
 {
@@ -68,6 +69,15 @@ final readonly class IntercompanyContractFlowReadinessProbe implements ReportDef
             && hash_equals($allocationWatermark, (string) $snapshot->allocation_watermark)
             && (int) $allocationWatermark > 0
             && (int) $snapshot->row_count > 0
+            && HoldingAllocationFactVersion::query()
+                ->whereIn('organization_id', $hierarchy->organizationIds)
+                ->where('monetary_basis', 'contracted')
+                ->whereDate('recognized_on', '<=', $snapshot->generated_at)
+                ->count() >= ContractAllocationHistory::query()
+                ->where('created_at', '<=', $snapshot->generated_at)
+                ->whereHas('contract', static fn ($query) => $query
+                    ->whereIn('organization_id', $hierarchy->organizationIds))
+                ->count()
             && ! HoldingAllocationProjectionGap::query()
                 ->where('holding_id', $hierarchy->holdingId)
                 ->whereIn('organization_id', $hierarchy->organizationIds)

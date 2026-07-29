@@ -21,6 +21,7 @@ final class PortfolioLiquiditySourceVersion extends Model
             'organization_id' => 'integer',
             'occurred_at' => 'immutable_datetime',
             'created_at' => 'immutable_datetime',
+            'recorded_at' => 'immutable_datetime',
             'effective_at' => 'immutable_datetime',
             'payload' => 'array',
         ];

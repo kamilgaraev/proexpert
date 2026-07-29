@@ -35,7 +35,7 @@ final readonly class CashGapForecastItem
         public string $direction,
         public string $bucket,
         string|int|float $amount,
-        public float $probability = 1.0,
+        string|int|float $probability = '1',
         public ?int $organizationId = null,
         public ?int $projectId = null,
         public ?int $counterpartyId = null,
@@ -53,9 +53,12 @@ final readonly class CashGapForecastItem
             $amount = rtrim(rtrim(sprintf('%.14F', $amount), '0'), '.');
         }
         $this->amount = PortfolioDecimal::money($amount);
+        $this->probability = self::probability($probability);
     }
 
     public string $amount;
+
+    public string $probability;
 
     public function isInflow(): bool
     {
@@ -97,5 +100,14 @@ final readonly class CashGapForecastItem
         }
 
         return $this->cashFlowKey;
+    }
+
+    private static function probability(string|int|float $probability): string
+    {
+        if (is_float($probability)) {
+            $probability = rtrim(rtrim(sprintf('%.14F', $probability), '0'), '.');
+        }
+
+        return PortfolioDecimal::ratio($probability);
     }
 }

@@ -36,7 +36,7 @@ final readonly class PaymentCalendarItem
         string|int|float $amount,
         string|int|float $remainingAmount,
         public string $currency,
-        public float $probability,
+        string|int|float $probability,
         public string $status,
         public string $sourceType,
         public int|string|null $sourceId,
@@ -50,11 +50,14 @@ final readonly class PaymentCalendarItem
     ) {
         $this->amount = self::money($amount);
         $this->remainingAmount = self::money($remainingAmount);
+        $this->probability = self::probability($probability);
     }
 
     public string $amount;
 
     public string $remainingAmount;
+
+    public string $probability;
 
     public function toCashGapForecastItem(): CashGapForecastItem
     {
@@ -157,5 +160,14 @@ final readonly class PaymentCalendarItem
         }
 
         return PortfolioDecimal::money($amount);
+    }
+
+    private static function probability(string|int|float $probability): string
+    {
+        if (is_float($probability)) {
+            $probability = rtrim(rtrim(sprintf('%.14F', $probability), '0'), '.');
+        }
+
+        return PortfolioDecimal::ratio($probability);
     }
 }

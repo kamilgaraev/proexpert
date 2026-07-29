@@ -42,6 +42,7 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
             ?? $source->getAttribute('created_at')
             ?? now();
         $createdAt = $source->getAttribute('created_at') ?? $occurredAt;
+        $recordedAt = now();
         $versionPayload = [
             'identity' => [$organizationId, $sourceType, $sourceId],
             'occurred_at' => $occurredAt->format(DateTimeInterface::ATOM),
@@ -59,6 +60,7 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
             [
                 'occurred_at' => $occurredAt,
                 'created_at' => $createdAt,
+                'recorded_at' => $recordedAt,
                 'effective_at' => $effectiveAt,
                 'payload' => $payload,
                 'source_hash' => $sourceHash,

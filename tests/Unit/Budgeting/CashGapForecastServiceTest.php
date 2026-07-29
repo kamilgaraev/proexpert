@@ -259,8 +259,8 @@ final class CashGapForecastServiceTest extends TestCase
 
         $this->assertSame('2026-01-08', $driver['date']);
         $this->assertSame('2026-01-01', $driver['original_date']);
-        $this->assertSame(0.6, $driver['probability']);
-        $this->assertSame(0.8, $driver['original_probability']);
+        $this->assertSame('0.60000000', $driver['probability']);
+        $this->assertSame('0.80000000', $driver['original_probability']);
         $this->assertSame('600.00', $driver['amount']);
     }
 
@@ -343,7 +343,7 @@ final class CashGapForecastServiceTest extends TestCase
         $this->assertSame('2026-01-02', $base['cash_gap']['first_gap_date']);
         $this->assertNull($scenario['cash_gap']['first_gap_date']);
         $this->assertSame('2026-01-02', $items[0]->date);
-        $this->assertSame(1.0, $scenario['daily'][2]['drivers'][0]['probability']);
+        $this->assertSame('1.00000000', $scenario['daily'][2]['drivers'][0]['probability']);
         $this->assertSame('2026-01-02', $scenario['daily'][4]['drivers'][0]['original_date']);
         $this->assertSame('cash_gap_scenario_adjustment', $scenario['daily'][1]['drivers'][0]['source']['type']);
     }

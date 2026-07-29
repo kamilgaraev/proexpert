@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Integration\Reporting\WaveOne;
 
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
@@ -62,5 +63,15 @@ final class BudgetingPortfolioProviderTest extends TestCase
             'row_key',
             'source_refs',
         ]));
+        self::assertTrue(Schema::hasColumns('budgeting_portfolio_liquidity_source_versions', [
+            'occurred_at',
+            'recorded_at',
+            'effective_at',
+            'source_hash',
+        ]));
+        self::assertSame(1, (int) DB::table('pg_trigger')
+            ->where('tgname', 'budgeting_liquidity_source_versions_append_only')
+            ->where('tgisinternal', false)
+            ->count());
     }
 }

@@ -26,7 +26,7 @@ final readonly class PortfolioLiquidityAsOfSource
             ->selectRaw('MAX(id)')
             ->where('organization_id', $organizationId)
             ->where('occurred_at', '<=', $asOf)
-            ->where('created_at', '<=', $asOf)
+            ->where('recorded_at', '<=', $asOf)
             ->groupBy('source_type', 'source_id');
         $versions = PortfolioLiquiditySourceVersion::query()
             ->where('organization_id', $organizationId)
@@ -68,6 +68,7 @@ final readonly class PortfolioLiquidityAsOfSource
                 'source_version' => (string) $version->source_version,
                 'occurred_at' => $version->occurred_at?->format(DateTimeInterface::ATOM),
                 'created_at' => $version->created_at?->format(DateTimeInterface::ATOM),
+                'recorded_at' => $version->recorded_at?->format(DateTimeInterface::ATOM),
                 'effective_at' => $version->effective_at?->format(DateTimeInterface::ATOM),
                 'source_hash' => (string) $version->source_hash,
             ])->all(),
@@ -85,7 +86,9 @@ final readonly class PortfolioLiquidityAsOfSource
             amount: (string) ($payload['amount'] ?? '0'),
             remainingAmount: (string) ($payload['remaining_amount'] ?? '0'),
             currency: (string) ($payload['currency'] ?? ''),
-            probability: (float) ($payload['probability'] ?? 1),
+            probability: is_string($payload['probability'] ?? null)
+                ? $payload['probability']
+                : (string) ($payload['probability'] ?? '1'),
             status: (string) ($payload['status'] ?? ''),
             sourceType: (string) ($payload['source_type'] ?? ''),
             sourceId: is_int($payload['source_id'] ?? null) || is_string($payload['source_id'] ?? null)

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -18,6 +19,7 @@ return new class extends Migration
             $table->char('source_version', 64);
             $table->dateTimeTz('occurred_at');
             $table->dateTimeTz('created_at');
+            $table->dateTimeTz('recorded_at');
             $table->dateTimeTz('effective_at');
             $table->jsonb('payload')->nullable();
             $table->char('source_hash', 64);
@@ -29,7 +31,27 @@ return new class extends Migration
                 ['organization_id', 'occurred_at', 'effective_at', 'id'],
                 'budgeting_liquidity_source_as_of',
             );
+            $table->index(
+                ['organization_id', 'recorded_at', 'id'],
+                'budgeting_liquidity_source_recorded_at',
+            );
         });
+
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement(<<<'SQL'
+CREATE OR REPLACE FUNCTION budgeting_liquidity_source_versions_append_only()
+RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'budgeting liquidity source versions are append-only';
+END;
+$$ LANGUAGE plpgsql
+SQL);
+            DB::statement(
+                'CREATE TRIGGER budgeting_liquidity_source_versions_append_only '
+                .'BEFORE UPDATE OR DELETE ON budgeting_portfolio_liquidity_source_versions '
+                .'FOR EACH ROW EXECUTE FUNCTION budgeting_liquidity_source_versions_append_only()',
+            );
+        }
 
         Schema::create('budgeting_portfolio_report_snapshots', function (Blueprint $table): void {
             $table->ulid('id')->primary();
@@ -113,6 +135,14 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement(
+                'DROP TRIGGER IF EXISTS budgeting_liquidity_source_versions_append_only '
+                .'ON budgeting_portfolio_liquidity_source_versions',
+            );
+            DB::statement('DROP FUNCTION IF EXISTS budgeting_liquidity_source_versions_append_only()');
+        }
+
         Schema::dropIfExists('budgeting_portfolio_liquidity_rows');
         Schema::dropIfExists('budgeting_project_portfolio_health_rows');
         Schema::dropIfExists('budgeting_portfolio_report_snapshots');

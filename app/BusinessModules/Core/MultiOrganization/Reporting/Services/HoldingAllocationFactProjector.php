@@ -133,6 +133,13 @@ final readonly class HoldingAllocationFactProjector
             ]],
         ];
 
+        $missing = $this->missingEvidence($source);
+        if ($missing !== []) {
+            $this->recordGap($source, $missing);
+
+            return null;
+        }
+
         return $this->persist($this->project($source), $source);
     }
 
@@ -398,7 +405,6 @@ final readonly class HoldingAllocationFactProjector
                 'linked_outgoing_minor' => null,
             ];
         }
-        $parent = Contract::query()->find($parentContractId);
         $parentAllocation = ContractProjectAllocation::withTrashed()
             ->where('contract_id', $parentContractId)
             ->where('project_id', $projectId)
@@ -411,8 +417,7 @@ final readonly class HoldingAllocationFactProjector
             ->whereHas('history', static fn ($query) => $query->where('created_at', '<=', $asOf))
             ->latest('id')
             ->first();
-        if (! $parent instanceof Contract
-            || ! $parentAllocation instanceof ContractProjectAllocation
+        if (! $parentAllocation instanceof ContractProjectAllocation
             || ! $childAllocation instanceof ContractProjectAllocation) {
             return [
                 'linked_parent_allocation_id' => null,
@@ -420,12 +425,39 @@ final readonly class HoldingAllocationFactProjector
                 'linked_outgoing_minor' => null,
             ];
         }
+        $parentMinor = $this->historicalAllocationMinor($parentAllocation, $asOf);
+        $childMinor = $this->historicalAllocationMinor($childAllocation, $asOf);
 
         return [
             'linked_parent_allocation_id' => (int) $parentAllocation->getKey(),
-            'linked_incoming_minor' => $this->moneyToMinor((string) $parentAllocation->calculateAllocatedAmount()),
-            'linked_outgoing_minor' => $this->moneyToMinor((string) $childAllocation->calculateAllocatedAmount()),
+            'linked_incoming_minor' => $parentMinor,
+            'linked_outgoing_minor' => $childMinor,
         ];
+    }
+
+    private function historicalAllocationMinor(
+        ContractProjectAllocation $allocation,
+        \DateTimeInterface $asOf,
+    ): ?int {
+        $history = ContractAllocationHistory::query()
+            ->where('allocation_id', $allocation->getKey())
+            ->where('created_at', '<=', $asOf)
+            ->latest('id')
+            ->first();
+        if (! $history instanceof ContractAllocationHistory) {
+            return null;
+        }
+        $state = $this->allocationState((int) $allocation->getKey(), (int) $history->getKey());
+        if (($state['is_active'] ?? true) === false || $history->action === 'deleted') {
+            return 0;
+        }
+        if (ContractAllocationTypeEnum::tryFrom((string) ($state['allocation_type'] ?? ''))
+            !== ContractAllocationTypeEnum::FIXED
+            || ! isset($state['allocated_amount'])) {
+            return null;
+        }
+
+        return $this->moneyToMinor((string) $state['allocated_amount']);
     }
 
     private function moneyToMinor(string $amount): int

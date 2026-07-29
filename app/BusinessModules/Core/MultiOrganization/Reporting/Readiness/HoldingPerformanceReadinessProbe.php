@@ -9,8 +9,12 @@ use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocatio
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingPerformanceSnapshot;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingHierarchyResolver;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceSnapshotMaterializer;
+use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
+use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionReadinessProbe;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
+use App\Models\ContractAllocationHistory;
+use App\Models\ContractPerformanceAct;
 
 final readonly class HoldingPerformanceReadinessProbe implements ReportDefinitionReadinessProbe
 {
@@ -73,10 +77,55 @@ final readonly class HoldingPerformanceReadinessProbe implements ReportDefinitio
             && (int) $actWatermark > 0
             && (int) $paymentWatermark > 0
             && (int) $snapshot->row_count > 0
+            && $this->eligibleSourcesAreProjected($hierarchy->organizationIds, $snapshot->generated_at)
             && ! HoldingAllocationProjectionGap::query()
                 ->where('holding_id', $hierarchy->holdingId)
                 ->whereIn('organization_id', $hierarchy->organizationIds)
                 ->whereNull('resolved_at')
                 ->exists();
+    }
+
+    private function eligibleSourcesAreProjected(array $organizationIds, mixed $asOf): bool
+    {
+        $eligibleAllocations = ContractAllocationHistory::query()
+            ->where('created_at', '<=', $asOf)
+            ->whereHas('contract', static fn ($query) => $query->whereIn('organization_id', $organizationIds))
+            ->count();
+        $projectedAllocations = HoldingAllocationFactVersion::query()
+            ->whereIn('organization_id', $organizationIds)
+            ->where('monetary_basis', 'contracted')
+            ->whereDate('recognized_on', '<=', $asOf)
+            ->count();
+        $eligibleActs = ContractPerformanceAct::query()
+            ->where('is_approved', true)
+            ->whereIn('status', [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED])
+            ->whereHas('contract', static fn ($query) => $query->whereIn('organization_id', $organizationIds))
+            ->where(static fn ($query) => $query
+                ->where('approval_date', '<=', $asOf)
+                ->orWhere(static fn ($fallback) => $fallback->whereNull('approval_date')->where('created_at', '<=', $asOf)))
+            ->distinct()
+            ->count('id');
+        $projectedActs = HoldingAllocationFactVersion::query()
+            ->whereIn('organization_id', $organizationIds)
+            ->where('monetary_basis', 'accepted_accrual')
+            ->whereDate('recognized_on', '<=', $asOf)
+            ->distinct()
+            ->count('source_id');
+        $eligiblePayments = PaymentTransaction::query()
+            ->whereIn('organization_id', $organizationIds)
+            ->where('status', PaymentTransactionStatus::COMPLETED)
+            ->where('created_at', '<=', $asOf)
+            ->distinct()
+            ->count('id');
+        $projectedPayments = HoldingAllocationFactVersion::query()
+            ->whereIn('organization_id', $organizationIds)
+            ->where('monetary_basis', 'cash')
+            ->whereDate('recognized_on', '<=', $asOf)
+            ->distinct()
+            ->count('source_id');
+
+        return $projectedAllocations >= $eligibleAllocations
+            && $projectedActs >= $eligibleActs
+            && $projectedPayments >= $eligiblePayments;
     }
 }

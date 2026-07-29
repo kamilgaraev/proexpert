@@ -193,7 +193,10 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             ->first();
         if (! $record instanceof HoldingPerformanceSnapshot
             || $snapshot->kind !== self::CODE
-            || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)) {
+            || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)
+            || ! hash_equals((string) $record->definition_hash, $snapshot->definitionHash->value)
+            || ! hash_equals((string) $record->formula_version, $snapshot->formulaVersion)
+            || ! hash_equals((string) $record->query_hash, (string) ($snapshot->watermarks['query_hash'] ?? ''))) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
         }
 

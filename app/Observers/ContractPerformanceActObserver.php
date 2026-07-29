@@ -60,6 +60,15 @@ class ContractPerformanceActObserver
 
     public function deleted(ContractPerformanceAct $act): void
     {
+        if ((bool) $act->getOriginal('is_approved')
+            && in_array(
+                $act->getOriginal('status'),
+                [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED],
+                true,
+            )) {
+            $this->acceptedWorkFacts->project($act, now(), false);
+        }
+
         $this->recalculateContractTotal($act, 'deleted');
         $this->invalidateEVMCache($act);
     }
