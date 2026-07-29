@@ -73,6 +73,7 @@ final class CsvReportExportRenderer implements ReportExportRenderer
                 }
                 $this->write($stream, $this->line($cells, $delimiter), $writtenBytes);
             }
+            unset($row);
             unset($chunk);
         }
 

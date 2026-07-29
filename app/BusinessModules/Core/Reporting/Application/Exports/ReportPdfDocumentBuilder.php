@@ -125,6 +125,7 @@ final readonly class ReportPdfDocumentBuilder
                 $projectedRetainedBytes += $rowRetainedBytes;
                 $rows[] = $cells;
             }
+            unset($row);
             $rowCount = $projectedRows;
             unset($chunk);
         }

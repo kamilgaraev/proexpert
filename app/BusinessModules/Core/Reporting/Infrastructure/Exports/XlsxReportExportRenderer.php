@@ -105,6 +105,7 @@ final class XlsxReportExportRenderer implements ReportExportRenderer
                     }
                     $this->writeSheet($sheet, $this->xmlRow($worksheetRow++, $cells, false), $xmlBytes);
                 }
+                unset($row);
                 unset($chunk);
             }
 

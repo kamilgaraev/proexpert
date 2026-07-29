@@ -148,11 +148,19 @@ final class InstrumentedReportChunkSource implements \Iterator
         }
 
         $chunkReference = \WeakReference::create($this->currentChunk);
-        $firstRowReference = \WeakReference::create($this->currentChunk->rows[0]);
+        $rowReferences = array_map(
+            static fn (object $row): \WeakReference => \WeakReference::create($row),
+            $this->currentChunk->rows,
+        );
         $this->currentChunk = null;
         $this->activeRows = 0;
         gc_collect_cycles();
-        if ($chunkReference->get() !== null || $firstRowReference->get() !== null) {
+        foreach ($rowReferences as $rowReference) {
+            if ($rowReference->get() !== null) {
+                throw new \RuntimeException('previous_chunk_retained');
+            }
+        }
+        if ($chunkReference->get() !== null) {
             throw new \RuntimeException('previous_chunk_retained');
         }
         $this->collectibleChunkChecks++;
@@ -306,5 +314,20 @@ final class ReportExportStreamingBudgetTest extends ReportExportRendererTestCase
         $this->expectExceptionMessage('previous_chunk_retained');
 
         iterator_to_array($provider->chunks(), false);
+    }
+
+    public function test_adversarial_probe_rejects_retained_row_without_chunk(): void
+    {
+        [$source] = $this->source(1000);
+        $provider = new InstrumentedReportChunkSource($source, 1000, 500);
+        $retainedRows = [];
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('previous_chunk_retained');
+
+        foreach ($provider->chunks() as $chunk) {
+            $retainedRows[] = $chunk->rows[250];
+            unset($chunk);
+        }
     }
 }
