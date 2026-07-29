@@ -80,7 +80,6 @@ class FileService
                 'Key' => $organizationPath,
                 'ContentType' => $mime,
                 'Metadata' => $metadata,
-                'ChecksumAlgorithm' => 'SHA256',
                 '@http' => $this->s3HttpOptions(),
             ]);
         } catch (AwsException $exception) {
@@ -122,7 +121,6 @@ class FileService
             throw new \InvalidArgumentException('multipart_part_checksum_mismatch');
         }
 
-        $checksum = base64_encode(hex2bin($checksumSha256));
         try {
             $result = $this->reportS3Client()->uploadPart([
                 'Bucket' => $this->reportBucket(),
@@ -131,7 +129,6 @@ class FileService
                 'PartNumber' => $partNumber,
                 'Body' => $bytes,
                 'ContentLength' => strlen($bytes),
-                'ChecksumSHA256' => $checksum,
                 '@http' => $this->s3HttpOptions(),
             ]);
         } catch (AwsException $exception) {
@@ -144,13 +141,6 @@ class FileService
         if ($etag === '') {
             throw new VersionedObjectIntegrityException('s3_multipart_part_identity_invalid');
         }
-        if (
-            isset($result['ChecksumSHA256'])
-            && (! is_string($result['ChecksumSHA256']) || ! hash_equals($checksum, $result['ChecksumSHA256']))
-        ) {
-            throw new VersionedObjectIntegrityException('s3_multipart_part_checksum_mismatch');
-        }
-
         return new MultipartPart(
             $upload->organizationPath,
             $upload->uploadId,
@@ -167,13 +157,11 @@ class FileService
         array $conditions,
     ): StoredFile {
         $sizeBytes = $this->assertMultipartParts($upload, $orderedParts);
-        $checksumSha256 = $this->assertMultipartConditions($conditions, $sizeBytes);
-        $providerCompositeChecksum = $this->multipartCompositeChecksum($orderedParts);
+        $checksumSha256 = $this->assertMultipartConditions($conditions);
         $completedParts = array_map(
             static fn (MultipartPart $part): array => [
                 'PartNumber' => $part->number,
                 'ETag' => $part->etag,
-                'ChecksumSHA256' => base64_encode(hex2bin($part->checksumSha256)),
             ],
             $orderedParts,
         );
@@ -185,7 +173,6 @@ class FileService
                 'UploadId' => $upload->uploadId,
                 'MultipartUpload' => ['Parts' => $completedParts],
                 'IfNoneMatch' => '*',
-                'MpuObjectSize' => $sizeBytes,
                 '@http' => $this->s3HttpOptions(),
             ]);
         } catch (AwsException $exception) {
@@ -208,14 +195,6 @@ class FileService
         ) {
             throw new VersionedObjectIntegrityException('s3_multipart_completion_identity_invalid');
         }
-        if (
-            isset($result['ChecksumSHA256'])
-            && (! is_string($result['ChecksumSHA256'])
-                || ! hash_equals($providerCompositeChecksum, $result['ChecksumSHA256']))
-        ) {
-            throw new VersionedObjectIntegrityException('s3_multipart_completion_checksum_mismatch');
-        }
-
         return new StoredFile(
             $upload->organizationPath,
             $versionId,
@@ -253,7 +232,7 @@ class FileService
     {
         $this->assertOrganizationPath($organizationPath);
         $this->assertVersionId($versionId, 's3_versioned_read_requires_version');
-        $description = $this->describeVersion($organizationPath, $versionId, PHP_INT_MAX, false);
+        $description = $this->describeVersionInternal($organizationPath, $versionId, PHP_INT_MAX, false);
         if (
             ! is_string($description['version_id'])
             || ! hash_equals($versionId, $description['version_id'])
@@ -371,7 +350,17 @@ class FileService
         string $path,
         ?string $versionId,
         int $maxBytes = 64_000_000,
-        bool $includeBody = true,
+    ): array
+    {
+        return $this->describeVersionInternal($path, $versionId, $maxBytes, true);
+    }
+
+    /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,metadata?:array<string,string>} */
+    private function describeVersionInternal(
+        string $path,
+        ?string $versionId,
+        int $maxBytes,
+        bool $includeBody,
     ): array
     {
         $reportObject = preg_match('#^org-[1-9][0-9]*/reports(?:/|$)#D', $path) === 1;
@@ -402,9 +391,6 @@ class FileService
         if ($versionId !== null && $versionId !== '') {
             $arguments['VersionId'] = $versionId;
         }
-        if ($reportObject) {
-            $arguments['ChecksumMode'] = 'ENABLED';
-        }
         try {
             $head = $client->headObject([...$arguments, '@http' => $this->s3HttpOptions()]);
         } catch (AwsException $exception) {
@@ -427,10 +413,10 @@ class FileService
         }
         $metadata = is_array($head['Metadata'] ?? null) ? $head['Metadata'] : [];
         if ($reportObject) {
+            $metadata = $this->normalizeReportMetadata($metadata);
             $this->assertClosedReportMetadata($metadata, $organizationId);
         }
         $arguments['VersionId'] = $resolvedVersion;
-        unset($arguments['ChecksumMode']);
         try {
             $object = $client->getObject([...$arguments, '@http' => $this->s3HttpOptions()]);
         } catch (AwsException $exception) {
@@ -689,15 +675,13 @@ class FileService
         return $sizeBytes;
     }
 
-    private function assertMultipartConditions(array $conditions, int $sizeBytes): string
+    private function assertMultipartConditions(array $conditions): string
     {
         $keys = array_keys($conditions);
         sort($keys, SORT_STRING);
         if (
-            $keys !== ['ApplicationChecksumSHA256', 'IfNoneMatch', 'MpuObjectSize']
+            $keys !== ['ApplicationChecksumSHA256', 'IfNoneMatch']
             || ($conditions['IfNoneMatch'] ?? null) !== '*'
-            || ! is_int($conditions['MpuObjectSize'] ?? null)
-            || $conditions['MpuObjectSize'] !== $sizeBytes
             || ! is_string($conditions['ApplicationChecksumSHA256'] ?? null)
             || preg_match('/^[a-f0-9]{64}$/D', $conditions['ApplicationChecksumSHA256']) !== 1
         ) {
@@ -707,18 +691,21 @@ class FileService
         return $conditions['ApplicationChecksumSHA256'];
     }
 
-    private function multipartCompositeChecksum(array $orderedParts): string
+    private function normalizeReportMetadata(array $metadata): array
     {
-        $partChecksums = '';
-        foreach ($orderedParts as $part) {
-            $decoded = hex2bin($part->checksumSha256);
-            if (! is_string($decoded)) {
-                throw new \InvalidArgumentException('multipart_parts_invalid');
+        $normalized = [];
+        foreach ($metadata as $key => $value) {
+            if (! is_string($key) || ! is_string($value)) {
+                throw new VersionedObjectIntegrityException('s3_report_metadata_invalid');
             }
-            $partChecksums .= $decoded;
+            $normalizedKey = strtolower($key);
+            if (array_key_exists($normalizedKey, $normalized)) {
+                throw new VersionedObjectIntegrityException('s3_report_metadata_invalid');
+            }
+            $normalized[$normalizedKey] = $value;
         }
 
-        return base64_encode(hash('sha256', $partChecksums, true)).'-'.count($orderedParts);
+        return $normalized;
     }
 
     private function assertClosedReportMetadata(array $metadata, int $organizationId): void

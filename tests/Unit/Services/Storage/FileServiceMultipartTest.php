@@ -52,6 +52,13 @@ final class FileServiceMultipartTest extends TestCase
             );
             self::assertSame($returnType, (string) $method->getReturnType());
         }
+
+        $describe = new ReflectionMethod(FileService::class, 'describeVersion');
+        self::assertCount(3, $describe->getParameters());
+        self::assertSame(['string', '?string', 'int'], array_map(
+            static fn ($parameter): string => (string) $parameter->getType(),
+            $describe->getParameters(),
+        ));
     }
 
     public function test_dtos_reject_invalid_identity_and_preserve_immutable_upload_metadata(): void
@@ -160,6 +167,14 @@ final class FileServiceMultipartTest extends TestCase
             'null',
             new DateTimeImmutable('+60 seconds'),
         )];
+        yield 'stored file literal null version' => [static fn () => new StoredFile(
+            'org-7/reports/export.csv',
+            'null',
+            'etag',
+            1,
+            new \App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash(str_repeat('a', 64)),
+            'text/csv',
+        )];
     }
 
     public function test_all_seven_operations_use_the_reports_bucket_and_exact_version_identity(): void
@@ -229,7 +244,6 @@ final class FileServiceMultipartTest extends TestCase
         $completed = $files->completeMultipart($upload, [$part], [
             'IfNoneMatch' => '*',
             'ApplicationChecksumSHA256' => $checksum,
-            'MpuObjectSize' => self::PART_SIZE,
         ]);
         $headed = $files->headVersion($path, 'version-1');
         $link = $files->createTemporaryLink($path, 'version-1', 60);
@@ -253,13 +267,14 @@ final class FileServiceMultipartTest extends TestCase
             array_column($commands, 0),
         );
         self::assertSame('reports-test', $commands[0][1]['Bucket']);
-        self::assertSame('SHA256', $commands[0][1]['ChecksumAlgorithm']);
+        self::assertArrayNotHasKey('ChecksumAlgorithm', $commands[0][1]);
         self::assertSame($metadata, $commands[0][1]['Metadata']);
-        self::assertSame($checksumBase64, $commands[1][1]['ChecksumSHA256']);
+        self::assertArrayNotHasKey('ChecksumSHA256', $commands[1][1]);
         self::assertSame('*', $commands[2][1]['IfNoneMatch']);
         self::assertArrayNotHasKey('ChecksumSHA256', $commands[2][1]);
+        self::assertArrayNotHasKey('MpuObjectSize', $commands[2][1]);
         self::assertSame('version-1', $commands[3][1]['VersionId']);
-        self::assertSame('ENABLED', $commands[3][1]['ChecksumMode']);
+        self::assertArrayNotHasKey('ChecksumMode', $commands[3][1]);
         self::assertSame('version-1', $commands[4][1]['VersionId']);
         self::assertSame('version-1', $commands[6][1]['VersionId']);
     }
@@ -295,7 +310,6 @@ final class FileServiceMultipartTest extends TestCase
             $files->completeMultipart($upload, [$part], [
                 'IfNoneMatch' => '*',
                 'ApplicationChecksumSHA256' => str_repeat('0', 64),
-                'MpuObjectSize' => self::PART_SIZE,
             ]);
             self::fail('Skipped first part was accepted.');
         } catch (InvalidArgumentException $exception) {
@@ -337,7 +351,6 @@ final class FileServiceMultipartTest extends TestCase
         $files->completeMultipart($upload, [$part], [
             'IfNoneMatch' => '*',
             'ApplicationChecksumSHA256' => $checksum,
-            'MpuObjectSize' => self::PART_SIZE,
         ]);
     }
 
@@ -377,18 +390,15 @@ final class FileServiceMultipartTest extends TestCase
         $stored = $files->completeMultipart($upload, $parts, [
             'IfNoneMatch' => '*',
             'ApplicationChecksumSHA256' => $applicationHash,
-            'MpuObjectSize' => self::PART_SIZE * 2,
         ]);
 
         self::assertSame($applicationHash, $stored->checksum->value);
         self::assertArrayNotHasKey('ChecksumSHA256', $commands[0]);
-        self::assertSame(
-            [
-                base64_encode(hex2bin($firstHash)),
-                base64_encode(hex2bin($secondHash)),
-            ],
-            array_column($commands[0]['MultipartUpload']['Parts'], 'ChecksumSHA256'),
-        );
+        self::assertArrayNotHasKey('MpuObjectSize', $commands[0]);
+        self::assertSame([], array_filter(
+            $commands[0]['MultipartUpload']['Parts'],
+            static fn (array $part): bool => array_key_exists('ChecksumSHA256', $part),
+        ));
     }
 
     public function test_literal_null_version_and_missing_metadata_fail_closed(): void
@@ -421,6 +431,52 @@ final class FileServiceMultipartTest extends TestCase
         $files->headVersion('org-7/reports/export.csv', 'version-1');
     }
 
+    public function test_versioned_report_metadata_is_normalized_to_lowercase(): void
+    {
+        $bytes = 'body';
+        $metadata = [];
+        foreach ($this->metadata() as $key => $value) {
+            $metadata[strtoupper($key)] = $value;
+        }
+        $handler = new MockHandler([
+            new Result([
+                'ETag' => '"etag"',
+                'VersionId' => 'version-1',
+                'ContentLength' => strlen($bytes),
+                'ContentType' => 'text/csv',
+                'Metadata' => $metadata,
+            ]),
+            new Result(['VersionId' => 'version-1', 'Body' => Utils::streamFor($bytes)]),
+        ]);
+
+        $description = $this->files($handler)->describeVersion(
+            'org-7/reports/export.csv',
+            'version-1',
+            100,
+        );
+
+        self::assertSame($this->metadata(), $description['metadata']);
+    }
+
+    public function test_versioned_report_metadata_case_collision_fails_closed(): void
+    {
+        $metadata = $this->metadata();
+        $metadata['ORGANIZATION_ID'] = $metadata['organization_id'];
+        $handler = new MockHandler([
+            new Result([
+                'ETag' => '"etag"',
+                'VersionId' => 'version-1',
+                'ContentLength' => 4,
+                'ContentType' => 'text/csv',
+                'Metadata' => $metadata,
+            ]),
+        ]);
+
+        $this->expectException(VersionedObjectIntegrityException::class);
+        $this->expectExceptionMessage('s3_report_metadata_invalid');
+        $this->files($handler)->describeVersion('org-7/reports/export.csv', 'version-1', 100);
+    }
+
     public function test_provider_returned_literal_null_version_fails_closed_at_complete_and_head(): void
     {
         $bytes = str_repeat('n', self::PART_SIZE);
@@ -443,7 +499,6 @@ final class FileServiceMultipartTest extends TestCase
             $files->completeMultipart($upload, [$part], [
                 'IfNoneMatch' => '*',
                 'ApplicationChecksumSHA256' => $checksum,
-                'MpuObjectSize' => self::PART_SIZE,
             ]);
             self::fail('Provider null version was accepted at completion.');
         } catch (VersionedObjectIntegrityException $exception) {

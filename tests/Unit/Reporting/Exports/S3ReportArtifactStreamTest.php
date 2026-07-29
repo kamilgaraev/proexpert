@@ -21,6 +21,7 @@ use Aws\Exception\AwsException;
 use GuzzleHttp\Psr7\Response;
 use DateTimeZone;
 use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
@@ -55,16 +56,15 @@ final class S3ReportArtifactStreamTest extends TestCase
             $files->completedParts,
         ));
         self::assertSame('*', $files->conditions['IfNoneMatch']);
-        self::assertSame(self::PART_SIZE + 4, $files->conditions['MpuObjectSize']);
         self::assertSame(
             hash('sha256', $fullPart.'tail'),
             $files->conditions['ApplicationChecksumSHA256'],
         );
         self::assertSame(
             [['org-7/reports/exports/01J00000000000000000000001/artifact.csv', 'version-1']],
-            $files->heads,
+            $files->descriptions,
         );
-        self::assertSame($files->headed, $stored);
+        self::assertEquals($files->headed, $stored);
         self::assertSame(0, $files->abortCount);
     }
 
@@ -205,10 +205,11 @@ final class S3ReportArtifactStreamTest extends TestCase
         self::assertSame(0, $files->abortCount);
     }
 
-    public function test_conditional_race_reuses_only_exact_ready_winner_and_aborts_loser_once(): void
+    #[DataProvider('conditionalStatusProvider')]
+    public function test_conditional_race_reuses_only_exact_ready_winner_and_aborts_loser_once(int $status): void
     {
         $files = new RecordingMultipartFileService();
-        $files->completionFailure = $this->conditionalConflict();
+        $files->completionFailure = $this->conditionalConflict($status);
         $bytes = 'body';
         $checksum = hash('sha256', $bytes);
         $files->headed = new StoredFile(
@@ -244,9 +245,15 @@ final class S3ReportArtifactStreamTest extends TestCase
         );
         $stream->write($bytes);
 
-        self::assertSame($files->headed, $stream->finish());
+        self::assertEquals($files->headed, $stream->finish());
         self::assertSame(1, $files->abortCount);
-        self::assertSame([[$files->headed->path, 'winner-version']], $files->heads);
+        self::assertSame([[$files->headed->path, 'winner-version']], $files->descriptions);
+    }
+
+    public static function conditionalStatusProvider(): iterable
+    {
+        yield '409 conflict' => [409];
+        yield '412 precondition failed' => [412];
     }
 
     public function test_conditional_race_metadata_mismatch_fails_closed_after_one_loser_abort(): void
@@ -373,12 +380,12 @@ final class S3ReportArtifactStreamTest extends TestCase
         ];
     }
 
-    private function conditionalConflict(): AwsException
+    private function conditionalConflict(int $status = 412): AwsException
     {
         return new AwsException(
             'provider detail',
             $this->createStub(CommandInterface::class),
-            ['response' => new Response(412)],
+            ['response' => new Response($status)],
         );
     }
 
@@ -416,7 +423,7 @@ final class RecordingMultipartFileService extends FileService
 
     public array $conditions = [];
 
-    public array $heads = [];
+    public array $descriptions = [];
 
     public int $abortCount = 0;
 
@@ -509,12 +516,16 @@ final class RecordingMultipartFileService extends FileService
         $this->completedParts = $orderedParts;
         $this->conditions = $conditions;
         $checksum = $conditions['ApplicationChecksumSHA256'];
+        $sizeBytes = array_sum(array_map(
+            static fn (MultipartPart $part): int => $part->sizeBytes,
+            $orderedParts,
+        ));
 
         return new StoredFile(
             $upload->organizationPath,
             'version-1',
             'artifact-etag',
-            $conditions['MpuObjectSize'],
+            $sizeBytes,
             new Sha256Hash($checksum),
             $upload->mime,
         );
@@ -529,23 +540,16 @@ final class RecordingMultipartFileService extends FileService
         }
     }
 
-    public function headVersion(string $organizationPath, string $versionId): StoredFile
-    {
-        if ($this->headFailure instanceof Throwable) {
-            throw $this->headFailure;
-        }
-
-        $this->heads[] = [$organizationPath, $versionId];
-
-        return $this->headed;
-    }
-
     public function describeVersion(
         string $path,
         ?string $versionId,
         int $maxBytes = 64_000_000,
-        bool $includeBody = true,
     ): array {
+        if ($this->headFailure instanceof Throwable) {
+            throw $this->headFailure;
+        }
+        $this->descriptions[] = [$path, $versionId];
+
         return [
             'path' => $path,
             'body' => '',

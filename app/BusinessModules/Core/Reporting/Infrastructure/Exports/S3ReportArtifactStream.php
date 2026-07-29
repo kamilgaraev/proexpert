@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportArtifactStream;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\Services\Storage\DTO\MultipartPart;
 use App\Services\Storage\DTO\MultipartUpload;
 use App\Services\Storage\DTO\StoredFile;
@@ -170,7 +171,6 @@ final class S3ReportArtifactStream implements ReportArtifactStream
             $conditions = [
                 'IfNoneMatch' => '*',
                 'ApplicationChecksumSHA256' => $checksumSha256,
-                'MpuObjectSize' => $this->sizeBytes,
             ];
 
             try {
@@ -191,8 +191,11 @@ final class S3ReportArtifactStream implements ReportArtifactStream
 
             $this->completionAccepted = true;
             $this->closed = true;
-            $headed = $this->files->headVersion($completed->path, $completed->versionId);
-            $metadata = $this->exactVersionMetadata($headed);
+            [$headed, $metadata] = $this->verifiedVersion(
+                $completed->path,
+                $completed->versionId,
+                $completed->sizeBytes,
+            );
             if (
                 ! self::sameFile($completed, $headed)
                 || ! hash_equals($this->upload->organizationPath, $headed->path)
@@ -312,8 +315,11 @@ final class S3ReportArtifactStream implements ReportArtifactStream
                 throw new InvalidArgumentException('report_artifact_race_winner_invalid');
             }
 
-            $headed = $this->files->headVersion($winner->artifactPath, $winner->versionId);
-            $metadata = $this->exactVersionMetadata($headed);
+            [$headed, $metadata] = $this->verifiedVersion(
+                $winner->artifactPath,
+                $winner->versionId,
+                $winner->sizeBytes,
+            );
             if (
                 ! hash_equals($winner->artifactPath, $headed->path)
                 || ! hash_equals($winner->versionId, $headed->versionId)
@@ -367,27 +373,37 @@ final class S3ReportArtifactStream implements ReportArtifactStream
             && hash_equals($left->mime, $right->mime);
     }
 
-    private function exactVersionMetadata(StoredFile $file): array
+    private function verifiedVersion(string $path, string $versionId, int $sizeBytes): array
     {
         $description = $this->files->describeVersion(
-            $file->path,
-            $file->versionId,
-            $file->sizeBytes,
-            false,
+            $path,
+            $versionId,
+            $sizeBytes,
         );
         if (
-            ($description['path'] ?? null) !== $file->path
-            || ($description['version_id'] ?? null) !== $file->versionId
-            || ($description['etag'] ?? null) !== $file->etag
-            || ($description['size'] ?? null) !== $file->sizeBytes
-            || ($description['sha256'] ?? null) !== $file->checksum->value
-            || ($description['content_type'] ?? null) !== $file->mime
+            ($description['path'] ?? null) !== $path
+            || ($description['version_id'] ?? null) !== $versionId
+            || ! is_string($description['etag'] ?? null)
+            || ($description['etag'] ?? '') === ''
+            || ($description['size'] ?? null) !== $sizeBytes
+            || ! is_string($description['sha256'] ?? null)
+            || ! is_string($description['content_type'] ?? null)
             || ! is_array($description['metadata'] ?? null)
         ) {
             throw new InvalidArgumentException('report_artifact_version_description_invalid');
         }
 
-        return $description['metadata'];
+        return [
+            new StoredFile(
+                $path,
+                $versionId,
+                $description['etag'],
+                $sizeBytes,
+                new Sha256Hash($description['sha256']),
+                $description['content_type'],
+            ),
+            $description['metadata'],
+        ];
     }
 
     private static function sameMetadata(array $expected, array $actual): bool

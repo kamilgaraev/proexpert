@@ -87,14 +87,12 @@ final class S3ReportArtifactIntegrationTest extends TestCase
             $stored = $files->completeMultipart($winner, [$winnerPart], [
                 'IfNoneMatch' => '*',
                 'ApplicationChecksumSHA256' => $checksum,
-                'MpuObjectSize' => self::PART_SIZE,
             ]);
 
             try {
                 $files->completeMultipart($loser, [$loserPart], [
                     'IfNoneMatch' => '*',
                     'ApplicationChecksumSHA256' => $checksum,
-                    'MpuObjectSize' => self::PART_SIZE,
                 ]);
                 self::fail('Concurrent immutable completion did not return 409/412.');
             } catch (Throwable $exception) {
@@ -121,7 +119,6 @@ final class S3ReportArtifactIntegrationTest extends TestCase
                 'Body' => 'newer-version',
                 'ContentType' => 'application/octet-stream',
                 'Metadata' => $metadata,
-                'ChecksumSHA256' => base64_encode(hash('sha256', 'newer-version', true)),
             ]);
             $secondVersion = (string) ($second['VersionId'] ?? '');
             self::assertNotSame('', $secondVersion);

@@ -19,6 +19,7 @@ final readonly class StoredFile
     ) {
         if (! self::isPrivateRelativePath($path)
             || ! self::isSafeString($versionId)
+            || strtolower(trim($versionId)) === 'null'
             || ! self::isSafeString($etag)
             || $sizeBytes < 1
             || ! self::isSafeString($mime)) {
