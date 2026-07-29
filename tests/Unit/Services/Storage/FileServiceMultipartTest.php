@@ -458,7 +458,7 @@ final class FileServiceMultipartTest extends TestCase
         self::assertSame($this->metadata(), $description['metadata']);
     }
 
-    public function test_zero_max_bytes_streams_exact_version_without_retaining_body(): void
+    public function test_negative_max_bytes_streams_exact_version_without_retaining_body(): void
     {
         $bytes = str_repeat('stream-chunk-', 10_000);
         $stream = new TrackingReadableStream($bytes);
@@ -476,7 +476,7 @@ final class FileServiceMultipartTest extends TestCase
         $description = $this->files($handler)->describeVersion(
             'org-7/reports/export.csv',
             'version-1',
-            0,
+            -strlen($bytes),
         );
 
         self::assertSame('', $description['body']);
@@ -514,11 +514,42 @@ final class FileServiceMultipartTest extends TestCase
         $limited->describeVersion('org-7/reports/export.csv', 'version-1', strlen($bytes) - 1);
     }
 
-    public function test_zero_max_bytes_requires_an_exact_version_identity(): void
+    public function test_negative_max_bytes_requires_an_exact_version_identity(): void
     {
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('s3_versioned_read_requires_version');
-        $this->files(new MockHandler())->describeVersion('org-7/object.csv', null, 0);
+        $this->files(new MockHandler())->describeVersion('org-7/object.csv', null, -100);
+    }
+
+    #[DataProvider('invalidVerificationBoundProvider')]
+    public function test_invalid_verification_bounds_fail_before_storage(int $maxBytes): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('s3_object_size_invalid');
+        $this->files(new MockHandler())->describeVersion('org-7/object.csv', 'version-1', $maxBytes);
+    }
+
+    public static function invalidVerificationBoundProvider(): iterable
+    {
+        yield 'zero' => [0];
+        yield 'minimum integer' => [PHP_INT_MIN];
+    }
+
+    public function test_negative_bound_rejects_head_size_before_get(): void
+    {
+        $handler = new MockHandler([
+            new Result([
+                'ETag' => '"etag"',
+                'VersionId' => 'version-1',
+                'ContentLength' => 101,
+                'ContentType' => 'text/csv',
+                'Metadata' => $this->metadata(),
+            ]),
+        ]);
+
+        $this->expectException(VersionedObjectIntegrityException::class);
+        $this->expectExceptionMessage('s3_object_size_invalid');
+        $this->files($handler)->describeVersion('org-7/reports/export.csv', 'version-1', -100);
     }
 
     public function test_versioned_report_metadata_case_collision_fails_closed(): void

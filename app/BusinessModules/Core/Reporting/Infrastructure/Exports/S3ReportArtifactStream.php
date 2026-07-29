@@ -378,7 +378,7 @@ final class S3ReportArtifactStream implements ReportArtifactStream
         $description = $this->files->describeVersion(
             $path,
             $versionId,
-            0,
+            -$sizeBytes,
         );
         if (
             ($description['path'] ?? null) !== $path

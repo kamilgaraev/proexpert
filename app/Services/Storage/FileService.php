@@ -346,7 +346,8 @@ class FileService
     }
 
     /**
-     * A zero max size selects exact-version verification without retaining the response body.
+     * A negative max size selects exact-version verification without retaining the response body.
+     * Its absolute value is the maximum accepted object size.
      *
      * @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,metadata?:array<string,string>}
      */
@@ -356,7 +357,7 @@ class FileService
         int $maxBytes = 64_000_000,
     ): array
     {
-        return $this->describeVersionInternal($path, $versionId, $maxBytes, $maxBytes !== 0);
+        return $this->describeVersionInternal($path, $versionId, $maxBytes, $maxBytes > 0);
     }
 
     /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,metadata?:array<string,string>} */
@@ -367,9 +368,13 @@ class FileService
         bool $includeBody,
     ): array
     {
-        if ($maxBytes === 0 && ($versionId === null || ! $this->isUsableVersionId($versionId))) {
+        if ($maxBytes === 0 || $maxBytes === PHP_INT_MIN) {
+            throw new \InvalidArgumentException('s3_object_size_invalid');
+        }
+        if ($maxBytes < 0 && ($versionId === null || ! $this->isUsableVersionId($versionId))) {
             throw new \InvalidArgumentException('s3_versioned_read_requires_version');
         }
+        $streamLimitBytes = $maxBytes < 0 ? abs($maxBytes) : $maxBytes;
         $reportObject = preg_match('#^org-[1-9][0-9]*/reports(?:/|$)#D', $path) === 1;
         $organizationId = null;
         if ($reportObject) {
@@ -379,10 +384,6 @@ class FileService
             }
             $this->assertVersionId($versionId, 's3_versioned_read_requires_version');
         }
-        if ($maxBytes < 0) {
-            throw new \InvalidArgumentException('s3_object_size_invalid');
-        }
-
         try {
             $client = $reportObject ? $this->reportS3Client() : $this->s3Client();
             $bucket = $reportObject ? $this->reportBucket() : ($this->disk()->getConfig()['bucket'] ?? null);
@@ -418,11 +419,10 @@ class FileService
         $contentLengthBytes = is_numeric($contentLength) ? (int) $contentLength : -1;
         if (
             $contentLengthBytes < 0
-            || ($maxBytes > 0 && $contentLengthBytes > $maxBytes)
+            || $contentLengthBytes > $streamLimitBytes
         ) {
             throw new VersionedObjectIntegrityException('s3_object_size_invalid');
         }
-        $streamLimitBytes = $maxBytes === 0 ? $contentLengthBytes : $maxBytes;
         $metadata = is_array($head['Metadata'] ?? null) ? $head['Metadata'] : [];
         if ($reportObject) {
             $metadata = $this->normalizeReportMetadata($metadata);
