@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:most:reporting:management-catalog:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["catalog", "contract_version", "definitions"],
+  "properties": {
+    "catalog": {"const": "management-catalog.v1"},
+    "contract_version": {"const": "1.0.0"},
+    "definitions": {
+      "type": "array",
+      "minItems": 28,
+      "maxItems": 28,
+      "items": {"$ref": "#/$defs/definition"}
+    }
+  },
+  "$defs": {
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["view", "export", "sensitive", "audit"],
+      "properties": {
+        "view": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
+        "export": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
+        "sensitive": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "audit": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "formula", "source_schema", "renderer"],
+      "properties": {
+        "contract": {"$ref": "#/$defs/version"},
+        "formula": {"$ref": "#/$defs/version"},
+        "source_schema": {"$ref": "#/$defs/version"},
+        "renderer": {"$ref": "#/$defs/version"}
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "formula", "delivery", "publication"],
+      "properties": {
+        "source": {"enum": ["ready", "partial", "aggregation_required", "event_required", "blocked_by_source"]},
+        "formula": {"enum": ["ready", "contract_required", "policy_required", "blocked_by_source"]},
+        "delivery": {"enum": ["not_implemented", "verified"]},
+        "publication": {"enum": ["draft", "candidate", "published", "blocked"]}
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supports_subscriptions", "reproducible_scheduled_snapshot"],
+      "properties": {
+        "supports_subscriptions": {"type": "boolean"},
+        "reproducible_scheduled_snapshot": {"type": "boolean"}
+      }
+    },
+    "definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "title_key", "catalog_group", "category", "grain", "wave", "filters", "columns", "sorts", "formats", "versions", "permissions", "readiness", "capabilities"],
+      "properties": {
+        "code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$"},
+        "title_key": {"type": "string", "pattern": "^reports\\.catalog\\.[a-z][a-z0-9_]+$"},
+        "catalog_group": {"enum": ["portfolio", "projects", "finance", "procurement_warehouse", "team", "quality_safety", "partners_customers"]},
+        "category": {"type": "string", "minLength": 2},
+        "grain": {"type": "string", "minLength": 2},
+        "wave": {"enum": [1, 2, 3]},
+        "filters": {"type": "array", "items": {"type": "object"}},
+        "columns": {"type": "array", "items": {"type": "object"}},
+        "sorts": {"type": "array", "items": {"type": "object"}},
+        "formats": {"type": "array", "items": {"enum": ["csv", "xlsx", "pdf"]}, "uniqueItems": true},
+        "versions": {"$ref": "#/$defs/versions"},
+        "permissions": {"$ref": "#/$defs/permissions"},
+        "readiness": {"$ref": "#/$defs/readiness"},
+        "capabilities": {"$ref": "#/$defs/capabilities"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"readiness": {"properties": {"publication": {"enum": ["candidate", "published"]}}}}},
+          "then": {"properties": {"filters": {"minItems": 1}, "columns": {"minItems": 1}, "sorts": {"minItems": 1}, "formats": {"minItems": 1}}}
+        },
+        {
+          "if": {"properties": {"readiness": {"properties": {"publication": {"const": "published"}}}}},
+          "then": {"properties": {"readiness": {"properties": {"source": {"const": "ready"}, "formula": {"const": "ready"}, "delivery": {"const": "verified"}}}}}
+        }
+      ]
+    }
+  }
+}
