@@ -17,6 +17,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportExportRecord;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Services\Storage\DTO\StoredFile;
 use DateTimeImmutable;
@@ -51,9 +52,30 @@ final class EloquentReportExportStore implements ReportExportStore
         $now = $this->clock->now();
         $id = (string) Str::ulid();
         $identity = $this->identity($source, $data, $columns);
-        $payload = $this->payload($id, $context, $source, $data, $columns, $idempotencyKey, $identity, $now);
 
-        return DB::transaction(function () use ($context, $source, $data, $idempotencyKey, $identity, $payload, $id, $now): ReportExport {
+        return DB::transaction(function () use ($context, $source, $data, $idempotencyKey, $identity, $columns, $id, $now): ReportExport {
+            $parentRun = ReportRunRecord::query()
+                ->whereKey($source->run->id)
+                ->where('organization_id', $context->scope->organizationId)
+                ->lockForUpdate()
+                ->first();
+            if (! $parentRun instanceof ReportRunRecord || $parentRun->status !== 'ready') {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
+            }
+            if ($parentRun->correlation_lineage_id !== null && ! is_string($parentRun->correlation_lineage_id)) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+            }
+            $payload = $this->payload(
+                $id,
+                $context,
+                $source,
+                $data,
+                $columns,
+                $idempotencyKey,
+                $identity,
+                $parentRun->correlation_lineage_id,
+                $now,
+            );
             $columns = array_keys($payload);
             $inserted = DB::selectOne(
                 'INSERT INTO report_exports ('.implode(', ', $columns).') VALUES ('.implode(', ', array_fill(0, count($columns), '?')).') ON CONFLICT (organization_id, idempotency_key_hash) DO NOTHING RETURNING id',
@@ -171,6 +193,7 @@ final class EloquentReportExportStore implements ReportExportStore
             if ($record->status !== ReportExportStatus::UPLOADING->value || ! $this->hasLiveLease($record, $leaseToken, $occurredAt)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_NOT_READY);
             }
+            $this->assertParentIdentity($record);
             $subject = $this->transitionSubject($record, ReportExportStatus::READY) + ['definition_hash' => (string) $record->definition_hash, 'query_hash' => (string) $record->query_hash, 'source_hash' => (string) $record->source_hash, 'result_hash' => (string) $record->result_hash, 'snapshot_id' => (string) $record->snapshot_id, 'renderer_version' => (string) $record->renderer_version, 'row_count' => $rowCount, 'artifact' => ['version_id' => $artifact->versionId, 'etag' => $artifact->etag, 'checksum' => $artifact->checksum->value, 'size' => $artifact->sizeBytes, 'mime' => $artifact->mime]];
             $this->audit->append("reports:export:{$exportId}:ready:{$artifact->checksum->value}", 'report.export.ready', $context, $subject, $occurredAt);
             $this->cas($record, ReportExportStatus::UPLOADING, [
@@ -252,13 +275,13 @@ final class EloquentReportExportStore implements ReportExportStore
         return ['export_hash' => hash('sha256', $canonical), 'input_fingerprint' => hash('sha256', $canonical)];
     }
 
-    private function payload(string $id, ReportExecutionContext $context, ReportRunExportSource $source, CreateReportExportData $data, array $columns, IdempotencyKey $idempotencyKey, array $identity, DateTimeImmutable $now): array
+    private function payload(string $id, ReportExecutionContext $context, ReportRunExportSource $source, CreateReportExportData $data, array $columns, IdempotencyKey $idempotencyKey, array $identity, ?string $correlationLineageId, DateTimeImmutable $now): array
     {
         $scope = $source->query->scope;
         $snapshot = $source->snapshot;
         $seal = $snapshot->seal;
         return [
-            'id' => $id, 'run_id' => $source->run->id, 'organization_id' => $context->scope->organizationId, 'requester_actor_id' => $context->actor->id, 'correlation_lineage_id' => null, 'report_code' => $source->query->definition->code, 'status' => ReportExportStatus::QUEUED->value,
+            'id' => $id, 'run_id' => $source->run->id, 'organization_id' => $context->scope->organizationId, 'requester_actor_id' => $context->actor->id, 'correlation_lineage_id' => $correlationLineageId, 'report_code' => $source->query->definition->code, 'status' => ReportExportStatus::QUEUED->value,
             'definition_hash' => $source->query->definition->definitionHash->value, 'query_hash' => $source->query->queryHash->value, 'source_hash' => $snapshot->sourceHash->value, 'result_hash' => $source->resultHash->value, 'export_hash' => $identity['export_hash'], 'idempotency_key_hash' => $idempotencyKey->hash, 'input_fingerprint' => $identity['input_fingerprint'],
             'scope_holding_organization_ids' => json_encode($scope->holdingOrganizationIds, JSON_THROW_ON_ERROR), 'scope_project_ids' => json_encode($scope->projectIds, JSON_THROW_ON_ERROR), 'scope_resources' => json_encode(array_map(static fn ($resource): array => $resource->canonicalIdentity(), $scope->resources), JSON_THROW_ON_ERROR), 'scope_timezone' => $scope->timezone->getName(),
             'snapshot_kind' => $snapshot->kind, 'snapshot_id' => $snapshot->id, 'snapshot_generated_at' => $this->timestamp($snapshot->generatedAt), 'snapshot_stale_at' => $snapshot->staleAt === null ? null : $this->timestamp($snapshot->staleAt), 'snapshot_watermarks' => json_encode($snapshot->watermarks, JSON_THROW_ON_ERROR), 'snapshot_classification' => $snapshot->classification->value,
@@ -270,11 +293,21 @@ final class EloquentReportExportStore implements ReportExportStore
     }
 
     private function transitionSubject(ReportExportRecord $record, ReportExportStatus $status): array { return ['export_id' => (string) $record->id, 'run_id' => (string) $record->run_id, 'report_code' => (string) $record->report_code, 'status' => $status->value, 'format' => (string) $record->format]; }
+    private function assertParentIdentity(ReportExportRecord $record): void { $run = ReportRunRecord::query()->whereKey($record->run_id)->where('organization_id', $record->organization_id)->lockForUpdate()->first(); if (! $run instanceof ReportRunRecord || $run->status !== 'ready') { throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY); } foreach ($this->parentIdentityPairs($record, $run) as [$exportValue, $runValue]) { if (! $this->identityValuesMatch($exportValue, $runValue)) { throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR); } } }
+    private function parentIdentityPairs(ReportExportRecord $record, ReportRunRecord $run): array { return [
+        [$record->report_code, $run->report_code], [$record->definition_hash, $run->definition_hash], [$record->query_hash, $run->query_hash], [$record->source_hash, $run->source_hash], [$record->result_hash, $run->result_hash],
+        [$record->scope_holding_organization_ids, $run->scope_holding_organization_ids], [$record->scope_project_ids, $run->scope_project_ids], [$record->scope_resources, $run->scope_resources], [$record->scope_timezone, $run->scope_timezone],
+        [$record->snapshot_kind, $run->snapshot_kind], [$record->snapshot_id, $run->snapshot_id], [$record->snapshot_generated_at, $run->snapshot_generated_at], [$record->snapshot_stale_at, $run->snapshot_stale_at], [$record->snapshot_watermarks, $run->snapshot_watermarks], [$record->snapshot_classification, $run->snapshot_classification],
+        [$record->snapshot_seal_key_id, $run->snapshot_seal_key_id], [$record->snapshot_seal_algorithm, $run->snapshot_seal_algorithm], [$record->snapshot_sealed_payload_hash, $run->snapshot_sealed_payload_hash], [$record->snapshot_seal_signature, $run->snapshot_seal_signature], [$record->snapshot_sealed_at, $run->snapshot_sealed_at],
+        [$record->data_classification, $run->data_classification], [$record->sensitive_column_ids, $run->sensitive_column_ids], [$record->audit_column_ids, $run->audit_column_ids], [$record->totals_sensitive, $run->totals_sensitive], [$record->totals_audit, $run->totals_audit], [$record->provenance_audit, $run->provenance_audit],
+        [$record->contract_version, $run->contract_version], [$record->formula_version, $run->formula_version], [$record->source_schema_version, $run->source_schema_version], [$record->renderer_version, $run->renderer_version],
+    ]; }
+    private function identityValuesMatch(mixed $left, mixed $right): bool { if (is_string($left) && is_string($right)) { return hash_equals($left, $right); } if ($left instanceof DateTimeInterface && $right instanceof DateTimeInterface) { return $left->format('U.u') === $right->format('U.u'); } return $left === $right; }
     private function find(ReportExecutionContext $context, string $id): ReportExportRecord { $record = ReportExportRecord::query()->where('organization_id', $context->scope->organizationId)->whereKey($id)->first(); if (! $record instanceof ReportExportRecord) { throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND); } return $record; }
     private function locked(ReportExecutionContext $context, string $id): ReportExportRecord { $record = ReportExportRecord::query()->where('organization_id', $context->scope->organizationId)->whereKey($id)->lockForUpdate()->first(); if (! $record instanceof ReportExportRecord) { throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND); } return $record; }
     private function cas(ReportExportRecord $record, ReportExportStatus $expected, array $values): void { foreach ($values as $key => $value) { if ($value instanceof DateTimeImmutable) { $values[$key] = $this->timestamp($value); } } if (ReportExportRecord::query()->whereKey($record->id)->where('organization_id', $record->organization_id)->where('status', $expected->value)->update($values) !== 1) { throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_NOT_READY); } }
-    private function assertLeaseInput(string $token, DateTimeImmutable $expiresAt, DateTimeImmutable $occurredAt): void { if (! Str::isUuid($token) || $expiresAt <= $occurredAt) { throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID); } }
-    private function hasLiveLease(ReportExportRecord $record, string $token, DateTimeImmutable $occurredAt): bool { $expiresAt = $record->execution_lease_expires_at; return is_string($record->execution_lease_token) && hash_equals($record->execution_lease_token, $token) && $expiresAt instanceof DateTimeInterface && DateTimeImmutable::createFromInterface($expiresAt) > $occurredAt; }
+    private function assertLeaseInput(string $token, DateTimeImmutable $expiresAt, DateTimeImmutable $occurredAt): void { if (! Str::isUuid($token) || $expiresAt != $occurredAt->modify('+960 seconds')) { throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID); } }
+    private function hasLiveLease(ReportExportRecord $record, string $token, DateTimeImmutable $occurredAt): bool { $expiresAt = $record->execution_lease_expires_at; $heartbeatAt = $record->execution_heartbeat_at; return is_string($record->execution_lease_token) && hash_equals($record->execution_lease_token, $token) && $expiresAt instanceof DateTimeInterface && $heartbeatAt instanceof DateTimeInterface && DateTimeImmutable::createFromInterface($expiresAt) > $occurredAt && DateTimeImmutable::createFromInterface($expiresAt) == DateTimeImmutable::createFromInterface($heartbeatAt)->modify('+960 seconds'); }
     private function timestamp(DateTimeImmutable $value): string { return $value->format('Y-m-d H:i:s.uP'); }
     private function utc(DateTimeImmutable $value): string { return $value->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\\TH:i:s.u\\Z'); }
 

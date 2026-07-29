@@ -62,7 +62,9 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
             }
             $query = $this->runHydrator->query($run);
             $scope = $this->scope($export);
-            if ($scope->canonicalIdentity() !== $query->scope->canonicalIdentity() || ! hash_equals($this->string($export->definition_hash), $query->definition->definitionHash->value)) {
+            if ($scope->canonicalIdentity() !== $query->scope->canonicalIdentity()
+                || ! hash_equals($this->string($export->definition_hash), $query->definition->definitionHash->value)
+                || ! $this->matchesParentIdentity($export, $run)) {
                 throw new \InvalidArgumentException('report_export_parent_identity_mismatch');
             }
             $snapshot = $this->snapshot($export, $scope);
@@ -107,6 +109,61 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
         }
 
         return $scope;
+    }
+
+    private function matchesParentIdentity(ReportExportRecord $export, ReportRunRecord $run): bool
+    {
+        foreach ($this->parentIdentityPairs($export, $run) as [$exportValue, $runValue]) {
+            if (! $this->identityValuesMatch($exportValue, $runValue)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function parentIdentityPairs(ReportExportRecord $export, ReportRunRecord $run): array
+    {
+        return [
+            [$export->report_code, $run->report_code],
+            [$export->definition_hash, $run->definition_hash],
+            [$export->query_hash, $run->query_hash],
+            [$export->source_hash, $run->source_hash],
+            [$export->result_hash, $run->result_hash],
+            [$export->snapshot_kind, $run->snapshot_kind],
+            [$export->snapshot_id, $run->snapshot_id],
+            [$export->snapshot_generated_at, $run->snapshot_generated_at],
+            [$export->snapshot_stale_at, $run->snapshot_stale_at],
+            [$export->snapshot_watermarks, $run->snapshot_watermarks],
+            [$export->snapshot_classification, $run->snapshot_classification],
+            [$export->snapshot_seal_key_id, $run->snapshot_seal_key_id],
+            [$export->snapshot_seal_algorithm, $run->snapshot_seal_algorithm],
+            [$export->snapshot_sealed_payload_hash, $run->snapshot_sealed_payload_hash],
+            [$export->snapshot_seal_signature, $run->snapshot_seal_signature],
+            [$export->snapshot_sealed_at, $run->snapshot_sealed_at],
+            [$export->data_classification, $run->data_classification],
+            [$export->sensitive_column_ids, $run->sensitive_column_ids],
+            [$export->audit_column_ids, $run->audit_column_ids],
+            [$export->totals_sensitive, $run->totals_sensitive],
+            [$export->totals_audit, $run->totals_audit],
+            [$export->provenance_audit, $run->provenance_audit],
+            [$export->contract_version, $run->contract_version],
+            [$export->formula_version, $run->formula_version],
+            [$export->source_schema_version, $run->source_schema_version],
+            [$export->renderer_version, $run->renderer_version],
+        ];
+    }
+
+    private function identityValuesMatch(mixed $left, mixed $right): bool
+    {
+        if (is_string($left) && is_string($right)) {
+            return hash_equals($left, $right);
+        }
+        if ($left instanceof DateTimeInterface && $right instanceof DateTimeInterface) {
+            return $left->format('U.u') === $right->format('U.u');
+        }
+
+        return $left === $right;
     }
 
     private function string(mixed $value): string { if (! is_string($value) || $value === '') { throw new \InvalidArgumentException('report_persistence_string_invalid'); } return $value; }

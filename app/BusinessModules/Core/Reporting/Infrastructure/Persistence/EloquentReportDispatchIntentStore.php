@@ -115,6 +115,15 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
             }
 
             if ((int) $record->attempt_count === 12) {
+                if (
+                    $record->aggregate_type === ReportDispatchAggregate::EXPORT->value
+                    && $record->topic === ReportDispatchTopic::GENERATE_EXPORT->value
+                ) {
+                    $this->failQueuedExport($record, $errorCode, $occurredAt, false);
+
+                    return;
+                }
+
                 ReportDispatchIntentRecord::query()
                     ->whereKey($record->id)
                     ->where('status', 'leased')
@@ -133,11 +142,6 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
                     && $record->topic === ReportDispatchTopic::MATERIALIZE_RUN->value
                 ) {
                     $this->failQueuedRun($record, $errorCode, $occurredAt);
-                } elseif (
-                    $record->aggregate_type === ReportDispatchAggregate::EXPORT->value
-                    && $record->topic === ReportDispatchTopic::GENERATE_EXPORT->value
-                ) {
-                    $this->failQueuedExport($record, $errorCode, $occurredAt);
                 }
 
                 return;
@@ -174,6 +178,18 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
             $reclaimed = 0;
             foreach ($records as $record) {
                 $terminal = (int) $record->attempt_count === 12;
+                if (
+                    $terminal
+                    && $record->aggregate_type === ReportDispatchAggregate::EXPORT->value
+                    && $record->topic === ReportDispatchTopic::GENERATE_EXPORT->value
+                ) {
+                    if ($this->failQueuedExport($record, ReportErrorCode::REPORT_DEPENDENCY_FAILED, $occurredAt, true)) {
+                        $reclaimed++;
+                    }
+
+                    continue;
+                }
+
                 $updated = ReportDispatchIntentRecord::query()
                     ->whereKey($record->id)
                     ->where('status', 'leased')
@@ -244,18 +260,43 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
         );
     }
 
-    private function failQueuedExport(ReportDispatchIntentRecord $intent, ReportErrorCode $errorCode, DateTimeImmutable $occurredAt): void
+    private function failQueuedExport(ReportDispatchIntentRecord $intent, ReportErrorCode $errorCode, DateTimeImmutable $occurredAt, bool $requiresExpiredLease): bool
     {
+        if ($intent->aggregate_type !== ReportDispatchAggregate::EXPORT->value
+            || $intent->topic !== ReportDispatchTopic::GENERATE_EXPORT->value
+            || (int) $intent->attempt_count !== 12) {
+            return false;
+        }
+
         $export = ReportExportRecord::query()
             ->whereKey($intent->aggregate_id)
             ->where('organization_id', $intent->organization_id)
             ->lockForUpdate()
             ->first();
         if (! $export instanceof ReportExportRecord || $export->status !== 'queued') {
-            return;
+            return false;
         }
 
-        ReportExportRecord::query()
+        $intentQuery = ReportDispatchIntentRecord::query()
+            ->whereKey($intent->id)
+            ->where('status', 'leased')
+            ->where('lease_token', $intent->lease_token)
+            ->where('attempt_count', 12);
+        if ($requiresExpiredLease) {
+            $intentQuery->where('lease_expires_at', '<=', $this->timestamp($occurredAt));
+        }
+        if ($intentQuery->update([
+            'status' => 'dead_letter',
+            'lease_token' => null,
+            'lease_expires_at' => null,
+            'dead_lettered_at' => $this->timestamp($occurredAt),
+            'last_error_code' => $errorCode->value,
+            'updated_at' => $this->timestamp($occurredAt),
+        ]) !== 1) {
+            return false;
+        }
+
+        $updated = ReportExportRecord::query()
             ->whereKey($export->id)
             ->where('organization_id', $export->organization_id)
             ->where('status', 'queued')
@@ -265,6 +306,26 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
                 'failed_at' => $this->timestamp($occurredAt),
                 'updated_at' => $this->timestamp($occurredAt),
             ]);
+        if ($updated !== 1) {
+            throw new LogicException('report_export_terminal_transition_lost');
+        }
+
+        $this->audit->append(
+            "reports:export:{$export->id}:failed:{$errorCode->value}",
+            'report.export.failed',
+            $this->exportContext($export),
+            [
+                'export_id' => (string) $export->id,
+                'run_id' => (string) $export->run_id,
+                'report_code' => (string) $export->report_code,
+                'status' => 'failed',
+                'format' => (string) $export->format,
+                'error_code' => $errorCode->value,
+            ],
+            $occurredAt,
+        );
+
+        return true;
     }
 
     private function context(ReportRunRecord $run): ReportExecutionContext
@@ -286,6 +347,30 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
                 $resources,
                 $timezone,
                 "reports:run:{$run->id}:dispatch-failure",
+                null,
+            ),
+        );
+    }
+
+    private function exportContext(ReportExportRecord $export): ReportExecutionContext
+    {
+        $timezone = new DateTimeZone((string) $export->scope_timezone);
+        $holdingOrganizationIds = array_map('intval', $export->scope_holding_organization_ids);
+        $projectIds = array_map('intval', $export->scope_project_ids);
+        $resources = $this->typedResources($export->scope_resources);
+
+        return new ReportExecutionContext(
+            new ReportActor((int) $export->requester_actor_id, 'active', []),
+            new ReportScope((int) $export->organization_id, $holdingOrganizationIds, $projectIds, $resources, $timezone),
+            new ReportVisibility(true, false, false, false, false, false, false),
+            new AuthorizationDecisionContext(
+                'queue',
+                (int) $export->organization_id,
+                $holdingOrganizationIds,
+                $projectIds,
+                $resources,
+                $timezone,
+                "reports:export:{$export->id}:dispatch-failure",
                 null,
             ),
         );
