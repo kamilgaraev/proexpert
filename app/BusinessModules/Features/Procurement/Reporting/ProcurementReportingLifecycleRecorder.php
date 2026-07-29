@@ -15,6 +15,7 @@ use App\BusinessModules\Features\Procurement\Models\SupplierRequestLine;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementProcessEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementProcessEventRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\PurchaseOrderPromiseVersionRecorder;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyLifecycleEventRecorder;
 use Brick\Math\BigDecimal;
@@ -260,9 +261,13 @@ final readonly class ProcurementReportingLifecycleRecorder
         ]);
         $metadata = is_array($line->metadata) ? $line->metadata : [];
         if (($metadata['reporting_source_version'] ?? null) !== 1) {
-            $line->forceFill(['metadata' => array_merge($metadata, ['reporting_source_version' => 1])])->save();
+            throw new DomainException(trans_message('procurement.purchase_orders.receipt_history_version_required'));
         }
-        $occurredAt = CarbonImmutable::parse($line->purchaseReceipt->receipt_date)->endOfDay();
+        $postedAt = $metadata['reporting_posted_at'] ?? null;
+        if (! is_string($postedAt) || trim($postedAt) === '') {
+            throw new DomainException(trans_message('procurement.purchase_orders.receipt_posted_at_required'));
+        }
+        $occurredAt = CarbonImmutable::parse($postedAt);
         $this->supplyEvents->receipt($line->fresh(), $occurredAt);
 
         $item = $line->purchaseOrderItem;
@@ -297,6 +302,14 @@ final readonly class ProcurementReportingLifecycleRecorder
                 projectId: $order->purchaseRequest?->siteRequest?->project_id,
             );
         }
+    }
+
+    public function receiptReversed(
+        PurchaseReceiptLine $line,
+        string $reasonCode,
+        CarbonImmutable $occurredAt,
+    ): SupplyLifecycleEvent {
+        return $this->supplyEvents->reversal($line, $reasonCode, $occurredAt);
     }
 
     private function pinOrderItemBasis(PurchaseOrder $order, PurchaseOrderItem $item): void

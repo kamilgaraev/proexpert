@@ -190,6 +190,7 @@ final readonly class InventoryRiskBackfill
         $current = WarehouseBalance::query()
             ->where('organization_id', $movement->organization_id)
             ->where('warehouse_id', $movement->warehouse_id)
+            ->where('project_id', $movement->project_id)
             ->where('material_id', $movement->material_id)
             ->get()
             ->reduce(

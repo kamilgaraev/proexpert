@@ -71,6 +71,8 @@ final class SupplierAwardFormulaTest extends TestCase
             unit: 'piece',
             vatBasis: 'included',
             freightBasis: 'included',
+            unitDimension: 'count',
+            conversionVersion: 'identity-v1',
         );
     }
 }

@@ -11,12 +11,15 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementProcessEvent as ProcessEventData;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementProcessTimeline;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementCyclePolicyVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementCycleRow;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementCycleSnapshot;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Models\ProcurementProcessEvent;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
 use Brick\Math\BigDecimal;
@@ -87,9 +90,77 @@ final readonly class ProcurementCycleSnapshotMaterializer
             ->orderBy('occurred_at')
             ->orderBy('id')
             ->get();
+        $purchaseOrderIds = $events->pluck('purchase_order_id')->filter()->unique()->values();
+        $promises = PurchaseOrderPromiseVersion::query()
+            ->where('organization_id', $organizationId)
+            ->where('promise_version', 1)
+            ->whereIn('purchase_order_id', $purchaseOrderIds)
+            ->get();
+        $expectedItemsByOrder = PurchaseOrderItem::query()
+            ->whereIn('purchase_order_id', $purchaseOrderIds)
+            ->orderBy('purchase_order_id')
+            ->orderBy('id')
+            ->get(['id', 'purchase_order_id'])
+            ->groupBy('purchase_order_id');
+        $supplyEvents = SupplyLifecycleEvent::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('purchase_order_id', $purchaseOrderIds)
+            ->where('occurred_at', '<=', $query->asOf)
+            ->orderBy('occurred_at')
+            ->orderBy('id')
+            ->get();
+        $netByItem = $supplyEvents
+            ->groupBy('purchase_order_item_id')
+            ->map(static fn ($itemEvents) => $itemEvents->reduce(
+                static fn (BigDecimal $total, SupplyLifecycleEvent $event): BigDecimal => $total
+                    ->plus((string) $event->signed_quantity),
+                BigDecimal::zero(),
+            ));
+        $incompletePurchaseOrderIds = $promises
+            ->groupBy('purchase_order_id')
+            ->filter(static function ($orderPromises) use ($netByItem): bool {
+                return $orderPromises->contains(static function (PurchaseOrderPromiseVersion $promise) use ($netByItem): bool {
+                    $net = $netByItem->get($promise->purchase_order_item_id, BigDecimal::zero());
+
+                    return $net->isLessThan((string) $promise->ordered_quantity);
+                });
+            })
+            ->keys()
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+        foreach ($expectedItemsByOrder as $purchaseOrderId => $orderItems) {
+            $expectedIds = $orderItems->pluck('id')->map(static fn (mixed $id): int => (int) $id)->sort()->values();
+            $promisedIds = $promises
+                ->where('purchase_order_id', $purchaseOrderId)
+                ->pluck('purchase_order_item_id')
+                ->map(static fn (mixed $id): int => (int) $id)
+                ->sort()
+                ->values();
+            if ($expectedIds->all() !== $promisedIds->all()) {
+                $incompletePurchaseOrderIds[] = (int) $purchaseOrderId;
+            }
+        }
+        $incompletePurchaseOrderIds = array_values(array_unique($incompletePurchaseOrderIds));
+        $events = $events->reject(
+            static fn (ProcurementProcessEvent $event): bool => $event->event_code === 'fully_received'
+                && ($event->purchase_order_id === null
+                    || in_array((int) $event->purchase_order_id, $incompletePurchaseOrderIds, true)),
+        )->values();
         $sourceHash = $this->sourceHashes->make(
             $query->canonicalJson,
-            [$policy->source_hash, ...$events->pluck('source_hash')->all()],
+            [
+                $policy->source_hash,
+                ...$events->pluck('source_hash')->all(),
+                ...$promises->pluck('source_hash')->all(),
+                ...$supplyEvents->pluck('source_hash')->all(),
+                hash('sha256', CanonicalJson::encode(
+                    $expectedItemsByOrder->map(
+                        static fn ($items): array => $items->pluck('id')
+                            ->map(static fn (mixed $id): int => (int) $id)
+                            ->all(),
+                    )->all(),
+                )),
+            ],
         );
         $existing = ProcurementCycleSnapshot::query()
             ->where('organization_id', $organizationId)

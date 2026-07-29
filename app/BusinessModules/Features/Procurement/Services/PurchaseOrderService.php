@@ -11,11 +11,14 @@ use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Reporting\ProcurementReportingLifecycleRecorder;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\SupplyLifecycleEvent;
 use App\DTOs\Contract\ContractDossierCreationResult;
 use App\Models\Supplier;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -243,6 +246,7 @@ class PurchaseOrderService
             foreach ($items as $item) {
                 $quantity = (float) $item['quantity_received'];
                 $price = (float) $item['price'];
+                $postedAt = now('UTC')->toISOString();
 
                 $receiptLine = $receipt->lines()->create([
                     'purchase_order_item_id' => (int) $item['item_id'],
@@ -251,7 +255,11 @@ class PurchaseOrderService
                     'total_amount' => round($quantity * $price, 2),
                     'metadata' => array_merge(
                         is_array($item['metadata'] ?? null) ? $item['metadata'] : [],
-                        ['reporting_source_version' => 1],
+                        [
+                            'reporting_source_version' => 1,
+                            'reporting_posted_at' => $postedAt,
+                            'reporting_return_events' => [],
+                        ],
                     ),
                 ]);
                 $this->reportingLifecycle->receipt($receiptLine, $userId);
@@ -354,6 +362,34 @@ class PurchaseOrderService
             DB::rollBack();
             throw $e;
         }
+    }
+
+    public function reverseReceiptLine(
+        PurchaseReceiptLine $line,
+        string $reasonCode,
+    ): SupplyLifecycleEvent {
+        return DB::transaction(function () use ($line, $reasonCode): SupplyLifecycleEvent {
+            $occurredAt = CarbonImmutable::now('UTC');
+            $event = $this->reportingLifecycle->receiptReversed($line->fresh(), $reasonCode, $occurredAt);
+            $metadata = is_array($line->metadata) ? $line->metadata : [];
+            $corrections = is_array($metadata['reporting_return_events'] ?? null)
+                ? $metadata['reporting_return_events']
+                : [];
+            $corrections[] = [
+                'event_type' => 'receipt_reversed',
+                'occurred_at' => $occurredAt->format(DATE_ATOM),
+                'quantity' => (string) $line->quantity_received,
+                'source_type' => 'purchase_receipt_line',
+                'source_id' => (int) $line->id,
+                'source_version' => (int) ($metadata['reporting_source_version'] ?? 1),
+                'reason_code' => $reasonCode,
+            ];
+            $line->forceFill([
+                'metadata' => array_merge($metadata, ['reporting_return_events' => $corrections]),
+            ])->save();
+
+            return $event;
+        }, 3);
     }
 
     public function createContractFromOrder(PurchaseOrder $order): ContractDossierCreationResult

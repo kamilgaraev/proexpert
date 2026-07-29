@@ -48,6 +48,12 @@ final readonly class SupplierProposalComparabilityPolicy
         ComparableProposalVersion $selected,
         ComparableProposalVersion $candidate,
     ): ?string {
+        if ($selected->unitDimension === null
+            || $selected->conversionVersion === null
+            || $candidate->unitDimension === null
+            || $candidate->conversionVersion === null) {
+            return 'unit_conversion_basis_unproven';
+        }
         if (! hash_equals($selected->materialSpecificationHash, $candidate->materialSpecificationHash)) {
             return 'specification_mismatch';
         }

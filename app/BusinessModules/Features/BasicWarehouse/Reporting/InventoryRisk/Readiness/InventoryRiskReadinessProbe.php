@@ -29,12 +29,15 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
 
     public function inspect(ReportExecutionContext $context, ReportQuery $query): SourceReadinessResult
     {
+        $projects = $context->scope->projectIds;
         $eligible = WarehouseMovement::query()
             ->where('organization_id', $context->scope->organizationId)
+            ->when($projects !== [], static fn ($builder) => $builder->whereIn('project_id', $projects))
             ->where('movement_date', '<=', $query->asOf)
             ->count();
         $events = WarehouseInventoryEvent::query()
             ->where('organization_id', $context->scope->organizationId)
+            ->when($projects !== [], static fn ($builder) => $builder->whereIn('project_id', $projects))
             ->where('occurred_at', '<=', $query->asOf);
         $projected = (clone $events)->distinct()->count('source_movement_id');
         $unknown = (clone $events)
@@ -55,6 +58,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
                     ->from('warehouse_inventory_events as earlier')
                     ->whereColumn('earlier.organization_id', 'warehouse_inventory_events.organization_id')
                     ->whereColumn('earlier.warehouse_id', 'warehouse_inventory_events.warehouse_id')
+                    ->whereRaw('earlier.project_id IS NOT DISTINCT FROM warehouse_inventory_events.project_id')
                     ->whereColumn('earlier.material_id', 'warehouse_inventory_events.material_id')
                     ->whereColumn('earlier.unit_dimension', 'warehouse_inventory_events.unit_dimension')
                     ->whereColumn('earlier.unit_code', 'warehouse_inventory_events.unit_code')
@@ -77,6 +81,7 @@ final readonly class InventoryRiskReadinessProbe implements ReportDefinitionRead
             ->fromSub(
                 WarehouseInventoryEvent::query()
                     ->where('organization_id', $context->scope->organizationId)
+                    ->when($projects !== [], static fn ($builder) => $builder->whereIn('project_id', $projects))
                     ->where('occurred_at', '<=', $query->asOf)
                     ->whereNotNull('transfer_pair_key')
                     ->select('transfer_pair_key')

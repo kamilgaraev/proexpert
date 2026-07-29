@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionReadines
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardDecisionVersion;
 use App\Support\Reporting\SourceReadinessResult;
@@ -28,13 +29,31 @@ final readonly class SupplierAwardReadinessProbe implements ReportDefinitionRead
 
     public function inspect(ReportExecutionContext $context, ReportQuery $query): SourceReadinessResult
     {
+        $projects = $context->scope->projectIds;
+        $purchaseRequestIds = $projects === []
+            ? null
+            : PurchaseRequest::query()
+                ->where('organization_id', $context->scope->organizationId)
+                ->whereHas('siteRequest', static fn ($builder) => $builder->whereIn('project_id', $projects))
+                ->pluck('id');
         $eligible = SupplierProposalDecision::query()
             ->where('organization_id', $context->scope->organizationId)
+            ->when(
+                $purchaseRequestIds !== null,
+                static fn ($builder) => $builder->whereHas(
+                    'supplierRequest',
+                    static fn ($request) => $request->whereIn('purchase_request_id', $purchaseRequestIds),
+                ),
+            )
             ->whereNotNull('selected_at')
             ->where('selected_at', '<=', $query->asOf)
             ->count();
         $versions = SupplierAwardDecisionVersion::query()
             ->where('organization_id', $context->scope->organizationId)
+            ->when(
+                $purchaseRequestIds !== null,
+                static fn ($builder) => $builder->whereIn('purchase_request_id', $purchaseRequestIds),
+            )
             ->where('selected_at', '<=', $query->asOf);
         $projected = (clone $versions)->distinct()->count('decision_id');
         $invalidVersions = (clone $versions)

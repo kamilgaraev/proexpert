@@ -39,6 +39,29 @@ final class SupplierProposalComparabilityPolicyTest extends TestCase
         ], $partition->excludedReasonByProposalVersionId);
     }
 
+    public function test_unproven_conversion_basis_is_never_comparable(): void
+    {
+        $partition = (new SupplierProposalComparabilityPolicy)->partition([
+            $this->proposal(1, dimension: null, conversion: null),
+            $this->proposal(2, dimension: null, conversion: null),
+        ], 1);
+
+        self::assertSame([], $partition->comparable);
+        self::assertSame('unit_conversion_basis_unproven', $partition->excludedReasonByProposalVersionId[1]);
+        self::assertSame('unit_conversion_basis_unproven', $partition->excludedReasonByProposalVersionId[2]);
+    }
+
+    public function test_conversion_version_mismatch_is_explicitly_excluded(): void
+    {
+        $partition = (new SupplierProposalComparabilityPolicy)->partition([
+            $this->proposal(1, dimension: 'piece', conversion: 'identity-v1'),
+            $this->proposal(2, dimension: 'piece', conversion: 'identity-v2'),
+        ], 1);
+
+        self::assertCount(1, $partition->comparable);
+        self::assertSame('unit_conversion_basis_mismatch', $partition->excludedReasonByProposalVersionId[2]);
+    }
+
     private function proposal(
         int $id,
         string $quantity = '10.000',
@@ -47,6 +70,8 @@ final class SupplierProposalComparabilityPolicyTest extends TestCase
         string $freightBasis = 'included',
         string $currency = 'RUB',
         string $specificationHash = '',
+        ?string $dimension = 'count',
+        ?string $conversion = 'identity-v1',
     ): ComparableProposalVersion {
         return new ComparableProposalVersion(
             proposalVersionId: $id,
@@ -58,6 +83,8 @@ final class SupplierProposalComparabilityPolicyTest extends TestCase
             unit: $unit,
             vatBasis: $vatBasis,
             freightBasis: $freightBasis,
+            unitDimension: $dimension,
+            conversionVersion: $conversion,
         );
     }
 }

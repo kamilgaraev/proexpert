@@ -81,6 +81,74 @@ final class SupplyReportingHardeningTest extends TestCase
         self::assertStringContainsString('foreach ($eventCodes as $eventCode)', $source);
     }
 
+    public function test_inventory_transfer_pair_constraint_requires_exactly_two_balanced_events(): void
+    {
+        $source = $this->source(
+            'app/BusinessModules/Features/BasicWarehouse/migrations/'
+            .'2026_07_26_130000_create_inventory_risk_reporting_tables.php',
+        );
+
+        self::assertStringContainsString('pair_count <> 2', $source);
+        self::assertStringContainsString('on_hand_sum <> 0', $source);
+        self::assertStringContainsString('unit_dimension = NEW.unit_dimension', $source);
+        self::assertStringContainsString('conversion_version = NEW.conversion_version', $source);
+    }
+
+    public function test_supply_backfill_requires_explicit_unit_and_posted_timestamp_evidence(): void
+    {
+        $source = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/Supply/Backfill/'
+            .'SupplyReliabilityBackfill.php',
+        );
+
+        self::assertStringNotContainsString("'unit-code:'.hash", $source);
+        self::assertStringNotContainsString('->endOfDay()', $source);
+        self::assertStringContainsString("'reporting_unit_dimension'", $source);
+        self::assertStringContainsString("'reporting_conversion_version'", $source);
+        self::assertStringContainsString("'reporting_posted_at'", $source);
+        self::assertStringContainsString("'reporting_return_events'", $source);
+    }
+
+    public function test_receipt_correction_has_a_production_owner_path(): void
+    {
+        $service = $this->source(
+            'app/BusinessModules/Features/Procurement/Services/PurchaseOrderService.php',
+        );
+        $lifecycle = $this->source(
+            'app/BusinessModules/Features/Procurement/Reporting/ProcurementReportingLifecycleRecorder.php',
+        );
+
+        self::assertStringContainsString('public function reverseReceiptLine(', $service);
+        self::assertStringContainsString('receiptReversed(', $service);
+        self::assertStringContainsString('public function receiptReversed(', $lifecycle);
+        self::assertStringContainsString('$this->supplyEvents->reversal(', $lifecycle);
+    }
+
+    public function test_readiness_is_bound_to_requested_project_scope(): void
+    {
+        foreach ([
+            'Procurement/Reporting/Cycle/Readiness/ProcurementCycleReadinessProbe.php',
+            'Procurement/Reporting/Award/Readiness/SupplierAwardReadinessProbe.php',
+            'Procurement/Reporting/Supply/Readiness/SupplyReliabilityReadinessProbe.php',
+            'BasicWarehouse/Reporting/InventoryRisk/Readiness/InventoryRiskReadinessProbe.php',
+        ] as $suffix) {
+            $source = $this->source('app/BusinessModules/Features/'.$suffix);
+            self::assertStringContainsString('$context->scope->projectIds', $source, $suffix);
+            self::assertStringContainsString('whereIn', $source, $suffix);
+        }
+    }
+
+    public function test_inventory_opening_reconciliation_is_project_bound(): void
+    {
+        $source = $this->source(
+            'app/BusinessModules/Features/BasicWarehouse/Reporting/InventoryRisk/Backfill/'
+            .'InventoryRiskBackfill.php',
+        );
+        $balanceQuery = substr($source, strpos($source, '$current = WarehouseBalance::query()'));
+
+        self::assertStringContainsString("->where('project_id', \$movement->project_id)", $balanceQuery);
+    }
+
     public function test_proposal_versions_have_application_and_database_immutability_fences(): void
     {
         $model = $this->source(

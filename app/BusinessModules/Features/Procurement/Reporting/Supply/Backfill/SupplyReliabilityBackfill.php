@@ -11,6 +11,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\PurchaseO
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyLifecycleEventRecorder;
 use App\Support\Reporting\OwnerBackfillBatch;
 use Carbon\CarbonImmutable;
+use DomainException;
 use Throwable;
 
 final readonly class SupplyReliabilityBackfill
@@ -45,6 +46,9 @@ final readonly class SupplyReliabilityBackfill
             $promiseEvidence = $metadata['reporting_original_promised_at']
                 ?? $orderMetadata['delivery_date_at_first_send']
                 ?? null;
+            $unitDimension = $metadata['reporting_unit_dimension'] ?? null;
+            $unitCode = $metadata['reporting_unit_code'] ?? null;
+            $conversionVersion = $metadata['reporting_conversion_version'] ?? null;
             $input[] = [
                 'item_id' => (int) $item->id,
                 'sent_at' => $order->sent_at?->format(DATE_ATOM),
@@ -53,6 +57,12 @@ final readonly class SupplyReliabilityBackfill
             if (! is_string($promiseEvidence)
                 || trim($promiseEvidence) === ''
                 || $order->sent_at === null
+                || ! is_string($unitDimension)
+                || trim($unitDimension) === ''
+                || ! is_string($unitCode)
+                || trim($unitCode) === ''
+                || ! is_string($conversionVersion)
+                || trim($conversionVersion) === ''
                 || ! is_string($orderMetadata['tax_basis'] ?? null)
                 || ! is_string($orderMetadata['freight_basis'] ?? null)) {
                 $gaps++;
@@ -60,11 +70,11 @@ final readonly class SupplyReliabilityBackfill
                 continue;
             }
             try {
-                $unitIdentity = 'unit-code:'.hash('sha256', mb_strtolower(trim((string) $item->unit)));
                 $basis = array_merge([
                     'reporting_source_version' => 1,
-                    'unit_dimension' => $unitIdentity,
-                    'unit_conversion_version' => $unitIdentity.':identity-v1',
+                    'unit_dimension' => $unitDimension,
+                    'unit_code' => $unitCode,
+                    'unit_conversion_version' => $conversionVersion,
                     'tax_basis' => $orderMetadata['tax_basis'],
                     'freight_basis' => $orderMetadata['freight_basis'],
                 ], $metadata);
@@ -88,17 +98,76 @@ final readonly class SupplyReliabilityBackfill
                 );
                 $projected[] = (int) $sent->id;
                 foreach ($item->receiptLines->sortBy('id') as $line) {
-                    if ($line->purchaseReceipt?->receipt_date === null) {
+                    $lineMetadata = is_array($line->metadata) ? $line->metadata : [];
+                    $postedAt = $lineMetadata['reporting_posted_at'] ?? null;
+                    $sourceVersion = $lineMetadata['reporting_source_version'] ?? null;
+                    if (! is_string($postedAt)
+                        || trim($postedAt) === ''
+                        || ! is_int($sourceVersion)
+                        || $sourceVersion < 1) {
                         $gaps++;
 
                         continue;
                     }
                     $receipt = $this->events->receiptBackfill(
                         $line,
-                        CarbonImmutable::parse($line->purchaseReceipt->receipt_date)->endOfDay(),
-                        1,
+                        CarbonImmutable::parse($postedAt),
+                        $sourceVersion,
                     );
                     $projected[] = (int) $receipt->id;
+                    $corrections = $lineMetadata['reporting_return_events'] ?? [];
+                    if (! is_array($corrections)) {
+                        $gaps++;
+
+                        continue;
+                    }
+                    foreach ($corrections as $correction) {
+                        if (! is_array($correction)
+                            || ! in_array($correction['event_type'] ?? null, ['receipt_reversed', 'returned'], true)
+                            || ! is_string($correction['occurred_at'] ?? null)
+                            || ! is_string($correction['quantity'] ?? null)
+                            || ! is_string($correction['source_type'] ?? null)
+                            || ! is_int($correction['source_id'] ?? null)
+                            || ! is_int($correction['source_version'] ?? null)) {
+                            $gaps++;
+
+                            continue;
+                        }
+                        $eventType = $correction['event_type'];
+                        $occurredAt = CarbonImmutable::parse($correction['occurred_at']);
+                        $signedQuantity = '-'.ltrim($correction['quantity'], '+-');
+                        $existingCorrection = SupplyLifecycleEvent::query()
+                            ->where('organization_id', $organizationId)
+                            ->where('source_type', $correction['source_type'])
+                            ->where('source_id', $correction['source_id'])
+                            ->where('source_version', $correction['source_version'])
+                            ->where('event_type', $eventType)
+                            ->first();
+                        if ($existingCorrection instanceof SupplyLifecycleEvent) {
+                            if ((string) $existingCorrection->signed_quantity !== $signedQuantity
+                                || ! $existingCorrection->occurred_at->equalTo($occurredAt)) {
+                                throw new DomainException('Supply correction source identity conflicts with history.');
+                            }
+                            $projected[] = (int) $existingCorrection->id;
+
+                            continue;
+                        }
+                        $correctionEvent = $this->events->record(
+                            $promise,
+                            $eventType,
+                            $correction['source_type'],
+                            $correction['source_id'],
+                            $correction['source_version'],
+                            $signedQuantity,
+                            $occurredAt,
+                            'supply-correction:'.$correction['source_type'].':'
+                                .$correction['source_id'].':'.$correction['source_version'].':'.$eventType,
+                            is_string($correction['reason_code'] ?? null) ? $correction['reason_code'] : null,
+                            $eventType === 'receipt_reversed' ? (int) $receipt->id : null,
+                            ['backfill' => true, 'purchase_receipt_line_id' => (int) $line->id],
+                        );
+                        $projected[] = (int) $correctionEvent->id;
+                    }
                 }
             } catch (Throwable) {
                 $gaps++;

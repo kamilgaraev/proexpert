@@ -29,20 +29,27 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
 
     public function inspect(ReportExecutionContext $context, ReportQuery $query): SourceReadinessResult
     {
-        $eligible = PurchaseOrderItem::query()
+        $projects = $context->scope->projectIds;
+        $eligibleQuery = PurchaseOrderItem::query()
             ->join('purchase_orders', 'purchase_orders.id', '=', 'purchase_order_items.purchase_order_id')
+            ->join('purchase_requests', 'purchase_requests.id', '=', 'purchase_orders.purchase_request_id')
+            ->join('site_requests', 'site_requests.id', '=', 'purchase_requests.site_request_id')
             ->where('purchase_orders.organization_id', $context->scope->organizationId)
             ->whereNotNull('purchase_orders.sent_at')
             ->where('purchase_orders.sent_at', '<=', $query->asOf)
             ->whereNull('purchase_orders.deleted_at')
-            ->count('purchase_order_items.id');
+            ->when($projects !== [], static fn ($builder) => $builder->whereIn('site_requests.project_id', $projects));
+        $eligibleItemIds = (clone $eligibleQuery)->pluck('purchase_order_items.id');
+        $eligible = $eligibleItemIds->count();
         $promises = PurchaseOrderPromiseVersion::query()
             ->where('organization_id', $context->scope->organizationId)
+            ->when($projects !== [], static fn ($builder) => $builder->whereIn('purchase_order_item_id', $eligibleItemIds))
             ->where('promise_version', 1)
             ->where('effective_from', '<=', $query->asOf);
         $projected = (clone $promises)->distinct()->count('purchase_order_item_id');
         $sentItems = SupplyLifecycleEvent::query()
             ->where('organization_id', $context->scope->organizationId)
+            ->when($projects !== [], static fn ($builder) => $builder->whereIn('purchase_order_item_id', $eligibleItemIds))
             ->where('event_type', 'sent')
             ->where('occurred_at', '<=', $query->asOf)
             ->distinct()
@@ -58,6 +65,7 @@ final readonly class SupplyReliabilityReadinessProbe implements ReportDefinition
             ->count();
         $lifecycle = SupplyLifecycleEvent::query()
             ->where('organization_id', $context->scope->organizationId)
+            ->when($projects !== [], static fn ($builder) => $builder->whereIn('purchase_order_item_id', $eligibleItemIds))
             ->where('occurred_at', '<=', $query->asOf);
 
         return new SourceReadinessResult(

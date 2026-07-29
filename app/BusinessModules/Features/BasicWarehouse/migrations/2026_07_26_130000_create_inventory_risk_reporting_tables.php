@@ -96,7 +96,17 @@ return new class extends Migration
                 'daily_balance_row_key_unique',
             );
             $table->unique(
-                ['organization_id', 'balance_snapshot_id', 'warehouse_id', 'project_id', 'material_id', 'balance_date', 'unit_code'],
+                [
+                    'organization_id',
+                    'balance_snapshot_id',
+                    'warehouse_id',
+                    'project_id',
+                    'material_id',
+                    'balance_date',
+                    'unit_dimension',
+                    'unit_code',
+                    'conversion_version',
+                ],
                 'daily_balance_grain_unique',
             );
             $table->index(
@@ -289,7 +299,7 @@ BEGIN
       FROM warehouse_inventory_events
      WHERE organization_id = NEW.organization_id
        AND transfer_pair_key = NEW.transfer_pair_key;
-    IF dimension_count <> 1 OR on_hand_sum > 0 THEN
+    IF pair_count <> 2 OR dimension_count <> 1 OR on_hand_sum <> 0 THEN
         RAISE EXCEPTION 'warehouse transfer pair is incomplete' USING ERRCODE = '23514';
     END IF;
     RETURN NEW;
@@ -319,7 +329,9 @@ BEGIN
        AND warehouse_id = NEW.warehouse_id
        AND project_id IS NOT DISTINCT FROM NEW.project_id
        AND material_id = NEW.material_id
+       AND unit_dimension = NEW.unit_dimension
        AND unit_code = NEW.unit_code
+       AND conversion_version = NEW.conversion_version
        AND balance_date < NEW.balance_date
      ORDER BY balance_date DESC
      LIMIT 1;
