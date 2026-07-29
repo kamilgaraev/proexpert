@@ -20,8 +20,18 @@ final readonly class ReportPdfDocument
         public array $rows,
         public array $totals,
         public array $metadata,
+        public int $projectedHtmlBytes = 0,
+        public int $projectedRetainedBytes = 0,
+        public int $memoryBaselineBytes = 0,
+        public int $buildPeakMemoryDeltaBytes = 0,
     ) {
-        if (!array_is_list($headers) || $headers === [] || !array_is_list($rows)) {
+        if (!array_is_list($headers)
+            || $headers === []
+            || !array_is_list($rows)
+            || $projectedHtmlBytes < 0
+            || $projectedRetainedBytes < 0
+            || $memoryBaselineBytes < 0
+            || $buildPeakMemoryDeltaBytes < 0) {
             throw new InvalidArgumentException('report_pdf_document_invalid');
         }
 

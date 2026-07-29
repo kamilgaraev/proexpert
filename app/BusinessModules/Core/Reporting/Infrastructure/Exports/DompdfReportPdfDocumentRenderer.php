@@ -69,12 +69,25 @@ final class DompdfReportPdfDocumentRenderer implements ReportPdfDocumentRenderer
 
     public function render(ReportPdfDocument $document, ReportPdfRenderBudget $budget): string
     {
-        $memoryAtStart = ($this->memoryUsage)();
-        if (function_exists('memory_reset_peak_usage')) {
+        $memoryAtStart = $document->memoryBaselineBytes > 0
+            ? $document->memoryBaselineBytes
+            : ($this->memoryUsage)();
+        if ($document->memoryBaselineBytes === 0 && function_exists('memory_reset_peak_usage')) {
             memory_reset_peak_usage();
         }
 
         try {
+            $projectedHtmlBytes = $document->projectedHtmlBytes > 0
+                ? $document->projectedHtmlBytes
+                : $budget->maxHtmlBytes;
+            $this->assertCumulativeMemory(
+                $document,
+                $memoryAtStart,
+                $budget,
+                $projectedHtmlBytes,
+                $budget->maxPdfBytes,
+            );
+
             $html = ($this->htmlRenderer)($document);
             if (!is_string($html)) {
                 throw new \RuntimeException('invalid_html_renderer_result');
@@ -82,13 +95,27 @@ final class DompdfReportPdfDocumentRenderer implements ReportPdfDocumentRenderer
             if (strlen($html) > $budget->maxHtmlBytes) {
                 throw $this->limit();
             }
-            $this->assertMemory($memoryAtStart, $budget);
+            $this->assertCumulativeMemory(
+                $document,
+                $memoryAtStart,
+                $budget,
+                0,
+                $budget->maxPdfBytes,
+                strlen($html),
+            );
 
             $renderedDocument = ($this->documentLoader)($html);
             if (!is_object($renderedDocument)) {
                 throw new \RuntimeException('invalid_pdf_renderer_result');
             }
-            $this->assertMemory($memoryAtStart, $budget);
+            $this->assertCumulativeMemory(
+                $document,
+                $memoryAtStart,
+                $budget,
+                0,
+                $budget->maxPdfBytes,
+                strlen($html),
+            );
             $pages = ($this->pageCounter)($renderedDocument);
             if (!is_int($pages) || $pages < 1) {
                 throw new RuntimeException('invalid_pdf_page_count');
@@ -96,7 +123,6 @@ final class DompdfReportPdfDocumentRenderer implements ReportPdfDocumentRenderer
             if ($pages > $budget->maxPages) {
                 throw $this->limit();
             }
-            $this->assertMemory($memoryAtStart, $budget);
 
             $bytes = ($this->outputRenderer)($renderedDocument);
             if (!is_string($bytes)) {
@@ -105,7 +131,14 @@ final class DompdfReportPdfDocumentRenderer implements ReportPdfDocumentRenderer
             if (strlen($bytes) > $budget->maxPdfBytes) {
                 throw $this->limit();
             }
-            $this->assertMemory($memoryAtStart, $budget);
+            $this->assertCumulativeMemory(
+                $document,
+                $memoryAtStart,
+                $budget,
+                0,
+                0,
+                strlen($html) + strlen($bytes),
+            );
 
             return $bytes;
         } catch (ReportContractException $exception) {
@@ -123,9 +156,31 @@ final class DompdfReportPdfDocumentRenderer implements ReportPdfDocumentRenderer
         return ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_LIMIT_EXCEEDED);
     }
 
-    private function assertMemory(int $memoryAtStart, ReportPdfRenderBudget $budget): void
-    {
-        if (max(0, ($this->memoryPeak)() - $memoryAtStart) > $budget->maxMemoryDeltaBytes) {
+    private function assertCumulativeMemory(
+        ReportPdfDocument $document,
+        int $memoryAtStart,
+        ReportPdfRenderBudget $budget,
+        int $futureHtmlBytes,
+        int $futurePdfBytes,
+        int $materializedBytes = 0,
+    ): void {
+        $actualUsageDelta = max(0, ($this->memoryUsage)() - $memoryAtStart);
+        $actualPeakDelta = max(
+            $document->buildPeakMemoryDeltaBytes,
+            max(0, ($this->memoryPeak)() - $memoryAtStart),
+        );
+        $retainedAndMaterialized = $document->projectedRetainedBytes + $materializedBytes;
+        $knownPeak = max($actualUsageDelta, $actualPeakDelta, $retainedAndMaterialized);
+        $remaining = $budget->maxMemoryDeltaBytes;
+
+        foreach ([$knownPeak, $futureHtmlBytes, $futurePdfBytes] as $reservedBytes) {
+            if ($reservedBytes < 0 || $reservedBytes > $remaining) {
+                throw $this->limit();
+            }
+            $remaining -= $reservedBytes;
+        }
+
+        if ($knownPeak > $budget->maxMemoryDeltaBytes) {
             throw $this->limit();
         }
     }

@@ -20,7 +20,8 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\XlsxReportExportRe
 use Tests\Unit\Reporting\Exports\HashingReportArtifactStream;
 use Tests\Unit\Reporting\Exports\ReportExportRendererTestCase;
 
-final class InstrumentedReportChunkSource
+/** @implements \Iterator<int, ReportRowChunk> */
+final class InstrumentedReportChunkSource implements \Iterator
 {
     private int $emittedRows = 0;
 
@@ -34,6 +35,14 @@ final class InstrumentedReportChunkSource
     /** @var list<int> */
     private array $sourceReadCounts = [];
 
+    private int $collectibleChunkChecks = 0;
+
+    private int $offset = 0;
+
+    private int $position = 0;
+
+    private ?ReportRowChunk $currentChunk = null;
+
     public function __construct(
         private readonly ReportRunExportSource $source,
         private readonly int $rowCount,
@@ -44,22 +53,44 @@ final class InstrumentedReportChunkSource
     /** @return iterable<ReportRowChunk> */
     public function chunks(): iterable
     {
-        for ($offset = 0; $offset < $this->rowCount; $offset += $this->chunkSize) {
-            $chunkIndex = count($this->sourceReadCounts);
-            $chunk = $this->readChunk($offset);
-            $this->activeRows = count($chunk->rows);
-            $this->peakRetainedRows = max($this->peakRetainedRows, $this->activeRows);
-            $this->chunkSizes[] = $this->activeRows;
-            $this->emittedRows += $this->activeRows;
+        return $this;
+    }
 
-            yield $chunk;
-
-            $this->activeRows = 0;
-            unset($chunk);
-            if (($this->sourceReadCounts[$chunkIndex] ?? 0) > 4) {
-                throw new \RuntimeException('source_read_budget_exceeded');
-            }
+    public function current(): ReportRowChunk
+    {
+        if (!$this->currentChunk instanceof ReportRowChunk) {
+            throw new \LogicException('report_chunk_iterator_not_valid');
         }
+
+        return $this->currentChunk;
+    }
+
+    public function key(): int
+    {
+        return $this->position;
+    }
+
+    public function next(): void
+    {
+        $this->releaseCurrent();
+        $this->offset += $this->chunkSize;
+        $this->position++;
+        $this->loadCurrent();
+    }
+
+    public function rewind(): void
+    {
+        if ($this->currentChunk instanceof ReportRowChunk) {
+            $this->releaseCurrent();
+        }
+        $this->offset = 0;
+        $this->position = 0;
+        $this->loadCurrent();
+    }
+
+    public function valid(): bool
+    {
+        return $this->currentChunk instanceof ReportRowChunk;
     }
 
     public function emittedRows(): int
@@ -89,9 +120,47 @@ final class InstrumentedReportChunkSource
         return $this->sourceReadCounts;
     }
 
+    public function collectibleChunkChecks(): int
+    {
+        return $this->collectibleChunkChecks;
+    }
+
+    private function loadCurrent(): void
+    {
+        if ($this->offset >= $this->rowCount) {
+            $this->currentChunk = null;
+            $this->activeRows = 0;
+
+            return;
+        }
+
+        $this->currentChunk = $this->readChunk($this->offset);
+        $this->activeRows = count($this->currentChunk->rows);
+        $this->peakRetainedRows = max($this->peakRetainedRows, $this->activeRows);
+        $this->chunkSizes[] = $this->activeRows;
+        $this->emittedRows += $this->activeRows;
+    }
+
+    private function releaseCurrent(): void
+    {
+        if (!$this->currentChunk instanceof ReportRowChunk) {
+            return;
+        }
+
+        $chunkReference = \WeakReference::create($this->currentChunk);
+        $firstRowReference = \WeakReference::create($this->currentChunk->rows[0]);
+        $this->currentChunk = null;
+        $this->activeRows = 0;
+        gc_collect_cycles();
+        if ($chunkReference->get() !== null || $firstRowReference->get() !== null) {
+            throw new \RuntimeException('previous_chunk_retained');
+        }
+        $this->collectibleChunkChecks++;
+    }
+
     private function readChunk(int $offset): ReportRowChunk
     {
-        $chunkIndex = count($this->sourceReadCounts);
+        $chunkIndex = intdiv($offset, $this->chunkSize);
         $this->sourceReadCounts[$chunkIndex] = ($this->sourceReadCounts[$chunkIndex] ?? 0) + 1;
         $size = min($this->chunkSize, $this->rowCount - $offset);
         $rows = [];
@@ -145,6 +214,7 @@ final class ReportExportStreamingBudgetTest extends ReportExportRendererTestCase
             self::assertLessThanOrEqual(4, max($provider->sourceReadCounts()));
             self::assertSame(500, $provider->peakRetainedRows());
             self::assertSame(0, $provider->activeRows());
+            self::assertSame(100, $provider->collectibleChunkChecks());
             self::assertLessThanOrEqual(128 * 1024 * 1024, $memoryDelta);
             self::assertGreaterThan(0, $stream->size());
             self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/D', $stream->checksum());
@@ -212,10 +282,29 @@ final class ReportExportStreamingBudgetTest extends ReportExportRendererTestCase
         self::assertSame(array_fill(0, 10, 1), $provider->sourceReadCounts());
         self::assertSame(500, $provider->peakRetainedRows());
         self::assertSame(0, $provider->activeRows());
+        self::assertSame(10, $provider->collectibleChunkChecks());
         self::assertGreaterThan(0, $renderedHtmlBytes);
         self::assertLessThanOrEqual($budget->maxHtmlBytes, $renderedHtmlBytes);
         self::assertSame(['render', 'pages', 'output'], $events);
         self::assertLessThanOrEqual($budget->maxMemoryDeltaBytes, $memoryDelta);
         self::assertSame(strlen('%PDF bounded'), $stream->size());
+    }
+
+    public function test_adversarial_probe_rejects_eager_chunk_materialization(): void
+    {
+        [$source] = $this->source(1000);
+        $counterProbe = new InstrumentedReportChunkSource($source, 1000, 500);
+
+        $counterProbe->rewind();
+        $counterProbe->rewind();
+
+        self::assertSame(2, $counterProbe->sourceReadCounts()[0]);
+
+        $provider = new InstrumentedReportChunkSource($source, 1000, 500);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('previous_chunk_retained');
+
+        iterator_to_array($provider->chunks(), false);
     }
 }

@@ -9,7 +9,6 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunk;
-use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeZone;
 use Throwable;
 
@@ -39,18 +38,49 @@ final readonly class ReportPdfDocumentBuilder
         ReportPdfRenderBudget $budget,
         ReportArtifactStream $stream,
     ): ReportPdfDocument {
-        $this->assertColumns($source, $data);
-        $headers = $this->headers($source, $data);
-        $metadata = $this->metadata($source, $data);
-        $totals = $this->totals($source, $data);
-        $rows = [];
-        $rowCount = 0;
-        $startedAt = hrtime(true);
         $memoryAtStart = memory_get_usage(true);
-        $projectedHtmlBytes = self::HTML_FIXED_OVERHEAD_BYTES
-            + $this->escapedProjectionBytes([$headers, $totals, $metadata]);
-        $projectedRetainedBytes = self::HTML_FIXED_OVERHEAD_BYTES
-            + $this->retainedProjectionBytes([$headers, $totals, $metadata]);
+        if (function_exists('memory_reset_peak_usage')) {
+            memory_reset_peak_usage();
+        }
+
+        $this->assertColumns($source, $data);
+        $projectedHtmlBytes = self::HTML_FIXED_OVERHEAD_BYTES;
+        $projectedRetainedBytes = self::HTML_FIXED_OVERHEAD_BYTES;
+        $this->assertProjectedBudget($projectedHtmlBytes, $projectedRetainedBytes, $memoryAtStart, $budget);
+
+        $headers = $this->headers($source, $data);
+        $this->reserveProjection(
+            $headers,
+            $projectedHtmlBytes,
+            $projectedRetainedBytes,
+            $memoryAtStart,
+            $budget,
+        );
+        $metadata = $this->metadata($source, $data);
+        $this->reserveProjection(
+            $metadata,
+            $projectedHtmlBytes,
+            $projectedRetainedBytes,
+            $memoryAtStart,
+            $budget,
+        );
+        $totals = [];
+        foreach ($data->columns as $columnId) {
+            if (!array_key_exists($columnId, $source->result->totals)) {
+                continue;
+            }
+
+            $total = self::normalizeCell($source->result->totals[$columnId], $data->timezone);
+            $this->reserveScalar(
+                $total,
+                $projectedHtmlBytes,
+                $projectedRetainedBytes,
+                $memoryAtStart,
+                $budget,
+            );
+            $totals[$columnId] = $total;
+        }
+
         $sourceRowCount = $source->result->metadata->rowCount;
 
         if ($sourceRowCount > $budget->maxDetailRows
@@ -58,12 +88,9 @@ final readonly class ReportPdfDocumentBuilder
             || 1 + $sourceRowCount + ($totals === [] ? 0 : 1) > $this->limits->maxWorksheetRows) {
             throw $this->limit();
         }
-        $this->assertProjectedBudget(
-            $projectedHtmlBytes,
-            $projectedRetainedBytes,
-            $memoryAtStart,
-            $budget,
-        );
+        $rows = [];
+        $rowCount = 0;
+        $startedAt = hrtime(true);
 
         foreach ($chunks as $chunk) {
             $this->assertChunk($source, $chunk, $stream, $startedAt, $memoryAtStart, $budget);
@@ -107,7 +134,23 @@ final readonly class ReportPdfDocumentBuilder
         }
 
         try {
-            return new ReportPdfDocument($headers, $rows, $totals, $metadata);
+            $this->assertProjectedBudget(
+                $projectedHtmlBytes,
+                $projectedRetainedBytes,
+                $memoryAtStart,
+                $budget,
+            );
+
+            return new ReportPdfDocument(
+                $headers,
+                $rows,
+                $totals,
+                $metadata,
+                $projectedHtmlBytes,
+                $projectedRetainedBytes,
+                $memoryAtStart,
+                max(0, memory_get_peak_usage(true) - $memoryAtStart),
+            );
         } catch (Throwable $exception) {
             throw $this->limit($exception);
         }
@@ -164,42 +207,107 @@ final readonly class ReportPdfDocumentBuilder
         }
     }
 
-    private function totals(ReportRunExportSource $source, CreateReportExportData $data): array
-    {
-        $totals = [];
-        foreach ($data->columns as $columnId) {
-            if (array_key_exists($columnId, $source->result->totals)) {
-                $totals[$columnId] = self::normalizeCell($source->result->totals[$columnId], $data->timezone);
-            }
-        }
-
-        return $totals;
-    }
-
     private function assertProjectedBudget(
         int $projectedHtmlBytes,
         int $projectedRetainedBytes,
         int $memoryAtStart,
         ReportPdfRenderBudget $budget,
     ): void {
-        $actualMemoryDelta = max(0, memory_get_usage(true) - $memoryAtStart);
+        $actualMemoryDelta = max(0, memory_get_peak_usage(true) - $memoryAtStart);
         if ($projectedHtmlBytes > $budget->maxHtmlBytes
             || $projectedHtmlBytes > $this->limits->maxBytes
             || $projectedRetainedBytes > $budget->maxMemoryDeltaBytes
-            || $actualMemoryDelta + $projectedRetainedBytes > $budget->maxMemoryDeltaBytes) {
+            || $this->sumExceeds(
+                [$actualMemoryDelta, $projectedHtmlBytes, $projectedRetainedBytes, $budget->maxPdfBytes],
+                $budget->maxMemoryDeltaBytes,
+            )) {
             throw $this->limit();
         }
     }
 
-    private function escapedProjectionBytes(array $projection): int
-    {
-        return strlen(CanonicalJson::encode($projection)) * self::HTML_ESCAPE_EXPANSION_FACTOR;
+    private function reserveProjection(
+        mixed $value,
+        int &$projectedHtmlBytes,
+        int &$projectedRetainedBytes,
+        int $memoryAtStart,
+        ReportPdfRenderBudget $budget,
+    ): void {
+        if (!is_array($value)) {
+            $this->reserveScalar(
+                self::normalizeCell($value, new DateTimeZone('UTC')),
+                $projectedHtmlBytes,
+                $projectedRetainedBytes,
+                $memoryAtStart,
+                $budget,
+            );
+
+            return;
+        }
+
+        $projectedHtmlBytes += self::HTML_ROW_OVERHEAD_BYTES;
+        $projectedRetainedBytes += self::RETAINED_ROW_OVERHEAD_BYTES;
+        $this->assertProjectedBudget(
+            $projectedHtmlBytes,
+            $projectedRetainedBytes,
+            $memoryAtStart,
+            $budget,
+        );
+        foreach ($value as $key => $item) {
+            if (is_string($key)) {
+                $this->reserveScalar(
+                    $key,
+                    $projectedHtmlBytes,
+                    $projectedRetainedBytes,
+                    $memoryAtStart,
+                    $budget,
+                );
+            }
+            $this->reserveProjection(
+                $item,
+                $projectedHtmlBytes,
+                $projectedRetainedBytes,
+                $memoryAtStart,
+                $budget,
+            );
+        }
     }
 
-    private function retainedProjectionBytes(array $projection): int
+    private function reserveScalar(
+        string $value,
+        int &$projectedHtmlBytes,
+        int &$projectedRetainedBytes,
+        int $memoryAtStart,
+        ReportPdfRenderBudget $budget,
+    ): void {
+        $length = strlen($value);
+        if ($length > intdiv(PHP_INT_MAX - self::HTML_CELL_OVERHEAD_BYTES, self::HTML_ESCAPE_EXPANSION_FACTOR)) {
+            throw $this->limit();
+        }
+
+        $projectedHtmlBytes += self::HTML_CELL_OVERHEAD_BYTES
+            + $length * self::HTML_ESCAPE_EXPANSION_FACTOR;
+        $projectedRetainedBytes += self::RETAINED_CELL_OVERHEAD_BYTES + $length;
+        $this->assertProjectedBudget(
+            $projectedHtmlBytes,
+            $projectedRetainedBytes,
+            $memoryAtStart,
+            $budget,
+        );
+    }
+
+    /** @param list<int> $values */
+    private function sumExceeds(array $values, int $limit): bool
     {
-        return strlen(CanonicalJson::encode($projection))
-            + count($projection, COUNT_RECURSIVE) * self::RETAINED_CELL_OVERHEAD_BYTES;
+        $remaining = $limit;
+        foreach ($values as $value) {
+            if ($value < 0 || $value > $remaining) {
+                return true;
+            }
+
+            $remaining -= $value;
+        }
+
+        return false;
     }
 
     private function headers(ReportRunExportSource $source, CreateReportExportData $data): array

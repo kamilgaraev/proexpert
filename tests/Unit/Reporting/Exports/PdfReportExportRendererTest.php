@@ -130,6 +130,39 @@ final class PdfReportExportRendererTest extends ReportExportRendererTestCase
         self::assertSame('', $stream->bytes());
     }
 
+    public function test_oversized_total_fails_incrementally_without_full_json_copy(): void
+    {
+        [$source, $definition] = $this->source(1, ['name' => str_repeat('"', 4 * 1024 * 1024)]);
+        $budget = new ReportPdfRenderBudget(1, 10, 64 * 1024, 1024, 128 * 1024 * 1024);
+        $documentRenderer = new FakeReportPdfDocumentRenderer();
+        $stream = new InMemoryReportArtifactStream();
+        $chunk = $this->chunk($source, [[
+            'name' => 'A',
+            'amount' => '1',
+            'date' => '2026-07-29',
+        ]]);
+        if (function_exists('memory_reset_peak_usage')) {
+            memory_reset_peak_usage();
+        }
+        $memoryAtStart = memory_get_usage(true);
+
+        try {
+            $this->pdf($definition, $documentRenderer, $budget)->render(
+                $source,
+                $this->data('pdf'),
+                [$chunk],
+                $stream,
+            );
+            self::fail('Expected projected total limit.');
+        } catch (Throwable $exception) {
+            $this->assertLimit($exception);
+        }
+
+        self::assertLessThanOrEqual(4 * 1024 * 1024, memory_get_peak_usage(true) - $memoryAtStart);
+        self::assertSame(0, $documentRenderer->calls);
+        self::assertSame('', $stream->bytes());
+    }
+
     public function test_html_page_pdf_and_peak_memory_boundaries_are_exact(): void
     {
         $document = new ReportPdfDocument(
@@ -138,7 +171,7 @@ final class PdfReportExportRendererTest extends ReportExportRendererTestCase
             [],
             ['locale' => 'en-US'],
         );
-        $budget = new ReportPdfRenderBudget(1, 2, 4, 5, 10);
+        $budget = new ReportPdfRenderBudget(1, 2, 4, 5, 19);
         $adapter = new DompdfReportPdfDocumentRenderer(
             htmlRenderer: static fn (): string => 'html',
             documentLoader: static fn (): object => new stdClass(),
@@ -225,7 +258,7 @@ final class PdfReportExportRendererTest extends ReportExportRendererTestCase
         );
 
         try {
-            $adapter->render($document, new ReportPdfRenderBudget(1, 2, 1024, 1024, 1024));
+            $adapter->render($document, new ReportPdfRenderBudget(1, 2, 1024, 1024, 4096));
             self::fail('Expected page cap.');
         } catch (Throwable $exception) {
             $this->assertLimit($exception);
