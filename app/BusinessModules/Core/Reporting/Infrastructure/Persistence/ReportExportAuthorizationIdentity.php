@@ -52,6 +52,8 @@ final class ReportExportAuthorizationIdentity
                 'query' => $record->query_hash,
                 'source' => $record->source_hash,
                 'result' => $record->result_hash,
+                'export' => $record->export_hash,
+                'input_fingerprint' => $record->input_fingerprint,
             ],
             'snapshot' => [
                 'kind' => $record->snapshot_kind,

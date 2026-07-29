@@ -39,10 +39,13 @@ final class ReportRunAuthorizationIdentity
             ],
             'hashes' => [
                 'definition' => $record->definition_hash,
+                'definition_snapshot' => $record->definition_snapshot_hash,
                 'query' => $record->query_hash,
                 'source' => $record->source_hash,
                 'result' => $record->result_hash,
+                'input_fingerprint' => $record->input_fingerprint,
             ],
+            'saved_view' => self::savedView($record),
             'snapshot' => [
                 'kind' => $record->snapshot_kind,
                 'id' => $record->snapshot_id,
@@ -75,6 +78,21 @@ final class ReportRunAuthorizationIdentity
         ];
 
         return new Sha256Hash(hash('sha256', CanonicalJson::encode($projection)));
+    }
+
+    private static function savedView(ReportRunRecord $record): ?array
+    {
+        if ($record->saved_view_id === null
+            && $record->saved_view_revision === null
+            && $record->saved_view_hash === null) {
+            return null;
+        }
+
+        return [
+            'id' => $record->saved_view_id,
+            'revision' => $record->saved_view_revision,
+            'hash' => $record->saved_view_hash,
+        ];
     }
 
     private static function resources(ReportRunRecord $record): array

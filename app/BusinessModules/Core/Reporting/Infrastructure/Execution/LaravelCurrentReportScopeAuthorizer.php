@@ -7,8 +7,8 @@ namespace App\BusinessModules\Core\Reporting\Infrastructure\Execution;
 use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportAuthorizationFacts;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
@@ -455,18 +455,33 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
             ->lockForUpdate()
             ->get();
 
-        if ($scope->projectIds !== []) {
+        $projectAssignmentIds = DB::table('project_user')
+            ->where('user_id', $actorId)
+            ->orderBy('project_id')
+            ->pluck('project_id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
+        $authoritativeProjectIds = array_values(array_unique([
+            ...$scope->projectIds,
+            ...$projectAssignmentIds,
+        ]));
+        sort($authoritativeProjectIds, SORT_NUMERIC);
+
+        if ($authoritativeProjectIds !== []) {
             Project::query()
-                ->whereIn('id', $scope->projectIds)
+                ->whereIn('id', $authoritativeProjectIds)
                 ->orderBy('id')
                 ->lockForUpdate()
                 ->get();
-            DB::table('project_user')
-                ->where('user_id', $actorId)
-                ->whereIn('project_id', $scope->projectIds)
-                ->orderBy('project_id')
-                ->lockForUpdate()
-                ->get();
+        }
+
+        DB::table('project_user')
+            ->where('user_id', $actorId)
+            ->orderBy('project_id')
+            ->lockForUpdate()
+            ->get();
+
+        if ($scope->projectIds !== []) {
             DB::table('project_organization')
                 ->whereIn('project_id', $scope->projectIds)
                 ->whereIn('organization_id', $scope->holdingOrganizationIds)
@@ -527,7 +542,8 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
 
     /**
      * @template T
-     * @param callable(): T $callback
+     *
+     * @param  callable(): T  $callback
      * @return T
      */
     private function transaction(callable $callback): mixed
@@ -548,5 +564,4 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, previous: $exception);
         }
     }
-
 }
