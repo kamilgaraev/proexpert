@@ -23,6 +23,8 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotIdentityViolationReason;
+use App\BusinessModules\Core\Reporting\Domain\Exceptions\ReportSnapshotIdentityViolation;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;
@@ -91,6 +93,20 @@ final class PlanOneBPlanOneAHandoffTest extends TestCase
         self::assertSame(['asc', 'desc'], array_column(ReportSortDirection::cases(), 'value'));
         self::assertSame(['fresh', 'stale', 'partial', 'unavailable'], array_column(ReportFreshnessStatus::cases(), 'value'));
         self::assertSame(['complete', 'partial', 'invalid'], array_column(ReportQualityStatus::cases(), 'value'));
+        self::assertSame(['invalid_kind', 'invalid_id', 'official_seal_required', 'operational_seal_forbidden', 'seal_time_invalid'], array_column(ReportSnapshotIdentityViolationReason::cases(), 'value'));
+    }
+
+    public function test_snapshot_identity_exception_remains_typed_and_message_independent(): void
+    {
+        $reflection = new ReflectionClass(ReportSnapshotIdentityViolation::class);
+        self::assertTrue($reflection->isFinal());
+        self::assertTrue($reflection->getProperty('reason')->isReadOnly());
+
+        foreach (ReportSnapshotIdentityViolationReason::cases() as $reason) {
+            $exception = new ReportSnapshotIdentityViolation($reason);
+            self::assertSame($reason, $exception->reason);
+            self::assertSame('snapshot_identity_invalid', $exception->getMessage());
+        }
     }
 
     private function assertMethod(string $class, string $name, array $parameters, string $return): void

@@ -27,7 +27,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (['faultOverride', 'phpHashOverride', 'phpVersionOverride', 'branchOverride', 'errorOverride', 'taskSevenRegenerationOverride', 'taskSevenProvenanceOverride'] as $property) {
+        foreach (['faultOverride', 'phpHashOverride', 'phpVersionOverride', 'branchOverride', 'errorOverride', 'taskSevenRegenerationOverride', 'taskSevenProvenanceOverride', 'historicalPredicateOverride'] as $property) {
             $this->setStaticOverride($property, null);
         }
         foreach (array_reverse($this->temporaryDirectories) as $directory) {
@@ -88,6 +88,115 @@ final class BuildPlanOneAEvidenceTest extends TestCase
         self::assertSame($paths, $constants['TASK_FOUR_A_PATHS']);
     }
 
+    public function test_builder_declares_the_exact_task_four_a2_subject_parent_manifest_and_lineage(): void
+    {
+        $constants = (new ReflectionClass(\PlanOneAEvidence::class))->getConstants();
+
+        self::assertSame('fix[reports]: типизировать нарушения идентичности снимков', $constants['TASK_FOUR_A2_SUBJECT']);
+        self::assertSame('973aabb17516c0ff9bc7d5a87b3ab6eb8732f333', $constants['TASK_FOUR_A2_PARENT']);
+        self::assertCount(16, $constants['TASK_FOUR_A2_PATHS']);
+        self::assertSame($constants['TASK_FOUR_A2_PATHS'], array_values(array_unique($constants['TASK_FOUR_A2_PATHS'])));
+        $sorted = $constants['TASK_FOUR_A2_PATHS'];
+        sort($sorted, SORT_STRING);
+        self::assertSame($sorted, $constants['TASK_FOUR_A2_PATHS']);
+        self::assertSame(['Task 4a exact53', 'Task 4b exact39', 'Task 4a2 exact16'], $constants['TASK_FOUR_A2_LINEAGE']);
+    }
+
+    public function test_task_four_a2_lock_rejects_every_closed_contract_mutation(): void
+    {
+        $lock = json_decode((string) file_get_contents($this->root().'/docs/reports/contracts/plan-1a-contract-lock.json'), true, 512, JSON_THROW_ON_ERROR);
+        $builder = new \PlanOneAEvidence($this->repository());
+        $this->invoke($builder, 'validateTaskFourA2Lock', [$lock]);
+        $mutations = [
+            static function (array &$value): void {
+                unset($value['task_4a2']);
+            },
+            static function (array &$value): void {
+                $value['task_4a2']['extra'] = true;
+            },
+            static function (array &$value): void {
+                [$value['task_4a2']['tracked_paths'][0], $value['task_4a2']['tracked_paths'][1]] = [$value['task_4a2']['tracked_paths'][1], $value['task_4a2']['tracked_paths'][0]];
+            },
+            static function (array &$value): void {
+                $value['task_4a2']['subject'] = 'wrong';
+            },
+            static function (array &$value): void {
+                $value['task_4a2']['parent_commit_sha'] = str_repeat('0', 40);
+            },
+            static function (array &$value): void {
+                array_pop($value['task_4a2']['identity_violation_reasons']);
+            },
+            static function (array &$value): void {
+                $value['task_4a2']['exception_message'] = 'reason_in_message';
+            },
+            static function (array &$value): void {
+                $value['task_4a']['tracked_paths'] = $value['task_4a2']['tracked_paths'];
+            },
+        ];
+
+        foreach ($mutations as $index => $mutate) {
+            $candidate = $lock;
+            $mutate($candidate);
+            try {
+                $this->invoke($builder, 'validateTaskFourA2Lock', [$candidate]);
+                self::fail('Mutation '.$index.' was accepted');
+            } catch (\PlanOneAEvidenceFailure $failure) {
+                self::assertSame('PLAN_1A_TASK_4A2_LOCK_INVALID', $failure->getMessage());
+            }
+        }
+    }
+
+    public function test_historical_task_four_a_and_four_b_mutation_families_are_rejected(): void
+    {
+        [$repository, $mutations] = $this->historicalMutationCommits();
+        $builder = new \PlanOneAEvidence($repository);
+        $constants = (new ReflectionClass(\PlanOneAEvidence::class))->getConstants();
+        $cases = [
+            'task4a_wrong_parent' => [$constants['TASK_FOUR_A_PARENT'], $constants['TASK_FOUR_A_TREE'], $constants['TASK_FOUR_A_SUBJECT'], $constants['TASK_FOUR_A_PATHS'], 'parent', 'PLAN_1A_EVIDENCE_TASK_4A_HISTORY_PARENT_INVALID'],
+            'task4a_altered_blob' => [$constants['TASK_FOUR_A_PARENT'], $constants['TASK_FOUR_A_TREE'], $constants['TASK_FOUR_A_SUBJECT'], $constants['TASK_FOUR_A_PATHS'], 'tree', 'PLAN_1A_EVIDENCE_TASK_4A_HISTORY_TREE_INVALID'],
+            'task4b_wrong_subject' => [$constants['TASK_FOUR_A_COMMIT'], $constants['TASK_FOUR_B_TREE'], $constants['TASK_FOUR_B_SUBJECT'], $constants['TASK_FOUR_B_PATHS'], 'subject', 'PLAN_1A_EVIDENCE_TASK_4B_HISTORY_SUBJECT_INVALID'],
+            'task4b_same_count_different_paths' => [$constants['TASK_FOUR_A_COMMIT'], $this->git($repository, ['show', '-s', '--format=%T', $mutations['task4b_same_count_different_paths']]), $constants['TASK_FOUR_B_SUBJECT'], $constants['TASK_FOUR_B_PATHS'], 'paths', 'PLAN_1A_EVIDENCE_TASK_4B_HISTORY_PATHS_INVALID'],
+            'task4b_altered_blob' => [$constants['TASK_FOUR_A_COMMIT'], $constants['TASK_FOUR_B_TREE'], $constants['TASK_FOUR_B_SUBJECT'], $constants['TASK_FOUR_B_PATHS'], 'tree', 'PLAN_1A_EVIDENCE_TASK_4B_HISTORY_TREE_INVALID'],
+        ];
+
+        foreach ($cases as $name => [$parent, $tree, $subject, $paths, $boundary, $message]) {
+            $arguments = [$mutations[$name], $mutations[$name], $parent, $tree, $subject, $paths, str_starts_with($name, 'task4a_') ? 'PLAN_1A_EVIDENCE_TASK_4A_HISTORY' : 'PLAN_1A_EVIDENCE_TASK_4B_HISTORY'];
+            self::assertTrue($this->historicalMutationRejected($builder, $arguments, $message), $name);
+            $this->setStaticOverride('historicalPredicateOverride', static fn (string $actualBoundary, bool $actual): bool => $actualBoundary === $boundary ? true : $actual);
+            self::assertFalse($this->historicalMutationRejected($builder, $arguments, $message), $name.' predicate bypass was not detected');
+            $this->setStaticOverride('historicalPredicateOverride', null);
+        }
+
+        self::assertTrue($this->historicalWrapperRejected($builder, 'validateHistoricalTaskFourACommit', $mutations['task4a_wrong_parent'], 'PLAN_1A_EVIDENCE_TASK_4A_HISTORY_COMMIT_INVALID'));
+        self::assertTrue($this->historicalWrapperRejected($builder, 'validateHistoricalTaskFourBCommit', $mutations['task4b_wrong_subject'], 'PLAN_1A_EVIDENCE_TASK_4B_HISTORY_COMMIT_INVALID'));
+        $this->git($repository, ['replace', '-f', '0b581469a3ad39d4ce5eff5c41072f5ef3f745f7', $mutations['task4a_wrong_parent']]);
+        $this->git($repository, ['replace', '-f', '973aabb17516c0ff9bc7d5a87b3ab6eb8732f333', $mutations['task4b_wrong_subject']]);
+        $this->invoke($builder, 'validateHistoricalTaskLineage', []);
+        self::assertCount(2, $this->gitPaths($repository, ['replace', '-l']));
+    }
+
+    private function historicalMutationRejected(\PlanOneAEvidence $builder, array $arguments, string $message): bool
+    {
+        try {
+            $this->invoke($builder, 'validateHistoricalCommit', $arguments);
+        } catch (\PlanOneAEvidenceFailure $failure) {
+            return $failure->getMessage() === $message;
+        }
+
+        return false;
+    }
+
+    private function historicalWrapperRejected(\PlanOneAEvidence $builder, string $method, string $commit, string $message): bool
+    {
+        try {
+            $this->invoke($builder, $method, [$commit]);
+        } catch (\PlanOneAEvidenceFailure $failure) {
+            return $failure->getMessage() === $message;
+        }
+
+        return false;
+    }
+
     public function test_contract_lock_check_is_accepted_for_non_mutating_precommit_replay(): void
     {
         self::assertTrue($this->parse('contract-lock', 'docs/reports/contracts/plan-1a-contract-lock.json', true)['check']);
@@ -123,7 +232,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
         mkdir($repository.'/build/reports', 0777, true);
         file_put_contents($repository.'/build/reports/task-7-composer-evidence.json', 'stale');
         file_put_contents($repository.'/docs/reports/contracts/plan-1a-contract-lock.sha256', 'stale');
-        $this->git($repository, ['add', $this->taskFourAPreGenerationPaths()[0]]);
+        $this->git($repository, ['add', $this->taskFourA2PreGenerationPaths()[0]]);
         $process = $this->runCli(
             $repository,
             'contract-lock',
@@ -330,7 +439,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
         }
     }
 
-    public function test_precommit_exact_unstaged_task_four_a_pre_generation_set_is_accepted(): void
+    public function test_precommit_exact_unstaged_task_four_a2_pre_generation_set_is_accepted(): void
     {
         [$repository, $head] = $this->precommitRepository();
         $builder = new \PlanOneAEvidence($repository);
@@ -343,7 +452,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
     public function test_precommit_staged_path_is_rejected(): void
     {
         [$repository, $head] = $this->precommitRepository();
-        $this->git($repository, ['add', $this->taskFourAPreGenerationPaths()[0]]);
+        $this->git($repository, ['add', $this->taskFourA2PreGenerationPaths()[0]]);
         $builder = new \PlanOneAEvidence($repository);
 
         $this->expectException(\PlanOneAEvidenceFailure::class);
@@ -354,7 +463,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
     public function test_precommit_extra_untracked_path_is_rejected(): void
     {
         [$repository, $head] = $this->precommitRepository();
-        file_put_contents($repository.'/foreign.txt', 'foreign');
+        file_put_contents($repository.'/composer.json', "\n", FILE_APPEND);
         $builder = new \PlanOneAEvidence($repository);
 
         $this->expectException(\PlanOneAEvidenceFailure::class);
@@ -362,9 +471,9 @@ final class BuildPlanOneAEvidenceTest extends TestCase
         $this->invoke($builder, 'validateModeGitState', ['contract-lock', $head]);
     }
 
-    public function test_clean_canonical_task_four_a_commit_is_accepted(): void
+    public function test_clean_canonical_task_four_a2_commit_is_accepted(): void
     {
-        [$repository, $commit] = $this->canonicalRepository($this->taskFourASubject());
+        [$repository, $commit] = $this->canonicalRepository($this->taskFourA2Subject());
         $builder = new \PlanOneAEvidence($repository);
 
         $this->invoke($builder, 'validateModeGitState', ['task-7', $commit]);
@@ -384,44 +493,44 @@ final class BuildPlanOneAEvidenceTest extends TestCase
 
     public function test_canonical_worktree_byte_drift_is_rejected(): void
     {
-        [$repository, $commit] = $this->canonicalRepository($this->taskFourASubject());
+        [$repository, $commit] = $this->canonicalRepository($this->taskFourA2Subject());
         file_put_contents($repository.'/scripts/reporting/build-plan-1a-evidence.php', 'drift');
         $builder = new \PlanOneAEvidence($repository);
 
         $this->expectException(\PlanOneAEvidenceFailure::class);
 
-        $this->invoke($builder, 'validateCanonicalTaskFourACommit', [$commit]);
+        $this->invoke($builder, 'validateCanonicalTaskFourA2Commit', [$commit]);
     }
 
     public function test_canonical_extra_path_commit_is_rejected(): void
     {
-        [$repository] = $this->canonicalRepository($this->taskFourASubject());
+        [$repository] = $this->canonicalRepository($this->taskFourA2Subject());
         file_put_contents($repository.'/foreign.txt', 'foreign');
-        $this->git($repository, ['add', 'foreign.txt']);
-        $this->git($repository, ['commit', '-m', $this->taskFourASubject()]);
+        $this->git($repository, ['add', '-f', 'foreign.txt']);
+        $this->git($repository, ['commit', '-m', $this->taskFourA2Subject()]);
         $commit = $this->git($repository, ['rev-parse', 'HEAD']);
         $builder = new \PlanOneAEvidence($repository);
 
         $this->expectException(\PlanOneAEvidenceFailure::class);
-        $this->invoke($builder, 'validateCanonicalTaskFourACommit', [$commit]);
+        $this->invoke($builder, 'validateCanonicalTaskFourA2Commit', [$commit]);
     }
 
     public function test_canonical_merge_parent_is_rejected(): void
     {
-        [$repository, $taskFourA] = $this->canonicalRepository($this->taskFourASubject());
+        [$repository, $taskFourA] = $this->canonicalRepository($this->taskFourA2Subject());
         $canonicalBranch = $this->git($repository, ['branch', '--show-current']);
         $parent = $this->git($repository, ['rev-parse', $taskFourA.'^']);
         $this->git($repository, ['checkout', '-b', 'side', $parent]);
         file_put_contents($repository.'/side.txt', 'side');
-        $this->git($repository, ['add', 'side.txt']);
+        $this->git($repository, ['add', '-f', 'side.txt']);
         $this->git($repository, ['commit', '-m', 'side']);
         $this->git($repository, ['checkout', $canonicalBranch]);
-        $this->git($repository, ['merge', '--no-ff', 'side', '-m', $this->taskFourASubject()]);
+        $this->git($repository, ['merge', '--no-ff', 'side', '-m', $this->taskFourA2Subject()]);
         $merge = $this->git($repository, ['rev-parse', 'HEAD']);
         $builder = new \PlanOneAEvidence($repository);
 
         $this->expectException(\PlanOneAEvidenceFailure::class);
-        $this->invoke($builder, 'validateCanonicalTaskFourACommit', [$merge]);
+        $this->invoke($builder, 'validateCanonicalTaskFourA2Commit', [$merge]);
     }
 
     public function test_task_seven_owner_with_exact_two_trailers_is_resolved(): void
@@ -699,7 +808,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
     ): void {
         $repository = match ($failureStage) {
             'tracked schema bytes', 'lock provenance/binding', 'runner bootstrap' => $this->canonicalOrchestratorRepository(),
-            'missing Task7 history' => $this->missingTaskSevenOrchestratorRepository(),
+            'missing Task7 history' => $this->canonicalOrchestratorRepository(),
             default => $this->preflightFailureRepository(),
         };
         file_put_contents(
@@ -710,6 +819,14 @@ final class BuildPlanOneAEvidenceTest extends TestCase
 
         $this->setStaticOverride('branchOverride', static fn (): string => 'feat/reports-canonical-backend');
         $this->setStaticOverride('phpHashOverride', static fn (): string => 'f515db26936a2702886ca19523518556972fdf25dee699b78e1c78863a08b680');
+        if ($failureStage === 'missing Task7 history') {
+            $this->setStaticOverride(
+                'taskSevenProvenanceOverride',
+                static function (): never {
+                    throw new \PlanOneAEvidenceFailure(4, 'PLAN_1A_TASK_7_OWNER_COUNT_INVALID');
+                },
+            );
+        }
         if (in_array($failureStage, ['tracked schema bytes', 'lock provenance/binding', 'runner bootstrap'], true)) {
             $taskSevenBytes = (string) file_get_contents($this->root().'/build/reports/task-7-composer-evidence.json');
             $taskSeven = json_decode($taskSevenBytes, true, 512, JSON_THROW_ON_ERROR);
@@ -1016,11 +1133,13 @@ final class BuildPlanOneAEvidenceTest extends TestCase
 
     private function precommitRepository(): array
     {
-        $repository = $this->repository();
-        file_put_contents($repository.'/.gitignore', $this->reportIgnoreRules());
-        $this->git($repository, ['add', '.gitignore']);
-        $this->git($repository, ['commit', '-m', 'ignore base']);
-        foreach ($this->taskFourAPreGenerationPaths() as $path) {
+        $repository = $this->temporaryDirectory().'/repository';
+        $process = new Process(['git', 'clone', '--no-hardlinks', '--quiet', $this->root(), $repository]);
+        $process->setTimeout(30);
+        $process->mustRun();
+        $this->git($repository, ['config', 'user.email', 'reports@example.test']);
+        $this->git($repository, ['config', 'user.name', 'Reports Test']);
+        foreach ($this->taskFourA2PreGenerationPaths() as $path) {
             $this->write($repository.'/'.$path, (string) file_get_contents($this->root().'/'.$path));
         }
 
@@ -1030,38 +1149,73 @@ final class BuildPlanOneAEvidenceTest extends TestCase
     private function canonicalRepository(string $subject = 'test[reports]: добавлен проверяемый handoff Plan 1a'): array
     {
         [$repository] = $this->precommitRepository();
-        foreach (array_diff($this->taskFourAPaths(), $this->taskFourAPreGenerationPaths()) as $path) {
+        foreach (array_diff($this->taskFourA2Paths(), $this->taskFourA2PreGenerationPaths()) as $path) {
             $this->write($repository.'/'.$path, (string) file_get_contents($this->root().'/'.$path));
         }
-        $this->git($repository, ['add', '--', ...$this->taskFourAPaths()]);
+        $this->git($repository, ['add', '--', ...$this->taskFourA2Paths()]);
         $this->git($repository, ['commit', '-m', $subject]);
 
         return [$repository, $this->git($repository, ['rev-parse', 'HEAD'])];
     }
 
-    private function canonicalOrchestratorRepository(): string
+    private function historicalMutationCommits(): array
     {
-        $repository = $this->preflightFailureRepository();
-        foreach ($this->taskFourAPaths() as $path) {
-            $this->write($repository.'/'.$path, (string) file_get_contents($this->root().'/'.$path));
-        }
-        $this->git($repository, ['add', '--', ...$this->taskFourAPaths()]);
-        $this->git($repository, ['commit', '-m', $this->taskFourASubject()]);
+        $repository = $this->temporaryDirectory().'/history-mutations';
+        $process = new Process(['git', 'clone', '--no-hardlinks', '--quiet', $this->root(), $repository]);
+        $process->setTimeout(30);
+        $process->mustRun();
+        $this->git($repository, ['config', 'user.email', 'reports@example.test']);
+        $this->git($repository, ['config', 'user.name', 'Reports Test']);
+        $taskFourA = '0b581469a3ad39d4ce5eff5c41072f5ef3f745f7';
+        $taskFourAParent = '786e5f3433d04baf35c81789178e1e83012e0916';
+        $taskFourB = '973aabb17516c0ff9bc7d5a87b3ab6eb8732f333';
+        $taskFourATree = $this->git($repository, ['show', '-s', '--format=%T', $taskFourA]);
+        $taskFourBTree = $this->git($repository, ['show', '-s', '--format=%T', $taskFourB]);
+        $wrongParent = $this->git($repository, ['commit-tree', $taskFourATree, '-p', $taskFourAParent.'^', '-m', $this->taskFourASubject()]);
+        $wrongSubject = $this->git($repository, ['commit-tree', $taskFourBTree, '-p', $taskFourA, '-m', 'wrong subject']);
 
-        return $repository;
+        $this->git($repository, ['checkout', '--detach', $taskFourA]);
+        file_put_contents($repository.'/app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotRef.php', "\n", FILE_APPEND);
+        $this->git($repository, ['add', 'app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotRef.php']);
+        $alteredTaskFourATree = $this->git($repository, ['write-tree']);
+        $alteredTaskFourABlob = $this->git($repository, ['commit-tree', $alteredTaskFourATree, '-p', $taskFourAParent, '-m', $this->taskFourASubject()]);
+
+        $this->git($repository, ['reset', '--hard', $taskFourB]);
+        file_put_contents($repository.'/app/BusinessModules/Core/Reporting/Application/Dispatch/ReportAuditIntent.php', "\n", FILE_APPEND);
+        $this->git($repository, ['add', 'app/BusinessModules/Core/Reporting/Application/Dispatch/ReportAuditIntent.php']);
+        $alteredTaskFourBTree = $this->git($repository, ['write-tree']);
+        $alteredTaskFourBBlob = $this->git($repository, ['commit-tree', $alteredTaskFourBTree, '-p', $taskFourA, '-m', 'feat[reports]: добавить надежную доставку заданий отчетов']);
+
+        $this->git($repository, ['reset', '--hard', $taskFourB]);
+        $this->git($repository, ['rm', '--cached', '--', 'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php']);
+        unlink($repository.'/app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php');
+        file_put_contents($repository.'/composer.json', "\n", FILE_APPEND);
+        $this->git($repository, ['add', 'composer.json']);
+        $differentPathsTree = $this->git($repository, ['write-tree']);
+        $differentPaths = $this->git($repository, ['commit-tree', $differentPathsTree, '-p', $taskFourA, '-m', 'feat[reports]: добавить надежную доставку заданий отчетов']);
+
+        return [$repository, [
+            'task4a_wrong_parent' => $wrongParent,
+            'task4a_altered_blob' => $alteredTaskFourABlob,
+            'task4b_wrong_subject' => $wrongSubject,
+            'task4b_same_count_different_paths' => $differentPaths,
+            'task4b_altered_blob' => $alteredTaskFourBBlob,
+        ]];
     }
 
-    private function missingTaskSevenOrchestratorRepository(): string
+    private function canonicalOrchestratorRepository(): string
     {
-        $repository = $this->repository();
-        file_put_contents($repository.'/.gitignore', $this->reportIgnoreRules());
-        $this->git($repository, ['add', '.gitignore']);
-        $this->git($repository, ['commit', '-m', 'ignore base']);
-        foreach ($this->taskFourAPaths() as $path) {
+        $repository = $this->temporaryDirectory().'/repository';
+        $process = new Process(['git', 'clone', '--no-hardlinks', '--quiet', $this->root(), $repository]);
+        $process->setTimeout(30);
+        $process->mustRun();
+        $this->git($repository, ['config', 'user.email', 'reports@example.test']);
+        $this->git($repository, ['config', 'user.name', 'Reports Test']);
+        foreach ($this->taskFourA2Paths() as $path) {
             $this->write($repository.'/'.$path, (string) file_get_contents($this->root().'/'.$path));
         }
-        $this->git($repository, ['add', '--', ...$this->taskFourAPaths()]);
-        $this->git($repository, ['commit', '-m', $this->taskFourASubject()]);
+        $this->git($repository, ['add', '--', ...$this->taskFourA2Paths()]);
+        $this->git($repository, ['commit', '-m', $this->taskFourA2Subject()]);
 
         return $repository;
     }
@@ -1119,10 +1273,18 @@ final class BuildPlanOneAEvidenceTest extends TestCase
         return $constant->getValue();
     }
 
-    private function taskFourAPreGenerationPaths(): array
+    private function taskFourA2Paths(): array
+    {
+        $constant = (new ReflectionClass(\PlanOneAEvidence::class))->getReflectionConstant('TASK_FOUR_A2_PATHS');
+        self::assertNotFalse($constant);
+
+        return $constant->getValue();
+    }
+
+    private function taskFourA2PreGenerationPaths(): array
     {
         return array_values(array_filter(
-            $this->taskFourAPaths(),
+            $this->taskFourA2Paths(),
             static fn (string $path): bool => !in_array($path, [
                 'docs/reports/contracts/plan-1a-contract-lock.json',
                 'docs/reports/contracts/plan-1a-contract-lock.sha256',
@@ -1133,6 +1295,14 @@ final class BuildPlanOneAEvidenceTest extends TestCase
     private function taskFourASubject(): string
     {
         $constant = (new ReflectionClass(\PlanOneAEvidence::class))->getReflectionConstant('TASK_FOUR_A_SUBJECT');
+        self::assertNotFalse($constant);
+
+        return $constant->getValue();
+    }
+
+    private function taskFourA2Subject(): string
+    {
+        $constant = (new ReflectionClass(\PlanOneAEvidence::class))->getReflectionConstant('TASK_FOUR_A2_SUBJECT');
         self::assertNotFalse($constant);
 
         return $constant->getValue();

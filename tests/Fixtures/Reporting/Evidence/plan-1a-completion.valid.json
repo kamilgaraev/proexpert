@@ -11,8 +11,8 @@
       "command": "pinned phpunit aggregate",
       "status": "passed",
       "exit_code": 0,
-      "tests": 393,
-      "assertions": 3143,
+      "tests": 406,
+      "assertions": 3356,
       "skipped": 0,
       "executed_at": "2026-07-26T00:00:00Z"
     },

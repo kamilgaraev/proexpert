@@ -53,7 +53,7 @@
     "contractCommand": {
       "allOf": [
         {"$ref": "#/$defs/commandBase"},
-        {"properties": {"command_id": {"const": "plan1a_contract_tests"}, "tests": {"const": 393}, "assertions": {"const": 3143}}}
+        {"properties": {"command_id": {"const": "plan1a_contract_tests"}, "tests": {"const": 406}, "assertions": {"const": 3356}}}
       ]
     },
     "staticCommand": {

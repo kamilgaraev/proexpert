@@ -951,10 +951,10 @@
                   "const": 0
                 },
                 "tests": {
-                  "const": 393
+                  "const": 406
                 },
                 "assertions": {
-                  "const": 3143
+                  "const": 3356
                 },
                 "skipped": {
                   "const": 0
@@ -2161,10 +2161,10 @@
                   "const": 0
                 },
                 "tests": {
-                  "const": 393
+                  "const": 406
                 },
                 "assertions": {
-                  "const": 3143
+                  "const": 3356
                 },
                 "skipped": {
                   "const": 0

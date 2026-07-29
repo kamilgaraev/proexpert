@@ -138,6 +138,45 @@
             "RetryReportExportAction"
         ]
     },
+    "task_4a2": {
+        "subject": "fix[reports]: \u0442\u0438\u043f\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043d\u0430\u0440\u0443\u0448\u0435\u043d\u0438\u044f \u0438\u0434\u0435\u043d\u0442\u0438\u0447\u043d\u043e\u0441\u0442\u0438 \u0441\u043d\u0438\u043c\u043a\u043e\u0432",
+        "parent_commit_sha": "973aabb17516c0ff9bc7d5a87b3ab6eb8732f333",
+        "tracked_paths": [
+            "app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotRef.php",
+            "app/BusinessModules/Core/Reporting/Domain/Enums/ReportSnapshotIdentityViolationReason.php",
+            "app/BusinessModules/Core/Reporting/Domain/Exceptions/ReportSnapshotIdentityViolation.php",
+            "docs/reports/contracts/plan-1a-completion.schema.json",
+            "docs/reports/contracts/plan-1a-contract-lock.json",
+            "docs/reports/contracts/plan-1a-contract-lock.sha256",
+            "docs/reports/contracts/plan-1a-gate-evidence.schema.json",
+            "scripts/reporting/build-plan-1a-evidence.php",
+            "scripts/reporting/run-plan-1a-gates.php",
+            "tests/Architecture/Reporting/PlanOneAHandoffContractTest.php",
+            "tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php",
+            "tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json",
+            "tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json",
+            "tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php",
+            "tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php",
+            "tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php"
+        ],
+        "lineage": [
+            "Task 4a exact53",
+            "Task 4b exact39",
+            "Task 4a2 exact16"
+        ],
+        "identity_violation_reasons": [
+            "invalid_kind",
+            "invalid_id",
+            "official_seal_required",
+            "operational_seal_forbidden",
+            "seal_time_invalid"
+        ],
+        "exception_message": "snapshot_identity_invalid",
+        "contract_command_counts": {
+            "tests": 406,
+            "assertions": 3356
+        }
+    },
     "composer_contract": {
         "root_constraint": "^2.6",
         "locked_opis_version": "2.6.0",

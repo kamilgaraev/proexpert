@@ -11,8 +11,8 @@
       "command": "C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe -c C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64 vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportValueObjectContractTest.php tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php tests/Unit/Reporting/Input/ReportInputNormalizerTest.php tests/Unit/Reporting/Access/OrganizationReportScopeResolverTest.php tests/Unit/Reporting/Access/ReportAccessServiceTest.php tests/Unit/Reporting/Access/ReportingPermissionTranslationTest.php tests/Unit/Reporting/Http/ReportResourceSchemaTest.php tests/Unit/Reporting/Http/ReportFormRequestContractTest.php tests/Unit/Reporting/Errors/ReportErrorCatalogTest.php tests/Unit/Reporting/Errors/ReportErrorResponseFactoryTest.php tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php tests/Architecture/Reporting/ReportPortSignatureTest.php tests/Architecture/Reporting/ThinReportControllerTest.php tests/Unit/Reporting/Http/ReportControllerContractTest.php tests/Architecture/Reporting/ReportingRouteSnapshotTest.php tests/Architecture/Reporting/PlanOneAHandoffContractTest.php tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php tests/Unit/Reporting/Execution/ExecutionContractsTest.php",
       "status": "passed",
       "exit_code": 0,
-      "tests": 393,
-      "assertions": 3143,
+      "tests": 406,
+      "assertions": 3356,
       "skipped": 0,
       "executed_at": "2026-07-26T00:00:00Z"
     },
