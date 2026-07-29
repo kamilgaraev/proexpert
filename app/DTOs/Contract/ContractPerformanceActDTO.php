@@ -11,15 +11,17 @@ class ContractPerformanceActDTO
         public readonly string $act_date, // Y-m-d format
         public readonly ?string $description,
         public readonly bool $is_approved = true, // По умолчанию одобрен при создании, если не указано иное
-        public readonly ?string $approval_date, // Y-m-d format, если is_approved = true
+        public readonly ?string $approval_date = null, // Y-m-d format, если is_approved = true
         public readonly array $completed_works = [], // Массив выполненных работ с количествами
         public readonly float $amount = 0, // Сумма акта (рассчитывается автоматически)
-        public readonly mixed $pdf_file = null // PDF файл акта (UploadedFile или null)
+        public readonly mixed $pdf_file = null, // PDF файл акта (UploadedFile или null)
+        public readonly ?string $currency = null,
+        public readonly bool $completedWorksProvided = false,
     ) {}
 
     public function toArray(): array
     {
-        return [
+        $data = [
             'project_id' => $this->project_id,
             'act_document_number' => $this->act_document_number,
             'act_date' => $this->act_date,
@@ -28,6 +30,11 @@ class ContractPerformanceActDTO
             'is_approved' => $this->is_approved,
             'approval_date' => $this->is_approved ? ($this->approval_date ?? now()->toDateString()) : null,
         ];
+        if ($this->currency !== null) {
+            $data['currency'] = strtoupper($this->currency);
+        }
+
+        return $data;
     }
 
     /**
@@ -38,12 +45,16 @@ class ContractPerformanceActDTO
     {
         $syncData = [];
         foreach ($this->completed_works as $work) {
+            $currency = $work['currency'] ?? $this->currency;
             $syncData[$work['completed_work_id']] = [
                 'included_quantity' => $work['included_quantity'],
                 'included_amount' => $work['included_amount'],
+                'currency' => is_string($currency) && trim($currency) !== ''
+                    ? strtoupper($currency)
+                    : null,
                 'notes' => $work['notes'] ?? null,
             ];
         }
         return $syncData;
     }
-} 
+}

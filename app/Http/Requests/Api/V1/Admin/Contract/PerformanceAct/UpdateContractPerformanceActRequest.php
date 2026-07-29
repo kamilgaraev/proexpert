@@ -33,6 +33,7 @@ class UpdateContractPerformanceActRequest extends FormRequest
             'description' => ['sometimes', 'nullable', 'string'],
             'is_approved' => ['sometimes', 'boolean'],
             'approval_date' => ['sometimes', 'nullable', 'date_format:Y-m-d', 'required_if:is_approved,true'],
+            'currency' => ['sometimes', 'required_if:is_approved,true', 'string', 'size:3', 'regex:/^[A-Z]{3}$/'],
             'organization_id_for_show' => ['sometimes', 'integer'], // Временное поле
 
             // Сумма акта
@@ -66,7 +67,9 @@ class UpdateContractPerformanceActRequest extends FormRequest
             is_approved: $this->has('is_approved') ? $this->boolean('is_approved') : true, // true по умолчанию, если не передано
             approval_date: $validatedData['approval_date'] ?? null,
             completed_works: $validatedData['completed_works'] ?? [],
-            amount: $validatedData['amount'] ?? 0 // Используем переданную сумму или 0 по умолчанию
+            amount: $validatedData['amount'] ?? 0, // Используем переданную сумму или 0 по умолчанию
+            currency: $validatedData['currency'] ?? null,
+            completedWorksProvided: $this->has('completed_works'),
         );
     }
 }

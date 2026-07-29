@@ -7,7 +7,9 @@ namespace App\Services\CompletedWork\Reporting\AcceptedProduction\Services;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Models\CompletedWork;
 use App\Models\ContractPerformanceAct;
+use App\Models\PerformanceActCompletedWork;
 use App\Models\PerformanceActLine;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\ApprovedAcceptanceRate;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Events\ProductionAcceptanceTransitioned;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
 use Carbon\CarbonImmutable;
@@ -19,8 +21,11 @@ final readonly class ProductionAcceptanceEventRecorder
 {
     private const ACCEPTED_STATES = ['approved', 'signed'];
 
-    public function __construct(private ProductionAcceptanceEventIdentity $identity)
-    {
+    public function __construct(
+        private ProductionAcceptanceEventIdentity $identity,
+        private ApprovedAcceptanceRateResolver $rates,
+        private ProductionAcceptanceReversalSource $reversals,
+    ) {
     }
 
     public function recordTransition(
@@ -102,6 +107,10 @@ final readonly class ProductionAcceptanceEventRecorder
         ) {
             throw new InvalidArgumentException('production_acceptance_scope_mismatch');
         }
+        $pivot = $work->pivot;
+        if (!$pivot instanceof PerformanceActCompletedWork) {
+            throw new InvalidArgumentException('production_acceptance_pivot_unavailable');
+        }
 
         return $this->recordSource(
             act: $act,
@@ -112,6 +121,9 @@ final readonly class ProductionAcceptanceEventRecorder
             unitDimension: (string) ($unit->type ?? 'work'),
             unitCode: (string) $unit->short_name,
             conversionVersion: 'unit_'.(int) $unit->id,
+            approvedRate: $eventType === 'accepted'
+                ? $this->rates->fromPivot($pivot, $act->currency)
+                : null,
             eventType: $eventType,
             occurredAt: $occurredAt,
             actorId: $actorId,
@@ -143,6 +155,9 @@ final readonly class ProductionAcceptanceEventRecorder
             unitDimension: (string) ($unit->type ?? 'work'),
             unitCode: (string) $unit->short_name,
             conversionVersion: 'unit_'.(int) $unit->id,
+            approvedRate: $eventType === 'accepted'
+                ? $this->rates->fromLine($line, $act->currency)
+                : null,
             eventType: $eventType,
             occurredAt: $occurredAt,
             actorId: $actorId,
@@ -158,6 +173,7 @@ final readonly class ProductionAcceptanceEventRecorder
         string $unitDimension,
         string $unitCode,
         string $conversionVersion,
+        ?ApprovedAcceptanceRate $approvedRate,
         string $eventType,
         CarbonImmutable $occurredAt,
         ?int $actorId,
@@ -174,6 +190,19 @@ final readonly class ProductionAcceptanceEventRecorder
             throw new InvalidArgumentException('production_acceptance_quantity_zero');
         }
         $delta = $eventType === 'reversed' ? '-'.$acceptedQuantity : $acceptedQuantity;
+        $plannedQuantity = $this->decimal((string) ($work->quantity ?? '0'));
+        $reportedQuantity = $this->decimal((string) ($work->completed_quantity ?? $work->quantity ?? '0'));
+        $workId = (int) $work->id;
+        $taskId = $work->schedule_task_id === null ? null : (int) $work->schedule_task_id;
+        $wbsCode = $work->scheduleTask?->wbs_code;
+        $additionalInfo = is_array($work->additional_info) ? $work->additional_info : [];
+        $zone = isset($additionalInfo['zone']) && is_scalar($additionalInfo['zone'])
+            ? trim((string) $additionalInfo['zone'])
+            : null;
+        $contractorId = $work->contractor_id === null ? null : (int) $work->contractor_id;
+        if ($eventType === 'accepted' && $approvedRate === null) {
+            throw new InvalidArgumentException('production_acceptance_rate_unavailable');
+        }
         $latestEvent = ProductionAcceptanceEvent::query()
             ->where('organization_id', $organizationId)
             ->where('performance_act_id', $act->id)
@@ -182,6 +211,9 @@ final readonly class ProductionAcceptanceEventRecorder
             ->orderByDesc('transition_version')
             ->first();
         if ($latestEvent?->event_type === $eventType) {
+            if ($eventType === 'reversed') {
+                return $latestEvent;
+            }
             $this->assertRepeatedEventMatches(
                 $latestEvent,
                 $act,
@@ -192,6 +224,7 @@ final readonly class ProductionAcceptanceEventRecorder
                 $unitDimension,
                 $unitCode,
                 $conversionVersion,
+                $approvedRate,
             );
 
             return $latestEvent;
@@ -205,18 +238,46 @@ final readonly class ProductionAcceptanceEventRecorder
         if ($eventType === 'reversed' && $acceptedEvent?->event_type !== 'accepted') {
             throw new InvalidArgumentException('production_acceptance_reversal_without_acceptance');
         }
+        if ($eventType === 'reversed') {
+            $reversal = $this->reversals->fromAccepted($acceptedEvent);
+            $delta = $reversal['accepted_quantity_delta'];
+            $plannedQuantity = $reversal['planned_quantity'];
+            $reportedQuantity = $reversal['reported_quantity'];
+            $unitDimension = $reversal['unit_dimension'];
+            $unitCode = $reversal['unit_code'];
+            $conversionVersion = $reversal['conversion_version'];
+            $approvedRate = $reversal['approved_rate'];
+            $workId = $reversal['work_id'];
+            $taskId = $reversal['task_id'];
+            $wbsCode = $reversal['wbs_code'];
+            $zone = $reversal['zone'];
+            $contractorId = $reversal['contractor_id'];
+        }
+        if (!$approvedRate instanceof ApprovedAcceptanceRate) {
+            throw new InvalidArgumentException('production_acceptance_rate_unavailable');
+        }
         $version = $latestEvent === null ? 1 : (int) $latestEvent->transition_version + 1;
         $sourceHash = hash('sha256', CanonicalJson::encode([
             'accepted_quantity_delta' => $delta,
+            'approved_rate_minor' => $approvedRate->minor,
+            'contractor_id' => $contractorId,
+            'currency' => $approvedRate->currency,
+            'currency_source' => $approvedRate->source,
             'event_type' => $eventType,
             'performance_act_id' => (int) $act->id,
+            'planned_quantity' => $plannedQuantity,
             'recognized_at' => $occurredAt->format(DATE_ATOM),
+            'reported_quantity' => $reportedQuantity,
             'source_line_id' => $sourceLineId,
             'source_line_type' => $sourceLineType,
+            'task_id' => $taskId,
             'transition_version' => $version,
             'unit_code' => $unitCode,
             'unit_dimension' => $unitDimension,
             'conversion_version' => $conversionVersion,
+            'wbs_code' => $wbsCode,
+            'work_id' => $workId,
+            'zone' => $zone,
         ]));
 
         $existing = ProductionAcceptanceEvent::query()
@@ -243,30 +304,35 @@ final readonly class ProductionAcceptanceEventRecorder
                 'performance_act_id' => (int) $act->id,
                 'source_line_type' => $sourceLineType,
                 'source_line_id' => $sourceLineId,
-                'work_id' => (int) $work->id,
-                'task_id' => $work->schedule_task_id === null ? null : (int) $work->schedule_task_id,
-                'wbs_code' => $work->scheduleTask?->wbs_code,
-                'zone' => null,
-                'contractor_id' => $work->contractor_id === null ? null : (int) $work->contractor_id,
+                'work_id' => $workId,
+                'task_id' => $taskId,
+                'wbs_code' => $wbsCode,
+                'zone' => $zone,
+                'contractor_id' => $contractorId,
                 'transition_version' => $version,
                 'event_type' => $eventType,
                 'reverses_event_id' => $acceptedEvent?->id,
                 'accepted_quantity_delta' => $delta,
-                'planned_quantity' => $this->decimal((string) ($work->quantity ?? '0')),
-                'reported_quantity' => $this->decimal((string) ($work->completed_quantity ?? $work->quantity ?? '0')),
+                'planned_quantity' => $plannedQuantity,
+                'reported_quantity' => $reportedQuantity,
                 'unit_dimension' => $unitDimension,
                 'unit_code' => $unitCode,
                 'conversion_version' => $conversionVersion,
-                'approved_rate_minor' => null,
-                'currency' => null,
-                'currency_source' => null,
+                'approved_rate_minor' => $approvedRate->minor,
+                'currency' => $approvedRate->currency,
+                'currency_source' => $approvedRate->source,
                 'recognized_at' => $occurredAt,
                 'actor_id' => $actorId,
                 'source_hash' => $sourceHash,
                 'evidence_refs' => [
-                    ['type' => 'performance_act', 'id' => (int) $act->id],
-                    ['type' => $sourceLineType, 'id' => $sourceLineId],
-                    ['type' => 'completed_work', 'id' => (int) $work->id],
+                    ['type' => 'performance_act', 'id' => (int) $act->id, 'project_id' => (int) $act->project_id],
+                    ['type' => $sourceLineType, 'id' => $sourceLineId, 'project_id' => (int) $act->project_id],
+                    ['type' => 'completed_work', 'id' => $workId, 'project_id' => (int) $act->project_id],
+                    ...($work->journal_entry_id === null ? [] : [[
+                        'type' => 'construction_journal_entry',
+                        'id' => (int) $work->journal_entry_id,
+                        'project_id' => (int) $act->project_id,
+                    ]]),
                 ],
             ]));
         } catch (QueryException $exception) {
@@ -281,17 +347,9 @@ final readonly class ProductionAcceptanceEventRecorder
             if ($concurrent === null) {
                 throw $exception;
             }
-            $this->assertRepeatedEventMatches(
-                $concurrent,
-                $act,
-                $work,
-                $delta,
-                $sourceLineType,
-                $sourceLineId,
-                $unitDimension,
-                $unitCode,
-                $conversionVersion,
-            );
+            if (!hash_equals((string) $concurrent->source_hash, $sourceHash)) {
+                throw new InvalidArgumentException('production_acceptance_event_immutable');
+            }
 
             return $concurrent;
         }
@@ -307,9 +365,11 @@ final readonly class ProductionAcceptanceEventRecorder
         string $unitDimension,
         string $unitCode,
         string $conversionVersion,
+        ApprovedAcceptanceRate $approvedRate,
     ): void {
         $this->identity->assertMatches($event, [
             'accepted_quantity_delta' => $delta,
+            'approved_rate_minor' => $approvedRate->minor,
             'contract_id' => (int) $act->contract_id,
             'performance_act_id' => (int) $act->id,
             'planned_quantity' => $this->decimal((string) ($work->quantity ?? '0')),
@@ -320,6 +380,8 @@ final readonly class ProductionAcceptanceEventRecorder
             'unit_code' => $unitCode,
             'unit_dimension' => $unitDimension,
             'conversion_version' => $conversionVersion,
+            'currency' => $approvedRate->currency,
+            'currency_source' => $approvedRate->source,
             'work_id' => (int) $work->id,
         ]);
     }

@@ -26,7 +26,12 @@ use InvalidArgumentException;
 
 final readonly class BaselineScheduleSnapshotService
 {
-    private const FORMULA_VERSION = 'schedule.baseline_variance.v1';
+    private const FORMULA_VERSION = 'schedule.baseline-variance.v1';
+
+    public function __construct(
+        private HistoricalScheduleTaskStateQuery $historicalTasks,
+    ) {
+    }
 
     public function capture(
         ProjectSchedule $schedule,
@@ -131,65 +136,105 @@ final readonly class BaselineScheduleSnapshotService
         ) {
             throw new InvalidArgumentException('baseline_schedule_materialization_identity_invalid');
         }
+        $asOfFilter = $query->filters->values['as_of'] ?? null;
+        if ($asOfFilter !== null
+            && (!is_string($asOfFilter)
+                || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $asOfFilter) !== 1
+                || $asOfFilter !== $query->asOf->format('Y-m-d'))
+        ) {
+            throw new InvalidArgumentException('baseline_schedule_as_of_filter_invalid');
+        }
 
         $projectIds = $scope->projectIds;
         $requestedProjectIds = $query->filters->values['project_ids'] ?? [];
         if (is_array($requestedProjectIds) && $requestedProjectIds !== []) {
             $projectIds = array_values(array_intersect($projectIds, $requestedProjectIds));
         }
+        if ($projectIds === []) {
+            throw new InvalidArgumentException('baseline_schedule_project_filter_empty');
+        }
 
-        $schedules = ProjectSchedule::query()
+        $scheduleIds = $this->positiveIntegerFilter($query, 'schedule_ids');
+        $allowedScheduleIds = ProjectSchedule::query()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('project_id', $projectIds)
             ->where('is_template', false)
-            ->orderBy('id')
-            ->get();
+            ->when($scheduleIds !== [], fn ($builder) => $builder->whereIn('id', $scheduleIds))
+            ->pluck('id')
+            ->map('intval')
+            ->all();
+        $states = $this->historicalTasks
+            ->latestForProjects($scope->organizationId, $projectIds, $query->asOf)
+            ->whereIn('scheduleId', $allowedScheduleIds)
+            ->values();
+        $eligibleTaskIds = ScheduleTask::withTrashed()
+            ->where('organization_id', $scope->organizationId)
+            ->where('created_at', '<=', $query->asOf)
+            ->whereIn('schedule_id', $allowedScheduleIds)
+            ->pluck('id')
+            ->map('intval')
+            ->all();
+        $versionedTaskIds = $states
+            ->when(
+                $scheduleIds !== [],
+                static fn ($items) => $items->whereIn('scheduleId', $scheduleIds),
+            )
+            ->pluck('taskId')
+            ->map('intval')
+            ->all();
+        if (array_diff($eligibleTaskIds, $versionedTaskIds) !== []) {
+            throw new InvalidArgumentException('historical_schedule_task_state_incomplete');
+        }
+
+        $states = $states
+            ->filter(fn ($state): bool => $state->active
+                && $this->matchesTaskFilters($query, $state))
+            ->values();
         $sourceRows = [];
         $watermarks = [];
-        foreach ($schedules as $schedule) {
+        foreach ($states->groupBy('scheduleId') as $scheduleId => $scheduleStates) {
+            $scheduleId = (int) $scheduleId;
             $baseline = ScheduleBaselineVersion::query()
                 ->where('organization_id', $scope->organizationId)
-                ->where('schedule_id', $schedule->id)
+                ->where('schedule_id', $scheduleId)
                 ->where('captured_at', '<=', $query->asOf)
                 ->orderByDesc('version')
                 ->first();
-            $watermarks['schedule_'.(int) $schedule->id] = $baseline === null
+            $watermarks['schedule_'.$scheduleId] = $baseline === null
                 ? 'missing'
                 : 'version_'.(int) $baseline->version;
             $baselineTasks = $baseline === null
                 ? []
                 : collect((array) $baseline->source_payload)->keyBy('task_id')->all();
-            $tasks = $schedule->tasks()->orderBy('id')->get();
-            foreach ($tasks as $task) {
-                $saved = $baselineTasks[(int) $task->id] ?? null;
+            foreach ($scheduleStates as $state) {
+                $saved = $baselineTasks[$state->taskId] ?? null;
                 $sourceRows[] = [
                     'baseline_version_id' => $baseline?->id,
                     'dependency_refs' => (array) ($saved['dependency_refs'] ?? []),
-                    'project_id' => (int) $schedule->project_id,
-                    'schedule_id' => (int) $schedule->id,
+                    'project_id' => $state->projectId,
+                    'schedule_id' => $scheduleId,
+                    'state_hash' => $state->sourceHash,
                     'source' => new BaselineScheduleTaskSource(
-                        taskId: (int) $task->id,
+                        taskId: $state->taskId,
                         baselineStart: isset($saved['baseline_start'])
                             ? new DateTimeImmutable($saved['baseline_start'])
                             : null,
                         baselineEnd: isset($saved['baseline_end'])
                             ? new DateTimeImmutable($saved['baseline_end'])
                             : null,
-                        plannedStart: new DateTimeImmutable($task->planned_start_date->format('Y-m-d')),
-                        plannedEnd: new DateTimeImmutable($task->planned_end_date->format('Y-m-d')),
+                        plannedStart: $state->plannedStart,
+                        plannedEnd: $state->plannedEnd,
                         baselineDurationDays: isset($saved['baseline_duration_days'])
                             ? (int) $saved['baseline_duration_days']
                             : null,
-                        plannedDurationDays: (int) $task->planned_duration_days,
-                        totalFloatDays: (int) ($saved['total_float_days'] ?? $task->total_float_days ?? 0),
-                        freeFloatDays: (int) ($saved['free_float_days'] ?? $task->free_float_days ?? 0),
-                        critical: (bool) ($saved['is_critical'] ?? $task->is_critical),
-                        status: $task->status instanceof \BackedEnum
-                            ? (string) $task->status->value
-                            : (string) $task->status,
-                        scheduleId: (int) $schedule->id,
-                        wbsCode: $task->wbs_code,
-                        taskName: (string) $task->name,
+                        plannedDurationDays: $state->plannedDurationDays,
+                        totalFloatDays: (int) ($saved['total_float_days'] ?? $state->totalFloatDays),
+                        freeFloatDays: (int) ($saved['free_float_days'] ?? $state->freeFloatDays),
+                        critical: (bool) ($saved['is_critical'] ?? $state->critical),
+                        status: $state->status,
+                        scheduleId: $scheduleId,
+                        wbsCode: $state->wbsCode,
+                        taskName: $state->taskName,
                     ),
                 ];
             }
@@ -201,6 +246,7 @@ final readonly class BaselineScheduleSnapshotService
                 'dependency_refs' => $item['dependency_refs'],
                 'project_id' => $item['project_id'],
                 'schedule_id' => $item['schedule_id'],
+                'state_hash' => $item['state_hash'],
                 'source' => [
                     'baseline_duration_days' => $item['source']->baselineDurationDays,
                     'baseline_end' => $item['source']->baselineEnd?->format(DATE_ATOM),
@@ -385,5 +431,46 @@ final readonly class BaselineScheduleSnapshotService
                 'status',
             ],
         );
+    }
+
+    private function matchesTaskFilters(ReportQuery $query, object $state): bool
+    {
+        $values = $query->filters->values;
+
+        return $this->matches($values['wbs_ids'] ?? [], $state->wbsCode)
+            && $this->matches($values['owner_ids'] ?? [], $state->ownerId)
+            && $this->matches($values['contractor_ids'] ?? [], $state->contractorId)
+            && $this->matches($values['statuses'] ?? [], $state->status)
+            && (!array_key_exists('critical', $values) || (bool) $values['critical'] === $state->critical);
+    }
+
+    private function positiveIntegerFilter(ReportQuery $query, string $key): array
+    {
+        $values = $query->filters->values[$key] ?? [];
+        if ($values === []) {
+            return [];
+        }
+        if (!is_array($values) || !array_is_list($values)) {
+            throw new InvalidArgumentException('baseline_schedule_filter_invalid');
+        }
+
+        $result = array_map('intval', $values);
+        if (in_array(0, $result, true)) {
+            throw new InvalidArgumentException('baseline_schedule_filter_invalid');
+        }
+
+        return array_values(array_unique($result));
+    }
+
+    private function matches(mixed $filter, int|string|null $value): bool
+    {
+        if ($filter === []) {
+            return true;
+        }
+        if (!is_array($filter) || !array_is_list($filter) || $value === null) {
+            return false;
+        }
+
+        return in_array((string) $value, array_map('strval', $filter), true);
     }
 }

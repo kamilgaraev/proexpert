@@ -2,11 +2,13 @@
 
 namespace App\Observers;
 
+use App\BusinessModules\Features\ScheduleManagement\Reporting\ScheduleTaskStateRecorder;
 use App\Exceptions\Schedule\ScheduleValidationException;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Services\Analytics\EVMService;
 use Carbon\Carbon;
+use DateTimeImmutable;
 use Illuminate\Support\Facades\Log;
 
 class ScheduleTaskObserver
@@ -105,6 +107,8 @@ class ScheduleTaskObserver
      */
     public function updated(ScheduleTask $task): void
     {
+        $this->captureReportingState($task, 'updated');
+
         if ($task->wasChanged(['planned_start_date', 'planned_end_date'])) {
             $service = app(\App\Services\Schedule\AutoSchedulingService::class);
 
@@ -160,6 +164,8 @@ class ScheduleTaskObserver
      */
     public function created(ScheduleTask $task): void
     {
+        $this->captureReportingState($task, 'created');
+
         $service = app(\App\Services\Schedule\AutoSchedulingService::class);
         $service->syncParentDates($task);
         $this->invalidateEVMCache($task);
@@ -175,6 +181,8 @@ class ScheduleTaskObserver
      */
     public function deleted(ScheduleTask $task): void
     {
+        $this->captureReportingState($task, 'deleted', false);
+
         if ($task->parent_task_id) {
             // Пытаемся получить родителя (даже если он мягко удален, но тут нам нужен живой)
             $parent = ScheduleTask::find($task->parent_task_id);
@@ -187,12 +195,23 @@ class ScheduleTaskObserver
 
     public function restored(ScheduleTask $task): void
     {
+        $this->captureReportingState($task, 'restored');
         $this->invalidateEVMCache($task);
     }
 
     public function forceDeleted(ScheduleTask $task): void
     {
+        $this->captureReportingState($task, 'force_deleted', false);
         $this->invalidateEVMCache($task, true);
+    }
+
+    private function captureReportingState(
+        ScheduleTask $task,
+        string $sourceKind,
+        bool $active = true,
+    ): void {
+        $timestamp = $task->updated_at?->toDateTimeImmutable() ?? new DateTimeImmutable();
+        app(ScheduleTaskStateRecorder::class)->capture($task, $timestamp, $sourceKind, $active);
     }
 
     private function invalidateEVMCache(ScheduleTask $task, bool $includeOriginal = false): void

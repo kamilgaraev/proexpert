@@ -4,6 +4,10 @@ namespace App\BusinessModules\Features\ScheduleManagement;
 
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleSnapshotService;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceQueryService;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\HistoricalScheduleTaskStateQuery;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Readiness\BaselineScheduleVarianceReadinessProbe;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\ScheduleBaselineVersionBackfill;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\ScheduleTaskStateRecorder;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Backfill\LookaheadReadinessBackfill;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Readiness\LookaheadReadinessProbe;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadReadinessSnapshotMaterializer;
@@ -30,6 +34,10 @@ class ScheduleManagementServiceProvider extends ServiceProvider
         $this->app->singleton(\App\BusinessModules\Features\ScheduleManagement\Services\LookaheadPlanningService::class);
         $this->app->singleton(BaselineScheduleSnapshotService::class);
         $this->app->singleton(BaselineScheduleVarianceQueryService::class);
+        $this->app->singleton(HistoricalScheduleTaskStateQuery::class);
+        $this->app->singleton(ScheduleTaskStateRecorder::class);
+        $this->app->singleton(ScheduleBaselineVersionBackfill::class);
+        $this->app->singleton(BaselineScheduleVarianceReadinessProbe::class);
         $this->app->singleton(WorkConstraintEventRecorder::class);
         $this->app->singleton(LookaheadReadinessSnapshotMaterializer::class);
         $this->app->singleton(LookaheadReadinessBackfill::class);

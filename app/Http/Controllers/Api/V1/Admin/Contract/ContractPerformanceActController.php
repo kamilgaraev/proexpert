@@ -411,7 +411,9 @@ class ContractPerformanceActController extends Controller
                 : (bool) $act->is_approved,
             approval_date: $validated['approval_date'] ?? $act->approval_date,
             completed_works: $validated['completed_works'] ?? [],
-            amount: isset($validated['amount']) ? (float) $validated['amount'] : (float) $act->amount
+            amount: isset($validated['amount']) ? (float) $validated['amount'] : (float) $act->amount,
+            currency: $validated['currency'] ?? $act->currency,
+            completedWorksProvided: array_key_exists('completed_works', $validated),
         );
     }
 }

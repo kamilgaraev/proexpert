@@ -2,6 +2,7 @@
 
 namespace App\Observers;
 
+use App\Exceptions\BusinessLogicException;
 use App\Models\ContractPerformanceAct;
 use App\Services\Analytics\EVMService;
 use App\Services\Contract\ContractAuditedMutationService;
@@ -9,6 +10,7 @@ use App\Services\Contract\ContractAuditReconciliationService;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class ContractPerformanceActObserver
@@ -23,6 +25,23 @@ class ContractPerformanceActObserver
     {
         $this->recalculateContractTotal($act, 'created');
         $this->invalidateEVMCache($act);
+    }
+
+    public function updating(ContractPerformanceAct $act): void
+    {
+        if (!$act->isDirty(['status', 'is_approved'])) {
+            return;
+        }
+        $wasAccepted = $this->isAccepted(
+            (string) $act->getOriginal('status'),
+            (bool) $act->getOriginal('is_approved'),
+        );
+        $isAccepted = $this->isAccepted((string) $act->status, (bool) $act->is_approved);
+        if ($wasAccepted !== $isAccepted && DB::transactionLevel() < 1) {
+            throw new BusinessLogicException(
+                trans_message('act_reports.acceptance_transition_requires_transaction')
+            );
+        }
     }
 
     public function updated(ContractPerformanceAct $act): void
@@ -51,6 +70,11 @@ class ContractPerformanceActObserver
         if (! $this->isAccepted((string) $act->status, (bool) $act->is_approved)) {
             return;
         }
+        if (DB::transactionLevel() < 1) {
+            throw new BusinessLogicException(
+                trans_message('act_reports.accepted_act_delete_requires_transaction')
+            );
+        }
 
         $this->productionAcceptanceEvents->recordTransition(
             $act,
@@ -77,9 +101,9 @@ class ContractPerformanceActObserver
             $act,
             $wasAccepted ? 'approved' : 'pending',
             $isAccepted ? 'approved' : 'reopened',
-            $act->signed_at === null
-                ? CarbonImmutable::now()
-                : CarbonImmutable::instance($act->signed_at),
+            $isAccepted && $act->signed_at !== null
+                ? CarbonImmutable::instance($act->signed_at)
+                : CarbonImmutable::now(),
             Auth::id(),
         );
     }

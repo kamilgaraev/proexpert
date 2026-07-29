@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -25,9 +26,16 @@ return new class extends Migration
             $table->string('timezone', 64);
             $table->char('source_hash', 64);
             $table->timestampsTz();
-            $table->unique(['organization_id', 'project_id', 'version'], 'lookahead_policy_version_unique');
             $table->index(['organization_id', 'project_id', 'effective_from', 'effective_until', 'version'], 'lookahead_policy_effective');
         });
+        DB::statement(
+            'CREATE UNIQUE INDEX lookahead_policy_version_unique
+            ON lookahead_readiness_policy_versions (
+                organization_id,
+                COALESCE(project_id, 0),
+                version
+            )'
+        );
 
         Schema::create('work_constraint_transition_events', function (Blueprint $table): void {
             $table->bigIncrements('id');
@@ -56,7 +64,7 @@ return new class extends Migration
         Schema::create('lookahead_readiness_snapshots', function (Blueprint $table): void {
             $table->string('id', 26)->primary();
             $table->unsignedBigInteger('organization_id');
-            $table->unsignedBigInteger('policy_version_id');
+            $table->jsonb('policy_version_ids');
             $table->date('as_of');
             $table->string('formula_version', 64);
             $table->char('definition_hash', 64);
@@ -88,6 +96,7 @@ return new class extends Migration
             $table->string('wbs_code')->nullable();
             $table->unsignedBigInteger('owner_id')->nullable();
             $table->unsignedBigInteger('contractor_id')->nullable();
+            $table->unsignedBigInteger('zone_id')->nullable();
             $table->string('severity', 64)->nullable();
             $table->date('due_date')->nullable();
             $table->boolean('eligible');
@@ -98,7 +107,10 @@ return new class extends Migration
             $table->unique(['organization_id', 'snapshot_id', 'row_key'], 'lookahead_row_unique');
             $table->index(['organization_id', 'snapshot_id', 'project_id', 'ready', 'severity', 'due_date', 'row_key'], 'lookahead_row_keyset');
             $table->index(['organization_id', 'snapshot_id', 'constraint_type', 'constraint_status', 'row_key'], 'lookahead_row_constraints');
-            $table->index(['organization_id', 'snapshot_id', 'wbs_code', 'owner_id', 'contractor_id', 'row_key'], 'lookahead_row_filters');
+            $table->index(
+                ['organization_id', 'snapshot_id', 'wbs_code', 'owner_id', 'contractor_id', 'zone_id', 'row_key'],
+                'lookahead_row_filters'
+            );
         });
     }
 

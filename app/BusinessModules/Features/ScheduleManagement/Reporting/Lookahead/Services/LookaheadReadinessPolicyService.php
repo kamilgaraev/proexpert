@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services;
 
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessPolicyVersion;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessPolicySet;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -16,11 +17,24 @@ final readonly class LookaheadReadinessPolicyService
         array $projectIds,
         DateTimeImmutable $asOf,
     ): LookaheadReadinessPolicyVersion {
+        if (count($projectIds) !== 1) {
+            throw new InvalidArgumentException('lookahead_single_project_policy_required');
+        }
+
+        return $this->activeForProjects($organizationId, $projectIds, $asOf)
+            ->forProject((int) $projectIds[0]);
+    }
+
+    public function activeForProjects(
+        int $organizationId,
+        array $projectIds,
+        DateTimeImmutable $asOf,
+    ): LookaheadReadinessPolicySet {
         if ($organizationId < 1 || $projectIds === []) {
             throw new InvalidArgumentException('lookahead_policy_scope_invalid');
         }
 
-        $record = DB::table('lookahead_readiness_policy_versions')
+        $records = DB::table('lookahead_readiness_policy_versions')
             ->where('organization_id', $organizationId)
             ->where(function ($query) use ($projectIds): void {
                 $query->whereNull('project_id')->orWhereIn('project_id', $projectIds);
@@ -29,13 +43,30 @@ final readonly class LookaheadReadinessPolicyService
             ->where(function ($query) use ($asOf): void {
                 $query->whereNull('effective_until')->orWhere('effective_until', '>=', $asOf);
             })
-            ->orderByRaw('project_id is null')
             ->orderByDesc('version')
-            ->first();
-        if ($record === null) {
+            ->get();
+        if ($records->isEmpty()) {
             throw new InvalidArgumentException('lookahead_policy_unavailable');
         }
 
+        return new LookaheadReadinessPolicySet(
+            $records->map(fn (object $record): LookaheadReadinessPolicyVersion => $this->hydrate($record))->all(),
+            array_values(array_map('intval', $projectIds)),
+        );
+    }
+
+    private function jsonList(mixed $value): array
+    {
+        $decoded = is_string($value) ? json_decode($value, true) : $value;
+        if (!is_array($decoded) || !array_is_list($decoded)) {
+            throw new InvalidArgumentException('lookahead_policy_payload_invalid');
+        }
+
+        return $decoded;
+    }
+
+    private function hydrate(object $record): LookaheadReadinessPolicyVersion
+    {
         return new LookaheadReadinessPolicyVersion(
             version: (int) $record->version,
             organizationId: (int) $record->organization_id,
@@ -53,15 +84,5 @@ final readonly class LookaheadReadinessPolicyService
             projectId: $record->project_id === null ? null : (int) $record->project_id,
             policyId: (int) $record->id,
         );
-    }
-
-    private function jsonList(mixed $value): array
-    {
-        $decoded = is_string($value) ? json_decode($value, true) : $value;
-        if (!is_array($decoded) || !array_is_list($decoded)) {
-            throw new InvalidArgumentException('lookahead_policy_payload_invalid');
-        }
-
-        return $decoded;
     }
 }

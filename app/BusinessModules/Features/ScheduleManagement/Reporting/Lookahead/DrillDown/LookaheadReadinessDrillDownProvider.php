@@ -12,13 +12,17 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessRow;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessSnapshot;
 use App\Support\Reporting\ImmutableOwnerProjectionReader;
+use App\Support\Reporting\ReportSourceObjectAccessAuthorizer;
 
 final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillDownProvider
 {
     private ImmutableOwnerProjectionReader $reader;
 
-    public function __construct()
+    private ReportSourceObjectAccessAuthorizer $sourceAccess;
+
+    public function __construct(?ReportSourceObjectAccessAuthorizer $sourceAccess = null)
     {
+        $this->sourceAccess = $sourceAccess ?? new ReportSourceObjectAccessAuthorizer();
         $this->reader = new ImmutableOwnerProjectionReader(
             LookaheadReadinessRow::class,
             LookaheadReadinessSnapshot::class,
@@ -38,6 +42,13 @@ final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillD
         );
         $rows = [];
         if ($row !== null) {
+            $projectId = (int) $row['project_id'];
+            $this->sourceAccess->assertAccessible(
+                $context,
+                'schedule_task',
+                (int) $row['task_id'],
+                $projectId,
+            );
             $rows[] = [
                 'row_key' => 'lookahead_task:'.$row['row_key'],
                 'project_id' => $row['project_id'],
@@ -46,6 +57,12 @@ final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillD
                 'blocking_constraint_ids' => $row['blocking_constraint_ids'],
             ];
             if (($row['constraint_id'] ?? null) !== null) {
+                $this->sourceAccess->assertAccessible(
+                    $context,
+                    'work_constraint',
+                    (int) $row['constraint_id'],
+                    $projectId,
+                );
                 $rows[] = [
                     'row_key' => 'work_constraint:'.$row['constraint_id'],
                     'project_id' => $row['project_id'],
@@ -55,6 +72,12 @@ final readonly class LookaheadReadinessDrillDownProvider implements ReportDrillD
                 ];
             }
             if (($row['linked_resource_id'] ?? null) !== null) {
+                $this->sourceAccess->assertAccessible(
+                    $context,
+                    (string) $row['linked_resource_type'],
+                    (int) $row['linked_resource_id'],
+                    $projectId,
+                );
                 $rows[] = [
                     'row_key' => $row['linked_resource_type'].':'.$row['linked_resource_id'],
                     'project_id' => $row['project_id'],

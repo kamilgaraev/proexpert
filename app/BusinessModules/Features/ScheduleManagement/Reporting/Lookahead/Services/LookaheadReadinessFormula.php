@@ -24,6 +24,7 @@ final readonly class LookaheadReadinessFormula
 
         $horizonEnd = $input->asOf->add(new DateInterval('P'.$policy->horizonDays.'D'));
         $eligible = !$input->container
+            && !in_array($input->status, ['completed', 'cancelled', 'canceled'], true)
             && in_array($input->status, $policy->eligibleTaskStatuses, true)
             && $input->plannedStart >= $input->asOf
             && $input->plannedStart <= $horizonEnd;

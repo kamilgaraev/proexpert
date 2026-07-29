@@ -43,6 +43,38 @@ return new class extends Migration
             $table->unique(['organization_id', 'baseline_version_id', 'task_id'], 'schedule_baseline_task_unique');
         });
 
+        Schema::create('schedule_task_state_versions', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('schedule_id');
+            $table->unsignedBigInteger('task_id');
+            $table->unsignedInteger('version');
+            $table->timestampTz('effective_at');
+            $table->string('source_kind', 32);
+            $table->boolean('is_active');
+            $table->string('task_name');
+            $table->string('wbs_code')->nullable();
+            $table->string('task_type', 64);
+            $table->string('status', 64);
+            $table->date('planned_start');
+            $table->date('planned_end');
+            $table->integer('planned_duration_days');
+            $table->integer('total_float_days');
+            $table->integer('free_float_days');
+            $table->boolean('is_critical');
+            $table->unsignedBigInteger('owner_id')->nullable();
+            $table->unsignedBigInteger('contractor_id')->nullable();
+            $table->unsignedBigInteger('zone_id')->nullable();
+            $table->char('source_hash', 64);
+            $table->timestampsTz();
+            $table->unique(['organization_id', 'task_id', 'version'], 'schedule_task_state_version_unique');
+            $table->index(
+                ['organization_id', 'project_id', 'effective_at', 'task_id', 'version'],
+                'schedule_task_state_as_of'
+            );
+        });
+
         Schema::create('baseline_schedule_variance_snapshots', function (Blueprint $table): void {
             $table->string('id', 26)->primary();
             $table->unsignedBigInteger('organization_id');
@@ -92,6 +124,7 @@ return new class extends Migration
     {
         Schema::dropIfExists('baseline_schedule_variance_rows');
         Schema::dropIfExists('baseline_schedule_variance_snapshots');
+        Schema::dropIfExists('schedule_task_state_versions');
         Schema::dropIfExists('schedule_baseline_task_rows');
         Schema::dropIfExists('schedule_baseline_versions');
     }

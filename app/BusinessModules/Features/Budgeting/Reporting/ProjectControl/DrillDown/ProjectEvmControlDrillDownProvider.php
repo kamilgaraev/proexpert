@@ -12,13 +12,17 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Models\ProjectControlRow;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Models\ProjectControlSnapshot;
 use App\Support\Reporting\ImmutableOwnerProjectionReader;
+use App\Support\Reporting\ReportSourceObjectAccessAuthorizer;
 
 final readonly class ProjectEvmControlDrillDownProvider implements ReportDrillDownProvider
 {
     private ImmutableOwnerProjectionReader $reader;
 
-    public function __construct()
+    private ReportSourceObjectAccessAuthorizer $sourceAccess;
+
+    public function __construct(?ReportSourceObjectAccessAuthorizer $sourceAccess = null)
     {
+        $this->sourceAccess = $sourceAccess ?? new ReportSourceObjectAccessAuthorizer();
         $this->reader = new ImmutableOwnerProjectionReader(
             ProjectControlRow::class,
             ProjectControlSnapshot::class,
@@ -52,6 +56,15 @@ final readonly class ProjectEvmControlDrillDownProvider implements ReportDrillDo
             ) {
                 continue;
             }
+            $projectId = isset($sourceRef['project_id'])
+                ? (int) $sourceRef['project_id']
+                : (int) $row['project_id'];
+            $this->sourceAccess->assertAccessible(
+                $context,
+                $type,
+                (int) $sourceRef['id'],
+                $projectId,
+            );
             $evidence[] = [
                 'row_key' => 'project_control_evidence:'.$row['row_key'].':'.$index,
                 'evidence_type' => $type,
@@ -61,6 +74,12 @@ final readonly class ProjectEvmControlDrillDownProvider implements ReportDrillDo
             ];
         }
         if ($evidence === []) {
+            $this->sourceAccess->assertAccessible(
+                $context,
+                'schedule_task',
+                (int) $row['task_id'],
+                (int) $row['project_id'],
+            );
             $evidence[] = [
                 'row_key' => 'project_control_evidence:'.$row['row_key'],
                 'evidence_type' => 'schedule_task',

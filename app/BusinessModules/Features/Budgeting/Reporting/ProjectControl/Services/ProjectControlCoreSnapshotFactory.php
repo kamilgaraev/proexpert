@@ -56,9 +56,6 @@ final readonly class ProjectControlCoreSnapshotFactory
             }
             $rows[] = $row;
         }
-        if ($rows === []) {
-            throw new InvalidArgumentException('project_control_capture_empty');
-        }
         usort($rows, static fn (ProjectControlSourceRow $left, ProjectControlSourceRow $right): int => strcmp($left->rowKey, $right->rowKey));
         $rowKeys = array_column(array_map(
             static fn (ProjectControlSourceRow $row): array => ['row_key' => $row->rowKey],

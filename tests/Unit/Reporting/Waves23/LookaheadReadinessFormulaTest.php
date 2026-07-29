@@ -69,6 +69,42 @@ final class LookaheadReadinessFormulaTest extends TestCase
         self::assertSame('LOOKAHEAD_LINKED_EVIDENCE_MISSING', $metric->warningCode);
     }
 
+    public function test_completed_or_cancelled_task_is_never_eligible_even_when_policy_contains_status(): void
+    {
+        $policy = new LookaheadReadinessPolicyVersion(
+            1,
+            10,
+            30,
+            ['completed', 'cancelled'],
+            ['permit'],
+            ['high'],
+            true,
+            new DateTimeImmutable('2026-07-01'),
+            null,
+            'Europe/Moscow',
+            str_repeat('d', 64),
+        );
+        $completed = new LookaheadEligibilityInput(
+            1,
+            false,
+            'completed',
+            new DateTimeImmutable('2026-08-05'),
+            new DateTimeImmutable('2026-07-29'),
+            [],
+        );
+        $cancelled = new LookaheadEligibilityInput(
+            2,
+            false,
+            'cancelled',
+            new DateTimeImmutable('2026-08-05'),
+            new DateTimeImmutable('2026-07-29'),
+            [],
+        );
+
+        self::assertFalse((new LookaheadReadinessFormula())->evaluate($completed, $policy)->eligible);
+        self::assertFalse((new LookaheadReadinessFormula())->evaluate($cancelled, $policy)->eligible);
+    }
+
     private function input(int $taskId, array $constraints): LookaheadEligibilityInput
     {
         return new LookaheadEligibilityInput(

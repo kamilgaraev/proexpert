@@ -26,8 +26,10 @@ final readonly class AcceptedProductionSnapshotMaterializer
 {
     private const FORMULA_VERSION = 'accepted_production.v1';
 
-    public function __construct(private AcceptedProductionFormula $formula)
-    {
+    public function __construct(
+        private AcceptedProductionFormula $formula,
+        private ProductionAcceptanceRecognitionGrain $grain,
+    ) {
     }
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
@@ -38,7 +40,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
             throw new InvalidArgumentException('accepted_production_materialization_identity_invalid');
         }
 
-        $events = ProductionAcceptanceEvent::query()
+        $allEvents = ProductionAcceptanceEvent::query()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('project_id', $scope->projectIds)
             ->where('recognized_at', '<=', $query->asOf)
@@ -47,12 +49,16 @@ final readonly class AcceptedProductionSnapshotMaterializer
             ->orderBy('source_line_id')
             ->orderBy('transition_version')
             ->get();
-        $this->assertProjectionComplete($scope, $query, $events);
-        $watermark = (int) ($events->max('id') ?? 0);
+        $this->assertProjectionComplete($scope, $query, $allEvents);
+        $events = $allEvents
+            ->filter(fn (ProductionAcceptanceEvent $event): bool => $this->matchesFilters($query, $event))
+            ->values();
+        $watermark = (int) ($allEvents->max('id') ?? 0);
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
             'event_watermark' => $watermark,
             'events' => $events->map(static fn (ProductionAcceptanceEvent $event): array => [
                 'accepted_quantity_delta' => (string) $event->accepted_quantity_delta,
+                'approved_rate_minor' => $event->approved_rate_minor,
                 'currency' => $event->currency,
                 'currency_source' => $event->currency_source,
                 'event_type' => (string) $event->event_type,
@@ -75,11 +81,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
         }
 
         $facts = $events
-            ->groupBy(static fn (ProductionAcceptanceEvent $event): string => implode(':', [
-                $event->performance_act_id,
-                $event->source_line_type,
-                $event->source_line_id,
-            ]))
+            ->groupBy(fn (ProductionAcceptanceEvent $event): string => $this->grain->key($event))
             ->map(fn (Collection $lineEvents): array => $this->fact($lineEvents))
             ->values();
 
@@ -127,20 +129,13 @@ final readonly class AcceptedProductionSnapshotMaterializer
 
             foreach ($rows as [$item, $metric]) {
                 $event = $item['event'];
-                $rowKey = implode(':', [
-                    $event->project_id,
-                    $event->recognized_at->format('Y-m-d'),
-                    $event->unit_dimension,
-                    $event->unit_code,
-                    $event->performance_act_id,
-                    $event->source_line_type,
-                    $event->source_line_id,
-                ]);
+                $rowKey = $this->grain->key($event);
                 $payload = [
                     'project_id' => (int) $event->project_id,
                     'performance_act_id' => (int) $event->performance_act_id,
                     'source_line_type' => (string) $event->source_line_type,
                     'source_line_id' => (int) $event->source_line_id,
+                    'event_status' => (string) $event->event_type,
                     'work_id' => $event->work_id === null ? null : (int) $event->work_id,
                     'task_id' => $event->task_id === null ? null : (int) $event->task_id,
                     'wbs_code' => $event->wbs_code,
@@ -167,8 +162,12 @@ final readonly class AcceptedProductionSnapshotMaterializer
                     'row_key' => $rowKey,
                     'project_id' => (int) $event->project_id,
                     'performance_act_id' => (int) $event->performance_act_id,
+                    'source_line_type' => (string) $event->source_line_type,
                     'source_line_id' => (int) $event->source_line_id,
                     'work_id' => $event->work_id,
+                    'contractor_id' => $event->contractor_id,
+                    'zone' => $event->zone,
+                    'event_status' => (string) $event->event_type,
                     'recognized_on' => $event->recognized_at->format('Y-m-d'),
                     'unit_dimension' => (string) $event->unit_dimension,
                     'unit_code' => (string) $event->unit_code,
@@ -177,8 +176,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                     'accepted_amount_minor' => $metric->acceptedAmountMinor,
                     'payload' => $payload,
                     'source_refs' => [
-                        ['type' => 'performance_act', 'id' => (int) $event->performance_act_id],
-                        ['type' => (string) $event->source_line_type, 'id' => (int) $event->source_line_id],
+                        ...(array) $event->evidence_refs,
                         ['type' => 'acceptance_event', 'ids' => $item['event_ids']],
                     ],
                 ]);
@@ -216,6 +214,12 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 || $event->approved_rate_minor !== $first->approved_rate_minor
             ) {
                 throw new InvalidArgumentException('accepted_production_event_identity_changed');
+            }
+            if ($event->approved_rate_minor === null
+                || $event->currency === null
+                || $event->currency_source === null
+            ) {
+                throw new InvalidArgumentException('accepted_production_rate_identity_missing');
             }
         }
         $accepted = $events->reduce(
@@ -300,6 +304,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
         $acts = ContractPerformanceAct::query()
             ->whereIn('project_id', $scope->projectIds)
             ->whereHas('contract', static fn ($builder) => $builder->where('organization_id', $scope->organizationId))
+            ->where('created_at', '<=', $query->asOf)
             ->where(function ($builder): void {
                 $builder
                     ->where('is_approved', true)
@@ -311,11 +316,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
             ->with(['lines:id,performance_act_id', 'completedWorks:id'])
             ->get();
         foreach ($acts as $act) {
-            $recognizedAt = $act->signed_at ?? $act->approval_date;
-            if ($recognizedAt === null) {
-                throw new InvalidArgumentException('accepted_production_transition_time_missing');
-            }
-            if ($recognizedAt->greaterThan($query->asOf)) {
+            if ($act->signed_at !== null && $act->signed_at->greaterThan($query->asOf)) {
                 continue;
             }
             $sourceLineType = $act->lines->isNotEmpty() ? 'performance_act_line' : 'completed_work';
@@ -329,6 +330,9 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 $key = implode(':', [$act->id, $sourceLineType, $sourceLineId]);
                 $latest = $latestEvents->get($key);
                 if (!$latest instanceof ProductionAcceptanceEvent || $latest->event_type !== 'accepted') {
+                    if ($laterEventKeys->has($key)) {
+                        continue;
+                    }
                     throw new InvalidArgumentException('accepted_production_projection_incomplete');
                 }
             }
@@ -384,6 +388,56 @@ final readonly class AcceptedProductionSnapshotMaterializer
         ];
     }
 
+    private function matchesFilters(ReportQuery $query, ProductionAcceptanceEvent $event): bool
+    {
+        $values = $query->filters->values;
+        $period = $values['period'] ?? [];
+        $from = $values['period_from'] ?? (is_array($period) ? ($period['from'] ?? null) : null);
+        $to = $values['period_to'] ?? (is_array($period) ? ($period['to'] ?? null) : null);
+        foreach ([$from, $to] as $date) {
+            if ($date !== null
+                && (!is_string($date) || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $date) !== 1)
+            ) {
+                throw new InvalidArgumentException('accepted_production_period_filter_invalid');
+            }
+        }
+        if ($from !== null && $to !== null && $from > $to) {
+            throw new InvalidArgumentException('accepted_production_period_filter_invalid');
+        }
+        $recognizedOn = $event->recognized_at->format('Y-m-d');
+
+        return $this->matches($values['project_ids'] ?? [], (int) $event->project_id)
+            && $this->matches(
+                $values['work_ids'] ?? [],
+                $event->work_id === null ? null : (int) $event->work_id,
+            )
+            && $this->matches(
+                $values['act_ids'] ?? $values['performance_act_ids'] ?? [],
+                (int) $event->performance_act_id,
+            )
+            && $this->matches(
+                $values['contractor_ids'] ?? [],
+                $event->contractor_id === null ? null : (int) $event->contractor_id,
+            )
+            && $this->matches($values['unit_codes'] ?? [], (string) $event->unit_code)
+            && $this->matches($values['zones'] ?? [], $event->zone)
+            && $this->matches($values['statuses'] ?? [], (string) $event->event_type)
+            && ($from === null || $recognizedOn >= (string) $from)
+            && ($to === null || $recognizedOn <= (string) $to);
+    }
+
+    private function matches(mixed $filter, int|string|null $value): bool
+    {
+        if ($filter === []) {
+            return true;
+        }
+        if (!is_array($filter) || !array_is_list($filter) || $value === null) {
+            return false;
+        }
+
+        return in_array((string) $value, array_map('strval', $filter), true);
+    }
+
     private function scaled(string $value): int
     {
         $negative = str_starts_with($value, '-');
@@ -434,6 +488,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 'wbs_code',
                 'work_id',
                 'performance_act_id',
+                'source_line_type',
                 'planned_quantity',
                 'reported_quantity',
                 'accepted_quantity',
@@ -444,6 +499,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 'currency',
                 'approved_rate_minor',
                 'accepted_amount_minor',
+                'event_status',
             ],
         );
     }

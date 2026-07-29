@@ -41,7 +41,13 @@ return new class extends Migration
             $table->char('source_hash', 64);
             $table->jsonb('evidence_refs');
             $table->unique(
-                ['organization_id', 'performance_act_id', 'source_line_type', 'source_line_id', 'transition_version', 'event_type'],
+                [
+                    'organization_id',
+                    'performance_act_id',
+                    'source_line_type',
+                    'source_line_id',
+                    'transition_version',
+                ],
                 'production_acceptance_event_unique',
             );
             $table->index(['organization_id', 'project_id', 'recognized_at', 'performance_act_id', 'source_line_id', 'id'], 'production_acceptance_event_order');
@@ -66,6 +72,19 @@ return new class extends Migration
                 (approved_rate_minor IS NOT NULL AND currency IS NOT NULL AND currency_source IS NOT NULL)
             )'
         );
+        DB::unprepared(<<<'SQL'
+CREATE FUNCTION production_acceptance_event_immutable_guard() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'production_acceptance_events_are_append_only' USING ERRCODE = '55000';
+END;
+$$;
+CREATE TRIGGER production_acceptance_events_append_only
+BEFORE UPDATE OR DELETE ON production_acceptance_events
+FOR EACH ROW
+EXECUTE FUNCTION production_acceptance_event_immutable_guard();
+SQL);
 
         Schema::create('accepted_production_snapshots', function (Blueprint $table): void {
             $table->string('id', 26)->primary();
@@ -94,8 +113,12 @@ return new class extends Migration
             $table->string('row_key', 160);
             $table->unsignedBigInteger('project_id');
             $table->unsignedBigInteger('performance_act_id');
+            $table->string('source_line_type', 64);
             $table->unsignedBigInteger('source_line_id');
             $table->unsignedBigInteger('work_id')->nullable();
+            $table->unsignedBigInteger('contractor_id')->nullable();
+            $table->string('zone')->nullable();
+            $table->string('event_status', 16);
             $table->date('recognized_on');
             $table->string('unit_dimension', 64);
             $table->string('unit_code', 64);
@@ -114,5 +137,6 @@ return new class extends Migration
         Schema::dropIfExists('accepted_production_rows');
         Schema::dropIfExists('accepted_production_snapshots');
         Schema::dropIfExists('production_acceptance_events');
+        DB::statement('DROP FUNCTION IF EXISTS production_acceptance_event_immutable_guard()');
     }
 };

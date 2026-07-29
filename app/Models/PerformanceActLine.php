@@ -28,6 +28,7 @@ class PerformanceActLine extends Model
         'quantity',
         'unit_price',
         'amount',
+        'currency',
         'manual_reason',
         'created_by',
     ];
@@ -42,6 +43,12 @@ class PerformanceActLine extends Model
     {
         static::saving(function (self $line): void {
             $line->validateLine();
+        });
+        static::updating(function (self $line): void {
+            $line->assertAcceptanceSourceMutable();
+        });
+        static::deleting(function (self $line): void {
+            $line->assertAcceptanceSourceMutable();
         });
     }
 
@@ -83,6 +90,23 @@ class PerformanceActLine extends Model
 
         if (!in_array($this->line_type, [self::TYPE_COMPLETED_WORK, self::TYPE_MANUAL], true)) {
             throw new BusinessLogicException(trans_message('act_reports.invalid_line_type'), 422);
+        }
+    }
+
+    private function assertAcceptanceSourceMutable(): void
+    {
+        $accepted = $this->performanceAct()
+            ->where(function ($builder): void {
+                $builder
+                    ->where('is_approved', true)
+                    ->orWhereIn('status', [
+                        ContractPerformanceAct::STATUS_APPROVED,
+                        ContractPerformanceAct::STATUS_SIGNED,
+                    ]);
+            })
+            ->exists();
+        if ($accepted) {
+            throw new BusinessLogicException(trans_message('act_reports.accepted_act_lines_immutable'));
         }
     }
 }

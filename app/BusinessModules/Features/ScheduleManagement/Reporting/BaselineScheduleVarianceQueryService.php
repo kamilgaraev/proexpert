@@ -16,13 +16,17 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Models\BaselineScheduleSnapshot;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Models\BaselineScheduleVarianceRecord;
 use App\Support\Reporting\ImmutableOwnerProjectionReader;
+use App\Support\Reporting\ReportSourceObjectAccessAuthorizer;
 
 final readonly class BaselineScheduleVarianceQueryService implements ReportRowQuery, ReportDrillDownProvider
 {
     private ImmutableOwnerProjectionReader $reader;
 
-    public function __construct()
+    private ReportSourceObjectAccessAuthorizer $sourceAccess;
+
+    public function __construct(?ReportSourceObjectAccessAuthorizer $sourceAccess = null)
     {
+        $this->sourceAccess = $sourceAccess ?? new ReportSourceObjectAccessAuthorizer();
         $this->reader = new ImmutableOwnerProjectionReader(
             BaselineScheduleVarianceRecord::class,
             BaselineScheduleSnapshot::class,
@@ -72,6 +76,9 @@ final readonly class BaselineScheduleVarianceQueryService implements ReportRowQu
             return new ReportDrillDownResult([], null, []);
         }
 
+        $projectId = (int) $row['project_id'];
+        $this->sourceAccess->assertAccessible($context, 'schedule_task', (int) $row['task_id'], $projectId);
+        $this->sourceAccess->assertAccessible($context, 'schedule', (int) $row['schedule_id'], $projectId);
         $evidence = [[
             'row_key' => 'schedule_evidence:'.$row['row_key'],
             'schedule_id' => $row['schedule_id'],
@@ -83,6 +90,12 @@ final readonly class BaselineScheduleVarianceQueryService implements ReportRowQu
             if (!is_array($dependency) || !isset($dependency['dependency_id'])) {
                 continue;
             }
+            $this->sourceAccess->assertAccessible(
+                $context,
+                'task_dependency',
+                (int) $dependency['dependency_id'],
+                $projectId,
+            );
             $evidence[] = [
                 'row_key' => 'dependency_evidence:'.$row['row_key'].':'.$dependency['dependency_id'],
                 'dependency_id' => $dependency['dependency_id'],

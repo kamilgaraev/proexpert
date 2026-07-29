@@ -23,6 +23,7 @@ final readonly class ProjectControlSourceAssembler
             throw new InvalidArgumentException('project_control_single_project_scope_required');
         }
         $projectId = $scope->projectIds[0];
+        $this->assertStatusDateFilter($query);
         $baselines = ProjectControlBaselineVersion::query()
             ->where('organization_id', $scope->organizationId)
             ->where('project_id', $projectId)
@@ -45,7 +46,21 @@ final readonly class ProjectControlSourceAssembler
         $version = WipForecastVersion::query()
             ->where('organization_id', $scope->organizationId)
             ->where('project_id', $projectId)
-            ->whereIn('status', ['approved', 'active'])
+            ->where(function ($builder) use ($query): void {
+                $builder
+                    ->where(function ($approved) use ($query): void {
+                        $approved
+                            ->where('status', 'approved')
+                            ->whereNotNull('approved_at')
+                            ->where('approved_at', '<=', $query->asOf);
+                    })
+                    ->orWhere(function ($active) use ($query): void {
+                        $active
+                            ->where('status', 'active')
+                            ->whereNotNull('activated_at')
+                            ->where('activated_at', '<=', $query->asOf);
+                    });
+            })
             ->whereDate('as_of_date', '<=', $query->asOf->format('Y-m-d'))
             ->with(['lines' => static fn ($builder) => $builder
                 ->where('project_id', $projectId)
@@ -81,13 +96,28 @@ final readonly class ProjectControlSourceAssembler
                 throw new InvalidArgumentException('project_control_baseline_row_invalid');
             }
             $taskId = $this->positiveInt($baselineRow['task_id'] ?? null);
+            $currency = (string) ($baselineRow['currency'] ?? '');
+            if (!$this->matches($query->filters->values['project_ids'] ?? [], $projectId)
+                || !$this->matches($query->filters->values['task_ids'] ?? [], $taskId)
+                || !$this->matches($query->filters->values['wbs_ids'] ?? [], $baselineRow['wbs_code'] ?? null)
+                || !$this->matches($query->filters->values['currencies'] ?? [], $currency)
+            ) {
+                continue;
+            }
             $line = $linesByTask[$taskId] ?? null;
             if (!$line instanceof WipForecastLine) {
                 throw new InvalidArgumentException('project_control_progress_source_incomplete');
             }
-            $currency = (string) ($baselineRow['currency'] ?? '');
             if ($currency === '' || $currency !== (string) $line->currency) {
                 throw new InvalidArgumentException('project_control_currency_mismatch');
+            }
+            $dimensions = (array) $line->dimensions;
+            $contractorId = $this->nullablePositiveInt($dimensions['contractor_id'] ?? null);
+            $costCenterId = $this->nullablePositiveInt($dimensions['cost_center_id'] ?? null);
+            if (!$this->matches($query->filters->values['contractor_ids'] ?? [], $contractorId)
+                || !$this->matches($query->filters->values['cost_center_ids'] ?? [], $costCenterId)
+            ) {
+                continue;
             }
             $bacMinor = $this->moneyMinor((string) ($baselineRow['bac'] ?? ''));
             $pvMinor = $this->plannedValueMinor(
@@ -112,14 +142,13 @@ final readonly class ProjectControlSourceAssembler
                 ],
                 ...$this->sourceRefs((array) $line->source_row_refs),
             ];
-            $dimensions = (array) $line->dimensions;
             $rows[] = new ProjectControlSourceRow(
                 rowKey: implode(':', [$projectId, $taskId, $currency]),
                 projectId: $projectId,
                 taskId: $taskId,
                 wbsCode: isset($baselineRow['wbs_code']) ? (string) $baselineRow['wbs_code'] : null,
-                contractorId: $this->nullablePositiveInt($dimensions['contractor_id'] ?? null),
-                costCenterId: $this->nullablePositiveInt($dimensions['cost_center_id'] ?? null),
+                contractorId: $contractorId,
+                costCenterId: $costCenterId,
                 amounts: new ProjectControlAmounts(
                     bacMinor: $bacMinor,
                     pvMinor: $pvMinor,
@@ -132,9 +161,13 @@ final readonly class ProjectControlSourceAssembler
             );
         }
 
-        $approvedBy = $version->activated_by ?? $version->approved_by;
-        $approvedAt = $version->activated_at ?? $version->approved_at;
-        if ((int) $approvedBy < 1 || $approvedAt === null) {
+        $isActive = (string) $version->status === 'active';
+        $approvedBy = $isActive ? $version->activated_by : $version->approved_by;
+        $approvedAt = $isActive ? $version->activated_at : $version->approved_at;
+        if ((int) $approvedBy < 1
+            || $approvedAt === null
+            || $approvedAt->toDateTimeImmutable() > $query->asOf
+        ) {
             throw new InvalidArgumentException('project_control_wip_approval_identity_missing');
         }
         $sourceWatermark = (string) $version->source_snapshot_hash;
@@ -264,5 +297,31 @@ final readonly class ProjectControlSourceAssembler
         }
 
         return array_values(array_filter($refs, 'is_array'));
+    }
+
+    private function assertStatusDateFilter(ReportQuery $query): void
+    {
+        $statusDate = $query->filters->values['status_date'] ?? null;
+        if ($statusDate === null) {
+            return;
+        }
+        if (!is_string($statusDate)
+            || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $statusDate) !== 1
+            || $statusDate !== $query->asOf->format('Y-m-d')
+        ) {
+            throw new InvalidArgumentException('project_control_status_date_filter_invalid');
+        }
+    }
+
+    private function matches(mixed $filter, int|string|null $value): bool
+    {
+        if ($filter === []) {
+            return true;
+        }
+        if (!is_array($filter) || !array_is_list($filter) || $value === null) {
+            return false;
+        }
+
+        return in_array((string) $value, array_map('strval', $filter), true);
     }
 }

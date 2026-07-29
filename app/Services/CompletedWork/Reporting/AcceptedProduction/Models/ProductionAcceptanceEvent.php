@@ -18,4 +18,14 @@ final class ProductionAcceptanceEvent extends Model
         'recognized_at' => 'immutable_datetime',
         'evidence_refs' => 'array',
     ];
+
+    protected static function booted(): void
+    {
+        static::updating(static function (): never {
+            throw new \LogicException('production_acceptance_event_immutable');
+        });
+        static::deleting(static function (): never {
+            throw new \LogicException('production_acceptance_event_immutable');
+        });
+    }
 }

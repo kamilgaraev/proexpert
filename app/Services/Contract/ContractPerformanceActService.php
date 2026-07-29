@@ -265,14 +265,17 @@ class ContractPerformanceActService
                 ContractPerformanceAct::STATUS_APPROVED,
                 ContractPerformanceAct::STATUS_SIGNED,
             ], true);
-            if (($act->is_approved || in_array($act->status, [
-                ContractPerformanceAct::STATUS_APPROVED,
-                ContractPerformanceAct::STATUS_SIGNED,
-            ], true)) && isset($actDTO->completed_works)) {
+            if ($wasAccepted && $actDTO->completedWorksProvided) {
+                throw new BusinessLogicException(trans_message('act_reports.accepted_act_lines_immutable'));
+            }
+            if ($wasAccepted
+                && $actDTO->currency !== null
+                && strtoupper($actDTO->currency) !== strtoupper((string) $act->currency)
+            ) {
                 throw new BusinessLogicException(trans_message('act_reports.accepted_act_lines_immutable'));
             }
 
-            if (isset($actDTO->completed_works) && ! empty($actDTO->completed_works)) {
+            if ($actDTO->completedWorksProvided && ! empty($actDTO->completed_works)) {
                 $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
                 $act->recalculateAmount();
             } elseif ($act->completedWorks()->count() > 0) {
@@ -297,9 +300,9 @@ class ContractPerformanceActService
                     $current,
                     $wasAccepted ? 'approved' : 'pending',
                     $isAccepted ? 'approved' : 'reopened',
-                    $current->signed_at === null
-                        ? CarbonImmutable::now()
-                        : CarbonImmutable::instance($current->signed_at),
+                    $isAccepted && $current->signed_at !== null
+                        ? CarbonImmutable::instance($current->signed_at)
+                        : CarbonImmutable::now(),
                     Auth::id(),
                 );
             }
@@ -504,7 +507,9 @@ class ContractPerformanceActService
             'user_id' => request()->user()?->id,
         ], 'warning');
 
-        $result = $this->actRepository->delete($actId);
+        $result = DB::transaction(
+            fn (): bool => $this->actRepository->delete($actId),
+        );
 
         if ($result) {
             // BUSINESS: Акт успешно удален

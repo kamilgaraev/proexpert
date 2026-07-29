@@ -21,6 +21,7 @@ final class LookaheadReadinessSnapshot extends Model
         'generated_at' => 'immutable_datetime',
         'stale_at' => 'immutable_datetime',
         'watermarks' => 'array',
+        'policy_version_ids' => 'array',
         'totals' => 'array',
         'source_refs' => 'array',
         'row_schema' => 'array',

@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\HistoricalScheduleTaskStateQuery;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\LookaheadConstraintState;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\DTO\LookaheadEligibilityInput;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\LookaheadReadinessSnapshot;
@@ -17,7 +18,6 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\L
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\WorkConstraintTransitionEvent;
 use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
 use App\Models\ScheduleTask;
-use DateInterval;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -31,6 +31,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
     public function __construct(
         private LookaheadReadinessPolicyService $policies,
         private LookaheadReadinessFormula $formula,
+        private HistoricalScheduleTaskStateQuery $historicalTasks,
     ) {
     }
 
@@ -41,21 +42,44 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         ) {
             throw new InvalidArgumentException('lookahead_materialization_identity_invalid');
         }
-        $policy = $this->policies->active($scope->organizationId, $scope->projectIds, $query->asOf);
-        $horizonEnd = $query->asOf->add(new DateInterval('P'.$policy->horizonDays.'D'));
-        $tasks = ScheduleTask::query()
+        $projectIds = array_values(array_intersect(
+            $scope->projectIds,
+            $this->positiveIntegerFilter($query, 'project_ids') ?: $scope->projectIds,
+        ));
+        if ($projectIds === []) {
+            throw new InvalidArgumentException('lookahead_project_filter_empty');
+        }
+        $policySet = $this->policies->activeForProjects($scope->organizationId, $projectIds, $query->asOf);
+        $scheduleIds = \App\Models\ProjectSchedule::query()
             ->where('organization_id', $scope->organizationId)
-            ->whereHas('schedule', fn ($builder) => $builder->whereIn('project_id', $scope->projectIds))
-            ->whereIn('status', $policy->eligibleTaskStatuses)
-            ->whereBetween('planned_start_date', [
-                $query->asOf->format('Y-m-d'),
-                $horizonEnd->format('Y-m-d'),
-            ])
-            ->where('task_type', '!=', 'container')
-            ->with('schedule:id,project_id')
-            ->orderBy('id')
-            ->get();
-        $taskIds = $tasks->pluck('id')->map(static fn ($id): int => (int) $id)->all();
+            ->whereIn('project_id', $projectIds)
+            ->where('is_template', false)
+            ->pluck('id')
+            ->map('intval')
+            ->all();
+        $states = $this->historicalTasks
+            ->latestForProjects($scope->organizationId, $projectIds, $query->asOf)
+            ->whereIn('scheduleId', $scheduleIds)
+            ->values();
+        $eligibleTaskIds = ScheduleTask::withTrashed()
+            ->where('organization_id', $scope->organizationId)
+            ->where('created_at', '<=', $query->asOf)
+            ->whereIn('schedule_id', $scheduleIds)
+            ->pluck('id')
+            ->map('intval')
+            ->all();
+        $versionedTaskIds = $states
+            ->pluck('taskId')
+            ->map('intval')
+            ->all();
+        if (array_diff($eligibleTaskIds, $versionedTaskIds) !== []) {
+            throw new InvalidArgumentException('historical_schedule_task_state_incomplete');
+        }
+
+        $states = $states
+            ->filter(fn ($state): bool => $state->active && $this->matchesTaskFilters($query, $state))
+            ->values();
+        $taskIds = $states->pluck('taskId')->all();
         $events = WorkConstraintTransitionEvent::query()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('task_id', $taskIds)
@@ -81,7 +105,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             ->pluck('constraint_id')
             ->map(static fn ($id): int => (int) $id)
             ->all();
-        $uncapturedConstraintExists = WorkConstraint::query()
+        $uncapturedConstraintExists = WorkConstraint::withTrashed()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('schedule_task_id', $taskIds)
             ->where('created_at', '<=', $query->asOf)
@@ -94,9 +118,9 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             throw new InvalidArgumentException('lookahead_constraint_history_incomplete');
         }
         $inputs = [];
-        foreach ($tasks as $task) {
+        foreach ($states as $state) {
             $constraints = [];
-            foreach ($events->get((int) $task->id, []) as $event) {
+            foreach ($events->get($state->taskId, []) as $event) {
                 $linkedResource = $this->linkedResource((array) $event->evidence_refs);
                 $constraints[] = new LookaheadConstraintState(
                     constraintId: (int) $event->constraint_id,
@@ -112,17 +136,22 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     linkedResourceId: $linkedResource['id'] ?? null,
                 );
             }
+            if (!$this->matchesConstraintFilters($query, $constraints)) {
+                continue;
+            }
             $inputs[] = new LookaheadEligibilityInput(
-                taskId: (int) $task->id,
-                container: false,
-                status: $task->status instanceof \BackedEnum ? (string) $task->status->value : (string) $task->status,
-                plannedStart: new DateTimeImmutable($task->planned_start_date->format('Y-m-d')),
+                taskId: $state->taskId,
+                container: $state->taskType === 'container',
+                status: $state->status,
+                plannedStart: $state->plannedStart,
                 asOf: $query->asOf,
                 constraints: $constraints,
-                projectId: (int) $task->schedule->project_id,
-                scheduleId: (int) $task->schedule_id,
-                wbsCode: $task->wbs_code,
-                ownerId: $task->assigned_user_id === null ? null : (int) $task->assigned_user_id,
+                projectId: $state->projectId,
+                scheduleId: $state->scheduleId,
+                wbsCode: $state->wbsCode,
+                ownerId: $state->ownerId,
+                contractorId: $state->contractorId,
+                zoneId: $state->zoneId,
             );
         }
         $canonicalInputs = array_map(
@@ -150,9 +179,13 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             ],
             $inputs,
         );
+        $policyHashes = array_map(
+            static fn ($policy): string => $policy->sourceHash,
+            $policySet->all(),
+        );
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
             'inputs' => $canonicalInputs,
-            'policy_hash' => $policy->sourceHash,
+            'policy_hashes' => $policyHashes,
         ])));
         $existing = LookaheadReadinessSnapshot::query()
             ->where('organization_id', $scope->organizationId)
@@ -164,10 +197,20 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         }
 
         try {
-            return DB::transaction(function () use ($scope, $query, $policy, $inputs, $sourceHash): ReportSnapshotRef {
+            return DB::transaction(function () use (
+                $scope,
+                $query,
+                $policySet,
+                $policyHashes,
+                $inputs,
+                $sourceHash
+            ): ReportSnapshotRef {
             $snapshotId = (string) Str::ulid();
             $metrics = array_map(
-                fn (LookaheadEligibilityInput $input): array => [$input, $this->formula->evaluate($input, $policy)],
+                fn (LookaheadEligibilityInput $input): array => [
+                    $input,
+                    $this->formula->evaluate($input, $policySet->forProject((int) $input->projectId)),
+                ],
                 $inputs,
             );
             $projectionRows = [];
@@ -197,7 +240,10 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             $snapshot = LookaheadReadinessSnapshot::query()->create([
                 'id' => $snapshotId,
                 'organization_id' => $scope->organizationId,
-                'policy_version_id' => $policy->policyId ?? $policy->version,
+                'policy_version_ids' => array_map(
+                    static fn ($policy): int => $policy->policyId ?? $policy->version,
+                    $policySet->all(),
+                ),
                 'as_of' => $query->asOf,
                 'formula_version' => self::FORMULA_VERSION,
                 'definition_hash' => $query->definition->definitionHash->value,
@@ -206,7 +252,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 'generated_at' => $query->asOf,
                 'stale_at' => $query->asOf->modify('+15 minutes'),
                 'watermarks' => [
-                    'policy' => 'version_'.$policy->version,
+                    'policies' => $policyHashes,
                     'events' => 'source_'.substr($sourceHash->value, 0, 24),
                 ],
                 'totals' => $totals,
@@ -224,6 +270,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     'wbs_code' => $input->wbsCode,
                     'owner_id' => $input->ownerId,
                     'contractor_id' => $input->contractorId,
+                    'zone_id' => $input->zoneId,
                     'eligible' => $metric->eligible,
                     'ready' => $metric->ready,
                     'blocking_constraint_ids' => $metric->blockingConstraintIds,
@@ -260,6 +307,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     'wbs_code' => $input->wbsCode,
                     'owner_id' => $input->ownerId,
                     'contractor_id' => $input->contractorId,
+                    'zone_id' => $input->zoneId,
                     'severity' => $constraint?->severity,
                     'due_date' => null,
                     'eligible' => $metric->eligible,
@@ -317,6 +365,79 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         }
 
         return null;
+    }
+
+    private function matchesTaskFilters(ReportQuery $query, object $state): bool
+    {
+        $values = $query->filters->values;
+        $horizonDays = $values['horizon_days'] ?? null;
+        if ($horizonDays !== null) {
+            if (!is_numeric($horizonDays) || (int) $horizonDays < 1) {
+                throw new InvalidArgumentException('lookahead_horizon_filter_invalid');
+            }
+            $filterEnd = $query->asOf->modify('+'.(int) $horizonDays.' days');
+            if ($state->plannedStart < $query->asOf || $state->plannedStart > $filterEnd) {
+                return false;
+            }
+        }
+
+        return $this->matches($values['zone_ids'] ?? [], $state->zoneId)
+            && $this->matches($values['wbs_ids'] ?? [], $state->wbsCode)
+            && $this->matches($values['owner_ids'] ?? [], $state->ownerId)
+            && $this->matches($values['contractor_ids'] ?? [], $state->contractorId)
+            && $this->matches($values['task_statuses'] ?? [], $state->status);
+    }
+
+    private function matchesConstraintFilters(ReportQuery $query, array $constraints): bool
+    {
+        $values = $query->filters->values;
+        $types = $values['constraint_types'] ?? $values['types'] ?? [];
+        $severities = $values['severities'] ?? [];
+        $statuses = $values['statuses'] ?? [];
+        if ($types === [] && $severities === [] && $statuses === []) {
+            return true;
+        }
+
+        foreach ($constraints as $constraint) {
+            if ($this->matches($types, $constraint->type)
+                && $this->matches($severities, $constraint->severity)
+                && $this->matches($statuses, $constraint->status)
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function positiveIntegerFilter(ReportQuery $query, string $key): array
+    {
+        $values = $query->filters->values[$key] ?? [];
+        if ($values === []) {
+            return [];
+        }
+        if (!is_array($values) || !array_is_list($values)) {
+            throw new InvalidArgumentException('lookahead_filter_invalid');
+        }
+
+        $result = array_map('intval', $values);
+        if (in_array(0, $result, true)) {
+            throw new InvalidArgumentException('lookahead_filter_invalid');
+        }
+
+        return array_values(array_unique($result));
+    }
+
+    private function matches(mixed $filter, int|string|null $value): bool
+    {
+        if ($filter === []) {
+            return true;
+        }
+        if (!is_array($filter) || !array_is_list($filter) || $value === null) {
+            return false;
+        }
+
+        return in_array((string) $value, array_map('strval', $filter), true);
     }
 
     private function reference(

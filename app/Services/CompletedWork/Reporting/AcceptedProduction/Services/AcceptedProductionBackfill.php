@@ -35,9 +35,9 @@ final readonly class AcceptedProductionBackfill
             ->orderBy('id')
             ->get();
         foreach ($acts as $act) {
-            $recognizedAt = $act->signed_at ?? $act->approval_date;
+            $recognizedAt = $act->signed_at;
             if ($recognizedAt === null) {
-                throw new InvalidArgumentException('accepted_production_backfill_transition_time_missing');
+                continue;
             }
             $transition = $this->events->recordTransition(
                 $act,

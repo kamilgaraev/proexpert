@@ -21,6 +21,7 @@ final readonly class LookaheadEligibilityInput
         public ?string $wbsCode = null,
         public ?int $ownerId = null,
         public ?int $contractorId = null,
+        public ?int $zoneId = null,
     ) {
         if ($taskId < 1 || trim($status) === '' || !array_is_list($constraints)) {
             throw new InvalidArgumentException('lookahead_eligibility_input_invalid');
