@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
@@ -54,6 +55,8 @@ return new class extends Migration {
             $table->string('position_name');
             $table->foreignId('project_id')->nullable()->constrained()->nullOnDelete();
             $table->string('project_name')->nullable();
+            $table->string('employment_type', 40)->nullable();
+            $table->date('rate_as_of');
             $table->decimal('planned_fte', 18, 4);
             $table->decimal('assigned_fte', 18, 4);
             $table->decimal('vacancy_fte', 18, 4);
@@ -102,6 +105,7 @@ return new class extends Migration {
             $table->string('site_name')->nullable();
             $table->unsignedBigInteger('shift_id')->nullable();
             $table->string('shift')->nullable();
+            $table->char('close_version', 64);
             $table->string('status', 40);
             $table->decimal('eligible_hours', 18, 4);
             $table->decimal('present_hours', 18, 4);
@@ -135,10 +139,40 @@ return new class extends Migration {
                 'attendance_execution_snapshot_dimensions_idx',
             );
         });
+
+        DB::unprepared(
+            <<<'SQL'
+CREATE FUNCTION workforce_report_guard_immutable() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'immutable workforce report snapshot';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER workforce_report_snapshots_immutable
+BEFORE UPDATE OR DELETE ON workforce_report_snapshots
+FOR EACH ROW EXECUTE FUNCTION workforce_report_guard_immutable();
+
+CREATE TRIGGER workforce_capacity_snapshot_rows_immutable
+BEFORE UPDATE OR DELETE ON workforce_capacity_snapshot_rows
+FOR EACH ROW EXECUTE FUNCTION workforce_report_guard_immutable();
+
+CREATE TRIGGER attendance_execution_snapshot_rows_immutable
+BEFORE UPDATE OR DELETE ON attendance_execution_snapshot_rows
+FOR EACH ROW EXECUTE FUNCTION workforce_report_guard_immutable();
+SQL,
+        );
     }
 
     public function down(): void
     {
+        DB::unprepared(
+            <<<'SQL'
+DROP TRIGGER IF EXISTS attendance_execution_snapshot_rows_immutable ON attendance_execution_snapshot_rows;
+DROP TRIGGER IF EXISTS workforce_capacity_snapshot_rows_immutable ON workforce_capacity_snapshot_rows;
+DROP TRIGGER IF EXISTS workforce_report_snapshots_immutable ON workforce_report_snapshots;
+DROP FUNCTION IF EXISTS workforce_report_guard_immutable();
+SQL,
+        );
         Schema::dropIfExists('attendance_execution_snapshot_rows');
         Schema::dropIfExists('workforce_capacity_snapshot_rows');
         Schema::dropIfExists('workforce_report_snapshots');

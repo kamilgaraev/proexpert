@@ -58,7 +58,12 @@ return new class extends Migration {
             $table->date('work_date');
             $table->string('source_type', 80);
             $table->decimal('hours', 18, 4);
-            $table->decimal('amount', 24, 4);
+            $table->foreignId('rate_version_id')->nullable()
+                ->constrained('time_tracking_labor_rate_versions')
+                ->restrictOnDelete();
+            $table->string('rate_type', 40)->nullable();
+            $table->decimal('rate', 18, 4)->nullable();
+            $table->decimal('amount', 24, 4)->nullable();
             $table->char('currency', 3)->nullable();
             $table->jsonb('source_refs');
             $table->char('row_hash', 64);
@@ -81,7 +86,9 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
             $table->unsignedBigInteger('calculation_version_id');
-            $table->foreignId('source_issue_id')->constrained('workforce_payroll_validation_issues')->restrictOnDelete();
+            $table->foreignId('source_issue_id')->nullable()
+                ->constrained('workforce_payroll_validation_issues')
+                ->restrictOnDelete();
             $table->string('severity', 40);
             $table->string('issue_code', 120);
             $table->foreignId('employee_id')->nullable()->constrained('workforce_employees')->nullOnDelete();
@@ -102,6 +109,16 @@ return new class extends Migration {
                 'workforce_payroll_calculation_issue_severity_idx',
             );
         });
+        DB::statement(
+            "ALTER TABLE workforce_payroll_calculation_source_rows
+             ADD CONSTRAINT workforce_payroll_calculation_money_check
+             CHECK (
+                 (rate_version_id IS NULL AND rate_type IS NULL AND rate IS NULL AND amount IS NULL AND currency IS NULL)
+                 OR
+                 (rate_version_id IS NOT NULL AND rate_type = 'hourly' AND rate IS NOT NULL
+                     AND amount IS NOT NULL AND currency ~ '^[A-Z]{3}$')
+             )",
+        );
 
         Schema::create('payroll_readiness_snapshot_rows', function (Blueprint $table): void {
             $table->id();
@@ -113,14 +130,19 @@ return new class extends Migration {
             $table->date('period_end');
             $table->unsignedBigInteger('calculation_version_id');
             $table->unsignedInteger('calculation_version');
-            $table->foreignId('employee_id')->constrained('workforce_employees')->restrictOnDelete();
-            $table->string('employee_name');
+            $table->string('row_type', 32);
+            $table->foreignId('employee_id')->nullable()->constrained('workforce_employees')->restrictOnDelete();
+            $table->string('employee_name')->nullable();
             $table->foreignId('project_id')->nullable()->constrained()->nullOnDelete();
             $table->string('project_name')->nullable();
-            $table->string('source_type', 80);
-            $table->foreignId('source_row_id')->constrained('workforce_payroll_source_rows')->restrictOnDelete();
-            $table->decimal('hours', 18, 4);
-            $table->decimal('amount', 24, 4);
+            $table->string('source_type', 80)->nullable();
+            $table->foreignId('source_row_id')->nullable()
+                ->constrained('workforce_payroll_source_rows')
+                ->restrictOnDelete();
+            $table->decimal('hours', 18, 4)->nullable();
+            $table->decimal('rate', 18, 4)->nullable();
+            $table->string('rate_type', 40)->nullable();
+            $table->decimal('amount', 24, 4)->nullable();
             $table->char('currency', 3)->nullable();
             $table->unsignedBigInteger('issue_id')->nullable();
             $table->string('issue_code', 120)->nullable();
@@ -148,10 +170,101 @@ return new class extends Migration {
                 'payroll_readiness_snapshot_employee_idx',
             );
         });
+
+        DB::statement(
+            "ALTER TABLE payroll_readiness_snapshot_rows
+             ADD CONSTRAINT payroll_readiness_snapshot_row_type_check
+             CHECK (
+                 (row_type = 'source' AND employee_id IS NOT NULL AND source_type IS NOT NULL
+                     AND source_row_id IS NOT NULL AND hours IS NOT NULL)
+                 OR
+                 (row_type = 'issue' AND source_type IS NULL AND source_row_id IS NULL
+                     AND hours IS NULL AND rate IS NULL AND rate_type IS NULL
+                     AND amount IS NULL AND currency IS NULL AND issue_code IS NOT NULL
+                     AND severity IS NOT NULL)
+             )",
+        );
+        DB::unprepared(
+            <<<'SQL'
+CREATE FUNCTION workforce_payroll_guard_immutable() RETURNS trigger AS $$
+DECLARE parent_status text;
+BEGIN
+    IF TG_TABLE_NAME IN (
+        'workforce_payroll_calculation_source_rows',
+        'payroll_readiness_snapshot_rows'
+    ) THEN
+        RAISE EXCEPTION 'immutable payroll record';
+    END IF;
+
+    IF TG_TABLE_NAME = 'workforce_payroll_calculation_issues' THEN
+        SELECT status INTO parent_status
+          FROM workforce_payroll_calculation_versions
+         WHERE id = OLD.calculation_version_id
+           AND organization_id = OLD.organization_id;
+        IF parent_status IN ('validated', 'locked') THEN
+            RAISE EXCEPTION 'immutable payroll validation';
+        END IF;
+    END IF;
+
+    IF TG_TABLE_NAME = 'workforce_payroll_calculation_versions'
+       AND OLD.status = 'locked' THEN
+        RAISE EXCEPTION 'immutable locked payroll calculation';
+    END IF;
+
+    IF TG_TABLE_NAME = 'workforce_payroll_source_rows'
+       AND EXISTS (
+           SELECT 1
+             FROM workforce_payroll_periods
+            WHERE id = OLD.payroll_period_id
+              AND organization_id = OLD.organization_id
+              AND status = 'locked'
+       ) THEN
+        RAISE EXCEPTION 'immutable locked payroll source';
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER workforce_payroll_source_rows_immutable
+BEFORE UPDATE OR DELETE ON workforce_payroll_calculation_source_rows
+FOR EACH ROW EXECUTE FUNCTION workforce_payroll_guard_immutable();
+
+CREATE TRIGGER workforce_payroll_calculation_issues_immutable
+BEFORE UPDATE OR DELETE ON workforce_payroll_calculation_issues
+FOR EACH ROW EXECUTE FUNCTION workforce_payroll_guard_immutable();
+
+CREATE TRIGGER workforce_payroll_calculation_versions_immutable
+BEFORE UPDATE OR DELETE ON workforce_payroll_calculation_versions
+FOR EACH ROW EXECUTE FUNCTION workforce_payroll_guard_immutable();
+
+CREATE TRIGGER workforce_payroll_period_sources_immutable
+BEFORE UPDATE OR DELETE ON workforce_payroll_source_rows
+FOR EACH ROW EXECUTE FUNCTION workforce_payroll_guard_immutable();
+
+CREATE TRIGGER payroll_readiness_snapshot_rows_immutable
+BEFORE UPDATE OR DELETE ON payroll_readiness_snapshot_rows
+FOR EACH ROW EXECUTE FUNCTION workforce_payroll_guard_immutable();
+SQL,
+        );
     }
 
     public function down(): void
     {
+        DB::unprepared(
+            <<<'SQL'
+DROP TRIGGER IF EXISTS payroll_readiness_snapshot_rows_immutable ON payroll_readiness_snapshot_rows;
+DROP TRIGGER IF EXISTS workforce_payroll_period_sources_immutable ON workforce_payroll_source_rows;
+DROP TRIGGER IF EXISTS workforce_payroll_calculation_versions_immutable ON workforce_payroll_calculation_versions;
+DROP TRIGGER IF EXISTS workforce_payroll_calculation_issues_immutable ON workforce_payroll_calculation_issues;
+DROP TRIGGER IF EXISTS workforce_payroll_source_rows_immutable ON workforce_payroll_calculation_source_rows;
+DROP FUNCTION IF EXISTS workforce_payroll_guard_immutable();
+SQL,
+        );
         Schema::dropIfExists('payroll_readiness_snapshot_rows');
         Schema::dropIfExists('workforce_payroll_calculation_issues');
         Schema::dropIfExists('workforce_payroll_calculation_source_rows');

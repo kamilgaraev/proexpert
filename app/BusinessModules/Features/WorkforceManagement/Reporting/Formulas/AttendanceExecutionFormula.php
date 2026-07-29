@@ -21,9 +21,19 @@ final readonly class AttendanceExecutionFormula
     ): AttendanceExecutionMetrics {
         $zero = BigDecimal::zero();
         $eligible = self::nonNegative($eligibleHours);
-        $present = self::nonNegative($presentHours);
-        $absence = self::nonNegative($approvedAbsenceHours);
-        $overtime = self::nonNegative($overtimeHours);
+        $rawPresent = self::nonNegative($presentHours);
+        $present = $rawPresent->isGreaterThan($eligible) ? $eligible : $rawPresent;
+        $availableAbsence = $eligible->minus($present);
+        $rawAbsence = self::nonNegative($approvedAbsenceHours);
+        $absence = $rawAbsence->isGreaterThan($availableAbsence) ? $availableAbsence : $rawAbsence;
+        $derivedOvertime = $rawPresent->minus($eligible);
+        if ($derivedOvertime->isLessThan($zero)) {
+            $derivedOvertime = $zero;
+        }
+        $providedOvertime = self::nonNegative($overtimeHours);
+        $overtime = $providedOvertime->isGreaterThan($derivedOvertime)
+            ? $providedOvertime
+            : $derivedOvertime;
         $late = self::nonNegative($lateHours);
         $early = self::nonNegative($earlyHours);
         $covered = $present->plus($absence);

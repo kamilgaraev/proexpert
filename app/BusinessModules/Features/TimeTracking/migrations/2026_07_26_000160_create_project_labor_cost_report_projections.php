@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
@@ -73,11 +74,17 @@ return new class extends Migration {
             $table->string('employee_name');
             $table->foreignId('project_id')->constrained()->restrictOnDelete();
             $table->string('project_name');
+            $table->foreignId('contractor_id')->nullable()->constrained()->nullOnDelete();
+            $table->string('contractor_name')->nullable();
             $table->foreignId('task_id')->nullable()->constrained('schedule_tasks')->nullOnDelete();
             $table->string('task_name')->nullable();
             $table->foreignId('work_type_id')->nullable()->constrained('work_types')->nullOnDelete();
             $table->string('work_type_name')->nullable();
             $table->boolean('billable');
+            $table->foreignId('accepted_work_id')->nullable()->constrained('completed_works')->nullOnDelete();
+            $table->decimal('accepted_units', 18, 4)->nullable();
+            $table->string('accepted_unit', 40)->nullable();
+            $table->decimal('planned_hours', 18, 4)->nullable();
             $table->decimal('approved_hours', 18, 4);
             $table->decimal('billable_hours', 18, 4);
             $table->decimal('billable_percent', 18, 4);
@@ -85,7 +92,7 @@ return new class extends Migration {
             $table->decimal('rate', 18, 4)->nullable();
             $table->decimal('cost', 24, 4)->nullable();
             $table->char('currency', 3)->nullable();
-            $table->decimal('hours_variance', 18, 4);
+            $table->decimal('hours_variance', 18, 4)->nullable();
             $table->decimal('cost_per_accepted_unit', 24, 4)->nullable();
             $table->jsonb('quality_warnings')->default('[]');
             $table->jsonb('source_refs');
@@ -102,14 +109,59 @@ return new class extends Migration {
                 'project_labor_cost_snapshot_project_date_idx',
             );
             $table->index(
+                ['organization_id', 'snapshot_id', 'contractor_id', 'accepted_work_id', 'row_key'],
+                'project_labor_cost_snapshot_contractor_work_idx',
+            );
+            $table->index(
                 ['organization_id', 'snapshot_id', 'cost', 'row_key'],
                 'project_labor_cost_snapshot_cost_idx',
             );
         });
+
+        DB::unprepared(
+            <<<'SQL'
+CREATE FUNCTION time_tracking_report_guard_immutable() RETURNS trigger AS $$
+BEGIN
+    IF TG_TABLE_NAME IN (
+        'project_labor_cost_report_snapshots',
+        'project_labor_cost_snapshot_rows'
+    ) OR (TG_TABLE_NAME = 'time_tracking_labor_rate_versions' AND OLD.status = 'approved') THEN
+        RAISE EXCEPTION 'immutable time tracking report source';
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER project_labor_cost_report_snapshots_immutable
+BEFORE UPDATE OR DELETE ON project_labor_cost_report_snapshots
+FOR EACH ROW EXECUTE FUNCTION time_tracking_report_guard_immutable();
+
+CREATE TRIGGER project_labor_cost_snapshot_rows_immutable
+BEFORE UPDATE OR DELETE ON project_labor_cost_snapshot_rows
+FOR EACH ROW EXECUTE FUNCTION time_tracking_report_guard_immutable();
+
+CREATE TRIGGER time_tracking_labor_rate_versions_immutable
+BEFORE UPDATE OR DELETE ON time_tracking_labor_rate_versions
+FOR EACH ROW EXECUTE FUNCTION time_tracking_report_guard_immutable();
+SQL,
+        );
     }
 
     public function down(): void
     {
+        DB::unprepared(
+            <<<'SQL'
+DROP TRIGGER IF EXISTS time_tracking_labor_rate_versions_immutable ON time_tracking_labor_rate_versions;
+DROP TRIGGER IF EXISTS project_labor_cost_snapshot_rows_immutable ON project_labor_cost_snapshot_rows;
+DROP TRIGGER IF EXISTS project_labor_cost_report_snapshots_immutable ON project_labor_cost_report_snapshots;
+DROP FUNCTION IF EXISTS time_tracking_report_guard_immutable();
+SQL,
+        );
         Schema::dropIfExists('project_labor_cost_snapshot_rows');
         Schema::dropIfExists('project_labor_cost_report_snapshots');
         Schema::dropIfExists('time_tracking_labor_rate_versions');

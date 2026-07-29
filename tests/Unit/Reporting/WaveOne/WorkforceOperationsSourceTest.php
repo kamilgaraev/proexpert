@@ -160,6 +160,26 @@ final class WorkforceOperationsSourceTest extends TestCase
         self::assertSame('0.00', $empty->overtimeHours);
     }
 
+    #[Test]
+    public function attendance_conserves_eligible_hours_and_separates_overtime(): void
+    {
+        $metrics = (new AttendanceExecutionFormula())->calculate(
+            eligibleHours: '8.00',
+            presentHours: '10.00',
+            approvedAbsenceHours: '3.00',
+            overtimeHours: '0.00',
+            lateHours: '0.00',
+            earlyHours: '0.00',
+            corrected: false,
+        );
+
+        self::assertSame('8.00', $metrics->presentHours);
+        self::assertSame('0.00', $metrics->approvedAbsenceHours);
+        self::assertSame('0.00', $metrics->unexplainedAbsenceHours);
+        self::assertSame('2.00', $metrics->overtimeHours);
+        self::assertSame('100.00', $metrics->executionPercent);
+    }
+
     private function assignmentSource(array $assignments): EffectiveAssignmentSource
     {
         return new class($assignments) implements EffectiveAssignmentSource {

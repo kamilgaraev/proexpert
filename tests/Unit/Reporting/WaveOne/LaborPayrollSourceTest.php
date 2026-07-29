@@ -15,6 +15,7 @@ use App\BusinessModules\Features\TimeTracking\Reporting\Formulas\ProjectLaborCos
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostProvider;
 use App\BusinessModules\Features\TimeTracking\Reporting\ProjectLaborCostQueryService;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollReadinessFormula;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\PayrollSourceRateFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastructure\DatabasePayrollReadinessAdapter;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessProvider;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\PayrollReadinessQueryService;
@@ -144,7 +145,9 @@ final class LaborPayrollSourceTest extends TestCase
         self::assertNotNull($metrics);
         self::assertNull($metrics->cost);
         self::assertNull($metrics->currency);
+        self::assertNull($metrics->hoursVariance);
         self::assertContains('MISSING_RATE_CURRENCY', $metrics->qualityWarnings);
+        self::assertContains('MISSING_PLANNED_HOURS', $metrics->qualityWarnings);
     }
 
     #[Test]
@@ -186,30 +189,82 @@ final class LaborPayrollSourceTest extends TestCase
     #[Test]
     public function payroll_source_currency_changes_source_identity(): void
     {
+        $formula = new PayrollSourceRateFormula();
+        $usd = $formula->calculate(
+            hours: '8.0000',
+            rate: '225.0000',
+            rateType: 'hourly',
+            currency: 'USD',
+        );
+        $rub = $formula->calculate(
+            hours: '8.0000',
+            rate: '225.0000',
+            rateType: 'hourly',
+            currency: 'RUB',
+        );
+
+        self::assertNotSame($usd->currency, $rub->currency);
+        self::assertSame($usd->amount, $rub->amount);
+    }
+
+    #[Test]
+    public function payroll_source_hash_covers_rate_version_and_currency(): void
+    {
         $adapter = new DatabasePayrollReadinessAdapter(
             $this->createMock(ConnectionInterface::class),
             new PayrollReadinessFormula(),
+            new PayrollSourceRateFormula(),
         );
-        $hashMethod = new ReflectionMethod($adapter, 'rowHash');
-        $hashMethod->setAccessible(true);
-        $row = (object) [
-            'id' => 1,
+        $rowHash = new ReflectionMethod($adapter, 'rowHash');
+        $rowHash->setAccessible(true);
+        $row = [
+            'source_row_id' => 1,
             'employee_id' => 7,
             'project_id' => 20,
             'work_date' => '2026-07-10',
             'source_type' => 'timesheet',
-            'hours' => '8.00',
-            'amount' => '1800.00',
-            'payload' => json_encode(['currency' => 'USD'], JSON_THROW_ON_ERROR),
-            'timesheet_entry_id' => 101,
-            'work_order_id' => null,
-            'work_order_line_id' => null,
+            'hours' => '8.0000',
+            'rate_version_id' => 3,
+            'rate_type' => 'hourly',
+            'rate' => '225.0000',
+            'amount' => '1800.0000',
+            'currency' => 'USD',
+            'source_refs' => [],
         ];
-        $usdHash = $hashMethod->invoke($adapter, $row);
-        $row->payload = json_encode(['currency' => 'RUB'], JSON_THROW_ON_ERROR);
-        $rubHash = $hashMethod->invoke($adapter, $row);
+        $usdHash = $rowHash->invoke($adapter, $row);
+        $row['currency'] = 'RUB';
+        $rubHash = $rowHash->invoke($adapter, $row);
+        $row['rate_version_id'] = 4;
+        $newRateVersionHash = $rowHash->invoke($adapter, $row);
 
         self::assertNotSame($usdHash, $rubHash);
+        self::assertNotSame($rubHash, $newRateVersionHash);
+    }
+
+    #[Test]
+    public function payroll_uses_decimal_effective_hourly_rate_and_explicit_currency(): void
+    {
+        $amount = (new PayrollSourceRateFormula())->calculate(
+            hours: '7.1250',
+            rate: '123.4567',
+            rateType: 'hourly',
+            currency: 'RUB',
+        );
+
+        self::assertSame('879.6290', $amount->amount);
+        self::assertSame('123.4567', $amount->rate);
+        self::assertSame('RUB', $amount->currency);
+    }
+
+    #[Test]
+    public function management_pnl_sources_remain_compile_safe_without_budgeting_prerequisites(): void
+    {
+        self::assertFalse(class_exists(
+            'App\\BusinessModules\\Features\\TimeTracking\\Reporting\\TimeTrackingManagementPnlComponentSource',
+        ));
+        self::assertFalse(class_exists(
+            'App\\BusinessModules\\Features\\WorkforceManagement\\Reporting\\PayrollManagementPnlComponentSource',
+        ));
     }
 
     private function rateSource(array $rates): EffectiveLaborRateSource

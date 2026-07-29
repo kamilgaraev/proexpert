@@ -6,7 +6,8 @@ namespace App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastruct
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursorKeyset;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
@@ -40,6 +41,7 @@ use DateTimeImmutable;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
@@ -103,15 +105,23 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
     {
         $this->assertScope($scope, $query);
         [$monthFrom, $monthTo] = $this->monthRange($query);
-        $departmentIds = $this->ids($query, 'department_ids');
-        $positionIds = $this->ids($query, 'position_ids');
+        $departmentIds = $this->authorizedIds($scope, 'department', $this->ids($query, 'department_ids'));
+        $positionIds = $this->authorizedIds($scope, 'position', $this->ids($query, 'position_ids'));
         $projectIds = $this->projectIds($scope, $query);
         $employmentTypes = $this->strings($query, 'employment_types');
         $rateTypes = $this->strings($query, 'rate_types');
         $currencies = $this->strings($query, 'currencies');
+        $this->assertOrganizationIds('workforce_departments', $scope, $departmentIds);
+        $this->assertOrganizationIds('workforce_positions', $scope, $positionIds);
         $staffUnits = $this->connection->table('workforce_staff_units as unit')
-            ->join('workforce_departments as department', 'department.id', '=', 'unit.department_id')
-            ->join('workforce_positions as position', 'position.id', '=', 'unit.position_id')
+            ->join('workforce_departments as department', function ($join): void {
+                $join->on('department.id', '=', 'unit.department_id')
+                    ->on('department.organization_id', '=', 'unit.organization_id');
+            })
+            ->join('workforce_positions as position', function ($join): void {
+                $join->on('position.id', '=', 'unit.position_id')
+                    ->on('position.organization_id', '=', 'unit.organization_id');
+            })
             ->where('unit.organization_id', $scope->organizationId)
             ->where('unit.is_active', true)
             ->whereNull('unit.deleted_at')
@@ -145,11 +155,30 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         $assignments = $unitIds === []
             ? collect()
             : $this->connection->table('workforce_employee_assignments as assignment')
-                ->leftJoin('projects as project', 'project.id', '=', 'assignment.project_id')
+                ->join('workforce_employees as employee', function ($join): void {
+                    $join->on('employee.id', '=', 'assignment.employee_id')
+                        ->on('employee.organization_id', '=', 'assignment.organization_id');
+                })
+                ->leftJoin('projects as project', function ($join): void {
+                    $join->on('project.id', '=', 'assignment.project_id')
+                        ->on('project.organization_id', '=', 'assignment.organization_id');
+                })
                 ->where('assignment.organization_id', $scope->organizationId)
                 ->whereIn('assignment.staff_unit_id', $unitIds)
                 ->where('assignment.status', 'active')
                 ->whereNull('assignment.deleted_at')
+                ->whereNull('employee.deleted_at')
+                ->when(
+                    $projectIds !== [],
+                    static fn (Builder $builder): Builder => $builder->whereIn('assignment.project_id', $projectIds),
+                )
+                ->when(
+                    $employmentTypes !== [],
+                    static fn (Builder $builder): Builder => $builder->whereIn(
+                        'employee.employment_status',
+                        $employmentTypes,
+                    ),
+                )
                 ->whereDate('assignment.valid_from', '<=', $monthTo->modify('last day of this month')->format('Y-m-d'))
                 ->where(static function (Builder $builder) use ($monthFrom): void {
                     $builder->whereNull('assignment.valid_to')
@@ -158,9 +187,26 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                 ->select([
                     'assignment.*',
                     'project.name as project_name',
+                    'employee.employment_status',
                 ])
                 ->orderBy('assignment.id')
                 ->get();
+        $employeeIds = $assignments->pluck('employee_id')->map(static fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+        $ratesByEmployee = $employeeIds === []
+            ? collect()
+            : $this->connection->table('time_tracking_labor_rate_versions')
+                ->where('organization_id', $scope->organizationId)
+                ->whereIn('employee_id', $employeeIds)
+                ->where('status', 'approved')
+                ->whereDate('valid_from', '<=', $query->asOf->format('Y-m-d'))
+                ->orderBy('employee_id')
+                ->orderBy('valid_from')
+                ->orderBy('id')
+                ->get()
+                ->groupBy('employee_id');
         $scheduleIds = $assignments->pluck('work_schedule_id')->filter()->unique()->values()->all();
         $scheduleDays = $scheduleIds === []
             ? collect()
@@ -251,83 +297,154 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                         && ($projectId === null || !in_array($projectId, $projectIds, true))) {
                         continue;
                     }
-                    $facts = $projectAssignments->map(
-                        static fn (object $assignment): EffectiveAssignmentFact => new EffectiveAssignmentFact(
-                            assignmentId: (int) $assignment->id,
-                            organizationId: (int) $assignment->organization_id,
-                            employeeId: (int) $assignment->employee_id,
-                            staffUnitId: (int) $assignment->staff_unit_id,
-                            departmentId: (int) $assignment->department_id,
-                            positionId: (int) $assignment->position_id,
-                            projectId: $assignment->project_id === null ? null : (int) $assignment->project_id,
-                            workScheduleId: $assignment->work_schedule_id === null ? null : (int) $assignment->work_schedule_id,
-                            validFrom: new DateTimeImmutable((string) $assignment->valid_from),
-                            validToExclusive: $assignment->valid_to === null
-                                ? null
-                                : (new DateTimeImmutable((string) $assignment->valid_to))->modify('+1 day'),
-                            fte: (string) $assignment->rate,
-                            sourceVersion: (int) $assignment->id,
-                        ),
-                    )->all();
-                    $allocatedPlannedFte = BigDecimal::of(
+                    $projectPlannedFte = BigDecimal::of(
                         $plannedFteByProject[(string) $projectKey] ?? '0.00',
                     );
-                    [$plannedCapacityHours, $capacityWarnings, $capacityScheduleRefs] =
-                        $this->capacitySchedule(
-                            $projectAssignments,
-                            $scheduleDays,
-                            $month,
-                            $allocatedPlannedFte,
-                        );
-                    $metrics = $this->capacityFormula->calculate(
-                        approvedFte: (string) $allocatedPlannedFte,
-                        assignments: $facts,
-                        plannedCapacityHours: $plannedCapacityHours,
-                        rateType: 'not_available',
-                        rate: null,
-                        currency: null,
-                    );
-                    if ($employmentTypes !== []
-                        || $currencies !== []
-                        || ($rateTypes !== [] && !in_array($metrics->rateType, $rateTypes, true))) {
-                        continue;
-                    }
-                    $rowWarnings = array_values(array_unique([
-                        ...$metrics->qualityWarnings,
-                        ...$capacityWarnings,
-                    ]));
-                    $warnings = array_merge($warnings, $rowWarnings);
-                    $project = $projectAssignments->first();
-                    $rows[] = [
-                        'row_key' => hash('sha256', implode('|', [$month->format('Y-m-01'), $unit->id, $projectKey])),
-                        'month' => $month->format('Y-m-01'),
-                        'staff_unit_id' => (int) $unit->id,
-                        'department_id' => (int) $unit->department_id,
-                        'department_name' => (string) $unit->department_name,
-                        'position_id' => (int) $unit->position_id,
-                        'position_name' => (string) $unit->position_name,
-                        'project_id' => $projectId,
-                        'project_name' => $project?->project_name,
-                        'planned_fte' => $metrics->approvedFte,
-                        'assigned_fte' => $metrics->assignedFte,
-                        'vacancy_fte' => $metrics->vacancyFte,
-                        'overstaffing_fte' => $metrics->overstaffingFte,
-                        'vacancy_percent' => $metrics->vacancyPercent,
-                        'planned_capacity_hours' => $metrics->plannedCapacityHours,
-                        'capacity_hours' => $metrics->assignedCapacityHours,
-                        'rate_type' => $metrics->rateType,
-                        'rate' => $metrics->rate,
-                        'currency' => $metrics->currency,
-                        'period_cost_run_rate' => $metrics->periodCostRunRate,
-                        'quality_warnings' => $rowWarnings,
-                        'source_refs' => [
-                            ['type' => 'staff_unit', 'id' => (int) $unit->id],
-                            ...$projectAssignments->map(
-                                static fn (object $assignment): array => ['type' => 'assignment', 'id' => (int) $assignment->id],
-                            )->all(),
-                            ...$capacityScheduleRefs,
+                    $ratedAssignments = $projectAssignments->map(
+                        fn (object $assignment): array => [
+                            'assignment' => $assignment,
+                            'rate' => $this->effectiveRate(
+                                $ratesByEmployee,
+                                (int) $assignment->employee_id,
+                                $asOf,
+                            ),
                         ],
-                    ];
+                    );
+                    $rateGroups = $ratedAssignments->groupBy(
+                        static fn (array $rated): string => implode(':', [
+                            (string) $rated['assignment']->employment_status,
+                            $rated['rate'] === null ? 'unrated' : implode(':', [
+                                $rated['rate']->rate_type,
+                                $rated['rate']->currency ?? 'none',
+                                $rated['rate']->amount,
+                            ]),
+                        ]),
+                    );
+                    if ($rateGroups->isEmpty()) {
+                        $rateGroups = collect(['none' => collect()]);
+                    }
+                    $assignedFteByRate = [];
+                    foreach ($rateGroups as $rateKey => $ratedGroup) {
+                        $assignedFteByRate[(string) $rateKey] = (string) $ratedGroup->reduce(
+                            static fn (BigDecimal $sum, array $rated): BigDecimal => $sum->plus(
+                                (string) $rated['assignment']->rate,
+                            ),
+                            BigDecimal::zero(),
+                        );
+                    }
+                    $plannedFteByRate = $this->capacityFormula->allocatePlannedFte(
+                        (string) $projectPlannedFte,
+                        $assignedFteByRate,
+                    );
+                    if (array_key_exists('none', $plannedFteByRate) && !$rateGroups->has('none')) {
+                        $rateGroups->put('none', collect());
+                    }
+
+                    foreach ($rateGroups->sortKeys() as $rateKey => $ratedGroup) {
+                        $rate = $ratedGroup->first()['rate'] ?? null;
+                        $rateType = $rate === null ? 'unrated' : (string) $rate->rate_type;
+                        $currency = $rate?->currency;
+                        if (($currencies !== [] && ($currency === null || !in_array($currency, $currencies, true)))
+                            || ($rateTypes !== [] && !in_array($rateType, $rateTypes, true))) {
+                            continue;
+                        }
+                        $groupAssignments = $ratedGroup->map(
+                            static fn (array $rated): object => $rated['assignment'],
+                        );
+                        $facts = $groupAssignments->map(
+                            static fn (object $assignment): EffectiveAssignmentFact => new EffectiveAssignmentFact(
+                                assignmentId: (int) $assignment->id,
+                                organizationId: (int) $assignment->organization_id,
+                                employeeId: (int) $assignment->employee_id,
+                                staffUnitId: (int) $assignment->staff_unit_id,
+                                departmentId: (int) $assignment->department_id,
+                                positionId: (int) $assignment->position_id,
+                                projectId: $assignment->project_id === null ? null : (int) $assignment->project_id,
+                                workScheduleId: $assignment->work_schedule_id === null ? null : (int) $assignment->work_schedule_id,
+                                validFrom: new DateTimeImmutable((string) $assignment->valid_from),
+                                validToExclusive: $assignment->valid_to === null
+                                    ? null
+                                    : (new DateTimeImmutable((string) $assignment->valid_to))->modify('+1 day'),
+                                fte: (string) $assignment->rate,
+                                sourceVersion: (int) $assignment->id,
+                            ),
+                        )->all();
+                        $allocatedPlannedFte = BigDecimal::of(
+                            $plannedFteByRate[(string) $rateKey] ?? $plannedFteByRate['none'] ?? '0.00',
+                        );
+                        [$plannedCapacityHours, $capacityWarnings, $capacityScheduleRefs] =
+                            $this->capacitySchedule(
+                                $groupAssignments,
+                                $scheduleDays,
+                                $month,
+                                $allocatedPlannedFte,
+                            );
+                        $metrics = $this->capacityFormula->calculate(
+                            approvedFte: (string) $allocatedPlannedFte,
+                            assignments: $facts,
+                            plannedCapacityHours: $plannedCapacityHours,
+                            rateType: $rateType,
+                            rate: $rate === null ? null : (string) $rate->amount,
+                            currency: $currency,
+                        );
+                        $rowWarnings = array_values(array_unique([
+                            ...$metrics->qualityWarnings,
+                            ...$capacityWarnings,
+                        ]));
+                        $warnings = array_merge($warnings, $rowWarnings);
+                        $project = $groupAssignments->first() ?? $projectAssignments->first();
+                        $rateRefs = $ratedGroup->filter(
+                            static fn (array $rated): bool => $rated['rate'] !== null,
+                        )->map(
+                            static fn (array $rated): array => [
+                                'type' => 'labor_rate_version',
+                                'id' => (int) $rated['rate']->id,
+                            ],
+                        )->unique('id')->values()->all();
+                        $row = [
+                            'row_key' => hash('sha256', implode('|', [
+                                $month->format('Y-m-01'),
+                                $unit->id,
+                                $projectKey,
+                                $rateKey,
+                            ])),
+                            'month' => $month->format('Y-m-01'),
+                            'staff_unit_id' => (int) $unit->id,
+                            'department_id' => (int) $unit->department_id,
+                            'department_name' => (string) $unit->department_name,
+                            'position_id' => (int) $unit->position_id,
+                            'position_name' => (string) $unit->position_name,
+                            'project_id' => $projectId,
+                            'project_name' => $project?->project_name,
+                            'employment_type' => $project?->employment_status,
+                            'rate_as_of' => $asOf->format('Y-m-d'),
+                            'planned_fte' => $metrics->approvedFte,
+                            'assigned_fte' => $metrics->assignedFte,
+                            'vacancy_fte' => $metrics->vacancyFte,
+                            'overstaffing_fte' => $metrics->overstaffingFte,
+                            'vacancy_percent' => $metrics->vacancyPercent,
+                            'planned_capacity_hours' => $metrics->plannedCapacityHours,
+                            'capacity_hours' => $metrics->assignedCapacityHours,
+                            'rate_type' => $metrics->rateType,
+                            'rate' => $metrics->rate,
+                            'currency' => $metrics->currency,
+                            'period_cost_run_rate' => $metrics->periodCostRunRate,
+                            'quality_warnings' => $rowWarnings,
+                            'source_refs' => [
+                                ['type' => 'staff_unit', 'id' => (int) $unit->id],
+                                ...$groupAssignments->map(
+                                    static fn (object $assignment): array => [
+                                        'type' => 'assignment',
+                                        'id' => (int) $assignment->id,
+                                    ],
+                                )->all(),
+                                ...$rateRefs,
+                                ...$capacityScheduleRefs,
+                            ],
+                        ];
+                        $this->assertMaterializedRowScope($scope, $row);
+                        $rows[] = $row;
+                    }
                 }
             }
         }
@@ -349,14 +466,31 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
     {
         $this->assertScope($scope, $query);
         [$dayFrom, $dayTo] = $this->dayRange($query);
-        $employeeFilterIds = $this->ids($query, 'employee_ids');
+        $employeeFilterIds = $this->authorizedIds($scope, 'employee', $this->ids($query, 'employee_ids'));
         $projectFilterIds = $this->projectIds($scope, $query);
-        $absenceTypeIds = $this->ids($query, 'absence_type_ids');
+        $absenceTypeIds = $this->authorizedIds(
+            $scope,
+            'absence_type',
+            $this->ids($query, 'absence_type_ids'),
+        );
+        $siteIds = $this->authorizedIds($scope, 'site', $this->ids($query, 'site_ids'));
+        $shiftIds = $this->authorizedIds($scope, 'shift', $this->ids($query, 'shift_ids'));
         $statuses = $this->strings($query, 'statuses');
+        $this->assertOrganizationIds('workforce_employees', $scope, $employeeFilterIds);
+        $this->assertOrganizationIds('workforce_absence_types', $scope, $absenceTypeIds);
         $assignments = $this->connection->table('workforce_employee_assignments as assignment')
-            ->join('workforce_employees as employee', 'employee.id', '=', 'assignment.employee_id')
-            ->leftJoin('projects as project', 'project.id', '=', 'assignment.project_id')
-            ->leftJoin('workforce_work_schedules as schedule', 'schedule.id', '=', 'assignment.work_schedule_id')
+            ->join('workforce_employees as employee', function ($join): void {
+                $join->on('employee.id', '=', 'assignment.employee_id')
+                    ->on('employee.organization_id', '=', 'assignment.organization_id');
+            })
+            ->leftJoin('projects as project', function ($join): void {
+                $join->on('project.id', '=', 'assignment.project_id')
+                    ->on('project.organization_id', '=', 'assignment.organization_id');
+            })
+            ->leftJoin('workforce_work_schedules as schedule', function ($join): void {
+                $join->on('schedule.id', '=', 'assignment.work_schedule_id')
+                    ->on('schedule.organization_id', '=', 'assignment.organization_id');
+            })
             ->where('assignment.organization_id', $scope->organizationId)
             ->where('assignment.status', 'active')
             ->whereNull('assignment.deleted_at')
@@ -402,6 +536,10 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             ->table('workforce_attendance_corrections')
             ->where('organization_id', $scope->organizationId)
             ->whereIn('employee_id', $employeeIds)
+            ->when(
+                $projectFilterIds !== [],
+                static fn (Builder $builder): Builder => $builder->whereIn('project_id', $projectFilterIds),
+            )
             ->whereBetween('work_date', [$dayFrom->format('Y-m-d'), $dayTo->format('Y-m-d')])
             ->orderBy('created_at')
             ->orderBy('id')
@@ -426,10 +564,30 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             ->where('organization_id', $scope->organizationId)
             ->whereIn('employee_id', $employeeIds)
             ->where('result', 'confirmed')
+            ->when(
+                $projectFilterIds !== [],
+                static fn (Builder $builder): Builder => $builder->whereIn('project_id', $projectFilterIds),
+            )
             ->whereBetween('work_date', [$dayFrom->format('Y-m-d'), $dayTo->format('Y-m-d')])
             ->orderBy('scanned_at')
+            ->orderBy('id')
             ->get()
-            ->keyBy(static fn (object $row): string => $row->employee_id.':'.($row->project_id ?? 'none').':'.$row->work_date);
+            ->groupBy(static fn (object $row): string => $row->employee_id.':'.($row->project_id ?? 'none').':'.$row->work_date);
+        $availableSiteIds = [];
+        $availableShiftIds = [];
+        foreach ($scans->flatten(1) as $scan) {
+            $metadata = $scan->metadata === null ? [] : $this->json($scan->metadata);
+            if (isset($metadata['site_id']) && is_int($metadata['site_id']) && $metadata['site_id'] > 0) {
+                $availableSiteIds[$metadata['site_id']] = true;
+            }
+            if (isset($metadata['shift_id']) && is_int($metadata['shift_id']) && $metadata['shift_id'] > 0) {
+                $availableShiftIds[$metadata['shift_id']] = true;
+            }
+        }
+        if (array_diff($siteIds, array_keys($availableSiteIds)) !== []
+            || array_diff($shiftIds, array_keys($availableShiftIds)) !== []) {
+            throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
+        }
         $rows = [];
 
         foreach ($this->effectiveAttendanceAssignments($assignments, $dayFrom, $dayTo) as $assignment) {
@@ -447,74 +605,128 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                     : ($assignment->work_schedule_id === null ? '0' : (string) ($assignment->hours_per_day ?? 0));
                 $key = $assignment->employee_id.':'.($assignment->project_id ?? 'none').':'.$date;
                 $correction = $corrections->get($key);
-                $scan = $scans->get($key);
-                $present = $correction !== null && (string) $correction->status === 'at_work'
-                    ? (string) ($correction->hours ?? $eligible)
-                    : ($scan === null ? '0' : $eligible);
+                $dayScans = $scans->get($key, collect());
                 $absence = $absences->get($assignment->employee_id, collect())->first(
                     static fn (object $row): bool => (string) $row->start_date <= $date && (string) $row->end_date >= $date,
                 );
-                $absenceHours = $absence === null ? '0' : $eligible;
-                $overtime = BigDecimal::of($present)->minus($eligible);
-                if ($overtime->isLessThan(BigDecimal::zero())) {
-                    $overtime = BigDecimal::zero();
-                }
-                $metrics = $this->attendanceFormula->calculate(
-                    eligibleHours: $eligible,
-                    presentHours: $present,
-                    approvedAbsenceHours: $absenceHours,
-                    overtimeHours: (string) $overtime,
-                    lateHours: '0',
-                    earlyHours: '0',
-                    corrected: $correction !== null,
-                );
-                $sourceRefs = [
-                    ['type' => 'assignment', 'id' => (int) $assignment->id],
-                ];
-                if ($scheduleDay !== null) {
-                    $sourceRefs[] = ['type' => 'schedule_day', 'id' => (int) $scheduleDay->id];
-                }
-                if ($absence !== null) {
-                    $sourceRefs[] = ['type' => 'approved_absence', 'id' => (int) $absence->id];
-                }
-                if ($scan !== null) {
-                    $sourceRefs[] = ['type' => 'attendance_scan', 'id' => (int) $scan->id];
-                }
-                $auditRefs = $correction === null ? [] : [
-                    ['type' => 'attendance_correction', 'id' => (int) $correction->id],
-                ];
-                $row = [
-                    'row_key' => hash('sha256', implode('|', [$date, $assignment->employee_id, $assignment->project_id ?? 'none', $assignment->id])),
-                    'work_date' => $date,
-                    'employee_id' => (int) $assignment->employee_id,
-                    'employee_name' => trim(implode(' ', array_filter([
-                        $assignment->last_name,
-                        $assignment->first_name,
-                        $assignment->middle_name,
-                    ]))),
-                    'project_id' => $assignment->project_id === null ? null : (int) $assignment->project_id,
-                    'project_name' => $assignment->project_name,
-                    'site_id' => null,
-                    'site_name' => null,
-                    'shift_id' => null,
-                    'shift' => null,
-                    'status' => $metrics->violation ? 'unexplained_absence' : 'covered',
-                    'eligible_hours' => $metrics->eligibleHours,
-                    'present_hours' => $metrics->presentHours,
-                    'approved_absence_hours' => $metrics->approvedAbsenceHours,
-                    'unexplained_absence_hours' => $metrics->unexplainedAbsenceHours,
-                    'absence_hours' => $metrics->unexplainedAbsenceHours,
-                    'overtime_hours' => $metrics->overtimeHours,
-                    'late_hours' => $metrics->lateHours,
-                    'early_hours' => $metrics->earlyHours,
-                    'execution_percent' => $metrics->executionPercent,
-                    'correction_rate' => $metrics->correctionRate,
-                    'violation' => $metrics->violation,
-                    'source_refs' => $sourceRefs,
-                    'audit_refs' => $auditRefs,
-                ];
-                if ($statuses === [] || in_array($row['status'], $statuses, true)) {
-                    $rows[] = $row;
+                $grains = $correction !== null || $dayScans->isEmpty()
+                    ? collect([['scan' => null, 'metadata' => []]])
+                    : $dayScans->map(fn (object $scan): array => [
+                        'scan' => $scan,
+                        'metadata' => $scan->metadata === null ? [] : $this->json($scan->metadata),
+                    ])->values();
+                $eligiblePerGrain = $grains->count() === 1
+                    ? BigDecimal::of($eligible)
+                    : BigDecimal::of($eligible)->dividedBy($grains->count(), 8, RoundingMode::HalfUp);
+                $remainingEligible = BigDecimal::of($eligible);
+
+                foreach ($grains as $grainIndex => $grain) {
+                    $scan = $grain['scan'];
+                    $metadata = $grain['metadata'];
+                    $grainEligible = $grainIndex === $grains->count() - 1
+                        ? $remainingEligible
+                        : $eligiblePerGrain;
+                    $remainingEligible = $remainingEligible->minus($grainEligible);
+                    $siteId = $this->positiveMetadataId($metadata, 'site_id');
+                    $shiftId = $this->positiveMetadataId($metadata, 'shift_id');
+                    if (($siteIds !== [] && ($siteId === null || !in_array($siteId, $siteIds, true)))
+                        || ($shiftIds !== [] && ($shiftId === null || !in_array($shiftId, $shiftIds, true)))) {
+                        continue;
+                    }
+                    $present = $correction !== null && (string) $correction->status === 'at_work'
+                        ? (string) ($correction->hours ?? $grainEligible)
+                        : ($scan === null
+                            ? '0'
+                            : $this->decimalMetadata($metadata, 'present_hours', (string) $grainEligible));
+                    $absenceHours = $absence === null ? '0' : (string) $grainEligible;
+                    $overtime = BigDecimal::of($present)->minus($grainEligible);
+                    if ($overtime->isLessThan(BigDecimal::zero())) {
+                        $overtime = BigDecimal::zero();
+                    }
+                    $metrics = $this->attendanceFormula->calculate(
+                        eligibleHours: (string) $grainEligible,
+                        presentHours: $present,
+                        approvedAbsenceHours: $absenceHours,
+                        overtimeHours: (string) $overtime,
+                        lateHours: $this->decimalMetadata($metadata, 'late_hours', '0'),
+                        earlyHours: $this->decimalMetadata($metadata, 'early_hours', '0'),
+                        corrected: $correction !== null,
+                    );
+                    $sourceRefs = [
+                        ['type' => 'assignment', 'id' => (int) $assignment->id],
+                    ];
+                    if ($scheduleDay !== null) {
+                        $sourceRefs[] = ['type' => 'schedule_day', 'id' => (int) $scheduleDay->id];
+                    }
+                    if ($absence !== null) {
+                        $sourceRefs[] = ['type' => 'approved_absence', 'id' => (int) $absence->id];
+                        $sourceRefs[] = ['type' => 'absence_type', 'id' => (int) $absence->absence_type_id];
+                    }
+                    if ($scan !== null) {
+                        $sourceRefs[] = ['type' => 'attendance_scan', 'id' => (int) $scan->id];
+                    }
+                    $auditRefs = $correction === null ? [] : [
+                        ['type' => 'attendance_correction', 'id' => (int) $correction->id],
+                    ];
+                    $row = [
+                        'row_key' => hash('sha256', implode('|', [
+                            $date,
+                            $assignment->employee_id,
+                            $assignment->project_id ?? 'none',
+                            $siteId ?? 'none',
+                            $shiftId ?? 'none',
+                            $scan?->id ?? $assignment->id,
+                        ])),
+                        'work_date' => $date,
+                        'employee_id' => (int) $assignment->employee_id,
+                        'employee_name' => trim(implode(' ', array_filter([
+                            $assignment->last_name,
+                            $assignment->first_name,
+                            $assignment->middle_name,
+                        ]))),
+                        'project_id' => $assignment->project_id === null ? null : (int) $assignment->project_id,
+                        'project_name' => $assignment->project_name,
+                        'site_id' => $siteId,
+                        'site_name' => $this->metadataLabel($metadata, 'site_name'),
+                        'shift_id' => $shiftId,
+                        'shift' => $this->metadataLabel($metadata, 'shift'),
+                        'close_version' => hash('sha256', CanonicalJson::encode([
+                            'date' => $date,
+                            'employee_id' => (int) $assignment->employee_id,
+                            'project_id' => $assignment->project_id === null
+                                ? null
+                                : (int) $assignment->project_id,
+                            'site_id' => $siteId,
+                            'shift_id' => $shiftId,
+                            'eligible_hours' => $metrics->eligibleHours,
+                            'present_hours' => $metrics->presentHours,
+                            'approved_absence_hours' => $metrics->approvedAbsenceHours,
+                            'unexplained_absence_hours' => $metrics->unexplainedAbsenceHours,
+                            'overtime_hours' => $metrics->overtimeHours,
+                            'late_hours' => $metrics->lateHours,
+                            'early_hours' => $metrics->earlyHours,
+                            'source_refs' => $sourceRefs,
+                            'audit_refs' => $auditRefs,
+                        ])),
+                        'status' => $metrics->violation ? 'unexplained_absence' : 'covered',
+                        'eligible_hours' => $metrics->eligibleHours,
+                        'present_hours' => $metrics->presentHours,
+                        'approved_absence_hours' => $metrics->approvedAbsenceHours,
+                        'unexplained_absence_hours' => $metrics->unexplainedAbsenceHours,
+                        'absence_hours' => $metrics->unexplainedAbsenceHours,
+                        'overtime_hours' => $metrics->overtimeHours,
+                        'late_hours' => $metrics->lateHours,
+                        'early_hours' => $metrics->earlyHours,
+                        'execution_percent' => $metrics->executionPercent,
+                        'correction_rate' => $metrics->correctionRate,
+                        'violation' => $metrics->violation,
+                        'source_refs' => $sourceRefs,
+                        'audit_refs' => $auditRefs,
+                    ];
+                    if ($statuses === [] || in_array($row['status'], $statuses, true)) {
+                        $this->assertMaterializedRowScope($scope, $row);
+                        $rows[] = $row;
+                    }
                 }
             }
         }
@@ -541,6 +753,16 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             $rowSchema = array_values(array_filter(
                 $rowSchema,
                 static fn (array $column): bool => ($column['id'] ?? null) !== 'audit_refs',
+            ));
+        }
+        if ($record->report_code === 'workforce_capacity' && !$context->visibility->canViewSensitive) {
+            $rowSchema = array_values(array_filter(
+                $rowSchema,
+                static fn (array $column): bool => !in_array(
+                    $column['id'] ?? null,
+                    ['rate', 'currency', 'period_cost_run_rate'],
+                    true,
+                ),
             ));
         }
 
@@ -584,7 +806,9 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         $builder = $this->connection->table($table)
             ->where('organization_id', $context->scope->organizationId)
             ->where('snapshot_id', $snapshot->id);
-        $position = $cursor === null ? null : $this->decodeCursor($cursor, $snapshot, $sort);
+        $position = $cursor === null
+            ? null
+            : $this->cursorKeyset($cursor, $snapshot, $sort, (string) $record->query_hash);
         if ($position !== null) {
             $this->applyCursor($builder, $field, $sort, $position);
         }
@@ -599,16 +823,12 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         $rows = $records->map(
             fn (object $row): array => $this->visibleRow($this->json($row->row_payload), $code, $context),
         )->all();
-        $last = $records->last();
-
         return new ReportPage(
             rows: $rows,
             totals: $this->json($record->totals),
             freshness: ReportFreshnessStatus::from((string) $record->freshness_status),
             quality: $this->quality($record, $this->json($record->warnings)),
-            nextCursor: $hasMore && $last !== null
-                ? $this->encodeCursor($last->{$field}, (string) $last->row_key)
-                : null,
+            nextCursor: null,
             limit: $limit,
             hasMore: $hasMore,
             sort: $sort,
@@ -621,32 +841,50 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         ReportWindowSort $sort,
         int $chunkSize,
     ): iterable {
-        if ($chunkSize < 1 || $chunkSize > 100) {
+        if ($chunkSize < 1 || $chunkSize > 5000) {
             throw new InvalidArgumentException('workforce_report_chunk_size_invalid');
         }
-        $cursor = null;
+        $record = $this->snapshot($context, $snapshot);
+        $code = (string) $record->report_code;
+        $this->assertSort($code, $sort);
+        $table = $code === 'workforce_capacity'
+            ? 'workforce_capacity_snapshot_rows'
+            : 'attendance_execution_snapshot_rows';
+        $field = $sort->field === 'absence_hours' ? 'unexplained_absence_hours' : $sort->field;
+        $direction = $sort->direction === ReportSortDirection::ASC ? 'asc' : 'desc';
+        $position = null;
         do {
-            $page = $this->page($context, $snapshot, $sort, $cursor, $chunkSize);
-            foreach ($page->rows as $row) {
-                yield $row;
+            $builder = $this->connection->table($table)
+                ->where('organization_id', $context->scope->organizationId)
+                ->where('snapshot_id', $snapshot->id);
+            if ($position !== null) {
+                $this->applyCursor($builder, $field, $sort, $position);
             }
-            $cursor = $page->nextCursor === null
+            $records = $builder->orderByRaw("CASE WHEN {$field} IS NULL THEN 1 ELSE 0 END ASC")
+                ->orderBy($field, $direction)
+                ->orderBy('row_key', $direction)
+                ->limit($chunkSize)
+                ->get();
+            foreach ($records as $row) {
+                yield [
+                    'query_hash' => (string) $record->query_hash,
+                    'row_key' => (string) $row->row_key,
+                    'snapshot_id' => $snapshot->id,
+                    'source_hash' => $snapshot->sourceHash->value,
+                    'values' => $this->visibleRow($this->json($row->row_payload), $code, $context),
+                ];
+            }
+            $last = $records->last();
+            $position = $last === null
                 ? null
-                : new ReportCursor(
-                    token: $page->nextCursor,
-                    runId: '01J00000000000000000000000',
-                    queryHash: new Sha256Hash($this->snapshot($context, $snapshot)->query_hash),
-                    sourceHash: $snapshot->sourceHash,
-                    sort: $sort,
-                    expiresAt: new DateTimeImmutable('+1 hour'),
-                );
-        } while ($page->hasMore);
+                : new ReportCursorKeyset($last->{$field}, (string) $last->row_key);
+        } while ($records->count() === $chunkSize);
     }
 
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         $record = $this->snapshot($context, $snapshot);
         $code = (string) $record->report_code;
@@ -656,7 +894,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         $row = $this->connection->table($table)
             ->where('organization_id', $context->scope->organizationId)
             ->where('snapshot_id', $snapshot->id)
-            ->where('row_key', $request->token)
+            ->where('row_key', $input->cell->rowKey)
             ->first();
         if ($row === null) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
@@ -669,15 +907,23 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         }
         $rows = array_map(
             static fn (array $ref, int $index): array => [
-                'row_key' => hash('sha256', $request->token.'|'.$index),
+                'row_key' => hash('sha256', $input->cell->rowKey.'|'.$index),
                 'source_type' => $ref['type'],
                 'source_id' => $ref['id'],
             ],
             $sourceRefs,
             array_keys($sourceRefs),
         );
+        $offset = $this->drillDownOffset($input->cursor, $input->cell->rowKey);
+        $nextOffset = $offset + $input->limit;
 
-        return new ReportDrillDownResult($rows, null, []);
+        return new ReportDrillDownResult(
+            array_slice($rows, $offset, $input->limit),
+            $nextOffset < count($rows)
+                ? $this->drillDownCursor($input->cell->rowKey, $nextOffset)
+                : null,
+            [],
+        );
     }
 
     private function persist(
@@ -694,6 +940,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         $id = (string) Str::ulid();
         $generatedAt = new DateTimeImmutable();
         $staleAt = $generatedAt->add(new DateInterval($code === 'attendance_execution' ? 'PT15M' : 'P1D'));
+        $sourceManifest = $this->sourceManifest($code, $rows);
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
             'code' => $code,
             'organization_id' => $scope->organizationId,
@@ -717,6 +964,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             $generatedAt,
             $staleAt,
             $quality,
+            $sourceManifest,
         ): void {
             $timestamp = $generatedAt->format('Y-m-d H:i:sP');
             $this->connection->table('workforce_report_snapshots')->insert([
@@ -734,9 +982,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
                 'totals' => CanonicalJson::encode($totals),
                 'row_schema' => CanonicalJson::encode($rowSchema),
                 'warnings' => CanonicalJson::encode($warnings),
-                'source_refs' => CanonicalJson::encode([
-                    ['source' => $code.'_owner', 'row_count' => count($rows)],
-                ]),
+                'source_refs' => CanonicalJson::encode($sourceManifest),
                 'row_count' => count($rows),
                 'generated_at' => $timestamp,
                 'stale_at' => $staleAt->format('Y-m-d H:i:sP'),
@@ -773,7 +1019,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             sourceHash: $sourceHash,
             generatedAt: $generatedAt,
             staleAt: $staleAt,
-            watermarks: ['source_schema_version' => self::SCHEMA_VERSION],
+            watermarks: array_column($sourceManifest, 'watermark', 'snapshot_id'),
             classification: ReportSnapshotClassification::OPERATIONAL,
             seal: null,
         );
@@ -831,20 +1077,76 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
     {
         return new ReportProvenance(
             sourceOfTruth: 'workforce_owner_snapshot',
-            sourceRefs: [
-                new ReportSourceRef(
-                    source: (string) $record->report_code,
-                    snapshotKind: 'workforce_snapshot',
-                    snapshotId: 'workforce_snapshot_v1',
-                    schemaVersion: 'v1',
-                    watermark: 'materialized',
-                    rowCount: (int) $record->row_count,
-                    hash: $snapshot->sourceHash,
+            sourceRefs: array_map(
+                static fn (array $ref): ReportSourceRef => new ReportSourceRef(
+                    source: (string) $ref['source'],
+                    snapshotKind: (string) $ref['snapshot_kind'],
+                    snapshotId: (string) $ref['snapshot_id'],
+                    schemaVersion: (string) $ref['schema_version'],
+                    watermark: (string) $ref['watermark'],
+                    rowCount: (int) $ref['row_count'],
+                    hash: new Sha256Hash((string) $ref['hash']),
                 ),
-            ],
+                $this->json($record->source_refs),
+            ),
             sourceHash: $snapshot->sourceHash,
             externalConfirmationRole: null,
         );
+    }
+
+    private function sourceManifest(string $code, array $rows): array
+    {
+        $byType = [];
+        foreach ($rows as $row) {
+            $rowHash = hash('sha256', CanonicalJson::encode($row));
+            foreach ($row['source_refs'] as $ref) {
+                $type = (string) $ref['type'];
+                $byType[$type][(int) $ref['id']][$rowHash] = $rowHash;
+            }
+        }
+        if ($byType === []) {
+            $byType[$code.'_source'] = [];
+        }
+        ksort($byType, SORT_STRING);
+
+        return array_map(static function (string $type, array $sources): array {
+            $ids = array_keys($sources);
+            sort($ids, SORT_NUMERIC);
+            $identities = array_map(static function (int $id) use ($sources): array {
+                $rowHashes = array_values($sources[$id]);
+                sort($rowHashes, SORT_STRING);
+
+                return ['id' => $id, 'row_hashes' => $rowHashes];
+            }, $ids);
+
+            return [
+                'source' => $type,
+                'snapshot_kind' => 'owner_rows',
+                'snapshot_id' => 'rows_'.$type,
+                'schema_version' => 'v1',
+                'watermark' => 'max_id_'.($ids === [] ? 0 : max($ids)),
+                'row_count' => count($ids),
+                'hash' => hash('sha256', CanonicalJson::encode($identities)),
+            ];
+        }, array_keys($byType), array_values($byType));
+    }
+
+    private function drillDownOffset(?string $cursor, string $rowKey): int
+    {
+        if ($cursor === null) {
+            return 0;
+        }
+        if (preg_match('/^(0|[1-9][0-9]*)\.([a-f0-9]{64})$/D', $cursor, $matches) !== 1
+            || !hash_equals(hash('sha256', $rowKey.'|'.$matches[1]), $matches[2])) {
+            throw new InvalidArgumentException('workforce_report_drill_down_cursor_invalid');
+        }
+
+        return (int) $matches[1];
+    }
+
+    private function drillDownCursor(string $rowKey, int $offset): string
+    {
+        return $offset.'.'.hash('sha256', $rowKey.'|'.$offset);
     }
 
     private function visibleRow(array $row, string $code, ReportExecutionContext $context): array
@@ -853,13 +1155,54 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             unset($row['audit_refs']);
         }
         $this->assertProjectAccess($context->scope, $row['project_id'] ?? null);
+        foreach ($row['source_refs'] ?? [] as $ref) {
+            if (is_array($ref) && isset($ref['type'], $ref['id'])) {
+                $this->assertScopedResource(
+                    $context->scope,
+                    (string) $ref['type'],
+                    (int) $ref['id'],
+                    isset($row['project_id']) ? (int) $row['project_id'] : null,
+                );
+            }
+        }
+        if ($code === 'attendance_execution' && $context->visibility->canViewAudit) {
+            foreach ($row['audit_refs'] ?? [] as $ref) {
+                if (is_array($ref) && isset($ref['type'], $ref['id'])) {
+                    $this->assertScopedResource(
+                        $context->scope,
+                        (string) $ref['type'],
+                        (int) $ref['id'],
+                        isset($row['project_id']) ? (int) $row['project_id'] : null,
+                    );
+                }
+            }
+        }
+        if ($code === 'workforce_capacity' && !$context->visibility->canViewSensitive) {
+            unset($row['rate'], $row['currency'], $row['period_cost_run_rate']);
+            $row['source_refs'] = array_values(array_filter(
+                $row['source_refs'],
+                static fn (array $ref): bool => ($ref['type'] ?? null) !== 'labor_rate_version',
+            ));
+        }
 
         return $row;
     }
 
     private function assertProjectAccess(ReportScope $scope, mixed $projectId): void
     {
-        if ($projectId !== null && $scope->projectIds !== [] && !in_array((int) $projectId, $scope->projectIds, true)) {
+        $resourceProjectIds = array_map(
+            static fn (object $resource): int => $resource->id,
+            array_values(array_filter(
+                $scope->resources,
+                static fn (object $resource): bool => $resource->kind === 'project',
+            )),
+        );
+        if ($projectId === null && ($scope->projectIds !== [] || $resourceProjectIds !== [])) {
+            throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
+        }
+        if ($projectId !== null
+            && ($scope->projectIds !== [] && !in_array((int) $projectId, $scope->projectIds, true)
+                || $resourceProjectIds !== [] && !in_array((int) $projectId, $resourceProjectIds, true))) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
     }
@@ -878,54 +1221,38 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         }
     }
 
-    private function decodeCursor(
+    private function cursorKeyset(
         ReportCursor $cursor,
         ReportSnapshotRef $snapshot,
         ReportWindowSort $sort,
-    ): array {
+        string $queryHash,
+    ): ReportCursorKeyset {
         if ($cursor->sourceHash->value !== $snapshot->sourceHash->value
+            || $cursor->queryHash->value !== $queryHash
             || $cursor->sort->field !== $sort->field
             || $cursor->sort->direction !== $sort->direction) {
             throw new InvalidArgumentException('workforce_report_cursor_invalid');
         }
-        $decoded = base64_decode(strtr($cursor->token, '-_', '+/'), true);
-        $payload = $decoded === false ? null : json_decode($decoded, true);
-        if (!is_array($payload)
-            || !is_bool($payload['is_null'] ?? null)
-            || (!($payload['is_null'] ?? true) && !is_string($payload['value'] ?? null))
-            || !is_string($payload['row_key'] ?? null)) {
-            throw new InvalidArgumentException('workforce_report_cursor_invalid');
-        }
-
-        return $payload;
-    }
-
-    private function encodeCursor(mixed $value, string $rowKey): string
-    {
-        return rtrim(strtr(base64_encode(CanonicalJson::encode([
-            'is_null' => $value === null,
-            'row_key' => $rowKey,
-            'value' => $value === null ? null : (string) $value,
-        ])), '+/', '-_'), '=');
+        return $cursor->keyset;
     }
 
     private function applyCursor(
         Builder $builder,
         string $field,
         ReportWindowSort $sort,
-        array $position,
+        ReportCursorKeyset $position,
     ): void {
         $operator = $sort->direction === ReportSortDirection::ASC ? '>' : '<';
-        if ($position['is_null']) {
-            $builder->whereNull($field)->where('row_key', $operator, $position['row_key']);
+        if ($position->lastSortValue === null) {
+            $builder->whereNull($field)->where('row_key', $operator, $position->lastStableRowKey);
 
             return;
         }
         $builder->where(static function (Builder $nested) use ($field, $operator, $position): void {
-            $nested->where($field, $operator, $position['value'])
+            $nested->where($field, $operator, $position->lastSortValue)
                 ->orWhere(static function (Builder $same) use ($field, $operator, $position): void {
-                    $same->where($field, $position['value'])
-                        ->where('row_key', $operator, $position['row_key']);
+                    $same->where($field, $position->lastSortValue)
+                        ->where('row_key', $operator, $position->lastStableRowKey);
                 })
                 ->orWhereNull($field);
         });
@@ -1006,6 +1333,186 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         ];
     }
 
+    private function effectiveRate(
+        Collection $ratesByEmployee,
+        int $employeeId,
+        DateTimeImmutable $asOf,
+    ): ?object {
+        $date = $asOf->format('Y-m-d');
+        $rates = $ratesByEmployee->get($employeeId, collect())->filter(
+            static fn (object $rate): bool => (string) $rate->valid_from <= $date
+                && ($rate->valid_to_exclusive === null || $date < (string) $rate->valid_to_exclusive),
+        )->unique(
+            static fn (object $rate): string => implode(':', [
+                $rate->amount,
+                $rate->currency ?? 'none',
+                $rate->rate_type,
+                $rate->valid_from,
+                $rate->valid_to_exclusive ?? 'open',
+                $rate->version,
+            ]),
+        )->values();
+        if ($rates->count() > 1) {
+            throw new DomainException('LABOR_RATE_OVERLAP');
+        }
+        $rate = $rates->first();
+        if ($rate === null) {
+            return null;
+        }
+        if (BigDecimal::of((string) $rate->amount)->isLessThan(BigDecimal::zero())
+            || !is_string($rate->rate_type)
+            || trim($rate->rate_type) === ''
+            || ($rate->currency !== null
+                && (!is_string($rate->currency) || preg_match('/^[A-Z]{3}$/D', $rate->currency) !== 1))) {
+            throw new DomainException('LABOR_RATE_INVALID');
+        }
+
+        return $rate;
+    }
+
+    private function positiveMetadataId(array $metadata, string $field): ?int
+    {
+        $value = $metadata[$field] ?? null;
+        if ($value === null) {
+            return null;
+        }
+        if (!is_int($value) || $value < 1) {
+            throw new DomainException('ATTENDANCE_SOURCE_METADATA_INVALID');
+        }
+
+        return $value;
+    }
+
+    private function decimalMetadata(array $metadata, string $field, string $default): string
+    {
+        $value = $metadata[$field] ?? $default;
+        if (!is_string($value) && !is_int($value) && !is_float($value)) {
+            throw new DomainException('ATTENDANCE_SOURCE_METADATA_INVALID');
+        }
+        $decimal = BigDecimal::of((string) $value);
+        if ($decimal->isLessThan(BigDecimal::zero())) {
+            throw new DomainException('ATTENDANCE_SOURCE_METADATA_INVALID');
+        }
+
+        return (string) $decimal;
+    }
+
+    private function metadataLabel(array $metadata, string $field): ?string
+    {
+        $value = $metadata[$field] ?? null;
+        if ($value === null) {
+            return null;
+        }
+        if (!is_string($value) || trim($value) === '') {
+            throw new DomainException('ATTENDANCE_SOURCE_METADATA_INVALID');
+        }
+
+        return trim($value);
+    }
+
+    private function assertOrganizationIds(
+        string $table,
+        ReportScope $scope,
+        array $ids,
+    ): void {
+        if ($ids === []) {
+            return;
+        }
+        $found = $this->connection->table($table)
+            ->where('organization_id', $scope->organizationId)
+            ->whereIn('id', $ids)
+            ->pluck('id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+        sort($found, SORT_NUMERIC);
+        $expected = $ids;
+        sort($expected, SORT_NUMERIC);
+        if ($found !== $expected) {
+            throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
+        }
+    }
+
+    private function assertMaterializedRowScope(ReportScope $scope, array $row): void
+    {
+        $projectId = isset($row['project_id']) ? (int) $row['project_id'] : null;
+        $this->assertProjectAccess($scope, $projectId);
+        foreach ($row['source_refs'] as $ref) {
+            $this->assertScopedResource(
+                $scope,
+                (string) $ref['type'],
+                (int) $ref['id'],
+                $projectId,
+            );
+        }
+        foreach ([
+            'project' => $row['project_id'] ?? null,
+            'employee' => $row['employee_id'] ?? null,
+            'department' => $row['department_id'] ?? null,
+            'position' => $row['position_id'] ?? null,
+            'site' => $row['site_id'] ?? null,
+            'shift' => $row['shift_id'] ?? null,
+        ] as $kind => $id) {
+            if ($id !== null) {
+                $this->assertScopedResource($scope, $kind, (int) $id, $projectId);
+            }
+        }
+        foreach ($row['audit_refs'] ?? [] as $ref) {
+            $this->assertScopedResource(
+                $scope,
+                (string) $ref['type'],
+                (int) $ref['id'],
+                $projectId,
+            );
+        }
+    }
+
+    private function assertScopedResource(
+        ReportScope $scope,
+        string $kind,
+        int $id,
+        ?int $projectId,
+    ): void {
+        $restricted = array_values(array_filter(
+            $scope->resources,
+            static fn (object $resource): bool => $resource->kind === $kind,
+        ));
+        if ($restricted === []) {
+            return;
+        }
+        foreach ($restricted as $resource) {
+            if ($resource->id === $id
+                && ($resource->projectId === null
+                    || ($projectId !== null && $resource->projectId === $projectId))) {
+                return;
+            }
+        }
+
+        throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
+    }
+
+    private function authorizedIds(ReportScope $scope, string $kind, array $requested): array
+    {
+        $allowed = array_values(array_unique(array_map(
+            static fn (object $resource): int => $resource->id,
+            array_filter(
+                $scope->resources,
+                static fn (object $resource): bool => $resource->kind === $kind,
+            ),
+        )));
+        sort($allowed, SORT_NUMERIC);
+        if ($allowed === []) {
+            return $requested;
+        }
+        if ($requested === []) {
+            return $allowed;
+        }
+        if (array_diff($requested, $allowed) !== []) {
+            throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
+        }
+
+        return $requested;
+    }
+
     private function ids(ReportQuery $query, string $filter): array
     {
         $values = $query->filters->values[$filter] ?? [];
@@ -1039,12 +1546,30 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
     private function projectIds(ReportScope $scope, ReportQuery $query): array
     {
         $requested = $this->ids($query, 'project_ids');
-        if ($requested === []) {
-            return $scope->projectIds;
+        $resourceIds = array_values(array_unique(array_map(
+            static fn (object $resource): int => $resource->id,
+            array_filter(
+                $scope->resources,
+                static fn (object $resource): bool => $resource->kind === 'project',
+            ),
+        )));
+        $allowed = $scope->projectIds;
+        if ($resourceIds !== []) {
+            $allowed = $allowed === [] ? $resourceIds : array_values(array_intersect($allowed, $resourceIds));
         }
-        if ($scope->projectIds !== [] && array_diff($requested, $scope->projectIds) !== []) {
+        $restricted = $scope->projectIds !== [] || $resourceIds !== [];
+        if ($restricted && $allowed === []) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
+        if ($requested === []) {
+            $this->assertOrganizationIds('projects', $scope, $allowed);
+
+            return $allowed;
+        }
+        if ($restricted && array_diff($requested, $allowed) !== []) {
+            throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
+        }
+        $this->assertOrganizationIds('projects', $scope, $requested);
 
         return $requested;
     }
@@ -1155,7 +1680,8 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
         return array_map(
             static fn (string $id): array => ['id' => $id],
             [
-                'month', 'department_name', 'position_name', 'project_name', 'planned_fte',
+                'month', 'department_name', 'position_name', 'project_name', 'employment_type',
+                'rate_as_of', 'planned_fte',
                 'assigned_fte', 'vacancy_fte', 'capacity_hours', 'rate_type', 'currency', 'rate',
             ],
         );
@@ -1168,7 +1694,7 @@ final readonly class DatabaseWorkforceReportAdapter implements WorkforceReportDa
             [
                 'work_date', 'employee_name', 'project_name', 'site_name', 'shift',
                 'eligible_hours', 'present_hours', 'overtime_hours', 'absence_hours',
-                'execution_percent', 'status', 'audit_refs',
+                'execution_percent', 'status', 'close_version', 'audit_refs',
             ],
         );
     }

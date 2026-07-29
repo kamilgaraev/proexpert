@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\WorkforceManagement\Reporting\Contracts;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
@@ -41,6 +41,6 @@ interface WorkforceReportDatabasePort extends EffectiveAssignmentSource
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): ReportDrillDownResult;
 }

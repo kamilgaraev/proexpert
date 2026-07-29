@@ -13,7 +13,7 @@ final readonly class ProjectLaborCostMetrics
         public ?string $rate,
         public ?string $cost,
         public ?string $currency,
-        public string $hoursVariance,
+        public ?string $hoursVariance,
         public ?string $costPerAcceptedUnit,
         public array $qualityWarnings,
     ) {

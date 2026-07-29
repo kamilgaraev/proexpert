@@ -74,7 +74,16 @@ final class WorkforceCorporateService
             $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
 
             if ($period->status === 'locked') {
-                return (array) $period;
+                $result = (array) $period;
+                $version = $this->payrollVersions->current($organizationId, $periodId);
+                if ($version !== null) {
+                    $result['calculation_version'] = ($version->status === 'locked'
+                        ? $version
+                        : $this->payrollVersions->lock($organizationId, $version->id, $userId))
+                        ->toArray();
+                }
+
+                return $result;
             }
 
             if ($period->status !== 'validated') {
@@ -98,6 +107,10 @@ final class WorkforceCorporateService
                 return ['blocking_issues' => true];
             }
 
+            $version = $this->payrollVersions->current($organizationId, $periodId);
+            if ($version === null || $version->status !== 'validated' || $version->blockingCount > 0) {
+                throw new DomainException(trans_message('workforce.errors.payroll_period_not_validated'));
+            }
             $sourceHash = $this->payrollSnapshotHash($organizationId, $period);
 
             DB::table('workforce_payroll_periods')
@@ -111,20 +124,19 @@ final class WorkforceCorporateService
                     'updated_at' => now(),
                 ]);
 
-            return (array) DB::table('workforce_payroll_periods')->where('organization_id', $organizationId)->where('id', $periodId)->first();
+            $result = (array) DB::table('workforce_payroll_periods')
+                ->where('organization_id', $organizationId)
+                ->where('id', $periodId)
+                ->first();
+            $result['calculation_version'] = $this->payrollVersions
+                ->lock($organizationId, $version->id, $userId)
+                ->toArray();
+
+            return $result;
         });
 
         if (isset($result['blocking_issues'])) {
             throw new DomainException(trans_message('workforce.errors.payroll_period_has_blocking_issues'));
-        }
-
-        $version = $this->payrollVersions->current($organizationId, $periodId);
-        if ($version !== null && $version->status !== 'locked') {
-            $result['calculation_version'] = $this->payrollVersions
-                ->lock($organizationId, $version->id, $userId)
-                ->toArray();
-        } elseif ($version !== null) {
-            $result['calculation_version'] = $version->toArray();
         }
 
         return $result;

@@ -7,7 +7,7 @@ namespace App\BusinessModules\Features\WorkforceManagement\Reporting;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
@@ -49,8 +49,8 @@ final readonly class WorkforceReportQueryService implements ReportRowQuery, Repo
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): ReportDrillDownResult {
-        return $this->database->drillDown($context, $snapshot, $request);
+        return $this->database->drillDown($context, $snapshot, $input);
     }
 }

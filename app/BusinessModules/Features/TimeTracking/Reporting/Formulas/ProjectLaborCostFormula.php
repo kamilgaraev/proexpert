@@ -41,7 +41,10 @@ final readonly class ProjectLaborCostFormula
         $costPerUnit = $cost !== null && $accepted !== null && !$accepted->isZero()
             ? $cost->dividedBy($accepted, 8, RoundingMode::HalfUp)
             : null;
-        $variance = $plannedHours === null ? BigDecimal::zero() : $hours->minus($plannedHours);
+        $variance = $plannedHours === null ? null : $hours->minus($plannedHours);
+        if ($plannedHours === null) {
+            $warnings[] = 'MISSING_PLANNED_HOURS';
+        }
 
         return new ProjectLaborCostMetrics(
             approvedHours: self::decimal($hours),
@@ -50,7 +53,7 @@ final readonly class ProjectLaborCostFormula
             rate: $amount === null ? null : self::decimal(BigDecimal::of($amount)),
             cost: $cost === null ? null : self::decimal($cost),
             currency: $currency,
-            hoursVariance: self::decimal($variance),
+            hoursVariance: $variance === null ? null : self::decimal($variance),
             costPerAcceptedUnit: $costPerUnit === null ? null : self::decimal($costPerUnit),
             qualityWarnings: $warnings,
         );
