@@ -24,12 +24,12 @@ final class RunPlanOneAGatesTest extends TestCase
         $contract = \PlanOneAExecutionPhaseAuthority::trackedContract();
 
         self::assertSame(
-            ['POST_TASK_4H_PRE_TASK_5', 'POST_TASK_5'],
+            ['POST_TASK_4I_PRE_TASK_5', 'POST_TASK_5'],
             array_keys($contract['phases']),
         );
-        self::assertCount(4, $contract['phases']['POST_TASK_4H_PRE_TASK_5']['dispatch_allowlist']);
+        self::assertCount(4, $contract['phases']['POST_TASK_4I_PRE_TASK_5']['dispatch_allowlist']);
         self::assertCount(5, $contract['phases']['POST_TASK_5']['dispatch_allowlist']);
-        self::assertSame('pending', $contract['phases']['POST_TASK_4H_PRE_TASK_5']['task_5_state']);
+        self::assertSame('pending', $contract['phases']['POST_TASK_4I_PRE_TASK_5']['task_5_state']);
         self::assertSame('present', $contract['phases']['POST_TASK_5']['task_5_state']);
     }
 

@@ -38,6 +38,7 @@
             "parent_commit_sha": "57b9e1b5eb3d646f5d24f78e00165ca9b272e93d",
             "tracked_paths": [
                 "tests/Architecture/Reporting/PlanOneAHandoffContractTest.php",
+                "tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php",
                 "docs/reports/contracts/plan-1a-completion.schema.json",
                 "docs/reports/contracts/plan-1a-contract-lock.json",
                 "docs/reports/contracts/plan-1a-contract-lock.sha256",
@@ -47,7 +48,6 @@
                 "tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php",
                 "tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json",
                 "tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json",
-                "tests/Support/Reporting/HermeticReportingHttpHarness.php",
                 "tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php",
                 "tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php"
             ],
@@ -77,8 +77,29 @@
             "reason": "ledger_count_omission"
         },
         "task_4h": {
+            "commit_sha": "f541756b404a8b882577f0482ab9f68b82e0a09b",
             "subject": "fix[reports]: \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u0442\u044c ledger evidence",
             "parent_commit_sha": "370943e3d9a7941589b975472e2ff05c96f3bc63",
+            "tracked_paths": [
+                "docs/reports/contracts/plan-1a-completion.schema.json",
+                "docs/reports/contracts/plan-1a-contract-lock.json",
+                "docs/reports/contracts/plan-1a-contract-lock.sha256",
+                "docs/reports/contracts/plan-1a-gate-evidence.schema.json",
+                "scripts/reporting/build-plan-1a-evidence.php",
+                "scripts/reporting/run-plan-1a-gates.php",
+                "tests/Architecture/Reporting/PlanOneAHandoffContractTest.php",
+                "tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php",
+                "tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json",
+                "tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json",
+                "tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php",
+                "tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php"
+            ],
+            "state": "historical_red",
+            "reason": "manifest_projection_mismatch"
+        },
+        "task_4i": {
+            "subject": "fix[reports]: \u0432\u044b\u0440\u043e\u0432\u043d\u044f\u0442\u044c \u0444\u0430\u0437\u043e\u0432\u044b\u0435 \u043c\u0430\u043d\u0438\u0444\u0435\u0441\u0442\u044b",
+            "parent_commit_sha": "f541756b404a8b882577f0482ab9f68b82e0a09b",
             "tracked_paths": [
                 "docs/reports/contracts/plan-1a-completion.schema.json",
                 "docs/reports/contracts/plan-1a-contract-lock.json",
@@ -134,7 +155,7 @@
             ]
         },
         "phases": {
-            "POST_TASK_4H_PRE_TASK_5": {
+            "POST_TASK_4I_PRE_TASK_5": {
                 "task_5_state": "pending",
                 "dispatch_allowlist": [
                     "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",

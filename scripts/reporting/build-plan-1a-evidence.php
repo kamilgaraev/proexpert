@@ -19,7 +19,7 @@ final class PlanOneAEvidenceFailure extends RuntimeException
 
 final class PlanOneAExecutionPhaseAuthority
 {
-    public const PRE5 = 'POST_TASK_4H_PRE_TASK_5';
+    public const PRE5 = 'POST_TASK_4I_PRE_TASK_5';
 
     public const POST5 = 'POST_TASK_5';
 
@@ -40,6 +40,10 @@ final class PlanOneAExecutionPhaseAuthority
     private const TASK_FOUR_G_COMMIT = '370943e3d9a7941589b975472e2ff05c96f3bc63';
 
     private const TASK_FOUR_H_SUBJECT = 'fix[reports]: синхронизировать ledger evidence';
+
+    private const TASK_FOUR_H_COMMIT = 'f541756b404a8b882577f0482ab9f68b82e0a09b';
+
+    private const TASK_FOUR_I_SUBJECT = 'fix[reports]: выровнять фазовые манифесты';
 
     private const TASK_FIVE_RUNTIME_CONTRACT_PATH = 'tests/Architecture/Reporting/ReportQueueRuntimeContractTest.php';
 
@@ -158,6 +162,11 @@ final class PlanOneAExecutionPhaseAuthority
         return self::TASK_FOUR_H_PATHS;
     }
 
+    public static function taskFourIPaths(): array
+    {
+        return self::TASK_FOUR_H_PATHS;
+    }
+
     public static function taskFivePaths(): array
     {
         return self::TASK_FIVE_PATHS;
@@ -201,8 +210,16 @@ final class PlanOneAExecutionPhaseAuthority
                 'reason' => 'ledger_count_omission',
             ],
             'task_4h' => [
+                'commit_sha' => self::TASK_FOUR_H_COMMIT,
                 'subject' => self::TASK_FOUR_H_SUBJECT,
                 'parent_commit_sha' => self::TASK_FOUR_G_COMMIT,
+                'tracked_paths' => self::TASK_FOUR_H_PATHS,
+                'state' => 'historical_red',
+                'reason' => 'manifest_projection_mismatch',
+            ],
+            'task_4i' => [
+                'subject' => self::TASK_FOUR_I_SUBJECT,
+                'parent_commit_sha' => self::TASK_FOUR_H_COMMIT,
                 'tracked_paths' => self::TASK_FOUR_H_PATHS,
                 'ledger_command_counts' => ['tests' => 504, 'assertions' => 5064],
             ],
@@ -235,40 +252,43 @@ final class PlanOneAExecutionPhaseAuthority
     {
         self::guard(preg_match('/^[a-f0-9]{40}$/D', $head) === 1);
         self::verifyTaskFourE($root);
-        self::guard(! in_array($head, [self::TASK_FOUR_E_COMMIT, self::TASK_FOUR_G_COMMIT], true), 'PLAN_1A_EXECUTION_PHASE_HISTORICAL_RED');
+        self::guard(! in_array($head, [self::TASK_FOUR_E_COMMIT, self::TASK_FOUR_G_COMMIT, self::TASK_FOUR_H_COMMIT], true), 'PLAN_1A_EXECUTION_PHASE_HISTORICAL_RED');
         $headMetadata = self::commitMetadata($root, $head);
         $taskFourF = null;
         $taskFourG = null;
         $taskFourH = null;
+        $taskFourI = null;
         $taskFive = null;
         $phase = null;
 
-        if ($headMetadata['subject'] === self::TASK_FOUR_H_SUBJECT) {
+        if ($headMetadata['subject'] === self::TASK_FOUR_I_SUBJECT) {
             self::guard(count($headMetadata['parents']) === 1);
-            $taskFourG = $headMetadata['parents'][0];
-            self::verifyTaskFourG($root, $taskFourG);
+            $taskFourH = $headMetadata['parents'][0];
+            self::verifyTaskFourH($root, $taskFourH);
+            $taskFourG = self::TASK_FOUR_G_COMMIT;
             $taskFourF = self::TASK_FOUR_F_COMMIT;
             self::verifyManifestCommit($root, $head, self::TASK_FOUR_H_PATHS);
             self::verifyPre5TaskFiveState($root, $head);
-            $taskFourH = $head;
+            $taskFourI = $head;
             $phase = self::PRE5;
         } elseif ($headMetadata['subject'] === self::TASK_FIVE_SUBJECT) {
             self::guard(count($headMetadata['parents']) === 1);
-            $taskFourH = $headMetadata['parents'][0];
-            $taskFourHMetadata = self::commitMetadata($root, $taskFourH);
-            self::guard($taskFourHMetadata['subject'] === self::TASK_FOUR_H_SUBJECT && count($taskFourHMetadata['parents']) === 1);
-            $taskFourG = $taskFourHMetadata['parents'][0];
-            self::verifyTaskFourG($root, $taskFourG);
+            $taskFourI = $headMetadata['parents'][0];
+            $taskFourIMetadata = self::commitMetadata($root, $taskFourI);
+            self::guard($taskFourIMetadata['subject'] === self::TASK_FOUR_I_SUBJECT && count($taskFourIMetadata['parents']) === 1);
+            $taskFourH = $taskFourIMetadata['parents'][0];
+            self::verifyTaskFourH($root, $taskFourH);
+            $taskFourG = self::TASK_FOUR_G_COMMIT;
             $taskFourF = self::TASK_FOUR_F_COMMIT;
-            self::verifyManifestCommit($root, $taskFourH, self::TASK_FOUR_H_PATHS);
-            self::verifyPre5TaskFiveState($root, $taskFourH);
+            self::verifyManifestCommit($root, $taskFourI, self::TASK_FOUR_H_PATHS);
+            self::verifyPre5TaskFiveState($root, $taskFourI);
             self::verifyManifestCommit($root, $head, self::TASK_FIVE_PATHS);
-            self::verifyTaskFiveTransition($root, $taskFourH, $head);
+            self::verifyTaskFiveTransition($root, $taskFourI, $head);
             $taskFive = $head;
             $phase = self::POST5;
         }
 
-        self::guard(is_string($phase) && is_string($taskFourF) && is_string($taskFourG) && is_string($taskFourH));
+        self::guard(is_string($phase) && is_string($taskFourF) && is_string($taskFourG) && is_string($taskFourH) && is_string($taskFourI));
         $contract = self::trackedContract();
 
         return [
@@ -278,6 +298,7 @@ final class PlanOneAExecutionPhaseAuthority
             'task_4f_commit_sha' => $taskFourF,
             'task_4g_commit_sha' => $taskFourG,
             'task_4h_commit_sha' => $taskFourH,
+            'task_4i_commit_sha' => $taskFourI,
             'task_5_commit_sha' => $taskFive,
             'task_5_state' => $contract['phases'][$phase]['task_5_state'],
             'dispatch_allowlist' => $contract['phases'][$phase]['dispatch_allowlist'],
@@ -351,6 +372,17 @@ final class PlanOneAExecutionPhaseAuthority
                 && $metadata['subject'] === self::TASK_FOUR_G_SUBJECT,
         );
         self::verifyManifestCommit($root, $commit, self::TASK_FOUR_G_PATHS);
+    }
+
+    private static function verifyTaskFourH(string $root, string $commit): void
+    {
+        $metadata = self::commitMetadata($root, $commit);
+        self::guard(
+            $commit === self::TASK_FOUR_H_COMMIT
+                && $metadata['parents'] === [self::TASK_FOUR_G_COMMIT]
+                && $metadata['subject'] === self::TASK_FOUR_H_SUBJECT,
+        );
+        self::verifyManifestCommit($root, $commit, self::TASK_FOUR_H_PATHS);
     }
 
     private static function verifyPre5TaskFiveState(string $root, string $head): void
