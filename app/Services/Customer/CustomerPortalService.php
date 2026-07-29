@@ -22,9 +22,13 @@ use App\Models\Project;
 use App\Models\ProjectParticipantInvitation;
 use App\Models\User;
 use App\Services\Contract\ContractSideResolverService;
+use App\Services\Customer\Reporting\Sla\Enums\CustomerWorkflowEventType;
+use App\Services\Customer\Reporting\Sla\Services\CustomerWorkflowEventRecorder;
 use App\Services\Project\ProjectCustomerResolverService;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File as FileSystem;
 use Illuminate\Support\Str;
 
@@ -34,7 +38,8 @@ class CustomerPortalService
         private readonly AuthorizationService $authorizationService,
         private readonly ProjectCustomerResolverService $projectCustomerResolverService,
         private readonly ContractSideResolverService $contractSideResolverService,
-        private readonly NotificationQueryService $notificationQueryService
+        private readonly NotificationQueryService $notificationQueryService,
+        private readonly CustomerWorkflowEventRecorder $workflowEventRecorder,
     ) {}
 
     public function getDashboard(User $user, int $organizationId): array
@@ -423,31 +428,42 @@ class CustomerPortalService
     {
         $payload = $this->normalizeIssuePayload($organizationId, $payload, $user);
 
-        $issue = CustomerIssue::create([
-            'organization_id' => $organizationId,
-            'author_user_id' => $user->id,
-            'project_id' => $payload['project_id'] ?? null,
-            'contract_id' => $payload['contract_id'] ?? null,
-            'performance_act_id' => $payload['performance_act_id'] ?? null,
-            'file_id' => $payload['file_id'] ?? null,
-            'title' => $payload['title'],
-            'issue_reason' => $payload['issue_reason'],
-            'body' => $payload['body'],
-            'attachments' => $payload['attachments'] ?? [],
-            'due_date' => $payload['due_date'] ?? null,
-            'status' => 'new',
-            'metadata' => [
-                'history' => [
-                    [
-                        'type' => 'created',
-                        'author_id' => $user->id,
-                        'author_name' => $user->name,
-                        'created_at' => now()->toISOString(),
-                        'body' => $payload['body'],
+        $issue = DB::transaction(function () use ($user, $organizationId, $payload): CustomerIssue {
+            $occurredAt = CarbonImmutable::now();
+            $issue = CustomerIssue::create([
+                'organization_id' => $organizationId,
+                'author_user_id' => $user->id,
+                'project_id' => $payload['project_id'] ?? null,
+                'contract_id' => $payload['contract_id'] ?? null,
+                'performance_act_id' => $payload['performance_act_id'] ?? null,
+                'file_id' => $payload['file_id'] ?? null,
+                'title' => $payload['title'],
+                'issue_reason' => $payload['issue_reason'],
+                'body' => $payload['body'],
+                'attachments' => $payload['attachments'] ?? [],
+                'due_date' => $payload['due_date'] ?? null,
+                'status' => 'new',
+                'metadata' => [
+                    'history' => [
+                        [
+                            'type' => 'created',
+                            'author_id' => $user->id,
+                            'author_name' => $user->name,
+                            'created_at' => $occurredAt->toISOString(),
+                            'body' => $payload['body'],
+                        ],
                     ],
                 ],
-            ],
-        ]);
+            ]);
+            $this->workflowEventRecorder->recordIssue(
+                $issue,
+                CustomerWorkflowEventType::OPENED,
+                $user,
+                $occurredAt,
+            );
+
+            return $issue;
+        }, 3);
 
         return [
             'issue' => $this->mapIssue($issue->load(['author:id,name', 'project:id,name', 'contract:id,number,subject', 'performanceAct:id,act_document_number,amount', 'file:id,name,original_name']), true),
@@ -464,33 +480,42 @@ class CustomerPortalService
             return null;
         }
 
-        $issue->comments()->create([
-            'organization_id' => $organizationId,
-            'author_user_id' => $user->id,
-            'body' => $payload['body'],
-            'attachments' => $payload['attachments'] ?? [],
-        ]);
+        DB::transaction(function () use ($user, $organizationId, $issue, $payload): void {
+            $occurredAt = CarbonImmutable::now();
+            $issue->comments()->create([
+                'organization_id' => $organizationId,
+                'author_user_id' => $user->id,
+                'body' => $payload['body'],
+                'attachments' => $payload['attachments'] ?? [],
+            ]);
 
-        if ($issue->status === 'new') {
-            $issue->update(['status' => 'in_progress']);
-        }
+            if ($issue->status === 'new') {
+                $issue->update(['status' => 'in_progress']);
+            }
 
-        $metadata = $issue->metadata ?? [];
-        $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
-        $history[] = [
-            'type' => 'comment_added',
-            'author_id' => $user->id,
-            'author_name' => $user->name,
-            'created_at' => now()->toISOString(),
-            'body' => $payload['body'],
-        ];
+            $metadata = $issue->metadata ?? [];
+            $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
+            $history[] = [
+                'type' => 'comment_added',
+                'author_id' => $user->id,
+                'author_name' => $user->name,
+                'created_at' => $occurredAt->toISOString(),
+                'body' => $payload['body'],
+            ];
 
-        $issue->update([
-            'metadata' => array_merge($metadata, [
-                'history' => $history,
-                'last_response_at' => now()->toISOString(),
-            ]),
-        ]);
+            $issue->update([
+                'metadata' => array_merge($metadata, [
+                    'history' => $history,
+                    'last_response_at' => $occurredAt->toISOString(),
+                ]),
+            ]);
+            $this->workflowEventRecorder->recordIssue(
+                $issue->fresh(),
+                CustomerWorkflowEventType::COMMENTED,
+                $user,
+                $occurredAt,
+            );
+        }, 3);
 
         return $this->getIssue($organizationId, $issue->fresh(['author:id,name', 'resolver:id,name', 'project:id,name', 'contract:id,number,subject', 'performanceAct:id,act_document_number,amount', 'file:id,name,original_name', 'comments.author:id,name']), $user);
     }
@@ -505,25 +530,34 @@ class CustomerPortalService
             return null;
         }
 
-        $metadata = $issue->metadata ?? [];
-        $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
-        $history[] = [
-            'type' => 'status_changed',
-            'author_id' => $user->id,
-            'author_name' => $user->name,
-            'created_at' => now()->toISOString(),
-            'status' => $status,
-        ];
+        DB::transaction(function () use ($user, $issue, $status): void {
+            $occurredAt = CarbonImmutable::now();
+            $metadata = $issue->metadata ?? [];
+            $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
+            $history[] = [
+                'type' => 'status_changed',
+                'author_id' => $user->id,
+                'author_name' => $user->name,
+                'created_at' => $occurredAt->toISOString(),
+                'status' => $status,
+            ];
 
-        $issue->update([
-            'status' => $status,
-            'resolved_at' => now(),
-            'resolved_by_user_id' => $user->id,
-            'metadata' => array_merge($metadata, [
-                'history' => $history,
-                'last_response_at' => now()->toISOString(),
-            ]),
-        ]);
+            $issue->update([
+                'status' => $status,
+                'resolved_at' => $occurredAt,
+                'resolved_by_user_id' => $user->id,
+                'metadata' => array_merge($metadata, [
+                    'history' => $history,
+                    'last_response_at' => $occurredAt->toISOString(),
+                ]),
+            ]);
+            $this->workflowEventRecorder->recordIssue(
+                $issue->fresh(),
+                CustomerWorkflowEventType::RESOLVED,
+                $user,
+                $occurredAt,
+            );
+        }, 3);
 
         return $this->getIssue($organizationId, $issue->fresh(['author:id,name', 'resolver:id,name', 'project:id,name', 'contract:id,number,subject', 'performanceAct:id,act_document_number,amount', 'file:id,name,original_name', 'comments.author:id,name']), $user);
     }
@@ -569,29 +603,40 @@ class CustomerPortalService
     {
         $payload = $this->normalizeRequestPayload($organizationId, $payload, $user);
 
-        $request = CustomerRequest::create([
-            'organization_id' => $organizationId,
-            'author_user_id' => $user->id,
-            'project_id' => $payload['project_id'] ?? null,
-            'contract_id' => $payload['contract_id'] ?? null,
-            'title' => $payload['title'],
-            'request_type' => $payload['request_type'],
-            'body' => $payload['body'],
-            'attachments' => $payload['attachments'] ?? [],
-            'due_date' => $payload['due_date'] ?? null,
-            'status' => 'new',
-            'metadata' => [
-                'history' => [
-                    [
-                        'type' => 'created',
-                        'author_id' => $user->id,
-                        'author_name' => $user->name,
-                        'created_at' => now()->toISOString(),
-                        'body' => $payload['body'],
+        $request = DB::transaction(function () use ($user, $organizationId, $payload): CustomerRequest {
+            $occurredAt = CarbonImmutable::now();
+            $request = CustomerRequest::create([
+                'organization_id' => $organizationId,
+                'author_user_id' => $user->id,
+                'project_id' => $payload['project_id'] ?? null,
+                'contract_id' => $payload['contract_id'] ?? null,
+                'title' => $payload['title'],
+                'request_type' => $payload['request_type'],
+                'body' => $payload['body'],
+                'attachments' => $payload['attachments'] ?? [],
+                'due_date' => $payload['due_date'] ?? null,
+                'status' => 'new',
+                'metadata' => [
+                    'history' => [
+                        [
+                            'type' => 'created',
+                            'author_id' => $user->id,
+                            'author_name' => $user->name,
+                            'created_at' => $occurredAt->toISOString(),
+                            'body' => $payload['body'],
+                        ],
                     ],
                 ],
-            ],
-        ]);
+            ]);
+            $this->workflowEventRecorder->recordRequest(
+                $request,
+                CustomerWorkflowEventType::OPENED,
+                $user,
+                $occurredAt,
+            );
+
+            return $request;
+        }, 3);
 
         return [
             'request' => $this->mapRequest($request->load(['author:id,name', 'project:id,name', 'contract:id,number,subject']), true),
@@ -608,33 +653,42 @@ class CustomerPortalService
             return null;
         }
 
-        $request->comments()->create([
-            'organization_id' => $organizationId,
-            'author_user_id' => $user->id,
-            'body' => $payload['body'],
-            'attachments' => $payload['attachments'] ?? [],
-        ]);
+        DB::transaction(function () use ($user, $organizationId, $request, $payload): void {
+            $occurredAt = CarbonImmutable::now();
+            $request->comments()->create([
+                'organization_id' => $organizationId,
+                'author_user_id' => $user->id,
+                'body' => $payload['body'],
+                'attachments' => $payload['attachments'] ?? [],
+            ]);
 
-        if ($request->status === 'new') {
-            $request->update(['status' => 'in_progress']);
-        }
+            if ($request->status === 'new') {
+                $request->update(['status' => 'in_progress']);
+            }
 
-        $metadata = $request->metadata ?? [];
-        $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
-        $history[] = [
-            'type' => 'comment_added',
-            'author_id' => $user->id,
-            'author_name' => $user->name,
-            'created_at' => now()->toISOString(),
-            'body' => $payload['body'],
-        ];
+            $metadata = $request->metadata ?? [];
+            $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
+            $history[] = [
+                'type' => 'comment_added',
+                'author_id' => $user->id,
+                'author_name' => $user->name,
+                'created_at' => $occurredAt->toISOString(),
+                'body' => $payload['body'],
+            ];
 
-        $request->update([
-            'metadata' => array_merge($metadata, [
-                'history' => $history,
-                'last_response_at' => now()->toISOString(),
-            ]),
-        ]);
+            $request->update([
+                'metadata' => array_merge($metadata, [
+                    'history' => $history,
+                    'last_response_at' => $occurredAt->toISOString(),
+                ]),
+            ]);
+            $this->workflowEventRecorder->recordRequest(
+                $request->fresh(),
+                CustomerWorkflowEventType::COMMENTED,
+                $user,
+                $occurredAt,
+            );
+        }, 3);
 
         return $this->getRequest($organizationId, $request->fresh(['author:id,name', 'resolver:id,name', 'project:id,name', 'contract:id,number,subject', 'comments.author:id,name']), $user);
     }
@@ -649,25 +703,35 @@ class CustomerPortalService
             return null;
         }
 
-        $metadata = $request->metadata ?? [];
-        $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
-        $history[] = [
-            'type' => 'status_changed',
-            'author_id' => $user->id,
-            'author_name' => $user->name,
-            'created_at' => now()->toISOString(),
-            'status' => $status,
-        ];
+        DB::transaction(function () use ($user, $request, $status): void {
+            $occurredAt = CarbonImmutable::now();
+            $terminal = in_array($status, ['completed', 'rejected'], true);
+            $metadata = $request->metadata ?? [];
+            $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
+            $history[] = [
+                'type' => 'status_changed',
+                'author_id' => $user->id,
+                'author_name' => $user->name,
+                'created_at' => $occurredAt->toISOString(),
+                'status' => $status,
+            ];
 
-        $request->update([
-            'status' => $status,
-            'resolved_at' => in_array($status, ['completed', 'rejected'], true) ? now() : null,
-            'resolved_by_user_id' => in_array($status, ['completed', 'rejected'], true) ? $user->id : null,
-            'metadata' => array_merge($metadata, [
-                'history' => $history,
-                'last_response_at' => now()->toISOString(),
-            ]),
-        ]);
+            $request->update([
+                'status' => $status,
+                'resolved_at' => $terminal ? $occurredAt : null,
+                'resolved_by_user_id' => $terminal ? $user->id : null,
+                'metadata' => array_merge($metadata, [
+                    'history' => $history,
+                    'last_response_at' => $occurredAt->toISOString(),
+                ]),
+            ]);
+            $this->workflowEventRecorder->recordRequest(
+                $request->fresh(),
+                $terminal ? CustomerWorkflowEventType::RESOLVED : CustomerWorkflowEventType::STATUS_CHANGED,
+                $user,
+                $occurredAt,
+            );
+        }, 3);
 
         return $this->getRequest($organizationId, $request->fresh(['author:id,name', 'resolver:id,name', 'project:id,name', 'contract:id,number,subject', 'comments.author:id,name']), $user);
     }

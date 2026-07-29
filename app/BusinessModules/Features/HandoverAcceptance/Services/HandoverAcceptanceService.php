@@ -13,10 +13,12 @@ use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceSignoff;
 use App\BusinessModules\Features\HandoverAcceptance\Models\HandoverPackage;
 use App\BusinessModules\Features\HandoverAcceptance\Models\HandoverPackageDocument;
 use App\BusinessModules\Features\HandoverAcceptance\Models\ProjectLocation;
+use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\Services\HandoverEvidenceEventRecorder;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Storage\FileService;
+use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\UploadedFile;
@@ -34,8 +36,10 @@ final class HandoverAcceptanceService
         'handoverPackage.documents',
     ];
 
-    public function __construct(private readonly FileService $fileService)
-    {
+    public function __construct(
+        private readonly FileService $fileService,
+        private readonly HandoverEvidenceEventRecorder $evidenceEvents,
+    ) {
     }
 
     public function listScopes(int $organizationId, array $filters = []): Collection
@@ -188,6 +192,14 @@ final class HandoverAcceptanceService
 
             $scope->update(['status' => 'findings_open']);
             $session->update(['status' => 'findings_open']);
+            $this->evidenceEvents->record(
+                $scope,
+                'finding_opened',
+                'acceptance_finding',
+                (int) $finding->id,
+                CarbonImmutable::now(),
+                $userId,
+            );
 
             return $finding->fresh(['qualityDefect']);
         });
@@ -199,26 +211,49 @@ final class HandoverAcceptanceService
             throw new DomainException(trans_message('handover_acceptance.errors.finding_resolve_invalid_status'));
         }
 
-        $finding->update([
-            'status' => 'resolved',
-            'resolved_by_user_id' => $userId,
-            'resolution_comment' => $data['resolution_comment'],
-            'resolved_at' => now(),
-        ]);
+        return DB::transaction(function () use ($finding, $userId, $data): AcceptanceFinding {
+            $occurredAt = CarbonImmutable::now();
+            $finding->update([
+                'status' => 'resolved',
+                'resolved_by_user_id' => $userId,
+                'resolution_comment' => $data['resolution_comment'],
+                'resolved_at' => $occurredAt,
+            ]);
+            $scope = $finding->scope()->firstOrFail();
+            $this->evidenceEvents->record(
+                $scope,
+                'finding_resolved',
+                'acceptance_finding',
+                (int) $finding->id,
+                $occurredAt,
+                $userId,
+            );
 
-        return $finding->fresh(['qualityDefect']);
+            return $finding->fresh(['qualityDefect']);
+        }, 3);
     }
 
     public function reviewChecklistItem(AcceptanceChecklistItem $item, array $data): AcceptanceChecklistItem
     {
-        $item->update([
-            'status' => $data['status'],
-            'comment' => $data['comment'] ?? null,
-        ]);
+        return DB::transaction(function () use ($item, $data): AcceptanceChecklistItem {
+            $item->update([
+                'status' => $data['status'],
+                'comment' => $data['comment'] ?? null,
+            ]);
+            $checklist = $item->checklist()->firstOrFail();
+            $this->refreshChecklistStatus($checklist);
+            $scope = $checklist->scope()->firstOrFail();
+            $this->evidenceEvents->record(
+                $scope,
+                'checklist_reviewed',
+                'acceptance_checklist_item',
+                (int) $item->id,
+                CarbonImmutable::now(),
+                null,
+            );
 
-        $this->refreshChecklistStatus($item->checklist()->firstOrFail());
-
-        return $item->fresh(['checklist.items']);
+            return $item->fresh(['checklist.items']);
+        }, 3);
     }
 
     public function markReadyForReinspection(AcceptanceScope $scope): AcceptanceScope
@@ -228,9 +263,20 @@ final class HandoverAcceptanceService
         }
 
         $this->assertStatus($scope, ['findings_open', 'in_progress', 'rejected']);
-        $scope->update(['status' => 'ready_for_reinspection']);
+        return DB::transaction(function () use ($scope): AcceptanceScope {
+            $occurredAt = CarbonImmutable::now();
+            $scope->update(['status' => 'ready_for_reinspection']);
+            $this->evidenceEvents->record(
+                $scope,
+                'inspection_attempted',
+                'inspection',
+                (int) $scope->id,
+                $occurredAt,
+                null,
+            );
 
-        return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh(self::SCOPE_RELATIONS);
+        }, 3);
     }
 
     public function acceptScope(AcceptanceScope $scope, int $userId, ?string $comment): AcceptanceScope
@@ -241,19 +287,65 @@ final class HandoverAcceptanceService
         }
 
         $this->assertStatus($scope, ['in_progress', 'ready_for_reinspection', 'rejected']);
-        $scope->update(['status' => 'accepted', 'accepted_at' => now()]);
-        $this->sign($scope, $userId, 'accepted', $comment);
 
-        return $scope->fresh(self::SCOPE_RELATIONS);
+        return DB::transaction(function () use ($scope, $userId, $comment): AcceptanceScope {
+            $occurredAt = CarbonImmutable::now();
+            $wasReinspection = $scope->status === 'ready_for_reinspection';
+            $scope->update(['status' => 'accepted', 'accepted_at' => $occurredAt]);
+            $this->sign($scope, $userId, 'accepted', $comment);
+            if ($wasReinspection) {
+                $this->evidenceEvents->record(
+                    $scope,
+                    'inspection_resulted',
+                    'inspection',
+                    (int) $scope->id,
+                    $occurredAt,
+                    $userId,
+                );
+            }
+            $this->evidenceEvents->record(
+                $scope,
+                'scope_accepted',
+                'acceptance_scope',
+                (int) $scope->id,
+                $occurredAt,
+                $userId,
+            );
+
+            return $scope->fresh(self::SCOPE_RELATIONS);
+        }, 3);
     }
 
     public function rejectScope(AcceptanceScope $scope, int $userId, string $reason): AcceptanceScope
     {
         $this->assertStatus($scope, ['in_progress', 'findings_open', 'ready_for_reinspection']);
-        $scope->update(['status' => 'rejected']);
-        $this->sign($scope, $userId, 'rejected', $reason);
 
-        return $scope->fresh(self::SCOPE_RELATIONS);
+        return DB::transaction(function () use ($scope, $userId, $reason): AcceptanceScope {
+            $occurredAt = CarbonImmutable::now();
+            $wasReinspection = $scope->status === 'ready_for_reinspection';
+            $scope->update(['status' => 'rejected']);
+            $this->sign($scope, $userId, 'rejected', $reason);
+            if ($wasReinspection) {
+                $this->evidenceEvents->record(
+                    $scope,
+                    'inspection_resulted',
+                    'inspection',
+                    (int) $scope->id,
+                    $occurredAt,
+                    $userId,
+                );
+            }
+            $this->evidenceEvents->record(
+                $scope,
+                'scope_rejected',
+                'acceptance_scope',
+                (int) $scope->id,
+                $occurredAt,
+                $userId,
+            );
+
+            return $scope->fresh(self::SCOPE_RELATIONS);
+        }, 3);
     }
 
     public function createPackage(AcceptanceScope $scope, int $userId, array $data): HandoverPackage
@@ -289,13 +381,25 @@ final class HandoverAcceptanceService
 
     public function approveDocument(HandoverPackageDocument $document, array $data): HandoverPackageDocument
     {
-        $document->update([
-            'status' => 'approved',
-            'external_url' => $data['external_url'] ?? $document->external_url,
-            'approved_at' => now(),
-        ]);
+        return DB::transaction(function () use ($document, $data): HandoverPackageDocument {
+            $occurredAt = CarbonImmutable::now();
+            $document->update([
+                'status' => 'approved',
+                'external_url' => $data['external_url'] ?? $document->external_url,
+                'approved_at' => $occurredAt,
+            ]);
+            $scope = $document->package()->firstOrFail()->scope()->firstOrFail();
+            $this->evidenceEvents->record(
+                $scope,
+                'document_approved',
+                'handover_document',
+                (int) $document->id,
+                $occurredAt,
+                null,
+            );
 
-        return $document->fresh();
+            return $document->fresh();
+        }, 3);
     }
 
     public function uploadDocument(HandoverPackageDocument $document, UploadedFile $file): HandoverPackageDocument
@@ -319,13 +423,25 @@ final class HandoverAcceptanceService
             throw new DomainException(trans_message('handover_acceptance.errors.document_upload_failed'));
         }
 
-        $document->update([
-            'status' => 'approved',
-            'external_url' => $url,
-            'approved_at' => now(),
-        ]);
+        return DB::transaction(function () use ($document, $package, $url): HandoverPackageDocument {
+            $occurredAt = CarbonImmutable::now();
+            $document->update([
+                'status' => 'approved',
+                'external_url' => $url,
+                'approved_at' => $occurredAt,
+            ]);
+            $scope = $package->scope()->firstOrFail();
+            $this->evidenceEvents->record(
+                $scope,
+                'document_approved',
+                'handover_document',
+                (int) $document->id,
+                $occurredAt,
+                null,
+            );
 
-        return $document->fresh(['package.documents']);
+            return $document->fresh(['package.documents']);
+        }, 3);
     }
 
     public function handoverScope(AcceptanceScope $scope, int $userId): AcceptanceScope
@@ -340,20 +456,42 @@ final class HandoverAcceptanceService
             throw new DomainException(trans_message('handover_acceptance.errors.required_documents_block_handover'));
         }
 
-        $package->update(['status' => 'approved']);
-        $scope->update(['status' => 'handed_over', 'handed_over_at' => now()]);
-        $this->sign($scope, $userId, 'handed_over', null);
+        return DB::transaction(function () use ($package, $scope, $userId): AcceptanceScope {
+            $occurredAt = CarbonImmutable::now();
+            $package->update(['status' => 'approved']);
+            $scope->update(['status' => 'handed_over', 'handed_over_at' => $occurredAt]);
+            $this->sign($scope, $userId, 'handed_over', null);
+            $this->evidenceEvents->record(
+                $scope,
+                'scope_handed_over',
+                'acceptance_scope',
+                (int) $scope->id,
+                $occurredAt,
+                $userId,
+            );
 
-        return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh(self::SCOPE_RELATIONS);
+        }, 3);
     }
 
     public function reopenScope(AcceptanceScope $scope, int $userId, string $reason): AcceptanceScope
     {
         $this->assertStatus($scope, ['accepted', 'handed_over']);
-        $scope->update(['status' => 'reopened', 'reopened_at' => now()]);
-        $this->sign($scope, $userId, 'reopened', $reason);
+        return DB::transaction(function () use ($scope, $userId, $reason): AcceptanceScope {
+            $occurredAt = CarbonImmutable::now();
+            $scope->update(['status' => 'reopened', 'reopened_at' => $occurredAt]);
+            $this->sign($scope, $userId, 'reopened', $reason);
+            $this->evidenceEvents->record(
+                $scope,
+                'scope_reopened',
+                'acceptance_scope',
+                (int) $scope->id,
+                $occurredAt,
+                $userId,
+            );
 
-        return $scope->fresh(self::SCOPE_RELATIONS);
+            return $scope->fresh(self::SCOPE_RELATIONS);
+        }, 3);
     }
 
     public function findScope(int $organizationId, int $id): AcceptanceScope

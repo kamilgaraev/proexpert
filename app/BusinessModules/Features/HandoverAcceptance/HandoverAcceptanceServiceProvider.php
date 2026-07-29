@@ -12,6 +12,13 @@ final class HandoverAcceptanceServiceProvider extends ServiceProvider
     {
         $this->app->singleton(HandoverAcceptanceModule::class);
         $this->app->singleton(Services\HandoverAcceptanceService::class);
+        $this->app->singleton(Reporting\Readiness\Services\HandoverEvidenceEventRecorder::class);
+        $this->app->singleton(Reporting\Readiness\Services\HandoverReadinessFormula::class);
+        $this->app->singleton(Reporting\Readiness\Services\HandoverReadinessSnapshotMaterializer::class);
+        $this->app->singleton(Reporting\Readiness\Providers\HandoverReadinessReportProvider::class);
+        $this->app->singleton(Reporting\Readiness\Queries\HandoverReadinessRowQuery::class);
+        $this->app->singleton(Reporting\Readiness\DrillDown\HandoverReadinessDrillDownProvider::class);
+        $this->app->singleton(Reporting\Readiness\Readiness\HandoverReadinessProbe::class);
     }
 
     public function boot(): void
