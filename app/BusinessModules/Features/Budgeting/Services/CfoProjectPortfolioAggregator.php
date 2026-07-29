@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Features\Budgeting\DTOs\CfoCommandCenterFilters;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\ProjectPortfolioProjectionResult;
 
 final class CfoProjectPortfolioAggregator
 {
@@ -26,10 +27,32 @@ final class CfoProjectPortfolioAggregator
         string $generatedAt,
         int $itemLimit,
     ): array {
+        return $this->buildResult(
+            $filters,
+            $projects,
+            $marginReport,
+            $wipReport,
+            $planFactItems,
+            $calendarItems,
+            $generatedAt,
+            $itemLimit,
+        )->toArray();
+    }
+
+    public function buildResult(
+        CfoCommandCenterFilters $filters,
+        array $projects,
+        array $marginReport,
+        array $wipReport,
+        array $planFactItems,
+        array $calendarItems,
+        string $generatedAt,
+        int $itemLimit,
+    ): ProjectPortfolioProjectionResult {
         $rows = $this->rows($filters, $projects, $marginReport, $wipReport, $planFactItems, $calendarItems);
         $summary = $this->summary($projects, $rows, $marginReport, $wipReport);
 
-        return [
+        return ProjectPortfolioProjectionResult::fromAggregator($rows, [
             'available' => true,
             'summary' => $summary,
             'items' => array_slice($this->problemRows($rows), 0, $itemLimit),
@@ -43,7 +66,7 @@ final class CfoProjectPortfolioAggregator
                     'cash_gap' => '/api/v1/admin/budgeting/cfo-command-center',
                 ],
             ],
-        ];
+        ]);
     }
 
     private function rows(

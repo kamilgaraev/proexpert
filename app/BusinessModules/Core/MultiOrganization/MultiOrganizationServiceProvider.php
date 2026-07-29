@@ -1,7 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\MultiOrganization;
 
+use App\BusinessModules\Core\MultiOrganization\Reporting\Listeners\ProjectHoldingAllocationFacts;
+use App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid;
 use Illuminate\Support\ServiceProvider;
 use App\BusinessModules\Core\MultiOrganization\Services\MultiOrganizationHelperService;
 use App\BusinessModules\Core\MultiOrganization\Contracts\OrganizationScopeInterface;
@@ -63,6 +67,7 @@ class MultiOrganizationServiceProvider extends ServiceProvider
             \App\Events\ProjectCreated::class,
             AutoAddParentToProject::class
         );
+        Event::listen(PaymentDocumentPaid::class, ProjectHoldingAllocationFacts::class);
     }
 
     private function isMultiOrgActiveForOrganization(int $orgId): bool
