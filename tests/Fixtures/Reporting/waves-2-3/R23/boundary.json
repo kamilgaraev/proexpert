@@ -1,0 +1,18 @@
+{
+  "report_code": "quality_defect_flow",
+  "formula_version": "defect-flow.v1",
+  "input": {
+    "from_status": "verified",
+    "to_status": "in_progress",
+    "cohort_at": "2026-06-01T00:00:00+03:00",
+    "occurred_at": "2026-07-20T00:00:00+03:00",
+    "resolved_at": "2026-07-10T00:00:00+03:00",
+    "closure_evidence_present": true
+  },
+  "expected": {
+    "reopened": true,
+    "mature_numerator": "0",
+    "mature_denominator": "1",
+    "mature_ratio": "0.0000"
+  }
+}

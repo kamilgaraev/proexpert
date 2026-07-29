@@ -10,11 +10,11 @@ use App\BusinessModules\Features\SafetyManagement\Models\SafetyBriefing;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyBriefingParticipant;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyCorrectiveAction;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyEmployeeRequirement;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspection;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspectionFinding;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspectionItem;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspectionTemplate;
-use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyMedicalExam;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyPpeIssue;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyRequirementMatrix;
@@ -22,6 +22,7 @@ use App\BusinessModules\Features\SafetyManagement\Models\SafetyTrainingRecord;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyViolation;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermitParticipant;
+use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Services\SafetyTransitionRecorder;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Models\Project;
 use App\Models\User;
@@ -37,8 +38,8 @@ final class SafetyManagementService
 {
     public function __construct(
         private readonly SafetyComplianceService $complianceService,
-    ) {
-    }
+        private readonly SafetyTransitionRecorder $transitionRecorder,
+    ) {}
 
     public function employeeCards(int $organizationId, array $filters = []): array
     {
@@ -48,7 +49,7 @@ final class SafetyManagementService
         $employees = WorkforceEmployee::query()
             ->with('user:id,name,email,current_organization_id')
             ->where('organization_id', $organizationId)
-            ->when(!empty($filters['employee_id']), fn (Builder $query) => $query->whereKey((int) $filters['employee_id']))
+            ->when(! empty($filters['employee_id']), fn (Builder $query) => $query->whereKey((int) $filters['employee_id']))
             ->when($search !== '', function (Builder $query) use ($search): void {
                 $query->where(function (Builder $scope) use ($search): void {
                     $scope->where('last_name', 'like', "%{$search}%")
@@ -80,7 +81,7 @@ final class SafetyManagementService
             ];
         }
 
-        $projectId = !empty($filters['project_id']) ? (int) $filters['project_id'] : null;
+        $projectId = ! empty($filters['project_id']) ? (int) $filters['project_id'] : null;
         $assignments = $this->currentEmployeeAssignments($organizationId, $employeeIds);
         $requirements = SafetyEmployeeRequirement::forOrganization($organizationId)
             ->with(['employee:id,last_name,first_name,middle_name', 'user:id,name', 'project:id,name', 'workType:id,name,code'])
@@ -249,8 +250,8 @@ final class SafetyManagementService
     {
         return SafetyWorkPermit::forOrganization($organizationId)
             ->with(['project:id,name', 'responsibleUser:id,name', 'participants.employee:id,last_name,first_name,middle_name'])
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->orderByDesc('created_at')
             ->paginate($perPage);
     }
@@ -259,9 +260,9 @@ final class SafetyManagementService
     {
         return SafetyIncident::forOrganization($organizationId)
             ->with(['project:id,name', 'assignedUser:id,name'])
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
-            ->when(!empty($filters['reported_by_user_id']), fn ($query) => $query->where('reported_by_user_id', (int) $filters['reported_by_user_id']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['reported_by_user_id']), fn ($query) => $query->where('reported_by_user_id', (int) $filters['reported_by_user_id']))
             ->orderByDesc('occurred_at')
             ->paginate($perPage);
     }
@@ -270,9 +271,9 @@ final class SafetyManagementService
     {
         return SafetyViolation::forOrganization($organizationId)
             ->with(['project:id,name', 'assignedUser:id,name'])
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
-            ->when(!empty($filters['assigned_to_user_id']), fn ($query) => $query->where(function ($scope) use ($filters): void {
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['assigned_to_user_id']), fn ($query) => $query->where(function ($scope) use ($filters): void {
                 $scope->where('assigned_to_user_id', (int) $filters['assigned_to_user_id'])
                     ->orWhere('created_by_user_id', (int) $filters['assigned_to_user_id']);
             }))
@@ -284,7 +285,7 @@ final class SafetyManagementService
     {
         return SafetyBriefing::forOrganization($organizationId)
             ->with(['project:id,name', 'conductedByUser:id,name', 'participants.user:id,name', 'participants.employee:id,last_name,first_name,middle_name', 'participants.signedByUser:id,name'])
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->orderByDesc('conducted_at')
             ->paginate($perPage);
     }
@@ -293,10 +294,10 @@ final class SafetyManagementService
     {
         return SafetyCorrectiveAction::forOrganization($organizationId)
             ->with(['project:id,name', 'assignedUser:id,name'])
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
-            ->when(!empty($filters['incident_id']), fn ($query) => $query->where('incident_id', (int) $filters['incident_id']))
-            ->when(!empty($filters['violation_id']), fn ($query) => $query->where('violation_id', (int) $filters['violation_id']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['incident_id']), fn ($query) => $query->where('incident_id', (int) $filters['incident_id']))
+            ->when(! empty($filters['violation_id']), fn ($query) => $query->where('violation_id', (int) $filters['violation_id']))
             ->orderByDesc('created_at')
             ->paginate($perPage);
     }
@@ -305,10 +306,10 @@ final class SafetyManagementService
     {
         return SafetyRequirementMatrix::forOrganization($organizationId)
             ->with(['project:id,name', 'workType:id,name,code'])
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['work_type_id']), fn ($query) => $query->where('work_type_id', (int) $filters['work_type_id']))
-            ->when(!empty($filters['work_category']), fn ($query) => $query->where('work_category', (string) $filters['work_category']))
-            ->when(!empty($filters['risk_level']), fn ($query) => $query->where('risk_level', (string) $filters['risk_level']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['work_type_id']), fn ($query) => $query->where('work_type_id', (int) $filters['work_type_id']))
+            ->when(! empty($filters['work_category']), fn ($query) => $query->where('work_category', (string) $filters['work_category']))
+            ->when(! empty($filters['risk_level']), fn ($query) => $query->where('risk_level', (string) $filters['risk_level']))
             ->when(array_key_exists('is_active', $filters), fn ($query) => $query->where('is_active', (bool) $filters['is_active']))
             ->orderByDesc('is_active')
             ->orderBy('work_category')
@@ -363,10 +364,10 @@ final class SafetyManagementService
     {
         return SafetyEmployeeRequirement::forOrganization($organizationId)
             ->with(['employee:id,last_name,first_name,middle_name', 'user:id,name', 'project:id,name', 'workType:id,name,code'])
-            ->when(!empty($filters['employee_id']), fn ($query) => $query->where('employee_id', (int) $filters['employee_id']))
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['work_category']), fn ($query) => $query->where('work_category', (string) $filters['work_category']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['employee_id']), fn ($query) => $query->where('employee_id', (int) $filters['employee_id']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['work_category']), fn ($query) => $query->where('work_category', (string) $filters['work_category']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->orderByDesc('valid_until')
             ->paginate($perPage);
     }
@@ -428,9 +429,9 @@ final class SafetyManagementService
     {
         return SafetyTrainingRecord::forOrganization($organizationId)
             ->with(['employee:id,last_name,first_name,middle_name', 'user:id,name'])
-            ->when(!empty($filters['employee_id']), fn ($query) => $query->where('employee_id', (int) $filters['employee_id']))
-            ->when(!empty($filters['program_code']), fn ($query) => $query->where('program_code', (string) $filters['program_code']))
-            ->when(!empty($filters['result']), fn ($query) => $query->where('result', (string) $filters['result']))
+            ->when(! empty($filters['employee_id']), fn ($query) => $query->where('employee_id', (int) $filters['employee_id']))
+            ->when(! empty($filters['program_code']), fn ($query) => $query->where('program_code', (string) $filters['program_code']))
+            ->when(! empty($filters['result']), fn ($query) => $query->where('result', (string) $filters['result']))
             ->orderByDesc('valid_until')
             ->paginate($perPage);
     }
@@ -485,9 +486,9 @@ final class SafetyManagementService
     {
         return SafetyMedicalExam::forOrganization($organizationId)
             ->with(['employee:id,last_name,first_name,middle_name'])
-            ->when(!empty($filters['employee_id']), fn ($query) => $query->where('employee_id', (int) $filters['employee_id']))
-            ->when(!empty($filters['exam_type']), fn ($query) => $query->where('exam_type', (string) $filters['exam_type']))
-            ->when(!empty($filters['result']), fn ($query) => $query->where('result', (string) $filters['result']))
+            ->when(! empty($filters['employee_id']), fn ($query) => $query->where('employee_id', (int) $filters['employee_id']))
+            ->when(! empty($filters['exam_type']), fn ($query) => $query->where('exam_type', (string) $filters['exam_type']))
+            ->when(! empty($filters['result']), fn ($query) => $query->where('result', (string) $filters['result']))
             ->orderByDesc('valid_until')
             ->paginate($perPage);
     }
@@ -537,9 +538,9 @@ final class SafetyManagementService
     {
         return SafetyPpeIssue::forOrganization($organizationId)
             ->with(['employee:id,last_name,first_name,middle_name'])
-            ->when(!empty($filters['employee_id']), fn ($query) => $query->where('employee_id', (int) $filters['employee_id']))
-            ->when(!empty($filters['ppe_code']), fn ($query) => $query->where('ppe_code', (string) $filters['ppe_code']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['employee_id']), fn ($query) => $query->where('employee_id', (int) $filters['employee_id']))
+            ->when(! empty($filters['ppe_code']), fn ($query) => $query->where('ppe_code', (string) $filters['ppe_code']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->orderByDesc('issued_at')
             ->paginate($perPage);
     }
@@ -643,7 +644,7 @@ final class SafetyManagementService
     public function paginateInspectionTemplates(int $organizationId, int $perPage = 20, array $filters = []): LengthAwarePaginator
     {
         return SafetyInspectionTemplate::forOrganization($organizationId)
-            ->when(!empty($filters['inspection_type']), fn ($query) => $query->where('inspection_type', (string) $filters['inspection_type']))
+            ->when(! empty($filters['inspection_type']), fn ($query) => $query->where('inspection_type', (string) $filters['inspection_type']))
             ->when(array_key_exists('is_active', $filters), fn ($query) => $query->where('is_active', (bool) $filters['is_active']))
             ->latest()
             ->paginate($perPage);
@@ -666,9 +667,9 @@ final class SafetyManagementService
         return SafetyInspection::forOrganization($organizationId)
             ->with(['project:id,name', 'items', 'findings'])
             ->withCount('findings')
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
-            ->when(!empty($filters['inspection_type']), fn ($query) => $query->where('inspection_type', (string) $filters['inspection_type']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['inspection_type']), fn ($query) => $query->where('inspection_type', (string) $filters['inspection_type']))
             ->latest()
             ->paginate($perPage);
     }
@@ -680,7 +681,7 @@ final class SafetyManagementService
             ? null
             : $this->findInspectionTemplate($organizationId, (int) $data['template_id']);
 
-        if (!empty($data['permit_id'])) {
+        if (! empty($data['permit_id'])) {
             $this->assertPermitBelongsToOrganization((int) $data['permit_id'], $organizationId, (int) $data['project_id']);
         }
 
@@ -714,7 +715,7 @@ final class SafetyManagementService
 
     public function completeInspection(SafetyInspection $inspection, int $userId, array $data): SafetyInspection
     {
-        if (!in_array($inspection->status, ['planned', 'in_progress'], true)) {
+        if (! in_array($inspection->status, ['planned', 'in_progress'], true)) {
             throw new DomainException(trans_message('safety_management.errors.inspection_complete_invalid_status'));
         }
 
@@ -753,9 +754,9 @@ final class SafetyManagementService
     {
         return SafetyInspectionFinding::forOrganization($organizationId)
             ->with(['project:id,name', 'assignedUser:id,name'])
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
-            ->when(!empty($filters['assigned_to_user_id']), fn ($query) => $query->where('assigned_to_user_id', (int) $filters['assigned_to_user_id']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['assigned_to_user_id']), fn ($query) => $query->where('assigned_to_user_id', (int) $filters['assigned_to_user_id']))
             ->latest()
             ->paginate($perPage);
     }
@@ -827,7 +828,7 @@ final class SafetyManagementService
                 'metadata' => $data['metadata'] ?? null,
             ]);
 
-            if (!empty($data['participants'])) {
+            if (! empty($data['participants'])) {
                 $this->replacePermitParticipants($permit, $data['participants']);
             }
 
@@ -851,8 +852,8 @@ final class SafetyManagementService
                         }
                     });
             })
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->orderBy('valid_until')
             ->get()
             ->all();
@@ -883,7 +884,7 @@ final class SafetyManagementService
         $employee = $this->employeeForUser($organizationId, $userId);
 
         $permits = SafetyWorkPermit::forOrganization($organizationId)
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->where(function ($query) use ($userId, $employee): void {
                 $query->where('responsible_user_id', $userId)
                     ->orWhereHas('participants', static function ($relation) use ($userId, $employee): void {
@@ -896,14 +897,14 @@ final class SafetyManagementService
             });
 
         $violations = SafetyViolation::forOrganization($organizationId)
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->where(function ($query) use ($userId): void {
                 $query->where('assigned_to_user_id', $userId)
                     ->orWhere('created_by_user_id', $userId);
             });
 
         $findings = SafetyInspectionFinding::forOrganization($organizationId)
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->where('assigned_to_user_id', $userId);
 
         $dashboard['mine'] = [
@@ -954,7 +955,7 @@ final class SafetyManagementService
     ): ?SafetyBriefing {
         $briefing = $this->findMobileBriefing($organizationId, $userId, $briefingId);
 
-        if (!$briefing instanceof SafetyBriefing) {
+        if (! $briefing instanceof SafetyBriefing) {
             return null;
         }
 
@@ -965,7 +966,7 @@ final class SafetyManagementService
             && $participant->employee_id !== null
             && (int) $participant->employee_id === (int) $employee->id;
 
-        if (!$matchesUser && !$matchesEmployee) {
+        if (! $matchesUser && ! $matchesEmployee) {
             throw new DomainException(trans_message('safety_management.errors.briefing_participant_not_found'));
         }
 
@@ -978,7 +979,7 @@ final class SafetyManagementService
     {
         $employee = $this->employeeForUser($organizationId, $userId);
 
-        if (!$employee instanceof WorkforceEmployee) {
+        if (! $employee instanceof WorkforceEmployee) {
             return null;
         }
 
@@ -1103,7 +1104,7 @@ final class SafetyManagementService
 
     public function suspendPermit(SafetyWorkPermit $permit, int $userId, string $reason): SafetyWorkPermit
     {
-        if (!in_array($permit->status, ['approved', 'active'], true)) {
+        if (! in_array($permit->status, ['approved', 'active'], true)) {
             throw new DomainException(trans_message('safety_management.errors.permit_suspend_invalid_status'));
         }
 
@@ -1141,7 +1142,7 @@ final class SafetyManagementService
 
     public function closePermit(SafetyWorkPermit $permit, int $userId, string $comment): SafetyWorkPermit
     {
-        if (!in_array($permit->status, ['approved', 'active', 'suspended'], true)) {
+        if (! in_array($permit->status, ['approved', 'active', 'suspended'], true)) {
             throw new DomainException(trans_message('safety_management.errors.permit_close_invalid_status'));
         }
 
@@ -1159,7 +1160,7 @@ final class SafetyManagementService
     {
         $this->assertProjectBelongsToOrganization((int) $data['project_id'], $organizationId);
 
-        return SafetyIncident::query()->create([
+        $incident = SafetyIncident::query()->create([
             'organization_id' => $organizationId,
             'project_id' => (int) $data['project_id'],
             'reported_by_user_id' => $userId,
@@ -1173,7 +1174,10 @@ final class SafetyManagementService
             'description' => $data['description'] ?? null,
             'immediate_actions' => $data['immediate_actions'] ?? null,
             'metadata' => $data['metadata'] ?? null,
-        ])->fresh(['project:id,name', 'assignedUser:id,name']);
+        ]);
+        $this->transitionRecorder->record($incident, null, 'reported', $userId, $incident->created_at);
+
+        return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
     }
 
     public function findIncident(int $organizationId, int $id): ?SafetyIncident
@@ -1189,12 +1193,14 @@ final class SafetyManagementService
             throw new DomainException(trans_message('safety_management.errors.incident_triage_invalid_status'));
         }
 
+        $changedAt = now();
         $incident->update([
             'status' => 'triage',
             'triaged_by_user_id' => $userId,
-            'triaged_at' => now(),
+            'triaged_at' => $changedAt,
             'triage_comment' => $comment,
         ]);
+        $this->transitionRecorder->record($incident, 'reported', 'triage', $userId, $changedAt);
 
         return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
     }
@@ -1207,11 +1213,13 @@ final class SafetyManagementService
 
         $this->assertOptionalUserBelongsToOrganization($assigneeId, (int) $incident->organization_id);
 
+        $changedAt = now();
         $incident->update([
             'status' => 'investigation',
             'assigned_to_user_id' => $assigneeId,
-            'investigation_started_at' => now(),
+            'investigation_started_at' => $changedAt,
         ]);
+        $this->transitionRecorder->record($incident, 'triage', 'investigation', $assigneeId, $changedAt);
 
         return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
     }
@@ -1222,27 +1230,32 @@ final class SafetyManagementService
             throw new DomainException(trans_message('safety_management.errors.incident_corrective_actions_invalid_status'));
         }
 
+        $changedAt = now();
         $incident->update([
             'status' => 'corrective_actions',
             'root_cause' => trim((string) $rootCause) ?: $incident->root_cause,
-            'corrective_actions_started_at' => now(),
+            'corrective_actions_started_at' => $changedAt,
         ]);
+        $this->transitionRecorder->record($incident, 'investigation', 'corrective_actions', null, $changedAt);
 
         return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
     }
 
     public function cancelIncident(SafetyIncident $incident, int $userId, string $reason): SafetyIncident
     {
-        if (!in_array($incident->status, ['reported', 'triage', 'investigation'], true)) {
+        if (! in_array($incident->status, ['reported', 'triage', 'investigation'], true)) {
             throw new DomainException(trans_message('safety_management.errors.incident_cancel_invalid_status'));
         }
 
+        $fromStatus = (string) $incident->status;
+        $changedAt = now();
         $incident->update([
             'status' => 'cancelled',
             'cancelled_by_user_id' => $userId,
-            'cancelled_at' => now(),
+            'cancelled_at' => $changedAt,
             'cancellation_reason' => trim($reason),
         ]);
+        $this->transitionRecorder->record($incident, $fromStatus, 'cancelled', $userId, $changedAt);
 
         return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
     }
@@ -1271,18 +1284,20 @@ final class SafetyManagementService
                 ->where('status', 'verified')
                 ->exists();
 
-            if ($openActions || !$hasVerifiedActions) {
+            if ($openActions || ! $hasVerifiedActions) {
                 throw new DomainException(trans_message('safety_management.errors.incident_close_corrective_actions_required'));
             }
         }
 
+        $changedAt = now();
         $incident->update([
             'status' => 'closed',
             'root_cause' => $rootCause,
             'corrective_actions' => $correctiveActions,
-            'closed_at' => now(),
+            'closed_at' => $changedAt,
             'closed_by_user_id' => $userId,
         ]);
+        $this->transitionRecorder->record($incident, 'corrective_actions', 'closed', $userId, $changedAt);
 
         return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
     }
@@ -1292,7 +1307,7 @@ final class SafetyManagementService
         $this->assertProjectBelongsToOrganization((int) $data['project_id'], $organizationId);
         $this->assertOptionalUserBelongsToOrganization($data['assigned_to_user_id'] ?? null, $organizationId);
 
-        return SafetyViolation::query()->create([
+        $violation = SafetyViolation::query()->create([
             'organization_id' => $organizationId,
             'project_id' => (int) $data['project_id'],
             'created_by_user_id' => $userId,
@@ -1306,7 +1321,10 @@ final class SafetyManagementService
             'corrective_action' => $data['corrective_action'] ?? null,
             'due_date' => $data['due_date'] ?? null,
             'metadata' => $data['metadata'] ?? null,
-        ])->fresh(['project:id,name', 'assignedUser:id,name']);
+        ]);
+        $this->transitionRecorder->record($violation, null, 'open', $userId, $violation->created_at);
+
+        return $violation->fresh(['project:id,name', 'assignedUser:id,name']);
     }
 
     public function findViolation(int $organizationId, int $id): ?SafetyViolation
@@ -1326,12 +1344,14 @@ final class SafetyManagementService
             throw new DomainException(trans_message('safety_management.errors.violation_resolution_required'));
         }
 
+        $changedAt = now();
         $violation->update([
             'status' => 'resolved',
-            'resolved_at' => now(),
+            'resolved_at' => $changedAt,
             'resolved_by_user_id' => $userId,
             'resolution_comment' => trim($comment),
         ]);
+        $this->transitionRecorder->record($violation, 'open', 'resolved', $userId, $changedAt);
 
         return $violation->fresh(['project:id,name', 'assignedUser:id,name']);
     }
@@ -1533,8 +1553,8 @@ final class SafetyManagementService
     {
         $incident = null;
         $violation = null;
-        $hasIncident = !empty($data['incident_id']);
-        $hasViolation = !empty($data['violation_id']);
+        $hasIncident = ! empty($data['incident_id']);
+        $hasViolation = ! empty($data['violation_id']);
 
         if ($hasIncident && $hasViolation) {
             throw new DomainException(trans_message('safety_management.errors.corrective_action_single_source_required'));
@@ -1561,7 +1581,7 @@ final class SafetyManagementService
         $projectId = (int) ($incident?->project_id ?? $violation?->project_id);
         $this->assertOptionalUserBelongsToOrganization($data['assigned_to_user_id'] ?? null, $organizationId);
 
-        return SafetyCorrectiveAction::query()->create([
+        $action = SafetyCorrectiveAction::query()->create([
             'organization_id' => $organizationId,
             'project_id' => $projectId,
             'incident_id' => $incident?->id,
@@ -1576,7 +1596,10 @@ final class SafetyManagementService
             'status' => 'open',
             'due_date' => $data['due_date'] ?? null,
             'metadata' => $data['metadata'] ?? null,
-        ])->fresh(['project:id,name', 'assignedUser:id,name']);
+        ]);
+        $this->transitionRecorder->record($action, null, 'open', $userId, $action->created_at);
+
+        return $action->fresh(['project:id,name', 'assignedUser:id,name']);
     }
 
     public function findCorrectiveAction(int $organizationId, int $id): ?SafetyCorrectiveAction
@@ -1596,12 +1619,14 @@ final class SafetyManagementService
             throw new DomainException(trans_message('safety_management.errors.corrective_action_resolution_required'));
         }
 
+        $changedAt = now();
         $action->update([
             'status' => 'resolved',
             'resolved_by_user_id' => $userId,
-            'resolved_at' => now(),
+            'resolved_at' => $changedAt,
             'resolution_comment' => trim($comment),
         ]);
+        $this->transitionRecorder->record($action, 'open', 'resolved', $userId, $changedAt);
 
         return $action->fresh(['project:id,name', 'assignedUser:id,name']);
     }
@@ -1612,12 +1637,14 @@ final class SafetyManagementService
             throw new DomainException(trans_message('safety_management.errors.corrective_action_verify_invalid_status'));
         }
 
+        $changedAt = now();
         $action->update([
             'status' => 'verified',
             'verified_by_user_id' => $userId,
-            'verified_at' => now(),
+            'verified_at' => $changedAt,
             'verification_comment' => trim($comment),
         ]);
+        $this->transitionRecorder->record($action, 'resolved', 'verified', $userId, $changedAt);
 
         return $action->fresh(['project:id,name', 'assignedUser:id,name']);
     }
@@ -1688,7 +1715,7 @@ final class SafetyManagementService
         $participants = $permit->participants()->with('employee')->get();
 
         foreach ($participants as $participant) {
-            if (!$participant instanceof SafetyWorkPermitParticipant || $participant->employee_id === null) {
+            if (! $participant instanceof SafetyWorkPermitParticipant || $participant->employee_id === null) {
                 continue;
             }
 
@@ -1794,7 +1821,7 @@ final class SafetyManagementService
             ->where('organization_id', $organizationId)
             ->find($employeeId);
 
-        if (!$employee instanceof WorkforceEmployee) {
+        if (! $employee instanceof WorkforceEmployee) {
             throw new DomainException(trans_message('safety_management.errors.employee_not_found'));
         }
 
@@ -1823,8 +1850,8 @@ final class SafetyManagementService
                     $relation->orWhere('employee_id', $employee->id);
                 }
             })
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']));
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']));
     }
 
     private function createBriefingParticipant(SafetyBriefing $briefing, array $participant): SafetyBriefingParticipant
@@ -1869,7 +1896,7 @@ final class SafetyManagementService
             ->where('id', $participantId)
             ->first();
 
-        if (!$participant instanceof SafetyBriefingParticipant) {
+        if (! $participant instanceof SafetyBriefingParticipant) {
             throw new DomainException(trans_message('safety_management.errors.briefing_participant_not_found'));
         }
 
@@ -1951,7 +1978,7 @@ final class SafetyManagementService
     {
         $template = SafetyInspectionTemplate::forOrganization($organizationId)->find($id);
 
-        if (!$template instanceof SafetyInspectionTemplate) {
+        if (! $template instanceof SafetyInspectionTemplate) {
             throw new DomainException(trans_message('safety_management.errors.inspection_template_not_found'));
         }
 
@@ -1965,7 +1992,7 @@ final class SafetyManagementService
             ->whereKey($permitId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('safety_management.errors.permit_not_found'));
         }
     }
@@ -1981,7 +2008,7 @@ final class SafetyManagementService
         $normalized = [];
 
         foreach ($source as $index => $item) {
-            if (!is_array($item)) {
+            if (! is_array($item)) {
                 continue;
             }
 
@@ -1992,7 +2019,7 @@ final class SafetyManagementService
             }
 
             $normalized[] = [
-                'item_code' => (string) ($item['item_code'] ?? $item['code'] ?? 'item_' . ($index + 1)),
+                'item_code' => (string) ($item['item_code'] ?? $item['code'] ?? 'item_'.($index + 1)),
                 'title' => $title,
                 'requirement_text' => $item['requirement_text'] ?? $item['description'] ?? null,
                 'severity' => $item['severity'] ?? 'major',
@@ -2010,9 +2037,9 @@ final class SafetyManagementService
     {
         $query = $inspection->items();
 
-        if (!empty($payload['id'])) {
+        if (! empty($payload['id'])) {
             $query->whereKey((int) $payload['id']);
-        } elseif (!empty($payload['item_code'])) {
+        } elseif (! empty($payload['item_code'])) {
             $query->where('item_code', (string) $payload['item_code']);
         } else {
             throw new DomainException(trans_message('safety_management.errors.inspection_item_not_found'));
@@ -2020,7 +2047,7 @@ final class SafetyManagementService
 
         $item = $query->first();
 
-        if (!$item instanceof SafetyInspectionItem) {
+        if (! $item instanceof SafetyInspectionItem) {
             throw new DomainException(trans_message('safety_management.errors.inspection_item_not_found'));
         }
 
@@ -2073,22 +2100,22 @@ final class SafetyManagementService
 
     private function assertInspectionReferenceBelongsToProject(int $organizationId, int $projectId, array $data): void
     {
-        if (!empty($data['inspection_id'])) {
+        if (! empty($data['inspection_id'])) {
             $inspection = SafetyInspection::forOrganization($organizationId)
                 ->where('project_id', $projectId)
                 ->whereKey((int) $data['inspection_id'])
                 ->first();
 
-            if (!$inspection instanceof SafetyInspection) {
+            if (! $inspection instanceof SafetyInspection) {
                 throw new DomainException(trans_message('safety_management.errors.inspection_not_found'));
             }
 
-            if (!empty($data['inspection_item_id'])) {
+            if (! empty($data['inspection_item_id'])) {
                 $exists = $inspection->items()
                     ->whereKey((int) $data['inspection_item_id'])
                     ->exists();
 
-                if (!$exists) {
+                if (! $exists) {
                     throw new DomainException(trans_message('safety_management.errors.inspection_item_not_found'));
                 }
             }
@@ -2096,7 +2123,7 @@ final class SafetyManagementService
             return;
         }
 
-        if (!empty($data['inspection_item_id'])) {
+        if (! empty($data['inspection_item_id'])) {
             throw new DomainException(trans_message('safety_management.errors.inspection_not_found'));
         }
     }
@@ -2108,7 +2135,7 @@ final class SafetyManagementService
             ->where('organization_id', $organizationId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('safety_management.errors.project_not_found'));
         }
     }
@@ -2129,7 +2156,7 @@ final class SafetyManagementService
             })
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('safety_management.errors.user_not_found'));
         }
     }
@@ -2154,7 +2181,7 @@ final class SafetyManagementService
             ->where('organization_id', $organizationId)
             ->exists();
 
-        if (!$exists) {
+        if (! $exists) {
             throw new DomainException(trans_message('safety_management.errors.work_type_not_found'));
         }
     }

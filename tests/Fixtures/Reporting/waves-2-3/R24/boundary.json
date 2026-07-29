@@ -1,0 +1,17 @@
+{
+  "report_code": "safety_incident_actions",
+  "formula_version": "safety-actions.v1",
+  "input": {
+    "qualifying_incident_count": 2,
+    "exposure_hours": null,
+    "frequency_multiplier": 200000,
+    "action_status": "verified",
+    "resolved_at": "2026-07-20T10:00:00+03:00",
+    "verified_at": "2026-07-20T11:00:00+03:00",
+    "evidence_id": null
+  },
+  "expected": {
+    "incident_frequency": null,
+    "action_closed": false
+  }
+}

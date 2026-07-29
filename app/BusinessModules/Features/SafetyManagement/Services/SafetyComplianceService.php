@@ -80,6 +80,35 @@ final class SafetyComplianceService
         );
     }
 
+    public function checkPinnedRequirements(SafetyComplianceContext $context, array $requirements): array
+    {
+        $date = $context->date === null
+            ? CarbonImmutable::today()
+            : CarbonImmutable::instance($context->date);
+        $employee = $this->findEmployee($context);
+        $results = [];
+
+        foreach ($requirements as $requirement) {
+            if (! is_array($requirement)) {
+                throw new DomainException('REPORT_SOURCE_UNAVAILABLE');
+            }
+
+            $normalized = $this->normalizeRequirementEntry([
+                'type' => $requirement['type'] ?? null,
+                'code' => $requirement['code'] ?? null,
+                'label' => $requirement['label'] ?? $requirement['code'] ?? null,
+                'required' => $requirement['mandatory'] ?? true,
+            ]);
+            if ($normalized === null) {
+                throw new DomainException('REPORT_SOURCE_UNAVAILABLE');
+            }
+
+            $results[] = $this->evaluateRequirement($context, $employee, $normalized, $date);
+        }
+
+        return $results;
+    }
+
     private function findEmployee(SafetyComplianceContext $context): WorkforceEmployee
     {
         $employee = WorkforceEmployee::query()
@@ -87,7 +116,7 @@ final class SafetyComplianceService
             ->whereKey($context->employeeId)
             ->first();
 
-        if (!$employee instanceof WorkforceEmployee) {
+        if (! $employee instanceof WorkforceEmployee) {
             throw new DomainException(trans_message('safety_management.errors.employee_not_found'));
         }
 
@@ -148,7 +177,7 @@ final class SafetyComplianceService
         $requirements = [];
 
         foreach ($matrices as $matrix) {
-            if (!$matrix instanceof SafetyRequirementMatrix) {
+            if (! $matrix instanceof SafetyRequirementMatrix) {
                 continue;
             }
 
@@ -207,11 +236,11 @@ final class SafetyComplianceService
         }
 
         foreach ($requirements as $type => $items) {
-            if (!is_array($items)) {
+            if (! is_array($items)) {
                 continue;
             }
 
-            if (!array_is_list($items)) {
+            if (! array_is_list($items)) {
                 $items = [$items];
             }
 
@@ -359,7 +388,7 @@ final class SafetyComplianceService
             ->orderByDesc('completed_at')
             ->first();
 
-        if (!$record instanceof SafetyTrainingRecord) {
+        if (! $record instanceof SafetyTrainingRecord) {
             return $this->result($requirement, 'missing', $this->severity($requirement));
         }
 
@@ -367,7 +396,7 @@ final class SafetyComplianceService
             return $this->result($requirement, 'failed', $this->severity($requirement), $record->valid_until, 'training', (int) $record->id);
         }
 
-        if (!$this->validOn($record->valid_until, $date)) {
+        if (! $this->validOn($record->valid_until, $date)) {
             return $this->result($requirement, 'expired', $this->severity($requirement), $record->valid_until, 'training', (int) $record->id);
         }
 
@@ -387,7 +416,7 @@ final class SafetyComplianceService
             ->orderByDesc('completed_at')
             ->first();
 
-        if (!$exam instanceof SafetyMedicalExam) {
+        if (! $exam instanceof SafetyMedicalExam) {
             return $this->result($requirement, 'missing', $this->severity($requirement));
         }
 
@@ -395,7 +424,7 @@ final class SafetyComplianceService
             return $this->result($requirement, 'not_fit', $this->severity($requirement), $exam->valid_until, 'medical_exam', (int) $exam->id);
         }
 
-        if (!$this->validOn($exam->valid_until, $date)) {
+        if (! $this->validOn($exam->valid_until, $date)) {
             return $this->result($requirement, 'expired', $this->severity($requirement), $exam->valid_until, 'medical_exam', (int) $exam->id);
         }
 
@@ -420,11 +449,11 @@ final class SafetyComplianceService
             ->orderByDesc('issued_at')
             ->first();
 
-        if (!$issue instanceof SafetyPpeIssue) {
+        if (! $issue instanceof SafetyPpeIssue) {
             return $this->result($requirement, 'missing', $this->severity($requirement));
         }
 
-        if (!$this->validOn($issue->valid_until, $date)) {
+        if (! $this->validOn($issue->valid_until, $date)) {
             return $this->result($requirement, 'expired', $this->severity($requirement), $issue->valid_until, 'ppe', (int) $issue->id);
         }
 
@@ -457,7 +486,7 @@ final class SafetyComplianceService
             ->latest('signed_at')
             ->first();
 
-        if (!$participant instanceof SafetyBriefingParticipant) {
+        if (! $participant instanceof SafetyBriefingParticipant) {
             return $this->result($requirement, 'missing', $this->severity($requirement));
         }
 

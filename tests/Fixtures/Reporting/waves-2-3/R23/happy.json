@@ -1,0 +1,13 @@
+{
+  "report_code": "quality_defect_flow",
+  "formula_version": "defect-flow.v1",
+  "input": {
+    "opening": 4,
+    "created": 2,
+    "reopened": 1,
+    "closed": 3
+  },
+  "expected": {
+    "closing": 4
+  }
+}

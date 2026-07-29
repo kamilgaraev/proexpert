@@ -19,6 +19,6 @@ final readonly class SafetyComplianceContext
         public ?string $positionName = null,
         public ?int $permitId = null,
         public ?int $workOrderLineId = null,
-    ) {
-    }
+        public ?int $siteId = null,
+    ) {}
 }
