@@ -105,6 +105,17 @@ return [
             'after_commit' => false,
         ],
 
+        'redis_reports' => [
+            'driver' => 'redis',
+            'connection' => 'default',
+            'queue' => 'reports',
+            'job_timeout' => 900,
+            'execution_lease_seconds' => 960,
+            'retry_after' => 1200,
+            'block_for' => null,
+            'after_commit' => false,
+        ],
+
     ],
 
     /*

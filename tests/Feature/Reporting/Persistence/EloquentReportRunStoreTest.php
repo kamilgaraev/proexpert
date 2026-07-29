@@ -94,6 +94,7 @@ final class EloquentReportRunStoreTest extends TestCase
                 'report_runs_ready_identity_check',
                 'report_runs_terminal_timestamps_check',
                 'report_runs_expired_seal_check',
+                'report_runs_correlation_lineage_check',
             ])
             ->pluck('conname')
             ->sort()
@@ -102,6 +103,7 @@ final class EloquentReportRunStoreTest extends TestCase
 
         self::assertSame([
             'report_runs_classification_check',
+            'report_runs_correlation_lineage_check',
             'report_runs_definition_hash_check',
             'report_runs_definition_snapshot_hash_check',
             'report_runs_error_code_check',
@@ -130,6 +132,7 @@ final class EloquentReportRunStoreTest extends TestCase
                 'report_runs_queued_idx',
                 'report_runs_execution_lease_idx',
                 'report_runs_retention_idx',
+                'report_runs_execution_lease_token_unique',
             ])
             ->pluck('indexname')
             ->sort()
@@ -138,11 +141,21 @@ final class EloquentReportRunStoreTest extends TestCase
 
         self::assertSame([
             'report_runs_execution_lease_idx',
+            'report_runs_execution_lease_token_unique',
             'report_runs_org_id_lookup',
             'report_runs_org_idempotency_unique',
             'report_runs_queued_idx',
             'report_runs_retention_idx',
         ], $indexes);
+
+        self::assertSame(
+            ['data_type' => 'text', 'is_nullable' => 'YES'],
+            (array) DB::table('information_schema.columns')
+                ->where('table_schema', 'public')
+                ->where('table_name', 'report_runs')
+                ->where('column_name', 'correlation_lineage_id')
+                ->first(['data_type', 'is_nullable']),
+        );
     }
 
     public function test_official_snapshot_persists_and_hydrates_the_complete_seal(): void
@@ -622,6 +635,322 @@ final class EloquentReportRunStoreTest extends TestCase
         }
     }
 
+    public function test_same_token_live_claim_renews_without_restarting_progress_or_repeating_audit(): void
+    {
+        $audit = new FakeReportTransitionAudit();
+        $store = $this->store($audit);
+        $context = (new ReportExecutionContextBuilder())->build();
+        $run = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('renew-live-lease'));
+        $startedAt = new DateTimeImmutable('2026-07-26T09:55:00.111111Z');
+        $store->claimMaterialization(
+            $context,
+            $run->id,
+            self::LEASE_TOKEN,
+            new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
+            $startedAt,
+        );
+        ReportRunRecord::query()->whereKey($run->id)->update(['progress' => 41]);
+        $auditCount = count($audit->events());
+
+        $renewed = $store->claimMaterialization(
+            $context,
+            $run->id,
+            self::LEASE_TOKEN,
+            new DateTimeImmutable('2026-07-26T10:15:00.333333Z'),
+            new DateTimeImmutable('2026-07-26T09:59:59.222222Z'),
+        );
+
+        self::assertSame(ReportRunStatus::MATERIALIZING, $renewed->status);
+        self::assertSame(41, $renewed->progress);
+        self::assertCount($auditCount, $audit->events());
+        $record = ReportRunRecord::query()->findOrFail($run->id);
+        self::assertSame('2026-07-26 09:55:00.111111+00', $record->getRawOriginal('started_at'));
+        self::assertSame('2026-07-26 10:15:00.333333+00', $record->getRawOriginal('execution_lease_expires_at'));
+        self::assertSame('2026-07-26 09:59:59.222222+00', $record->getRawOriginal('execution_heartbeat_at'));
+    }
+
+    public function test_same_token_renewal_is_monotonic_and_equality_is_idempotent(): void
+    {
+        $audit = new FakeReportTransitionAudit();
+        $store = $this->store($audit);
+        $context = (new ReportExecutionContextBuilder())->build();
+        $run = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('monotonic-renewal'));
+        $store->claimMaterialization(
+            $context,
+            $run->id,
+            self::LEASE_TOKEN,
+            new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
+            new DateTimeImmutable('2026-07-26T09:55:00.111111Z'),
+        );
+        $auditCount = count($audit->events());
+        $initial = ReportRunRecord::query()->whereKey($run->id)->firstOrFail();
+        $initialProjection = [
+            'lease' => $initial->getRawOriginal('execution_lease_expires_at'),
+            'heartbeat' => $initial->getRawOriginal('execution_heartbeat_at'),
+            'started' => $initial->getRawOriginal('started_at'),
+            'progress' => $initial->progress,
+            'updated' => $initial->getRawOriginal('updated_at'),
+        ];
+
+        foreach ([
+            [
+                'lease' => '2026-07-26T10:00:00.899999Z',
+                'occurred' => '2026-07-26T09:56:00.222222Z',
+            ],
+        ] as $proposal) {
+            try {
+                $store->claimMaterialization(
+                    $context,
+                    $run->id,
+                    self::LEASE_TOKEN,
+                    new DateTimeImmutable($proposal['lease']),
+                    new DateTimeImmutable($proposal['occurred']),
+                );
+                self::fail('Expected regressive execution lease renewal to be fenced.');
+            } catch (ReportContractException $exception) {
+                self::assertSame(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY, $exception->errorCode);
+            }
+
+            $unchanged = ReportRunRecord::query()->whereKey($run->id)->firstOrFail();
+            self::assertSame($initialProjection, [
+                'lease' => $unchanged->getRawOriginal('execution_lease_expires_at'),
+                'heartbeat' => $unchanged->getRawOriginal('execution_heartbeat_at'),
+                'started' => $unchanged->getRawOriginal('started_at'),
+                'progress' => $unchanged->progress,
+                'updated' => $unchanged->getRawOriginal('updated_at'),
+            ]);
+            self::assertCount($auditCount, $audit->events());
+        }
+
+        $replayed = $store->claimMaterialization(
+            $context,
+            $run->id,
+            self::LEASE_TOKEN,
+            new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
+            new DateTimeImmutable('2026-07-26T09:55:00.111111Z'),
+        );
+
+        self::assertSame(ReportRunStatus::MATERIALIZING, $replayed->status);
+        $afterReplay = ReportRunRecord::query()->whereKey($run->id)->firstOrFail();
+        self::assertSame($initialProjection, [
+            'lease' => $afterReplay->getRawOriginal('execution_lease_expires_at'),
+            'heartbeat' => $afterReplay->getRawOriginal('execution_heartbeat_at'),
+            'started' => $afterReplay->getRawOriginal('started_at'),
+            'progress' => $afterReplay->progress,
+            'updated' => $afterReplay->getRawOriginal('updated_at'),
+        ]);
+        self::assertCount($auditCount, $audit->events());
+    }
+
+    public function test_same_token_renewal_fences_heartbeat_independently_of_updated_at_and_expiry(): void
+    {
+        $audit = new FakeReportTransitionAudit();
+        $store = $this->store($audit);
+        $context = (new ReportExecutionContextBuilder())->build();
+        $run = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('heartbeat-only-renewal'));
+        $store->claimMaterialization(
+            $context,
+            $run->id,
+            self::LEASE_TOKEN,
+            new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
+            new DateTimeImmutable('2026-07-26T09:55:00.222222Z'),
+        );
+        DB::table('report_runs')->where('id', $run->id)->update([
+            'updated_at' => '2026-07-26 09:55:00.111111+00',
+        ]);
+        $auditCount = count($audit->events());
+        $before = ReportRunRecord::query()->whereKey($run->id)->firstOrFail();
+        $beforeProjection = [
+            'lease' => $before->getRawOriginal('execution_lease_expires_at'),
+            'heartbeat' => $before->getRawOriginal('execution_heartbeat_at'),
+            'started' => $before->getRawOriginal('started_at'),
+            'progress' => $before->progress,
+            'updated' => $before->getRawOriginal('updated_at'),
+        ];
+
+        try {
+            $store->claimMaterialization(
+                $context,
+                $run->id,
+                self::LEASE_TOKEN,
+                new DateTimeImmutable('2026-07-26T10:15:00.333333Z'),
+                new DateTimeImmutable('2026-07-26T09:55:00.166666Z'),
+            );
+            self::fail('Expected heartbeat-only regression to be fenced.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY, $exception->errorCode);
+        }
+
+        $after = ReportRunRecord::query()->whereKey($run->id)->firstOrFail();
+        self::assertSame($beforeProjection, [
+            'lease' => $after->getRawOriginal('execution_lease_expires_at'),
+            'heartbeat' => $after->getRawOriginal('execution_heartbeat_at'),
+            'started' => $after->getRawOriginal('started_at'),
+            'progress' => $after->progress,
+            'updated' => $after->getRawOriginal('updated_at'),
+        ]);
+        self::assertCount($auditCount, $audit->events());
+    }
+
+    public function test_same_token_renewal_fences_updated_at_independently_of_heartbeat_and_expiry(): void
+    {
+        $audit = new FakeReportTransitionAudit();
+        $store = $this->store($audit);
+        $context = (new ReportExecutionContextBuilder())->build();
+        $run = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('updated-only-renewal'));
+        $store->claimMaterialization(
+            $context,
+            $run->id,
+            self::LEASE_TOKEN,
+            new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
+            new DateTimeImmutable('2026-07-26T09:55:00.111111Z'),
+        );
+        DB::table('report_runs')->where('id', $run->id)->update([
+            'updated_at' => '2026-07-26 09:55:00.222222+00',
+        ]);
+        $auditCount = count($audit->events());
+        $before = ReportRunRecord::query()->whereKey($run->id)->firstOrFail();
+        $beforeProjection = [
+            'lease' => $before->getRawOriginal('execution_lease_expires_at'),
+            'heartbeat' => $before->getRawOriginal('execution_heartbeat_at'),
+            'started' => $before->getRawOriginal('started_at'),
+            'progress' => $before->progress,
+            'updated' => $before->getRawOriginal('updated_at'),
+        ];
+
+        try {
+            $store->claimMaterialization(
+                $context,
+                $run->id,
+                self::LEASE_TOKEN,
+                new DateTimeImmutable('2026-07-26T10:15:00.333333Z'),
+                new DateTimeImmutable('2026-07-26T09:55:00.166666Z'),
+            );
+            self::fail('Expected updated-at-only regression to be fenced.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY, $exception->errorCode);
+        }
+
+        $after = ReportRunRecord::query()->whereKey($run->id)->firstOrFail();
+        self::assertSame($beforeProjection, [
+            'lease' => $after->getRawOriginal('execution_lease_expires_at'),
+            'heartbeat' => $after->getRawOriginal('execution_heartbeat_at'),
+            'started' => $after->getRawOriginal('started_at'),
+            'progress' => $after->progress,
+            'updated' => $after->getRawOriginal('updated_at'),
+        ]);
+        self::assertCount($auditCount, $audit->events());
+    }
+
+    public function test_renewal_rejects_expired_equal_expiry_and_different_token_leases(): void
+    {
+        foreach ([
+            ['token' => self::LEASE_TOKEN, 'at' => '2026-07-26T10:00:00.900000Z'],
+            ['token' => self::LEASE_TOKEN, 'at' => '2026-07-26T10:00:00.900001Z'],
+            ['token' => '00000000-0000-4000-8000-000000000002', 'at' => '2026-07-26T09:59:59.999999Z'],
+        ] as $index => $attempt) {
+            $store = $this->store(new FakeReportTransitionAudit());
+            $context = (new ReportExecutionContextBuilder())->build();
+            $run = $store->createOrReuse(
+                $context,
+                $this->query($context),
+                null,
+                new IdempotencyKey("reject-renewal-{$index}"),
+            );
+            $store->claimMaterialization(
+                $context,
+                $run->id,
+                self::LEASE_TOKEN,
+                new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
+                new DateTimeImmutable('2026-07-26T09:55:00.000000Z'),
+            );
+
+            try {
+                $store->claimMaterialization(
+                    $context,
+                    $run->id,
+                    $attempt['token'],
+                    new DateTimeImmutable('2026-07-26T10:15:00.000000Z'),
+                    new DateTimeImmutable($attempt['at']),
+                );
+                self::fail('Expected stale execution lease renewal to be fenced.');
+            } catch (ReportContractException $exception) {
+                self::assertSame(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY, $exception->errorCode);
+            }
+        }
+    }
+
+    public function test_same_token_renewal_uses_the_locked_status_qualified_write_path(): void
+    {
+        $store = $this->store(new FakeReportTransitionAudit());
+        $context = (new ReportExecutionContextBuilder())->build();
+        $run = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('lock-renewal'));
+        $store->claimMaterialization(
+            $context,
+            $run->id,
+            self::LEASE_TOKEN,
+            new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
+            new DateTimeImmutable('2026-07-26T09:55:00.000000Z'),
+        );
+
+        $this->assertLockedCas(fn () => $store->claimMaterialization(
+            $context,
+            $run->id,
+            self::LEASE_TOKEN,
+            new DateTimeImmutable('2026-07-26T10:15:00.000000Z'),
+            new DateTimeImmutable('2026-07-26T09:59:00.000000Z'),
+        ));
+    }
+
+    public function test_correlation_lineage_round_trips_and_schema_rejects_invalid_or_duplicate_leases(): void
+    {
+        $store = $this->store(new FakeReportTransitionAudit());
+        $context = (new ReportExecutionContextBuilder())->build();
+        $first = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('lineage-first'));
+        $second = $store->createOrReuse($context, $this->query($context), null, new IdempotencyKey('lineage-second'));
+        self::assertSame(
+            $context->correlationId(),
+            ReportRunRecord::query()->findOrFail($first->id)->correlation_lineage_id,
+        );
+
+        ReportRunRecord::query()->whereKey($second->id)->update(['correlation_lineage_id' => null]);
+        self::assertNull(ReportRunRecord::query()->findOrFail($second->id)->correlation_lineage_id);
+        foreach (['invalid lineage', str_repeat('a', 129)] as $invalidLineage) {
+            try {
+                DB::transaction(static function () use ($second, $invalidLineage): void {
+                    ReportRunRecord::query()->whereKey($second->id)->update([
+                        'correlation_lineage_id' => $invalidLineage,
+                    ]);
+                });
+                self::fail('Expected correlation lineage grammar and length constraint.');
+            } catch (QueryException $exception) {
+                self::assertSame('23514', $exception->errorInfo[0] ?? null);
+            }
+        }
+
+        $store->claimMaterialization(
+            $context,
+            $first->id,
+            self::LEASE_TOKEN,
+            new DateTimeImmutable('2026-07-26T10:00:00.000000Z'),
+            new DateTimeImmutable('2026-07-26T09:55:00.000000Z'),
+        );
+        try {
+            DB::transaction(static function () use ($second): void {
+                ReportRunRecord::query()->whereKey($second->id)->update([
+                    'status' => ReportRunStatus::MATERIALIZING->value,
+                    'execution_lease_token' => self::LEASE_TOKEN,
+                    'execution_lease_expires_at' => '2026-07-26 10:00:00.000000+00',
+                    'execution_heartbeat_at' => '2026-07-26 09:55:00.000000+00',
+                    'started_at' => '2026-07-26 09:55:00.000000+00',
+                ]);
+            });
+            self::fail('Expected execution lease token uniqueness.');
+        } catch (QueryException $exception) {
+            self::assertSame('23505', $exception->errorInfo[0] ?? null);
+        }
+    }
+
     public function test_database_rejects_unknown_missing_and_nonfailed_error_codes(): void
     {
         $store = $this->store(new FakeReportTransitionAudit());
@@ -964,6 +1293,96 @@ final class EloquentReportRunStoreTest extends TestCase
         }
     }
 
+    public function test_same_token_renewal_serializes_behind_the_run_row_lock(): void
+    {
+        self::assertTrue(function_exists('pcntl_fork'), 'PostgreSQL renewal gate requires pcntl.');
+        self::assertTrue(function_exists('posix_kill'), 'PostgreSQL renewal gate requires posix.');
+        $suffix = bin2hex(random_bytes(6));
+        $organizationId = 1300000000 + hexdec(substr($suffix, 0, 6));
+        $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR."report-renewal-{$suffix}";
+        $connectionName = "report_renewal_{$suffix}";
+        $children = [];
+        $connection = null;
+        $transactionOpen = false;
+        self::assertTrue(mkdir($directory));
+
+        try {
+            $connection = $this->independentConnection($connectionName);
+            $connection->statement("SET lock_timeout = '10s'");
+            $connection->statement("SET statement_timeout = '12s'");
+            $children[] = $this->spawnCreateWorker($directory, 0, $organizationId, "renewal-{$suffix}");
+            file_put_contents($directory.DIRECTORY_SEPARATOR.'go-0', 'go');
+            $this->waitForChildren($children, 15.0);
+            $children = [];
+            $created = $this->workerResult($directory, 0);
+
+            $children[] = $this->spawnClaimWorker(
+                $directory,
+                1,
+                $organizationId,
+                $created['id'],
+                new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
+                new DateTimeImmutable('2026-07-26T09:55:00.000000Z'),
+            );
+            file_put_contents($directory.DIRECTORY_SEPARATOR.'go-1', 'go');
+            $this->waitForChildren($children, 15.0);
+            $children = [];
+            self::assertSame('materializing', $this->workerResult($directory, 1)['status']);
+
+            $connection->beginTransaction();
+            $transactionOpen = true;
+            self::assertNotNull(
+                $connection->table('report_runs')
+                    ->where('organization_id', $organizationId)
+                    ->where('id', $created['id'])
+                    ->lockForUpdate()
+                    ->first(),
+            );
+
+            $children[] = $this->spawnClaimWorker(
+                $directory,
+                2,
+                $organizationId,
+                $created['id'],
+                new DateTimeImmutable('2026-07-26T10:15:00.333333Z'),
+                new DateTimeImmutable('2026-07-26T09:59:59.222222Z'),
+            );
+            file_put_contents($directory.DIRECTORY_SEPARATOR.'go-2', 'go');
+            $renewalPid = $this->waitForWorkerBackendPid($directory, 2);
+            $this->waitForPostgresWait($connection, $renewalPid, 'transactionid', 10.0);
+
+            $connection->commit();
+            $transactionOpen = false;
+            $this->waitForChildren($children, 15.0);
+            $children = [];
+            self::assertSame('materializing', $this->workerResult($directory, 2)['status']);
+            self::assertSame(
+                '2026-07-26 10:15:00.333333+00',
+                $connection->table('report_runs')
+                    ->where('organization_id', $organizationId)
+                    ->where('id', $created['id'])
+                    ->value('execution_lease_expires_at'),
+            );
+        } finally {
+            $cleanupFailure = null;
+            if ($transactionOpen && $connection !== null) {
+                $this->cleanupStep(static fn () => $connection->rollBack(), $cleanupFailure);
+            }
+            $this->terminateAndReap($children);
+            if ($connection !== null) {
+                $this->cleanupStep(
+                    static fn () => $connection->table('report_runs')->where('organization_id', $organizationId)->delete(),
+                    $cleanupFailure,
+                );
+            }
+            DB::purge($connectionName);
+            $this->removeWorkerDirectory($directory);
+            if ($cleanupFailure !== null) {
+                throw $cleanupFailure;
+            }
+        }
+    }
+
     private function spawnCreateWorker(string $directory, int $index, int $organizationId, string $key): int
     {
         $pid = (int) call_user_func('pcntl_fork');
@@ -987,6 +1406,45 @@ final class EloquentReportRunStoreTest extends TestCase
                 new IdempotencyKey($key),
             );
             $result = ['ok' => true, 'value' => ['id' => $run->id, 'disposition' => $run->httpDisposition]];
+        } catch (\Throwable $exception) {
+            $result = ['ok' => false, 'error' => $exception::class, 'message' => $exception->getMessage()];
+        }
+        file_put_contents(
+            $directory.DIRECTORY_SEPARATOR."result-{$index}.json",
+            json_encode($result, JSON_THROW_ON_ERROR),
+        );
+        exit($result['ok'] ? 0 : 1);
+    }
+
+    private function spawnClaimWorker(
+        string $directory,
+        int $index,
+        int $organizationId,
+        string $runId,
+        DateTimeImmutable $leaseExpiresAt,
+        DateTimeImmutable $occurredAt,
+    ): int {
+        $pid = (int) call_user_func('pcntl_fork');
+        self::assertGreaterThanOrEqual(0, $pid);
+        if ($pid !== 0) {
+            return $pid;
+        }
+
+        try {
+            $this->waitForFile($directory.DIRECTORY_SEPARATOR."go-{$index}", 10.0);
+            DB::purge();
+            DB::statement("SET lock_timeout = '30s'");
+            DB::statement("SET statement_timeout = '30s'");
+            $backend = DB::selectOne('SELECT pg_backend_pid() AS pid');
+            file_put_contents($directory.DIRECTORY_SEPARATOR."pid-{$index}", (string) $backend->pid);
+            $run = $this->store(new FakeReportTransitionAudit())->claimMaterialization(
+                $this->context($organizationId, $organizationId + $index + 1),
+                $runId,
+                self::LEASE_TOKEN,
+                $leaseExpiresAt,
+                $occurredAt,
+            );
+            $result = ['ok' => true, 'value' => ['status' => $run->status->value]];
         } catch (\Throwable $exception) {
             $result = ['ok' => false, 'error' => $exception::class, 'message' => $exception->getMessage()];
         }

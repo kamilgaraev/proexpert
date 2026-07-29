@@ -175,6 +175,21 @@ final class EloquentReportRunStore implements ReportRunStore
         return DB::transaction(function () use ($context, $runId, $leaseToken, $leaseExpiresAt, $occurredAt): ReportRun {
             $record = $this->locked($context, $runId);
             $this->hydrator->query($record);
+            if ($record->status === ReportRunStatus::MATERIALIZING->value) {
+                if (
+                    !$this->hasActiveLease($record, $leaseToken, $occurredAt)
+                    || !$this->isMonotonicLeaseRenewal($record, $leaseExpiresAt, $occurredAt)
+                ) {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
+                }
+                $this->cas($record, ReportRunStatus::MATERIALIZING, [
+                    'execution_lease_expires_at' => $leaseExpiresAt,
+                    'execution_heartbeat_at' => $occurredAt,
+                    'updated_at' => $occurredAt,
+                ]);
+
+                return $this->hydrator->hydrate($record->fresh(), 'reused', $this->pollAfterMs);
+            }
             if ($record->status !== ReportRunStatus::QUEUED->value) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
@@ -443,6 +458,7 @@ final class EloquentReportRunStore implements ReportRunStore
             'id' => $id,
             'organization_id' => $context->scope->organizationId,
             'requester_actor_id' => $context->actor->id,
+            'correlation_lineage_id' => $context->correlationId(),
             'report_code' => $definition->code,
             'status' => ReportRunStatus::QUEUED->value,
             'definition_hash' => $definition->definitionHash->value,
@@ -697,6 +713,23 @@ final class EloquentReportRunStore implements ReportRunStore
             && hash_equals($record->execution_lease_token, $leaseToken)
             && $expiresAt instanceof DateTimeImmutable
             && $expiresAt > $occurredAt;
+    }
+
+    private function isMonotonicLeaseRenewal(
+        ReportRunRecord $record,
+        DateTimeImmutable $leaseExpiresAt,
+        DateTimeImmutable $occurredAt,
+    ): bool {
+        $currentExpiry = $this->immutableInstant($record->execution_lease_expires_at);
+        $currentHeartbeat = $this->immutableInstant($record->execution_heartbeat_at);
+        $currentUpdatedAt = $this->immutableInstant($record->updated_at);
+
+        return $currentExpiry instanceof DateTimeImmutable
+            && $currentHeartbeat instanceof DateTimeImmutable
+            && $currentUpdatedAt instanceof DateTimeImmutable
+            && $leaseExpiresAt >= $currentExpiry
+            && $occurredAt >= $currentHeartbeat
+            && $occurredAt >= $currentUpdatedAt;
     }
 
     private function immutableInstant(mixed $value): ?DateTimeImmutable

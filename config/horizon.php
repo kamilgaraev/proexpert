@@ -31,6 +31,7 @@ return [
         'redis:notifications-low' => 300,
         'redis:ai-rag' => 600,
         'redis_ai_rag:ai-rag' => 600,
+        'redis_reports:reports' => 120,
         'redis:'.env('EPM_DATA_MART_QUEUE', 'epm-data-mart') => 600,
     ],
 
@@ -203,6 +204,17 @@ return [
                 'memory' => 512,
                 'nice' => 5,
             ],
+            'supervisor-reports' => [
+                'connection' => 'redis_reports',
+                'queue' => ['reports'],
+                'balance' => 'auto',
+                'autoScalingStrategy' => 'time',
+                'minProcesses' => 1,
+                'maxProcesses' => 4,
+                'tries' => 1,
+                'timeout' => 960,
+                'memory' => 512,
+            ],
         ],
 
         'local' => [
@@ -277,6 +289,15 @@ return [
                 'processes' => 1,
                 'tries' => 3,
                 'timeout' => 1800,
+                'memory' => 512,
+            ],
+            'supervisor-reports' => [
+                'connection' => 'redis_reports',
+                'queue' => ['reports'],
+                'balance' => 'simple',
+                'processes' => 1,
+                'tries' => 1,
+                'timeout' => 960,
                 'memory' => 512,
             ],
             'supervisor-1' => [
