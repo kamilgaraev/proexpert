@@ -458,6 +458,69 @@ final class FileServiceMultipartTest extends TestCase
         self::assertSame($this->metadata(), $description['metadata']);
     }
 
+    public function test_zero_max_bytes_streams_exact_version_without_retaining_body(): void
+    {
+        $bytes = str_repeat('stream-chunk-', 10_000);
+        $stream = new TrackingReadableStream($bytes);
+        $handler = new MockHandler([
+            new Result([
+                'ETag' => '"etag"',
+                'VersionId' => 'version-1',
+                'ContentLength' => strlen($bytes),
+                'ContentType' => 'text/csv',
+                'Metadata' => $this->metadata(),
+            ]),
+            new Result(['VersionId' => 'version-1', 'Body' => $stream]),
+        ]);
+
+        $description = $this->files($handler)->describeVersion(
+            'org-7/reports/export.csv',
+            'version-1',
+            0,
+        );
+
+        self::assertSame('', $description['body']);
+        self::assertSame(strlen($bytes), $description['size']);
+        self::assertSame(hash('sha256', $bytes), $description['sha256']);
+        self::assertLessThanOrEqual(8192, $stream->maxRequestedBytes);
+    }
+
+    public function test_positive_max_bytes_preserves_body_and_enforces_limit(): void
+    {
+        $bytes = 'legacy-body';
+        $success = $this->files(new MockHandler([
+            new Result([
+                'ETag' => '"etag"',
+                'VersionId' => 'version-1',
+                'ContentLength' => strlen($bytes),
+                'ContentType' => 'text/csv',
+                'Metadata' => $this->metadata(),
+            ]),
+            new Result(['VersionId' => 'version-1', 'Body' => Utils::streamFor($bytes)]),
+        ]))->describeVersion('org-7/reports/export.csv', 'version-1', strlen($bytes));
+        self::assertSame($bytes, $success['body']);
+
+        $limited = $this->files(new MockHandler([
+            new Result([
+                'ETag' => '"etag"',
+                'VersionId' => 'version-1',
+                'ContentLength' => strlen($bytes),
+                'ContentType' => 'text/csv',
+                'Metadata' => $this->metadata(),
+            ]),
+        ]));
+        $this->expectException(VersionedObjectIntegrityException::class);
+        $this->expectExceptionMessage('s3_object_size_invalid');
+        $limited->describeVersion('org-7/reports/export.csv', 'version-1', strlen($bytes) - 1);
+    }
+
+    public function test_zero_max_bytes_requires_an_exact_version_identity(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('s3_versioned_read_requires_version');
+        $this->files(new MockHandler())->describeVersion('org-7/object.csv', null, 0);
+    }
+
     public function test_versioned_report_metadata_case_collision_fails_closed(): void
     {
         $metadata = $this->metadata();
@@ -573,5 +636,30 @@ final class FileServiceMultipartTest extends TestCase
             'source_schema_version' => '1',
             'renderer_version' => '1',
         ];
+    }
+}
+
+final class TrackingReadableStream
+{
+    public int $maxRequestedBytes = 0;
+
+    private int $offset = 0;
+
+    public function __construct(private readonly string $bytes)
+    {
+    }
+
+    public function eof(): bool
+    {
+        return $this->offset >= strlen($this->bytes);
+    }
+
+    public function read(int $length): string
+    {
+        $this->maxRequestedBytes = max($this->maxRequestedBytes, $length);
+        $chunk = substr($this->bytes, $this->offset, $length);
+        $this->offset += strlen($chunk);
+
+        return $chunk;
     }
 }

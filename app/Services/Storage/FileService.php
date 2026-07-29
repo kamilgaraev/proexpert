@@ -345,14 +345,18 @@ class FileService
         }
     }
 
-    /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,metadata?:array<string,string>} */
+    /**
+     * A zero max size selects exact-version verification without retaining the response body.
+     *
+     * @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,metadata?:array<string,string>}
+     */
     public function describeVersion(
         string $path,
         ?string $versionId,
         int $maxBytes = 64_000_000,
     ): array
     {
-        return $this->describeVersionInternal($path, $versionId, $maxBytes, true);
+        return $this->describeVersionInternal($path, $versionId, $maxBytes, $maxBytes !== 0);
     }
 
     /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,metadata?:array<string,string>} */
@@ -363,6 +367,9 @@ class FileService
         bool $includeBody,
     ): array
     {
+        if ($maxBytes === 0 && ($versionId === null || ! $this->isUsableVersionId($versionId))) {
+            throw new \InvalidArgumentException('s3_versioned_read_requires_version');
+        }
         $reportObject = preg_match('#^org-[1-9][0-9]*/reports(?:/|$)#D', $path) === 1;
         $organizationId = null;
         if ($reportObject) {
@@ -408,9 +415,14 @@ class FileService
             throw new VersionedObjectIntegrityException('s3_bucket_versioning_required');
         }
         $contentLength = $head['ContentLength'] ?? null;
-        if (! is_numeric($contentLength) || (int) $contentLength < 0 || (int) $contentLength > $maxBytes) {
+        $contentLengthBytes = is_numeric($contentLength) ? (int) $contentLength : -1;
+        if (
+            $contentLengthBytes < 0
+            || ($maxBytes > 0 && $contentLengthBytes > $maxBytes)
+        ) {
             throw new VersionedObjectIntegrityException('s3_object_size_invalid');
         }
+        $streamLimitBytes = $maxBytes === 0 ? $contentLengthBytes : $maxBytes;
         $metadata = is_array($head['Metadata'] ?? null) ? $head['Metadata'] : [];
         if ($reportObject) {
             $metadata = $this->normalizeReportMetadata($metadata);
@@ -441,7 +453,7 @@ class FileService
         $readBytes = 0;
         $hash = hash_init('sha256');
         while (! $stream->eof()) {
-            $remaining = $maxBytes + 1 - $readBytes;
+            $remaining = $streamLimitBytes + 1 - $readBytes;
             if ($remaining <= 0) {
                 throw new VersionedObjectIntegrityException('s3_object_size_invalid');
             }
@@ -455,7 +467,7 @@ class FileService
                 $body .= $chunk;
             }
         }
-        if ($readBytes !== (int) $contentLength) {
+        if ($readBytes !== $contentLengthBytes) {
             throw new VersionedObjectIntegrityException('s3_object_size_mismatch');
         }
 

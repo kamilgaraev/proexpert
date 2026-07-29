@@ -61,7 +61,7 @@ final class S3ReportArtifactStreamTest extends TestCase
             $files->conditions['ApplicationChecksumSHA256'],
         );
         self::assertSame(
-            [['org-7/reports/exports/01J00000000000000000000001/artifact.csv', 'version-1']],
+            [['org-7/reports/exports/01J00000000000000000000001/artifact.csv', 'version-1', 0]],
             $files->descriptions,
         );
         self::assertEquals($files->headed, $stored);
@@ -247,7 +247,7 @@ final class S3ReportArtifactStreamTest extends TestCase
 
         self::assertEquals($files->headed, $stream->finish());
         self::assertSame(1, $files->abortCount);
-        self::assertSame([[$files->headed->path, 'winner-version']], $files->descriptions);
+        self::assertSame([[$files->headed->path, 'winner-version', 0]], $files->descriptions);
     }
 
     public static function conditionalStatusProvider(): iterable
@@ -548,7 +548,7 @@ final class RecordingMultipartFileService extends FileService
         if ($this->headFailure instanceof Throwable) {
             throw $this->headFailure;
         }
-        $this->descriptions[] = [$path, $versionId];
+        $this->descriptions[] = [$path, $versionId, $maxBytes];
 
         return [
             'path' => $path,
