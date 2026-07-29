@@ -41,14 +41,17 @@ final class PlanOneBPlanOneAHandoffTest extends TestCase
         $contract = \PlanOneAExecutionPhaseAuthority::trackedContract();
 
         self::assertSame(
-            ['task_4e', 'task_4f', 'task_4g', 'task_5', 'phases', 'ownership'],
+            ['task_4e', 'task_4f', 'task_4g', 'task_4h', 'task_5', 'phases', 'ownership'],
             array_keys($contract),
         );
         self::assertSame('470fecd5733021421dbc9b36c1d2a410ef27cc42', $contract['task_4f']['commit_sha']);
         self::assertSame('historical_red', $contract['task_4f']['state']);
         self::assertSame(13, count($contract['task_4f']['tracked_paths']));
-        self::assertSame('470fecd5733021421dbc9b36c1d2a410ef27cc42', $contract['task_4g']['parent_commit_sha']);
+        self::assertSame('370943e3d9a7941589b975472e2ff05c96f3bc63', $contract['task_4g']['commit_sha']);
+        self::assertSame('historical_red', $contract['task_4g']['state']);
         self::assertSame(14, count($contract['task_4g']['tracked_paths']));
+        self::assertSame('370943e3d9a7941589b975472e2ff05c96f3bc63', $contract['task_4h']['parent_commit_sha']);
+        self::assertSame(12, count($contract['task_4h']['tracked_paths']));
         self::assertSame(30, count($contract['task_5']['tracked_paths']));
         self::assertSame(108, $contract['ownership']['product_union']);
         self::assertSame(0, $contract['ownership']['product_overlap']);

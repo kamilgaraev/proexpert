@@ -96,11 +96,17 @@ final class PlanOneAHandoffContractTest extends TestCase
         self::assertCount(108, $owned);
         $phase = \PlanOneAExecutionPhaseAuthority::trackedContract();
         self::assertCount(13, $phase['task_4f']['tracked_paths']);
-        self::assertCount(14, $phase['task_4g']['tracked_paths']);
+        self::assertSame(
+            ['tracked_paths' => 12, 'ledger_command_counts' => ['tests' => 504, 'assertions' => 5064]],
+            [
+                'tracked_paths' => count($phase['task_4h']['tracked_paths']),
+                'ledger_command_counts' => $phase['task_4h']['ledger_command_counts'],
+            ],
+        );
         self::assertSame(108, $phase['ownership']['product_union']);
         self::assertSame(0, $phase['ownership']['product_overlap']);
         self::assertSame(
-            ['POST_TASK_4G_PRE_TASK_5', 'POST_TASK_5'],
+            ['POST_TASK_4H_PRE_TASK_5', 'POST_TASK_5'],
             array_keys($phase['phases']),
         );
         self::assertSame($phase, $this->lock()['execution_phases']);
@@ -215,7 +221,7 @@ final class PlanOneAHandoffContractTest extends TestCase
         $reordered['commands'] = array_reverse($reordered['commands']);
         self::assertFalse($this->validates($reordered));
         $counts = $this->fixture('plan-1a-command-ledger.valid.json');
-        $counts['commands'][0]['assertions'] = 0;
+        $counts['commands'][0]['assertions'] = 5062;
         self::assertFalse($this->validates($counts));
         $command = $this->fixture('plan-1a-command-ledger.valid.json');
         $command['commands'][1]['command_id'] = 'another_command';

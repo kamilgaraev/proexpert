@@ -1186,7 +1186,8 @@ final class PlanOneAGates
         try {
             self::$executionPhase = PlanOneAExecutionPhaseAuthority::discover($root, $commit);
             self::guard(
-                is_string(self::$executionPhase['task_4g_commit_sha'] ?? null),
+                is_string(self::$executionPhase['task_4g_commit_sha'] ?? null)
+                    && is_string(self::$executionPhase['task_4h_commit_sha'] ?? null),
                 3,
                 'PLAN_1A_EXECUTION_PHASE_INVALID',
             );

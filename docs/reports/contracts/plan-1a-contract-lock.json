@@ -38,7 +38,6 @@
             "parent_commit_sha": "57b9e1b5eb3d646f5d24f78e00165ca9b272e93d",
             "tracked_paths": [
                 "tests/Architecture/Reporting/PlanOneAHandoffContractTest.php",
-                "tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php",
                 "docs/reports/contracts/plan-1a-completion.schema.json",
                 "docs/reports/contracts/plan-1a-contract-lock.json",
                 "docs/reports/contracts/plan-1a-contract-lock.sha256",
@@ -48,12 +47,14 @@
                 "tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php",
                 "tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json",
                 "tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json",
+                "tests/Support/Reporting/HermeticReportingHttpHarness.php",
                 "tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php",
                 "tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php"
             ],
             "state": "historical_red"
         },
         "task_4g": {
+            "commit_sha": "370943e3d9a7941589b975472e2ff05c96f3bc63",
             "subject": "fix[reports]: \u0438\u0437\u043e\u043b\u0438\u0440\u043e\u0432\u0430\u0442\u044c HTTP evidence \u043e\u0442 \u0431\u0430\u0437\u044b",
             "parent_commit_sha": "470fecd5733021421dbc9b36c1d2a410ef27cc42",
             "tracked_paths": [
@@ -71,7 +72,31 @@
                 "tests/Support/Reporting/HermeticReportingHttpHarness.php",
                 "tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php",
                 "tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php"
-            ]
+            ],
+            "state": "historical_red",
+            "reason": "ledger_count_omission"
+        },
+        "task_4h": {
+            "subject": "fix[reports]: \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u0442\u044c ledger evidence",
+            "parent_commit_sha": "370943e3d9a7941589b975472e2ff05c96f3bc63",
+            "tracked_paths": [
+                "docs/reports/contracts/plan-1a-completion.schema.json",
+                "docs/reports/contracts/plan-1a-contract-lock.json",
+                "docs/reports/contracts/plan-1a-contract-lock.sha256",
+                "docs/reports/contracts/plan-1a-gate-evidence.schema.json",
+                "scripts/reporting/build-plan-1a-evidence.php",
+                "scripts/reporting/run-plan-1a-gates.php",
+                "tests/Architecture/Reporting/PlanOneAHandoffContractTest.php",
+                "tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php",
+                "tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json",
+                "tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json",
+                "tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php",
+                "tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php"
+            ],
+            "ledger_command_counts": {
+                "tests": 504,
+                "assertions": 5064
+            }
         },
         "task_5": {
             "subject": "feat[reports]: \u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b\u0438\u0437\u043e\u0432\u0430\u0442\u044c \u0441\u043d\u0438\u043c\u043a\u0438 \u0441 \u0442\u0435\u043a\u0443\u0449\u0435\u0439 \u0430\u0432\u0442\u043e\u0440\u0438\u0437\u0430\u0446\u0438\u0435\u0439",
@@ -109,7 +134,7 @@
             ]
         },
         "phases": {
-            "POST_TASK_4G_PRE_TASK_5": {
+            "POST_TASK_4H_PRE_TASK_5": {
                 "task_5_state": "pending",
                 "dispatch_allowlist": [
                     "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",

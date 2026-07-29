@@ -24,12 +24,12 @@ final class RunPlanOneAGatesTest extends TestCase
         $contract = \PlanOneAExecutionPhaseAuthority::trackedContract();
 
         self::assertSame(
-            ['POST_TASK_4G_PRE_TASK_5', 'POST_TASK_5'],
+            ['POST_TASK_4H_PRE_TASK_5', 'POST_TASK_5'],
             array_keys($contract['phases']),
         );
-        self::assertCount(4, $contract['phases']['POST_TASK_4G_PRE_TASK_5']['dispatch_allowlist']);
+        self::assertCount(4, $contract['phases']['POST_TASK_4H_PRE_TASK_5']['dispatch_allowlist']);
         self::assertCount(5, $contract['phases']['POST_TASK_5']['dispatch_allowlist']);
-        self::assertSame('pending', $contract['phases']['POST_TASK_4G_PRE_TASK_5']['task_5_state']);
+        self::assertSame('pending', $contract['phases']['POST_TASK_4H_PRE_TASK_5']['task_5_state']);
         self::assertSame('present', $contract['phases']['POST_TASK_5']['task_5_state']);
     }
 
@@ -273,7 +273,7 @@ final class RunPlanOneAGatesTest extends TestCase
     public function test_schema_rejects_ledger_count_drift(): void
     {
         $fixture = $this->decode('plan-1a-command-ledger.valid.json');
-        $fixture['commands'][0]['tests'] = 0;
+        $fixture['commands'][0]['tests'] = 503;
 
         self::assertFalse($this->validates($fixture));
     }
