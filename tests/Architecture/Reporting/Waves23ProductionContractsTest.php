@@ -104,6 +104,64 @@ final class Waves23ProductionContractsTest extends TestCase
         }
         self::assertStringContainsString('HistoricalScheduleTaskStateQuery', $baseline);
         self::assertStringContainsString('HistoricalScheduleTaskStateQuery', $lookahead);
+        self::assertStringContainsString(
+            '$state->active && $this->matchesTaskFilters($query, $state)',
+            $baseline,
+        );
+        self::assertStringContainsString(
+            "\$this->positiveIntegerFilter(\$query, 'project_ids') ?: \$context->scope->projectIds",
+            $baseline,
+        );
+        self::assertStringContainsString(
+            "'state:'.hash('sha256', implode('|', \$states->pluck('sourceHash')->all()))",
+            $baseline,
+        );
+        self::assertStringNotContainsString("\$states->max('id')", $baseline);
+        self::assertStringNotContainsString('$events->count() < 2', $lookahead);
+        self::assertStringContainsString(
+            "->where('occurred_at', '<=', \$query->asOf)\n                ->max('id')",
+            $lookahead,
+        );
+        self::assertStringContainsString(
+            "throw new InvalidArgumentException('lookahead_horizon_filter_invalid')",
+            $lookahead,
+        );
+        self::assertSame(
+            2,
+            substr_count(
+                $baseline.$this->source(
+                    'app/BusinessModules/Features/ScheduleManagement/Reporting/'
+                    .'BaselineScheduleSnapshotService.php',
+                ),
+                'static fn (int $value): bool => $value < 1',
+            ),
+        );
+        self::assertSame(
+            2,
+            substr_count(
+                $lookahead.$this->source(
+                    'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Services/'
+                    .'LookaheadReadinessSnapshotMaterializer.php',
+                ),
+                'static fn (int $value): bool => $value < 1',
+            ),
+        );
+    }
+
+    #[Test]
+    public function accepted_production_readiness_requires_latest_as_of_event_to_remain_accepted(): void
+    {
+        $readiness = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Readiness/'
+            .'AcceptedProductionReadinessProbe.php',
+        );
+
+        self::assertStringContainsString('->groupBy(self::key(...))', $readiness);
+        self::assertStringContainsString(
+            "\$latestEventTypes->get(\$key) === 'accepted'",
+            $readiness,
+        );
+        self::assertStringNotContainsString('$eventKeys->has($key)', $readiness);
     }
 
     #[Test]

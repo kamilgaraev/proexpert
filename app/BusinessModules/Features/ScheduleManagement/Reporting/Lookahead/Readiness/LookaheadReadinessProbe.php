@@ -120,8 +120,7 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
                 'kind' => 'constraint',
                 'source_id' => (int) $constraint->id,
             ];
-            $requiresFinal = $latest !== null && (string) $latest->to_status !== 'open';
-            if ($events->isEmpty() || ($requiresFinal && $events->count() < 2)) {
+            if ($events->isEmpty()) {
                 $gapCount++;
 
                 continue;
@@ -153,6 +152,7 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
             (int) (WorkConstraintTransitionEvent::query()
                 ->where('organization_id', $context->scope->organizationId)
                 ->whereIn('project_id', $projectIds)
+                ->where('occurred_at', '<=', $query->asOf)
                 ->max('id') ?? 0),
             (int) ($allStates->max('taskId') ?? 0),
         ]);
@@ -166,7 +166,7 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
         $horizonDays = $values['horizon_days'] ?? null;
         if ($horizonDays !== null) {
             if (! is_numeric($horizonDays) || (int) $horizonDays < 1) {
-                return false;
+                throw new InvalidArgumentException('lookahead_horizon_filter_invalid');
             }
             $horizonEnd = $query->asOf->modify('+'.(int) $horizonDays.' days');
             if ($state->plannedStart < $query->asOf || $state->plannedStart > $horizonEnd) {
@@ -196,14 +196,19 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
     private function positiveIntegerFilter(ReportQuery $query, string $key): array
     {
         $values = $query->filters->values[$key] ?? [];
-        if (! is_array($values) || ! array_is_list($values)) {
+        if ($values === []) {
             return [];
         }
+        if (! is_array($values) || ! array_is_list($values)) {
+            throw new InvalidArgumentException('lookahead_filter_invalid');
+        }
 
-        return array_values(array_unique(array_filter(
-            array_map('intval', $values),
-            static fn (int $value): bool => $value > 0,
-        )));
+        $result = array_map('intval', $values);
+        if (array_filter($result, static fn (int $value): bool => $value < 1) !== []) {
+            throw new InvalidArgumentException('lookahead_filter_invalid');
+        }
+
+        return array_values(array_unique($result));
     }
 
     private function matches(mixed $filter, int|string|null $value): bool

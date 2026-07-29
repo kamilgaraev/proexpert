@@ -144,11 +144,10 @@ final readonly class BaselineScheduleSnapshotService
             throw new InvalidArgumentException('baseline_schedule_as_of_filter_invalid');
         }
 
-        $projectIds = $scope->projectIds;
-        $requestedProjectIds = $query->filters->values['project_ids'] ?? [];
-        if (is_array($requestedProjectIds) && $requestedProjectIds !== []) {
-            $projectIds = array_values(array_intersect($projectIds, $requestedProjectIds));
-        }
+        $projectIds = array_values(array_intersect(
+            $scope->projectIds,
+            $this->positiveIntegerFilter($query, 'project_ids') ?: $scope->projectIds,
+        ));
         if ($projectIds === []) {
             throw new InvalidArgumentException('baseline_schedule_project_filter_empty');
         }
@@ -455,7 +454,7 @@ final readonly class BaselineScheduleSnapshotService
         }
 
         $result = array_map('intval', $values);
-        if (in_array(0, $result, true)) {
+        if (array_filter($result, static fn (int $value): bool => $value < 1) !== []) {
             throw new InvalidArgumentException('baseline_schedule_filter_invalid');
         }
 

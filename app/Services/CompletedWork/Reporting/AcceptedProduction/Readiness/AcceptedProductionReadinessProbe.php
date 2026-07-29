@@ -38,11 +38,14 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
             ->where('organization_id', $context->scope->organizationId)
             ->whereIn('project_id', $context->scope->projectIds)
             ->where('recognized_at', '<=', $query->asOf)
-            ->orderBy('id')
+            ->orderBy('performance_act_id')
+            ->orderBy('source_line_type')
+            ->orderBy('source_line_id')
+            ->orderBy('transition_version')
             ->get();
-        $eventKeys = $events->mapWithKeys(
-            static fn (ProductionAcceptanceEvent $event): array => [self::key($event) => true],
-        );
+        $latestEventTypes = $events
+            ->groupBy(self::key(...))
+            ->map(static fn ($lineEvents): string => (string) $lineEvents->last()->event_type);
         $eligible = $events->map(static fn (ProductionAcceptanceEvent $event): array => [
             'event_id' => (int) $event->id,
             'source_hash' => (string) $event->source_hash,
@@ -81,7 +84,7 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
             }
             foreach ($this->sourceLines($act) as $sourceLine) {
                 $key = implode(':', [(int) $act->id, $sourceLine['type'], $sourceLine['id']]);
-                if ($eventKeys->has($key)) {
+                if ($latestEventTypes->get($key) === 'accepted') {
                     continue;
                 }
                 $eligible[] = [

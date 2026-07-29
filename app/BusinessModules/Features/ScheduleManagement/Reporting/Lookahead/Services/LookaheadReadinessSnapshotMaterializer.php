@@ -421,7 +421,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         }
 
         $result = array_map('intval', $values);
-        if (in_array(0, $result, true)) {
+        if (array_filter($result, static fn (int $value): bool => $value < 1) !== []) {
             throw new InvalidArgumentException('lookahead_filter_invalid');
         }
 

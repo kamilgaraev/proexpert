@@ -41,6 +41,9 @@ final readonly class BaselineScheduleVarianceReadinessProbe implements ReportSou
             $context->scope->projectIds,
             $this->positiveIntegerFilter($query, 'project_ids') ?: $context->scope->projectIds,
         ));
+        if ($projectIds === []) {
+            throw new \InvalidArgumentException('baseline_schedule_project_filter_empty');
+        }
         $scheduleFilter = $this->positiveIntegerFilter($query, 'schedule_ids');
         $candidateSchedules = ProjectSchedule::query()
             ->where('organization_id', $context->scope->organizationId)
@@ -64,7 +67,7 @@ final readonly class BaselineScheduleVarianceReadinessProbe implements ReportSou
             ->get(['id', 'schedule_id']);
         $allStatesByTask = $allStates->keyBy('taskId');
         $selectedStates = $allStates
-            ->filter(fn ($state): bool => $this->matchesTaskFilters($query, $state))
+            ->filter(fn ($state): bool => $state->active && $this->matchesTaskFilters($query, $state))
             ->values();
         $selectedStateIds = $selectedStates
             ->pluck('taskId')
@@ -128,7 +131,7 @@ final readonly class BaselineScheduleVarianceReadinessProbe implements ReportSou
 
         $watermark = implode('.', [
             'schedule:'.(int) ($schedules->max('id') ?? 0),
-            (int) ($states->max('id') ?? 0),
+            'state:'.hash('sha256', implode('|', $states->pluck('sourceHash')->all())),
             (int) ($baselines->max('id') ?? 0),
         ]);
 
@@ -154,13 +157,15 @@ final readonly class BaselineScheduleVarianceReadinessProbe implements ReportSou
             return [];
         }
         if (! is_array($values) || ! array_is_list($values)) {
-            return [];
+            throw new \InvalidArgumentException('baseline_schedule_filter_invalid');
         }
 
-        return array_values(array_unique(array_filter(
-            array_map('intval', $values),
-            static fn (int $value): bool => $value > 0,
-        )));
+        $result = array_map('intval', $values);
+        if (array_filter($result, static fn (int $value): bool => $value < 1) !== []) {
+            throw new \InvalidArgumentException('baseline_schedule_filter_invalid');
+        }
+
+        return array_values(array_unique($result));
     }
 
     private function matches(mixed $filter, int|string|null $value): bool
