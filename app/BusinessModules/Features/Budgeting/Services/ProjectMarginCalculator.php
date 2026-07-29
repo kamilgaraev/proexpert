@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginDimensions;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginDrillDownKey;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginReportFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginSourceAggregate;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\DTO\ProjectMarginReportResult;
 
 final class ProjectMarginCalculator
 {
@@ -26,11 +27,33 @@ final class ProjectMarginCalculator
         array $warnings,
         array $meta = [],
     ): array {
+        return $this->calculateResult(
+            $filters,
+            $aggregates,
+            $dimensions,
+            $scenario,
+            $budgetVersion,
+            $sourcesCoverage,
+            $warnings,
+            $meta,
+        )->toArray();
+    }
+
+    public function calculateResult(
+        ProjectMarginReportFilters $filters,
+        array $aggregates,
+        ProjectMarginDimensions $dimensions,
+        ?array $scenario,
+        ?array $budgetVersion,
+        array $sourcesCoverage,
+        array $warnings,
+        array $meta = [],
+    ): ProjectMarginReportResult {
         $buckets = $this->groupAggregates($filters, $aggregates);
         $rows = $this->rows($filters, $buckets, $dimensions);
         $totalsByCurrency = $this->totalsByCurrency($rows);
 
-        return [
+        return ProjectMarginReportResult::fromArray([
             'filters' => $filters->toArray(),
             'period' => $filters->period(),
             'summary' => $this->summary($rows, $totalsByCurrency),
@@ -60,7 +83,7 @@ final class ProjectMarginCalculator
                     'external_systems' => ['1c', 'bank', 'edo'],
                 ],
             ]),
-        ];
+        ]);
     }
 
     /**

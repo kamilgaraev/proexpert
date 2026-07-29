@@ -27,6 +27,8 @@ use App\BusinessModules\Features\Budgeting\Services\EpmDataMartRecalculationCoor
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartRecalculationService;
 use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardPayloadBuilder;
 use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardService;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlProjectionService;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\ProjectFinanceManagementPnlComponentSource;
 use Illuminate\Support\ServiceProvider;
 
 final class BudgetingServiceProvider extends ServiceProvider
@@ -55,6 +57,14 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->singleton(CfoCommandCenterService::class);
         $this->app->singleton(ProjectPortfolioDashboardPayloadBuilder::class);
         $this->app->singleton(ProjectPortfolioDashboardService::class);
+        $this->app->singleton(ProjectFinanceManagementPnlComponentSource::class);
+        $this->app->tag(
+            [ProjectFinanceManagementPnlComponentSource::class],
+            'management-pnl-component-sources',
+        );
+        $this->app->when(ManagementPnlProjectionService::class)
+            ->needs('$componentSources')
+            ->giveTagged('management-pnl-component-sources');
     }
 
     public function boot(): void

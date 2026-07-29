@@ -19,6 +19,8 @@ class ContractManagementServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->loadMigrationsFrom(__DIR__.'/migrations');
+
         Route::middleware([
             'api', 
             'auth:api_admin', 
@@ -38,4 +40,3 @@ class ContractManagementServiceProvider extends ServiceProvider
             });
     }
 }
-

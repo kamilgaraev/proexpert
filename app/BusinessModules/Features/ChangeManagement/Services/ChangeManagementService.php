@@ -9,7 +9,9 @@ use App\BusinessModules\Features\ChangeManagement\Models\ChangeClaim;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeManagementRfi;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
 use App\BusinessModules\Features\ChangeManagement\Models\VariationOrder;
+use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Services\ChangeWorkflowEventRecorder;
 use App\Models\Project;
+use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Arr;
@@ -17,6 +19,10 @@ use Illuminate\Support\Facades\DB;
 
 final class ChangeManagementService
 {
+    public function __construct(private readonly ChangeWorkflowEventRecorder $changeEvents)
+    {
+    }
+
     public function paginateRfis(int $organizationId, int $perPage, array $filters = []): LengthAwarePaginator
     {
         return ChangeManagementRfi::query()
@@ -126,21 +132,26 @@ final class ChangeManagementService
             $this->findRfi($organizationId, (int) $data['related_rfi_id']);
         }
 
-        return ChangeRequest::create([
-            'organization_id' => $organizationId,
-            'project_id' => (int) $data['project_id'],
-            'created_by_user_id' => $userId,
-            'related_rfi_id' => $data['related_rfi_id'] ?? null,
-            'change_number' => $data['change_number'] ?? $this->nextNumber(ChangeRequest::class, $organizationId, 'CHG', 'change_number'),
-            'title' => $data['title'],
-            'reason' => $data['reason'],
-            'description' => $data['description'],
-            'initiator_type' => $data['initiator_type'],
-            'status' => 'draft',
-            'affected_schedule_task_ids' => $this->integerList($data['affected_schedule_task_ids'] ?? []),
-            'affected_estimate_item_ids' => $this->integerList($data['affected_estimate_item_ids'] ?? []),
-            'linked_entities' => $data['linked_entities'] ?? [],
-        ])->load(['impact', 'approvals', 'variationOrders', 'relatedRfi']);
+        return DB::transaction(function () use ($organizationId, $userId, $data): ChangeRequest {
+            $change = ChangeRequest::create([
+                'organization_id' => $organizationId,
+                'project_id' => (int) $data['project_id'],
+                'created_by_user_id' => $userId,
+                'related_rfi_id' => $data['related_rfi_id'] ?? null,
+                'change_number' => $data['change_number'] ?? $this->nextNumber(ChangeRequest::class, $organizationId, 'CHG', 'change_number'),
+                'title' => $data['title'],
+                'reason' => $data['reason'],
+                'description' => $data['description'],
+                'initiator_type' => $data['initiator_type'],
+                'status' => 'draft',
+                'affected_schedule_task_ids' => $this->integerList($data['affected_schedule_task_ids'] ?? []),
+                'affected_estimate_item_ids' => $this->integerList($data['affected_estimate_item_ids'] ?? []),
+                'linked_entities' => $data['linked_entities'] ?? [],
+            ]);
+            $this->changeEvents->record($change, 'create', CarbonImmutable::now(), $userId);
+
+            return $change->load(['impact', 'approvals', 'variationOrders', 'relatedRfi']);
+        });
     }
 
     public function findChange(int $organizationId, int $id): ChangeRequest
@@ -161,12 +172,15 @@ final class ChangeManagementService
     {
         $this->assertStatus($change->status, ['draft']);
 
-        $change->forceFill([
-            'status' => 'submitted',
-            'submitted_at' => now(),
-        ])->save();
+        return DB::transaction(function () use ($change): ChangeRequest {
+            $change->forceFill([
+                'status' => 'submitted',
+                'submitted_at' => now(),
+            ])->save();
+            $this->changeEvents->record($change, 'submit', CarbonImmutable::now(), null);
 
-        return $this->reloadChange($change);
+            return $this->reloadChange($change);
+        });
     }
 
     public function assessImpact(ChangeRequest $change, array $data): ChangeRequest
@@ -195,6 +209,7 @@ final class ChangeManagementService
                 'affected_schedule_task_ids' => $impactData['affected_schedule_task_ids'],
                 'affected_estimate_item_ids' => $impactData['affected_estimate_item_ids'],
             ])->save();
+            $this->changeEvents->record($change, 'impact_assessment', CarbonImmutable::now(), null);
 
             return $this->reloadChange($change);
         });
@@ -205,9 +220,12 @@ final class ChangeManagementService
         $this->assertStatus($change->status, ['impact_assessment']);
         $this->assertImpactExists($change);
 
-        $change->forceFill(['status' => 'internal_review'])->save();
+        return DB::transaction(function () use ($change): ChangeRequest {
+            $change->forceFill(['status' => 'internal_review'])->save();
+            $this->changeEvents->record($change, 'review', CarbonImmutable::now(), null);
 
-        return $this->reloadChange($change);
+            return $this->reloadChange($change);
+        });
     }
 
     public function startCustomerReview(ChangeRequest $change): ChangeRequest
@@ -219,9 +237,12 @@ final class ChangeManagementService
             throw new DomainException(trans_message('change_management.errors.customer_approval_not_required'));
         }
 
-        $change->forceFill(['status' => 'customer_review'])->save();
+        return DB::transaction(function () use ($change): ChangeRequest {
+            $change->forceFill(['status' => 'customer_review'])->save();
+            $this->changeEvents->record($change, 'review', CarbonImmutable::now(), null);
 
-        return $this->reloadChange($change);
+            return $this->reloadChange($change);
+        });
     }
 
     public function approveChange(ChangeRequest $change, int $userId, ?string $comment = null): ChangeRequest
@@ -268,13 +289,16 @@ final class ChangeManagementService
     {
         $this->assertStatus($change->status, ['approved']);
 
-        $change->forceFill([
-            'status' => 'implemented',
-            'implementation_comment' => $comment,
-            'implemented_at' => now(),
-        ])->save();
+        return DB::transaction(function () use ($change, $comment): ChangeRequest {
+            $change->forceFill([
+                'status' => 'implemented',
+                'implementation_comment' => $comment,
+                'implemented_at' => now(),
+            ])->save();
+            $this->changeEvents->record($change, 'implement', CarbonImmutable::now(), null);
 
-        return $this->reloadChange($change);
+            return $this->reloadChange($change);
+        });
     }
 
     public function closeChange(ChangeRequest $change): ChangeRequest
@@ -283,12 +307,15 @@ final class ChangeManagementService
             throw new DomainException(trans_message('change_management.errors.implementation_required'));
         }
 
-        $change->forceFill([
-            'status' => 'closed',
-            'closed_at' => now(),
-        ])->save();
+        return DB::transaction(function () use ($change): ChangeRequest {
+            $change->forceFill([
+                'status' => 'closed',
+                'closed_at' => now(),
+            ])->save();
+            $this->changeEvents->record($change, 'close', CarbonImmutable::now(), null);
 
-        return $this->reloadChange($change);
+            return $this->reloadChange($change);
+        });
     }
 
     public function createClaim(int $organizationId, int $userId, array $data): ChangeClaim
@@ -303,18 +330,26 @@ final class ChangeManagementService
             }
         }
 
-        return ChangeClaim::create([
-            'organization_id' => $organizationId,
-            'project_id' => (int) $data['project_id'],
-            'change_request_id' => $data['change_request_id'] ?? null,
-            'created_by_user_id' => $userId,
-            'claim_number' => $data['claim_number'] ?? $this->nextNumber(ChangeClaim::class, $organizationId, 'CL', 'claim_number'),
-            'title' => $data['title'],
-            'description' => $data['description'] ?? null,
-            'amount' => $data['amount'] ?? 0,
-            'status' => 'submitted',
-            'evidence' => $data['evidence'] ?? [],
-        ])->load(['changeRequest']);
+        return DB::transaction(function () use ($organizationId, $userId, $data): ChangeClaim {
+            $claim = ChangeClaim::create([
+                'organization_id' => $organizationId,
+                'project_id' => (int) $data['project_id'],
+                'change_request_id' => $data['change_request_id'] ?? null,
+                'created_by_user_id' => $userId,
+                'claim_number' => $data['claim_number'] ?? $this->nextNumber(ChangeClaim::class, $organizationId, 'CL', 'claim_number'),
+                'title' => $data['title'],
+                'description' => $data['description'] ?? null,
+                'amount' => $data['amount'] ?? 0,
+                'status' => 'submitted',
+                'evidence' => $data['evidence'] ?? [],
+            ]);
+            if ($claim->change_request_id !== null) {
+                $change = $this->findChange($organizationId, (int) $claim->change_request_id);
+                $this->changeEvents->linkClaim($change, $claim);
+            }
+
+            return $claim->load(['changeRequest']);
+        });
     }
 
     private function approve(ChangeRequest $change, int $userId, string $approvalType, ?string $comment): ChangeRequest
@@ -334,6 +369,7 @@ final class ChangeManagementService
                 'status' => 'approved',
                 'approved_at' => now(),
             ])->save();
+            $this->changeEvents->record($change, 'approve', CarbonImmutable::now(), $userId);
 
             return $this->reloadChange($change);
         });

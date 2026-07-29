@@ -9,6 +9,7 @@ use App\BusinessModules\Features\Budgeting\DTOs\WipForecastDrillDownKey;
 use App\BusinessModules\Features\Budgeting\DTOs\WipForecastManualAdjustment;
 use App\BusinessModules\Features\Budgeting\DTOs\WipForecastReportFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\WipForecastSourceAggregate;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\DTO\WipForecastReportResult;
 
 final class WipForecastCalculator
 {
@@ -32,13 +33,41 @@ final class WipForecastCalculator
         array $freshness = [],
         array $meta = [],
     ): array {
+        return $this->calculateResult(
+            $filters,
+            $aggregates,
+            $dimensions,
+            $scenario,
+            $budgetVersion,
+            $forecastVersion,
+            $adjustments,
+            $assumptions,
+            $sourceCoverage,
+            $freshness,
+            $meta,
+        )->toArray();
+    }
+
+    public function calculateResult(
+        WipForecastReportFilters $filters,
+        array $aggregates,
+        WipForecastDimensions $dimensions,
+        ?array $scenario,
+        ?array $budgetVersion,
+        ?array $forecastVersion,
+        array $adjustments = [],
+        array $assumptions = [],
+        array $sourceCoverage = [],
+        array $freshness = [],
+        array $meta = [],
+    ): WipForecastReportResult {
         $buckets = $this->groupAggregates($filters, $aggregates);
         $this->applyAdjustments($filters, $buckets, $adjustments);
 
         $rows = $this->rows($filters, $buckets, $dimensions);
         $summary = $this->summary($rows);
 
-        return [
+        return WipForecastReportResult::fromArray([
             'filters' => $filters->toArray(),
             'period' => $filters->period(),
             'summary' => $summary,
@@ -72,7 +101,7 @@ final class WipForecastCalculator
                     'approved_budget' => $budgetVersion,
                 ],
             ]),
-        ];
+        ]);
     }
 
     /**
