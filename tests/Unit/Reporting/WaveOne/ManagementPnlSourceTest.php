@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\WaveOne;
 
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\DTO\ManagementPnlComponentSnapshot;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\DTO\ManagementSourceFact;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementAccountingPolicy;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlComponentSet;
-use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\DTO\ManagementPnlComponentSnapshot;
-use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use DomainException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -115,7 +116,7 @@ final class ManagementPnlSourceTest extends TestCase
     #[Test]
     public function composite_requires_exactly_one_pinned_snapshot_per_component_and_currency(): void
     {
-        $set = new ManagementPnlComponentSet();
+        $set = new ManagementPnlComponentSet;
         $components = [
             $this->component('project_margin'),
             $this->component('budget_plan_fact'),
@@ -140,7 +141,7 @@ final class ManagementPnlSourceTest extends TestCase
         ];
 
         $this->expectException(DomainException::class);
-        (new ManagementPnlComponentSet())->validate(
+        (new ManagementPnlComponentSet)->validate(
             $components,
             10,
             [101],
@@ -152,6 +153,13 @@ final class ManagementPnlSourceTest extends TestCase
 
     private function component(string $code, int $projectId = 101): ManagementPnlComponentSnapshot
     {
+        $scopeHash = hash('sha256', CanonicalJson::encode([
+            'organization_id' => 10,
+            'holding_id' => null,
+            'project_ids' => [101],
+            'resource_constraints' => [],
+        ]));
+
         return new ManagementPnlComponentSnapshot(
             componentCode: $code,
             snapshotId: $code.'-snapshot',
@@ -179,6 +187,13 @@ final class ManagementPnlSourceTest extends TestCase
                     sourceRefs: [['type' => $code, 'id' => 1]],
                 ),
             ],
+            scopeHash: $scopeHash,
+            queryHash: str_repeat('b', 64),
+            definitionHash: str_repeat('c', 64),
+            asOf: '2026-07-31T23:59:59+03:00',
+            rowCount: 1,
+            coverageNumerator: 1,
+            coverageDenominator: 1,
         );
     }
 

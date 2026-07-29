@@ -25,8 +25,7 @@ final readonly class ContractSettlementProjectionService
         private ContractSettlementCalculator $calculator,
         private SettlementAgingPolicy $agingPolicy,
         private ContractSettlementOwnerSource $ownerSource,
-    ) {
-    }
+    ) {}
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
     {
@@ -48,7 +47,7 @@ final readonly class ContractSettlementProjectionService
                 ?? $query->filters->values['aging_bucket']
                 ?? null;
             if ($agingFilter !== null
-                && !in_array($result->agingBucket, is_array($agingFilter) ? $agingFilter : [$agingFilter], true)) {
+                && ! in_array($result->agingBucket, is_array($agingFilter) ? $agingFilter : [$agingFilter], true)) {
                 continue;
             }
             $selectedInputs[] = $input;
@@ -162,7 +161,12 @@ final readonly class ContractSettlementProjectionService
             sourceHash: $sourceHash,
             generatedAt: $generatedAt,
             staleAt: $staleAt,
-            watermarks: ['source_fact_id' => $sourceWatermarkId],
+            watermarks: [
+                'query_hash' => $query->queryHash->value,
+                'as_of' => $query->asOf->format(DATE_ATOM),
+                'aging_policy_version' => SettlementAgingPolicy::VERSION,
+                'source_fact_id' => $sourceWatermarkId,
+            ],
             classification: ReportSnapshotClassification::OPERATIONAL,
             seal: null,
         );

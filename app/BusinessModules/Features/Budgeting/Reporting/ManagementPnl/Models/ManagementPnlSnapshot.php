@@ -21,6 +21,7 @@ final class ManagementPnlSnapshot extends Model
         'generated_at' => 'immutable_datetime',
         'stale_at' => 'immutable_datetime',
         'totals' => 'array',
+        'warnings' => 'array',
     ];
 
     public function rows(): HasMany

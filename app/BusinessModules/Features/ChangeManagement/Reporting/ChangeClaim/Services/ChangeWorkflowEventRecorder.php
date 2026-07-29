@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Services;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\ExactDecimal;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeClaim;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeClaimLink;
@@ -54,7 +55,7 @@ final readonly class ChangeWorkflowEventRecorder
                 'proposed_cost_minor' => $proposed,
                 'proposed_schedule_days' => (int) ($change->impact?->schedule_delta_days ?? 0),
                 'approved_cost_minor' => $approved,
-                'approved_schedule_days' => $approved === null || !array_key_exists('approved_schedule_days', $links)
+                'approved_schedule_days' => $approved === null || ! array_key_exists('approved_schedule_days', $links)
                     ? null
                     : (int) $links['approved_schedule_days'],
                 'currency' => $currency,
@@ -92,7 +93,7 @@ final readonly class ChangeWorkflowEventRecorder
             ->where('change_request_id', $change->id)
             ->latest('version')
             ->first();
-        if (!$version instanceof ChangeRequestVersion || $version->currency === null) {
+        if (! $version instanceof ChangeRequestVersion || $version->currency === null) {
             throw new DomainException('change_claim_version_not_ready');
         }
         $amountMinor = $this->minor($claim->amount);
@@ -114,23 +115,16 @@ final readonly class ChangeWorkflowEventRecorder
 
     private function minor(mixed $amount): int
     {
-        if (!is_numeric($amount)) {
+        if (! is_int($amount) && ! is_float($amount) && ! is_string($amount)) {
             throw new DomainException('change_claim_money_invalid');
         }
-        $normalized = number_format((float) $amount, 2, '.', '');
-        if (abs((float) $amount - (float) $normalized) > 0.000001) {
-            throw new DomainException('change_claim_money_minor_unit_loss');
-        }
-        $negative = str_starts_with($normalized, '-');
-        [$whole, $fraction] = explode('.', ltrim($normalized, '-'));
-        $minor = (int) $whole * 100 + (int) $fraction;
 
-        return $negative ? -$minor : $minor;
+        return ExactDecimal::minor((string) $amount);
     }
 
     private function currency(mixed $value): ?string
     {
-        if (!is_string($value) || preg_match('/^[A-Z]{3}$/', mb_strtoupper($value)) !== 1) {
+        if (! is_string($value) || preg_match('/^[A-Z]{3}$/', mb_strtoupper($value)) !== 1) {
             return null;
         }
 

@@ -42,9 +42,9 @@ class ContractDTO
         public readonly ?int $supplier_id = null,
         public readonly ?string $contract_category = null,
         public readonly ?ContractSideTypeEnum $contract_side_type = null,
-        public readonly ?string $delivery_terms = null
-    ) {
-    }
+        public readonly ?string $delivery_terms = null,
+        public readonly string $currency = 'RUB',
+    ) {}
 
     public function toArray(): array
     {
@@ -60,6 +60,7 @@ class ContractDTO
             'delivery_terms' => $this->delivery_terms,
             'base_amount' => $this->base_amount,
             'total_amount' => $this->total_amount,
+            'currency' => $this->currency,
             'gp_percentage' => $this->gp_percentage,
             'gp_calculation_type' => $this->gp_calculation_type?->value,
             'gp_coefficient' => $this->gp_coefficient,

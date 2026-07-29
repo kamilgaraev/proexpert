@@ -6,7 +6,6 @@ namespace Tests\Unit\Reporting\Waves23;
 
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\DTO\ChangeExposureFact;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\DTO\ContingencyMovement;
-use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Exceptions\DuplicateChangeClaimLink;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Services\ChangeClaimContingencyFormula;
 use DomainException;
 use PHPUnit\Framework\Attributes\Test;
@@ -17,7 +16,7 @@ final class ChangeClaimContingencyFormulaTest extends TestCase
     #[Test]
     public function proposed_approved_claim_and_contingency_are_distinct(): void
     {
-        $metric = (new ChangeClaimContingencyFormula())->summarize(
+        $metric = (new ChangeClaimContingencyFormula)->summarize(
             [
                 new ChangeExposureFact(
                     changeRequestId: 1,
@@ -49,7 +48,7 @@ final class ChangeClaimContingencyFormulaTest extends TestCase
     #[Test]
     public function only_the_latest_change_version_contributes_exposure(): void
     {
-        $metric = (new ChangeClaimContingencyFormula())->summarize(
+        $metric = (new ChangeClaimContingencyFormula)->summarize(
             [
                 new ChangeExposureFact(1, 1, 10, 20, 'RUB', 1_000, null, []),
                 new ChangeExposureFact(1, 2, 10, 20, 'RUB', 1_500, 1_200, []),
@@ -62,11 +61,9 @@ final class ChangeClaimContingencyFormulaTest extends TestCase
     }
 
     #[Test]
-    public function one_claim_link_cannot_inflate_two_change_versions(): void
+    public function a_claim_from_a_superseded_version_cannot_inflate_the_latest_exposure(): void
     {
-        $this->expectException(DuplicateChangeClaimLink::class);
-
-        (new ChangeClaimContingencyFormula())->summarize(
+        $metric = (new ChangeClaimContingencyFormula)->summarize(
             [
                 new ChangeExposureFact(
                     1,
@@ -86,11 +83,13 @@ final class ChangeClaimContingencyFormulaTest extends TestCase
                     'RUB',
                     1_500,
                     1_200,
-                    [['id' => 100, 'version' => 1, 'amount_minor' => 250]],
+                    [['id' => 101, 'version' => 1, 'amount_minor' => 300]],
                 ),
             ],
             [ContingencyMovement::opening(2_000, 'RUB')],
         );
+
+        self::assertSame(300, $metric->linkedClaimMinor);
     }
 
     #[Test]
@@ -98,7 +97,7 @@ final class ChangeClaimContingencyFormulaTest extends TestCase
     {
         $this->expectException(DomainException::class);
 
-        (new ChangeClaimContingencyFormula())->summarize(
+        (new ChangeClaimContingencyFormula)->summarize(
             [new ChangeExposureFact(1, 1, 10, 20, 'RUB', 1_000, null, [])],
             [ContingencyMovement::opening(2_000, 'USD')],
         );
@@ -107,7 +106,7 @@ final class ChangeClaimContingencyFormulaTest extends TestCase
     #[Test]
     public function approved_exposure_never_falls_back_to_proposed_exposure(): void
     {
-        $metric = (new ChangeClaimContingencyFormula())->summarize(
+        $metric = (new ChangeClaimContingencyFormula)->summarize(
             [new ChangeExposureFact(1, 1, 10, 20, 'RUB', 1_000, null, [])],
             [ContingencyMovement::opening(2_000, 'RUB')],
         );
@@ -121,7 +120,7 @@ final class ChangeClaimContingencyFormulaTest extends TestCase
     {
         $this->expectException(DomainException::class);
 
-        (new ChangeClaimContingencyFormula())->summarize(
+        (new ChangeClaimContingencyFormula)->summarize(
             [],
             [
                 ContingencyMovement::opening(2_000, 'RUB'),
@@ -135,7 +134,7 @@ final class ChangeClaimContingencyFormulaTest extends TestCase
     {
         $this->expectException(DomainException::class);
 
-        (new ChangeClaimContingencyFormula())->summarize(
+        (new ChangeClaimContingencyFormula)->summarize(
             [],
             [
                 ContingencyMovement::opening(1_000, 'RUB'),
@@ -150,7 +149,7 @@ final class ChangeClaimContingencyFormulaTest extends TestCase
     {
         $this->expectException(DomainException::class);
 
-        (new ChangeClaimContingencyFormula())->summarize(
+        (new ChangeClaimContingencyFormula)->summarize(
             [],
             [ContingencyMovement::allocation(200, 'RUB')],
         );

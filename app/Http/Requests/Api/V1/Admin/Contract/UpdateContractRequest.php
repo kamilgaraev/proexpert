@@ -212,6 +212,7 @@ class UpdateContractRequest extends FormRequest
             'is_fixed_amount' => ['sometimes', 'nullable', 'boolean'],
             'base_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'total_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'currency' => ['sometimes', 'string', 'size:3', 'regex:/^[A-Za-z]{3}$/'],
             'gp_percentage' => ['sometimes', 'nullable', 'numeric', 'min:-100', 'max:100'],
             'gp_calculation_type' => ['sometimes', 'nullable', new Enum(GpCalculationTypeEnum::class)],
             'gp_coefficient' => ['sometimes', 'nullable', 'numeric', 'min:0'],
@@ -293,6 +294,7 @@ class UpdateContractRequest extends FormRequest
             'is_fixed_amount',
             'base_amount',
             'total_amount',
+            'currency',
             'gp_percentage',
             'gp_calculation_type',
             'gp_coefficient',
@@ -394,7 +396,8 @@ class UpdateContractRequest extends FormRequest
                 : $contract->contract_category,
             contract_side_type: array_key_exists('contract_side_type', $validatedData)
                 ? ($validatedData['contract_side_type'] ? ContractSideTypeEnum::from($validatedData['contract_side_type']) : null)
-                : $contract->contract_side_type
+                : $contract->contract_side_type,
+            currency: mb_strtoupper((string) ($validatedData['currency'] ?? $contract->currency ?? 'RUB')),
         );
     }
 

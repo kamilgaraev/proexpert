@@ -9,7 +9,7 @@ use DomainException;
 final readonly class ContractSettlementAllocationConserver
 {
     /**
-     * @param array<int, int> $weights
+     * @param  array<int, int>  $weights
      * @return array<int, int>
      */
     public function allocate(int $totalMinor, array $weights): array
@@ -20,7 +20,7 @@ final readonly class ContractSettlementAllocationConserver
 
         $normalized = [];
         foreach ($weights as $allocationId => $weight) {
-            if ($allocationId < 1 || !is_int($weight) || $weight < 0) {
+            if ($allocationId < 1 || ! is_int($weight) || $weight < 0) {
                 throw new DomainException('contract_settlement_allocation_invalid');
             }
             $normalized[$allocationId] = $weight;
@@ -31,31 +31,27 @@ final readonly class ContractSettlementAllocationConserver
             throw new DomainException('contract_settlement_allocation_invalid');
         }
 
+        ksort($normalized);
+        $finalAllocationId = array_key_last($normalized);
         $allocated = [];
-        $remainders = [];
+        $remaining = $totalMinor;
         foreach ($normalized as $allocationId => $weight) {
+            if ($allocationId === $finalAllocationId) {
+                $allocated[$allocationId] = $remaining;
+
+                continue;
+            }
             if ($weight !== 0 && $totalMinor > intdiv(PHP_INT_MAX, $weight)) {
                 throw new DomainException('contract_settlement_allocation_overflow');
             }
             $weighted = $totalMinor * $weight;
-            $allocated[$allocationId] = intdiv($weighted, $weightTotal);
-            $remainders[$allocationId] = $weighted % $weightTotal;
-        }
-
-        $remaining = $totalMinor - array_sum($allocated);
-        uksort($remainders, static function (int $left, int $right) use ($remainders): int {
-            $comparison = $remainders[$right] <=> $remainders[$left];
-
-            return $comparison !== 0 ? $comparison : $left <=> $right;
-        });
-        foreach (array_keys($remainders) as $allocationId) {
-            if ($remaining === 0) {
-                break;
+            $amount = intdiv($weighted + intdiv($weightTotal, 2), $weightTotal);
+            if ($amount > $remaining) {
+                throw new DomainException('contract_settlement_allocation_rounding_invalid');
             }
-            $allocated[$allocationId]++;
-            $remaining--;
+            $allocated[$allocationId] = $amount;
+            $remaining -= $amount;
         }
-        ksort($allocated);
 
         return $allocated;
     }

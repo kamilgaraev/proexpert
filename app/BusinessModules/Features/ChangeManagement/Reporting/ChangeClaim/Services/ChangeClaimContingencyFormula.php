@@ -16,18 +16,21 @@ final readonly class ChangeClaimContingencyFormula
     {
         $currency = null;
         $latest = [];
-        $claims = [];
         foreach ($changeFacts as $fact) {
-            if (!$fact instanceof ChangeExposureFact) {
+            if (! $fact instanceof ChangeExposureFact) {
                 throw new DomainException('change_exposure_fact_invalid');
             }
             $currency = $this->currency($currency, $fact->currency);
             $current = $latest[$fact->changeRequestId] ?? null;
-            if (!$current instanceof ChangeExposureFact || $current->changeVersion < $fact->changeVersion) {
+            if (! $current instanceof ChangeExposureFact || $current->changeVersion < $fact->changeVersion) {
                 $latest[$fact->changeRequestId] = $fact;
             }
+        }
+
+        $claims = [];
+        foreach ($latest as $fact) {
             foreach ($fact->linkedClaims as $claim) {
-                if (!is_array($claim) || !isset($claim['id'], $claim['version'], $claim['amount_minor'])) {
+                if (! is_array($claim) || ! isset($claim['id'], $claim['version'], $claim['amount_minor'])) {
                     throw new DomainException('change_claim_link_invalid');
                 }
                 $key = $claim['id'].':'.$claim['version'];
@@ -45,7 +48,7 @@ final readonly class ChangeClaimContingencyFormula
         $release = 0;
         $balance = 0;
         foreach ($contingencyMovements as $movement) {
-            if (!$movement instanceof ContingencyMovement) {
+            if (! $movement instanceof ContingencyMovement) {
                 throw new DomainException('contingency_movement_invalid');
             }
             $currency = $this->currency($currency, $movement->currency);

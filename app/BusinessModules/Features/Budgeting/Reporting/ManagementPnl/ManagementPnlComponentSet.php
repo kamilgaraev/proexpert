@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl;
 
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\DTO\ManagementPnlComponentSnapshot;
 use DomainException;
 
@@ -23,16 +24,27 @@ final readonly class ManagementPnlComponentSet
         string $periodFrom,
         string $periodTo,
         string $scenario,
+        ?string $scopeHash = null,
+        ?string $asOf = null,
+        array $requiredCurrencies = [],
     ): array {
         $matrix = [];
         $currencies = [];
 
         foreach ($components as $component) {
-            if (!$component instanceof ManagementPnlComponentSnapshot
-                || !in_array($component->componentCode, self::CODES, true)
+            if (! $component instanceof ManagementPnlComponentSnapshot
+                || ! in_array($component->componentCode, self::CODES, true)
                 || $component->periodFrom !== $periodFrom
                 || $component->periodTo !== $periodTo
-                || $component->scenario !== $scenario) {
+                || $component->scenario !== $scenario
+                || ($scopeHash !== null && $component->scopeHash !== $scopeHash)
+                || ($asOf !== null && ($component->asOf === null
+                    || new \DateTimeImmutable($component->asOf) > new \DateTimeImmutable($asOf)))
+                || $component->queryHash === null
+                || $component->definitionHash === null
+                || $component->rowCount === null
+                || $component->coverageNumerator === null
+                || $component->coverageDenominator === null) {
                 throw new DomainException('management_pnl_component_scope_mismatch');
             }
 
@@ -48,7 +60,7 @@ final readonly class ManagementPnlComponentSet
                     || $fact->sourceType !== $component->componentCode
                     || $fact->organizationId !== $organizationId
                     || ($projectIds !== [] && ($fact->projectId === null
-                        || !in_array($fact->projectId, $projectIds, true)))
+                        || ! in_array($fact->projectId, $projectIds, true)))
                     || $fact->period < $periodFrom
                     || $fact->period > $periodTo
                     || $fact->scenario !== $scenario
@@ -61,9 +73,16 @@ final readonly class ManagementPnlComponentSet
         if ($currencies === []) {
             throw new DomainException('management_pnl_component_facts_missing');
         }
+        sort($requiredCurrencies, SORT_STRING);
+        $actualCurrencies = array_keys($currencies);
+        sort($actualCurrencies, SORT_STRING);
+        if ($requiredCurrencies !== []
+            && CanonicalJson::encode($actualCurrencies) !== CanonicalJson::encode($requiredCurrencies)) {
+            throw new DomainException('management_pnl_component_currency_scope_mismatch');
+        }
         foreach (array_keys($currencies) as $currency) {
             foreach (self::CODES as $code) {
-                if (!isset($matrix[$code.':'.$currency])) {
+                if (! isset($matrix[$code.':'.$currency])) {
                     throw new DomainException('management_pnl_component_cardinality_invalid');
                 }
             }

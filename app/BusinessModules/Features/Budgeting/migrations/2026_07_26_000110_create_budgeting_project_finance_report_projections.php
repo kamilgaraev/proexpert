@@ -17,6 +17,8 @@ return new class extends Migration
             $table->char('definition_hash', 64);
             $table->string('formula_version', 64);
             $table->string('source_schema_version', 64);
+            $table->char('scope_hash', 64);
+            $table->char('query_hash', 64);
             $table->char('source_hash', 64);
             $table->string('source_snapshot_kind', 64);
             $table->string('source_snapshot_id', 128);
@@ -38,7 +40,7 @@ return new class extends Migration
             $table->timestampsTz();
 
             $table->unique(
-                ['organization_id', 'report_code', 'source_hash'],
+                ['organization_id', 'report_code', 'scope_hash', 'query_hash', 'source_hash'],
                 'budgeting_project_finance_snapshot_identity_unique',
             );
             $table->index(

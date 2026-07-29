@@ -10,11 +10,11 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use App\BusinessModules\Features\Budgeting\Models\EpmDataMartSnapshot;
 use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
-use App\BusinessModules\Features\Budgeting\Services\EpmDataMartPayloadProjector;
+use App\BusinessModules\Features\Budgeting\Models\EpmDataMartSnapshot;
 use App\BusinessModules\Features\Budgeting\Models\WipForecastVersion;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\Models\ProjectFinanceSnapshot;
+use App\BusinessModules\Features\Budgeting\Services\EpmDataMartPayloadProjector;
 use DateInterval;
 use DateTimeImmutable;
 use DomainException;
@@ -69,7 +69,7 @@ final readonly class ProjectFinanceProjectionService
             ->latest('generated_at')
             ->first();
 
-        if (!$source instanceof EpmDataMartSnapshot) {
+        if (! $source instanceof EpmDataMartSnapshot) {
             throw new DomainException('report_mandatory_source_unavailable');
         }
 
@@ -122,6 +122,8 @@ final readonly class ProjectFinanceProjectionService
                 'definition_hash' => $query->definition->definitionHash->value,
                 'formula_version' => $query->definition->formulaVersion,
                 'source_schema_version' => $query->definition->sourceSchemaVersion,
+                'scope_hash' => hash('sha256', CanonicalJson::encode($scope->canonicalIdentity())),
+                'query_hash' => $query->queryHash->value,
                 'source_hash' => $sourceHash->value,
                 'source_snapshot_kind' => 'budgeting_epm_data_mart',
                 'source_snapshot_id' => (string) $source->uuid,
@@ -176,7 +178,14 @@ final readonly class ProjectFinanceProjectionService
             sourceHash: $sourceHash,
             generatedAt: $generatedAt,
             staleAt: $staleAt,
-            watermarks: ['source_generated_at' => $generatedAt->format(DATE_ATOM)],
+            watermarks: [
+                'query_hash' => $query->queryHash->value,
+                'as_of' => (string) $source->as_of_date?->format('Y-m-d'),
+                'source_schema_version' => $query->definition->sourceSchemaVersion,
+                'budget_version_id' => $this->nullablePositiveInt($query->filters->values['budget_version_id'] ?? null) ?? 0,
+                'forecast_version_id' => $this->nullablePositiveInt($query->filters->values['forecast_version_id'] ?? null) ?? 0,
+                'source_generated_at' => $generatedAt->format(DATE_ATOM),
+            ],
             classification: ReportSnapshotClassification::OPERATIONAL,
             seal: null,
         );
@@ -307,7 +316,7 @@ final readonly class ProjectFinanceProjectionService
     private function assertSourceCoversQuery(array $sourceFilters, array $queryFilters): void
     {
         foreach ($queryFilters as $key => $value) {
-            if (!array_key_exists($key, $sourceFilters)) {
+            if (! array_key_exists($key, $sourceFilters)) {
                 throw new DomainException('report_source_scope_mismatch');
             }
             if (CanonicalJson::encode($sourceFilters[$key]) !== CanonicalJson::encode($value)) {
@@ -341,7 +350,7 @@ final readonly class ProjectFinanceProjectionService
         if ($value === null || $value === '') {
             return null;
         }
-        if (!is_numeric($value)) {
+        if (! is_numeric($value)) {
             throw new DomainException('report_money_invalid');
         }
         $normalized = number_format((float) $value, 2, '.', '');
@@ -375,7 +384,7 @@ final readonly class ProjectFinanceProjectionService
         if ($value instanceof \DateTimeInterface) {
             return $value->format('Y-m-d');
         }
-        if (!is_string($value) || trim($value) === '') {
+        if (! is_string($value) || trim($value) === '') {
             return null;
         }
 

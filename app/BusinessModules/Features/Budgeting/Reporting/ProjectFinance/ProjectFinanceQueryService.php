@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance;
 
+use App\BusinessModules\Core\Payments\Reporting\FinanceSourceAccessPolicy;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
@@ -19,25 +20,26 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use App\BusinessModules\Core\Payments\Reporting\FinanceSourceAccessPolicy;
+use App\BusinessModules\Core\Reporting\Support\OwnerSnapshotIdentityGuard;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\Models\ProjectFinanceRow;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\Models\ProjectFinanceSnapshot;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 
-final readonly class ProjectFinanceQueryService implements ReportRowQuery, ReportDrillDownProvider
+final readonly class ProjectFinanceQueryService implements ReportDrillDownProvider, ReportRowQuery
 {
-    public function __construct(private FinanceSourceAccessPolicy $sourceAccess)
-    {
-    }
+    public function __construct(
+        private FinanceSourceAccessPolicy $sourceAccess,
+        private OwnerSnapshotIdentityGuard $identityGuard,
+    ) {}
 
     private const SORTS = [
         'project_margin' => [
@@ -264,16 +266,15 @@ final readonly class ProjectFinanceQueryService implements ReportRowQuery, Repor
 
     private function snapshot(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ProjectFinanceSnapshot
     {
-        if ($snapshot->scope->canonicalIdentity() !== $context->scope->canonicalIdentity()) {
-            throw new DomainException('report_snapshot_scope_mismatch');
-        }
         $record = ProjectFinanceSnapshot::query()
             ->where('organization_id', $context->scope->organizationId)
             ->whereKey($snapshot->id)
             ->firstOrFail();
-        if (!hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)) {
-            throw new DomainException('report_snapshot_source_hash_mismatch');
-        }
+        $this->identityGuard->assert($record, $context, $snapshot, [
+            'source_schema_version' => 'source_schema_version',
+            'budget_version_id' => 'budget_version_id',
+            'forecast_version_id' => 'forecast_version_id',
+        ]);
 
         return $record;
     }
@@ -378,7 +379,7 @@ final readonly class ProjectFinanceQueryService implements ReportRowQuery, Repor
 
     private function freshness(ReportSnapshotRef $snapshot): ReportFreshnessStatus
     {
-        return $snapshot->staleAt !== null && $snapshot->staleAt <= new \DateTimeImmutable()
+        return $snapshot->staleAt !== null && $snapshot->staleAt <= new \DateTimeImmutable
             ? ReportFreshnessStatus::STALE
             : ReportFreshnessStatus::FRESH;
     }
@@ -386,7 +387,7 @@ final readonly class ProjectFinanceQueryService implements ReportRowQuery, Repor
     private function sortColumn(string $code, ReportWindowSort $sort): string
     {
         $column = self::SORTS[$code][$sort->field] ?? null;
-        if (!is_string($column)) {
+        if (! is_string($column)) {
             throw new DomainException('report_sort_invalid');
         }
 

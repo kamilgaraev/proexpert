@@ -25,8 +25,7 @@ final readonly class ManagementPnlProjectionService
     public function __construct(
         private iterable $componentSources,
         private ManagementPnlComponentSet $componentSet,
-    ) {
-    }
+    ) {}
 
     public function materialize(
         ReportScope $scope,
@@ -42,17 +41,17 @@ final readonly class ManagementPnlProjectionService
             ->where('status', 'active')
             ->where('version', $policy->version())
             ->first();
-        if (!$policyRecord instanceof ManagementPnlPolicy) {
+        if (! $policyRecord instanceof ManagementPnlPolicy) {
             throw new DomainException('management_pnl_active_policy_missing');
         }
 
         $components = [];
         foreach ($this->componentSources as $source) {
-            if (!$source instanceof ManagementPnlComponentSource) {
+            if (! $source instanceof ManagementPnlComponentSource) {
                 throw new DomainException('management_pnl_component_source_invalid');
             }
             foreach ($source->snapshots($scope, $query) as $component) {
-                if (!$component instanceof ManagementPnlComponentSnapshot) {
+                if (! $component instanceof ManagementPnlComponentSnapshot) {
                     throw new DomainException('management_pnl_component_snapshot_invalid');
                 }
                 $components[] = $component;
@@ -63,10 +62,15 @@ final readonly class ManagementPnlProjectionService
         $periodFrom = $filters['period_from'] ?? null;
         $periodTo = $filters['period_to'] ?? null;
         $scenarios = $filters['scenarios'] ?? null;
-        if (!is_string($periodFrom) || !is_string($periodTo)
-            || !is_array($scenarios) || count($scenarios) !== 1 || !is_string($scenarios[0])) {
+        if (! is_string($periodFrom) || ! is_string($periodTo)
+            || ! is_array($scenarios) || count($scenarios) !== 1 || ! is_string($scenarios[0])) {
             throw new DomainException('management_pnl_exact_scope_required');
         }
+        $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
+        $requiredCurrencies = array_values(array_unique(array_map(
+            static fn (mixed $currency): string => mb_strtoupper((string) $currency),
+            is_array($filters['currencies'] ?? null) ? $filters['currencies'] : [],
+        )));
         $components = $this->componentSet->validate(
             $components,
             $scope->organizationId,
@@ -74,10 +78,16 @@ final readonly class ManagementPnlProjectionService
             $periodFrom,
             $periodTo,
             $scenarios[0],
+            $scopeHash,
+            $query->asOf->format(DATE_ATOM),
+            $requiredCurrencies,
         );
 
         $facts = [];
         $componentIdentities = [];
+        $coverageNumerator = 0;
+        $coverageDenominator = 0;
+        $warnings = [];
         foreach ($components as $component) {
             $this->assertComponentScope($component, $query);
             $componentIdentities[] = [
@@ -90,9 +100,26 @@ final readonly class ManagementPnlProjectionService
                 'period_to' => $component->periodTo,
                 'scenario' => $component->scenario,
                 'currency' => $component->currency,
+                'scope_hash' => $component->scopeHash,
+                'query_hash' => $component->queryHash,
+                'definition_hash' => $component->definitionHash,
+                'as_of' => $component->asOf,
+                'row_count' => $component->rowCount,
+                'coverage_numerator' => $component->coverageNumerator,
+                'coverage_denominator' => $component->coverageDenominator,
+                'warnings' => $component->warnings,
             ];
+            $coverageNumerator += (int) $component->coverageNumerator;
+            $coverageDenominator += (int) $component->coverageDenominator;
+            foreach ($component->warnings as $warning) {
+                $warnings[] = [
+                    'component_code' => $component->componentCode,
+                    'currency' => $component->currency,
+                    'code' => (string) $warning,
+                ];
+            }
             foreach ($component->facts as $fact) {
-                if (!$this->matchesFactFilters($fact, $filters)) {
+                if (! $this->matchesFactFilters($fact, $filters)) {
                     continue;
                 }
                 $identity = $fact->identity();
@@ -190,10 +217,11 @@ final readonly class ManagementPnlProjectionService
             'query_hash' => $query->queryHash->value,
         ])));
         $totals = $this->totals($rows);
-        $factCount = count($facts);
+        $qualityStatus = $coverageNumerator === $coverageDenominator ? 'complete' : 'partial';
 
         DB::transaction(function () use (
             $scope,
+            $scopeHash,
             $query,
             $policy,
             $policyRecord,
@@ -204,7 +232,10 @@ final readonly class ManagementPnlProjectionService
             $staleAt,
             $rows,
             $totals,
-            $factCount,
+            $coverageNumerator,
+            $coverageDenominator,
+            $qualityStatus,
+            $warnings,
         ): void {
             $snapshot = ManagementPnlSnapshot::query()->create([
                 'id' => $snapshotId,
@@ -213,7 +244,7 @@ final readonly class ManagementPnlProjectionService
                 'policy_version' => $policy->version(),
                 'definition_hash' => $query->definition->definitionHash->value,
                 'formula_version' => $query->definition->formulaVersion,
-                'scope_hash' => hash('sha256', CanonicalJson::encode($scope->canonicalIdentity())),
+                'scope_hash' => $scopeHash,
                 'query_hash' => $query->queryHash->value,
                 'source_hash' => $sourceHash->value,
                 'component_snapshots' => $componentIdentities,
@@ -222,9 +253,10 @@ final readonly class ManagementPnlProjectionService
                 'stale_at' => $staleAt,
                 'row_count' => count($rows),
                 'totals' => $totals,
-                'coverage_numerator' => $factCount,
-                'coverage_denominator' => $factCount,
-                'quality_status' => 'complete',
+                'coverage_numerator' => $coverageNumerator,
+                'coverage_denominator' => $coverageDenominator,
+                'quality_status' => $qualityStatus,
+                'warnings' => $warnings,
             ]);
             foreach (array_chunk($rows, 500) as $chunk) {
                 $snapshot->rows()->createMany($chunk);
@@ -240,7 +272,13 @@ final readonly class ManagementPnlProjectionService
             sourceHash: $sourceHash,
             generatedAt: $generatedAt,
             staleAt: $staleAt,
-            watermarks: ['component_source_hash' => $sourceHash->value],
+            watermarks: [
+                'query_hash' => $query->queryHash->value,
+                'as_of' => $query->asOf->format(DATE_ATOM),
+                'policy_id' => (int) $policyRecord->id,
+                'policy_version' => $policy->version(),
+                'component_source_hash' => $sourceHash->value,
+            ],
             classification: ReportSnapshotClassification::OPERATIONAL,
             seal: null,
         );
@@ -251,8 +289,8 @@ final readonly class ManagementPnlProjectionService
         $filters = $query->filters->values;
         if (($filters['period_from'] ?? $component->periodFrom) !== $component->periodFrom
             || ($filters['period_to'] ?? $component->periodTo) !== $component->periodTo
-            || (isset($filters['scenarios']) && !in_array($component->scenario, (array) $filters['scenarios'], true))
-            || (isset($filters['currencies']) && !in_array($component->currency, (array) $filters['currencies'], true))) {
+            || (isset($filters['scenarios']) && ! in_array($component->scenario, (array) $filters['scenarios'], true))
+            || (isset($filters['currencies']) && ! in_array($component->currency, (array) $filters['currencies'], true))) {
             throw new DomainException('management_pnl_component_scope_mismatch');
         }
         foreach ($component->facts as $fact) {
@@ -280,7 +318,7 @@ final readonly class ManagementPnlProjectionService
             'scenarios' => $fact->scenario,
         ] as $filter => $actual) {
             if (isset($filters[$filter])
-                && !in_array($actual, is_array($filters[$filter]) ? $filters[$filter] : [$filters[$filter]], true)) {
+                && ! in_array($actual, is_array($filters[$filter]) ? $filters[$filter] : [$filters[$filter]], true)) {
                 return false;
             }
         }
@@ -300,7 +338,7 @@ final readonly class ManagementPnlProjectionService
             'scenarios',
         ], true);
         foreach (array_keys($filters) as $filter) {
-            if (!isset($supported[$filter])) {
+            if (! isset($supported[$filter])) {
                 throw new DomainException('report_filter_not_sealed');
             }
         }

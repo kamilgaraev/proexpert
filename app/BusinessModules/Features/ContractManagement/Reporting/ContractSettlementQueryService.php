@@ -20,8 +20,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
@@ -29,17 +29,19 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Core\Reporting\Support\OwnerSnapshotIdentityGuard;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementExposureRecord;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementExposureSnapshot;
 use DateTimeImmutable;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 
-final readonly class ContractSettlementQueryService implements ReportRowQuery, ReportDrillDownProvider
+final readonly class ContractSettlementQueryService implements ReportDrillDownProvider, ReportRowQuery
 {
-    public function __construct(private FinanceSourceAccessPolicy $sourceAccess)
-    {
-    }
+    public function __construct(
+        private FinanceSourceAccessPolicy $sourceAccess,
+        private OwnerSnapshotIdentityGuard $identityGuard,
+    ) {}
 
     private const SORTS = [
         'contract_id' => 'contract_id',
@@ -160,16 +162,14 @@ final readonly class ContractSettlementQueryService implements ReportRowQuery, R
 
     private function snapshot(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ContractSettlementExposureSnapshot
     {
-        if ($snapshot->scope->canonicalIdentity() !== $context->scope->canonicalIdentity()) {
-            throw new DomainException('report_snapshot_scope_mismatch');
-        }
         $record = ContractSettlementExposureSnapshot::query()
             ->where('organization_id', $context->scope->organizationId)
             ->whereKey($snapshot->id)
             ->firstOrFail();
-        if (!hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)) {
-            throw new DomainException('report_snapshot_source_hash_mismatch');
-        }
+        $this->identityGuard->assert($record, $context, $snapshot, [
+            'aging_policy_version' => 'aging_policy_version',
+            'source_watermark_id' => 'source_fact_id',
+        ]);
 
         return $record;
     }
@@ -207,13 +207,19 @@ final readonly class ContractSettlementQueryService implements ReportRowQuery, R
         $numerator = (int) $snapshot->coverage_numerator;
         $denominator = (int) $snapshot->coverage_denominator;
 
+        $complete = $snapshot->quality_status === 'complete' && $numerator === $denominator;
+
         return new ReportQuality(
-            ReportQualityStatus::COMPLETE,
-            new ReportCoverage((string) $numerator, (string) $denominator, number_format($numerator / max(1, $denominator), 8, '.', '')),
-            $numerator === $denominator ? [] : [new ReportWarning('SOURCE_COVERAGE_INCOMPLETE', ReportWarningSeverity::WARNING, null, max(0, $denominator - $numerator))],
+            $complete ? ReportQualityStatus::COMPLETE : ReportQualityStatus::PARTIAL,
+            new ReportCoverage(
+                (string) $numerator,
+                (string) $denominator,
+                $denominator === 0 ? null : number_format($numerator / $denominator, 8, '.', ''),
+            ),
+            $complete ? [] : [new ReportWarning('SOURCE_COVERAGE_INCOMPLETE', ReportWarningSeverity::WARNING, null, max(0, $denominator - $numerator))],
             max(0, $denominator - $numerator),
-            $numerator === $denominator ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
-            [],
+            $complete ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
+            $complete ? [] : ['source_coverage'],
             [],
         );
     }
@@ -223,9 +229,9 @@ final readonly class ContractSettlementQueryService implements ReportRowQuery, R
         $grouped = [];
         foreach ($this->rows($context, $snapshot)->orderBy('row_key')->get() as $row) {
             foreach ((array) $row->source_refs as $ref) {
-                if (!is_array($ref)
-                    || !in_array($ref['type'] ?? null, self::SOURCE_TYPES, true)
-                    || !ctype_digit((string) ($ref['id'] ?? ''))
+                if (! is_array($ref)
+                    || ! in_array($ref['type'] ?? null, self::SOURCE_TYPES, true)
+                    || ! ctype_digit((string) ($ref['id'] ?? ''))
                     || preg_match('/^[a-f0-9]{64}$/', (string) ($ref['hash'] ?? '')) !== 1) {
                     throw new DomainException('contract_settlement_source_provenance_invalid');
                 }
@@ -257,7 +263,7 @@ final readonly class ContractSettlementQueryService implements ReportRowQuery, R
 
     private function freshness(ReportSnapshotRef $snapshot): ReportFreshnessStatus
     {
-        return $snapshot->staleAt !== null && $snapshot->staleAt <= new DateTimeImmutable()
+        return $snapshot->staleAt !== null && $snapshot->staleAt <= new DateTimeImmutable
             ? ReportFreshnessStatus::STALE
             : ReportFreshnessStatus::FRESH;
     }

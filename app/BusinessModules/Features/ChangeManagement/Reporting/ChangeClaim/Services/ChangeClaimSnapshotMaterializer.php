@@ -27,9 +27,7 @@ final readonly class ChangeClaimSnapshotMaterializer
 {
     public const FORMULA_VERSION = 'change-claim-contingency.v1';
 
-    public function __construct(private ChangeClaimContingencyFormula $formula)
-    {
-    }
+    public function __construct(private ChangeClaimContingencyFormula $formula) {}
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
     {
@@ -75,7 +73,6 @@ final readonly class ChangeClaimSnapshotMaterializer
             $ledgerQuery->whereIn('contract_project_allocation_id', $versions->pluck('contract_project_allocation_id')->filter());
         }
         $ledgerQuery
-            ->when(isset($filters['period_from']), static fn (Builder $builder) => $builder->whereDate('effective_on', '>=', (string) $filters['period_from']))
             ->when(isset($filters['period_to']), static fn (Builder $builder) => $builder->whereDate('effective_on', '<=', (string) $filters['period_to']));
         $ledger = $ledgerQuery
             ->orderBy('effective_on')
@@ -109,10 +106,11 @@ final readonly class ChangeClaimSnapshotMaterializer
                     'change_request_id' => (int) $version->change_request_id,
                     'version' => (int) $version->version,
                 ];
+
                 continue;
             }
             $key = $version->project_id.':'.$version->contract_project_allocation_id.':'.$version->currency;
-            $groups[$key] ??= ['facts' => [], 'movements' => [], 'versions' => [], 'ledger' => []];
+            $groups[$key] ??= ['facts' => [], 'movements' => [], 'versions' => [], 'claims' => [], 'ledger' => []];
             $claimRows = $links->get($version->id, collect());
             if (isset($filters['claim_ids']) && $claimRows->isEmpty()) {
                 continue;
@@ -132,10 +130,21 @@ final readonly class ChangeClaimSnapshotMaterializer
                 ])->all(),
             );
             $groups[$key]['versions'][] = $version;
+            foreach ($claimRows as $claimRow) {
+                $groups[$key]['claims'][] = $claimRow;
+            }
         }
         foreach ($ledger as $entry) {
             $key = $entry->project_id.':'.$entry->contract_project_allocation_id.':'.$entry->currency;
-            $groups[$key] ??= ['facts' => [], 'movements' => [], 'versions' => [], 'ledger' => []];
+            $groups[$key] ??= ['facts' => [], 'movements' => [], 'versions' => [], 'claims' => [], 'ledger' => []];
+            if (isset($filters['period_from'])
+                && $entry->effective_on->format('Y-m-d') < (string) $filters['period_from']) {
+                $groups[$key]['opening_balance'] = ($groups[$key]['opening_balance'] ?? 0)
+                    + (int) $entry->signed_amount_minor;
+                $groups[$key]['ledger'][] = $entry;
+
+                continue;
+            }
             $groups[$key]['movements'][] = ContingencyMovement::recorded(
                 type: (string) $entry->movement_type,
                 amountMinor: abs((int) $entry->signed_amount_minor),
@@ -149,51 +158,106 @@ final readonly class ChangeClaimSnapshotMaterializer
             );
             $groups[$key]['ledger'][] = $entry;
         }
+        if (isset($filters['period_from'])) {
+            foreach ($groups as $key => &$group) {
+                if (! array_key_exists('opening_balance', $group)) {
+                    continue;
+                }
+                $openingBalance = (int) $group['opening_balance'];
+                if ($openingBalance < 0) {
+                    throw new DomainException('contingency_opening_balance_negative');
+                }
+                [, , $currency] = explode(':', $key, 3);
+                array_unshift(
+                    $group['movements'],
+                    ContingencyMovement::opening($openingBalance, $currency),
+                );
+            }
+            unset($group);
+        }
 
         $rows = [];
         foreach ($groups as $key => $group) {
-            if ($group['facts'] === [] && $group['movements'] === []) {
-                continue;
-            }
-            $metric = $this->formula->summarize($group['facts'], $group['movements']);
-            $latest = collect($group['versions'])->sortByDesc('version')->first();
-            $event = $latest === null ? null : $events->get($latest->change_request_id, collect())->last();
             [$projectId, $allocationId] = array_map('intval', explode(':', $key, 3));
-            $rows[] = [
-                'row_key' => hash('sha256', $key.':'.($latest?->change_request_id ?? 0).':'.($latest?->version ?? 0)),
-                'organization_id' => $scope->organizationId,
-                'project_id' => $projectId,
-                'contract_id' => $latest?->contract_id,
-                'contract_project_allocation_id' => $allocationId,
-                'change_request_id' => $latest?->change_request_id,
-                'change_version' => $latest?->version,
-                'status' => (string) ($latest?->status ?? 'ledger_only'),
-                'occurred_on' => ($event?->occurred_at ?? $latest?->effective_at ?? $query->asOf)->format('Y-m-d'),
-                'currency' => $metric->currency,
-                'proposed_exposure_minor' => $metric->proposedExposureMinor,
-                'approved_exposure_minor' => $metric->approvedExposureMinor,
-                'linked_claim_minor' => $metric->linkedClaimMinor,
-                'opening_contingency_minor' => $metric->openingContingencyMinor,
-                'allocated_contingency_minor' => $metric->allocatedContingencyMinor,
-                'consumed_contingency_minor' => $metric->consumedContingencyMinor,
-                'released_contingency_minor' => $metric->releasedContingencyMinor,
-                'closing_contingency_minor' => $metric->closingContingencyMinor,
-                'quality_status' => 'complete',
-                'source_refs' => [
-                    ...array_map(static fn ($version): array => [
-                        'type' => 'change_request',
-                        'id' => (string) $version->change_request_id,
-                        'version' => (int) $version->version,
-                        'hash' => (string) $version->source_hash,
-                    ], $group['versions']),
-                    ...array_map(static fn ($entry): array => [
+            $factsByChange = collect($group['facts'])->groupBy(
+                static fn (ChangeExposureFact $fact): int => $fact->changeRequestId,
+            );
+            $versionsByChange = collect($group['versions'])->groupBy('change_request_id');
+            $claimsByVersion = collect($group['claims'])->groupBy('change_request_version_id');
+            foreach ($factsByChange as $changeRequestId => $changeFacts) {
+                $metric = $this->formula->summarize($changeFacts, []);
+                $changeVersions = $versionsByChange->get($changeRequestId, collect());
+                $latest = $changeVersions->sortByDesc('version')->first();
+                $event = $latest === null ? null : $events->get($latest->change_request_id, collect())->last();
+                $rows[] = [
+                    'row_key' => hash('sha256', $key.':change:'.$changeRequestId.':'.($latest?->version ?? 0)),
+                    'organization_id' => $scope->organizationId,
+                    'project_id' => $projectId,
+                    'contract_id' => $latest?->contract_id,
+                    'contract_project_allocation_id' => $allocationId,
+                    'change_request_id' => $latest?->change_request_id,
+                    'change_version' => $latest?->version,
+                    'status' => (string) ($latest?->status ?? 'unknown'),
+                    'occurred_on' => ($event?->occurred_at ?? $latest?->effective_at ?? $query->asOf)->format('Y-m-d'),
+                    'currency' => $metric->currency,
+                    'proposed_exposure_minor' => $metric->proposedExposureMinor,
+                    'approved_exposure_minor' => $metric->approvedExposureMinor,
+                    'linked_claim_minor' => $metric->linkedClaimMinor,
+                    'opening_contingency_minor' => 0,
+                    'allocated_contingency_minor' => 0,
+                    'consumed_contingency_minor' => 0,
+                    'released_contingency_minor' => 0,
+                    'closing_contingency_minor' => 0,
+                    'quality_status' => 'complete',
+                    'source_refs' => [
+                        ...array_map(static fn ($version): array => [
+                            'type' => 'change_request',
+                            'id' => (string) $version->change_request_id,
+                            'version' => (int) $version->version,
+                            'hash' => (string) $version->source_hash,
+                        ], $changeVersions->all()),
+                        ...$changeVersions->flatMap(
+                            static fn ($version) => $claimsByVersion->get($version->id, collect()),
+                        )->map(static fn (ChangeClaimLink $claim): array => [
+                            'type' => 'change_claim',
+                            'id' => (string) $claim->change_claim_id,
+                            'version' => (int) $claim->claim_version,
+                            'hash' => (string) $claim->source_hash,
+                        ])->values()->all(),
+                    ],
+                ];
+            }
+            if ($group['movements'] !== []) {
+                $metric = $this->formula->summarize([], $group['movements']);
+                $latestLedger = collect($group['ledger'])->sortByDesc('id')->first();
+                $rows[] = [
+                    'row_key' => hash('sha256', $key.':contingency-ledger'),
+                    'organization_id' => $scope->organizationId,
+                    'project_id' => $projectId,
+                    'contract_id' => null,
+                    'contract_project_allocation_id' => $allocationId,
+                    'change_request_id' => null,
+                    'change_version' => null,
+                    'status' => 'ledger_only',
+                    'occurred_on' => ($latestLedger?->effective_on ?? $query->asOf)->format('Y-m-d'),
+                    'currency' => $metric->currency,
+                    'proposed_exposure_minor' => 0,
+                    'approved_exposure_minor' => 0,
+                    'linked_claim_minor' => 0,
+                    'opening_contingency_minor' => $metric->openingContingencyMinor,
+                    'allocated_contingency_minor' => $metric->allocatedContingencyMinor,
+                    'consumed_contingency_minor' => $metric->consumedContingencyMinor,
+                    'released_contingency_minor' => $metric->releasedContingencyMinor,
+                    'closing_contingency_minor' => $metric->closingContingencyMinor,
+                    'quality_status' => 'complete',
+                    'source_refs' => array_map(static fn ($entry): array => [
                         'type' => (string) $entry->source_type,
                         'id' => (string) $entry->source_id,
                         'version' => (int) $entry->source_version,
                         'hash' => (string) $entry->entry_hash,
                     ], $group['ledger']),
-                ],
-            ];
+                ];
+            }
         }
         if ($rows === []) {
             throw new DomainException('change_claim_monetary_evidence_unavailable');
@@ -264,6 +328,8 @@ final readonly class ChangeClaimSnapshotMaterializer
             generatedAt: $generatedAt,
             staleAt: $staleAt,
             watermarks: [
+                'query_hash' => $query->queryHash->value,
+                'as_of' => $query->asOf->format(DATE_ATOM),
                 'change_request_version_id' => (int) $versions->max('id'),
                 'contingency_ledger_entry_id' => (int) $ledger->max('id'),
             ],
@@ -275,7 +341,7 @@ final readonly class ChangeClaimSnapshotMaterializer
     private function applyFilters(Builder $builder, array $filters, array $columns): void
     {
         foreach ($columns as $filter => $column) {
-            if (!array_key_exists($filter, $filters)) {
+            if (! array_key_exists($filter, $filters)) {
                 continue;
             }
             $values = is_array($filters[$filter]) ? $filters[$filter] : [$filters[$filter]];
@@ -302,7 +368,7 @@ final readonly class ChangeClaimSnapshotMaterializer
             'claim_ids',
         ], true);
         foreach (array_keys($filters) as $filter) {
-            if (!isset($supported[$filter])) {
+            if (! isset($supported[$filter])) {
                 throw new DomainException('report_filter_not_sealed');
             }
         }

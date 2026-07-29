@@ -45,6 +45,7 @@ return new class extends Migration
             $table->unsignedInteger('coverage_numerator');
             $table->unsignedInteger('coverage_denominator');
             $table->string('quality_status', 16);
+            $table->jsonb('warnings');
             $table->timestampsTz();
 
             $table->foreign('policy_id')->references('id')->on('management_pnl_policies');

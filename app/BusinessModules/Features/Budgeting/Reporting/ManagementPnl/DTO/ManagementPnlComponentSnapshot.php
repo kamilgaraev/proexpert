@@ -20,13 +20,29 @@ final readonly class ManagementPnlComponentSnapshot
         public string $scenario,
         public string $currency,
         public array $facts,
+        public ?string $scopeHash = null,
+        public ?string $queryHash = null,
+        public ?string $definitionHash = null,
+        public ?string $asOf = null,
+        public ?int $rowCount = null,
+        public ?int $coverageNumerator = null,
+        public ?int $coverageDenominator = null,
+        public array $warnings = [],
     ) {
         if (trim($componentCode) === '' || trim($snapshotId) === '' || trim($formulaVersion) === ''
-            || trim($sourceSchemaVersion) === '' || !preg_match('/^[A-Z]{3}$/', $currency)) {
+            || trim($sourceSchemaVersion) === '' || ! preg_match('/^[A-Z]{3}$/', $currency)
+            || ($scopeHash !== null && preg_match('/^[a-f0-9]{64}$/D', $scopeHash) !== 1)
+            || ($queryHash !== null && preg_match('/^[a-f0-9]{64}$/D', $queryHash) !== 1)
+            || ($definitionHash !== null && preg_match('/^[a-f0-9]{64}$/D', $definitionHash) !== 1)
+            || ($rowCount !== null && $rowCount < 0)
+            || ($coverageNumerator !== null && $coverageNumerator < 0)
+            || ($coverageDenominator !== null && $coverageDenominator < 0)
+            || ($coverageNumerator !== null && $coverageDenominator !== null
+                && $coverageNumerator > $coverageDenominator)) {
             throw new DomainException('management_pnl_component_snapshot_invalid');
         }
         foreach ($facts as $fact) {
-            if (!$fact instanceof ManagementSourceFact) {
+            if (! $fact instanceof ManagementSourceFact) {
                 throw new DomainException('management_pnl_component_facts_invalid');
             }
         }

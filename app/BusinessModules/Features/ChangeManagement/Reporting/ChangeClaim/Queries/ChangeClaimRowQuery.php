@@ -15,14 +15,15 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Support\OwnerSnapshotIdentityGuard;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeClaimRow;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeClaimSnapshot;
 use DateTimeImmutable;
@@ -31,6 +32,8 @@ use Illuminate\Database\Eloquent\Builder;
 
 final readonly class ChangeClaimRowQuery implements ReportRowQuery
 {
+    public function __construct(private OwnerSnapshotIdentityGuard $identityGuard) {}
+
     private const SORTS = [
         'occurred_on' => 'occurred_on',
         'project_id' => 'project_id',
@@ -150,13 +153,11 @@ final readonly class ChangeClaimRowQuery implements ReportRowQuery
 
     private function snapshot(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ChangeClaimSnapshot
     {
-        if ($snapshot->scope->canonicalIdentity() !== $context->scope->canonicalIdentity()) {
-            throw new DomainException('report_snapshot_scope_mismatch');
-        }
         $record = ChangeClaimSnapshot::query()->where('organization_id', $context->scope->organizationId)->whereKey($snapshot->id)->firstOrFail();
-        if (!hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)) {
-            throw new DomainException('report_snapshot_source_hash_mismatch');
-        }
+        $this->identityGuard->assert($record, $context, $snapshot, [
+            'version_watermark_id' => 'change_request_version_id',
+            'ledger_watermark_id' => 'contingency_ledger_entry_id',
+        ]);
 
         return $record;
     }
@@ -211,7 +212,7 @@ final readonly class ChangeClaimRowQuery implements ReportRowQuery
 
     private function freshness(ReportSnapshotRef $snapshot): ReportFreshnessStatus
     {
-        return $snapshot->staleAt !== null && $snapshot->staleAt <= new DateTimeImmutable()
+        return $snapshot->staleAt !== null && $snapshot->staleAt <= new DateTimeImmutable
             ? ReportFreshnessStatus::STALE
             : ReportFreshnessStatus::FRESH;
     }

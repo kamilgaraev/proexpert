@@ -23,9 +23,7 @@ use Illuminate\Support\Collection;
 
 final readonly class ContractSettlementOwnerSource
 {
-    public function __construct(private ContractSettlementAllocationConserver $conserver)
-    {
-    }
+    public function __construct(private ContractSettlementAllocationConserver $conserver) {}
 
     /**
      * @return list<ContractSettlementInput>
@@ -35,9 +33,9 @@ final readonly class ContractSettlementOwnerSource
         $this->assertSupportedFilters($query->filters->values);
         $contracts = Contract::query()
             ->where('organization_id', $scope->organizationId)
-            ->where('updated_at', '<=', $query->asOf)
+            ->where('created_at', '<=', $query->asOf)
             ->with(['activeAllocations' => static fn (Builder $builder): Builder => $builder
-                ->where('updated_at', '<=', $query->asOf)
+                ->where('created_at', '<=', $query->asOf)
                 ->orderBy('id')])
             ->when($scope->projectIds !== [], static function (Builder $builder) use ($scope): void {
                 $builder->whereHas('activeAllocations', static fn (Builder $allocation): Builder => $allocation
@@ -50,9 +48,13 @@ final readonly class ContractSettlementOwnerSource
 
         $result = [];
         foreach ($contracts as $contract) {
+            $this->assertOwnerVersionAvailable($contract->updated_at, $query->asOf);
             $allocations = $contract->activeAllocations;
             if ($allocations->isEmpty()) {
                 throw new DomainException('contract_settlement_allocation_required');
+            }
+            foreach ($allocations as $allocation) {
+                $this->assertOwnerVersionAvailable($allocation->updated_at, $query->asOf);
             }
             $result = [...$result, ...$this->contractInputs($contract, $allocations, $query)];
         }
@@ -64,43 +66,66 @@ final readonly class ContractSettlementOwnerSource
     }
 
     /**
-     * @param Collection<int, ContractProjectAllocation> $allocations
+     * @param  Collection<int, ContractProjectAllocation>  $allocations
      * @return list<ContractSettlementInput>
      */
     private function contractInputs(Contract $contract, Collection $allocations, ReportQuery $query): array
     {
         $totalMinor = self::minor((string) ($contract->total_amount ?? '0'));
-        $weights = [];
-        foreach ($allocations as $allocation) {
-            $weights[(int) $allocation->id] = $this->allocationWeight($allocation, $totalMinor);
-        }
-        if ($weights === []) {
-            return [];
-        }
-        $allocations = $allocations->whereIn('id', array_keys($weights))->values();
-        $effective = $this->conserver->allocate($totalMinor, $weights);
-        $accepted = array_fill_keys(array_keys($weights), 0);
-        $cash = array_fill_keys(array_keys($weights), 0);
-        $dueAt = array_fill_keys(array_keys($weights), null);
-        $refs = [];
-        foreach ($allocations as $allocation) {
-            $refs[(int) $allocation->id] = [
-                $this->sourceRef('contract', (int) $contract->id, (string) $contract->updated_at),
-                $this->sourceRef('contract_allocation', (int) $allocation->id, (string) $allocation->updated_at),
-            ];
+        $currency = strtoupper((string) ($contract->currency ?? ''));
+        if (preg_match('/^[A-Z]{3}$/', $currency) !== 1) {
+            throw new DomainException('contract_settlement_currency_invalid');
         }
 
-        $acts = ContractPerformanceAct::query()
+        $allActs = ContractPerformanceAct::query()
             ->where('contract_id', $contract->id)
             ->where('is_approved', true)
             ->where('act_date', '<=', $query->asOf->format('Y-m-d'))
-            ->where('updated_at', '<=', $query->asOf)
-            ->when(isset($query->filters->values['period_from']), static fn (Builder $builder): Builder => $builder
-                ->where('act_date', '>=', (string) $query->filters->values['period_from']))
-            ->when(isset($query->filters->values['period_to']), static fn (Builder $builder): Builder => $builder
-                ->where('act_date', '<=', (string) $query->filters->values['period_to']))
+            ->where(static fn (Builder $builder): Builder => $builder
+                ->whereNull('approval_date')
+                ->orWhere('approval_date', '<=', $query->asOf->format('Y-m-d')))
             ->orderBy('id')
             ->get();
+        foreach ($allActs as $act) {
+            $this->assertOwnerVersionAvailable($act->updated_at, $query->asOf);
+        }
+
+        $effective = $this->effectiveAllocations($allocations, $totalMinor, $allActs);
+        $allocationIds = array_keys($effective);
+        $allocations = $allocations->whereIn('id', $allocationIds)->values();
+        $weights = array_fill_keys($allocationIds, 1);
+        $accepted = array_fill_keys($allocationIds, 0);
+        $cash = array_fill_keys($allocationIds, 0);
+        $dueAt = array_fill_keys($allocationIds, null);
+        $contractRef = $this->sourceRef('contract', (int) $contract->id, [
+            'organization_id' => (int) $contract->organization_id,
+            'total_amount' => (string) $contract->total_amount,
+            'currency' => $currency,
+            'contract_side_type' => $contract->contract_side_type instanceof ContractSideTypeEnum
+                ? $contract->contract_side_type->value
+                : (string) $contract->contract_side_type,
+            'status' => (string) $contract->status,
+        ]);
+        $refs = [];
+        foreach ($allocations as $allocation) {
+            $refs[(int) $allocation->id] = [
+                $contractRef,
+                $this->sourceRef('contract_allocation', (int) $allocation->id, [
+                    'contract_id' => (int) $allocation->contract_id,
+                    'project_id' => (int) $allocation->project_id,
+                    'allocation_type' => $allocation->allocation_type->value,
+                    'allocated_amount' => $allocation->allocated_amount,
+                    'allocated_percentage' => $allocation->allocated_percentage,
+                    'is_active' => (bool) $allocation->is_active,
+                ]),
+            ];
+        }
+
+        $acts = $allActs
+            ->when(isset($query->filters->values['period_from']), static fn (Collection $items): Collection => $items
+                ->filter(static fn (ContractPerformanceAct $act): bool => $act->act_date->format('Y-m-d') >= (string) $query->filters->values['period_from']))
+            ->when(isset($query->filters->values['period_to']), static fn (Collection $items): Collection => $items
+                ->filter(static fn (ContractPerformanceAct $act): bool => $act->act_date->format('Y-m-d') <= (string) $query->filters->values['period_to']));
         foreach ($acts as $act) {
             $this->distribute(
                 self::minor((string) $act->amount),
@@ -110,7 +135,15 @@ final readonly class ContractSettlementOwnerSource
                 $accepted,
             );
             foreach ($this->targetAllocationIds($act->project_id, $allocations) as $allocationId) {
-                $refs[$allocationId][] = $this->sourceRef('contract_performance_act', (int) $act->id, (string) $act->updated_at);
+                $refs[$allocationId][] = $this->sourceRef('contract_performance_act', (int) $act->id, [
+                    'contract_id' => (int) $act->contract_id,
+                    'project_id' => $act->project_id === null ? null : (int) $act->project_id,
+                    'amount' => (string) $act->amount,
+                    'act_date' => $act->act_date->format('Y-m-d'),
+                    'approval_date' => $act->approval_date?->format('Y-m-d'),
+                    'status' => (string) $act->status,
+                    'is_approved' => (bool) $act->is_approved,
+                ]);
             }
         }
 
@@ -145,15 +178,34 @@ final readonly class ContractSettlementOwnerSource
             return [];
         }
         foreach ($documents as $document) {
-            $this->assertDocumentCompatible($contract, $document);
-            foreach ($this->targetAllocationIds($document->project_id, $allocations) as $allocationId) {
+            $this->assertOwnerVersionAvailable($document->updated_at, $query->asOf);
+            $this->assertDocumentCompatible($contract, $document, $currency);
+            $documentAllocationIds = $this->targetAllocationIds($document->project_id, $allocations);
+            foreach ($documentAllocationIds as $allocationId) {
                 $refs[$allocationId][] = $this->sourceRef(
                     'payment_document',
                     (int) $document->id,
-                    (string) $document->updated_at,
+                    [
+                        'contract_id' => (int) $contract->id,
+                        'project_id' => $document->project_id === null ? null : (int) $document->project_id,
+                        'direction' => $document->direction->value,
+                        'currency' => strtoupper((string) $document->currency),
+                        'amount' => (string) $document->amount,
+                        'status' => $document->status->value,
+                        'due_date' => $document->due_date?->format('Y-m-d'),
+                    ],
                 );
+                if ($document->due_date !== null) {
+                    $candidate = $document->due_date->toDateTimeImmutable();
+                    $dueAt[$allocationId] = $dueAt[$allocationId] === null || $candidate < $dueAt[$allocationId]
+                        ? $candidate
+                        : $dueAt[$allocationId];
+                }
             }
             foreach ($document->transactions as $transaction) {
+                if (strtoupper((string) $transaction->currency) !== $currency) {
+                    throw new DomainException('contract_settlement_currency_mismatch');
+                }
                 $this->distribute(
                     self::minor((string) $transaction->amount),
                     $transaction->project_id ?? $document->project_id,
@@ -165,14 +217,15 @@ final readonly class ContractSettlementOwnerSource
                     $refs[$allocationId][] = $this->sourceRef(
                         'payment_transaction',
                         (int) $transaction->id,
-                        (string) $transaction->updated_at,
+                        [
+                            'payment_document_id' => (int) $transaction->payment_document_id,
+                            'project_id' => $transaction->project_id === null ? null : (int) $transaction->project_id,
+                            'amount' => (string) $transaction->amount,
+                            'currency' => strtoupper((string) $transaction->currency),
+                            'status' => $transaction->status->value,
+                            'transaction_date' => $transaction->transaction_date->format('Y-m-d'),
+                        ],
                     );
-                    if ($document->due_date !== null) {
-                        $candidate = $document->due_date->toDateTimeImmutable();
-                        $dueAt[$allocationId] = $dueAt[$allocationId] === null || $candidate < $dueAt[$allocationId]
-                            ? $candidate
-                            : $dueAt[$allocationId];
-                    }
                 }
             }
         }
@@ -183,8 +236,8 @@ final readonly class ContractSettlementOwnerSource
         $allowedAllocationIds = $this->resourceIds($query->scope, 'contract_allocation');
         foreach ($allocations as $allocation) {
             $allocationId = (int) $allocation->id;
-            if (($query->scope->projectIds !== [] && !in_array((int) $allocation->project_id, $query->scope->projectIds, true))
-                || ($allowedAllocationIds !== [] && !in_array($allocationId, $allowedAllocationIds, true))) {
+            if (($query->scope->projectIds !== [] && ! in_array((int) $allocation->project_id, $query->scope->projectIds, true))
+                || ($allowedAllocationIds !== [] && ! in_array($allocationId, $allowedAllocationIds, true))) {
                 continue;
             }
             $inputs[] = new ContractSettlementInput(
@@ -193,7 +246,7 @@ final readonly class ContractSettlementOwnerSource
                 projectId: (int) $allocation->project_id,
                 partyId: $partyId === null ? null : (int) $partyId,
                 direction: $direction,
-                currency: 'RUB',
+                currency: $currency,
                 effectiveMinor: $effective[$allocationId],
                 acceptedMinor: $accepted[$allocationId],
                 cashMinor: $cash[$allocationId],
@@ -206,20 +259,75 @@ final readonly class ContractSettlementOwnerSource
         return $inputs;
     }
 
-    private function allocationWeight(ContractProjectAllocation $allocation, int $contractMinor): int
+    /**
+     * @param  Collection<int, ContractProjectAllocation>  $allocations
+     * @param  Collection<int, ContractPerformanceAct>  $acts
+     * @return array<int, int>
+     */
+    private function effectiveAllocations(Collection $allocations, int $contractMinor, Collection $acts): array
     {
-        return match ($allocation->allocation_type) {
-            ContractAllocationTypeEnum::FIXED => self::minor((string) ($allocation->allocated_amount ?? '0')),
-            ContractAllocationTypeEnum::PERCENTAGE => $this->percentageWeight((string) $allocation->allocated_percentage),
-            ContractAllocationTypeEnum::AUTO => 1,
-            ContractAllocationTypeEnum::CUSTOM => throw new DomainException('contract_settlement_custom_allocation_unsupported'),
-        };
+        $effective = [];
+        $percentageParts = [];
+        $autoAllocations = [];
+        $percentageTotal = 0;
+        foreach ($allocations->sortBy('id') as $allocation) {
+            $allocationId = (int) $allocation->id;
+            match ($allocation->allocation_type) {
+                ContractAllocationTypeEnum::FIXED => $effective[$allocationId] = self::minor((string) ($allocation->allocated_amount ?? '0')),
+                ContractAllocationTypeEnum::PERCENTAGE => $percentageParts[$allocationId] = $this->percentageWeight((string) $allocation->allocated_percentage),
+                ContractAllocationTypeEnum::AUTO => $autoAllocations[$allocationId] = (int) $allocation->project_id,
+                ContractAllocationTypeEnum::CUSTOM => throw new DomainException('contract_settlement_custom_allocation_unsupported'),
+            };
+        }
+        foreach ($percentageParts as $allocationId => $percentage) {
+            $percentageTotal += $percentage;
+            $effective[$allocationId] = $this->percentageMinor($contractMinor, $percentage);
+        }
+        if ($percentageTotal > 100_000_000) {
+            throw new DomainException('contract_settlement_allocation_invalid');
+        }
+
+        $remaining = $contractMinor - array_sum($effective);
+        if ($remaining < 0) {
+            throw new DomainException('contract_settlement_allocation_invalid');
+        }
+        if ($autoAllocations !== []) {
+            $weights = [];
+            foreach ($autoAllocations as $allocationId => $projectId) {
+                $weight = $acts
+                    ->where('project_id', $projectId)
+                    ->sum(static fn (ContractPerformanceAct $act): int => self::minor((string) $act->amount));
+                $weights[$allocationId] = max(0, $weight);
+            }
+            if (array_sum($weights) === 0) {
+                $weights = array_fill_keys(array_keys($autoAllocations), 1);
+            }
+            foreach ($this->conserver->allocate($remaining, $weights) as $allocationId => $amount) {
+                $effective[$allocationId] = $amount;
+            }
+        } elseif ($remaining !== 0) {
+            $percentageCount = count($percentageParts);
+            $percentageOnly = count($effective) === $percentageCount;
+            if (($percentageOnly && $percentageTotal !== 100_000_000)
+                || (! $percentageOnly && $percentageCount === 0)
+                || abs($remaining) > max(1, $percentageCount)) {
+                throw new DomainException('contract_settlement_allocation_incomplete');
+            }
+            $finalAllocationId = array_key_last($effective);
+            $effective[$finalAllocationId] += $remaining;
+        }
+        if (array_sum($effective) !== $contractMinor) {
+            throw new DomainException('contract_settlement_allocation_not_conserved');
+        }
+        ksort($effective);
+
+        return $effective;
     }
 
     /**
-     * @param Collection<int, ContractProjectAllocation> $allocations
-     * @param array<int, int> $weights
-     * @param array<int, int> $target
+     * @param  Collection<int, ContractProjectAllocation>  $allocations
+     * @param  array<int, int>  $weights
+     * @param  array<int, int>  $target
      */
     private function distribute(int $amount, mixed $projectId, Collection $allocations, array $weights, array &$target): void
     {
@@ -231,7 +339,7 @@ final readonly class ContractSettlementOwnerSource
     }
 
     /**
-     * @param Collection<int, ContractProjectAllocation> $allocations
+     * @param  Collection<int, ContractProjectAllocation>  $allocations
      * @return list<int>
      */
     private function targetAllocationIds(mixed $projectId, Collection $allocations): array
@@ -251,10 +359,10 @@ final readonly class ContractSettlementOwnerSource
         return $ids;
     }
 
-    private function assertDocumentCompatible(Contract $contract, PaymentDocument $document): void
+    private function assertDocumentCompatible(Contract $contract, PaymentDocument $document, string $contractCurrency): void
     {
         $currency = strtoupper((string) $document->currency);
-        if ($currency !== 'RUB') {
+        if ($currency !== $contractCurrency) {
             throw new DomainException('contract_settlement_currency_mismatch');
         }
         $expected = $this->direction($contract) === 'receivable'
@@ -273,7 +381,7 @@ final readonly class ContractSettlementOwnerSource
     }
 
     /**
-     * @param array<string, mixed> $filters
+     * @param  array<string, mixed>  $filters
      */
     private function matchesFilters(ContractSettlementInput $input, array $filters): bool
     {
@@ -287,7 +395,7 @@ final readonly class ContractSettlementOwnerSource
         ];
         foreach ($mapping as [$keys, $actual]) {
             $filter = $this->firstFilter($filters, $keys);
-            if ($filter !== null && !$this->filterContains($filter, $actual)) {
+            if ($filter !== null && ! $this->filterContains($filter, $actual)) {
                 return false;
             }
         }
@@ -353,7 +461,7 @@ final readonly class ContractSettlementOwnerSource
             'aging_bucket', 'aging_buckets',
         ], true);
         foreach (array_keys($filters) as $filter) {
-            if (!isset($supported[$filter])) {
+            if (! isset($supported[$filter])) {
                 throw new DomainException('report_filter_not_sealed');
             }
         }
@@ -362,7 +470,7 @@ final readonly class ContractSettlementOwnerSource
     /**
      * @return array{type: string, id: string, version: int, hash: string}
      */
-    private function sourceRef(string $type, int $id, string $version): array
+    private function sourceRef(string $type, int $id, array $payload): array
     {
         return [
             'type' => $type,
@@ -371,14 +479,21 @@ final readonly class ContractSettlementOwnerSource
             'hash' => hash('sha256', CanonicalJson::encode([
                 'id' => $id,
                 'type' => $type,
-                'updated_at' => $version,
+                'payload' => $payload,
             ])),
         ];
     }
 
+    private function assertOwnerVersionAvailable(mixed $updatedAt, DateTimeImmutable $asOf): void
+    {
+        if ($updatedAt !== null && $updatedAt->toDateTimeImmutable() > $asOf) {
+            throw new DomainException('contract_settlement_historical_owner_snapshot_unavailable');
+        }
+    }
+
     private static function minor(string $amount): int
     {
-        if (!preg_match('/^(-?)(\d+)(?:\.(\d{1,2}))?$/', $amount, $matches)) {
+        if (! preg_match('/^(-?)(\d+)(?:\.(\d{1,2}))?$/', $amount, $matches)) {
             throw new DomainException('contract_settlement_money_invalid');
         }
         $minor = ((int) $matches[2] * 100) + (int) str_pad($matches[3] ?? '', 2, '0');
@@ -388,10 +503,19 @@ final readonly class ContractSettlementOwnerSource
 
     private function percentageWeight(string $percentage): int
     {
-        if (!preg_match('/^(\d{1,3})(?:\.(\d{1,6}))?$/', $percentage, $matches)) {
+        if (! preg_match('/^(\d{1,3})(?:\.(\d{1,6}))?$/', $percentage, $matches)) {
             throw new DomainException('contract_settlement_allocation_invalid');
         }
 
         return ((int) $matches[1] * 1_000_000) + (int) str_pad($matches[2] ?? '', 6, '0');
+    }
+
+    private function percentageMinor(int $totalMinor, int $percentage): int
+    {
+        if ($percentage !== 0 && $totalMinor > intdiv(PHP_INT_MAX, $percentage)) {
+            throw new DomainException('contract_settlement_allocation_overflow');
+        }
+
+        return intdiv(($totalMinor * $percentage) + 50_000_000, 100_000_000);
     }
 }

@@ -192,6 +192,7 @@ class StoreContractRequest extends FormRequest
             'is_fixed_amount' => ['nullable', 'boolean'],
             'base_amount' => ['required_if:is_fixed_amount,true,1', 'nullable', 'numeric', 'min:0'],
             'total_amount' => ['nullable', 'numeric', 'min:0'],
+            'currency' => ['nullable', 'string', 'size:3', 'regex:/^[A-Za-z]{3}$/'],
             'gp_percentage' => ['nullable', 'numeric', 'min:-100', 'max:100'],
             'gp_calculation_type' => ['nullable', new Enum(GpCalculationTypeEnum::class)],
             'gp_coefficient' => ['nullable', 'numeric', 'min:0'],
@@ -320,7 +321,8 @@ class StoreContractRequest extends FormRequest
             contract_category: $this->validated('contract_category'),
             contract_side_type: $this->validated('contract_side_type')
                 ? ContractSideTypeEnum::from($this->validated('contract_side_type'))
-                : null
+                : null,
+            currency: mb_strtoupper((string) ($this->validated('currency') ?? config('payments.defaults.currency', 'RUB'))),
         );
     }
 }

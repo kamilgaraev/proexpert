@@ -20,25 +20,27 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Support\OwnerSnapshotIdentityGuard;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Models\ManagementPnlRecord;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Models\ManagementPnlSnapshot;
 use DateTimeImmutable;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 
-final readonly class ManagementPnlQueryService implements ReportRowQuery, ReportDrillDownProvider
+final readonly class ManagementPnlQueryService implements ReportDrillDownProvider, ReportRowQuery
 {
-    public function __construct(private FinanceSourceAccessPolicy $sourceAccess)
-    {
-    }
+    public function __construct(
+        private FinanceSourceAccessPolicy $sourceAccess,
+        private OwnerSnapshotIdentityGuard $identityGuard,
+    ) {}
 
     private const SORTS = [
         'period' => 'period',
@@ -174,13 +176,11 @@ final readonly class ManagementPnlQueryService implements ReportRowQuery, Report
 
     private function snapshot(ReportExecutionContext $context, ReportSnapshotRef $snapshot): ManagementPnlSnapshot
     {
-        if ($snapshot->scope->canonicalIdentity() !== $context->scope->canonicalIdentity()) {
-            throw new DomainException('report_snapshot_scope_mismatch');
-        }
         $record = ManagementPnlSnapshot::query()->where('organization_id', $context->scope->organizationId)->whereKey($snapshot->id)->firstOrFail();
-        if (!hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)) {
-            throw new DomainException('report_snapshot_source_hash_mismatch');
-        }
+        $this->identityGuard->assert($record, $context, $snapshot, [
+            'policy_id' => 'policy_id',
+            'policy_version' => 'policy_version',
+        ]);
 
         return $record;
     }
@@ -217,14 +217,35 @@ final readonly class ManagementPnlQueryService implements ReportRowQuery, Report
     {
         $n = (int) $snapshot->coverage_numerator;
         $d = (int) $snapshot->coverage_denominator;
+        $complete = $snapshot->quality_status === 'complete' && $n === $d;
+        $warnings = [];
+        foreach ((array) $snapshot->warnings as $warning) {
+            if (! is_array($warning)) {
+                continue;
+            }
+            $warnings[] = new ReportWarning(
+                mb_strtoupper((string) ($warning['code'] ?? 'SOURCE_COVERAGE_INCOMPLETE')),
+                ReportWarningSeverity::WARNING,
+                null,
+                1,
+            );
+        }
+        if (! $complete && $warnings === []) {
+            $warnings[] = new ReportWarning(
+                'SOURCE_COVERAGE_INCOMPLETE',
+                ReportWarningSeverity::WARNING,
+                null,
+                max(0, $d - $n),
+            );
+        }
 
         return new ReportQuality(
-            ReportQualityStatus::COMPLETE,
-            new ReportCoverage((string) $n, (string) $d, number_format($n / max(1, $d), 8, '.', '')),
-            $n === $d ? [] : [new ReportWarning('SOURCE_COVERAGE_INCOMPLETE', ReportWarningSeverity::WARNING, null, max(0, $d - $n))],
+            $complete ? ReportQualityStatus::COMPLETE : ReportQualityStatus::PARTIAL,
+            new ReportCoverage((string) $n, (string) $d, $d === 0 ? null : number_format($n / $d, 8, '.', '')),
+            $warnings,
             max(0, $d - $n),
-            $n === $d ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
-            [],
+            $complete ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
+            $complete ? [] : ['source_coverage'],
             [],
         );
     }
@@ -233,10 +254,10 @@ final readonly class ManagementPnlQueryService implements ReportRowQuery, Report
     {
         $refs = [];
         foreach ((array) $snapshot->component_snapshots as $component) {
-            if (!is_array($component)
-                || !is_string($component['component_code'] ?? null)
-                || !is_string($component['snapshot_id'] ?? null)
-                || !is_string($component['source_hash'] ?? null)
+            if (! is_array($component)
+                || ! is_string($component['component_code'] ?? null)
+                || ! is_string($component['snapshot_id'] ?? null)
+                || ! is_string($component['source_hash'] ?? null)
                 || preg_match('/^[a-f0-9]{64}$/', $component['source_hash']) !== 1) {
                 throw new DomainException('management_pnl_component_provenance_invalid');
             }
@@ -246,13 +267,17 @@ final readonly class ManagementPnlQueryService implements ReportRowQuery, Report
                 0,
                 61,
             );
+            $rowCount = $component['row_count'] ?? null;
+            if (! is_int($rowCount) || $rowCount < 0) {
+                throw new DomainException('management_pnl_component_provenance_invalid');
+            }
             $refs[] = new ReportSourceRef(
                 $source,
                 $source,
                 's'.substr(hash('sha256', $component['snapshot_id']), 0, 32),
                 $schema,
                 'w'.substr(hash('sha256', $component['snapshot_id']), 0, 32),
-                0,
+                $rowCount,
                 new Sha256Hash($component['source_hash']),
             );
         }
@@ -265,7 +290,7 @@ final readonly class ManagementPnlQueryService implements ReportRowQuery, Report
 
     private function freshness(ReportSnapshotRef $snapshot): ReportFreshnessStatus
     {
-        return $snapshot->staleAt !== null && $snapshot->staleAt <= new DateTimeImmutable()
+        return $snapshot->staleAt !== null && $snapshot->staleAt <= new DateTimeImmutable
             ? ReportFreshnessStatus::STALE
             : ReportFreshnessStatus::FRESH;
     }

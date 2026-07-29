@@ -19,9 +19,10 @@ class TimeTrackingServiceProvider extends ServiceProvider
 
     public function boot(Router $router): void
     {
+        $this->loadMigrationsFrom(__DIR__.'/migrations');
         $router->aliasMiddleware('time-tracking.active', EnsureTimeTrackingActive::class);
 
-        $routesPath = __DIR__ . '/routes.php';
+        $routesPath = __DIR__.'/routes.php';
         if (is_file($routesPath)) {
             $this->loadRoutesFrom($routesPath);
         }
