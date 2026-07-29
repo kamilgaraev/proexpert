@@ -16,6 +16,7 @@ use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthor
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinitionBinding;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -56,7 +57,7 @@ final readonly class GetReportDrillDownHandler implements GetReportDrillDownActi
             $snapshot,
             $run->queryHash,
         );
-        if (! in_array($cell['column_id'], array_column($query->definition->columns, 'id'), true)) {
+        if (! in_array($cell->columnId, array_column($query->definition->columns, 'id'), true)) {
             throw ReportContractException::fromCode(
                 ReportErrorCode::REPORT_CURSOR_INVALID,
                 ['fields' => ['token']],
@@ -65,7 +66,11 @@ final readonly class GetReportDrillDownHandler implements GetReportDrillDownActi
         $authorization = $this->authorizeDrillDown($context, $query, $snapshot);
         $providerContext = $this->contexts->fromCurrentAuthorization($authorization);
 
-        return $binding->drillDownProvider->drillDown($providerContext, $snapshot, $request);
+        return $binding->drillDownProvider->drillDown(
+            $providerContext,
+            $snapshot,
+            new ReportDrillDownInput($cell, $request->cursor, $request->limit),
+        );
     }
 
     private function readySnapshot(ReportRun $run): ReportSnapshotRef

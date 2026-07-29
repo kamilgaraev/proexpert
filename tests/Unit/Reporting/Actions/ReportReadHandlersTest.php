@@ -143,7 +143,7 @@ final class ReportReadHandlersTest extends TestCase
         $operations = [];
         $request = new ReportDrillDownRequest(
             $this->cellToken($fixture, 'row-1', 'name'),
-            null,
+            'details-page-2',
             25,
         );
 
@@ -159,7 +159,12 @@ final class ReportReadHandlersTest extends TestCase
         ], $operations);
         self::assertCount(1, $fixture['drillDown']->calls());
         self::assertSame($fixture['run']->resultMetadata->snapshot, $fixture['drillDown']->calls()[0][1]);
-        self::assertSame($request, $fixture['drillDown']->calls()[0][2]);
+        $input = $fixture['drillDown']->calls()[0][2];
+        self::assertSame('row-1', $input->cell->rowKey);
+        self::assertSame('name', $input->cell->columnId);
+        self::assertSame('details-page-2', $input->cursor);
+        self::assertSame(25, $input->limit);
+        self::assertObjectNotHasProperty('token', $input);
     }
 
     public function test_drill_down_rejects_invalid_or_cross_identity_cell_tokens_before_provider_call(): void
@@ -211,6 +216,7 @@ final class ReportReadHandlersTest extends TestCase
                 self::fail('Ожидалось отклонение cell token: '.$case);
             } catch (ReportContractException $exception) {
                 self::assertSame(ReportErrorCode::REPORT_CURSOR_INVALID, $exception->errorCode, $case);
+                self::assertSame([], $operations, $case);
                 self::assertSame([], $fixture['drillDown']->calls(), $case);
             }
         }
@@ -282,6 +288,26 @@ final class ReportReadHandlersTest extends TestCase
         );
 
         self::assertSame([], $fixture['rowQuery']->pageCalls());
+    }
+
+    public function test_revocation_prevents_drill_down_provider_call(): void
+    {
+        $fixture = $this->fixture();
+        $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
+        $authorizer->method('authorizeExact')->willThrowException(
+            ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN),
+        );
+
+        $this->expectReportError(
+            ReportErrorCode::REPORT_SCOPE_FORBIDDEN,
+            fn () => $this->drillDownHandler($fixture, $authorizer)->handle(
+                $this->context,
+                self::RUN_ID,
+                new ReportDrillDownRequest($this->cellToken($fixture, 'row-1', 'name'), null, 25),
+            ),
+        );
+
+        self::assertSame([], $fixture['drillDown']->calls());
     }
 
     private function fixture(

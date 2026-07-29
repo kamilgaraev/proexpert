@@ -227,13 +227,17 @@ final class ReportBindingLifecycleContractTest extends TestCase
     {
         $context = (new ReportExecutionContextBuilder())->build();
         $snapshot = $this->snapshot();
-        $request = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest('token', null, 10);
+        $input = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput(
+            new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell('row-1', 'amount'),
+            null,
+            10,
+        );
         $result = new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult([], null, []);
         $provider = new FakeReportDrillDownProvider($result);
 
-        self::assertSame($result, $provider->drillDown($context, $snapshot, $request));
+        self::assertSame($result, $provider->drillDown($context, $snapshot, $input));
         self::assertCount(1, $provider->calls());
-        self::assertSame([$context, $snapshot, $request], $provider->calls()[0]);
+        self::assertSame([$context, $snapshot, $input], $provider->calls()[0]);
     }
 
     #[Test]

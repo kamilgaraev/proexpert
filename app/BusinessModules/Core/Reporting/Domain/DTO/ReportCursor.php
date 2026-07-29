@@ -16,9 +16,10 @@ final readonly class ReportCursor
         public Sha256Hash $queryHash,
         public Sha256Hash $sourceHash,
         public ReportWindowSort $sort,
+        public ReportCursorKeyset $keyset,
         public DateTimeImmutable $expiresAt,
     ) {
-        if (trim($token) === '' || !self::isUlid($runId) || $expiresAt <= new DateTimeImmutable()) {
+        if (trim($token) === '' || ! self::isUlid($runId) || $expiresAt <= new DateTimeImmutable()) {
             throw new InvalidArgumentException('report_cursor_invalid');
         }
     }

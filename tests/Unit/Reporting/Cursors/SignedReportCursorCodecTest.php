@@ -6,6 +6,8 @@ namespace Tests\Unit\Reporting\Cursors;
 
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -52,6 +54,8 @@ final class SignedReportCursorCodecTest extends TestCase
         self::assertSame(str_repeat('c', 64), $cursor->sourceHash->value);
         self::assertSame('name', $cursor->sort->field);
         self::assertSame(ReportSortDirection::ASC, $cursor->sort->direction);
+        self::assertSame('ООО Альфа', $cursor->keyset->lastSortValue);
+        self::assertSame('row-10', $cursor->keyset->lastStableRowKey);
         self::assertSame('2030-01-01T00:05:00+00:00', $cursor->expiresAt->format(DATE_ATOM));
     }
 
@@ -127,6 +131,71 @@ final class SignedReportCursorCodecTest extends TestCase
         $this->expectCursorFailure(fn () => $this->decode($token));
     }
 
+    public function test_drill_down_cell_round_trip_uses_the_same_signed_identity_fence(): void
+    {
+        $token = $this->drillDownToken();
+
+        $cell = $this->decodeDrillDown($token);
+
+        self::assertSame('row-10', $cell->rowKey);
+        self::assertSame('amount', $cell->columnId);
+    }
+
+    #[DataProvider('drillDownIdentityMismatch')]
+    public function test_drill_down_cell_rejects_tampering_and_cross_identity_replay(
+        string $field,
+        mixed $wrongValue,
+    ): void {
+        $token = $this->drillDownToken();
+
+        $this->expectTokenFailure(function () use ($field, $wrongValue, $token): void {
+            $arguments = [
+                'organizationId' => 1,
+                'reportCode' => 'report',
+                'runId' => self::RUN_ID,
+                'snapshot' => (new ReportRunBuilder())->ready()->resultMetadata->snapshot,
+                'queryHash' => $this->queryHash,
+            ];
+            $arguments[$field] = $wrongValue;
+            $this->codec->decodeDrillDownCell($token, ...$arguments);
+        });
+    }
+
+    public static function drillDownIdentityMismatch(): iterable
+    {
+        yield 'organization' => ['organizationId', 2];
+        yield 'report' => ['reportCode', 'other_report'];
+        yield 'run' => ['runId', '01J00000000000000000000001'];
+        yield 'definition' => [
+            'snapshot',
+            (new ReportRunBuilder())
+                ->definitionHash(new Sha256Hash(str_repeat('d', 64)))
+                ->ready()
+                ->resultMetadata
+                ->snapshot,
+        ];
+        yield 'source' => [
+            'snapshot',
+            (new ReportRunBuilder())
+                ->sourceHash(new Sha256Hash(str_repeat('d', 64)))
+                ->ready()
+                ->resultMetadata
+                ->snapshot,
+        ];
+        yield 'query' => ['queryHash', new Sha256Hash(str_repeat('d', 64))];
+    }
+
+    public function test_drill_down_cell_rejects_invalid_signature_and_expiry(): void
+    {
+        $token = $this->drillDownToken();
+        $tampered = substr($token, 0, -1).($token[-1] === 'A' ? 'B' : 'A');
+
+        $this->expectTokenFailure(fn () => $this->decodeDrillDown($tampered));
+
+        $this->clock->advance(new DateInterval('PT5M1S'));
+        $this->expectTokenFailure(fn () => $this->decodeDrillDown($token));
+    }
+
     public function test_rejects_oversized_stable_row_key_before_emitting_an_undecodable_token(): void
     {
         $this->expectCursorFailure(fn () => $this->codec->encode(
@@ -156,8 +225,12 @@ final class SignedReportCursorCodecTest extends TestCase
             expiresAt: $this->now->modify('+5 minutes'),
         );
 
+        $cursor = $this->decode($token);
+
         self::assertLessThanOrEqual(2048, strlen($token));
-        self::assertSame(self::RUN_ID, $this->decode($token)->runId);
+        self::assertSame(self::RUN_ID, $cursor->runId);
+        self::assertSame(str_repeat('v', 300), $cursor->keyset->lastSortValue);
+        self::assertSame(str_repeat('r', 256), $cursor->keyset->lastStableRowKey);
     }
 
     public function test_rejects_signed_payload_with_noncanonical_timestamp(): void
@@ -200,7 +273,21 @@ final class SignedReportCursorCodecTest extends TestCase
         );
     }
 
-    private function decode(string $token, ?SignedReportCursorCodec $codec = null)
+    private function drillDownToken(): string
+    {
+        return $this->codec->encodeDrillDownCell(
+            organizationId: 1,
+            reportCode: 'report',
+            runId: self::RUN_ID,
+            snapshot: (new ReportRunBuilder())->ready()->resultMetadata->snapshot,
+            queryHash: $this->queryHash,
+            rowKey: 'row-10',
+            columnId: 'amount',
+            expiresAt: $this->now->modify('+5 minutes'),
+        );
+    }
+
+    private function decode(string $token, ?SignedReportCursorCodec $codec = null): ReportCursor
     {
         return ($codec ?? $this->codec)->decode(
             token: $token,
@@ -213,6 +300,18 @@ final class SignedReportCursorCodecTest extends TestCase
         );
     }
 
+    private function decodeDrillDown(string $token): ReportDrillDownCell
+    {
+        return $this->codec->decodeDrillDownCell(
+            token: $token,
+            organizationId: 1,
+            reportCode: 'report',
+            runId: self::RUN_ID,
+            snapshot: (new ReportRunBuilder())->ready()->resultMetadata->snapshot,
+            queryHash: $this->queryHash,
+        );
+    }
+
     private function expectCursorFailure(callable $callback): void
     {
         try {
@@ -221,6 +320,17 @@ final class SignedReportCursorCodecTest extends TestCase
         } catch (ReportContractException $exception) {
             self::assertSame(ReportErrorCode::REPORT_CURSOR_INVALID, $exception->errorCode);
             self::assertSame(['fields' => ['cursor']], $exception->safeFields);
+        }
+    }
+
+    private function expectTokenFailure(callable $callback): void
+    {
+        try {
+            $callback();
+            self::fail('Ожидалось отклонение drill-down token.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_CURSOR_INVALID, $exception->errorCode);
+            self::assertSame(['fields' => ['token']], $exception->safeFields);
         }
     }
 
