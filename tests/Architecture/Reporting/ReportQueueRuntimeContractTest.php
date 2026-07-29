@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Architecture\Reporting;
 
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionTelemetry;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunAttemptLifecycleStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunLeaseRecoveryStore;
+use App\BusinessModules\Core\Reporting\Infrastructure\Jobs\MaterializeReportRunJob;
+use App\BusinessModules\Core\Reporting\Infrastructure\Listeners\FinalizeFailedReportRunAttempt;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportRunStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use DateTimeImmutable;
@@ -58,7 +63,7 @@ final class ReportQueueRuntimeContractTest extends TestCase
 
     public function test_run_lease_renewal_compares_every_timestamp_with_microsecond_precision(): void
     {
-        $record = new ReportRunRecord();
+        $record = new ReportRunRecord;
         $record->setRawAttributes([
             'execution_lease_expires_at' => new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
             'execution_heartbeat_at' => new DateTimeImmutable('2026-07-26T09:55:00.111111Z'),
@@ -85,7 +90,7 @@ final class ReportQueueRuntimeContractTest extends TestCase
             new DateTimeImmutable('2026-07-26T10:00:00.899999Z'),
             new DateTimeImmutable('2026-07-26T09:56:00.000000Z'),
         ));
-        $heartbeatOnlyRecord = new ReportRunRecord();
+        $heartbeatOnlyRecord = new ReportRunRecord;
         $heartbeatOnlyRecord->setRawAttributes([
             'execution_lease_expires_at' => new DateTimeImmutable('2026-07-26T10:00:00.900000Z'),
             'execution_heartbeat_at' => new DateTimeImmutable('2026-07-26T09:55:00.222222Z'),
@@ -103,5 +108,66 @@ final class ReportQueueRuntimeContractTest extends TestCase
             new DateTimeImmutable('2026-07-26T10:15:00.000000Z'),
             new DateTimeImmutable('2026-07-26T09:55:00.222221Z'),
         ));
+    }
+
+    public function test_task_five_runtime_has_closed_ports_and_no_record_or_failed_hook_escape_hatches(): void
+    {
+        self::assertSame(
+            ['due', 'requeue'],
+            array_map(
+                static fn (ReflectionMethod $method): string => $method->getName(),
+                (new ReflectionClass(ReportRunLeaseRecoveryStore::class))->getMethods(),
+            ),
+        );
+        self::assertSame(
+            ['claimOrRenew', 'failLeased'],
+            array_map(
+                static fn (ReflectionMethod $method): string => $method->getName(),
+                (new ReflectionClass(ReportRunAttemptLifecycleStore::class))->getMethods(),
+            ),
+        );
+        $lifecycle = new ReflectionClass(ReportRunAttemptLifecycleStore::class);
+        self::assertSame(
+            [
+                ['runId' => 'string', 'envelopeUuid' => 'string', 'leaseExpiresAt' => DateTimeImmutable::class, 'occurredAt' => DateTimeImmutable::class],
+                ['runId' => 'string', 'envelopeUuid' => 'string', 'errorCode' => \App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::class, 'occurredAt' => DateTimeImmutable::class],
+            ],
+            array_map(
+                static fn (ReflectionMethod $method): array => array_combine(
+                    array_map(static fn (\ReflectionParameter $parameter): string => $parameter->getName(), $method->getParameters()),
+                    array_map(static fn (\ReflectionParameter $parameter): string => (string) $parameter->getType(), $method->getParameters()),
+                ),
+                $lifecycle->getMethods(),
+            ),
+        );
+        self::assertSame([
+            'runTransition',
+            'runDuration',
+            'exportTransition',
+            'exportDuration',
+            'exportArtifact',
+            'multipartAbort',
+            'dispatchIntent',
+            'executionAttempt',
+            'executionLeaseReclaimed',
+            'auditDeliveryFailure',
+        ], array_map(
+            static fn (ReflectionMethod $method): string => $method->getName(),
+            (new ReflectionClass(ReportExecutionTelemetry::class))->getMethods(),
+        ));
+
+        $job = new ReflectionClass(MaterializeReportRunJob::class);
+        self::assertFalse($job->hasMethod('failed'));
+        self::assertSame(['runId'], array_map(
+            static fn (\ReflectionParameter $parameter): string => $parameter->getName(),
+            $job->getConstructor()?->getParameters() ?? [],
+        ));
+
+        foreach ([MaterializeReportRunJob::class, FinalizeFailedReportRunAttempt::class] as $runtimeClass) {
+            $source = file_get_contents((new ReflectionClass($runtimeClass))->getFileName());
+            self::assertIsString($source);
+            self::assertStringNotContainsString('ReportRunRecord', $source);
+            self::assertStringNotContainsString('app(', $source);
+        }
     }
 }
