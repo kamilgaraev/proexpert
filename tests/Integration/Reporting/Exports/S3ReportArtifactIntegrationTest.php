@@ -10,6 +10,7 @@ use App\Services\Storage\Exceptions\VersionedObjectIntegrityException;
 use App\Services\Storage\FileService;
 use Aws\Exception\AwsException;
 use Aws\S3\S3ClientInterface;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 use Throwable;
@@ -23,6 +24,26 @@ final class S3ReportArtifactIntegrationTest extends TestCase
         if (env('REPORTS_S3_INTEGRATION') !== '1') {
             self::markTestSkipped('Disposable versioned S3 integration is CI-only.');
         }
+
+        $integrationBucket = env('REPORTS_S3_INTEGRATION_BUCKET');
+        $integrationEndpoint = env('REPORTS_S3_INTEGRATION_ENDPOINT');
+        $configuredBucket = config('filesystems.disks.reports.bucket');
+        if (
+            ! is_string($integrationBucket)
+            || trim($integrationBucket) === ''
+            || ! is_string($integrationEndpoint)
+            || filter_var($integrationEndpoint, FILTER_VALIDATE_URL) === false
+            || ! is_string($configuredBucket)
+            || hash_equals($configuredBucket, $integrationBucket)
+            || strtolower($integrationBucket) === 'official-reports'
+        ) {
+            self::fail('Disposable S3 bucket/endpoint markers are missing or unsafe.');
+        }
+
+        $originalDisk = config('filesystems.disks.reports');
+        config()->set('filesystems.disks.reports.bucket', $integrationBucket);
+        config()->set('filesystems.disks.reports.endpoint', $integrationEndpoint);
+        Storage::forgetDisk('reports');
 
         $files = new class($this->app->make(LoggingService::class)) extends FileService
         {
@@ -41,7 +62,6 @@ final class S3ReportArtifactIntegrationTest extends TestCase
         $path = 'org-999999/reports/integration/'.$exportId.'/artifact.bin';
         $bytes = random_bytes(self::PART_SIZE);
         $checksum = hash('sha256', $bytes);
-        $checksumBase64 = base64_encode(hex2bin($checksum));
         $metadata = [
             'organization_id' => '999999',
             'export_id' => $exportId,
@@ -66,14 +86,14 @@ final class S3ReportArtifactIntegrationTest extends TestCase
             $loserPart = $files->uploadPart($loser, 1, $bytes, $checksum);
             $stored = $files->completeMultipart($winner, [$winnerPart], [
                 'IfNoneMatch' => '*',
-                'ChecksumSHA256' => $checksumBase64,
+                'ApplicationChecksumSHA256' => $checksum,
                 'MpuObjectSize' => self::PART_SIZE,
             ]);
 
             try {
                 $files->completeMultipart($loser, [$loserPart], [
                     'IfNoneMatch' => '*',
-                    'ChecksumSHA256' => $checksumBase64,
+                    'ApplicationChecksumSHA256' => $checksum,
                     'MpuObjectSize' => self::PART_SIZE,
                 ]);
                 self::fail('Concurrent immutable completion did not return 409/412.');
@@ -135,6 +155,8 @@ final class S3ReportArtifactIntegrationTest extends TestCase
                 } catch (Throwable) {
                 }
             }
+            config()->set('filesystems.disks.reports', $originalDisk);
+            Storage::forgetDisk('reports');
         }
     }
 

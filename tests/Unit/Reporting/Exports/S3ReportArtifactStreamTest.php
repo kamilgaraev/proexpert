@@ -4,17 +4,28 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Exports;
 
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\S3ReportArtifactStream;
 use App\Services\Storage\DTO\MultipartPart;
 use App\Services\Storage\DTO\MultipartUpload;
 use App\Services\Storage\DTO\StoredFile;
 use App\Services\Storage\FileService;
+use Aws\CommandInterface;
+use Aws\Exception\AwsException;
+use GuzzleHttp\Psr7\Response;
+use DateTimeZone;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
+use Tests\Support\Reporting\ReportExecutionContextBuilder;
+use Tests\Support\Reporting\ReportExportBuilder;
+use Throwable;
 
 final class S3ReportArtifactStreamTest extends TestCase
 {
@@ -47,7 +58,7 @@ final class S3ReportArtifactStreamTest extends TestCase
         self::assertSame(self::PART_SIZE + 4, $files->conditions['MpuObjectSize']);
         self::assertSame(
             hash('sha256', $fullPart.'tail'),
-            bin2hex(base64_decode($files->conditions['ChecksumSHA256'], true)),
+            $files->conditions['ApplicationChecksumSHA256'],
         );
         self::assertSame(
             [['org-7/reports/exports/01J00000000000000000000001/artifact.csv', 'version-1']],
@@ -83,8 +94,9 @@ final class S3ReportArtifactStreamTest extends TestCase
         try {
             $stream->write(str_repeat('x', self::PART_SIZE));
             self::fail('Upload failure was swallowed.');
-        } catch (RuntimeException $exception) {
-            self::assertSame('upload_failed', $exception->getMessage());
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_DEPENDENCY_FAILED, $exception->errorCode);
+            self::assertSame('upload_failed', $exception->getPrevious()?->getMessage());
         }
 
         $stream->abort();
@@ -150,23 +162,186 @@ final class S3ReportArtifactStreamTest extends TestCase
 
     public function test_closed_metadata_rejects_forbidden_or_missing_members_before_storage(): void
     {
-        $files = new RecordingMultipartFileService();
-        $metadata = $this->metadata();
-        $metadata['actor_id'] = '42';
+        foreach (['extra', 'missing'] as $case) {
+            $files = new RecordingMultipartFileService();
+            $metadata = $this->metadata();
+            if ($case === 'extra') {
+                $metadata['actor_id'] = '42';
+            } else {
+                unset($metadata['renderer_version']);
+            }
 
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('report_artifact_metadata_invalid');
-        try {
-            new S3ReportArtifactStream(
-                $files,
-                'org-7/reports/exports/01J00000000000000000000001/artifact.csv',
-                'text/csv',
-                self::PART_SIZE,
-                $metadata,
-            );
-        } finally {
+            try {
+                new S3ReportArtifactStream(
+                    $files,
+                    'org-7/reports/exports/01J00000000000000000000001/artifact.csv',
+                    'text/csv',
+                    self::PART_SIZE,
+                    $metadata,
+                );
+                self::fail('Invalid metadata was accepted.');
+            } catch (InvalidArgumentException $exception) {
+                self::assertSame('report_artifact_metadata_invalid', $exception->getMessage());
+            }
             self::assertSame([], $files->starts);
         }
+    }
+
+    public function test_normal_completion_compares_every_exact_metadata_member(): void
+    {
+        $files = new RecordingMultipartFileService();
+        $stream = $this->stream($files);
+        $files->describedMetadata = $this->metadata();
+        $files->describedMetadata['renderer_version'] = 'different';
+        $stream->write(str_repeat('a', self::PART_SIZE).'tail');
+
+        try {
+            $stream->finish();
+            self::fail('Metadata drift was accepted.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_DEPENDENCY_FAILED, $exception->errorCode);
+        }
+
+        self::assertSame(0, $files->abortCount);
+    }
+
+    public function test_conditional_race_reuses_only_exact_ready_winner_and_aborts_loser_once(): void
+    {
+        $files = new RecordingMultipartFileService();
+        $files->completionFailure = $this->conditionalConflict();
+        $bytes = 'body';
+        $checksum = hash('sha256', $bytes);
+        $files->headed = new StoredFile(
+            'org-7/reports/exports/01J00000000000000000000001/artifact.csv',
+            'winner-version',
+            'winner-etag',
+            strlen($bytes),
+            new Sha256Hash($checksum),
+            'text/csv',
+        );
+        $files->describedMetadata = $this->metadata();
+        $winner = (new ReportExportBuilder())
+            ->id($this->metadata()['export_id'])
+            ->runId($this->metadata()['run_id'])
+            ->exportHash(new Sha256Hash($this->metadata()['export_hash']))
+            ->artifactPath($files->headed->path)
+            ->versionId($files->headed->versionId)
+            ->etag($files->headed->etag)
+            ->checksum($files->headed->checksum)
+            ->sizeBytes($files->headed->sizeBytes)
+            ->ready();
+        $store = $this->createStub(ReportExportStore::class);
+        $store->method('get')->willReturn($winner);
+        $stream = new S3ReportArtifactStream(
+            $files,
+            $files->headed->path,
+            'text/csv',
+            self::PART_SIZE,
+            $this->metadata(),
+            null,
+            $store,
+            $this->executionContext(),
+        );
+        $stream->write($bytes);
+
+        self::assertSame($files->headed, $stream->finish());
+        self::assertSame(1, $files->abortCount);
+        self::assertSame([[$files->headed->path, 'winner-version']], $files->heads);
+    }
+
+    public function test_conditional_race_metadata_mismatch_fails_closed_after_one_loser_abort(): void
+    {
+        $files = new RecordingMultipartFileService();
+        $files->completionFailure = $this->conditionalConflict();
+        $bytes = 'body';
+        $checksum = hash('sha256', $bytes);
+        $files->headed = new StoredFile(
+            'org-7/reports/exports/01J00000000000000000000001/artifact.csv',
+            'winner-version',
+            'winner-etag',
+            strlen($bytes),
+            new Sha256Hash($checksum),
+            'text/csv',
+        );
+        $files->describedMetadata = $this->metadata();
+        $files->describedMetadata['snapshot_id'] = 'other-snapshot';
+        $winner = (new ReportExportBuilder())
+            ->id($this->metadata()['export_id'])
+            ->runId($this->metadata()['run_id'])
+            ->exportHash(new Sha256Hash($this->metadata()['export_hash']))
+            ->artifactPath($files->headed->path)
+            ->versionId($files->headed->versionId)
+            ->etag($files->headed->etag)
+            ->checksum($files->headed->checksum)
+            ->sizeBytes($files->headed->sizeBytes)
+            ->ready();
+        $store = $this->createStub(ReportExportStore::class);
+        $store->method('get')->willReturn($winner);
+        $stream = new S3ReportArtifactStream(
+            $files,
+            $files->headed->path,
+            'text/csv',
+            self::PART_SIZE,
+            $this->metadata(),
+            null,
+            $store,
+            $this->executionContext(),
+        );
+        $stream->write($bytes);
+
+        try {
+            $stream->finish();
+            self::fail('Race winner metadata mismatch was accepted.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_DEPENDENCY_FAILED, $exception->errorCode);
+        }
+        self::assertSame(1, $files->abortCount);
+    }
+
+    public function test_failed_abort_is_retryable_and_never_exposes_raw_storage_failure(): void
+    {
+        $files = new RecordingMultipartFileService();
+        $files->abortFailuresRemaining = 1;
+        $stream = $this->stream($files);
+
+        try {
+            $stream->abort();
+            self::fail('Abort transport failure was swallowed.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_DEPENDENCY_FAILED, $exception->errorCode);
+        }
+
+        $stream->abort();
+        self::assertSame(2, $files->abortCount);
+    }
+
+    public function test_complete_and_head_failures_are_safe_and_respect_completion_boundary(): void
+    {
+        $completeFiles = new RecordingMultipartFileService();
+        $completeFiles->completionFailure = new RuntimeException('complete_provider_detail');
+        $completeStream = $this->stream($completeFiles);
+        $completeStream->write('body');
+        try {
+            $completeStream->finish();
+            self::fail('Complete failure was swallowed.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_DEPENDENCY_FAILED, $exception->errorCode);
+            self::assertSame('complete_provider_detail', $exception->getPrevious()?->getMessage());
+        }
+        self::assertSame(1, $completeFiles->abortCount);
+
+        $headFiles = new RecordingMultipartFileService();
+        $headFiles->headFailure = new RuntimeException('head_provider_detail');
+        $headStream = $this->stream($headFiles);
+        $headStream->write('body');
+        try {
+            $headStream->finish();
+            self::fail('Head failure was swallowed.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_DEPENDENCY_FAILED, $exception->errorCode);
+            self::assertSame('head_provider_detail', $exception->getPrevious()?->getMessage());
+        }
+        self::assertSame(0, $headFiles->abortCount);
     }
 
     private function stream(RecordingMultipartFileService $files): S3ReportArtifactStream
@@ -197,6 +372,36 @@ final class S3ReportArtifactStreamTest extends TestCase
             'renderer_version' => '1',
         ];
     }
+
+    private function conditionalConflict(): AwsException
+    {
+        return new AwsException(
+            'provider detail',
+            $this->createStub(CommandInterface::class),
+            ['response' => new Response(412)],
+        );
+    }
+
+    private function executionContext(): ReportExecutionContext
+    {
+        $timezone = new DateTimeZone('UTC');
+        $scope = new ReportScope(7, [7], [], [], $timezone);
+        $authorization = new AuthorizationDecisionContext(
+            'http',
+            7,
+            [7],
+            [],
+            [],
+            $timezone,
+            'report-test',
+            null,
+        );
+
+        return (new ReportExecutionContextBuilder())
+            ->scope($scope)
+            ->authorization($authorization)
+            ->build();
+    }
 }
 
 final class RecordingMultipartFileService extends FileService
@@ -218,6 +423,14 @@ final class RecordingMultipartFileService extends FileService
     public int $deleteCount = 0;
 
     public ?int $failUploadNumber = null;
+
+    public ?Throwable $completionFailure = null;
+
+    public ?Throwable $headFailure = null;
+
+    public int $abortFailuresRemaining = 0;
+
+    public array $describedMetadata = [];
 
     public StoredFile $headed;
 
@@ -242,6 +455,9 @@ final class RecordingMultipartFileService extends FileService
         array $metadata,
     ): MultipartUpload {
         $this->starts[] = compact('organizationPath', 'mime', 'partSizeBytes', 'metadata');
+        if ($this->describedMetadata === []) {
+            $this->describedMetadata = $metadata;
+        }
         $this->upload = new MultipartUpload(
             $organizationPath,
             'upload-1',
@@ -285,10 +501,14 @@ final class RecordingMultipartFileService extends FileService
         array $orderedParts,
         array $conditions,
     ): StoredFile {
+        if ($this->completionFailure instanceof Throwable) {
+            throw $this->completionFailure;
+        }
+
         $this->completions[] = $upload->uploadId;
         $this->completedParts = $orderedParts;
         $this->conditions = $conditions;
-        $checksum = bin2hex(base64_decode($conditions['ChecksumSHA256'], true));
+        $checksum = $conditions['ApplicationChecksumSHA256'];
 
         return new StoredFile(
             $upload->organizationPath,
@@ -303,13 +523,39 @@ final class RecordingMultipartFileService extends FileService
     public function abortMultipart(MultipartUpload $upload): void
     {
         ++$this->abortCount;
+        if ($this->abortFailuresRemaining > 0) {
+            --$this->abortFailuresRemaining;
+            throw new RuntimeException('abort_failed');
+        }
     }
 
     public function headVersion(string $organizationPath, string $versionId): StoredFile
     {
+        if ($this->headFailure instanceof Throwable) {
+            throw $this->headFailure;
+        }
+
         $this->heads[] = [$organizationPath, $versionId];
 
         return $this->headed;
+    }
+
+    public function describeVersion(
+        string $path,
+        ?string $versionId,
+        int $maxBytes = 64_000_000,
+        bool $includeBody = true,
+    ): array {
+        return [
+            'path' => $path,
+            'body' => '',
+            'size' => $this->headed->sizeBytes,
+            'sha256' => $this->headed->checksum->value,
+            'etag' => $this->headed->etag,
+            'version_id' => $this->headed->versionId,
+            'content_type' => $this->headed->mime,
+            'metadata' => $this->describedMetadata,
+        ];
     }
 
     public function deleteVersion(string $organizationPath, string $versionId): void

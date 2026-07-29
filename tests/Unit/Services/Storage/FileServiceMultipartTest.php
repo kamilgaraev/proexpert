@@ -17,6 +17,7 @@ use Aws\Result;
 use Aws\S3\S3Client;
 use Aws\S3\S3ClientInterface;
 use DateTimeImmutable;
+use GuzzleHttp\Psr7\Utils;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -141,9 +142,22 @@ final class FileServiceMultipartTest extends TestCase
             1,
             str_repeat('A', 64),
         )];
+        yield 'literal null part upload id' => [static fn () => new MultipartPart(
+            'org-7/reports/export.csv',
+            'null',
+            1,
+            'etag',
+            1,
+            str_repeat('a', 64),
+        )];
         yield 'invalid link URL' => [static fn () => new TemporaryFileLink(
             'not-a-url',
             'version',
+            new DateTimeImmutable('+60 seconds'),
+        )];
+        yield 'unversioned link identity' => [static fn () => new TemporaryFileLink(
+            'https://storage.example.test/file?versionId=null',
+            'null',
             new DateTimeImmutable('+60 seconds'),
         )];
     }
@@ -154,6 +168,7 @@ final class FileServiceMultipartTest extends TestCase
         $bytes = str_repeat('a', self::PART_SIZE);
         $checksum = hash('sha256', $bytes);
         $checksumBase64 = base64_encode(hex2bin($checksum));
+        $compositeChecksum = base64_encode(hash('sha256', hex2bin($checksum), true)).'-1';
         $metadata = $this->metadata();
         $handler = new MockHandler([
             static function (CommandInterface $command) use (&$commands): Result {
@@ -166,16 +181,16 @@ final class FileServiceMultipartTest extends TestCase
 
                 return new Result(['ETag' => '"part-etag"', 'ChecksumSHA256' => $checksumBase64]);
             },
-            static function (CommandInterface $command) use (&$commands, $checksumBase64): Result {
+            static function (CommandInterface $command) use (&$commands, $compositeChecksum): Result {
                 $commands[] = [$command->getName(), $command->toArray()];
 
                 return new Result([
                     'ETag' => '"artifact-etag"',
                     'VersionId' => 'version-1',
-                    'ChecksumSHA256' => $checksumBase64,
+                    'ChecksumSHA256' => $compositeChecksum,
                 ]);
             },
-            static function (CommandInterface $command) use (&$commands, $checksumBase64, $metadata): Result {
+            static function (CommandInterface $command) use (&$commands, $compositeChecksum, $metadata): Result {
                 $commands[] = [$command->getName(), $command->toArray()];
 
                 return new Result([
@@ -183,8 +198,16 @@ final class FileServiceMultipartTest extends TestCase
                     'VersionId' => 'version-1',
                     'ContentLength' => self::PART_SIZE,
                     'ContentType' => 'text/csv',
-                    'ChecksumSHA256' => $checksumBase64,
+                    'ChecksumSHA256' => $compositeChecksum,
                     'Metadata' => $metadata,
+                ]);
+            },
+            static function (CommandInterface $command) use (&$commands, $bytes): Result {
+                $commands[] = [$command->getName(), $command->toArray()];
+
+                return new Result([
+                    'VersionId' => 'version-1',
+                    'Body' => Utils::streamFor($bytes),
                 ]);
             },
             static function (CommandInterface $command) use (&$commands): Result {
@@ -205,7 +228,7 @@ final class FileServiceMultipartTest extends TestCase
         $part = $files->uploadPart($upload, 1, $bytes, $checksum);
         $completed = $files->completeMultipart($upload, [$part], [
             'IfNoneMatch' => '*',
-            'ChecksumSHA256' => $checksumBase64,
+            'ApplicationChecksumSHA256' => $checksum,
             'MpuObjectSize' => self::PART_SIZE,
         ]);
         $headed = $files->headVersion($path, 'version-1');
@@ -223,6 +246,7 @@ final class FileServiceMultipartTest extends TestCase
                 'UploadPart',
                 'CompleteMultipartUpload',
                 'HeadObject',
+                'GetObject',
                 'AbortMultipartUpload',
                 'DeleteObject',
             ],
@@ -233,9 +257,11 @@ final class FileServiceMultipartTest extends TestCase
         self::assertSame($metadata, $commands[0][1]['Metadata']);
         self::assertSame($checksumBase64, $commands[1][1]['ChecksumSHA256']);
         self::assertSame('*', $commands[2][1]['IfNoneMatch']);
+        self::assertArrayNotHasKey('ChecksumSHA256', $commands[2][1]);
         self::assertSame('version-1', $commands[3][1]['VersionId']);
         self::assertSame('ENABLED', $commands[3][1]['ChecksumMode']);
-        self::assertSame('version-1', $commands[5][1]['VersionId']);
+        self::assertSame('version-1', $commands[4][1]['VersionId']);
+        self::assertSame('version-1', $commands[6][1]['VersionId']);
     }
 
     public function test_invalid_receipts_checksum_and_ttl_fail_before_an_aws_request(): void
@@ -268,7 +294,7 @@ final class FileServiceMultipartTest extends TestCase
         try {
             $files->completeMultipart($upload, [$part], [
                 'IfNoneMatch' => '*',
-                'ChecksumSHA256' => base64_encode(str_repeat("\0", 32)),
+                'ApplicationChecksumSHA256' => str_repeat('0', 64),
                 'MpuObjectSize' => self::PART_SIZE,
             ]);
             self::fail('Skipped first part was accepted.');
@@ -310,9 +336,132 @@ final class FileServiceMultipartTest extends TestCase
         $this->expectExceptionMessage('s3_multipart_completion_identity_invalid');
         $files->completeMultipart($upload, [$part], [
             'IfNoneMatch' => '*',
-            'ChecksumSHA256' => $checksumBase64,
+            'ApplicationChecksumSHA256' => $checksum,
             'MpuObjectSize' => self::PART_SIZE,
         ]);
+    }
+
+    public function test_multi_part_completion_uses_provider_composite_shape_but_returns_true_application_hash(): void
+    {
+        $first = str_repeat('a', self::PART_SIZE);
+        $second = str_repeat('b', self::PART_SIZE);
+        $firstHash = hash('sha256', $first);
+        $secondHash = hash('sha256', $second);
+        $applicationHash = hash('sha256', $first.$second);
+        $commands = [];
+        $handler = new MockHandler([
+            new Result(['UploadId' => 'upload-2']),
+            new Result(['ETag' => '"part-1"', 'ChecksumSHA256' => base64_encode(hex2bin($firstHash))]),
+            new Result(['ETag' => '"part-2"', 'ChecksumSHA256' => base64_encode(hex2bin($secondHash))]),
+            static function (CommandInterface $command) use (&$commands): Result {
+                $commands[] = $command->toArray();
+
+                return new Result([
+                    'ETag' => '"artifact-etag-2"',
+                    'VersionId' => 'version-2',
+                ]);
+            },
+        ]);
+        $files = $this->files($handler);
+        $upload = $files->startMultipart(
+            'org-7/reports/two-parts.csv',
+            'text/csv',
+            self::PART_SIZE,
+            $this->metadata(),
+        );
+        $parts = [
+            $files->uploadPart($upload, 1, $first, $firstHash),
+            $files->uploadPart($upload, 2, $second, $secondHash),
+        ];
+
+        $stored = $files->completeMultipart($upload, $parts, [
+            'IfNoneMatch' => '*',
+            'ApplicationChecksumSHA256' => $applicationHash,
+            'MpuObjectSize' => self::PART_SIZE * 2,
+        ]);
+
+        self::assertSame($applicationHash, $stored->checksum->value);
+        self::assertArrayNotHasKey('ChecksumSHA256', $commands[0]);
+        self::assertSame(
+            [
+                base64_encode(hex2bin($firstHash)),
+                base64_encode(hex2bin($secondHash)),
+            ],
+            array_column($commands[0]['MultipartUpload']['Parts'], 'ChecksumSHA256'),
+        );
+    }
+
+    public function test_literal_null_version_and_missing_metadata_fail_closed(): void
+    {
+        $handler = new MockHandler([
+            new Result([
+                'ETag' => '"etag"',
+                'VersionId' => 'version-1',
+                'ContentLength' => 4,
+                'ContentType' => 'text/csv',
+                'Metadata' => array_diff_key($this->metadata(), ['renderer_version' => true]),
+            ]),
+        ]);
+        $files = $this->files($handler);
+
+        foreach ([
+            static fn () => $files->headVersion('org-7/reports/export.csv', 'null'),
+            static fn () => $files->createTemporaryLink('org-7/reports/export.csv', 'null', 60),
+            static fn () => $files->deleteVersion('org-7/reports/export.csv', 'null'),
+        ] as $operation) {
+            try {
+                $operation();
+                self::fail('Literal null version was accepted.');
+            } catch (InvalidArgumentException) {
+            }
+        }
+
+        $this->expectException(VersionedObjectIntegrityException::class);
+        $this->expectExceptionMessage('s3_report_metadata_invalid');
+        $files->headVersion('org-7/reports/export.csv', 'version-1');
+    }
+
+    public function test_provider_returned_literal_null_version_fails_closed_at_complete_and_head(): void
+    {
+        $bytes = str_repeat('n', self::PART_SIZE);
+        $checksum = hash('sha256', $bytes);
+        $handler = new MockHandler([
+            new Result(['UploadId' => 'upload-null-version']),
+            new Result(['ETag' => '"part"', 'ChecksumSHA256' => base64_encode(hex2bin($checksum))]),
+            new Result(['ETag' => '"artifact"', 'VersionId' => 'null']),
+        ]);
+        $files = $this->files($handler);
+        $upload = $files->startMultipart(
+            'org-7/reports/null-version.csv',
+            'text/csv',
+            self::PART_SIZE,
+            $this->metadata(),
+        );
+        $part = $files->uploadPart($upload, 1, $bytes, $checksum);
+
+        try {
+            $files->completeMultipart($upload, [$part], [
+                'IfNoneMatch' => '*',
+                'ApplicationChecksumSHA256' => $checksum,
+                'MpuObjectSize' => self::PART_SIZE,
+            ]);
+            self::fail('Provider null version was accepted at completion.');
+        } catch (VersionedObjectIntegrityException $exception) {
+            self::assertSame('s3_multipart_completion_identity_invalid', $exception->getMessage());
+        }
+
+        $headFiles = $this->files(new MockHandler([
+            new Result([
+                'ETag' => '"artifact"',
+                'VersionId' => 'null',
+                'ContentLength' => self::PART_SIZE,
+                'ContentType' => 'text/csv',
+                'Metadata' => $this->metadata(),
+            ]),
+        ]));
+        $this->expectException(VersionedObjectIntegrityException::class);
+        $this->expectExceptionMessage('s3_bucket_versioning_required');
+        $headFiles->headVersion('org-7/reports/null-version.csv', 'version-1');
     }
 
     private function files(MockHandler $handler): FileService

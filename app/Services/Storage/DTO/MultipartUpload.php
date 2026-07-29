@@ -26,6 +26,7 @@ final readonly class MultipartUpload
             || str_contains($organizationPath, '://')
             || preg_match('#(?:^|/)\.\.(?:/|$)#', $organizationPath) === 1
             || ! self::isSafeString($uploadId, 1024)
+            || strtolower(trim($uploadId)) === 'null'
             || ! self::isSafeString($mime, 255)
             || $partSizeBytes < self::MIN_PART_SIZE_BYTES
             || $partSizeBytes > self::MAX_PART_SIZE_BYTES

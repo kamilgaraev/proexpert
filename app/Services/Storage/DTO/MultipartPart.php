@@ -19,6 +19,7 @@ final readonly class MultipartPart
         if (
             preg_match('#^org-[1-9][0-9]*/[^\\\\\x00-\x1F\x7F]+$#D', $organizationPath) !== 1
             || ! self::isSafeString($uploadId, 1024)
+            || strtolower(trim($uploadId)) === 'null'
             || $number < 1
             || $number > 10000
             || ! self::isSafeString($etag, 255)

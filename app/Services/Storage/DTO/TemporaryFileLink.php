@@ -20,6 +20,7 @@ final readonly class TemporaryFileLink
             filter_var($url, FILTER_VALIDATE_URL) === false
             || ! in_array($scheme, ['http', 'https'], true)
             || ! self::isSafeString($versionId)
+            || strtolower(trim($versionId)) === 'null'
             || $expiresAt <= new DateTimeImmutable()
         ) {
             throw new InvalidArgumentException('temporary_file_link_invalid');

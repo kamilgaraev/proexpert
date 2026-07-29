@@ -70,17 +70,28 @@ final class S3ReportArtifactStream implements ReportArtifactStream
         private readonly ?ReportExecutionContext $executionContext = null,
     ) {
         self::assertMetadata($metadata, $organizationPath);
-        if (($exportStore === null) !== ($executionContext === null)) {
+        if (
+            ($exportStore === null) !== ($executionContext === null)
+            || ($executionContext !== null
+                && $executionContext->scope->organizationId !== (int) $metadata['organization_id'])
+        ) {
             throw new InvalidArgumentException('report_artifact_race_resolver_invalid');
         }
 
         $this->hash = hash_init('sha256');
-        $this->upload = $files->startMultipart(
-            $organizationPath,
-            $mime,
-            $partSizeBytes,
-            $metadata,
-        );
+        try {
+            $this->upload = $files->startMultipart(
+                $organizationPath,
+                $mime,
+                $partSizeBytes,
+                $metadata,
+            );
+        } catch (Throwable $exception) {
+            throw ReportContractException::fromCode(
+                ReportErrorCode::REPORT_DEPENDENCY_FAILED,
+                previous: $exception,
+            );
+        }
     }
 
     public function write(string $bytes): void
@@ -141,7 +152,13 @@ final class S3ReportArtifactStream implements ReportArtifactStream
 
         if ($this->sizeBytes === 0) {
             $exception = new InvalidArgumentException('report_artifact_empty');
-            $this->abortAfterFailure($exception);
+            try {
+                $this->abort();
+            } catch (ReportContractException $abortFailure) {
+                throw $abortFailure;
+            }
+
+            throw $exception;
         }
 
         try {
@@ -152,7 +169,7 @@ final class S3ReportArtifactStream implements ReportArtifactStream
             $checksumSha256 = hash_final($this->hash);
             $conditions = [
                 'IfNoneMatch' => '*',
-                'ChecksumSHA256' => base64_encode(hex2bin($checksumSha256)),
+                'ApplicationChecksumSHA256' => $checksumSha256,
                 'MpuObjectSize' => $this->sizeBytes,
             ];
 
@@ -175,12 +192,14 @@ final class S3ReportArtifactStream implements ReportArtifactStream
             $this->completionAccepted = true;
             $this->closed = true;
             $headed = $this->files->headVersion($completed->path, $completed->versionId);
+            $metadata = $this->exactVersionMetadata($headed);
             if (
                 ! self::sameFile($completed, $headed)
                 || ! hash_equals($this->upload->organizationPath, $headed->path)
                 || ! hash_equals($checksumSha256, $headed->checksum->value)
                 || $headed->sizeBytes !== $this->sizeBytes
                 || ! hash_equals($this->upload->mime, $headed->mime)
+                || ! self::sameMetadata($this->metadata, $metadata)
             ) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_DEPENDENCY_FAILED);
             }
@@ -209,9 +228,17 @@ final class S3ReportArtifactStream implements ReportArtifactStream
             return;
         }
 
+        try {
+            $this->files->abortMultipart($this->upload);
+        } catch (Throwable $exception) {
+            throw ReportContractException::fromCode(
+                ReportErrorCode::REPORT_DEPENDENCY_FAILED,
+                previous: $exception,
+            );
+        }
+
         $this->aborted = true;
         $this->closed = true;
-        $this->files->abortMultipart($this->upload);
     }
 
     public function __destruct()
@@ -247,14 +274,13 @@ final class S3ReportArtifactStream implements ReportArtifactStream
     {
         try {
             $this->abort();
-        } catch (Throwable $abortFailure) {
-            throw ReportContractException::fromCode(
-                ReportErrorCode::REPORT_DEPENDENCY_FAILED,
-                previous: $abortFailure,
-            );
+        } catch (ReportContractException) {
         }
 
-        throw $exception;
+        throw ReportContractException::fromCode(
+            ReportErrorCode::REPORT_DEPENDENCY_FAILED,
+            previous: $exception,
+        );
     }
 
     private function reuseRaceWinner(string $checksumSha256, Throwable $conflict): StoredFile
@@ -287,6 +313,7 @@ final class S3ReportArtifactStream implements ReportArtifactStream
             }
 
             $headed = $this->files->headVersion($winner->artifactPath, $winner->versionId);
+            $metadata = $this->exactVersionMetadata($headed);
             if (
                 ! hash_equals($winner->artifactPath, $headed->path)
                 || ! hash_equals($winner->versionId, $headed->versionId)
@@ -294,6 +321,7 @@ final class S3ReportArtifactStream implements ReportArtifactStream
                 || ! hash_equals($winner->checksum->value, $headed->checksum->value)
                 || $winner->sizeBytes !== $headed->sizeBytes
                 || ! hash_equals($this->upload->mime, $headed->mime)
+                || ! self::sameMetadata($this->metadata, $metadata)
             ) {
                 throw new InvalidArgumentException('report_artifact_race_winner_invalid');
             }
@@ -337,6 +365,37 @@ final class S3ReportArtifactStream implements ReportArtifactStream
             && $left->sizeBytes === $right->sizeBytes
             && hash_equals($left->checksum->value, $right->checksum->value)
             && hash_equals($left->mime, $right->mime);
+    }
+
+    private function exactVersionMetadata(StoredFile $file): array
+    {
+        $description = $this->files->describeVersion(
+            $file->path,
+            $file->versionId,
+            $file->sizeBytes,
+            false,
+        );
+        if (
+            ($description['path'] ?? null) !== $file->path
+            || ($description['version_id'] ?? null) !== $file->versionId
+            || ($description['etag'] ?? null) !== $file->etag
+            || ($description['size'] ?? null) !== $file->sizeBytes
+            || ($description['sha256'] ?? null) !== $file->checksum->value
+            || ($description['content_type'] ?? null) !== $file->mime
+            || ! is_array($description['metadata'] ?? null)
+        ) {
+            throw new InvalidArgumentException('report_artifact_version_description_invalid');
+        }
+
+        return $description['metadata'];
+    }
+
+    private static function sameMetadata(array $expected, array $actual): bool
+    {
+        ksort($expected, SORT_STRING);
+        ksort($actual, SORT_STRING);
+
+        return $expected === $actual;
     }
 
     private static function assertMetadata(array $metadata, string $organizationPath): void

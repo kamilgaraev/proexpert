@@ -90,7 +90,7 @@ class FileService
         }
 
         $uploadId = is_string($result['UploadId'] ?? null) ? trim($result['UploadId']) : '';
-        if ($uploadId === '') {
+        if ($uploadId === '' || strtolower($uploadId) === 'null') {
             throw new VersionedObjectIntegrityException('s3_multipart_identity_invalid');
         }
         if (
@@ -168,6 +168,7 @@ class FileService
     ): StoredFile {
         $sizeBytes = $this->assertMultipartParts($upload, $orderedParts);
         $checksumSha256 = $this->assertMultipartConditions($conditions, $sizeBytes);
+        $providerCompositeChecksum = $this->multipartCompositeChecksum($orderedParts);
         $completedParts = array_map(
             static fn (MultipartPart $part): array => [
                 'PartNumber' => $part->number,
@@ -184,7 +185,6 @@ class FileService
                 'UploadId' => $upload->uploadId,
                 'MultipartUpload' => ['Parts' => $completedParts],
                 'IfNoneMatch' => '*',
-                'ChecksumSHA256' => $conditions['ChecksumSHA256'],
                 'MpuObjectSize' => $sizeBytes,
                 '@http' => $this->s3HttpOptions(),
             ]);
@@ -197,7 +197,7 @@ class FileService
         $versionId = is_string($result['VersionId'] ?? null) ? trim($result['VersionId']) : '';
         $etag = is_string($result['ETag'] ?? null) ? trim($result['ETag'], " \t\n\r\0\x0B\"") : '';
         if (
-            $versionId === ''
+            ! $this->isUsableVersionId($versionId)
             || $etag === ''
             || (isset($result['Key'])
                 && (! is_string($result['Key'])
@@ -211,7 +211,7 @@ class FileService
         if (
             isset($result['ChecksumSHA256'])
             && (! is_string($result['ChecksumSHA256'])
-                || ! hash_equals($conditions['ChecksumSHA256'], $result['ChecksumSHA256']))
+                || ! hash_equals($providerCompositeChecksum, $result['ChecksumSHA256']))
         ) {
             throw new VersionedObjectIntegrityException('s3_multipart_completion_checksum_mismatch');
         }
@@ -251,49 +251,26 @@ class FileService
 
     public function headVersion(string $organizationPath, string $versionId): StoredFile
     {
-        $organizationId = $this->assertOrganizationPath($organizationPath);
-        $this->assertSafeStorageString($versionId, 255, 's3_versioned_read_requires_version');
-
-        try {
-            $head = $this->reportS3Client()->headObject([
-                'Bucket' => $this->reportBucket(),
-                'Key' => $organizationPath,
-                'VersionId' => $versionId,
-                'ChecksumMode' => 'ENABLED',
-                '@http' => $this->s3HttpOptions(),
-            ]);
-        } catch (AwsException $exception) {
-            throw $this->versionedAwsException($exception);
-        } catch (\InvalidArgumentException $exception) {
-            throw new VersionedObjectTransportException('s3_versioned_read_unavailable', 0, $exception);
-        }
-
-        $resolvedVersion = is_string($head['VersionId'] ?? null) ? trim($head['VersionId']) : '';
-        $etag = is_string($head['ETag'] ?? null) ? trim($head['ETag'], " \t\n\r\0\x0B\"") : '';
-        $sizeBytes = $head['ContentLength'] ?? null;
-        $mime = is_string($head['ContentType'] ?? null) ? trim($head['ContentType']) : '';
-        $checksum = is_string($head['ChecksumSHA256'] ?? null) ? $head['ChecksumSHA256'] : '';
-        $metadata = is_array($head['Metadata'] ?? null) ? $head['Metadata'] : [];
-
+        $this->assertOrganizationPath($organizationPath);
+        $this->assertVersionId($versionId, 's3_versioned_read_requires_version');
+        $description = $this->describeVersion($organizationPath, $versionId, PHP_INT_MAX, false);
         if (
-            ! hash_equals($versionId, $resolvedVersion)
-            || $etag === ''
-            || ! is_numeric($sizeBytes)
-            || (int) $sizeBytes < 1
-            || $mime === ''
+            ! is_string($description['version_id'])
+            || ! hash_equals($versionId, $description['version_id'])
+            || ! is_string($description['etag'])
+            || $description['etag'] === ''
+            || $description['size'] < 1
         ) {
             throw new VersionedObjectIntegrityException('s3_object_version_mismatch');
         }
-        $checksumSha256 = $this->decodeSha256Checksum($checksum);
-        $this->assertClosedReportMetadata($metadata, $organizationId);
 
         return new StoredFile(
             $organizationPath,
-            $resolvedVersion,
-            $etag,
-            (int) $sizeBytes,
-            new Sha256Hash($checksumSha256),
-            $mime,
+            $description['version_id'],
+            $description['etag'],
+            $description['size'],
+            new Sha256Hash($description['sha256']),
+            $description['content_type'],
         );
     }
 
@@ -303,7 +280,7 @@ class FileService
         int $ttlSeconds,
     ): TemporaryFileLink {
         $this->assertOrganizationPath($organizationPath);
-        $this->assertSafeStorageString($versionId, 255, 's3_versioned_read_requires_version');
+        $this->assertVersionId($versionId, 's3_versioned_read_requires_version');
         if ($ttlSeconds < 1 || $ttlSeconds > 300) {
             throw new \InvalidArgumentException('temporary_link_ttl_invalid');
         }
@@ -328,7 +305,7 @@ class FileService
     public function deleteVersion(string $organizationPath, string $versionId): void
     {
         $this->assertOrganizationPath($organizationPath);
-        $this->assertSafeStorageString($versionId, 255, 's3_versioned_delete_requires_version');
+        $this->assertVersionId($versionId, 's3_versioned_delete_requires_version');
 
         try {
             $this->reportS3Client()->deleteObject([
@@ -389,12 +366,30 @@ class FileService
         }
     }
 
-    /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string} */
-    public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
+    /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,metadata?:array<string,string>} */
+    public function describeVersion(
+        string $path,
+        ?string $versionId,
+        int $maxBytes = 64_000_000,
+        bool $includeBody = true,
+    ): array
     {
+        $reportObject = preg_match('#^org-[1-9][0-9]*/reports(?:/|$)#D', $path) === 1;
+        $organizationId = null;
+        if ($reportObject) {
+            $organizationId = $this->assertOrganizationPath($path);
+            if ($versionId === null) {
+                throw new \InvalidArgumentException('s3_versioned_read_requires_version');
+            }
+            $this->assertVersionId($versionId, 's3_versioned_read_requires_version');
+        }
+        if ($maxBytes < 0) {
+            throw new \InvalidArgumentException('s3_object_size_invalid');
+        }
+
         try {
-            $client = $this->s3Client();
-            $bucket = $this->disk()->getConfig()['bucket'] ?? null;
+            $client = $reportObject ? $this->reportS3Client() : $this->s3Client();
+            $bucket = $reportObject ? $this->reportBucket() : ($this->disk()->getConfig()['bucket'] ?? null);
             if (! is_string($bucket) || $bucket === '') {
                 throw new VersionedObjectTransportException('s3_versioned_read_unavailable');
             }
@@ -407,26 +402,49 @@ class FileService
         if ($versionId !== null && $versionId !== '') {
             $arguments['VersionId'] = $versionId;
         }
+        if ($reportObject) {
+            $arguments['ChecksumMode'] = 'ENABLED';
+        }
         try {
             $head = $client->headObject([...$arguments, '@http' => $this->s3HttpOptions()]);
         } catch (AwsException $exception) {
             throw $this->versionedAwsException($exception);
         }
         $resolvedVersion = is_string($head['VersionId'] ?? null) ? $head['VersionId'] : $versionId;
-        if ($resolvedVersion === null || trim($resolvedVersion) === '') {
+        if (
+            $resolvedVersion === null
+            || ! $this->isUsableVersionId($resolvedVersion)
+            || ($reportObject
+                && (! isset($head['VersionId'])
+                    || ! is_string($head['VersionId'])
+                    || ! hash_equals((string) $versionId, $head['VersionId'])))
+        ) {
             throw new VersionedObjectIntegrityException('s3_bucket_versioning_required');
         }
         $contentLength = $head['ContentLength'] ?? null;
         if (! is_numeric($contentLength) || (int) $contentLength < 0 || (int) $contentLength > $maxBytes) {
             throw new VersionedObjectIntegrityException('s3_object_size_invalid');
         }
+        $metadata = is_array($head['Metadata'] ?? null) ? $head['Metadata'] : [];
+        if ($reportObject) {
+            $this->assertClosedReportMetadata($metadata, $organizationId);
+        }
         $arguments['VersionId'] = $resolvedVersion;
+        unset($arguments['ChecksumMode']);
         try {
             $object = $client->getObject([...$arguments, '@http' => $this->s3HttpOptions()]);
         } catch (AwsException $exception) {
             throw $this->versionedAwsException($exception);
         }
-        if (isset($object['VersionId']) && (string) $object['VersionId'] !== $resolvedVersion) {
+        if (
+            ($reportObject
+                && (! isset($object['VersionId'])
+                    || ! is_string($object['VersionId'])
+                    || ! hash_equals($resolvedVersion, $object['VersionId'])))
+            || (! $reportObject
+                && isset($object['VersionId'])
+                && (string) $object['VersionId'] !== $resolvedVersion)
+        ) {
             throw new VersionedObjectIntegrityException('s3_object_version_mismatch');
         }
         $stream = $object['Body'] ?? null;
@@ -434,8 +452,10 @@ class FileService
             throw new VersionedObjectIntegrityException('s3_object_stream_invalid');
         }
         $body = '';
+        $readBytes = 0;
+        $hash = hash_init('sha256');
         while (! $stream->eof()) {
-            $remaining = $maxBytes + 1 - strlen($body);
+            $remaining = $maxBytes + 1 - $readBytes;
             if ($remaining <= 0) {
                 throw new VersionedObjectIntegrityException('s3_object_size_invalid');
             }
@@ -443,17 +463,26 @@ class FileService
             if (! is_string($chunk)) {
                 throw new VersionedObjectIntegrityException('s3_object_stream_invalid');
             }
-            $body .= $chunk;
+            $readBytes += strlen($chunk);
+            hash_update($hash, $chunk);
+            if ($includeBody) {
+                $body .= $chunk;
+            }
         }
-        if (strlen($body) !== (int) $contentLength) {
+        if ($readBytes !== (int) $contentLength) {
             throw new VersionedObjectIntegrityException('s3_object_size_mismatch');
         }
 
-        return ['path' => $path, 'body' => $body, 'size' => strlen($body),
-            'sha256' => hash('sha256', $body),
+        $description = ['path' => $path, 'body' => $body, 'size' => $readBytes,
+            'sha256' => hash_final($hash),
             'etag' => is_string($head['ETag'] ?? null) ? trim($head['ETag'], '"') : null,
             'version_id' => $resolvedVersion,
             'content_type' => is_string($head['ContentType'] ?? null) ? $head['ContentType'] : 'application/octet-stream'];
+        if ($reportObject) {
+            $description['metadata'] = $metadata;
+        }
+
+        return $description;
     }
 
     private function versionedAwsException(
@@ -602,6 +631,22 @@ class FileService
         }
     }
 
+    private function assertVersionId(string $versionId, string $error): void
+    {
+        $this->assertSafeStorageString($versionId, 255, $error);
+        if (strtolower(trim($versionId)) === 'null') {
+            throw new \InvalidArgumentException($error);
+        }
+    }
+
+    private function isUsableVersionId(string $versionId): bool
+    {
+        return $versionId !== ''
+            && strlen($versionId) <= 255
+            && strtolower(trim($versionId)) !== 'null'
+            && preg_match('/[\x00-\x1F\x7F]/', $versionId) !== 1;
+    }
+
     private function assertStorageMetadata(array $metadata): void
     {
         foreach ($metadata as $key => $value) {
@@ -649,30 +694,31 @@ class FileService
         $keys = array_keys($conditions);
         sort($keys, SORT_STRING);
         if (
-            $keys !== ['ChecksumSHA256', 'IfNoneMatch', 'MpuObjectSize']
+            $keys !== ['ApplicationChecksumSHA256', 'IfNoneMatch', 'MpuObjectSize']
             || ($conditions['IfNoneMatch'] ?? null) !== '*'
             || ! is_int($conditions['MpuObjectSize'] ?? null)
             || $conditions['MpuObjectSize'] !== $sizeBytes
-            || ! is_string($conditions['ChecksumSHA256'] ?? null)
+            || ! is_string($conditions['ApplicationChecksumSHA256'] ?? null)
+            || preg_match('/^[a-f0-9]{64}$/D', $conditions['ApplicationChecksumSHA256']) !== 1
         ) {
             throw new \InvalidArgumentException('multipart_conditions_invalid');
         }
 
-        return $this->decodeSha256Checksum($conditions['ChecksumSHA256']);
+        return $conditions['ApplicationChecksumSHA256'];
     }
 
-    private function decodeSha256Checksum(string $checksum): string
+    private function multipartCompositeChecksum(array $orderedParts): string
     {
-        $decoded = base64_decode($checksum, true);
-        if (
-            ! is_string($decoded)
-            || strlen($decoded) !== 32
-            || ! hash_equals($checksum, base64_encode($decoded))
-        ) {
-            throw new VersionedObjectIntegrityException('s3_checksum_invalid');
+        $partChecksums = '';
+        foreach ($orderedParts as $part) {
+            $decoded = hex2bin($part->checksumSha256);
+            if (! is_string($decoded)) {
+                throw new \InvalidArgumentException('multipart_parts_invalid');
+            }
+            $partChecksums .= $decoded;
         }
 
-        return bin2hex($decoded);
+        return base64_encode(hash('sha256', $partChecksums, true)).'-'.count($orderedParts);
     }
 
     private function assertClosedReportMetadata(array $metadata, int $organizationId): void
