@@ -12,6 +12,7 @@ use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\DTO\Managemen
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\DTO\ManagementSourceFact;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\Models\ProjectFinanceRow;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\Models\ProjectFinanceSnapshot;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DomainException;
 
 final readonly class ProjectFinanceManagementPnlComponentSource implements ManagementPnlComponentSource
@@ -28,11 +29,21 @@ final readonly class ProjectFinanceManagementPnlComponentSource implements Manag
             throw new DomainException('management_pnl_scenario_required');
         }
         $scenario = $scenarios[0];
+        $periodFrom = $query->filters->values['period_from'] ?? null;
+        $periodTo = $query->filters->values['period_to'] ?? null;
+        if (!is_string($periodFrom) || !is_string($periodTo)) {
+            throw new DomainException('management_pnl_exact_scope_required');
+        }
+        $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
 
         foreach (['project_margin', 'budget_plan_fact'] as $code) {
             $snapshot = ProjectFinanceSnapshot::query()
                 ->where('organization_id', $scope->organizationId)
                 ->where('report_code', $code)
+                ->where('scope_hash', $scopeHash)
+                ->whereDate('period_from', $periodFrom)
+                ->whereDate('period_to', $periodTo)
+                ->whereDate('as_of', $query->asOf->format('Y-m-d'))
                 ->where('generated_at', '<=', $query->asOf)
                 ->latest('generated_at')
                 ->first();
@@ -42,6 +53,7 @@ final readonly class ProjectFinanceManagementPnlComponentSource implements Manag
             $rows = ProjectFinanceRow::query()
                 ->where('organization_id', $scope->organizationId)
                 ->where('snapshot_id', $snapshot->id)
+                ->when($code === 'budget_plan_fact', static fn ($builder) => $builder->where('direction', 'expense'))
                 ->when($scope->projectIds !== [], static fn ($builder) => $builder->whereIn('project_id', $scope->projectIds))
                 ->orderBy('row_key')
                 ->get()
@@ -49,8 +61,12 @@ final readonly class ProjectFinanceManagementPnlComponentSource implements Manag
             foreach ($rows as $currency => $currencyRows) {
                 $facts = [];
                 foreach ($currencyRows as $row) {
-                    $metric = $code === 'project_margin' ? 'actual_revenue' : 'actual';
-                    $amount = $code === 'project_margin' ? $row->actual_revenue_minor : $row->actual_minor;
+                    $metric = $code === 'project_margin'
+                        ? 'actual_revenue'
+                        : ($scenario === 'actual' ? 'actual_non_labor_cost' : 'planned_non_labor_cost');
+                    $amount = $code === 'project_margin'
+                        ? $row->actual_revenue_minor
+                        : ($scenario === 'actual' ? $row->actual_minor : $row->plan_minor);
                     if ($amount === null) {
                         continue;
                     }

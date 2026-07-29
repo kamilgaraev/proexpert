@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl;
 
+use App\BusinessModules\Core\Payments\Reporting\FinanceSourceAccessPolicy;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
@@ -20,10 +21,12 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Models\ManagementPnlRecord;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Models\ManagementPnlSnapshot;
@@ -33,6 +36,10 @@ use Illuminate\Database\Eloquent\Builder;
 
 final readonly class ManagementPnlQueryService implements ReportRowQuery, ReportDrillDownProvider
 {
+    public function __construct(private FinanceSourceAccessPolicy $sourceAccess)
+    {
+    }
+
     private const SORTS = [
         'period' => 'period',
         'organization_name' => 'organization_id',
@@ -57,15 +64,7 @@ final readonly class ManagementPnlQueryService implements ReportRowQuery, Report
             $this->quality($record),
             new ReportProvenance(
                 'most',
-                [new ReportSourceRef(
-                    'management_pnl_components',
-                    'management_pnl',
-                    's'.$snapshot->id,
-                    'management_pnl_v1',
-                    'w'.$snapshot->generatedAt->format('YmdHis'),
-                    (int) $record->row_count,
-                    new Sha256Hash((string) $record->source_hash),
-                )],
+                $this->sourceRefs($record),
                 $snapshot->sourceHash,
                 'confirmation_only',
             ),
@@ -105,16 +104,16 @@ final readonly class ManagementPnlQueryService implements ReportRowQuery, Report
         $direction = $sort->direction === ReportSortDirection::ASC ? 'asc' : 'desc';
         $query = $this->rows($context, $snapshot);
         if ($cursor !== null) {
-            $payload = $this->tokenPayload($cursor->token);
-            $this->assertCursor($payload, $snapshot, $sort);
-            $operator = $direction === 'asc' ? '>' : '<';
-            $query->where(static fn (Builder $after): Builder => $after
-                ->where($column, $operator, $payload['last_sort_value'] ?? null)
-                ->orWhere(static fn (Builder $tie): Builder => $tie
-                    ->where($column, $payload['last_sort_value'] ?? null)
-                    ->where('row_key', $operator, $payload['last_stable_row_key'])));
+            $this->assertCursor($cursor, $snapshot, $sort);
+            $this->applyAfter(
+                $query,
+                $column,
+                $direction,
+                $cursor->keyset->lastSortValue,
+                $cursor->keyset->lastStableRowKey,
+            );
         }
-        $models = $query->orderBy($column, $direction)->orderBy('row_key', $direction)->limit($limit + 1)->get();
+        $models = $query->orderByRaw($column.' IS NULL ASC')->orderBy($column, $direction)->orderBy('row_key', $direction)->limit($limit + 1)->get();
         $hasMore = $models->count() > $limit;
         $rows = $models->take($limit)->map($this->serialize(...))->values()->all();
 
@@ -127,10 +126,13 @@ final readonly class ManagementPnlQueryService implements ReportRowQuery, Report
         ReportWindowSort $sort,
         int $chunkSize,
     ): iterable {
+        if ($chunkSize < 1 || $chunkSize > 5000) {
+            throw new DomainException('report_chunk_size_invalid');
+        }
         $this->snapshot($context, $snapshot);
         $column = self::SORTS[$sort->field] ?? throw new DomainException('report_sort_invalid');
         $direction = $sort->direction === ReportSortDirection::ASC ? 'asc' : 'desc';
-        foreach ($this->rows($context, $snapshot)->orderBy($column, $direction)->orderBy('row_key', $direction)->lazy($chunkSize) as $row) {
+        foreach ($this->rows($context, $snapshot)->orderByRaw($column.' IS NULL ASC')->orderBy($column, $direction)->orderBy('row_key', $direction)->cursor() as $row) {
             yield $this->serialize($row);
         }
     }
@@ -138,41 +140,33 @@ final readonly class ManagementPnlQueryService implements ReportRowQuery, Report
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         $this->snapshot($context, $snapshot);
-        $payload = $this->tokenPayload($request->token);
-        if (($payload['organization_id'] ?? null) !== $context->scope->organizationId
-            || ($payload['snapshot_id'] ?? null) !== $snapshot->id
-            || ($payload['source_hash'] ?? null) !== $snapshot->sourceHash->value
-            || !is_string($payload['row_key'] ?? null)) {
-            throw new DomainException('report_drill_down_token_invalid');
-        }
-        $record = $this->rows($context, $snapshot)->where('row_key', $payload['row_key'])->firstOrFail();
-        $scoped = [];
-        foreach ($context->scope->resources as $resource) {
-            $scoped[$resource->kind.':'.$resource->id] = true;
+        $record = $this->rows($context, $snapshot)->where('row_key', $input->cell->rowKey)->firstOrFail();
+        $sourceRefs = [];
+        foreach ((array) $record->source_refs as $allocation) {
+            foreach ((array) ($allocation['sources'] ?? []) as $ref) {
+                $sourceRefs[] = $ref;
+            }
         }
         $rows = [];
         $links = [];
-        foreach ((array) $record->source_refs as $allocation) {
-            foreach ((array) ($allocation['sources'] ?? []) as $ref) {
-                if (!is_array($ref) || !is_string($ref['type'] ?? null)) {
-                    continue;
-                }
-                $type = $ref['type'];
-                $id = (string) ($ref['id'] ?? '');
-                if (!isset($scoped[$type.':'.$id]) || !ctype_digit($id)) {
-                    continue;
-                }
-                $rows[] = [
-                    'row_key' => $type.':'.$id,
-                    'source_type' => $type,
-                    'source_id' => $id,
-                    'policy_version' => (string) $record->policy_version,
-                ];
-                $links[] = new ReportResourceLink($type, 'r'.$id, $this->routeName($type), ['id' => (int) $id], 'available');
-            }
+        foreach ($this->sourceAccess->visibleRefs(
+            $context,
+            $sourceRefs,
+            ['budget_line', 'budget_amount', 'approved_act', 'completed_work', 'payment_transaction',
+                'payment_document', 'completed_transaction', 'approved_time_entry', 'time_entry', 'payroll_row'],
+        ) as $ref) {
+            $type = $ref['type'];
+            $id = (string) $ref['id'];
+            $rows[] = [
+                'row_key' => $type.':'.$id,
+                'source_type' => $type,
+                'source_id' => $id,
+                'policy_version' => (string) $record->policy_version,
+            ];
+            $links[] = new ReportResourceLink($type, 'r'.$id, $this->routeName($type), ['id' => (int) $id], 'available');
         }
 
         return new ReportDrillDownResult($rows, null, $links);
@@ -227,12 +221,46 @@ final readonly class ManagementPnlQueryService implements ReportRowQuery, Report
         return new ReportQuality(
             ReportQualityStatus::COMPLETE,
             new ReportCoverage((string) $n, (string) $d, number_format($n / max(1, $d), 8, '.', '')),
-            [],
+            $n === $d ? [] : [new ReportWarning('SOURCE_COVERAGE_INCOMPLETE', ReportWarningSeverity::WARNING, null, max(0, $d - $n))],
             max(0, $d - $n),
             $n === $d ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
             [],
             [],
         );
+    }
+
+    private function sourceRefs(ManagementPnlSnapshot $snapshot): array
+    {
+        $refs = [];
+        foreach ((array) $snapshot->component_snapshots as $component) {
+            if (!is_array($component)
+                || !is_string($component['component_code'] ?? null)
+                || !is_string($component['snapshot_id'] ?? null)
+                || !is_string($component['source_hash'] ?? null)
+                || preg_match('/^[a-f0-9]{64}$/', $component['source_hash']) !== 1) {
+                throw new DomainException('management_pnl_component_provenance_invalid');
+            }
+            $source = preg_replace('/[^a-z0-9_]/', '_', mb_strtolower($component['component_code'])) ?? '';
+            $schema = 'v_'.substr(
+                preg_replace('/[^a-z0-9_]/', '_', mb_strtolower((string) ($component['source_schema_version'] ?? 'v1'))) ?? '',
+                0,
+                61,
+            );
+            $refs[] = new ReportSourceRef(
+                $source,
+                $source,
+                's'.substr(hash('sha256', $component['snapshot_id']), 0, 32),
+                $schema,
+                'w'.substr(hash('sha256', $component['snapshot_id']), 0, 32),
+                0,
+                new Sha256Hash($component['source_hash']),
+            );
+        }
+        if ($refs === []) {
+            throw new DomainException('management_pnl_component_provenance_missing');
+        }
+
+        return $refs;
     }
 
     private function freshness(ReportSnapshotRef $snapshot): ReportFreshnessStatus
@@ -242,25 +270,27 @@ final readonly class ManagementPnlQueryService implements ReportRowQuery, Report
             : ReportFreshnessStatus::FRESH;
     }
 
-    private function tokenPayload(string $token): array
+    private function applyAfter(Builder $query, string $column, string $direction, mixed $value, string $rowKey): void
     {
-        $encoded = explode('.', $token, 2)[0];
-        $decoded = base64_decode(strtr($encoded, '-_', '+/').str_repeat('=', (4 - strlen($encoded) % 4) % 4), true);
-        $payload = is_string($decoded) ? json_decode($decoded, true) : null;
-        if (!is_array($payload) || array_is_list($payload)) {
-            throw new DomainException('report_token_invalid');
-        }
+        $operator = $direction === 'asc' ? '>' : '<';
+        if ($value === null) {
+            $query->whereNull($column)->where('row_key', $operator, $rowKey);
 
-        return $payload;
+            return;
+        }
+        $query->where(static fn (Builder $after): Builder => $after
+            ->where($column, $operator, $value)
+            ->orWhere(static fn (Builder $tie): Builder => $tie
+                ->where($column, $value)
+                ->where('row_key', $operator, $rowKey))
+            ->orWhereNull($column));
     }
 
-    private function assertCursor(array $payload, ReportSnapshotRef $snapshot, ReportWindowSort $sort): void
+    private function assertCursor(ReportCursor $cursor, ReportSnapshotRef $snapshot, ReportWindowSort $sort): void
     {
-        if (($payload['snapshot_id'] ?? null) !== $snapshot->id
-            || ($payload['source_hash'] ?? null) !== $snapshot->sourceHash->value
-            || ($payload['sort_field'] ?? null) !== $sort->field
-            || ($payload['sort_direction'] ?? null) !== $sort->direction->value
-            || !is_string($payload['last_stable_row_key'] ?? null)) {
+        if ($cursor->sourceHash->value !== $snapshot->sourceHash->value
+            || $cursor->sort->field !== $sort->field
+            || $cursor->sort->direction !== $sort->direction) {
             throw new DomainException('report_cursor_identity_mismatch');
         }
     }

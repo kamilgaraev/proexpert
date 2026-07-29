@@ -16,10 +16,12 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeClaimRow;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeClaimSnapshot;
@@ -54,15 +56,26 @@ final readonly class ChangeClaimRowQuery implements ReportRowQuery
             $quality,
             new ReportProvenance(
                 'most',
-                [new ReportSourceRef(
-                    'change_management_versions_ledger',
-                    'change_claim_contingency',
-                    's'.$snapshot->id,
-                    'change_claim_contingency_v1',
-                    'w'.max((int) $record->version_watermark_id, (int) $record->ledger_watermark_id),
-                    (int) $record->row_count,
-                    new Sha256Hash((string) $record->source_hash),
-                )],
+                [
+                    new ReportSourceRef(
+                        'change_request_versions',
+                        'change_request_versions',
+                        's'.$snapshot->id,
+                        'change_request_versions_v1',
+                        'w'.(int) $record->version_watermark_id,
+                        (int) $record->row_count,
+                        new Sha256Hash((string) $record->source_hash),
+                    ),
+                    new ReportSourceRef(
+                        'contingency_ledger',
+                        'contingency_ledger',
+                        's'.$snapshot->id,
+                        'contingency_ledger_v1',
+                        'w'.(int) $record->ledger_watermark_id,
+                        (int) $record->row_count,
+                        new Sha256Hash((string) $record->source_hash),
+                    ),
+                ],
                 $snapshot->sourceHash,
                 'confirmation_only',
             ),
@@ -101,16 +114,10 @@ final readonly class ChangeClaimRowQuery implements ReportRowQuery
         $direction = $sort->direction === ReportSortDirection::ASC ? 'asc' : 'desc';
         $query = $this->rows($context, $snapshot);
         if ($cursor !== null) {
-            $payload = $this->tokenPayload($cursor->token);
-            $this->assertCursor($payload, $snapshot, $sort);
-            $operator = $direction === 'asc' ? '>' : '<';
-            $query->where(static fn (Builder $after): Builder => $after
-                ->where($column, $operator, $payload['last_sort_value'] ?? null)
-                ->orWhere(static fn (Builder $tie): Builder => $tie
-                    ->where($column, $payload['last_sort_value'] ?? null)
-                    ->where('row_key', $operator, $payload['last_stable_row_key'])));
+            $this->assertCursor($cursor, $snapshot, $sort);
+            $this->applyAfter($query, $column, $direction, $cursor->keyset->lastSortValue, $cursor->keyset->lastStableRowKey);
         }
-        $models = $query->orderBy($column, $direction)->orderBy('row_key', $direction)->limit($limit + 1)->get();
+        $models = $query->orderByRaw($column.' IS NULL ASC')->orderBy($column, $direction)->orderBy('row_key', $direction)->limit($limit + 1)->get();
         $hasMore = $models->count() > $limit;
         $rows = $models->take($limit)->map($this->serialize(...))->values()->all();
 
@@ -123,10 +130,13 @@ final readonly class ChangeClaimRowQuery implements ReportRowQuery
         ReportWindowSort $sort,
         int $chunkSize,
     ): iterable {
+        if ($chunkSize < 1 || $chunkSize > 5000) {
+            throw new DomainException('report_chunk_size_invalid');
+        }
         $this->snapshot($context, $snapshot);
         $column = self::SORTS[$sort->field] ?? throw new DomainException('report_sort_invalid');
         $direction = $sort->direction === ReportSortDirection::ASC ? 'asc' : 'desc';
-        foreach ($this->rows($context, $snapshot)->orderBy($column, $direction)->orderBy('row_key', $direction)->lazy($chunkSize) as $row) {
+        foreach ($this->rows($context, $snapshot)->orderByRaw($column.' IS NULL ASC')->orderBy($column, $direction)->orderBy('row_key', $direction)->cursor() as $row) {
             yield $this->serialize($row);
         }
     }
@@ -191,7 +201,7 @@ final readonly class ChangeClaimRowQuery implements ReportRowQuery
         return new ReportQuality(
             $complete ? ReportQualityStatus::COMPLETE : ReportQualityStatus::PARTIAL,
             new ReportCoverage((string) $n, (string) $d, $d === 0 ? null : number_format($n / $d, 8, '.', '')),
-            (array) $snapshot->warnings,
+            $complete ? [] : [new ReportWarning('MONETARY_EVIDENCE_INCOMPLETE', ReportWarningSeverity::WARNING, 'monetary_evidence', max(0, $d - $n))],
             max(0, $d - $n),
             $complete ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
             $complete ? [] : ['monetary_evidence'],
@@ -206,25 +216,27 @@ final readonly class ChangeClaimRowQuery implements ReportRowQuery
             : ReportFreshnessStatus::FRESH;
     }
 
-    private function tokenPayload(string $token): array
+    private function applyAfter(Builder $query, string $column, string $direction, mixed $value, string $rowKey): void
     {
-        $encoded = explode('.', $token, 2)[0];
-        $decoded = base64_decode(strtr($encoded, '-_', '+/').str_repeat('=', (4 - strlen($encoded) % 4) % 4), true);
-        $payload = is_string($decoded) ? json_decode($decoded, true) : null;
-        if (!is_array($payload) || array_is_list($payload)) {
-            throw new DomainException('report_token_invalid');
-        }
+        $operator = $direction === 'asc' ? '>' : '<';
+        if ($value === null) {
+            $query->whereNull($column)->where('row_key', $operator, $rowKey);
 
-        return $payload;
+            return;
+        }
+        $query->where(static fn (Builder $after): Builder => $after
+            ->where($column, $operator, $value)
+            ->orWhere(static fn (Builder $tie): Builder => $tie
+                ->where($column, $value)
+                ->where('row_key', $operator, $rowKey))
+            ->orWhereNull($column));
     }
 
-    private function assertCursor(array $payload, ReportSnapshotRef $snapshot, ReportWindowSort $sort): void
+    private function assertCursor(ReportCursor $cursor, ReportSnapshotRef $snapshot, ReportWindowSort $sort): void
     {
-        if (($payload['snapshot_id'] ?? null) !== $snapshot->id
-            || ($payload['source_hash'] ?? null) !== $snapshot->sourceHash->value
-            || ($payload['sort_field'] ?? null) !== $sort->field
-            || ($payload['sort_direction'] ?? null) !== $sort->direction->value
-            || !is_string($payload['last_stable_row_key'] ?? null)) {
+        if ($cursor->sourceHash->value !== $snapshot->sourceHash->value
+            || $cursor->sort->field !== $sort->field
+            || $cursor->sort->direction !== $sort->direction) {
             throw new DomainException('report_cursor_identity_mismatch');
         }
     }

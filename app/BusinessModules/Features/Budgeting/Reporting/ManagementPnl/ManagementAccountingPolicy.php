@@ -32,6 +32,9 @@ final readonly class ManagementAccountingPolicy
         if (!is_string($category)) {
             throw new DomainException('management_pnl_classification_missing');
         }
+        if (($category === 'direct_labor') !== ($fact->sourceType === 'project_labor_cost')) {
+            throw new DomainException('management_pnl_direct_labor_source_invalid');
+        }
 
         return new ManagementPnlClassification($category);
     }

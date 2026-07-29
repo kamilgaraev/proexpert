@@ -7,6 +7,7 @@ namespace Tests\Architecture\Reporting;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlProvider;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlQueryService;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\BudgetPlanFactProvider;
@@ -18,6 +19,9 @@ use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Provider
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Queries\ChangeClaimRowQuery;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureProvider;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementQueryService;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerSource;
+use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Services\ChangeClaimSnapshotMaterializer;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\ProjectFinanceProjectionService;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -93,7 +97,7 @@ final class FinanceOwnerReportingContractTest extends TestCase
             $contents[self::MIGRATIONS[1]],
         );
         self::assertStringContainsString(
-            "['organization_id', 'source_type', 'source_id', 'source_version', 'allocation_id', 'direction']",
+            "['organization_id', 'source_hash', 'contract_id', 'allocation_id', 'direction', 'currency']",
             $contents[self::MIGRATIONS[2]],
         );
         self::assertStringContainsString(
@@ -132,6 +136,75 @@ final class FinanceOwnerReportingContractTest extends TestCase
         ] as $model) {
             self::assertTrue((new ReflectionClass($model))->isSubclassOf('Illuminate\\Database\\Eloquent\\Model'));
         }
+    }
+
+    #[Test]
+    public function delivery_uses_typed_keysets_null_safe_ordering_and_typed_drill_down(): void
+    {
+        foreach ([
+            ProjectFinanceQueryService::class,
+            ContractSettlementQueryService::class,
+            ManagementPnlQueryService::class,
+            ChangeClaimRowQuery::class,
+        ] as $query) {
+            $contents = (string) file_get_contents((new ReflectionClass($query))->getFileName());
+            self::assertStringContainsString('->keyset->lastSortValue', $contents, $query);
+            self::assertStringContainsString("IS NULL ASC", $contents, $query);
+            self::assertStringContainsString('->cursor()', $contents, $query);
+            self::assertStringNotContainsString('->lazy(', $contents, $query);
+            self::assertStringNotContainsString('tokenPayload(', $contents, $query);
+        }
+
+        foreach ([
+            ProjectFinanceQueryService::class,
+            ContractSettlementQueryService::class,
+            ManagementPnlQueryService::class,
+            ChangeClaimDrillDownProvider::class,
+        ] as $provider) {
+            $parameter = (new \ReflectionMethod($provider, 'drillDown'))->getParameters()[2];
+            self::assertSame(ReportDrillDownInput::class, (string) $parameter->getType(), $provider);
+        }
+    }
+
+    #[Test]
+    public function production_sources_fail_closed_on_unsealed_filters_and_pin_exact_snapshots(): void
+    {
+        $contractSource = (string) file_get_contents((new ReflectionClass(ContractSettlementOwnerSource::class))->getFileName());
+        $changeSource = (string) file_get_contents((new ReflectionClass(ChangeClaimSnapshotMaterializer::class))->getFileName());
+        $projectSource = (string) file_get_contents((new ReflectionClass(ProjectFinanceProjectionService::class))->getFileName());
+
+        self::assertStringContainsString('report_filter_not_sealed', $contractSource);
+        self::assertStringContainsString('report_filter_not_sealed', $changeSource);
+        self::assertStringContainsString('->forScope(', $projectSource);
+        self::assertStringContainsString("->where('formula_version', EpmDataMartPayloadProjector::FORMULA_VERSION)", $projectSource);
+        self::assertStringContainsString("'contract_performance_act'", $contractSource);
+        self::assertStringContainsString("'payment_document'", $contractSource);
+        self::assertStringContainsString("'payment_transaction'", $contractSource);
+    }
+
+    #[Test]
+    public function settlement_projection_reads_owner_contract_act_and_payment_sources(): void
+    {
+        $root = $this->root();
+        $source = (string) file_get_contents(
+            $root.'/app/BusinessModules/Features/ContractManagement/Reporting/ContractSettlementOwnerSource.php',
+        );
+        $projection = (string) file_get_contents(
+            $root.'/app/BusinessModules/Features/ContractManagement/Reporting/ContractSettlementProjectionService.php',
+        );
+
+        foreach ([
+            'Contract::query()',
+            'ContractPerformanceAct::query()',
+            'PaymentDocument::query()',
+            'PaymentTransactionStatus::COMPLETED',
+            'ContractSettlementAllocationConserver',
+        ] as $ownerContract) {
+            self::assertStringContainsString($ownerContract, $source);
+        }
+        self::assertStringContainsString('private ContractSettlementOwnerSource $ownerSource', $projection);
+        self::assertStringContainsString('ContractSettlementSourceFact::query()->insertOrIgnore', $projection);
+        self::assertStringNotContainsString('ContractSettlementSourceFact::query()->where', $projection);
     }
 
     private function phpFiles(array $paths): array

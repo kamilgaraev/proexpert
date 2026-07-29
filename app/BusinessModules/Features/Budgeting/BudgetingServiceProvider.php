@@ -57,9 +57,19 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->singleton(CfoCommandCenterService::class);
         $this->app->singleton(ProjectPortfolioDashboardPayloadBuilder::class);
         $this->app->singleton(ProjectPortfolioDashboardService::class);
+        $componentSources = [ProjectFinanceManagementPnlComponentSource::class];
+        foreach ([
+            'App\\BusinessModules\\Features\\TimeTracking\\Reporting\\TimeTrackingManagementPnlComponentSource',
+            'App\\BusinessModules\\Features\\WorkforceManagement\\Reporting\\PayrollManagementPnlComponentSource',
+        ] as $componentSource) {
+            if (class_exists($componentSource)) {
+                $this->app->singleton($componentSource);
+                $componentSources[] = $componentSource;
+            }
+        }
         $this->app->singleton(ProjectFinanceManagementPnlComponentSource::class);
         $this->app->tag(
-            [ProjectFinanceManagementPnlComponentSource::class],
+            $componentSources,
             'management-pnl-component-sources',
         );
         $this->app->when(ManagementPnlProjectionService::class)

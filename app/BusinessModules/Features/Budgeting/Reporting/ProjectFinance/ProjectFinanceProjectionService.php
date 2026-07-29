@@ -11,6 +11,8 @@ use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Budgeting\Models\EpmDataMartSnapshot;
+use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
+use App\BusinessModules\Features\Budgeting\Services\EpmDataMartPayloadProjector;
 use App\BusinessModules\Features\Budgeting\Models\WipForecastVersion;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\Models\ProjectFinanceSnapshot;
 use DateInterval;
@@ -56,21 +58,14 @@ final readonly class ProjectFinanceProjectionService
             throw new DomainException('report_projection_scope_invalid');
         }
 
+        $sourceScope = $this->sourceScope($scope, $query, self::REPORT_SOURCE_SCOPE[$code]);
         $source = EpmDataMartSnapshot::query()
-            ->where('organization_id', $scope->organizationId)
-            ->where('report_scope', self::REPORT_SOURCE_SCOPE[$code])
+            ->forScope($scope->organizationId, self::REPORT_SOURCE_SCOPE[$code], $sourceScope->scopeHash())
             ->where('status', 'succeeded')
+            ->where('formula_version', EpmDataMartPayloadProjector::FORMULA_VERSION)
             ->whereNull('superseded_at')
             ->where('generated_at', '<=', $query->asOf)
             ->where('stale_at', '>', $query->asOf)
-            ->when(
-                $scope->projectIds !== [],
-                static fn ($builder) => $builder->where(
-                    static fn ($projects) => $projects
-                        ->whereNull('project_id')
-                        ->orWhereIn('project_id', $scope->projectIds),
-                ),
-            )
             ->latest('generated_at')
             ->first();
 
@@ -319,6 +314,26 @@ final readonly class ProjectFinanceProjectionService
                 throw new DomainException('report_source_scope_mismatch');
             }
         }
+    }
+
+    private function sourceScope(ReportScope $scope, ReportQuery $query, string $reportScope): EpmDataMartScope
+    {
+        $filters = $query->filters->values;
+        $periodStart = $filters['period_start'] ?? $filters['period_from'] ?? null;
+        $periodEnd = $filters['period_end'] ?? $filters['period_to'] ?? null;
+        $currencies = $filters['currencies'] ?? null;
+        $currency = $filters['currency'] ?? (is_array($currencies) && count($currencies) === 1 ? $currencies[0] : null);
+        $projectId = count($scope->projectIds) === 1 ? $scope->projectIds[0] : null;
+
+        return EpmDataMartScope::fromInput($reportScope, [
+            ...$filters,
+            'organization_id' => $scope->organizationId,
+            'period_start' => $periodStart,
+            'period_end' => $periodEnd,
+            'as_of_date' => $query->asOf->format('Y-m-d'),
+            'project_id' => $projectId,
+            'currency' => $currency,
+        ]);
     }
 
     private function minor(mixed $value): ?int

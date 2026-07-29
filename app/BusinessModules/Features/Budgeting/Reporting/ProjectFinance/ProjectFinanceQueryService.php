@@ -8,7 +8,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
@@ -20,11 +20,14 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Payments\Reporting\FinanceSourceAccessPolicy;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\Models\ProjectFinanceRow;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\Models\ProjectFinanceSnapshot;
 use DomainException;
@@ -32,6 +35,10 @@ use Illuminate\Database\Eloquent\Builder;
 
 final readonly class ProjectFinanceQueryService implements ReportRowQuery, ReportDrillDownProvider
 {
+    public function __construct(private FinanceSourceAccessPolicy $sourceAccess)
+    {
+    }
+
     private const SORTS = [
         'project_margin' => [
             'project_name' => 'project_name',
@@ -171,6 +178,7 @@ final readonly class ProjectFinanceQueryService implements ReportRowQuery, Repor
 
         $direction = $sort->direction === ReportSortDirection::ASC ? 'asc' : 'desc';
         $models = $query
+            ->orderByRaw($column.' IS NULL ASC')
             ->orderBy($column, $direction)
             ->orderBy('row_key', $direction)
             ->limit($limit + 1)
@@ -211,10 +219,11 @@ final readonly class ProjectFinanceQueryService implements ReportRowQuery, Repor
             ->where('organization_id', $context->scope->organizationId)
             ->where('snapshot_id', $snapshot->id)
             ->where('report_code', $record->report_code)
+            ->orderByRaw($column.' IS NULL ASC')
             ->orderBy($column, $direction)
             ->orderBy('row_key', $direction);
 
-        foreach ($query->lazy($chunkSize) as $row) {
+        foreach ($query->cursor() as $row) {
             yield $this->serialize($row, $context);
         }
     }
@@ -222,27 +231,18 @@ final readonly class ProjectFinanceQueryService implements ReportRowQuery, Repor
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         $record = $this->snapshot($context, $snapshot);
-        $cell = $this->drillPosition($request->token, $context, $snapshot);
         $row = ProjectFinanceRow::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('snapshot_id', $snapshot->id)
-            ->where('row_key', $cell['row_key'])
+            ->where('row_key', $input->cell->rowKey)
             ->firstOrFail();
         $allowed = array_fill_keys(self::DRILL_TYPES[(string) $record->report_code], true);
-        $scoped = [];
-        foreach ($context->scope->resources as $resource) {
-            $scoped[$resource->kind.':'.$resource->id] = true;
-        }
-
         $rows = [];
         $links = [];
-        foreach ($this->typedSourceRefs($row->source_refs) as $ref) {
-            if (!isset($allowed[$ref['type']]) || !isset($scoped[$ref['type'].':'.$ref['id']])) {
-                continue;
-            }
+        foreach ($this->sourceAccess->visibleRefs($context, $row->source_refs, array_keys($allowed)) as $ref) {
             $key = $ref['type'].':'.$ref['id'];
             $rows[] = [
                 'row_key' => $key,
@@ -351,7 +351,9 @@ final readonly class ProjectFinanceQueryService implements ReportRowQuery, Repor
                 (string) $denominator,
                 $denominator === 0 ? null : number_format($numerator / $denominator, 8, '.', ''),
             ),
-            warnings: [],
+            warnings: $numerator === $denominator ? [] : [
+                new ReportWarning('SOURCE_COVERAGE_INCOMPLETE', ReportWarningSeverity::WARNING, null, max(0, $denominator - $numerator)),
+            ],
             unmatchedCount: max(0, $denominator - $numerator),
             reconciliation: $numerator === $denominator
                 ? ReportReconciliationStatus::MATCHED
@@ -408,7 +410,8 @@ final readonly class ProjectFinanceQueryService implements ReportRowQuery, Repor
             ->where($column, $operator, $value)
             ->orWhere(static fn (Builder $tie): Builder => $tie
                 ->where($column, $value)
-                ->where('row_key', $operator, $rowKey)));
+                ->where('row_key', $operator, $rowKey))
+            ->orWhereNull($column));
     }
 
     private function cursorPosition(
@@ -416,69 +419,16 @@ final readonly class ProjectFinanceQueryService implements ReportRowQuery, Repor
         ReportSnapshotRef $snapshot,
         ReportWindowSort $sort,
     ): array {
-        $payload = $this->tokenPayload($cursor->token);
-        if (($payload['snapshot_id'] ?? null) !== $snapshot->id
-            || ($payload['source_hash'] ?? null) !== $snapshot->sourceHash->value
-            || ($payload['sort_field'] ?? null) !== $sort->field
-            || ($payload['sort_direction'] ?? null) !== $sort->direction->value
-            || !is_string($payload['last_stable_row_key'] ?? null)) {
+        if ($cursor->sourceHash->value !== $snapshot->sourceHash->value
+            || $cursor->sort->field !== $sort->field
+            || $cursor->sort->direction !== $sort->direction) {
             throw new DomainException('report_cursor_identity_mismatch');
         }
 
         return [
-            'value' => $payload['last_sort_value'] ?? null,
-            'row_key' => $payload['last_stable_row_key'],
+            'value' => $cursor->keyset->lastSortValue,
+            'row_key' => $cursor->keyset->lastStableRowKey,
         ];
-    }
-
-    private function drillPosition(
-        string $token,
-        ReportExecutionContext $context,
-        ReportSnapshotRef $snapshot,
-    ): array {
-        $payload = $this->tokenPayload($token);
-        if (($payload['organization_id'] ?? null) !== $context->scope->organizationId
-            || ($payload['snapshot_id'] ?? null) !== $snapshot->id
-            || ($payload['source_hash'] ?? null) !== $snapshot->sourceHash->value
-            || !is_string($payload['row_key'] ?? null)
-            || !is_string($payload['column_id'] ?? null)) {
-            throw new DomainException('report_drill_down_token_invalid');
-        }
-
-        return ['row_key' => $payload['row_key'], 'column_id' => $payload['column_id']];
-    }
-
-    private function tokenPayload(string $token): array
-    {
-        $encoded = explode('.', $token, 2)[0] ?? '';
-        $decoded = base64_decode(
-            strtr($encoded, '-_', '+/').str_repeat('=', (4 - strlen($encoded) % 4) % 4),
-            true,
-        );
-        $payload = is_string($decoded) ? json_decode($decoded, true) : null;
-        if (!is_array($payload) || array_is_list($payload)) {
-            throw new DomainException('report_token_invalid');
-        }
-
-        return $payload;
-    }
-
-    private function typedSourceRefs(mixed $value): array
-    {
-        if (!is_array($value) || !array_is_list($value)) {
-            return [];
-        }
-        $refs = [];
-        foreach ($value as $ref) {
-            if (!is_array($ref)
-                || !is_string($ref['type'] ?? null)
-                || (!is_int($ref['id'] ?? null) && !ctype_digit((string) ($ref['id'] ?? '')))) {
-                continue;
-            }
-            $refs[] = ['type' => $ref['type'], 'id' => (string) $ref['id']];
-        }
-
-        return $refs;
     }
 
     private function routeName(string $type): string

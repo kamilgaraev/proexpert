@@ -22,15 +22,10 @@ use Illuminate\Support\Str;
 
 final readonly class ManagementPnlProjectionService
 {
-    private const COMPONENTS = [
-        'project_margin',
-        'budget_plan_fact',
-        'project_labor_cost',
-        'payroll_readiness',
-    ];
-
-    public function __construct(private iterable $componentSources)
-    {
+    public function __construct(
+        private iterable $componentSources,
+        private ManagementPnlComponentSet $componentSet,
+    ) {
     }
 
     public function materialize(
@@ -63,16 +58,23 @@ final readonly class ManagementPnlProjectionService
                 $components[] = $component;
             }
         }
-        $codes = array_values(array_unique(array_map(
-            static fn (ManagementPnlComponentSnapshot $component): string => $component->componentCode,
-            $components,
-        )));
-        sort($codes);
-        $expected = self::COMPONENTS;
-        sort($expected);
-        if ($codes !== $expected) {
-            throw new DomainException('management_pnl_component_cardinality_invalid');
+        $filters = $query->filters->values;
+        $this->assertSupportedFilters($filters);
+        $periodFrom = $filters['period_from'] ?? null;
+        $periodTo = $filters['period_to'] ?? null;
+        $scenarios = $filters['scenarios'] ?? null;
+        if (!is_string($periodFrom) || !is_string($periodTo)
+            || !is_array($scenarios) || count($scenarios) !== 1 || !is_string($scenarios[0])) {
+            throw new DomainException('management_pnl_exact_scope_required');
         }
+        $components = $this->componentSet->validate(
+            $components,
+            $scope->organizationId,
+            $scope->projectIds,
+            $periodFrom,
+            $periodTo,
+            $scenarios[0],
+        );
 
         $facts = [];
         $componentIdentities = [];
@@ -90,6 +92,9 @@ final readonly class ManagementPnlProjectionService
                 'currency' => $component->currency,
             ];
             foreach ($component->facts as $fact) {
+                if (!$this->matchesFactFilters($fact, $filters)) {
+                    continue;
+                }
                 $identity = $fact->identity();
                 if (isset($facts[$identity])) {
                     throw new DomainException('management_pnl_source_fact_duplicate');
@@ -101,6 +106,9 @@ final readonly class ManagementPnlProjectionService
         $allocated = [];
         foreach ($facts as $fact) {
             $classification = $policy->classify($fact);
+            if ($classification->category === 'direct_labor' && $fact->sourceType !== 'project_labor_cost') {
+                throw new DomainException('management_pnl_direct_labor_source_invalid');
+            }
             $allocations = $policy->allocate($fact);
             $remaining = $fact->amountMinor;
             foreach ($allocations as $index => $allocation) {
@@ -260,6 +268,42 @@ final readonly class ManagementPnlProjectionService
         $sign = $amount < 0 ? -1 : 1;
 
         return $sign * intdiv(abs($amount) * $basisPoints + 5000, 10000);
+    }
+
+    private function matchesFactFilters(ManagementSourceFact $fact, array $filters): bool
+    {
+        foreach ([
+            'project_ids' => $fact->projectId,
+            'responsibility_center_ids' => $fact->responsibilityCenterId,
+            'budget_article_ids' => $fact->budgetArticleId,
+            'currencies' => $fact->currency,
+            'scenarios' => $fact->scenario,
+        ] as $filter => $actual) {
+            if (isset($filters[$filter])
+                && !in_array($actual, is_array($filters[$filter]) ? $filters[$filter] : [$filters[$filter]], true)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function assertSupportedFilters(array $filters): void
+    {
+        $supported = array_fill_keys([
+            'period_from',
+            'period_to',
+            'project_ids',
+            'responsibility_center_ids',
+            'budget_article_ids',
+            'currencies',
+            'scenarios',
+        ], true);
+        foreach (array_keys($filters) as $filter) {
+            if (!isset($supported[$filter])) {
+                throw new DomainException('report_filter_not_sealed');
+            }
+        }
     }
 
     private function totals(array $rows): array

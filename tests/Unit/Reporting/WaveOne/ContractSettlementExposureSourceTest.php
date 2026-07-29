@@ -7,6 +7,7 @@ namespace Tests\Unit\Reporting\WaveOne;
 use App\BusinessModules\Core\Payments\Reporting\SettlementAgingBucket;
 use App\BusinessModules\Core\Payments\Services\Reports\SettlementAgingPolicy;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementCalculator;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementAllocationConserver;
 use App\BusinessModules\Features\ContractManagement\Reporting\DTO\ContractSettlementInput;
 use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\Test;
@@ -14,6 +15,24 @@ use PHPUnit\Framework\TestCase;
 
 final class ContractSettlementExposureSourceTest extends TestCase
 {
+    public function test_allocation_conservation_assigns_every_minor_once(): void
+    {
+        $result = (new ContractSettlementAllocationConserver())->allocate(
+            totalMinor: 10_001,
+            weights: [41 => 50, 42 => 30, 43 => 20],
+        );
+
+        self::assertSame([41 => 5_001, 42 => 3_000, 43 => 2_000], $result);
+        self::assertSame(10_001, array_sum($result));
+    }
+
+    public function test_allocation_conservation_rejects_missing_or_negative_weights(): void
+    {
+        $this->expectException(\DomainException::class);
+
+        (new ContractSettlementAllocationConserver())->allocate(100, [41 => 0, 42 => -1]);
+    }
+
     #[Test]
     public function formula_version_is_the_published_contract(): void
     {

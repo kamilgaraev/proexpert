@@ -39,14 +39,19 @@ final readonly class ChangeClaimContingencyFormula
         }
 
         $opening = 0;
+        $openingCount = 0;
         $allocation = 0;
         $consumption = 0;
         $release = 0;
+        $balance = 0;
         foreach ($contingencyMovements as $movement) {
             if (!$movement instanceof ContingencyMovement) {
                 throw new DomainException('contingency_movement_invalid');
             }
             $currency = $this->currency($currency, $movement->currency);
+            if ($movement->type !== 'opening' && $openingCount === 0) {
+                throw new DomainException('contingency_opening_missing');
+            }
             match ($movement->type) {
                 'opening' => $opening += $movement->amountMinor,
                 'allocation' => $allocation += $movement->amountMinor,
@@ -54,6 +59,13 @@ final readonly class ChangeClaimContingencyFormula
                 'release' => $release += $movement->amountMinor,
                 default => throw new DomainException('contingency_movement_type_invalid'),
             };
+            if ($movement->type === 'opening' && ++$openingCount > 1) {
+                throw new DomainException('contingency_opening_duplicate');
+            }
+            $balance += $movement->signedMinor();
+            if ($balance < 0) {
+                throw new DomainException('contingency_balance_negative');
+            }
         }
         if ($currency === null) {
             throw new DomainException('change_claim_currency_missing');

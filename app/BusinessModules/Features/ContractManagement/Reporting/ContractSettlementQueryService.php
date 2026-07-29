@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\ContractManagement\Reporting;
 
+use App\BusinessModules\Core\Payments\Reporting\FinanceSourceAccessPolicy;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
@@ -20,11 +21,14 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementExposureRecord;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementExposureSnapshot;
 use DateTimeImmutable;
@@ -33,6 +37,10 @@ use Illuminate\Database\Eloquent\Builder;
 
 final readonly class ContractSettlementQueryService implements ReportRowQuery, ReportDrillDownProvider
 {
+    public function __construct(private FinanceSourceAccessPolicy $sourceAccess)
+    {
+    }
+
     private const SORTS = [
         'contract_id' => 'contract_id',
         'project_id' => 'project_id',
@@ -66,15 +74,7 @@ final readonly class ContractSettlementQueryService implements ReportRowQuery, R
             quality: $this->quality($record),
             provenance: new ReportProvenance(
                 sourceOfTruth: 'most',
-                sourceRefs: [new ReportSourceRef(
-                    source: 'contract_settlement_source_facts',
-                    snapshotKind: 'contract_settlement_exposure',
-                    snapshotId: 's'.$snapshot->id,
-                    schemaVersion: 'contract_settlement_source_facts_v1',
-                    watermark: 'w'.(string) $record->source_watermark_id,
-                    rowCount: (int) $record->row_count,
-                    hash: new Sha256Hash((string) $record->source_hash),
-                )],
+                sourceRefs: $this->sourceRefs($context, $snapshot),
                 sourceHash: $snapshot->sourceHash,
                 externalConfirmationRole: 'confirmation_only',
             ),
@@ -113,16 +113,10 @@ final readonly class ContractSettlementQueryService implements ReportRowQuery, R
         $direction = $sort->direction === ReportSortDirection::ASC ? 'asc' : 'desc';
         $query = $this->rows($context, $snapshot);
         if ($cursor !== null) {
-            $position = $this->tokenPayload($cursor->token);
-            $this->assertCursor($position, $snapshot, $sort);
-            $operator = $direction === 'asc' ? '>' : '<';
-            $query->where(static fn (Builder $after): Builder => $after
-                ->where($column, $operator, $position['last_sort_value'] ?? null)
-                ->orWhere(static fn (Builder $tie): Builder => $tie
-                    ->where($column, $position['last_sort_value'] ?? null)
-                    ->where('row_key', $operator, $position['last_stable_row_key'])));
+            $this->assertCursor($cursor, $snapshot, $sort);
+            $this->applyAfter($query, $column, $direction, $cursor->keyset->lastSortValue, $cursor->keyset->lastStableRowKey);
         }
-        $models = $query->orderBy($column, $direction)->orderBy('row_key', $direction)->limit($limit + 1)->get();
+        $models = $query->orderByRaw($column.' IS NULL ASC')->orderBy($column, $direction)->orderBy('row_key', $direction)->limit($limit + 1)->get();
         $hasMore = $models->count() > $limit;
         $rows = $models->take($limit)->map($this->serialize(...))->values()->all();
 
@@ -135,9 +129,12 @@ final readonly class ContractSettlementQueryService implements ReportRowQuery, R
         ReportWindowSort $sort,
         int $chunkSize,
     ): iterable {
+        if ($chunkSize < 1 || $chunkSize > 5000) {
+            throw new DomainException('report_chunk_size_invalid');
+        }
         $column = self::SORTS[$sort->field] ?? throw new DomainException('report_sort_invalid');
         $direction = $sort->direction === ReportSortDirection::ASC ? 'asc' : 'desc';
-        foreach ($this->rows($context, $snapshot)->orderBy($column, $direction)->orderBy('row_key', $direction)->lazy($chunkSize) as $row) {
+        foreach ($this->rows($context, $snapshot)->orderByRaw($column.' IS NULL ASC')->orderBy($column, $direction)->orderBy('row_key', $direction)->cursor() as $row) {
             yield $this->serialize($row);
         }
     }
@@ -145,32 +142,15 @@ final readonly class ContractSettlementQueryService implements ReportRowQuery, R
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         $this->snapshot($context, $snapshot);
-        $position = $this->tokenPayload($request->token);
-        if (($position['organization_id'] ?? null) !== $context->scope->organizationId
-            || ($position['snapshot_id'] ?? null) !== $snapshot->id
-            || ($position['source_hash'] ?? null) !== $snapshot->sourceHash->value
-            || !is_string($position['row_key'] ?? null)) {
-            throw new DomainException('report_drill_down_token_invalid');
-        }
-        $record = $this->rows($context, $snapshot)->where('row_key', $position['row_key'])->firstOrFail();
-        $resources = [];
-        foreach ($context->scope->resources as $resource) {
-            $resources[$resource->kind.':'.$resource->id] = true;
-        }
+        $record = $this->rows($context, $snapshot)->where('row_key', $input->cell->rowKey)->firstOrFail();
         $rows = [];
         $links = [];
-        foreach ((array) $record->source_refs as $ref) {
-            if (!is_array($ref) || !in_array($ref['type'] ?? null, self::SOURCE_TYPES, true)) {
-                continue;
-            }
-            $id = (string) ($ref['id'] ?? '');
+        foreach ($this->sourceAccess->visibleRefs($context, $record->source_refs, self::SOURCE_TYPES) as $ref) {
+            $id = (string) $ref['id'];
             $type = (string) $ref['type'];
-            if (!isset($resources[$type.':'.$id]) || !ctype_digit($id)) {
-                continue;
-            }
             $rows[] = ['row_key' => $type.':'.$id, 'source_type' => $type, 'source_id' => $id];
             $links[] = new ReportResourceLink($type, 'r'.$id, $this->routeName($type), ['id' => (int) $id], 'available');
         }
@@ -230,12 +210,49 @@ final readonly class ContractSettlementQueryService implements ReportRowQuery, R
         return new ReportQuality(
             ReportQualityStatus::COMPLETE,
             new ReportCoverage((string) $numerator, (string) $denominator, number_format($numerator / max(1, $denominator), 8, '.', '')),
-            [],
+            $numerator === $denominator ? [] : [new ReportWarning('SOURCE_COVERAGE_INCOMPLETE', ReportWarningSeverity::WARNING, null, max(0, $denominator - $numerator))],
             max(0, $denominator - $numerator),
             $numerator === $denominator ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
             [],
             [],
         );
+    }
+
+    private function sourceRefs(ReportExecutionContext $context, ReportSnapshotRef $snapshot): array
+    {
+        $grouped = [];
+        foreach ($this->rows($context, $snapshot)->orderBy('row_key')->get() as $row) {
+            foreach ((array) $row->source_refs as $ref) {
+                if (!is_array($ref)
+                    || !in_array($ref['type'] ?? null, self::SOURCE_TYPES, true)
+                    || !ctype_digit((string) ($ref['id'] ?? ''))
+                    || preg_match('/^[a-f0-9]{64}$/', (string) ($ref['hash'] ?? '')) !== 1) {
+                    throw new DomainException('contract_settlement_source_provenance_invalid');
+                }
+                $type = (string) $ref['type'];
+                $identity = (string) $ref['id'].':'.(string) $ref['hash'];
+                $grouped[$type][$identity] = ['id' => (string) $ref['id'], 'hash' => (string) $ref['hash']];
+            }
+        }
+        $sources = [];
+        foreach ($grouped as $type => $refs) {
+            $refs = array_values($refs);
+            usort($refs, static fn (array $left, array $right): int => [$left['id'], $left['hash']] <=> [$right['id'], $right['hash']]);
+            $sources[] = new ReportSourceRef(
+                $type,
+                $type,
+                's'.substr(hash('sha256', CanonicalJson::encode($refs)), 0, 32),
+                $type.'_v1',
+                'w'.max(array_map(static fn (array $ref): int => (int) $ref['id'], $refs)),
+                count($refs),
+                new Sha256Hash(hash('sha256', CanonicalJson::encode($refs))),
+            );
+        }
+        if ($sources === []) {
+            throw new DomainException('contract_settlement_source_provenance_missing');
+        }
+
+        return $sources;
     }
 
     private function freshness(ReportSnapshotRef $snapshot): ReportFreshnessStatus
@@ -245,25 +262,27 @@ final readonly class ContractSettlementQueryService implements ReportRowQuery, R
             : ReportFreshnessStatus::FRESH;
     }
 
-    private function tokenPayload(string $token): array
+    private function applyAfter(Builder $query, string $column, string $direction, mixed $value, string $rowKey): void
     {
-        $encoded = explode('.', $token, 2)[0];
-        $decoded = base64_decode(strtr($encoded, '-_', '+/').str_repeat('=', (4 - strlen($encoded) % 4) % 4), true);
-        $payload = is_string($decoded) ? json_decode($decoded, true) : null;
-        if (!is_array($payload) || array_is_list($payload)) {
-            throw new DomainException('report_token_invalid');
-        }
+        $operator = $direction === 'asc' ? '>' : '<';
+        if ($value === null) {
+            $query->whereNull($column)->where('row_key', $operator, $rowKey);
 
-        return $payload;
+            return;
+        }
+        $query->where(static fn (Builder $after): Builder => $after
+            ->where($column, $operator, $value)
+            ->orWhere(static fn (Builder $tie): Builder => $tie
+                ->where($column, $value)
+                ->where('row_key', $operator, $rowKey))
+            ->orWhereNull($column));
     }
 
-    private function assertCursor(array $payload, ReportSnapshotRef $snapshot, ReportWindowSort $sort): void
+    private function assertCursor(ReportCursor $cursor, ReportSnapshotRef $snapshot, ReportWindowSort $sort): void
     {
-        if (($payload['snapshot_id'] ?? null) !== $snapshot->id
-            || ($payload['source_hash'] ?? null) !== $snapshot->sourceHash->value
-            || ($payload['sort_field'] ?? null) !== $sort->field
-            || ($payload['sort_direction'] ?? null) !== $sort->direction->value
-            || !is_string($payload['last_stable_row_key'] ?? null)) {
+        if ($cursor->sourceHash->value !== $snapshot->sourceHash->value
+            || $cursor->sort->field !== $sort->field
+            || $cursor->sort->direction !== $sort->direction) {
             throw new DomainException('report_cursor_identity_mismatch');
         }
     }

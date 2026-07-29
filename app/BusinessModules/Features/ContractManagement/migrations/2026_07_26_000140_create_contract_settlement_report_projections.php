@@ -13,6 +13,8 @@ return new class extends Migration
         Schema::create('contract_settlement_source_facts', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
+            $table->char('query_hash', 64);
+            $table->char('source_hash', 64);
             $table->unsignedBigInteger('contract_id');
             $table->unsignedBigInteger('allocation_id');
             $table->unsignedBigInteger('project_id')->nullable();
@@ -24,19 +26,15 @@ return new class extends Migration
             $table->unsignedBigInteger('accepted_minor');
             $table->unsignedBigInteger('completed_cash_minor');
             $table->date('due_at')->nullable();
-            $table->dateTimeTz('effective_at');
-            $table->string('source_type', 64);
-            $table->string('source_id', 96);
-            $table->unsignedInteger('source_version');
-            $table->char('source_hash', 64);
+            $table->jsonb('source_refs');
             $table->timestampsTz();
 
             $table->unique(
-                ['organization_id', 'source_type', 'source_id', 'source_version', 'allocation_id', 'direction'],
+                ['organization_id', 'source_hash', 'contract_id', 'allocation_id', 'direction', 'currency'],
                 'contract_settlement_source_identity_unique',
             );
             $table->index(
-                ['organization_id', 'effective_at', 'contract_id', 'allocation_id'],
+                ['organization_id', 'query_hash', 'contract_id', 'allocation_id'],
                 'contract_settlement_source_scope_idx',
             );
         });

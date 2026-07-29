@@ -16,7 +16,6 @@ use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSet
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementSourceFact;
 use DateInterval;
 use DomainException;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -25,6 +24,7 @@ final readonly class ContractSettlementProjectionService
     public function __construct(
         private ContractSettlementCalculator $calculator,
         private SettlementAgingPolicy $agingPolicy,
+        private ContractSettlementOwnerSource $ownerSource,
     ) {
     }
 
@@ -35,56 +35,23 @@ final readonly class ContractSettlementProjectionService
             throw new DomainException('report_projection_scope_invalid');
         }
 
-        $sourceQuery = ContractSettlementSourceFact::query()
-            ->where('organization_id', $scope->organizationId)
-            ->where('effective_at', '<=', $query->asOf);
-        if ($scope->projectIds !== []) {
-            $sourceQuery->whereIn('project_id', $scope->projectIds);
-        }
-        $this->applyResourceScope($sourceQuery, $scope);
-        $facts = $sourceQuery
-            ->orderBy('contract_id')
-            ->orderBy('allocation_id')
-            ->orderBy('id')
-            ->get();
-        if ($facts->isEmpty()) {
+        $inputs = $this->ownerSource->read($scope, $query);
+        if ($inputs === []) {
             throw new DomainException('report_mandatory_source_unavailable');
         }
 
         $rows = [];
-        foreach ($facts->groupBy(
-            static fn (ContractSettlementSourceFact $fact): string => implode(':', [
-                $fact->contract_id,
-                $fact->allocation_id,
-                $fact->direction,
-                $fact->currency,
-            ]),
-        ) as $group) {
-            $currencies = $group->pluck('currency')->unique()->values();
-            if ($currencies->count() !== 1) {
-                throw new DomainException('contract_settlement_currency_mismatch');
-            }
-            $first = $group->first();
-            $input = new ContractSettlementInput(
-                contractId: (int) $first->contract_id,
-                allocationId: (int) $first->allocation_id,
-                projectId: $first->project_id === null ? null : (int) $first->project_id,
-                partyId: $first->party_id === null ? null : (int) $first->party_id,
-                direction: (string) $first->direction,
-                currency: (string) $first->currency,
-                effectiveMinor: (int) $group->sum('effective_minor'),
-                acceptedMinor: (int) $group->sum('accepted_minor'),
-                cashMinor: (int) $group->sum('completed_cash_minor'),
-                dueAt: $first->due_at?->toDateTimeImmutable(),
-                asOf: $query->asOf,
-                sourceRefs: $group->map(static fn (ContractSettlementSourceFact $fact): array => [
-                    'type' => (string) $fact->source_type,
-                    'id' => (string) $fact->source_id,
-                    'version' => (int) $fact->source_version,
-                    'hash' => (string) $fact->source_hash,
-                ])->values()->all(),
-            );
+        $selectedInputs = [];
+        foreach ($inputs as $input) {
             $result = $this->calculator->calculate($input, $this->agingPolicy);
+            $agingFilter = $query->filters->values['aging_buckets']
+                ?? $query->filters->values['aging_bucket']
+                ?? null;
+            if ($agingFilter !== null
+                && !in_array($result->agingBucket, is_array($agingFilter) ? $agingFilter : [$agingFilter], true)) {
+                continue;
+            }
+            $selectedInputs[] = $input;
             $rows[] = [
                 'row_key' => hash('sha256', $result->contractId.':'.$result->allocationId.':'.$result->direction.':'.$result->currency),
                 'contract_id' => $result->contractId,
@@ -93,7 +60,7 @@ final readonly class ContractSettlementProjectionService
                 'party_id' => $result->partyId,
                 'direction' => $result->direction,
                 'currency' => $result->currency,
-                'currency_source' => (string) $first->currency_source,
+                'currency_source' => 'contract_payment_owner',
                 'effective_minor' => $result->effectiveMinor,
                 'accepted_minor' => $result->acceptedMinor,
                 'cash_minor' => $result->cashMinor,
@@ -104,11 +71,14 @@ final readonly class ContractSettlementProjectionService
                 'source_refs' => $result->sourceRefs,
             ];
         }
+        if ($rows === []) {
+            throw new DomainException('report_mandatory_source_unavailable');
+        }
 
         $generatedAt = $query->asOf;
         $staleAt = $generatedAt->add(new DateInterval('PT10M'));
         $snapshotId = (string) Str::ulid();
-        $sourceWatermarkId = (int) $facts->max('id');
+        $sourceWatermarkId = $this->sourceWatermark($selectedInputs);
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
             'formula_version' => ContractSettlementCalculator::FORMULA_VERSION,
             'aging_policy_version' => SettlementAgingPolicy::VERSION,
@@ -128,7 +98,31 @@ final readonly class ContractSettlementProjectionService
             $sourceWatermarkId,
             $rows,
             $totals,
+            $selectedInputs,
         ): void {
+            $timestamp = now();
+            ContractSettlementSourceFact::query()->insertOrIgnore(array_map(
+                static fn (ContractSettlementInput $input): array => [
+                    'organization_id' => $scope->organizationId,
+                    'query_hash' => $query->queryHash->value,
+                    'source_hash' => $sourceHash->value,
+                    'contract_id' => $input->contractId,
+                    'allocation_id' => $input->allocationId,
+                    'project_id' => $input->projectId,
+                    'party_id' => $input->partyId,
+                    'direction' => $input->direction,
+                    'currency' => $input->currency,
+                    'currency_source' => 'contract_payment_owner',
+                    'effective_minor' => $input->effectiveMinor,
+                    'accepted_minor' => $input->acceptedMinor,
+                    'completed_cash_minor' => $input->cashMinor,
+                    'due_at' => $input->dueAt,
+                    'source_refs' => json_encode($input->sourceRefs, JSON_THROW_ON_ERROR),
+                    'created_at' => $timestamp,
+                    'updated_at' => $timestamp,
+                ],
+                $selectedInputs,
+            ));
             $snapshot = ContractSettlementExposureSnapshot::query()->create([
                 'id' => $snapshotId,
                 'organization_id' => $scope->organizationId,
@@ -174,26 +168,6 @@ final readonly class ContractSettlementProjectionService
         );
     }
 
-    private function applyResourceScope(Builder $query, ReportScope $scope): void
-    {
-        $contractIds = [];
-        $allocationIds = [];
-        foreach ($scope->resources as $resource) {
-            if ($resource->kind === 'contract') {
-                $contractIds[] = $resource->id;
-            }
-            if ($resource->kind === 'contract_allocation') {
-                $allocationIds[] = $resource->id;
-            }
-        }
-        if ($contractIds !== []) {
-            $query->whereIn('contract_id', $contractIds);
-        }
-        if ($allocationIds !== []) {
-            $query->whereIn('allocation_id', $allocationIds);
-        }
-    }
-
     private function totals(array $rows): array
     {
         $totals = [];
@@ -214,5 +188,19 @@ final readonly class ContractSettlementProjectionService
         ksort($totals);
 
         return $totals;
+    }
+
+    private function sourceWatermark(array $inputs): int
+    {
+        $ids = [];
+        foreach ($inputs as $input) {
+            foreach ($input->sourceRefs as $sourceRef) {
+                if (ctype_digit((string) ($sourceRef['id'] ?? ''))) {
+                    $ids[] = (int) $sourceRef['id'];
+                }
+            }
+        }
+
+        return $ids === [] ? 0 : max($ids);
     }
 }

@@ -103,4 +103,56 @@ final class ChangeClaimContingencyFormulaTest extends TestCase
             [ContingencyMovement::opening(2_000, 'USD')],
         );
     }
+
+    #[Test]
+    public function approved_exposure_never_falls_back_to_proposed_exposure(): void
+    {
+        $metric = (new ChangeClaimContingencyFormula())->summarize(
+            [new ChangeExposureFact(1, 1, 10, 20, 'RUB', 1_000, null, [])],
+            [ContingencyMovement::opening(2_000, 'RUB')],
+        );
+
+        self::assertSame(1_000, $metric->proposedExposureMinor);
+        self::assertSame(0, $metric->approvedExposureMinor);
+    }
+
+    #[Test]
+    public function contingency_recurrence_rejects_multiple_openings(): void
+    {
+        $this->expectException(DomainException::class);
+
+        (new ChangeClaimContingencyFormula())->summarize(
+            [],
+            [
+                ContingencyMovement::opening(2_000, 'RUB'),
+                ContingencyMovement::opening(500, 'RUB'),
+            ],
+        );
+    }
+
+    #[Test]
+    public function contingency_recurrence_rejects_consumption_beyond_available_balance(): void
+    {
+        $this->expectException(DomainException::class);
+
+        (new ChangeClaimContingencyFormula())->summarize(
+            [],
+            [
+                ContingencyMovement::opening(1_000, 'RUB'),
+                ContingencyMovement::allocation(200, 'RUB'),
+                ContingencyMovement::consumption(1_201, 'RUB'),
+            ],
+        );
+    }
+
+    #[Test]
+    public function contingency_recurrence_requires_one_opening_before_movements(): void
+    {
+        $this->expectException(DomainException::class);
+
+        (new ChangeClaimContingencyFormula())->summarize(
+            [],
+            [ContingencyMovement::allocation(200, 'RUB')],
+        );
+    }
 }

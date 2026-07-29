@@ -19,6 +19,7 @@ use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\C
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ContingencyLedgerEntry;
 use DateInterval;
 use DomainException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -36,16 +37,48 @@ final readonly class ChangeClaimSnapshotMaterializer
             || $query->scope->canonicalIdentity() !== $scope->canonicalIdentity()) {
             throw new DomainException('report_projection_scope_invalid');
         }
-        $versions = ChangeRequestVersion::query()
+        $filters = $query->filters->values;
+        $this->assertSupportedFilters($filters);
+        $versionsQuery = ChangeRequestVersion::query()
             ->where('organization_id', $scope->organizationId)
             ->where('effective_at', '<=', $query->asOf)
-            ->when($scope->projectIds !== [], static fn ($builder) => $builder->whereIn('project_id', $scope->projectIds))
+            ->when($scope->projectIds !== [], static fn (Builder $builder) => $builder->whereIn('project_id', $scope->projectIds));
+        $this->applyFilters($versionsQuery, $filters, [
+            'project_ids' => 'project_id',
+            'contract_ids' => 'contract_id',
+            'allocation_ids' => 'contract_project_allocation_id',
+            'change_request_ids' => 'change_request_id',
+            'statuses' => 'status',
+            'currencies' => 'currency',
+            'initiator_types' => 'initiator_type',
+            'initiator_user_ids' => 'initiator_user_id',
+            'owner_user_ids' => 'owner_user_id',
+            'reasons' => 'reason',
+        ]);
+        $versionsQuery
+            ->when(isset($filters['period_from']), static fn (Builder $builder) => $builder->whereDate('effective_at', '>=', (string) $filters['period_from']))
+            ->when(isset($filters['period_to']), static fn (Builder $builder) => $builder->whereDate('effective_at', '<=', (string) $filters['period_to']));
+        $versions = $versionsQuery
             ->orderBy('id')
             ->get();
-        $ledger = ContingencyLedgerEntry::query()
+        $ledgerQuery = ContingencyLedgerEntry::query()
             ->where('organization_id', $scope->organizationId)
             ->whereDate('effective_on', '<=', $query->asOf->format('Y-m-d'))
-            ->when($scope->projectIds !== [], static fn ($builder) => $builder->whereIn('project_id', $scope->projectIds))
+            ->when($scope->projectIds !== [], static fn (Builder $builder) => $builder->whereIn('project_id', $scope->projectIds));
+        $this->applyFilters($ledgerQuery, $filters, [
+            'project_ids' => 'project_id',
+            'allocation_ids' => 'contract_project_allocation_id',
+            'currencies' => 'currency',
+            'source_types' => 'source_type',
+        ]);
+        if (isset($filters['contract_ids'])) {
+            $ledgerQuery->whereIn('contract_project_allocation_id', $versions->pluck('contract_project_allocation_id')->filter());
+        }
+        $ledgerQuery
+            ->when(isset($filters['period_from']), static fn (Builder $builder) => $builder->whereDate('effective_on', '>=', (string) $filters['period_from']))
+            ->when(isset($filters['period_to']), static fn (Builder $builder) => $builder->whereDate('effective_on', '<=', (string) $filters['period_to']));
+        $ledger = $ledgerQuery
+            ->orderBy('effective_on')
             ->orderBy('id')
             ->get();
         if ($versions->isEmpty() && $ledger->isEmpty()) {
@@ -55,6 +88,8 @@ final readonly class ChangeClaimSnapshotMaterializer
         $links = ChangeClaimLink::query()
             ->where('organization_id', $scope->organizationId)
             ->whereIn('change_request_version_id', $versions->pluck('id'))
+            ->when(isset($filters['claim_ids']), static fn (Builder $builder) => $builder
+                ->whereIn('change_claim_id', is_array($filters['claim_ids']) ? $filters['claim_ids'] : [$filters['claim_ids']]))
             ->get()
             ->groupBy('change_request_version_id');
         $events = ChangeWorkflowEvent::query()
@@ -79,6 +114,9 @@ final readonly class ChangeClaimSnapshotMaterializer
             $key = $version->project_id.':'.$version->contract_project_allocation_id.':'.$version->currency;
             $groups[$key] ??= ['facts' => [], 'movements' => [], 'versions' => [], 'ledger' => []];
             $claimRows = $links->get($version->id, collect());
+            if (isset($filters['claim_ids']) && $claimRows->isEmpty()) {
+                continue;
+            }
             $groups[$key]['facts'][] = new ChangeExposureFact(
                 changeRequestId: (int) $version->change_request_id,
                 changeVersion: (int) $version->version,
@@ -232,6 +270,42 @@ final readonly class ChangeClaimSnapshotMaterializer
             classification: ReportSnapshotClassification::OPERATIONAL,
             seal: null,
         );
+    }
+
+    private function applyFilters(Builder $builder, array $filters, array $columns): void
+    {
+        foreach ($columns as $filter => $column) {
+            if (!array_key_exists($filter, $filters)) {
+                continue;
+            }
+            $values = is_array($filters[$filter]) ? $filters[$filter] : [$filters[$filter]];
+            $builder->whereIn($column, $values);
+        }
+    }
+
+    private function assertSupportedFilters(array $filters): void
+    {
+        $supported = array_fill_keys([
+            'period_from',
+            'period_to',
+            'project_ids',
+            'contract_ids',
+            'allocation_ids',
+            'change_request_ids',
+            'statuses',
+            'currencies',
+            'initiator_types',
+            'initiator_user_ids',
+            'owner_user_ids',
+            'reasons',
+            'source_types',
+            'claim_ids',
+        ], true);
+        foreach (array_keys($filters) as $filter) {
+            if (!isset($supported[$filter])) {
+                throw new DomainException('report_filter_not_sealed');
+            }
+        }
     }
 
     private function totals(array $rows): array
