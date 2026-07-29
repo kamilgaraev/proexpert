@@ -8,6 +8,8 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewReferenceResolver;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -74,6 +76,18 @@ final class ReportProviderPortContractTest extends TestCase
             static fn (ReflectionMethod $method): string => $method->getName(),
             (new \ReflectionClass(ReportDrillDownProvider::class))->getMethods(),
         ));
+    }
+
+    public function test_drill_down_owner_receives_validated_cell_without_a_signed_token_to_parse(): void
+    {
+        $parameter = (new ReflectionMethod(ReportDrillDownProvider::class, 'drillDown'))->getParameters()[2];
+        $input = new ReportDrillDownInput(new ReportDrillDownCell('row-1', 'amount'), null, 10);
+
+        self::assertSame('input', $parameter->getName());
+        self::assertSame(ReportDrillDownInput::class, (string) $parameter->getType());
+        self::assertSame('row-1', $input->cell->rowKey);
+        self::assertSame('amount', $input->cell->columnId);
+        self::assertFalse(property_exists($input, 'token'));
     }
 
     public function test_official_snapshot_requires_a_valid_seal_not_older_than_generation(): void
