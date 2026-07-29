@@ -74,6 +74,10 @@ final readonly class CustomerSlaReadinessProbe implements ReportSourceReadinessP
             ->orderBy('occurred_at')
             ->orderBy('id')
             ->get();
+        $unknownActorWorkflows = $events
+            ->where('actor_side', 'unknown')
+            ->map(static fn (object $event): string => $event->workflow_type.':'.$event->workflow_id)
+            ->flip();
         $openedByWorkflow = $events
             ->where('event_type', 'opened')
             ->groupBy(static fn (object $event): string => $event->workflow_type.':'.$event->workflow_id);
@@ -101,6 +105,7 @@ final readonly class CustomerSlaReadinessProbe implements ReportSourceReadinessP
                 ! is_object($opened)
                 || $opened->actor_side !== 'customer'
                 || $opened->customer_organization_id === null
+                || $unknownActorWorkflows->has($workflow['type'].':'.$workflow['id'])
             ) {
                 $unknown++;
 

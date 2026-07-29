@@ -75,11 +75,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
             )
             ->orderBy('id')
             ->get();
-        $groups = $reviews->groupBy(static fn (MarketplaceHiringOfferReview $review): string => implode(':', [
-            (int) $review->contractor_profile_id,
-            (int) $review->category_id,
-            (int) $review->project_id,
-        ]));
+        $groups = $this->groups($reviews, $objectiveObservations, $policy, $query->asOf);
         $sourceHash = hash('sha256', CanonicalJson::encode([
             'policy_id' => (int) $policy->id,
             'policy_source_hash' => (string) $policy->source_hash,
@@ -110,6 +106,10 @@ final readonly class ContractorScorecardSnapshotMaterializer
             $snapshotId,
             $rowCount,
         ): void {
+            DB::table('organizations')
+                ->where('id', $query->scope->organizationId)
+                ->lockForUpdate()
+                ->firstOrFail();
             $existing = ContractorScorecardSnapshot::query()
                 ->where('organization_id', $query->scope->organizationId)
                 ->where('source_hash', $sourceHash)
@@ -153,18 +153,18 @@ final readonly class ContractorScorecardSnapshotMaterializer
             }
 
             foreach ($groups as $group) {
-                $first = $group->first();
-                if (! $first instanceof MarketplaceHiringOfferReview) {
-                    continue;
-                }
-                $cohortKey = $this->cohortKey($group, $policy);
+                $profileId = $group['profile_id'];
+                $categoryId = $group['category_id'];
+                $projectId = $group['project_id'];
+                $cohortKey = $group['cohort_key'];
+                $groupReviews = $group['reviews'];
                 foreach ($components as $component) {
                     $observations = $this->componentObservations(
-                        $group,
+                        $groupReviews,
                         $component,
                         $objectiveObservations,
-                        (int) $first->contractor_profile_id,
-                        (int) $first->project_id,
+                        $profileId,
+                        $projectId,
                     );
                     $rawMetric = $this->formula->component(
                         $component['code'],
@@ -173,18 +173,18 @@ final readonly class ContractorScorecardSnapshotMaterializer
                     );
                     $metric = $this->applyPublicationThresholds($rawMetric, $policy);
                     $rowKey = implode(':', [
-                        (int) $first->contractor_profile_id,
-                        (int) $first->category_id,
-                        (int) $first->project_id,
+                        $profileId,
+                        $categoryId,
+                        $projectId,
                         $cohortKey,
                         $component['code'],
                     ]);
                     ContractorScorecardRow::query()->create([
                         'organization_id' => $query->scope->organizationId,
                         'snapshot_id' => $snapshotId,
-                        'profile_id' => (int) $first->contractor_profile_id,
-                        'category_id' => (int) $first->category_id,
-                        'project_id' => (int) $first->project_id,
+                        'profile_id' => $profileId,
+                        'category_id' => $categoryId,
+                        'project_id' => $projectId,
                         'cohort_key' => $cohortKey,
                         'component_code' => $metric->componentCode,
                         'unit_code' => $metric->unitCode,
@@ -234,6 +234,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
                 || ! is_string($component['source_report_code'] ?? null)
                 || ! is_string($component['source_formula_version'] ?? null)
                 || ! is_string($component['source_schema_version'] ?? null)
+                || ! is_string($component['source_metric'] ?? null)
                 || isset($codes[$component['code']])
             ) {
                 throw new InvalidArgumentException('contractor_scorecard_components_invalid');
@@ -263,8 +264,8 @@ final readonly class ContractorScorecardSnapshotMaterializer
                     true,
                 ))->all(),
                 'evidence' => $reviews->map(static fn (MarketplaceHiringOfferReview $review): array => [
-                'offer_id' => (int) $review->offer_id,
-                'review_id' => (int) $review->id,
+                    'offer_id' => (int) $review->offer_id,
+                    'review_id' => (int) $review->id,
                 ])->values()->all(),
             ];
         }
@@ -273,6 +274,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
             $component['source_report_code'],
             $profileId,
             $projectId,
+            $component['source_metric'],
             $component['unit_code'],
         );
     }
@@ -318,15 +320,63 @@ final readonly class ContractorScorecardSnapshotMaterializer
         );
     }
 
-    private function cohortKey(Collection $reviews, ContractorScorecardPolicyVersion $policy): string
-    {
+    private function groups(
+        Collection $reviews,
+        ContractorObjectiveObservationIndex $objectiveObservations,
+        ContractorScorecardPolicyVersion $policy,
+        \DateTimeInterface $asOf,
+    ): Collection {
         $period = $policy->cohort_rules['period'] ?? null;
-        $last = $reviews->max('created_at');
-        if (! $last instanceof \DateTimeInterface || ! in_array($period, ['month', 'quarter', 'year'], true)) {
+        if (! in_array($period, ['month', 'quarter', 'year'], true)) {
             throw new InvalidArgumentException('contractor_scorecard_cohort_invalid');
         }
-        $date = CarbonImmutable::instance($last);
+        $groups = [];
+        foreach ($reviews as $review) {
+            $cohortKey = $this->cohortKey(CarbonImmutable::instance($review->created_at), $period);
+            $key = implode(':', [
+                (int) $review->contractor_profile_id,
+                (int) $review->category_id,
+                (int) $review->project_id,
+                $cohortKey,
+            ]);
+            $groups[$key] ??= [
+                'profile_id' => (int) $review->contractor_profile_id,
+                'category_id' => (int) $review->category_id,
+                'project_id' => (int) $review->project_id,
+                'cohort_key' => $cohortKey,
+                'reviews' => collect(),
+            ];
+            $groups[$key]['reviews']->push($review);
+        }
 
+        $profileIds = array_map('intval', array_keys($objectiveObservations->profileProjects()));
+        $categories = DB::table('marketplace_contractor_categories')
+            ->whereIn('profile_id', $profileIds)
+            ->orderByDesc('is_primary')
+            ->orderBy('category_id')
+            ->get(['profile_id', 'category_id'])
+            ->groupBy('profile_id');
+        $objectiveCohort = $this->cohortKey(CarbonImmutable::instance($asOf), $period);
+        foreach ($objectiveObservations->profileProjects() as $profileId => $projects) {
+            foreach (array_keys($projects) as $projectId) {
+                foreach ($categories->get($profileId, collect()) as $category) {
+                    $key = implode(':', [$profileId, (int) $category->category_id, $projectId, $objectiveCohort]);
+                    $groups[$key] ??= [
+                        'profile_id' => (int) $profileId,
+                        'category_id' => (int) $category->category_id,
+                        'project_id' => (int) $projectId,
+                        'cohort_key' => $objectiveCohort,
+                        'reviews' => collect(),
+                    ];
+                }
+            }
+        }
+
+        return collect(array_values($groups));
+    }
+
+    private function cohortKey(CarbonImmutable $date, string $period): string
+    {
         return match ($period) {
             'month' => $date->format('Y-m'),
             'quarter' => $date->year.'-Q'.$date->quarter,

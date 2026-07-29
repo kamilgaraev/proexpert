@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Readiness;
 
 use App\BusinessModules\ContractorMarketplace\Domain\Models\MarketplaceHiringOfferReview;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\ContractorScorecardPolicyVersion;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services\ContractorScorecardObservationReader;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services\ContractorScorecardSourceResolver;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSourceReadinessProbe;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
@@ -19,7 +21,10 @@ use Throwable;
 
 final readonly class ContractorScorecardReadinessProbe implements ReportSourceReadinessProbe
 {
-    public function __construct(private ContractorScorecardSourceResolver $sources) {}
+    public function __construct(
+        private ContractorScorecardSourceResolver $sources,
+        private ContractorScorecardObservationReader $observations,
+    ) {}
 
     public function supports(ReportDefinition $definition): bool
     {
@@ -39,6 +44,18 @@ final readonly class ContractorScorecardReadinessProbe implements ReportSourceRe
     ): ReportSourceReadiness {
         try {
             $tuple = $this->sources->resolve($context, $query);
+            $policy = ContractorScorecardPolicyVersion::query()
+                ->where('organization_id', $context->scope->organizationId)
+                ->where('effective_from', '<=', $query->asOf)
+                ->where(static function ($builder) use ($query): void {
+                    $builder->whereNull('effective_to')->orWhere('effective_to', '>', $query->asOf);
+                })
+                ->orderByDesc('effective_from')
+                ->orderByDesc('id')
+                ->first();
+            if (! $policy instanceof ContractorScorecardPolicyVersion) {
+                throw new \RuntimeException('contractor_scorecard_policy_unavailable');
+            }
             $reviews = MarketplaceHiringOfferReview::query()
                 ->where('reviewer_organization_id', $context->scope->organizationId)
                 ->where('created_at', '<=', $query->asOf)
@@ -61,8 +78,23 @@ final readonly class ContractorScorecardReadinessProbe implements ReportSourceRe
             $projected = $validReviews->count();
             $eligible = $reviews->count();
             $unknown = $eligible - $projected;
+            $objectiveDimensions = $this->observations->load($tuple)->profileProjects();
+            foreach ($objectiveDimensions as $profileId => $projects) {
+                foreach (array_keys($projects) as $projectId) {
+                    $eligible++;
+                    $hasCategory = DB::table('marketplace_contractor_categories')
+                        ->where('profile_id', (int) $profileId)
+                        ->exists();
+                    if ($hasCategory) {
+                        $projected++;
+                    } else {
+                        $unknown++;
+                    }
+                }
+            }
             $input = [
                 'review_ids' => $reviews->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all(),
+                'policy_source_hash' => (string) $policy->source_hash,
                 'tuple_hash' => $tuple->hash(),
             ];
 

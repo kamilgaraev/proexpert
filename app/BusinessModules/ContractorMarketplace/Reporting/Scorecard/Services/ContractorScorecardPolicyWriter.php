@@ -28,6 +28,36 @@ final readonly class ContractorScorecardPolicyWriter
         'marketplace_financial_discipline',
     ];
 
+    private const REVIEW_METRICS = [
+        'marketplace_quality' => 'quality_score',
+        'marketplace_deadline' => 'deadline_score',
+        'marketplace_communication' => 'communication_score',
+        'marketplace_safety' => 'safety_score',
+        'marketplace_financial_discipline' => 'financial_discipline_score',
+    ];
+
+    private const SOURCE_METRICS = [
+        'baseline_schedule_variance' => [
+            'variance_days' => 'days',
+            'critical_flag' => 'ratio',
+            'task_count' => 'count',
+        ],
+        'supply_reliability' => [
+            'otif' => 'ratio',
+            'delivery_count' => 'count',
+        ],
+        'quality_defect_flow' => [
+            'cycle_days' => 'days',
+            'closed_flag' => 'ratio',
+            'defect_count' => 'count',
+        ],
+        'safety_incident_actions' => [
+            'closure_days' => 'days',
+            'closure_verified' => 'ratio',
+            'action_count' => 'count',
+        ],
+    ];
+
     public function append(
         int $organizationId,
         array $components,
@@ -119,6 +149,7 @@ final readonly class ContractorScorecardPolicyWriter
                 || ! is_string($component['source_report_code'] ?? null)
                 || ! is_string($component['source_formula_version'] ?? null)
                 || ! is_string($component['source_schema_version'] ?? null)
+                || ! is_string($component['source_metric'] ?? null)
                 || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $component['code']) !== 1
                 || trim($component['source_formula_version']) === ''
                 || trim($component['source_schema_version']) === ''
@@ -130,6 +161,11 @@ final readonly class ContractorScorecardPolicyWriter
                 )
                 || ($component['source_report_code'] === 'marketplace_reviews'
                     && ! in_array($component['code'], self::REVIEW_COMPONENTS, true))
+                || ($component['source_report_code'] !== 'marketplace_reviews'
+                    && (self::SOURCE_METRICS[$component['source_report_code']][$component['source_metric']] ?? null)
+                        !== $component['unit_code'])
+                || ($component['source_report_code'] === 'marketplace_reviews'
+                    && (self::REVIEW_METRICS[$component['code']] ?? null) !== $component['source_metric'])
                 || isset($codes[$component['code']])
             ) {
                 throw new InvalidArgumentException('contractor_scorecard_policy_invalid');

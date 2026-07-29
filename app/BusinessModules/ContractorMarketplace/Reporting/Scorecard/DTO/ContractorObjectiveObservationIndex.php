@@ -14,18 +14,17 @@ final readonly class ContractorObjectiveObservationIndex
         string $sourceReportCode,
         int $profileId,
         int $projectId,
+        string $sourceMetric,
         string $unitCode,
     ): array {
-        $rows = $sourceReportCode === 'baseline_schedule_variance'
-            ? ($this->rows[$sourceReportCode][$projectId] ?? [])
-            : ($this->rows[$sourceReportCode][$profileId][$projectId] ?? []);
+        $rows = $this->rows[$sourceReportCode][$profileId][$projectId] ?? [];
         $signals = [];
         $evidence = [];
         foreach ($rows as $row) {
             if (! is_array($row)) {
                 throw new InvalidArgumentException('contractor_objective_observation_invalid');
             }
-            [$value, $eligible] = $this->signal($sourceReportCode, $unitCode, $row);
+            [$value, $eligible] = $this->signal($sourceReportCode, $sourceMetric, $unitCode, $row);
             $signals[] = new ContractorComponentSignal($value, $eligible);
             $evidence[] = [
                 'source_report_code' => $sourceReportCode,
@@ -38,40 +37,58 @@ final readonly class ContractorObjectiveObservationIndex
         return ['signals' => $signals, 'evidence' => $evidence];
     }
 
-    private function signal(string $sourceReportCode, string $unitCode, array $row): array
+    public function profileProjects(): array
     {
+        $dimensions = [];
+        foreach ($this->rows as $sources) {
+            foreach ($sources as $profileId => $projects) {
+                foreach (array_keys($projects) as $projectId) {
+                    $dimensions[(int) $profileId][(int) $projectId] = true;
+                }
+            }
+        }
+
+        return $dimensions;
+    }
+
+    private function signal(
+        string $sourceReportCode,
+        string $sourceMetric,
+        string $unitCode,
+        array $row,
+    ): array {
         return match ($sourceReportCode) {
             'baseline_schedule_variance' => [
-                match ($unitCode) {
-                    'days' => $row['variance_days'] === null
+                match ($sourceMetric) {
+                    'variance_days' => $row['variance_days'] === null
                         ? null
                         : (string) abs((int) $row['variance_days']),
-                    'ratio' => (bool) $row['is_critical'] ? '1' : '0',
-                    'count' => '1',
+                    'critical_flag' => (bool) $row['is_critical'] ? '1' : '0',
+                    'task_count' => '1',
                     default => null,
                 },
                 true,
             ],
             'supply_reliability' => [
-                $unitCode === 'ratio' && (bool) $row['eligible']
+                $sourceMetric === 'otif' && (bool) $row['eligible']
                     ? (string) (int) $row['otif_numerator']
-                    : ($unitCode === 'count' ? '1' : null),
+                    : ($sourceMetric === 'delivery_count' ? '1' : null),
                 (bool) $row['eligible'],
             ],
             'quality_defect_flow' => [
-                match ($unitCode) {
-                    'days' => $row['cycle_days'] === null ? null : (string) $row['cycle_days'],
-                    'ratio' => (bool) $row['closed_flag'] ? '1' : '0',
-                    'count' => '1',
+                match ($sourceMetric) {
+                    'cycle_days' => $row['cycle_days'] === null ? null : (string) $row['cycle_days'],
+                    'closed_flag' => (bool) $row['closed_flag'] ? '1' : '0',
+                    'defect_count' => '1',
                     default => null,
                 },
                 true,
             ],
             'safety_incident_actions' => [
-                match ($unitCode) {
-                    'days' => $row['closure_days'] === null ? null : (string) $row['closure_days'],
-                    'ratio' => (bool) $row['closure_verified'] ? '1' : '0',
-                    'count' => '1',
+                match ($sourceMetric) {
+                    'closure_days' => $row['closure_days'] === null ? null : (string) $row['closure_days'],
+                    'closure_verified' => (bool) $row['closure_verified'] ? '1' : '0',
+                    'action_count' => '1',
                     default => null,
                 },
                 true,

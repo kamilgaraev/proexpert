@@ -51,6 +51,9 @@ final readonly class CustomerSlaFormula
                 $resolvedAt = null;
             }
         }
+        if (! $actorSideComplete) {
+            return new CustomerSlaMetric(null, null, null, null, null, false);
+        }
 
         $firstResponseSeconds = $firstResponseAt === null
             ? null

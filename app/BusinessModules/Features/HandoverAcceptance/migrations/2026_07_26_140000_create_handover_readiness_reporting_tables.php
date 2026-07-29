@@ -153,6 +153,49 @@ return new class extends Migration
         }
 
         DB::statement(<<<'SQL'
+            CREATE OR REPLACE FUNCTION most_validate_handover_evidence_causation_v1()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            DECLARE
+                cause handover_evidence_events%ROWTYPE;
+            BEGIN
+                IF NEW.causation_event_id IS NULL THEN
+                    RETURN NEW;
+                END IF;
+                SELECT * INTO cause
+                FROM handover_evidence_events
+                WHERE id = NEW.causation_event_id;
+                IF cause.id IS NULL
+                   OR cause.organization_id <> NEW.organization_id
+                   OR cause.acceptance_scope_id <> NEW.acceptance_scope_id
+                   OR cause.source_type <> NEW.source_type
+                   OR cause.source_id <> NEW.source_id
+                   OR cause.occurred_at > NEW.occurred_at
+                   OR (
+                       NEW.event_type = 'inspection_resulted'
+                       AND cause.event_type <> 'inspection_attempted'
+                   )
+                   OR (
+                       NEW.event_type IN ('finding_resolved', 'blocker_resolved')
+                       AND cause.event_type NOT IN (
+                           'finding_opened', 'finding_reopened', 'blocker_opened', 'blocker_reopened'
+                       )
+                   )
+                THEN
+                    RAISE EXCEPTION 'handover_evidence_causation_invalid';
+                END IF;
+                RETURN NEW;
+            END;
+            $$
+            SQL);
+        DB::statement(
+            'CREATE TRIGGER handover_evidence_causation '
+            .'BEFORE INSERT ON handover_evidence_events FOR EACH ROW '
+            .'EXECUTE FUNCTION most_validate_handover_evidence_causation_v1()',
+        );
+
+        DB::statement(<<<'SQL'
             CREATE OR REPLACE FUNCTION most_prevent_reporting_mutation_v1()
             RETURNS trigger
             LANGUAGE plpgsql
@@ -181,6 +224,7 @@ return new class extends Migration
         Schema::dropIfExists('handover_readiness_rows');
         Schema::dropIfExists('handover_readiness_snapshots');
         Schema::dropIfExists('handover_evidence_events');
+        DB::statement('DROP FUNCTION IF EXISTS most_validate_handover_evidence_causation_v1()');
         Schema::dropIfExists('handover_gate_versions');
         Schema::table('handover_package_documents', function (Blueprint $table): void {
             $table->dropForeign(['approved_by_user_id']);

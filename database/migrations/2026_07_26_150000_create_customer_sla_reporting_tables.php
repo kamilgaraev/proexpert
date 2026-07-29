@@ -11,6 +11,29 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::create('customer_membership_history', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->string('membership_kind', 32);
+            $table->unsignedBigInteger('membership_id');
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('user_id')->nullable();
+            $table->unsignedBigInteger('project_id')->nullable();
+            $table->string('role', 64)->nullable();
+            $table->boolean('is_active');
+            $table->timestampTz('valid_from', 6);
+            $table->timestampTz('valid_to', 6);
+            $table->char('evidence_hash', 64);
+
+            $table->unique('evidence_hash', 'customer_membership_history_evidence_unique');
+            $table->index(
+                ['membership_kind', 'membership_id', 'valid_from', 'valid_to'],
+                'customer_membership_history_interval_idx',
+            );
+            $table->index(
+                ['organization_id', 'user_id', 'project_id', 'valid_from', 'valid_to'],
+                'customer_membership_history_scope_idx',
+            );
+        });
         Schema::create('customer_workflow_events', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->uuid('event_id')->unique();
@@ -124,6 +147,9 @@ return new class extends Migration
         });
 
         foreach ([
+            "ALTER TABLE customer_membership_history ADD CONSTRAINT customer_membership_history_kind_check CHECK (membership_kind IN ('organization_user','project_organization'))",
+            'ALTER TABLE customer_membership_history ADD CONSTRAINT customer_membership_history_interval_check CHECK (valid_to > valid_from)',
+            "ALTER TABLE customer_membership_history ADD CONSTRAINT customer_membership_history_hash_check CHECK (evidence_hash ~ '^[a-f0-9]{64}$')",
             "ALTER TABLE customer_workflow_events ADD CONSTRAINT customer_workflow_event_type_check CHECK (workflow_type IN ('issue','request'))",
             "ALTER TABLE customer_workflow_events ADD CONSTRAINT customer_workflow_actor_side_check CHECK (actor_side IN ('customer','delivery_team','system','unknown'))",
             "ALTER TABLE customer_workflow_events ADD CONSTRAINT customer_workflow_event_hash_check CHECK (idempotency_key_hash ~ '^[a-f0-9]{64}$' AND evidence_hash ~ '^[a-f0-9]{64}$')",
@@ -140,6 +166,93 @@ return new class extends Migration
         }
 
         DB::statement(<<<'SQL'
+            CREATE OR REPLACE FUNCTION most_capture_customer_membership_history_v1()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            DECLARE
+                valid_from_value timestamptz;
+                valid_to_value timestamptz;
+                payload text;
+            BEGIN
+                valid_from_value := COALESCE(OLD.updated_at, OLD.created_at);
+                valid_to_value := CASE
+                    WHEN TG_OP = 'DELETE' THEN clock_timestamp()
+                    ELSE COALESCE(NEW.updated_at, clock_timestamp())
+                END;
+                IF valid_to_value <= valid_from_value THEN
+                    valid_to_value := valid_from_value + interval '1 microsecond';
+                END IF;
+
+                IF TG_TABLE_NAME = 'organization_user' THEN
+                    payload := concat_ws('|', TG_TABLE_NAME, OLD.id, OLD.organization_id, OLD.user_id,
+                        OLD.is_active, valid_from_value, valid_to_value);
+                    INSERT INTO customer_membership_history (
+                        membership_kind, membership_id, organization_id, user_id, project_id, role,
+                        is_active, valid_from, valid_to, evidence_hash
+                    ) VALUES (
+                        'organization_user', OLD.id, OLD.organization_id, OLD.user_id, NULL, NULL,
+                        OLD.is_active, valid_from_value, valid_to_value,
+                        encode(sha256(convert_to(payload, 'UTF8')), 'hex')
+                    ) ON CONFLICT (evidence_hash) DO NOTHING;
+                ELSE
+                    payload := concat_ws('|', TG_TABLE_NAME, OLD.id, OLD.organization_id, OLD.project_id,
+                        COALESCE(OLD.role_new, OLD.role::text), OLD.is_active, valid_from_value, valid_to_value);
+                    INSERT INTO customer_membership_history (
+                        membership_kind, membership_id, organization_id, user_id, project_id, role,
+                        is_active, valid_from, valid_to, evidence_hash
+                    ) VALUES (
+                        'project_organization', OLD.id, OLD.organization_id, NULL, OLD.project_id,
+                        COALESCE(OLD.role_new, OLD.role::text), OLD.is_active,
+                        valid_from_value, valid_to_value,
+                        encode(sha256(convert_to(payload, 'UTF8')), 'hex')
+                    ) ON CONFLICT (evidence_hash) DO NOTHING;
+                END IF;
+                RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+            END;
+            $$
+            SQL);
+        DB::statement(
+            'CREATE TRIGGER organization_user_customer_history '
+            .'BEFORE UPDATE OR DELETE ON organization_user FOR EACH ROW '
+            .'EXECUTE FUNCTION most_capture_customer_membership_history_v1()',
+        );
+        DB::statement(
+            'CREATE TRIGGER project_organization_customer_history '
+            .'BEFORE UPDATE OR DELETE ON project_organization FOR EACH ROW '
+            .'EXECUTE FUNCTION most_capture_customer_membership_history_v1()',
+        );
+
+        DB::statement(<<<'SQL'
+            CREATE OR REPLACE FUNCTION most_validate_customer_workflow_causation_v1()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF NEW.event_type IN ('resolved', 'reopened')
+                   AND NOT EXISTS (
+                       SELECT 1
+                       FROM customer_workflow_events opened
+                       WHERE opened.organization_id = NEW.organization_id
+                         AND opened.workflow_type = NEW.workflow_type
+                         AND opened.workflow_id = NEW.workflow_id
+                         AND opened.event_type = 'opened'
+                         AND opened.occurred_at <= NEW.occurred_at
+                   )
+                THEN
+                    RAISE EXCEPTION 'customer_workflow_causation_invalid';
+                END IF;
+                RETURN NEW;
+            END;
+            $$
+            SQL);
+        DB::statement(
+            'CREATE TRIGGER customer_workflow_event_causation '
+            .'BEFORE INSERT ON customer_workflow_events FOR EACH ROW '
+            .'EXECUTE FUNCTION most_validate_customer_workflow_causation_v1()',
+        );
+
+        DB::statement(<<<'SQL'
             CREATE OR REPLACE FUNCTION most_prevent_reporting_mutation_v1()
             RETURNS trigger
             LANGUAGE plpgsql
@@ -151,6 +264,7 @@ return new class extends Migration
             SQL);
 
         foreach ([
+            'customer_membership_history',
             'customer_workflow_events',
             'customer_sla_policy_versions',
             'customer_sla_snapshots',
@@ -165,9 +279,14 @@ return new class extends Migration
 
     public function down(): void
     {
+        DB::statement('DROP TRIGGER IF EXISTS organization_user_customer_history ON organization_user');
+        DB::statement('DROP TRIGGER IF EXISTS project_organization_customer_history ON project_organization');
+        DB::statement('DROP FUNCTION IF EXISTS most_capture_customer_membership_history_v1()');
         Schema::dropIfExists('customer_sla_rows');
         Schema::dropIfExists('customer_sla_snapshots');
         Schema::dropIfExists('customer_sla_policy_versions');
         Schema::dropIfExists('customer_workflow_events');
+        DB::statement('DROP FUNCTION IF EXISTS most_validate_customer_workflow_causation_v1()');
+        Schema::dropIfExists('customer_membership_history');
     }
 };

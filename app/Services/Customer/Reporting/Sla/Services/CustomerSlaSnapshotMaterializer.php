@@ -87,6 +87,10 @@ final readonly class CustomerSlaSnapshotMaterializer
             $snapshotId,
             $groups,
         ): void {
+            DB::table('organizations')
+                ->where('id', $query->scope->organizationId)
+                ->lockForUpdate()
+                ->firstOrFail();
             $existing = CustomerSlaSnapshot::query()
                 ->where('organization_id', $query->scope->organizationId)
                 ->where('source_hash', $sourceHash)

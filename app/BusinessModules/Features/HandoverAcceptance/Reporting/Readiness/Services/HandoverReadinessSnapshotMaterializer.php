@@ -83,6 +83,10 @@ final readonly class HandoverReadinessSnapshotMaterializer
             $generatedAt,
             $snapshotId,
         ): void {
+            DB::table('organizations')
+                ->where('id', $query->scope->organizationId)
+                ->lockForUpdate()
+                ->firstOrFail();
             $existing = HandoverReadinessSnapshot::query()
                 ->where('organization_id', $query->scope->organizationId)
                 ->where('source_hash', $sourceHash)

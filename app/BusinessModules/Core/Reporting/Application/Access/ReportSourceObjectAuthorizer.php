@@ -5,11 +5,20 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Application\Access;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\Project;
+use App\Models\User;
+use App\Services\Project\UserProjectAccessService;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 
 final readonly class ReportSourceObjectAuthorizer
 {
+    public function __construct(
+        private AuthorizationService $authorization,
+        private UserProjectAccessService $projectAccess,
+    ) {}
+
     private const PERMISSIONS = [
         'acceptance_checklist_item' => ['reports.project_readiness.view'],
         'acceptance_finding' => ['reports.project_readiness.view'],
@@ -56,7 +65,14 @@ final readonly class ReportSourceObjectAuthorizer
         }
 
         $permissions = self::PERMISSIONS[$sourceType] ?? [];
-        if ($permissions === [] || ! $this->hasAnyPermission($context, $permissions)) {
+        if ($permissions === [] || ! $this->hasAnyPermission(
+            $context,
+            $permissions,
+            $sourceType,
+            $sourceId,
+            $organizationId,
+            $projectId,
+        )) {
             return 'forbidden';
         }
 
@@ -65,10 +81,38 @@ final readonly class ReportSourceObjectAuthorizer
             : 'missing';
     }
 
-    private function hasAnyPermission(ReportExecutionContext $context, array $permissions): bool
-    {
+    private function hasAnyPermission(
+        ReportExecutionContext $context,
+        array $permissions,
+        string $sourceType,
+        int|string $sourceId,
+        int $organizationId,
+        ?int $projectId,
+    ): bool {
+        $actor = User::query()->find($context->actor->id);
+        if (! $actor instanceof User) {
+            return false;
+        }
+        if ($projectId !== null) {
+            $project = Project::query()->find($projectId);
+            if (
+                ! $project instanceof Project
+                || ! $this->projectAccess->canAccessProject($actor, $project, $organizationId)
+            ) {
+                return false;
+            }
+        }
+        $authorizationContext = [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'source_type' => $sourceType,
+            'source_id' => $sourceId,
+        ];
         foreach ($permissions as $permission) {
-            if (in_array($permission, $context->actor->permissionSlugs, true)) {
+            if (
+                in_array($permission, $context->actor->permissionSlugs, true)
+                && $this->authorization->can($actor, $permission, $authorizationContext)
+            ) {
                 return true;
             }
         }

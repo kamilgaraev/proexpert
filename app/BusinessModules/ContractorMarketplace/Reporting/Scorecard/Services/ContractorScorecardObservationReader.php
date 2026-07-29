@@ -54,6 +54,7 @@ final readonly class ContractorScorecardObservationReader
             'baseline_schedule_variance' => $this->baselineRows(
                 $organizationId,
                 $tuple->baselineScheduleVariance->id,
+                $profileByContractor,
             ),
             'supply_reliability' => $this->contractorRows(
                 DB::table('supply_reliability_rows')
@@ -82,8 +83,11 @@ final readonly class ContractorScorecardObservationReader
         ]);
     }
 
-    private function baselineRows(int $organizationId, string $snapshotId): array
-    {
+    private function baselineRows(
+        int $organizationId,
+        string $snapshotId,
+        array $profileByContractor,
+    ): array {
         $indexed = [];
         foreach (
             DB::table('baseline_schedule_variance_rows')
@@ -93,8 +97,10 @@ final readonly class ContractorScorecardObservationReader
         ) {
             $payload = is_string($row->payload) ? json_decode($row->payload, true) : $row->payload;
             $projectId = is_array($payload) ? (int) ($payload['project_id'] ?? 0) : 0;
-            if ($projectId > 0) {
-                $indexed[$projectId][] = [
+            $contractorId = is_array($payload) ? (int) ($payload['contractor_id'] ?? 0) : 0;
+            $profileId = $profileByContractor[$contractorId] ?? null;
+            if ($projectId > 0 && $profileId !== null) {
+                $indexed[$profileId][$projectId][] = [
                     ...$payload,
                     ...(array) $row,
                     'project_id' => $projectId,
