@@ -15,6 +15,7 @@ use App\BusinessModules\Core\Reporting\Application\Exports\ReportPdfRenderBudget
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\DompdfReportPdfDocumentRenderer;
 use App\BusinessModules\Core\Reporting\Infrastructure\Exports\PdfReportExportRenderer;
 use RuntimeException;
+use stdClass;
 use Throwable;
 
 final class PdfReportExportRendererTest extends ReportExportRendererTestCase
@@ -102,6 +103,33 @@ final class PdfReportExportRendererTest extends ReportExportRendererTestCase
         self::assertSame(0, $rejectedDocumentRenderer->calls);
     }
 
+    public function test_oversized_scalar_fails_before_document_renderer_and_artifact_write(): void
+    {
+        [$source, $definition] = $this->source(1);
+        $budget = new ReportPdfRenderBudget(1, 10, 64 * 1024, 1024, 128 * 1024 * 1024);
+        $documentRenderer = new FakeReportPdfDocumentRenderer();
+        $stream = new InMemoryReportArtifactStream();
+
+        try {
+            $this->pdf($definition, $documentRenderer, $budget)->render(
+                $source,
+                $this->data('pdf'),
+                [$this->chunk($source, [[
+                    'name' => str_repeat('"&', 100_000),
+                    'amount' => '1',
+                    'date' => '2026-07-29',
+                ]])],
+                $stream,
+            );
+            self::fail('Expected projected HTML limit before document materialization.');
+        } catch (Throwable $exception) {
+            $this->assertLimit($exception);
+        }
+
+        self::assertSame(0, $documentRenderer->calls);
+        self::assertSame('', $stream->bytes());
+    }
+
     public function test_html_page_pdf_and_peak_memory_boundaries_are_exact(): void
     {
         $document = new ReportPdfDocument(
@@ -112,37 +140,47 @@ final class PdfReportExportRendererTest extends ReportExportRendererTestCase
         );
         $budget = new ReportPdfRenderBudget(1, 2, 4, 5, 10);
         $adapter = new DompdfReportPdfDocumentRenderer(
-            static fn (): string => 'html',
-            static fn (): array => ['pages' => 2, 'bytes' => '12345'],
-            static fn (): int => 100,
-            static fn (): int => 110,
+            htmlRenderer: static fn (): string => 'html',
+            documentLoader: static fn (): object => new stdClass(),
+            pageCounter: static fn (): int => 2,
+            outputRenderer: static fn (): string => '12345',
+            memoryUsage: static fn (): int => 100,
+            memoryPeak: static fn (): int => 110,
         );
         self::assertSame('12345', $adapter->render($document, $budget));
 
         $cases = [
             'html' => new DompdfReportPdfDocumentRenderer(
-                static fn (): string => 'html!',
-                static fn (): array => ['pages' => 2, 'bytes' => '12345'],
-                static fn (): int => 100,
-                static fn (): int => 110,
+                htmlRenderer: static fn (): string => 'html!',
+                documentLoader: static fn (): object => new stdClass(),
+                pageCounter: static fn (): int => 2,
+                outputRenderer: static fn (): string => '12345',
+                memoryUsage: static fn (): int => 100,
+                memoryPeak: static fn (): int => 110,
             ),
             'pages' => new DompdfReportPdfDocumentRenderer(
-                static fn (): string => 'html',
-                static fn (): array => ['pages' => 3, 'bytes' => '12345'],
-                static fn (): int => 100,
-                static fn (): int => 110,
+                htmlRenderer: static fn (): string => 'html',
+                documentLoader: static fn (): object => new stdClass(),
+                pageCounter: static fn (): int => 3,
+                outputRenderer: static fn (): string => '12345',
+                memoryUsage: static fn (): int => 100,
+                memoryPeak: static fn (): int => 110,
             ),
             'pdf bytes' => new DompdfReportPdfDocumentRenderer(
-                static fn (): string => 'html',
-                static fn (): array => ['pages' => 2, 'bytes' => '123456'],
-                static fn (): int => 100,
-                static fn (): int => 110,
+                htmlRenderer: static fn (): string => 'html',
+                documentLoader: static fn (): object => new stdClass(),
+                pageCounter: static fn (): int => 2,
+                outputRenderer: static fn (): string => '123456',
+                memoryUsage: static fn (): int => 100,
+                memoryPeak: static fn (): int => 110,
             ),
             'memory' => new DompdfReportPdfDocumentRenderer(
-                static fn (): string => 'html',
-                static fn (): array => ['pages' => 2, 'bytes' => '12345'],
-                static fn (): int => 100,
-                static fn (): int => 111,
+                htmlRenderer: static fn (): string => 'html',
+                documentLoader: static fn (): object => new stdClass(),
+                pageCounter: static fn (): int => 2,
+                outputRenderer: static fn (): string => '12345',
+                memoryUsage: static fn (): int => 100,
+                memoryPeak: static fn (): int => 111,
             ),
         ];
 
@@ -156,13 +194,110 @@ final class PdfReportExportRendererTest extends ReportExportRendererTestCase
         }
     }
 
+    public function test_page_limit_is_checked_before_output_stage(): void
+    {
+        $events = [];
+        $adapter = new DompdfReportPdfDocumentRenderer(
+            htmlRenderer: static fn (): string => 'html',
+            documentLoader: static function () use (&$events): object {
+                $events[] = 'render';
+
+                return new stdClass();
+            },
+            pageCounter: static function () use (&$events): int {
+                $events[] = 'pages';
+
+                return 3;
+            },
+            outputRenderer: static function () use (&$events): string {
+                $events[] = 'output';
+
+                return 'must-not-be-created';
+            },
+            memoryUsage: static fn (): int => 100,
+            memoryPeak: static fn (): int => 100,
+        );
+        $document = new ReportPdfDocument(
+            [['id' => 'name', 'label' => 'Name']],
+            [['A']],
+            [],
+            ['locale' => 'en-US'],
+        );
+
+        try {
+            $adapter->render($document, new ReportPdfRenderBudget(1, 2, 1024, 1024, 1024));
+            self::fail('Expected page cap.');
+        } catch (Throwable $exception) {
+            $this->assertLimit($exception);
+        }
+
+        self::assertSame(['render', 'pages'], $events);
+    }
+
+    public function test_real_blade_and_dompdf_path_accepts_exact_html_boundary(): void
+    {
+        [$source] = $this->source(1, ['amount' => '1']);
+        $budget = new ReportPdfRenderBudget(1, 10, 2 * 1024 * 1024, 2 * 1024 * 1024, 128 * 1024 * 1024);
+        $document = (new ReportPdfDocumentBuilder(ReportExportLimits::pdf()))->build(
+            $source,
+            $this->data('pdf'),
+            [$this->chunk($source, [[
+                'name' => 'Кран',
+                'amount' => '1',
+                'date' => '2026-07-29',
+            ]])],
+            $budget,
+            new InMemoryReportArtifactStream(),
+        );
+        $html = $this->renderBlade($document);
+        $exactBudget = new ReportPdfRenderBudget(
+            1,
+            10,
+            strlen($html),
+            2 * 1024 * 1024,
+            128 * 1024 * 1024,
+        );
+        $bytes = (new DompdfReportPdfDocumentRenderer(
+            htmlRenderer: static fn (): string => $html,
+            documentLoader: static function (string $html): object {
+                $dompdf = new \Dompdf\Dompdf();
+                $dompdf->loadHtml($html);
+                $dompdf->render();
+
+                return $dompdf;
+            },
+        ))->render($document, $exactBudget);
+
+        self::assertStringStartsWith('%PDF-', $bytes);
+
+        $documentLoads = 0;
+        $capped = new DompdfReportPdfDocumentRenderer(
+            htmlRenderer: static fn (): string => $html,
+            documentLoader: static function () use (&$documentLoads): object {
+                $documentLoads++;
+
+                return new stdClass();
+            },
+        );
+        try {
+            $capped->render(
+                $document,
+                new ReportPdfRenderBudget(1, 10, strlen($html) - 1, 2 * 1024 * 1024, 128 * 1024 * 1024),
+            );
+            self::fail('Expected exact HTML cap before Dompdf load.');
+        } catch (Throwable $exception) {
+            $this->assertLimit($exception);
+        }
+        self::assertSame(0, $documentLoads);
+    }
+
     public function test_document_dependency_failure_is_catalogued_without_library_message(): void
     {
         [$source, $definition] = $this->source(1);
         $renderer = $this->pdf(
             $definition,
             new FakeReportPdfDocumentRenderer(failure: new RuntimeException('dompdf secret failure')),
-            new ReportPdfRenderBudget(1, 1, 1024, 1024, 1024),
+            new ReportPdfRenderBudget(1, 1, 128 * 1024, 1024, 128 * 1024),
         );
         $stream = new InMemoryReportArtifactStream();
 

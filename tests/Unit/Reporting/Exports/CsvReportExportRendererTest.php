@@ -39,6 +39,14 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Exports\CsvReportExportRen
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use DateTimeZone;
+use Illuminate\Container\Container;
+use Illuminate\Events\Dispatcher;
+use Illuminate\Filesystem\Filesystem;
+use Illuminate\View\Compilers\BladeCompiler;
+use Illuminate\View\Engines\CompilerEngine;
+use Illuminate\View\Engines\EngineResolver;
+use Illuminate\View\Factory;
+use Illuminate\View\FileViewFinder;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use RuntimeException;
@@ -243,6 +251,35 @@ abstract class ReportExportRendererTestCase extends TestCase
     {
         self::assertInstanceOf(ReportContractException::class, $exception);
         self::assertSame(ReportErrorCode::REPORT_EXPORT_LIMIT_EXCEEDED, $exception->errorCode);
+    }
+
+    protected function renderBlade(ReportPdfDocument $document): string
+    {
+        $files = new Filesystem();
+        $cachePath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-report-blade-'.bin2hex(random_bytes(8));
+        if (!$files->makeDirectory($cachePath, 0700, true)) {
+            throw new RuntimeException('blade_cache_directory_failed');
+        }
+
+        try {
+            $compiler = new BladeCompiler($files, $cachePath);
+            $engines = new EngineResolver();
+            $engines->register('blade', static fn (): CompilerEngine => new CompilerEngine($compiler, $files));
+            $container = new Container();
+            $factory = new Factory(
+                $engines,
+                new FileViewFinder($files, [dirname(__DIR__, 4).'/resources/views']),
+                new Dispatcher($container),
+            );
+            $factory->setContainer($container);
+
+            return $factory->make(
+                'reports.exports.canonical-report-pdf',
+                ['document' => $document],
+            )->render();
+        } finally {
+            $files->deleteDirectory($cachePath);
+        }
     }
 }
 

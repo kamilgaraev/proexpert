@@ -11,13 +11,19 @@ use App\BusinessModules\Core\Reporting\Application\Exports\ReportPdfDocumentRend
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportPdfRenderBudget;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Closure;
+use Dompdf\Dompdf;
+use RuntimeException;
 use Throwable;
 
 final class DompdfReportPdfDocumentRenderer implements ReportPdfDocumentRenderer
 {
     private readonly Closure $htmlRenderer;
 
-    private readonly Closure $pdfRenderer;
+    private readonly Closure $documentLoader;
+
+    private readonly Closure $pageCounter;
+
+    private readonly Closure $outputRenderer;
 
     private readonly Closure $memoryUsage;
 
@@ -25,7 +31,9 @@ final class DompdfReportPdfDocumentRenderer implements ReportPdfDocumentRenderer
 
     public function __construct(
         ?Closure $htmlRenderer = null,
-        ?Closure $pdfRenderer = null,
+        ?Closure $documentLoader = null,
+        ?Closure $pageCounter = null,
+        ?Closure $outputRenderer = null,
         ?Closure $memoryUsage = null,
         ?Closure $memoryPeak = null,
     ) {
@@ -34,15 +42,26 @@ final class DompdfReportPdfDocumentRenderer implements ReportPdfDocumentRenderer
                 'reports.exports.canonical-report-pdf',
                 ['document' => $document],
             )->render();
-        $this->pdfRenderer = $pdfRenderer ?? static function (string $html): array {
+        $this->documentLoader = $documentLoader ?? static function (string $html): Dompdf {
             $wrapper = Pdf::loadHTML($html);
             $dompdf = $wrapper->getDomPDF();
             $dompdf->render();
 
-            return [
-                'pages' => $dompdf->getCanvas()->get_page_count(),
-                'bytes' => $dompdf->output(),
-            ];
+            return $dompdf;
+        };
+        $this->pageCounter = $pageCounter ?? static function (object $document): int {
+            if (!$document instanceof Dompdf) {
+                throw new RuntimeException('invalid_pdf_document');
+            }
+
+            return $document->getCanvas()->get_page_count();
+        };
+        $this->outputRenderer = $outputRenderer ?? static function (object $document): string {
+            if (!$document instanceof Dompdf) {
+                throw new RuntimeException('invalid_pdf_document');
+            }
+
+            return $document->output();
         };
         $this->memoryUsage = $memoryUsage ?? static fn (): int => memory_get_usage(true);
         $this->memoryPeak = $memoryPeak ?? static fn (): int => memory_get_peak_usage(true);
@@ -63,24 +82,30 @@ final class DompdfReportPdfDocumentRenderer implements ReportPdfDocumentRenderer
             if (strlen($html) > $budget->maxHtmlBytes) {
                 throw $this->limit();
             }
+            $this->assertMemory($memoryAtStart, $budget);
 
-            $rendered = ($this->pdfRenderer)($html);
-            if (!is_array($rendered)
-                || array_keys($rendered) !== ['pages', 'bytes']
-                || !is_int($rendered['pages'])
-                || $rendered['pages'] < 1
-                || !is_string($rendered['bytes'])) {
+            $renderedDocument = ($this->documentLoader)($html);
+            if (!is_object($renderedDocument)) {
                 throw new \RuntimeException('invalid_pdf_renderer_result');
             }
-            if ($rendered['pages'] > $budget->maxPages) {
+            $this->assertMemory($memoryAtStart, $budget);
+            $pages = ($this->pageCounter)($renderedDocument);
+            if (!is_int($pages) || $pages < 1) {
+                throw new RuntimeException('invalid_pdf_page_count');
+            }
+            if ($pages > $budget->maxPages) {
                 throw $this->limit();
             }
+            $this->assertMemory($memoryAtStart, $budget);
 
-            $bytes = $rendered['bytes'];
-            if (strlen($bytes) > $budget->maxPdfBytes
-                || max(0, ($this->memoryPeak)() - $memoryAtStart) > $budget->maxMemoryDeltaBytes) {
+            $bytes = ($this->outputRenderer)($renderedDocument);
+            if (!is_string($bytes)) {
+                throw new RuntimeException('invalid_pdf_output');
+            }
+            if (strlen($bytes) > $budget->maxPdfBytes) {
                 throw $this->limit();
             }
+            $this->assertMemory($memoryAtStart, $budget);
 
             return $bytes;
         } catch (ReportContractException $exception) {
@@ -96,5 +121,12 @@ final class DompdfReportPdfDocumentRenderer implements ReportPdfDocumentRenderer
     private function limit(): ReportContractException
     {
         return ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_LIMIT_EXCEEDED);
+    }
+
+    private function assertMemory(int $memoryAtStart, ReportPdfRenderBudget $budget): void
+    {
+        if (max(0, ($this->memoryPeak)() - $memoryAtStart) > $budget->maxMemoryDeltaBytes) {
+            throw $this->limit();
+        }
     }
 }
