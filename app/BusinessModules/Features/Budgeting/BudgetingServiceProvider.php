@@ -5,6 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Budgeting;
 
 use App\BusinessModules\Features\Budgeting\Console\Commands\RecalculateEpmDataMartSnapshotsCommand;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Backfill\ProjectControlCoreBackfill;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Listeners\CaptureScheduleBaselineVersion;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Readiness\ProjectControlReadinessProbe;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Services\ProjectControlCoreSnapshotFactory;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Services\ProjectControlSourceAssembler;
 use App\BusinessModules\Features\Budgeting\Services\BudgetCatalogService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportFileReader;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportService;
@@ -55,6 +60,11 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->singleton(CfoCommandCenterService::class);
         $this->app->singleton(ProjectPortfolioDashboardPayloadBuilder::class);
         $this->app->singleton(ProjectPortfolioDashboardService::class);
+        $this->app->singleton(ProjectControlCoreSnapshotFactory::class);
+        $this->app->singleton(ProjectControlSourceAssembler::class);
+        $this->app->singleton(CaptureScheduleBaselineVersion::class);
+        $this->app->singleton(ProjectControlCoreBackfill::class);
+        $this->app->singleton(ProjectControlReadinessProbe::class);
     }
 
     public function boot(): void

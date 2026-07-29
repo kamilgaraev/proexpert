@@ -169,6 +169,8 @@ final class LookaheadPlanningController extends Controller
                 'override_constraint_ids' => ['nullable', 'array'],
                 'override_constraint_ids.*' => ['integer'],
                 'override_reason' => ['required_with:override_constraint_ids', 'string', 'max:1000'],
+                'override_until' => ['required_with:override_constraint_ids', 'date', 'after_or_equal:today'],
+                'override_evidence_ref' => ['required_with:override_constraint_ids', 'string', 'max:255'],
             ]);
             $scheduleModel = $this->findSchedule($project, $schedule);
 

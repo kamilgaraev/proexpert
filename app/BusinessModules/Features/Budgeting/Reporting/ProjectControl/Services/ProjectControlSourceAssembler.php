@@ -1,0 +1,268 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Services;
+
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Features\Budgeting\Models\WipForecastLine;
+use App\BusinessModules\Features\Budgeting\Models\WipForecastVersion;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectControlAmounts;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectControlSourceIdentity;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectControlSourceRow;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Models\ProjectControlBaselineVersion;
+use DateTimeImmutable;
+use InvalidArgumentException;
+
+final readonly class ProjectControlSourceAssembler
+{
+    public function assemble(ReportScope $scope, ReportQuery $query): array
+    {
+        if (count($scope->projectIds) !== 1) {
+            throw new InvalidArgumentException('project_control_single_project_scope_required');
+        }
+        $projectId = $scope->projectIds[0];
+        $baselines = ProjectControlBaselineVersion::query()
+            ->where('organization_id', $scope->organizationId)
+            ->where('project_id', $projectId)
+            ->where('approved_at', '<=', $query->asOf)
+            ->orderByDesc('approved_at')
+            ->orderByDesc('version_number')
+            ->limit(2)
+            ->get();
+        $baseline = $baselines->first();
+        if (!$baseline instanceof ProjectControlBaselineVersion) {
+            throw new InvalidArgumentException('project_control_baseline_unavailable');
+        }
+        if ($baselines->count() > 1
+            && (int) $baselines->get(1)->schedule_id !== (int) $baseline->schedule_id
+            && $baselines->get(1)->approved_at->equalTo($baseline->approved_at)
+        ) {
+            throw new InvalidArgumentException('project_control_baseline_ambiguous');
+        }
+
+        $version = WipForecastVersion::query()
+            ->where('organization_id', $scope->organizationId)
+            ->where('project_id', $projectId)
+            ->whereIn('status', ['approved', 'active'])
+            ->whereDate('as_of_date', '<=', $query->asOf->format('Y-m-d'))
+            ->with(['lines' => static fn ($builder) => $builder
+                ->where('project_id', $projectId)
+                ->orderBy('id')])
+            ->orderByDesc('as_of_date')
+            ->orderByDesc('version_number')
+            ->first();
+        if (!$version instanceof WipForecastVersion
+            || trim((string) $version->source_snapshot_hash) === ''
+            || $version->lines->isEmpty()
+        ) {
+            throw new InvalidArgumentException('project_control_wip_version_unavailable');
+        }
+
+        $linesByTask = [];
+        foreach ($version->lines as $line) {
+            $taskId = $this->taskId($line);
+            if ($taskId === null || isset($linesByTask[$taskId])) {
+                throw new InvalidArgumentException('project_control_wip_task_identity_invalid');
+            }
+            $linesByTask[$taskId] = $line;
+        }
+
+        $payload = (array) $baseline->source_payload;
+        $baselineRows = $payload['rows'] ?? null;
+        if (!is_array($baselineRows) || !array_is_list($baselineRows) || $baselineRows === []) {
+            throw new InvalidArgumentException('project_control_baseline_payload_invalid');
+        }
+
+        $rows = [];
+        foreach ($baselineRows as $baselineRow) {
+            if (!is_array($baselineRow)) {
+                throw new InvalidArgumentException('project_control_baseline_row_invalid');
+            }
+            $taskId = $this->positiveInt($baselineRow['task_id'] ?? null);
+            $line = $linesByTask[$taskId] ?? null;
+            if (!$line instanceof WipForecastLine) {
+                throw new InvalidArgumentException('project_control_progress_source_incomplete');
+            }
+            $currency = (string) ($baselineRow['currency'] ?? '');
+            if ($currency === '' || $currency !== (string) $line->currency) {
+                throw new InvalidArgumentException('project_control_currency_mismatch');
+            }
+            $bacMinor = $this->moneyMinor((string) ($baselineRow['bac'] ?? ''));
+            $pvMinor = $this->plannedValueMinor(
+                (array) ($baselineRow['baseline_curve'] ?? []),
+                $query->asOf,
+                $bacMinor,
+            );
+            $percentComplete = $this->percentage((string) $line->percent_complete);
+            $evMinor = $this->proportion($bacMinor, $percentComplete, 1_000_000);
+            $sourceRefs = [
+                [
+                    'type' => 'project_control_baseline',
+                    'id' => (int) $baseline->id,
+                    'task_id' => $taskId,
+                    'curve_version' => (string) $baselineRow['baseline_curve_version'],
+                ],
+                [
+                    'type' => 'wip_forecast_line',
+                    'id' => (int) $line->id,
+                    'version_id' => (int) $version->id,
+                    'source_snapshot_hash' => (string) $version->source_snapshot_hash,
+                ],
+                ...$this->sourceRefs((array) $line->source_row_refs),
+            ];
+            $dimensions = (array) $line->dimensions;
+            $rows[] = new ProjectControlSourceRow(
+                rowKey: implode(':', [$projectId, $taskId, $currency]),
+                projectId: $projectId,
+                taskId: $taskId,
+                wbsCode: isset($baselineRow['wbs_code']) ? (string) $baselineRow['wbs_code'] : null,
+                contractorId: $this->nullablePositiveInt($dimensions['contractor_id'] ?? null),
+                costCenterId: $this->nullablePositiveInt($dimensions['cost_center_id'] ?? null),
+                amounts: new ProjectControlAmounts(
+                    bacMinor: $bacMinor,
+                    pvMinor: $pvMinor,
+                    evMinor: $evMinor,
+                    acMinor: $this->moneyMinor((string) $line->ac),
+                    approvedEtcMinor: $line->etc === null ? null : $this->moneyMinor((string) $line->etc),
+                    currency: $currency,
+                ),
+                sourceRefs: $sourceRefs,
+            );
+        }
+
+        $approvedBy = $version->activated_by ?? $version->approved_by;
+        $approvedAt = $version->activated_at ?? $version->approved_at;
+        if ((int) $approvedBy < 1 || $approvedAt === null) {
+            throw new InvalidArgumentException('project_control_wip_approval_identity_missing');
+        }
+        $sourceWatermark = (string) $version->source_snapshot_hash;
+
+        return [
+            'identity' => new ProjectControlSourceIdentity(
+                organizationId: $scope->organizationId,
+                projectId: $projectId,
+                scheduleId: (int) $baseline->schedule_id,
+                baselineVersion: (int) $baseline->version_number,
+                statusDate: $query->asOf,
+                wipVersion: 'wip_forecast:'.(string) ($version->uuid ?? $version->id),
+                progressWatermark: $sourceWatermark,
+                actualCostWatermark: $sourceWatermark,
+                sourceHash: (string) $baseline->source_hash,
+            ),
+            'rows' => $rows,
+            'approved_by' => (int) $approvedBy,
+            'approved_at' => new DateTimeImmutable($approvedAt->format(DATE_ATOM)),
+        ];
+    }
+
+    private function taskId(WipForecastLine $line): ?int
+    {
+        $dimensions = (array) $line->dimensions;
+        $group = (array) $line->group_values;
+
+        return $this->nullablePositiveInt($dimensions['task_id'] ?? $group['task_id'] ?? null);
+    }
+
+    private function plannedValueMinor(array $curve, DateTimeImmutable $statusDate, int $bacMinor): int
+    {
+        if (!array_is_list($curve) || $curve === []) {
+            throw new InvalidArgumentException('project_control_baseline_curve_invalid');
+        }
+        $value = null;
+        $previousDate = null;
+        foreach ($curve as $point) {
+            if (!is_array($point) || !is_string($point['date'] ?? null)) {
+                throw new InvalidArgumentException('project_control_baseline_curve_invalid');
+            }
+            $date = new DateTimeImmutable($point['date']);
+            if ($previousDate !== null && $date <= $previousDate) {
+                throw new InvalidArgumentException('project_control_baseline_curve_order_invalid');
+            }
+            $previousDate = $date;
+            if ($date > $statusDate) {
+                continue;
+            }
+            if (isset($point['planned_value_minor']) && is_int($point['planned_value_minor'])) {
+                $value = $point['planned_value_minor'];
+                continue;
+            }
+            if (isset($point['cumulative_percent']) && is_string($point['cumulative_percent'])) {
+                $value = $this->proportion(
+                    $bacMinor,
+                    $this->percentage($point['cumulative_percent']),
+                    1_000_000,
+                );
+                continue;
+            }
+            throw new InvalidArgumentException('project_control_baseline_curve_value_invalid');
+        }
+
+        return $value ?? 0;
+    }
+
+    private function moneyMinor(string $value): int
+    {
+        if (preg_match('/^(-?)(\d+)(?:\.(\d{1,2}))?$/D', trim($value), $matches) !== 1) {
+            throw new InvalidArgumentException('project_control_money_invalid');
+        }
+        $minor = ((int) $matches[2] * 100) + (int) str_pad($matches[3] ?? '', 2, '0');
+
+        return ($matches[1] ?? '') === '-' ? -$minor : $minor;
+    }
+
+    private function percentage(string $value): int
+    {
+        if (preg_match('/^(\d{1,3})(?:\.(\d{1,4}))?$/D', trim($value), $matches) !== 1) {
+            throw new InvalidArgumentException('project_control_progress_invalid');
+        }
+        $scaled = ((int) $matches[1] * 10_000) + (int) str_pad($matches[2] ?? '', 4, '0');
+        if ($scaled > 1_000_000) {
+            throw new InvalidArgumentException('project_control_progress_invalid');
+        }
+
+        return $scaled;
+    }
+
+    private function proportion(int $amount, int $numerator, int $denominator): int
+    {
+        $product = $amount * $numerator;
+        $offset = intdiv($denominator, 2);
+
+        return $product < 0
+            ? -intdiv(abs($product) + $offset, $denominator)
+            : intdiv($product + $offset, $denominator);
+    }
+
+    private function positiveInt(mixed $value): int
+    {
+        $result = $this->nullablePositiveInt($value);
+        if ($result === null) {
+            throw new InvalidArgumentException('project_control_positive_integer_required');
+        }
+
+        return $result;
+    }
+
+    private function nullablePositiveInt(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (!is_numeric($value) || (int) $value < 1) {
+            throw new InvalidArgumentException('project_control_positive_integer_required');
+        }
+
+        return (int) $value;
+    }
+
+    private function sourceRefs(array $refs): array
+    {
+        if (!array_is_list($refs)) {
+            throw new InvalidArgumentException('project_control_source_refs_invalid');
+        }
+
+        return array_values(array_filter($refs, 'is_array'));
+    }
+}

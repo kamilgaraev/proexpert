@@ -2,6 +2,7 @@
 
 namespace App\Repositories\Schedule;
 
+use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleSnapshotService;
 use App\Models\ProjectSchedule;
 use App\Repositories\BaseRepository;
 use App\Repositories\Interfaces\ProjectScheduleRepositoryInterface;
@@ -31,7 +32,7 @@ class ProjectScheduleRepository extends BaseRepository implements ProjectSchedul
      */
     protected const ALLOWED_SORT_ORDERS = ['asc', 'desc'];
 
-    public function __construct()
+    public function __construct(private readonly BaselineScheduleSnapshotService $baselineSnapshots)
     {
         parent::__construct(ProjectSchedule::class);
     }
@@ -487,8 +488,18 @@ class ProjectScheduleRepository extends BaseRepository implements ProjectSchedul
 
     public function saveBaseline(int $scheduleId, int $userId): bool
     {
-        $schedule = $this->model->findOrFail($scheduleId);
-        return $schedule->saveBaseline(\App\Models\User::find($userId));
+        return DB::transaction(function () use ($scheduleId, $userId): bool {
+            $schedule = $this->model->newQuery()->lockForUpdate()->findOrFail($scheduleId);
+            $saved = $schedule->saveBaseline(\App\Models\User::find($userId));
+            if (!$saved) {
+                return false;
+            }
+
+            $schedule->refresh();
+            $this->baselineSnapshots->capture($schedule, $userId, new \DateTimeImmutable());
+
+            return true;
+        });
     }
 
     public function clearBaseline(int $scheduleId): bool
@@ -599,4 +610,4 @@ class ProjectScheduleRepository extends BaseRepository implements ProjectSchedul
             ->where('project_id', $projectId)
             ->first();
     }
-} 
+}

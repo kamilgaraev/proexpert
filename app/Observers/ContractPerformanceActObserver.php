@@ -6,6 +6,8 @@ use App\Models\ContractPerformanceAct;
 use App\Services\Analytics\EVMService;
 use App\Services\Contract\ContractAuditedMutationService;
 use App\Services\Contract\ContractAuditReconciliationService;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\ProductionAcceptanceEventRecorder;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
@@ -14,6 +16,7 @@ class ContractPerformanceActObserver
     public function __construct(
         private readonly ContractAuditedMutationService $contractMutations,
         private readonly ContractAuditReconciliationService $reconciliation,
+        private readonly ProductionAcceptanceEventRecorder $productionAcceptanceEvents,
     ) {}
 
     public function created(ContractPerformanceAct $act): void
@@ -24,6 +27,10 @@ class ContractPerformanceActObserver
 
     public function updated(ContractPerformanceAct $act): void
     {
+        if ($act->wasChanged(['status', 'is_approved'])) {
+            $this->recordProductionAcceptanceTransition($act);
+        }
+
         if ($act->wasChanged(['amount', 'is_approved'])) {
             $this->recalculateContractTotal($act, 'updated');
         }
@@ -37,6 +44,52 @@ class ContractPerformanceActObserver
     {
         $this->recalculateContractTotal($act, 'deleted');
         $this->invalidateEVMCache($act);
+    }
+
+    public function deleting(ContractPerformanceAct $act): void
+    {
+        if (! $this->isAccepted((string) $act->status, (bool) $act->is_approved)) {
+            return;
+        }
+
+        $this->productionAcceptanceEvents->recordTransition(
+            $act,
+            'approved',
+            'deleted',
+            CarbonImmutable::now(),
+            Auth::id(),
+        );
+    }
+
+    private function recordProductionAcceptanceTransition(ContractPerformanceAct $act): void
+    {
+        $previousStatus = (string) $act->getOriginal('status');
+        $previousApproved = (bool) $act->getOriginal('is_approved');
+        $currentStatus = (string) $act->status;
+        $currentApproved = (bool) $act->is_approved;
+        $wasAccepted = $this->isAccepted($previousStatus, $previousApproved);
+        $isAccepted = $this->isAccepted($currentStatus, $currentApproved);
+        if ($wasAccepted === $isAccepted) {
+            return;
+        }
+
+        $this->productionAcceptanceEvents->recordTransition(
+            $act,
+            $wasAccepted ? 'approved' : 'pending',
+            $isAccepted ? 'approved' : 'reopened',
+            $act->signed_at === null
+                ? CarbonImmutable::now()
+                : CarbonImmutable::instance($act->signed_at),
+            Auth::id(),
+        );
+    }
+
+    private function isAccepted(string $status, bool $approved): bool
+    {
+        return $approved || in_array($status, [
+            ContractPerformanceAct::STATUS_APPROVED,
+            ContractPerformanceAct::STATUS_SIGNED,
+        ], true);
     }
 
     private function recalculateContractTotal(ContractPerformanceAct $act, string $reason): void

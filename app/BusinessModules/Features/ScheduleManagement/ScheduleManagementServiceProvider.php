@@ -2,6 +2,12 @@
 
 namespace App\BusinessModules\Features\ScheduleManagement;
 
+use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleSnapshotService;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\BaselineScheduleVarianceQueryService;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Backfill\LookaheadReadinessBackfill;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Readiness\LookaheadReadinessProbe;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadReadinessSnapshotMaterializer;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\WorkConstraintEventRecorder;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Event;
 
@@ -22,6 +28,12 @@ class ScheduleManagementServiceProvider extends ServiceProvider
         $this->app->singleton(\App\BusinessModules\Features\ScheduleManagement\Services\EstimateScheduleImportService::class);
         $this->app->singleton(\App\BusinessModules\Features\ScheduleManagement\Services\EstimateSyncService::class);
         $this->app->singleton(\App\BusinessModules\Features\ScheduleManagement\Services\LookaheadPlanningService::class);
+        $this->app->singleton(BaselineScheduleSnapshotService::class);
+        $this->app->singleton(BaselineScheduleVarianceQueryService::class);
+        $this->app->singleton(WorkConstraintEventRecorder::class);
+        $this->app->singleton(LookaheadReadinessSnapshotMaterializer::class);
+        $this->app->singleton(LookaheadReadinessBackfill::class);
+        $this->app->singleton(LookaheadReadinessProbe::class);
     }
 
     public function boot(): void
