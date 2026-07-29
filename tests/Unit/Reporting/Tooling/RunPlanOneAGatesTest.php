@@ -24,12 +24,12 @@ final class RunPlanOneAGatesTest extends TestCase
         $contract = \PlanOneAExecutionPhaseAuthority::trackedContract();
 
         self::assertSame(
-            ['POST_TASK_4E_PRE_TASK_5', 'POST_TASK_5'],
+            ['POST_TASK_4G_PRE_TASK_5', 'POST_TASK_5'],
             array_keys($contract['phases']),
         );
-        self::assertCount(4, $contract['phases']['POST_TASK_4E_PRE_TASK_5']['dispatch_allowlist']);
+        self::assertCount(4, $contract['phases']['POST_TASK_4G_PRE_TASK_5']['dispatch_allowlist']);
         self::assertCount(5, $contract['phases']['POST_TASK_5']['dispatch_allowlist']);
-        self::assertSame('pending', $contract['phases']['POST_TASK_4E_PRE_TASK_5']['task_5_state']);
+        self::assertSame('pending', $contract['phases']['POST_TASK_4G_PRE_TASK_5']['task_5_state']);
         self::assertSame('present', $contract['phases']['POST_TASK_5']['task_5_state']);
     }
 
@@ -1104,12 +1104,12 @@ final class RunPlanOneAGatesTest extends TestCase
         $process->mustRun();
         $this->git($repository, ['config', 'user.email', 'reports@example.test']);
         $this->git($repository, ['config', 'user.name', 'Reports Test']);
-        $this->git($repository, ['checkout', '--detach', '57b9e1b5eb3d646f5d24f78e00165ca9b272e93d']);
-        foreach (\PlanOneAExecutionPhaseAuthority::taskFourFPaths() as $path) {
+        $this->git($repository, ['checkout', '--detach', '470fecd5733021421dbc9b36c1d2a410ef27cc42']);
+        foreach (\PlanOneAExecutionPhaseAuthority::taskFourGPaths() as $path) {
             $this->write($repository.'/'.$path, (string) file_get_contents($this->root().'/'.$path));
         }
-        $this->git($repository, ['add', '--', ...\PlanOneAExecutionPhaseAuthority::taskFourFPaths()]);
-        $this->git($repository, ['commit', '-m', 'fix[reports]: разделить evidence по фазам исполнения']);
+        $this->git($repository, ['add', '--', ...\PlanOneAExecutionPhaseAuthority::taskFourGPaths()]);
+        $this->git($repository, ['commit', '-m', 'fix[reports]: изолировать HTTP evidence от базы']);
         $this->git($repository, ['branch', '-f', 'feat/reports-canonical-backend', 'HEAD']);
         $this->git($repository, ['checkout', 'feat/reports-canonical-backend']);
 

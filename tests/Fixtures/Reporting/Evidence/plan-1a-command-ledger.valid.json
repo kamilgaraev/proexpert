@@ -26,10 +26,11 @@
     "ownership_audit": {"task_4e": 78, "task_5": 30, "union": 108, "overlap": 0, "unowned": 0, "extra": 0}
   },
   "execution_phase": {
-    "name": "POST_TASK_4E_PRE_TASK_5",
+    "name": "POST_TASK_4G_PRE_TASK_5",
     "head_commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "task_4e_commit_sha": "57b9e1b5eb3d646f5d24f78e00165ca9b272e93d",
     "task_4f_commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "task_4g_commit_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
     "task_5_commit_sha": null,
     "task_5_state": "pending",
     "dispatch_allowlist": [

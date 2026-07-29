@@ -88,19 +88,20 @@
     "executionPhase": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "head_commit_sha", "task_4e_commit_sha", "task_4f_commit_sha", "task_5_commit_sha", "task_5_state", "dispatch_allowlist", "committed_tree_projection_sha256"],
+      "required": ["name", "head_commit_sha", "task_4e_commit_sha", "task_4f_commit_sha", "task_4g_commit_sha", "task_5_commit_sha", "task_5_state", "dispatch_allowlist", "committed_tree_projection_sha256"],
       "properties": {
-        "name": {"enum": ["POST_TASK_4E_PRE_TASK_5", "POST_TASK_5"]},
+        "name": {"enum": ["POST_TASK_4G_PRE_TASK_5", "POST_TASK_5"]},
         "head_commit_sha": {"$ref": "#/$defs/sha1"},
         "task_4e_commit_sha": {"const": "57b9e1b5eb3d646f5d24f78e00165ca9b272e93d"},
         "task_4f_commit_sha": {"$ref": "#/$defs/sha1"},
+        "task_4g_commit_sha": {"$ref": "#/$defs/sha1"},
         "task_5_commit_sha": {"type": ["string", "null"], "pattern": "^[a-f0-9]{40}$"},
         "task_5_state": {"enum": ["pending", "present"]},
         "dispatch_allowlist": {"type": "array", "minItems": 4, "maxItems": 5, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
         "committed_tree_projection_sha256": {"$ref": "#/$defs/sha256"}
       },
       "oneOf": [
-        {"properties": {"name": {"const": "POST_TASK_4E_PRE_TASK_5"}, "task_5_commit_sha": {"type": "null"}, "task_5_state": {"const": "pending"}, "dispatch_allowlist": {"const": [
+        {"properties": {"name": {"const": "POST_TASK_4G_PRE_TASK_5"}, "task_5_commit_sha": {"type": "null"}, "task_5_state": {"const": "pending"}, "dispatch_allowlist": {"const": [
           "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",
           "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExportDispatcher.php",
           "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportMaterializationDispatcher.php",

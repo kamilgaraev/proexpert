@@ -20,7 +20,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
 
         $pre5 = \PlanOneAExecutionPhaseAuthority::discover($repository, $taskFourF);
 
-        self::assertSame('POST_TASK_4E_PRE_TASK_5', $pre5['name']);
+        self::assertSame('POST_TASK_4G_PRE_TASK_5', $pre5['name']);
         self::assertSame('pending', $pre5['task_5_state']);
         self::assertNull($pre5['task_5_commit_sha']);
         self::assertCount(4, $pre5['dispatch_allowlist']);
@@ -71,6 +71,28 @@ final class BuildPlanOneAEvidenceTest extends TestCase
         \PlanOneAExecutionPhaseAuthority::discover($repository, $symlinkCommit);
     }
 
+    public function test_execution_phase_authority_rejects_task_four_g_with_a_synthetic_task_four_f_parent(): void
+    {
+        [$repository] = $this->executionPhaseRepository(false);
+        $this->git($repository, ['checkout', '--detach', '57b9e1b5eb3d646f5d24f78e00165ca9b272e93d']);
+        foreach (\PlanOneAExecutionPhaseAuthority::taskFourFPaths() as $path) {
+            $this->write($repository.'/'.$path, $this->git($repository, ['show', '470fecd5733021421dbc9b36c1d2a410ef27cc42:'.$path]));
+        }
+        $syntheticPath = \PlanOneAExecutionPhaseAuthority::taskFourFPaths()[0];
+        file_put_contents($repository.'/'.$syntheticPath, "\nsynthetic task four f blob\n", FILE_APPEND);
+        $this->git($repository, ['add', '--', ...\PlanOneAExecutionPhaseAuthority::taskFourFPaths()]);
+        $this->git($repository, ['commit', '-m', 'fix[reports]: разделить evidence по фазам исполнения']);
+        foreach (\PlanOneAExecutionPhaseAuthority::taskFourGPaths() as $path) {
+            $this->write($repository.'/'.$path, (string) file_get_contents($this->root().'/'.$path));
+        }
+        $this->git($repository, ['add', '--', ...\PlanOneAExecutionPhaseAuthority::taskFourGPaths()]);
+        $this->git($repository, ['commit', '-m', 'fix[reports]: изолировать HTTP evidence от базы']);
+
+        $this->expectException(\PlanOneAEvidenceFailure::class);
+        $this->expectExceptionMessage('PLAN_1A_EXECUTION_PHASE_INVALID');
+        \PlanOneAExecutionPhaseAuthority::discover($repository, $this->git($repository, ['rev-parse', 'HEAD']));
+    }
+
     public function test_raw_task_four_e_is_recognized_as_historical_red_and_not_pre5(): void
     {
         [$repository] = $this->executionPhaseRepository(false);
@@ -93,7 +115,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
         $this->git($repository, ['commit', '-m', 'test: ignore future path']);
         $this->write($repository.'/'.$path, 'hidden future input');
 
-        self::assertSame('POST_TASK_4E_PRE_TASK_5', $phase['name']);
+        self::assertSame('POST_TASK_4G_PRE_TASK_5', $phase['name']);
         self::assertArrayNotHasKey('pending_probe', $phase);
 
         $this->expectException(\PlanOneAEvidenceFailure::class);
@@ -107,7 +129,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
         $path = 'tests/Architecture/Reporting/ReportQueueRuntimeContractTest.php';
         file_put_contents($repository.'/'.$path, "\nfuture task five change", FILE_APPEND);
 
-        self::assertSame('POST_TASK_4E_PRE_TASK_5', $phase['name']);
+        self::assertSame('POST_TASK_4G_PRE_TASK_5', $phase['name']);
 
         $this->expectException(\PlanOneAEvidenceFailure::class);
         $this->expectExceptionMessage('PLAN_1A_EXECUTION_PENDING_OCCUPANT');
@@ -251,12 +273,12 @@ final class BuildPlanOneAEvidenceTest extends TestCase
         foreach (['missing', 'extra', 'reordered'] as $mutation) {
             $candidate = $lock;
             if ($mutation === 'missing') {
-                array_pop($candidate['execution_phases']['task_4f']['tracked_paths']);
+                array_pop($candidate['execution_phases']['task_4g']['tracked_paths']);
             } elseif ($mutation === 'extra') {
                 $candidate['execution_phases']['task_5']['tracked_paths'][] = 'foreign.php';
             } else {
-                [$candidate['execution_phases']['task_4f']['tracked_paths'][0], $candidate['execution_phases']['task_4f']['tracked_paths'][1]]
-                    = [$candidate['execution_phases']['task_4f']['tracked_paths'][1], $candidate['execution_phases']['task_4f']['tracked_paths'][0]];
+                [$candidate['execution_phases']['task_4g']['tracked_paths'][0], $candidate['execution_phases']['task_4g']['tracked_paths'][1]]
+                    = [$candidate['execution_phases']['task_4g']['tracked_paths'][1], $candidate['execution_phases']['task_4g']['tracked_paths'][0]];
             }
             try {
                 $this->invoke($builder, 'validateTaskFourELock', [$candidate]);
@@ -1564,12 +1586,12 @@ final class BuildPlanOneAEvidenceTest extends TestCase
             $process->mustRun();
             $this->git($repository, ['config', 'user.email', 'reports@example.test']);
             $this->git($repository, ['config', 'user.name', 'Reports Test']);
-            $this->git($repository, ['checkout', '--detach', '57b9e1b5eb3d646f5d24f78e00165ca9b272e93d']);
-            foreach (\PlanOneAExecutionPhaseAuthority::taskFourFPaths() as $path) {
-                $this->write($repository.'/'.$path, 'task4f:'.$path);
+            $this->git($repository, ['checkout', '--detach', '470fecd5733021421dbc9b36c1d2a410ef27cc42']);
+            foreach (\PlanOneAExecutionPhaseAuthority::taskFourGPaths() as $path) {
+                $this->write($repository.'/'.$path, 'task4g:'.$path);
             }
-            $this->git($repository, ['add', '--', ...\PlanOneAExecutionPhaseAuthority::taskFourFPaths()]);
-            $this->git($repository, ['commit', '-m', 'fix[reports]: разделить evidence по фазам исполнения']);
+            $this->git($repository, ['add', '--', ...\PlanOneAExecutionPhaseAuthority::taskFourGPaths()]);
+            $this->git($repository, ['commit', '-m', 'fix[reports]: изолировать HTTP evidence от базы']);
             $taskFourF = $this->git($repository, ['rev-parse', 'HEAD']);
         }
 

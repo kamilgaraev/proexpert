@@ -1185,6 +1185,11 @@ final class PlanOneAGates
         self::guard(self::$cleanHead === $commit, 3, 'PLAN_1A_GATE_HEAD_MISMATCH');
         try {
             self::$executionPhase = PlanOneAExecutionPhaseAuthority::discover($root, $commit);
+            self::guard(
+                is_string(self::$executionPhase['task_4g_commit_sha'] ?? null),
+                3,
+                'PLAN_1A_EXECUTION_PHASE_INVALID',
+            );
             if (self::$executionPhase['name'] === PlanOneAExecutionPhaseAuthority::PRE5) {
                 PlanOneAExecutionPhaseAuthority::assertNoPendingOccupants($root);
             }

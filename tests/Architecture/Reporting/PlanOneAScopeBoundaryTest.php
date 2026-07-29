@@ -129,6 +129,17 @@ PHP;
         }
     }
 
+    public function test_raw_task_four_f_is_historical_red_and_cannot_select_pre5(): void
+    {
+        $this->expectException(\PlanOneAEvidenceFailure::class);
+        $this->expectExceptionMessage('PLAN_1A_EXECUTION_PHASE_INVALID');
+
+        \PlanOneAExecutionPhaseAuthority::discover(
+            dirname(__DIR__, 3),
+            '470fecd5733021421dbc9b36c1d2a410ef27cc42',
+        );
+    }
+
     private function phase(): array
     {
         $root = dirname(__DIR__, 3);
