@@ -138,14 +138,16 @@ final class EloquentReportRunStore implements ReportRunStore
 
     public function get(ReportExecutionContext $context, string $runId): ReportRun
     {
-        $record = $this->find($context, $runId);
+        $record = $this->findIncludingExpired($context, $runId);
 
         return $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs);
     }
 
     public function queryForRun(ReportExecutionContext $context, string $runId): ReportQuery
     {
-        return $this->hydrator->query($this->find($context, $runId));
+        $record = $this->findIncludingExpired($context, $runId);
+
+        return $this->hydrator->query($record);
     }
 
     public function retrySource(ReportExecutionContext $context, string $runId): ReportRunRetrySource
