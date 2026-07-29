@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportReadyDownloadStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -22,7 +23,7 @@ use ReflectionMethod;
 
 final class EloquentReportExportStoreTest extends TestCase
 {
-    public function test_export_store_contract_includes_fenced_download_boundary(): void
+    public function test_export_store_contract_restores_seven_methods_and_download_is_narrow(): void
     {
         $methods = array_map(static fn ($method): string => $method->getName(), (new ReflectionClass(ReportExportStore::class))->getMethods());
         sort($methods);
@@ -35,8 +36,13 @@ final class EloquentReportExportStoreTest extends TestCase
             'sealReady',
             'startRendering',
             'startUploading',
-            'withReadyDownload',
         ], $methods);
+
+        $downloadMethods = array_map(
+            static fn ($method): string => $method->getName(),
+            (new ReflectionClass(ReportReadyDownloadStore::class))->getMethods(),
+        );
+        self::assertSame(['withReadyDownload'], $downloadMethods);
     }
 
     public function test_export_store_enforces_exact_960_second_lease_fence(): void
@@ -176,18 +182,25 @@ final class EloquentReportExportStoreTest extends TestCase
             $attributes[$key] = "{$prefix}-{$key}";
         }
 
-        $attributes['scope_holding_organization_ids'] = [1, 2];
-        $attributes['scope_project_ids'] = [3];
+        $attributes['scope_holding_organization_ids'] = json_encode([1, 2], JSON_THROW_ON_ERROR);
+        $attributes['scope_project_ids'] = json_encode([3], JSON_THROW_ON_ERROR);
         $attributes['scope_resources'] = json_encode([['kind' => 'project', 'id' => 3, 'project_id' => 3]], JSON_THROW_ON_ERROR);
         $attributes['snapshot_generated_at'] = '2026-07-28 10:00:00.000000+00';
         $attributes['snapshot_stale_at'] = '2026-07-28 11:00:00.000000+00';
         $attributes['snapshot_watermarks'] = json_encode([['source' => "{$prefix}-source", 'watermark' => '1']], JSON_THROW_ON_ERROR);
         $attributes['snapshot_sealed_at'] = '2026-07-28 10:01:00.000000+00';
-        $attributes['sensitive_column_ids'] = ['amount'];
-        $attributes['audit_column_ids'] = ['status'];
+        $attributes['sensitive_column_ids'] = json_encode(['amount'], JSON_THROW_ON_ERROR);
+        $attributes['audit_column_ids'] = json_encode(['status'], JSON_THROW_ON_ERROR);
         $attributes['totals_sensitive'] = true;
         $attributes['totals_audit'] = false;
         $attributes['provenance_audit'] = true;
+        $attributes['definition_snapshot'] = json_encode([
+            'output_classification' => [
+                'totals_sensitive' => true,
+                'totals_audit' => false,
+                'provenance_audit' => true,
+            ],
+        ], JSON_THROW_ON_ERROR);
 
         return $attributes;
     }

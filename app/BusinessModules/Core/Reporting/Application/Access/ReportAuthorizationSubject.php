@@ -22,6 +22,7 @@ final readonly class ReportAuthorizationSubject
         public ?ReportSnapshotRef $snapshot,
         public ?string $parentRunId,
         public ?Sha256Hash $artifactIdentityHash,
+        public ?Sha256Hash $exportIdentityHash = null,
     ) {
         if (preg_match('/^[0-9A-HJKMNP-TV-Z]{26}$/D', $aggregateId) !== 1) {
             throw new InvalidArgumentException('report_authorization_subject_invalid');
@@ -85,6 +86,7 @@ final readonly class ReportAuthorizationSubject
             ],
             'parent_run_id' => $this->parentRunId,
             'artifact_identity_hash' => $this->artifactIdentityHash?->value,
+            'export_identity_hash' => $this->exportIdentityHash?->value,
         ]));
     }
 }

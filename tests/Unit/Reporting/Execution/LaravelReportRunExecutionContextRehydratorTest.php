@@ -61,6 +61,18 @@ final class LaravelReportRunExecutionContextRehydratorTest extends TestCase
                     $target,
                 );
             }
+
+            public function authorizeExactMany(int $actorId, ReportScope $requestedScope, array $targets): array
+            {
+                return array_map(
+                    fn (CurrentReportAuthorizationTarget $target): CurrentReportAuthorization => $this->authorizeExact(
+                        $actorId,
+                        $requestedScope,
+                        $target,
+                    ),
+                    $targets,
+                );
+            }
         };
 
         $context = (new LaravelReportRunExecutionContextRehydrator($seedReader, $authorizer))

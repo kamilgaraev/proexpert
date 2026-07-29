@@ -8,12 +8,10 @@ use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationFen
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\Services\Storage\DTO\StoredFile;
-use Closure;
 use DateTimeImmutable;
 
 interface ReportExportStore
@@ -32,6 +30,4 @@ interface ReportExportStore
 
     public function cancel(ReportExecutionContext $context, string $exportId, DateTimeImmutable $occurredAt, ReportAuthorizationFence $fence): ReportExport;
 
-    /** @param Closure(ReportExport): ReportDownloadLink $presign */
-    public function withReadyDownload(ReportExecutionContext $context, string $exportId, DateTimeImmutable $occurredAt, ReportAuthorizationFence $fence, Closure $presign): ReportDownloadLink;
 }

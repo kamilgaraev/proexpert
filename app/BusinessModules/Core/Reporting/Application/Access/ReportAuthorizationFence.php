@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Application\Access;
 
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
@@ -20,7 +20,7 @@ final readonly class ReportAuthorizationFence
     public function __construct(
         public ReportAuthorizationSubject $subject,
         public array $operations,
-        private CurrentReportScopeAuthorizer $authorizer,
+        private CurrentReportExactManyAuthorizer $authorizer,
         private ReportExecutionContextFactory $contexts,
     ) {
         if (! array_is_list($operations) || $operations === []) {
@@ -50,22 +50,50 @@ final readonly class ReportAuthorizationFence
         }
     }
 
+    /**
+     * @param list<ReportOperation> $expected
+     */
+    public function assertOperations(array $expected): void
+    {
+        $actualValues = array_map(
+            static fn (ReportOperation $operation): string => $operation->value,
+            $this->operations,
+        );
+        $expectedValues = array_map(
+            static fn (ReportOperation $operation): string => $operation->value,
+            $expected,
+        );
+        sort($actualValues, SORT_STRING);
+        sort($expectedValues, SORT_STRING);
+
+        if ($actualValues !== $expectedValues) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+        }
+    }
+
     public function assertCurrent(ReportExecutionContext $context): ReportExecutionContext
     {
         self::assertExactScope($context, $this->subject);
-        $currentContext = null;
-
+        $targets = [];
         foreach ($this->operations as $operation) {
-            $target = new CurrentReportAuthorizationTarget(
+            $targets[] = new CurrentReportAuthorizationTarget(
                 $this->subject->definition,
                 $operation,
                 $operation === ReportOperation::RUN ? null : $this->subject->snapshot,
             );
-            $authorization = $this->authorizer->authorizeExact(
-                $context->actor->id,
-                $context->scope,
-                $target,
-            );
+        }
+        $authorizations = $this->authorizer->authorizeExactMany(
+            $context->actor->id,
+            $context->scope,
+            $targets,
+        );
+        if (count($authorizations) !== count($targets)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+        }
+
+        $currentContext = null;
+        foreach ($authorizations as $index => $authorization) {
+            $target = $targets[$index];
             if ($authorization->actor->id !== $context->actor->id
                 || $authorization->target->canonicalFingerprint() !== $target->canonicalFingerprint()) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);

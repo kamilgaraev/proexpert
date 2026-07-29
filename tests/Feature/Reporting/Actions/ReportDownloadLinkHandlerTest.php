@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthor
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportReadyDownloadStore;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
@@ -27,13 +28,10 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\Services\Storage\FileService;
 use DateTimeImmutable;
 use DateTimeZone;
-use PHPUnit\Framework\Attributes\Group;
+use PHPUnit\Framework\TestCase;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
-use Tests\TestCase;
 
-#[Group('postgresql')]
-#[Group('ci-only')]
 final class ReportDownloadLinkHandlerTest extends TestCase
 {
     public function test_expired_export_returns_exact_gone_error_before_parent_or_url_generation(): void
@@ -65,7 +63,8 @@ final class ReportDownloadLinkHandlerTest extends TestCase
         );
         $exports = $this->createMock(ReportExportStore::class);
         $exports->method('get')->willReturn($export);
-        $exports->expects(self::once())
+        $downloads = $this->createMock(ReportReadyDownloadStore::class);
+        $downloads->expects(self::once())
             ->method('withReadyDownload')
             ->willThrowException(
                 ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_EXPIRED),
@@ -107,16 +106,20 @@ final class ReportDownloadLinkHandlerTest extends TestCase
             new \App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition($definition),
         );
         $authorizer = $this->createStub(CurrentReportScopeAuthorizer::class);
-        $authorizer->method('authorizeExact')->willReturnCallback(
-            static fn (int $actorId, $scope, $target): CurrentReportAuthorization => new CurrentReportAuthorization(
-                $context->actor,
-                $context->authorization,
-                $context->visibility,
-                $target,
+        $authorizer->method('authorizeExactMany')->willReturnCallback(
+            static fn (int $actorId, $scope, array $targets): array => array_map(
+                static fn ($target): CurrentReportAuthorization => new CurrentReportAuthorization(
+                    $context->actor,
+                    $context->authorization,
+                    $context->visibility,
+                    $target,
+                ),
+                $targets,
             ),
         );
         $handler = new CreateReportDownloadLinkHandler(
             $exports,
+            $downloads,
             $definitions,
             $authorizer,
             $files,

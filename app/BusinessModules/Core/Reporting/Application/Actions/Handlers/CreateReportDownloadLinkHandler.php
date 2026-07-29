@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportDownloa
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportReadyDownloadStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportDownloadLinkData;
@@ -26,6 +27,7 @@ final readonly class CreateReportDownloadLinkHandler implements CreateReportDown
 {
     public function __construct(
         private ReportExportStore $exports,
+        private ReportReadyDownloadStore $downloads,
         private ReportDefinitionRegistry $definitions,
         private CurrentReportScopeAuthorizer $authorizer,
         private FileService $files,
@@ -62,12 +64,12 @@ final readonly class CreateReportDownloadLinkHandler implements CreateReportDown
         $fence->assertCurrent($context);
 
         try {
-            return $this->exports->withReadyDownload(
+            return $this->downloads->withReadyDownload(
                 $context,
                 $data->exportId,
-                $this->clock->now(),
+                $data->ttlSeconds,
                 $fence,
-                function (ReportExport $lockedExport) use ($context, $data): ReportDownloadLink {
+                function (ReportExport $lockedExport, int $boundedTtlSeconds) use ($context): ReportDownloadLink {
                     if ($lockedExport->artifactPath === null
                         || $lockedExport->versionId === null
                         || ! str_starts_with(
@@ -80,7 +82,7 @@ final readonly class CreateReportDownloadLinkHandler implements CreateReportDown
                     $temporary = $this->files->createTemporaryLink(
                         $lockedExport->artifactPath,
                         $lockedExport->versionId,
-                        $data->ttlSeconds,
+                        $boundedTtlSeconds,
                     );
                     if (! hash_equals($lockedExport->versionId, $temporary->versionId)) {
                         throw ReportContractException::fromCode(ReportErrorCode::REPORT_DEPENDENCY_FAILED);

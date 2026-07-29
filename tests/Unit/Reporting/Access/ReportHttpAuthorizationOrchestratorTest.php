@@ -696,6 +696,21 @@ final class RecordingCurrentReportScopeAuthorizer implements CurrentReportScopeA
         return $this->authorization($actorId, $requestedScope, $this->replacementTarget ?? $target);
     }
 
+    public function authorizeExactMany(
+        int $actorId,
+        ReportScope $requestedScope,
+        array $targets,
+    ): array {
+        return array_map(
+            fn (CurrentReportAuthorizationTarget $target): CurrentReportAuthorization => $this->authorizeExact(
+                $actorId,
+                $requestedScope,
+                $target,
+            ),
+            $targets,
+        );
+    }
+
     private function authorization(
         int $actorId,
         ReportScope $scope,

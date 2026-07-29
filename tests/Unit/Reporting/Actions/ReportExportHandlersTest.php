@@ -175,12 +175,15 @@ final class ReportExportHandlersTest extends TestCase
             new \App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition($definition),
         );
         $authorizer = $this->createStub(CurrentReportScopeAuthorizer::class);
-        $authorizer->method('authorizeExact')->willReturnCallback(
-            static fn (int $actorId, $scope, $target): CurrentReportAuthorization => new CurrentReportAuthorization(
-                $context->actor,
-                $context->authorization,
-                $context->visibility,
-                $target,
+        $authorizer->method('authorizeExactMany')->willReturnCallback(
+            static fn (int $actorId, $scope, array $targets): array => array_map(
+                static fn ($target): CurrentReportAuthorization => new CurrentReportAuthorization(
+                    $context->actor,
+                    $context->authorization,
+                    $context->visibility,
+                    $target,
+                ),
+                $targets,
             ),
         );
         $handler = new RetryReportExportHandler(

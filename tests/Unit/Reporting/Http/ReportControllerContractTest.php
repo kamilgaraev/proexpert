@@ -207,6 +207,20 @@ final class ReportControllerContractTest extends TestCase
                 CurrentReportAuthorizationTarget $target,
             ): CurrentReportAuthorization => $makeAuthorization($actorId, $requestedScope, $target),
         );
+        $authorizer->method('authorizeExactMany')->willReturnCallback(
+            static fn (
+                int $actorId,
+                ReportScope $requestedScope,
+                array $targets,
+            ): array => array_map(
+                static fn (CurrentReportAuthorizationTarget $target): CurrentReportAuthorization => $makeAuthorization(
+                    $actorId,
+                    $requestedScope,
+                    $target,
+                ),
+                $targets,
+            ),
+        );
         $database = $this->createMock(ConnectionInterface::class);
         $database->method('transaction')
             ->willReturnCallback(static fn (\Closure $callback): mixed => $callback());

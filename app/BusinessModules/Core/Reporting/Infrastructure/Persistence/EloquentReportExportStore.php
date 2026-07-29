@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportReadyDownloadStore;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
@@ -17,7 +18,9 @@ use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportExportRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
@@ -31,7 +34,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
-final class EloquentReportExportStore implements ReportExportStore
+final class EloquentReportExportStore implements ReportExportStore, ReportReadyDownloadStore
 {
     public function __construct(
         private readonly ReportExecutionClock $clock,
@@ -61,7 +64,7 @@ final class EloquentReportExportStore implements ReportExportStore
         $id = (string) Str::ulid();
         $identity = $this->identity($source, $data, $columns);
 
-        return DB::transaction(function () use ($context, $source, $data, $idempotencyKey, $identity, $columns, $id, $fence): ReportExport {
+        return $this->serializableTransaction(function () use ($context, $source, $data, $idempotencyKey, $identity, $columns, $id, $fence): ReportExport {
             $parentRun = ReportRunRecord::query()
                 ->whereKey($source->run->id)
                 ->where('organization_id', $context->scope->organizationId)
@@ -70,6 +73,9 @@ final class EloquentReportExportStore implements ReportExportStore
             if (! $parentRun instanceof ReportRunRecord) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
             }
+            $fence->assertOperations(
+                $this->requiredOperations($parentRun, $columns, ReportOperation::EXPORT),
+            );
             $this->assertRunFence($context, $source, $parentRun, $fence);
             $currentContext = $fence->assertCurrent($context);
             $now = $this->clock->now();
@@ -259,8 +265,15 @@ final class EloquentReportExportStore implements ReportExportStore
         DateTimeImmutable $occurredAt,
         ReportAuthorizationFence $fence,
     ): ReportExport {
-        return DB::transaction(function () use ($context, $exportId, $occurredAt, $fence): ReportExport {
+        return $this->serializableTransaction(function () use ($context, $exportId, $occurredAt, $fence): ReportExport {
             $record = $this->locked($context, $exportId);
+            $fence->assertOperations(
+                $this->requiredOperations(
+                    $record,
+                    $this->selectedColumns($record),
+                    ReportOperation::EXPORT,
+                ),
+            );
             $this->assertExportFence($context, $record, $fence);
             $currentContext = $fence->assertCurrent($context);
             $status = ReportExportStatus::from((string) $record->status);
@@ -277,37 +290,62 @@ final class EloquentReportExportStore implements ReportExportStore
     public function withReadyDownload(
         ReportExecutionContext $context,
         string $exportId,
-        DateTimeImmutable $occurredAt,
+        int $requestedTtlSeconds,
         ReportAuthorizationFence $fence,
         Closure $presign,
     ): ReportDownloadLink {
-        return DB::transaction(function () use ($context, $exportId, $occurredAt, $fence, $presign): ReportDownloadLink {
+        if ($requestedTtlSeconds < 1 || $requestedTtlSeconds > 300) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
+        }
+
+        return $this->serializableTransaction(function () use ($context, $exportId, $requestedTtlSeconds, $fence, $presign): ReportDownloadLink {
             $record = $this->locked($context, $exportId);
+            $fence->assertOperations(
+                $this->requiredOperations(
+                    $record,
+                    $this->selectedColumns($record),
+                    ReportOperation::DOWNLOAD,
+                ),
+            );
             $this->assertExportFence($context, $record, $fence);
-            $fence->assertCurrent($context);
-            if ($this->expired($record->expires_at, $occurredAt) || $record->status === ReportExportStatus::EXPIRED->value) {
-                throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_EXPIRED);
-            }
-            if ($record->status !== ReportExportStatus::READY->value) {
-                throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_NOT_READY);
-            }
 
             $parent = ReportRunRecord::query()
                 ->whereKey($record->run_id)
                 ->where('organization_id', $record->organization_id)
                 ->lockForUpdate()
                 ->first();
-            if (! $parent instanceof ReportRunRecord
-                || $this->expired($parent->expires_at, $occurredAt)
-                || $parent->status === 'expired') {
+            if (! $parent instanceof ReportRunRecord) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+            }
+            $fence->assertCurrent($context);
+            $occurredAt = $this->clock->now();
+            if ($this->expired($record->expires_at, $occurredAt) || $record->status === ReportExportStatus::EXPIRED->value) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_EXPIRED);
+            }
+            if ($record->status !== ReportExportStatus::READY->value) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_NOT_READY);
+            }
+            if ($this->expired($parent->expires_at, $occurredAt) || $parent->status === 'expired') {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
             }
             if ($parent->status !== 'ready') {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
-            $this->assertParentIdentity($record);
+            $this->assertParentIdentity($record, $parent);
 
-            return $presign($this->hydrator->hydrate($record, 'reused', $this->pollAfterMs));
+            $ttlSeconds = min(
+                $requestedTtlSeconds,
+                $this->remainingSeconds($record->expires_at, $occurredAt),
+                $this->remainingSeconds($parent->expires_at, $occurredAt),
+            );
+            if ($ttlSeconds < 1) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_EXPIRED);
+            }
+
+            return $presign(
+                $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs),
+                $ttlSeconds,
+            );
         });
     }
 
@@ -359,9 +397,16 @@ final class EloquentReportExportStore implements ReportExportStore
         return ['export_id' => (string) $record->id, 'run_id' => (string) $record->run_id, 'report_code' => (string) $record->report_code, 'status' => $status->value, 'format' => (string) $record->format];
     }
 
-    private function assertParentIdentity(ReportExportRecord $record): void
+    private function assertParentIdentity(
+        ReportExportRecord $record,
+        ?ReportRunRecord $run = null,
+    ): void
     {
-        $run = ReportRunRecord::query()->whereKey($record->run_id)->where('organization_id', $record->organization_id)->lockForUpdate()->first();
+        $run ??= ReportRunRecord::query()
+            ->whereKey($record->run_id)
+            ->where('organization_id', $record->organization_id)
+            ->lockForUpdate()
+            ->first();
         if (! $run instanceof ReportRunRecord || $run->status !== 'ready') {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
         }
@@ -374,14 +419,40 @@ final class EloquentReportExportStore implements ReportExportStore
 
     private function parentIdentityPairs(ReportExportRecord $record, ReportRunRecord $run): array
     {
+        $definitionSnapshot = $run->definition_snapshot;
+        $outputClassification = is_array($definitionSnapshot)
+            ? ($definitionSnapshot['output_classification'] ?? null)
+            : null;
+        if (! is_array($outputClassification)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        }
+
         return [
             [$record->report_code, $run->report_code], [$record->definition_hash, $run->definition_hash], [$record->query_hash, $run->query_hash], [$record->source_hash, $run->source_hash], [$record->result_hash, $run->result_hash],
-            [$record->scope_holding_organization_ids, $run->scope_holding_organization_ids], [$record->scope_project_ids, $run->scope_project_ids], [$record->scope_resources, $run->scope_resources], [$record->scope_timezone, $run->scope_timezone],
+            [$record->scope_holding_organization_ids, $run->scope_holding_organization_ids], [$record->scope_project_ids, $run->scope_project_ids], [$record->scope_resources, $this->runScopeResources($run)], [$record->scope_timezone, $run->scope_timezone],
             [$record->snapshot_kind, $run->snapshot_kind], [$record->snapshot_id, $run->snapshot_id], [$record->snapshot_generated_at, $run->snapshot_generated_at], [$record->snapshot_stale_at, $run->snapshot_stale_at], [$record->snapshot_watermarks, $run->snapshot_watermarks], [$record->snapshot_classification, $run->snapshot_classification],
             [$record->snapshot_seal_key_id, $run->snapshot_seal_key_id], [$record->snapshot_seal_algorithm, $run->snapshot_seal_algorithm], [$record->snapshot_sealed_payload_hash, $run->snapshot_sealed_payload_hash], [$record->snapshot_seal_signature, $run->snapshot_seal_signature], [$record->snapshot_sealed_at, $run->snapshot_sealed_at],
-            [$record->data_classification, $run->data_classification], [$record->sensitive_column_ids, $run->sensitive_column_ids], [$record->audit_column_ids, $run->audit_column_ids], [$record->totals_sensitive, $run->totals_sensitive], [$record->totals_audit, $run->totals_audit], [$record->provenance_audit, $run->provenance_audit],
+            [$record->data_classification, $run->data_classification], [$record->sensitive_column_ids, $run->sensitive_column_ids], [$record->audit_column_ids, $run->audit_column_ids], [$record->totals_sensitive, $outputClassification['totals_sensitive'] ?? null], [$record->totals_audit, $outputClassification['totals_audit'] ?? null], [$record->provenance_audit, $outputClassification['provenance_audit'] ?? null],
             [$record->contract_version, $run->contract_version], [$record->formula_version, $run->formula_version], [$record->source_schema_version, $run->source_schema_version], [$record->renderer_version, $run->renderer_version],
         ];
+    }
+
+    private function runScopeResources(ReportRunRecord $run): array
+    {
+        $resources = $run->getAttribute('scope_resources');
+        if (is_array($resources)) {
+            return $resources;
+        }
+
+        $legacyResources = $run->getRawOriginal('scope_resource_ids');
+        if (is_string($legacyResources)) {
+            $decoded = json_decode($legacyResources, true, 512, JSON_THROW_ON_ERROR);
+            if (is_array($decoded) && array_is_list($decoded)) {
+                return $decoded;
+            }
+        }
+
+        throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
     }
 
     private function identityValuesMatch(mixed $left, mixed $right): bool
@@ -439,6 +510,11 @@ final class EloquentReportExportStore implements ReportExportStore
             ? $subject->artifactIdentityHash !== null
                 && hash_equals((string) $record->artifact_checksum, $subject->artifactIdentityHash->value)
             : $subject->artifactIdentityHash === null;
+        $exportIdentityMatches = $subject->exportIdentityHash !== null
+            && hash_equals(
+                ReportExportAuthorizationIdentity::fromRecord($record)->value,
+                $subject->exportIdentityHash->value,
+            );
         $this->assertExactRecordScope($context, $record);
         if ($subject->aggregateKind !== ReportDispatchAggregate::EXPORT
             || ! hash_equals((string) $record->id, $subject->aggregateId)
@@ -449,9 +525,58 @@ final class EloquentReportExportStore implements ReportExportStore
             || ! hash_equals((string) $record->snapshot_id, $snapshot->id)
             || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)
             || ! hash_equals((string) $record->formula_version, $snapshot->formulaVersion)
-            || ! $artifactMatches) {
+            || ! $artifactMatches
+            || ! $exportIdentityMatches) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
+    }
+
+    /**
+     * @param list<string> $selectedColumns
+     * @return list<ReportOperation>
+     */
+    private function requiredOperations(
+        ReportExportRecord|ReportRunRecord $record,
+        array $selectedColumns,
+        ReportOperation $primary,
+    ): array {
+        $sensitiveColumns = $this->classificationColumnIds($record->sensitive_column_ids);
+        $auditColumns = $this->classificationColumnIds($record->audit_column_ids);
+        $operations = [$primary];
+        if ($record->data_classification === ReportDataClassification::SENSITIVE->value
+            || array_intersect($selectedColumns, $sensitiveColumns) !== []) {
+            $operations[] = ReportOperation::VIEW_SENSITIVE;
+        }
+        if (array_intersect($selectedColumns, $auditColumns) !== []) {
+            $operations[] = ReportOperation::VIEW_AUDIT;
+        }
+
+        return $operations;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function selectedColumns(ReportExportRecord $record): array
+    {
+        return $this->classificationColumnIds($record->selected_columns);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function classificationColumnIds(mixed $value): array
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        }
+        foreach ($value as $columnId) {
+            if (! is_string($columnId) || $columnId === '') {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+            }
+        }
+
+        return $value;
     }
 
     private function assertExactRecordScope(
@@ -462,7 +587,9 @@ final class EloquentReportExportStore implements ReportExportStore
             'organization_id' => (int) $record->organization_id,
             'holding_organization_ids' => array_map('intval', (array) $record->scope_holding_organization_ids),
             'project_ids' => array_map('intval', (array) $record->scope_project_ids),
-            'resources' => (array) $record->scope_resources,
+            'resources' => $record instanceof ReportRunRecord
+                ? $this->runScopeResources($record)
+                : (array) $record->scope_resources,
             'timezone' => (string) $record->scope_timezone,
         ];
         if ($context->scope->canonicalIdentity() !== $stored) {
@@ -543,6 +670,31 @@ final class EloquentReportExportStore implements ReportExportStore
         }
 
         return DateTimeImmutable::createFromInterface($value) <= $occurredAt;
+    }
+
+    private function remainingSeconds(mixed $value, DateTimeImmutable $occurredAt): int
+    {
+        if (! $value instanceof DateTimeInterface) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        }
+
+        return max(0, (int) floor(
+            (float) DateTimeImmutable::createFromInterface($value)->format('U.u')
+            - (float) $occurredAt->format('U.u'),
+        ));
+    }
+
+    private function serializableTransaction(Closure $callback): mixed
+    {
+        if (DB::connection()->transactionLevel() > 0) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        }
+
+        return DB::transaction(function () use ($callback): mixed {
+            DB::statement('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+
+            return $callback();
+        }, 3);
     }
 
     private function isRetryable(ReportErrorCode $errorCode): bool

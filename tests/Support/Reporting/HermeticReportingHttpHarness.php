@@ -1163,6 +1163,23 @@ final readonly class HermeticCurrentReportScopeAuthorizer implements CurrentRepo
         return $this->authorize($actorId, $requestedScope, $target);
     }
 
+    public function authorizeExactMany(
+        int $actorId,
+        ReportScope $requestedScope,
+        array $targets,
+    ): array {
+        return array_map(
+            fn (
+                \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget $target,
+            ): \App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization => $this->authorize(
+                $actorId,
+                $requestedScope,
+                $target,
+            ),
+            $targets,
+        );
+    }
+
     private function authorize(
         int $actorId,
         ReportScope $scope,

@@ -40,6 +40,7 @@ final class ReportAuthorizationSubjectTest extends TestCase
                 'snapshot' => '?'.ReportSnapshotRef::class,
                 'parentRunId' => '?string',
                 'artifactIdentityHash' => '?'.Sha256Hash::class,
+                'exportIdentityHash' => '?'.Sha256Hash::class,
             ],
             array_reduce(
                 $reflection->getConstructor()?->getParameters() ?? [],

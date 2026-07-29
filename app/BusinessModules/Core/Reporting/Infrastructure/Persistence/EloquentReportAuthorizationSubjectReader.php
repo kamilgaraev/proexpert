@@ -73,7 +73,16 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
                 ? new Sha256Hash($this->string($export->artifact_checksum))
                 : null;
 
-            return new ReportAuthorizationSubject(ReportDispatchAggregate::EXPORT, $this->string($export->id), $query->definition, $scope, $snapshot, $this->string($export->run_id), $artifactIdentityHash);
+            return new ReportAuthorizationSubject(
+                ReportDispatchAggregate::EXPORT,
+                $this->string($export->id),
+                $query->definition,
+                $scope,
+                $snapshot,
+                $this->string($export->run_id),
+                $artifactIdentityHash,
+                ReportExportAuthorizationIdentity::fromRecord($export),
+            );
         } catch (ReportContractException $exception) {
             throw $exception;
         } catch (Throwable $exception) {

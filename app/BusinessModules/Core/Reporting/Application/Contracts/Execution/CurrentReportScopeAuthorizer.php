@@ -10,7 +10,7 @@ use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthor
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use DateTimeZone;
 
-interface CurrentReportScopeAuthorizer
+interface CurrentReportScopeAuthorizer extends CurrentReportExactManyAuthorizer
 {
     /** @param list<CurrentReportAuthorizationTarget> $targets */
     public function authorizeCatalog(

@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Access\CurrentReportAuthoriza
 use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Access\CurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportExactManyAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
@@ -28,7 +29,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Throwable;
 
-final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentReportScopeAuthorizer
+final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentReportExactManyAuthorizer, CurrentReportScopeAuthorizer
 {
     public function __construct(
         private CurrentReportAbacEvaluator $abac,
@@ -131,6 +132,59 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
             }
 
             return $this->authorizeInsideTransaction($actor, $requestedScope, $target);
+        });
+    }
+
+    public function authorizeExactMany(
+        int $actorId,
+        ReportScope $requestedScope,
+        array $targets,
+    ): array {
+        if (! array_is_list($targets) || $targets === []) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+        }
+
+        return $this->transaction(function () use ($actorId, $requestedScope, $targets): array {
+            $actor = $this->activeActor($actorId, $requestedScope->organizationId);
+            $allowedHoldingIds = $this->accessibleHoldingOrganizationIds($requestedScope->organizationId);
+            foreach ($requestedScope->holdingOrganizationIds as $organizationId) {
+                if (! in_array($organizationId, $allowedHoldingIds, true)) {
+                    throw new \InvalidArgumentException('report_holding_scope_revoked');
+                }
+            }
+            $allowedProjectIds = $this->accessibleProjectIds(
+                $actorId,
+                $requestedScope->organizationId,
+                $requestedScope->holdingOrganizationIds,
+            );
+            foreach ($requestedScope->projectIds as $projectId) {
+                if (! in_array($projectId, $allowedProjectIds, true)) {
+                    throw new \InvalidArgumentException('report_project_scope_revoked');
+                }
+            }
+
+            $occurredAt = new DateTimeImmutable;
+            $this->resources->authorizeAll(
+                $actor,
+                $requestedScope->organizationId,
+                $requestedScope->resources,
+                $occurredAt,
+            );
+            $authorizations = [];
+            foreach ($targets as $target) {
+                if (! $target instanceof CurrentReportAuthorizationTarget) {
+                    throw new \InvalidArgumentException('report_authorization_targets_invalid');
+                }
+                $authorizations[] = $this->authorization(
+                    $actor,
+                    $requestedScope,
+                    $target,
+                    $occurredAt,
+                    true,
+                );
+            }
+
+            return $authorizations;
         });
     }
 
