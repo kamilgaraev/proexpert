@@ -24,6 +24,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
+use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportCursorCodec;
 
 final readonly class GetReportDrillDownHandler implements GetReportDrillDownAction
 {
@@ -33,6 +34,7 @@ final readonly class GetReportDrillDownHandler implements GetReportDrillDownActi
         private ReportDefinitionBindingAssembler $bindings,
         private CurrentReportScopeAuthorizer $authorizer,
         private ReportExecutionContextFactory $contexts,
+        private SignedReportCursorCodec $tokens,
         private ReportExecutionClock $clock,
     ) {}
 
@@ -46,6 +48,20 @@ final readonly class GetReportDrillDownHandler implements GetReportDrillDownActi
         $query = $this->runs->queryForRun($context, $runId);
         $this->assertIdentity($context, $runId, $run, $query, $snapshot);
         $binding = $this->binding($run, $query);
+        $cell = $this->tokens->decodeDrillDownCell(
+            $request->token,
+            $query->scope->organizationId,
+            $run->reportCode,
+            $run->id,
+            $snapshot,
+            $run->queryHash,
+        );
+        if (! in_array($cell['column_id'], array_column($query->definition->columns, 'id'), true)) {
+            throw ReportContractException::fromCode(
+                ReportErrorCode::REPORT_CURSOR_INVALID,
+                ['fields' => ['token']],
+            );
+        }
         $authorization = $this->authorizeDrillDown($context, $query, $snapshot);
         $providerContext = $this->contexts->fromCurrentAuthorization($authorization);
 

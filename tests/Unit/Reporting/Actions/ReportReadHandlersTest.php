@@ -141,7 +141,11 @@ final class ReportReadHandlersTest extends TestCase
             columns: [['id' => 'name'], ['id' => 'audit_event']],
         );
         $operations = [];
-        $request = new ReportDrillDownRequest('drill-token', null, 25);
+        $request = new ReportDrillDownRequest(
+            $this->cellToken($fixture, 'row-1', 'name'),
+            null,
+            25,
+        );
 
         $result = $this->drillDownHandler($fixture, $this->authorizer($operations))
             ->handle($this->context, self::RUN_ID, $request);
@@ -156,6 +160,60 @@ final class ReportReadHandlersTest extends TestCase
         self::assertCount(1, $fixture['drillDown']->calls());
         self::assertSame($fixture['run']->resultMetadata->snapshot, $fixture['drillDown']->calls()[0][1]);
         self::assertSame($request, $fixture['drillDown']->calls()[0][2]);
+    }
+
+    public function test_drill_down_rejects_invalid_or_cross_identity_cell_tokens_before_provider_call(): void
+    {
+        $cases = [
+            'tamper' => static function (self $test, array $fixture): string {
+                $token = $test->cellToken($fixture, 'row-1', 'name');
+
+                return substr($token, 0, -1).($token[-1] === 'A' ? 'B' : 'A');
+            },
+            'cross-run' => fn (self $test, array $fixture): string => $test->cellToken(
+                $fixture,
+                'row-1',
+                'name',
+                runId: '01J00000000000000000000001',
+            ),
+            'cross-query' => fn (self $test, array $fixture): string => $test->cellToken(
+                $fixture,
+                'row-1',
+                'name',
+                queryHash: new Sha256Hash(str_repeat('d', 64)),
+            ),
+            'cross-snapshot' => fn (self $test, array $fixture): string => $test->cellToken(
+                $fixture,
+                'row-1',
+                'name',
+                snapshot: (new ReportRunBuilder())
+                    ->sourceHash(new Sha256Hash(str_repeat('d', 64)))
+                    ->ready()
+                    ->resultMetadata
+                    ->snapshot,
+            ),
+            'cell-mismatch' => fn (self $test, array $fixture): string => $test->cellToken(
+                $fixture,
+                'row-1',
+                'unknown_column',
+            ),
+        ];
+
+        foreach ($cases as $case => $token) {
+            $fixture = $this->fixture();
+            $operations = [];
+            try {
+                $this->drillDownHandler($fixture, $this->authorizer($operations))->handle(
+                    $this->context,
+                    self::RUN_ID,
+                    new ReportDrillDownRequest($token($this, $fixture), null, 25),
+                );
+                self::fail('Ожидалось отклонение cell token: '.$case);
+            } catch (ReportContractException $exception) {
+                self::assertSame(ReportErrorCode::REPORT_CURSOR_INVALID, $exception->errorCode, $case);
+                self::assertSame([], $fixture['drillDown']->calls(), $case);
+            }
+        }
     }
 
     public function test_rows_reject_expired_status_before_authorization_or_provider_call(): void
@@ -372,6 +430,36 @@ final class ReportReadHandlersTest extends TestCase
             $fixture['assembler'],
             $authorizer,
             new ReportExecutionContextFactory(),
+            $this->codec(),
+            $this->clock,
+        );
+    }
+
+    private function cellToken(
+        array $fixture,
+        string $rowKey,
+        string $columnId,
+        string $runId = self::RUN_ID,
+        ?Sha256Hash $queryHash = null,
+        ?\App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef $snapshot = null,
+    ): string {
+        return $this->codec()->encodeDrillDownCell(
+            organizationId: $fixture['query']->scope->organizationId,
+            reportCode: $fixture['run']->reportCode,
+            runId: $runId,
+            snapshot: $snapshot ?? $fixture['run']->resultMetadata->snapshot,
+            queryHash: $queryHash ?? $fixture['run']->queryHash,
+            rowKey: $rowKey,
+            columnId: $columnId,
+            expiresAt: $fixture['run']->expiresAt,
+        );
+    }
+
+    private function codec(): SignedReportCursorCodec
+    {
+        return new SignedReportCursorCodec(
+            ['cursor-v1' => str_repeat('a', 64)],
+            'cursor-v1',
             $this->clock,
         );
     }

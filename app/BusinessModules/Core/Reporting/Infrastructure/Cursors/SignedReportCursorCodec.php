@@ -19,7 +19,11 @@ use Throwable;
 
 final readonly class SignedReportCursorCodec
 {
-    private const PAYLOAD_FIELDS = [
+    private const MAX_TOKEN_BYTES = 2048;
+
+    private const MAX_ROW_KEY_BYTES = 256;
+
+    private const CURSOR_PAYLOAD_FIELDS = [
         'definition_hash',
         'expires_at',
         'issued_at',
@@ -34,6 +38,22 @@ final readonly class SignedReportCursorCodec
         'sort_direction',
         'sort_field',
         'source_hash',
+    ];
+
+    private const DRILL_DOWN_PAYLOAD_FIELDS = [
+        'column_id',
+        'definition_hash',
+        'expires_at',
+        'issued_at',
+        'key_id',
+        'organization_id',
+        'query_hash',
+        'report_code',
+        'row_key',
+        'run_id',
+        'snapshot_id',
+        'source_hash',
+        'token_type',
     ];
 
     private array $keys;
@@ -76,7 +96,7 @@ final readonly class SignedReportCursorCodec
             || $organizationId !== $snapshot->scope->organizationId
             || preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $reportCode) !== 1
             || preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/D', $runId) !== 1
-            || trim($lastStableRowKey) === ''
+            || ! self::isCanonicalRowKey($lastStableRowKey)
             || (is_float($lastSortValue) && ! is_finite($lastSortValue))
             || $expiresAt <= $issuedAt) {
             throw $this->invalid();
@@ -100,12 +120,9 @@ final readonly class SignedReportCursorCodec
                 'source_hash' => $snapshot->sourceHash->value,
             ]);
         } catch (Throwable $exception) {
-            throw $this->invalid($exception);
+            throw $this->invalid('cursor', $exception);
         }
-        $encodedPayload = self::base64UrlEncode($payload);
-        $signature = hash_hmac('sha256', $encodedPayload, $this->keys[$this->activeKeyId], true);
-
-        return $encodedPayload.'.'.self::base64UrlEncode($signature);
+        return $this->sign($payload, 'cursor');
     }
 
     public function decode(
@@ -118,28 +135,15 @@ final readonly class SignedReportCursorCodec
         ReportWindowSort $sort,
     ): ReportCursor {
         try {
-            [$encodedPayload, $encodedSignature] = $this->segments($token);
-            $payload = $this->payload($encodedPayload);
-            $keyId = $payload['key_id'];
-            $secret = $this->keys[$keyId] ?? null;
-            if (! is_string($secret)) {
-                throw new InvalidArgumentException('report_cursor_key_missing');
-            }
+            $payload = $this->verifiedPayload($token, self::CURSOR_PAYLOAD_FIELDS);
 
-            $signature = self::base64UrlDecode($encodedSignature);
-            $expected = hash_hmac('sha256', $encodedPayload, $secret, true);
-            if (strlen($signature) !== strlen($expected) || ! hash_equals($expected, $signature)) {
-                throw new InvalidArgumentException('report_cursor_signature_invalid');
-            }
+            $expiresAt = $this->assertLifetime($payload);
 
-            $issuedAt = $this->timestamp($payload['issued_at']);
-            $expiresAt = $this->timestamp($payload['expires_at']);
-            $now = $this->clock->now();
-            if ($issuedAt > $now || $expiresAt <= $issuedAt || $expiresAt <= $now) {
-                throw new InvalidArgumentException('report_cursor_expired');
-            }
-
-            if ($payload['organization_id'] !== $organizationId
+            if (! self::isScalarOrNull($payload['last_sort_value'])
+                || ! is_string($payload['last_stable_row_key'])
+                || ! is_string($payload['sort_direction'])
+                || ! is_string($payload['sort_field'])
+                || $payload['organization_id'] !== $organizationId
                 || $organizationId !== $snapshot->scope->organizationId
                 || ! hash_equals($payload['report_code'], $reportCode)
                 || ! hash_equals($payload['run_id'], $runId)
@@ -148,7 +152,8 @@ final readonly class SignedReportCursorCodec
                 || ! hash_equals($payload['query_hash'], $queryHash->value)
                 || ! hash_equals($payload['source_hash'], $snapshot->sourceHash->value)
                 || ! hash_equals($payload['sort_field'], $sort->field)
-                || ! hash_equals($payload['sort_direction'], $sort->direction->value)) {
+                || ! hash_equals($payload['sort_direction'], $sort->direction->value)
+                || ! self::isCanonicalRowKey($payload['last_stable_row_key'])) {
                 throw new InvalidArgumentException('report_cursor_identity_mismatch');
             }
 
@@ -165,7 +170,93 @@ final readonly class SignedReportCursorCodec
                 throw $exception;
             }
 
-            throw $this->invalid($exception);
+            throw $this->invalid('cursor', $exception);
+        }
+    }
+
+    public function encodeDrillDownCell(
+        int $organizationId,
+        string $reportCode,
+        string $runId,
+        ReportSnapshotRef $snapshot,
+        Sha256Hash $queryHash,
+        string $rowKey,
+        string $columnId,
+        DateTimeImmutable $expiresAt,
+    ): string {
+        $issuedAt = $this->clock->now();
+        if ($organizationId < 1
+            || $organizationId !== $snapshot->scope->organizationId
+            || preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $reportCode) !== 1
+            || preg_match('/^[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/D', $runId) !== 1
+            || ! self::isCanonicalRowKey($rowKey)
+            || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $columnId) !== 1
+            || $expiresAt <= $issuedAt) {
+            throw $this->invalid('token');
+        }
+
+        try {
+            $payload = CanonicalJson::encode([
+                'column_id' => $columnId,
+                'definition_hash' => $snapshot->definitionHash->value,
+                'expires_at' => $expiresAt->format(DATE_ATOM),
+                'issued_at' => $issuedAt->format(DATE_ATOM),
+                'key_id' => $this->activeKeyId,
+                'organization_id' => $organizationId,
+                'query_hash' => $queryHash->value,
+                'report_code' => $reportCode,
+                'row_key' => $rowKey,
+                'run_id' => $runId,
+                'snapshot_id' => $snapshot->id,
+                'source_hash' => $snapshot->sourceHash->value,
+                'token_type' => 'report_drill_down_cell',
+            ]);
+        } catch (Throwable $exception) {
+            throw $this->invalid('token', $exception);
+        }
+
+        return $this->sign($payload, 'token');
+    }
+
+    /** @return array{row_key:string,column_id:string} */
+    public function decodeDrillDownCell(
+        string $token,
+        int $organizationId,
+        string $reportCode,
+        string $runId,
+        ReportSnapshotRef $snapshot,
+        Sha256Hash $queryHash,
+    ): array {
+        try {
+            $payload = $this->verifiedPayload($token, self::DRILL_DOWN_PAYLOAD_FIELDS);
+            $this->assertLifetime($payload);
+            if (! is_string($payload['token_type'])
+                || ! is_string($payload['row_key'])
+                || ! is_string($payload['column_id'])
+                || $payload['token_type'] !== 'report_drill_down_cell'
+                || $payload['organization_id'] !== $organizationId
+                || $organizationId !== $snapshot->scope->organizationId
+                || ! hash_equals($payload['report_code'], $reportCode)
+                || ! hash_equals($payload['run_id'], $runId)
+                || ! hash_equals($payload['snapshot_id'], $snapshot->id)
+                || ! hash_equals($payload['definition_hash'], $snapshot->definitionHash->value)
+                || ! hash_equals($payload['query_hash'], $queryHash->value)
+                || ! hash_equals($payload['source_hash'], $snapshot->sourceHash->value)
+                || ! self::isCanonicalRowKey($payload['row_key'])
+                || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $payload['column_id']) !== 1) {
+                throw new InvalidArgumentException('report_drill_down_cell_identity_mismatch');
+            }
+
+            return [
+                'row_key' => $payload['row_key'],
+                'column_id' => $payload['column_id'],
+            ];
+        } catch (Throwable $exception) {
+            if ($exception instanceof ReportContractException) {
+                throw $exception;
+            }
+
+            throw $this->invalid('token', $exception);
         }
     }
 
@@ -173,14 +264,14 @@ final readonly class SignedReportCursorCodec
     private function segments(string $token): array
     {
         $segments = explode('.', $token);
-        if (strlen($token) > 2048 || count($segments) !== 2 || $segments[0] === '' || $segments[1] === '') {
+        if (strlen($token) > self::MAX_TOKEN_BYTES || count($segments) !== 2 || $segments[0] === '' || $segments[1] === '') {
             throw new InvalidArgumentException('report_cursor_token_invalid');
         }
 
         return [$segments[0], $segments[1]];
     }
 
-    private function payload(string $encoded): array
+    private function payload(string $encoded, array $expectedFields): array
     {
         try {
             $json = self::base64UrlDecode($encoded);
@@ -197,22 +288,17 @@ final readonly class SignedReportCursorCodec
 
         $fields = array_keys($payload);
         sort($fields, SORT_STRING);
-        if ($fields !== self::PAYLOAD_FIELDS
+        if ($fields !== $expectedFields
             || ! is_string($payload['definition_hash'])
             || ! is_string($payload['expires_at'])
             || ! is_string($payload['issued_at'])
             || ! is_string($payload['key_id'])
-            || ! self::isScalarOrNull($payload['last_sort_value'])
-            || ! is_string($payload['last_stable_row_key'])
-            || trim($payload['last_stable_row_key']) === ''
             || ! is_int($payload['organization_id'])
             || $payload['organization_id'] < 1
             || ! is_string($payload['query_hash'])
             || ! is_string($payload['report_code'])
             || ! is_string($payload['run_id'])
             || ! is_string($payload['snapshot_id'])
-            || ! is_string($payload['sort_direction'])
-            || ! is_string($payload['sort_field'])
             || ! is_string($payload['source_hash'])
             || preg_match('/^[a-f0-9]{64}$/D', $payload['definition_hash']) !== 1
             || preg_match('/^[a-f0-9]{64}$/D', $payload['query_hash']) !== 1
@@ -221,6 +307,61 @@ final readonly class SignedReportCursorCodec
         }
 
         return $payload;
+    }
+
+    private function sign(string $payload, string $safeField): string
+    {
+        $encodedPayload = self::base64UrlEncode($payload);
+        if (strlen($encodedPayload) + 44 > self::MAX_TOKEN_BYTES) {
+            throw $this->invalid($safeField);
+        }
+
+        $signature = hash_hmac('sha256', $encodedPayload, $this->keys[$this->activeKeyId], true);
+        $token = $encodedPayload.'.'.self::base64UrlEncode($signature);
+        if (strlen($token) > self::MAX_TOKEN_BYTES) {
+            throw $this->invalid($safeField);
+        }
+
+        return $token;
+    }
+
+    private function verifiedPayload(string $token, array $expectedFields): array
+    {
+        [$encodedPayload, $encodedSignature] = $this->segments($token);
+        $payload = $this->payload($encodedPayload, $expectedFields);
+        $keyId = $payload['key_id'];
+        $secret = $this->keys[$keyId] ?? null;
+        if (! is_string($secret)) {
+            throw new InvalidArgumentException('report_cursor_key_missing');
+        }
+
+        $signature = self::base64UrlDecode($encodedSignature);
+        $expected = hash_hmac('sha256', $encodedPayload, $secret, true);
+        if (strlen($signature) !== strlen($expected) || ! hash_equals($expected, $signature)) {
+            throw new InvalidArgumentException('report_cursor_signature_invalid');
+        }
+
+        return $payload;
+    }
+
+    private function assertLifetime(array $payload): DateTimeImmutable
+    {
+        $issuedAt = $this->timestamp($payload['issued_at']);
+        $expiresAt = $this->timestamp($payload['expires_at']);
+        $now = $this->clock->now();
+        if ($issuedAt > $now || $expiresAt <= $issuedAt || $expiresAt <= $now) {
+            throw new InvalidArgumentException('report_cursor_expired');
+        }
+
+        return $expiresAt;
+    }
+
+    private static function isCanonicalRowKey(mixed $rowKey): bool
+    {
+        return is_string($rowKey)
+            && $rowKey !== ''
+            && $rowKey === trim($rowKey)
+            && strlen($rowKey) <= self::MAX_ROW_KEY_BYTES;
     }
 
     private function timestamp(string $value): DateTimeImmutable
@@ -260,11 +401,11 @@ final readonly class SignedReportCursorCodec
         return $decoded;
     }
 
-    private function invalid(?Throwable $previous = null): ReportContractException
+    private function invalid(string $safeField = 'cursor', ?Throwable $previous = null): ReportContractException
     {
         return ReportContractException::fromCode(
             ReportErrorCode::REPORT_CURSOR_INVALID,
-            ['fields' => ['cursor']],
+            ['fields' => [$safeField]],
             $previous,
         );
     }

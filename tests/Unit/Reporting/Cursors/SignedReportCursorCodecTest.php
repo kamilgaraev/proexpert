@@ -127,6 +127,39 @@ final class SignedReportCursorCodecTest extends TestCase
         $this->expectCursorFailure(fn () => $this->decode($token));
     }
 
+    public function test_rejects_oversized_stable_row_key_before_emitting_an_undecodable_token(): void
+    {
+        $this->expectCursorFailure(fn () => $this->codec->encode(
+            organizationId: 1,
+            reportCode: 'report',
+            runId: self::RUN_ID,
+            snapshot: (new ReportRunBuilder())->ready()->resultMetadata->snapshot,
+            queryHash: $this->queryHash,
+            sort: $this->sort,
+            lastSortValue: 'ООО Альфа',
+            lastStableRowKey: str_repeat('r', 257),
+            expiresAt: $this->now->modify('+5 minutes'),
+        ));
+    }
+
+    public function test_every_emitted_cursor_respects_transport_limit_and_decodes_symmetrically(): void
+    {
+        $token = $this->codec->encode(
+            organizationId: 1,
+            reportCode: 'report',
+            runId: self::RUN_ID,
+            snapshot: (new ReportRunBuilder())->ready()->resultMetadata->snapshot,
+            queryHash: $this->queryHash,
+            sort: $this->sort,
+            lastSortValue: str_repeat('v', 300),
+            lastStableRowKey: str_repeat('r', 256),
+            expiresAt: $this->now->modify('+5 minutes'),
+        );
+
+        self::assertLessThanOrEqual(2048, strlen($token));
+        self::assertSame(self::RUN_ID, $this->decode($token)->runId);
+    }
+
     public function test_rejects_signed_payload_with_noncanonical_timestamp(): void
     {
         [$encodedPayload] = explode('.', $this->token(), 2);
