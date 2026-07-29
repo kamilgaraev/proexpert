@@ -19,6 +19,7 @@ final class WorkforceCorporateService
     public function __construct(
         private readonly FileService $fileService,
         private readonly WorkforceProService $proService,
+        private readonly PayrollCalculationVersionService $payrollVersions,
     ) {
     }
 
@@ -115,6 +116,15 @@ final class WorkforceCorporateService
 
         if (isset($result['blocking_issues'])) {
             throw new DomainException(trans_message('workforce.errors.payroll_period_has_blocking_issues'));
+        }
+
+        $version = $this->payrollVersions->current($organizationId, $periodId);
+        if ($version !== null && $version->status !== 'locked') {
+            $result['calculation_version'] = $this->payrollVersions
+                ->lock($organizationId, $version->id, $userId)
+                ->toArray();
+        } elseif ($version !== null) {
+            $result['calculation_version'] = $version->toArray();
         }
 
         return $result;

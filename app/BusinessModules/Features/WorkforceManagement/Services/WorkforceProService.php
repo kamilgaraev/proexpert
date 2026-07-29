@@ -19,8 +19,10 @@ use Illuminate\Support\Facades\DB;
 
 final class WorkforceProService
 {
-    public function __construct(private readonly WorkforceEmployeeService $employeeService)
-    {
+    public function __construct(
+        private readonly WorkforceEmployeeService $employeeService,
+        private readonly PayrollCalculationVersionService $payrollVersions,
+    ) {
     }
 
     public function paginateList(string $table, int $organizationId, int $perPage, ?string $search = null): LengthAwarePaginator
@@ -478,18 +480,27 @@ final class WorkforceProService
             ->where('payroll_period_id', $periodId)
             ->selectRaw('COUNT(*) as rows_count, COALESCE(SUM(hours), 0) as total_hours, COALESCE(SUM(amount), 0) as total_amount')
             ->first();
+        $actorId = (int) DB::table('workforce_payroll_periods')
+            ->where('organization_id', $organizationId)
+            ->where('id', $periodId)
+            ->value('created_by_user_id');
+        if ($actorId < 1) {
+            throw new DomainException('PAYROLL_CALCULATION_ACTOR_REQUIRED');
+        }
+        $version = $this->payrollVersions->build($organizationId, $periodId, $actorId);
 
         return [
             'payroll_period_id' => $periodId,
             'rows_count' => (int) ($summary->rows_count ?? 0),
             'total_hours' => number_format((float) ($summary->total_hours ?? 0), 2, '.', ''),
             'total_amount' => number_format((float) ($summary->total_amount ?? 0), 2, '.', ''),
+            'calculation_version' => $version->toArray(),
         ];
     }
 
     public function validatePayrollPeriod(int $organizationId, int $periodId): array
     {
-        return DB::transaction(function () use ($organizationId, $periodId): array {
+        $result = DB::transaction(function () use ($organizationId, $periodId): array {
             $this->lockOrganization($organizationId);
             $period = $this->assertRecord('workforce_payroll_periods', $organizationId, $periodId);
 
@@ -742,6 +753,20 @@ final class WorkforceProService
                 'blocking_count' => $blockingCount,
             ];
         });
+
+        $actorId = (int) DB::table('workforce_payroll_periods')
+            ->where('organization_id', $organizationId)
+            ->where('id', $periodId)
+            ->value('created_by_user_id');
+        if ($actorId < 1) {
+            throw new DomainException('PAYROLL_CALCULATION_ACTOR_REQUIRED');
+        }
+        $version = $this->payrollVersions->current($organizationId, $periodId)
+            ?? $this->payrollVersions->build($organizationId, $periodId, $actorId);
+        $validated = $this->payrollVersions->validate($organizationId, $version->id, $actorId);
+        $result['calculation_version'] = $validated->toArray();
+
+        return $result;
     }
 
     public function payrollSourceRows(int $organizationId, int $periodId): Collection
