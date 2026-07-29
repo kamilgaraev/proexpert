@@ -368,18 +368,6 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
 
         $store->markPublicationFailed(
             $lease->intent->id,
-            '00000000-0000-4000-8000-000000000099',
-            ReportErrorCode::REPORT_DEPENDENCY_FAILED,
-            $now,
-            $now,
-        );
-
-        self::assertSame('leased', $lease->intent->fresh()->status);
-        self::assertSame('queued', $export->fresh()->status);
-        self::assertSame(0, ReportAuditIntentRecord::query()->count());
-
-        $store->markPublicationFailed(
-            $lease->intent->id,
             $lease->leaseToken,
             ReportErrorCode::REPORT_DEPENDENCY_FAILED,
             $now,
@@ -393,6 +381,28 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
             ->where('event_type', 'report.export.failed')
             ->where('event_key', "reports:export:{$export->id}:failed:REPORT_DEPENDENCY_FAILED")
             ->count());
+    }
+
+    public function test_stale_export_failure_token_preserves_complete_intent_and_export_state(): void
+    {
+        $store = $this->store();
+        $now = new DateTimeImmutable('2026-07-28T10:00:00Z');
+        $export = $this->createQueuedExport($now);
+        $lease = $this->leaseTwelfthExportIntent($store, $export, $now);
+        $intentBefore = $this->intentSnapshot($lease->intent);
+        $exportBefore = $this->exportSnapshot($export);
+
+        $store->markPublicationFailed(
+            $lease->intent->id,
+            '00000000-0000-4000-8000-000000000099',
+            ReportErrorCode::REPORT_DEPENDENCY_FAILED,
+            $now,
+            $now,
+        );
+
+        self::assertSame($intentBefore, $this->intentSnapshot($lease->intent));
+        self::assertSame($exportBefore, $this->exportSnapshot($export));
+        self::assertSame(0, ReportAuditIntentRecord::query()->count());
     }
 
     public function test_reclaiming_expired_twelfth_export_lease_dead_letters_queued_export_and_audits_atomically(): void
@@ -418,20 +428,9 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
         $export = $this->createQueuedExport($now);
         $store = $this->store();
         $lease = $this->leaseTwelfthExportIntent($store, $export, $now);
-        ReportAuditIntentRecord::query()->create([
-            'id' => '01J00000000000000000000005',
-            'event_key' => "reports:export:{$export->id}:failed:REPORT_DEPENDENCY_FAILED",
-            'event_type' => 'report.export.cancelled',
-            'organization_id' => 1,
-            'actor_id' => 1,
-            'subject' => [],
-            'status' => 'pending',
-            'attempt_count' => 0,
-            'occurred_at' => $now,
-            'available_at' => $now,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+        $this->createConflictingExportFailureAudit($export, $now);
+        $intentBefore = $this->intentSnapshot($lease->intent);
+        $exportBefore = $this->exportSnapshot($export);
 
         try {
             $store->markPublicationFailed(
@@ -445,8 +444,30 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
         } catch (LogicException) {
         }
 
-        self::assertSame('leased', $lease->intent->fresh()->status);
-        self::assertSame('queued', $export->fresh()->status);
+        self::assertSame($intentBefore, $this->intentSnapshot($lease->intent));
+        self::assertSame($exportBefore, $this->exportSnapshot($export));
+        self::assertSame(1, ReportAuditIntentRecord::query()->count());
+        self::assertSame(0, ReportAuditIntentRecord::query()->where('event_type', 'report.export.failed')->count());
+    }
+
+    public function test_reclaiming_export_terminal_transition_rolls_back_when_outbox_audit_append_fails(): void
+    {
+        $now = new DateTimeImmutable('2026-07-28T10:00:00Z');
+        $export = $this->createQueuedExport($now);
+        $store = $this->store();
+        $lease = $this->leaseTwelfthExportIntent($store, $export, $now);
+        $this->createConflictingExportFailureAudit($export, $now);
+        $intentBefore = $this->intentSnapshot($lease->intent);
+        $exportBefore = $this->exportSnapshot($export);
+
+        try {
+            $store->reclaimExpiredLeases(1, $now->modify('+31 seconds'));
+            self::fail('Expected outbox audit conflict to abort the transaction.');
+        } catch (LogicException) {
+        }
+
+        self::assertSame($intentBefore, $this->intentSnapshot($lease->intent));
+        self::assertSame($exportBefore, $this->exportSnapshot($export));
         self::assertSame(1, ReportAuditIntentRecord::query()->count());
         self::assertSame(0, ReportAuditIntentRecord::query()->where('event_type', 'report.export.failed')->count());
     }
@@ -462,6 +483,8 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
             'failed_at' => $now,
         ]);
         $lease = $this->leaseTwelfthExportIntent($store, $export, $now);
+        $intentBefore = $this->intentSnapshot($lease->intent);
+        $exportBefore = $this->exportSnapshot($export);
 
         $store->markPublicationFailed(
             $lease->intent->id,
@@ -471,8 +494,28 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
             $now,
         );
 
-        self::assertSame('failed', $export->fresh()->status);
-        self::assertSame(ReportErrorCode::REPORT_DEPENDENCY_FAILED->value, $export->fresh()->error_code);
+        self::assertSame($intentBefore, $this->intentSnapshot($lease->intent));
+        self::assertSame($exportBefore, $this->exportSnapshot($export));
+        self::assertSame(0, ReportAuditIntentRecord::query()->count());
+    }
+
+    public function test_non_queued_export_is_not_mutated_by_terminal_dispatch_reclaim(): void
+    {
+        $store = $this->store();
+        $now = new DateTimeImmutable('2026-07-28T10:00:00Z');
+        $export = $this->createQueuedExport($now);
+        $export->update([
+            'status' => 'failed',
+            'error_code' => ReportErrorCode::REPORT_DEPENDENCY_FAILED->value,
+            'failed_at' => $now,
+        ]);
+        $lease = $this->leaseTwelfthExportIntent($store, $export, $now);
+        $intentBefore = $this->intentSnapshot($lease->intent);
+        $exportBefore = $this->exportSnapshot($export);
+
+        self::assertSame(0, $store->reclaimExpiredLeases(1, $now->modify('+31 seconds')));
+        self::assertSame($intentBefore, $this->intentSnapshot($lease->intent));
+        self::assertSame($exportBefore, $this->exportSnapshot($export));
         self::assertSame(0, ReportAuditIntentRecord::query()->count());
     }
 
@@ -582,5 +625,33 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
         $intent->update(['attempt_count' => 11]);
 
         return $store->claimDue(1, $now, $now->modify('+30 seconds'), '00000000-0000-4000-8000-000000000012')[0];
+    }
+
+    private function createConflictingExportFailureAudit(ReportExportRecord $export, DateTimeImmutable $now): void
+    {
+        ReportAuditIntentRecord::query()->create([
+            'id' => '01J00000000000000000000005',
+            'event_key' => "reports:export:{$export->id}:failed:REPORT_DEPENDENCY_FAILED",
+            'event_type' => 'report.export.cancelled',
+            'organization_id' => 1,
+            'actor_id' => 1,
+            'subject' => ['kind' => 'conflict'],
+            'status' => 'pending',
+            'attempt_count' => 0,
+            'occurred_at' => $now,
+            'available_at' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+
+    private function intentSnapshot(ReportDispatchIntentRecord $intent): array
+    {
+        return ReportDispatchIntentRecord::query()->findOrFail($intent->id)->getAttributes();
+    }
+
+    private function exportSnapshot(ReportExportRecord $export): array
+    {
+        return ReportExportRecord::query()->findOrFail($export->id)->getAttributes();
     }
 }
