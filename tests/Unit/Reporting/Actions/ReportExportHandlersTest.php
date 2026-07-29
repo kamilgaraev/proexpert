@@ -4,29 +4,39 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Actions;
 
+use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationSubject;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\CancelReportExportHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\CreateReportDownloadLinkHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\CreateReportExportHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\GetReportExportHandler;
 use App\BusinessModules\Core\Reporting\Application\Actions\Handlers\RetryReportExportHandler;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportDownloadLinkAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportAction;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\RetryReportExportAction;
+use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportExportCoordinator;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportDownloadLinkData;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -35,6 +45,7 @@ use DateTimeZone;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
 
 final class ReportExportHandlersTest extends TestCase
@@ -93,7 +104,7 @@ final class ReportExportHandlersTest extends TestCase
                 [
                     ['context', ReportExecutionContext::class],
                     ['exportId', 'string'],
-                    ['key', IdempotencyKey::class],
+                    ['idempotencyKey', IdempotencyKey::class],
                 ],
                 ReportExport::class,
             ],
@@ -131,7 +142,56 @@ final class ReportExportHandlersTest extends TestCase
             ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED),
         );
         $coordinator = (new ReflectionClass(ReportExportCoordinator::class))->newInstanceWithoutConstructor();
-        $handler = new RetryReportExportHandler($exports, $runs, $coordinator);
+        $definition = (new ReportDefinitionBuilder)
+            ->columns([['id' => 'amount'], ['id' => 'name']])
+            ->formats(['pdf'])
+            ->payload();
+        $snapshot = new ReportSnapshotRef(
+            'report',
+            'snapshot',
+            $context->scope,
+            $definition->definitionHash,
+            $definition->formulaVersion,
+            new Sha256Hash(str_repeat('c', 64)),
+            new DateTimeImmutable('2026-07-29T09:00:00+00:00'),
+            null,
+            [],
+            ReportSnapshotClassification::OPERATIONAL,
+            null,
+        );
+        $subject = new ReportAuthorizationSubject(
+            ReportDispatchAggregate::EXPORT,
+            $export->id,
+            $definition,
+            $context->scope,
+            $snapshot,
+            $export->runId,
+            null,
+        );
+        $subjects = $this->createStub(ReportAuthorizationSubjectReader::class);
+        $subjects->method('export')->willReturn($subject);
+        $definitions = $this->createStub(ReportDefinitionRegistry::class);
+        $definitions->method('published')->willReturn(
+            new \App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition($definition),
+        );
+        $authorizer = $this->createStub(CurrentReportScopeAuthorizer::class);
+        $authorizer->method('authorizeExact')->willReturnCallback(
+            static fn (int $actorId, $scope, $target): CurrentReportAuthorization => new CurrentReportAuthorization(
+                $context->actor,
+                $context->authorization,
+                $context->visibility,
+                $target,
+            ),
+        );
+        $handler = new RetryReportExportHandler(
+            $exports,
+            $runs,
+            $coordinator,
+            $definitions,
+            $authorizer,
+            new ReportExecutionContextFactory,
+            $subjects,
+        );
 
         try {
             $handler->handle($context, $export->id, new IdempotencyKey('retry-key-0001'));
@@ -148,6 +208,45 @@ final class ReportExportHandlersTest extends TestCase
             'cancelled' => [ReportExportStatus::CANCELLED],
             'expired' => [ReportExportStatus::EXPIRED],
         ];
+    }
+
+    public function test_scope_mismatch_is_concealed_before_handler_state_checks(): void
+    {
+        $context = (new ReportExecutionContextBuilder)->build();
+        $definition = (new ReportDefinitionBuilder)->payload();
+        $scope = new ReportScope(1, [1], [99], [], new DateTimeZone('UTC'));
+        $snapshot = new ReportSnapshotRef(
+            'report',
+            'snapshot',
+            $scope,
+            $definition->definitionHash,
+            $definition->formulaVersion,
+            new Sha256Hash(str_repeat('c', 64)),
+            new DateTimeImmutable('2026-07-29T09:00:00+00:00'),
+            null,
+            [],
+            ReportSnapshotClassification::OPERATIONAL,
+            null,
+        );
+        $subject = new ReportAuthorizationSubject(
+            ReportDispatchAggregate::EXPORT,
+            '01J00000000000000000000001',
+            $definition,
+            $scope,
+            $snapshot,
+            '01J00000000000000000000000',
+            null,
+        );
+
+        try {
+            \App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationFence::assertExactScope(
+                $context,
+                $subject,
+            );
+            self::fail('Expected mismatched scope to be concealed.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_NOT_FOUND, $exception->errorCode);
+        }
     }
 
     private function export(ReportExportStatus $status): ReportExport

@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Application\Actions\Handlers;
 
+use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationFence;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportStore;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
-use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
@@ -20,41 +21,36 @@ final readonly class GetReportExportHandler implements GetReportExportAction
 {
     public function __construct(
         private ReportExportStore $exports,
-        private ReportRunStore $runs,
         private ReportDefinitionRegistry $definitions,
         private CurrentReportScopeAuthorizer $authorizer,
+        private ReportExecutionContextFactory $contexts,
+        private ReportAuthorizationSubjectReader $subjects,
     ) {}
 
     public function handle(ReportExecutionContext $context, string $exportId): ReportExport
     {
+        $subject = $this->subjects->export($exportId);
+        ReportAuthorizationFence::assertExactScope($context, $subject);
         $export = $this->exports->get($context, $exportId);
-        $query = $this->runs->queryForRun($context, $export->runId);
-        $definition = $this->definitions->published($query->definition->code)->definition;
-        if (! hash_equals($definition->definitionHash->value, $query->definition->definitionHash->value)) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        $definition = $this->definitions->published($subject->definition->code)->definition;
+        if (! hash_equals($definition->definitionHash->value, $subject->definition->definitionHash->value)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
 
-        $this->authorize($context, $query->scope, $definition, ReportOperation::VIEW);
+        $operations = [ReportOperation::VIEW];
         if ($definition->outputClassification->requiresSensitiveForColumns($export->columns)) {
-            $this->authorize($context, $query->scope, $definition, ReportOperation::VIEW_SENSITIVE);
+            $operations[] = ReportOperation::VIEW_SENSITIVE;
         }
         if ($definition->outputClassification->requiresAuditForColumns($export->columns)) {
-            $this->authorize($context, $query->scope, $definition, ReportOperation::VIEW_AUDIT);
+            $operations[] = ReportOperation::VIEW_AUDIT;
         }
+        (new ReportAuthorizationFence(
+            $subject,
+            $operations,
+            $this->authorizer,
+            $this->contexts,
+        ))->assertCurrent($context);
 
         return $export;
-    }
-
-    private function authorize(
-        ReportExecutionContext $context,
-        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope $scope,
-        \App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition $definition,
-        ReportOperation $operation,
-    ): void {
-        $this->authorizer->authorizeExact(
-            $context->actor->id,
-            $scope,
-            new CurrentReportAuthorizationTarget($definition, $operation, null),
-        );
     }
 }

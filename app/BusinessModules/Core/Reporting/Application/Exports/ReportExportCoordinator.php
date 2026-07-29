@@ -4,15 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Application\Exports;
 
+use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationFence;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
-use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
-use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
@@ -39,6 +39,7 @@ final readonly class ReportExportCoordinator
         private ReportExecutionContextFactory $contexts,
         private ReportExportRendererRegistry $renderers,
         private ReportExecutionClock $clock,
+        private ReportAuthorizationSubjectReader $subjects,
     ) {}
 
     public function create(
@@ -57,10 +58,11 @@ final readonly class ReportExportCoordinator
 
         $published = $this->publishedFor($currentSource);
         $columns = $published->definition->validatedSelectedColumnIds($data->columns);
-        $currentContext = $this->authorize($context, $currentSource, $published, $columns);
+        $fence = $this->authorizationFence($context, $currentSource, $published, $columns);
+        $fence->assertCurrent($context);
         $this->renderers->resolve($published, $data);
 
-        return $this->exports->createOrReuse($currentContext, $currentSource, $data, $key);
+        return $this->exports->createOrReuse($context, $currentSource, $data, $key, $fence);
     }
 
     private function assertReady(ReportRunExportSource $source): void
@@ -92,38 +94,35 @@ final readonly class ReportExportCoordinator
         return $published;
     }
 
-    private function authorize(
+    private function authorizationFence(
         ReportExecutionContext $context,
         ReportRunExportSource $source,
         PublishedReportDefinition $published,
         array $columns,
-    ): ReportExecutionContext {
-        if ($context->scope->canonicalIdentity() !== $source->query->scope->canonicalIdentity()) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+    ): ReportAuthorizationFence {
+        $subject = $this->subjects->run($source->run->id);
+        ReportAuthorizationFence::assertExactScope($context, $subject);
+        if ($subject->snapshot === null
+            || ! hash_equals($subject->definition->definitionHash->value, $published->definitionHash->value)
+            || ! hash_equals($subject->snapshot->sourceHash->value, $source->snapshot->sourceHash->value)
+            || ! hash_equals($subject->snapshot->id, $source->snapshot->id)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
 
-        $current = $this->authorizeOperation($context, $source, $published, ReportOperation::EXPORT);
+        $operations = [ReportOperation::EXPORT];
         $classification = $published->definition->outputClassification;
         if ($classification->requiresSensitiveForColumns($columns)) {
-            $current = $this->authorizeOperation($context, $source, $published, ReportOperation::VIEW_SENSITIVE);
+            $operations[] = ReportOperation::VIEW_SENSITIVE;
         }
         if ($classification->requiresAuditForColumns($columns)) {
-            $current = $this->authorizeOperation($context, $source, $published, ReportOperation::VIEW_AUDIT);
+            $operations[] = ReportOperation::VIEW_AUDIT;
         }
 
-        return $this->contexts->fromCurrentAuthorization($current);
-    }
-
-    private function authorizeOperation(
-        ReportExecutionContext $context,
-        ReportRunExportSource $source,
-        PublishedReportDefinition $published,
-        ReportOperation $operation,
-    ): CurrentReportAuthorization {
-        return $this->authorizer->authorizeExact(
-            $context->actor->id,
-            $source->query->scope,
-            new CurrentReportAuthorizationTarget($published->definition, $operation, $source->snapshot),
+        return new ReportAuthorizationFence(
+            $subject,
+            $operations,
+            $this->authorizer,
+            $this->contexts,
         );
     }
 

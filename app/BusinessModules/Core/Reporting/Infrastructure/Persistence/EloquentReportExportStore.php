@@ -4,14 +4,17 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 
+use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationFence;
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExportStore;
+use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
@@ -20,6 +23,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportE
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Services\Storage\DTO\StoredFile;
+use Closure;
 use DateTimeImmutable;
 use DateTimeInterface;
 use DateTimeZone;
@@ -42,24 +46,37 @@ final class EloquentReportExportStore implements ReportExportStore
         }
     }
 
-    public function createOrReuse(ReportExecutionContext $context, ReportRunExportSource $source, CreateReportExportData $data, IdempotencyKey $idempotencyKey): ReportExport
-    {
-        if ($source->query->scope->organizationId !== $context->scope->organizationId) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+    public function createOrReuse(
+        ReportExecutionContext $context,
+        ReportRunExportSource $source,
+        CreateReportExportData $data,
+        IdempotencyKey $idempotencyKey,
+        ReportAuthorizationFence $fence,
+    ): ReportExport {
+        if ($source->query->scope->canonicalIdentity() !== $context->scope->canonicalIdentity()) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
 
         $columns = $source->query->definition->validatedSelectedColumnIds($data->columns);
-        $now = $this->clock->now();
         $id = (string) Str::ulid();
         $identity = $this->identity($source, $data, $columns);
 
-        return DB::transaction(function () use ($context, $source, $data, $idempotencyKey, $identity, $columns, $id, $now): ReportExport {
+        return DB::transaction(function () use ($context, $source, $data, $idempotencyKey, $identity, $columns, $id, $fence): ReportExport {
             $parentRun = ReportRunRecord::query()
                 ->whereKey($source->run->id)
                 ->where('organization_id', $context->scope->organizationId)
                 ->lockForUpdate()
                 ->first();
-            if (! $parentRun instanceof ReportRunRecord || $parentRun->status !== 'ready') {
+            if (! $parentRun instanceof ReportRunRecord) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+            }
+            $this->assertRunFence($context, $source, $parentRun, $fence);
+            $currentContext = $fence->assertCurrent($context);
+            $now = $this->clock->now();
+            if ($this->expired($parentRun->expires_at, $now) || $parentRun->status === 'expired') {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
+            }
+            if ($parentRun->status !== 'ready') {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
             if ($parentRun->correlation_lineage_id !== null && ! is_string($parentRun->correlation_lineage_id)) {
@@ -67,7 +84,7 @@ final class EloquentReportExportStore implements ReportExportStore
             }
             $payload = $this->payload(
                 $id,
-                $context,
+                $currentContext,
                 $source,
                 $data,
                 $columns,
@@ -83,13 +100,14 @@ final class EloquentReportExportStore implements ReportExportStore
             );
             if ($inserted === null) {
                 $record = ReportExportRecord::query()
-                    ->where('organization_id', $context->scope->organizationId)
+                    ->where('organization_id', $currentContext->scope->organizationId)
                     ->where('idempotency_key_hash', $idempotencyKey->hash)
                     ->lockForUpdate()
                     ->first();
                 if (! $record instanceof ReportExportRecord) {
                     throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
                 }
+                $this->assertExactRecordScope($currentContext, $record);
                 if (! hash_equals((string) $record->input_fingerprint, $identity['input_fingerprint'])) {
                     throw ReportContractException::fromCode(ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT);
                 }
@@ -97,11 +115,11 @@ final class EloquentReportExportStore implements ReportExportStore
                 return $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs);
             }
 
-            $this->dispatchIntents->addExportIntent($id, $context->scope->organizationId, "reports:export:{$id}:generate:initial", $now);
+            $this->dispatchIntents->addExportIntent($id, $currentContext->scope->organizationId, "reports:export:{$id}:generate:initial", $now);
             $this->audit->append(
                 "reports:export:{$id}:queued",
                 'report.export.queued',
-                $context,
+                $currentContext,
                 [
                     'export_id' => $id,
                     'run_id' => $source->run->id,
@@ -123,7 +141,7 @@ final class EloquentReportExportStore implements ReportExportStore
                 $now,
             );
 
-            return $this->hydrator->hydrate($this->locked($context, $id), 'created', $this->pollAfterMs);
+            return $this->hydrator->hydrate($this->locked($currentContext, $id), 'created', $this->pollAfterMs);
         });
     }
 
@@ -235,18 +253,61 @@ final class EloquentReportExportStore implements ReportExportStore
         });
     }
 
-    public function cancel(ReportExecutionContext $context, string $exportId, DateTimeImmutable $occurredAt): ReportExport
-    {
-        return DB::transaction(function () use ($context, $exportId, $occurredAt): ReportExport {
+    public function cancel(
+        ReportExecutionContext $context,
+        string $exportId,
+        DateTimeImmutable $occurredAt,
+        ReportAuthorizationFence $fence,
+    ): ReportExport {
+        return DB::transaction(function () use ($context, $exportId, $occurredAt, $fence): ReportExport {
             $record = $this->locked($context, $exportId);
+            $this->assertExportFence($context, $record, $fence);
+            $currentContext = $fence->assertCurrent($context);
             $status = ReportExportStatus::from((string) $record->status);
             if (! in_array($status, [ReportExportStatus::QUEUED, ReportExportStatus::RUNNING, ReportExportStatus::UPLOADING], true)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_NOT_READY);
             }
-            $this->audit->append("reports:export:{$exportId}:cancelled", 'report.export.cancelled', $context, $this->transitionSubject($record, ReportExportStatus::CANCELLED), $occurredAt);
+            $this->audit->append("reports:export:{$exportId}:cancelled", 'report.export.cancelled', $currentContext, $this->transitionSubject($record, ReportExportStatus::CANCELLED), $occurredAt);
             $this->cas($record, $status, ['status' => ReportExportStatus::CANCELLED->value, 'cancel_requested_at' => $occurredAt, 'cancelled_at' => $occurredAt, 'execution_lease_token' => null, 'execution_lease_expires_at' => null, 'execution_heartbeat_at' => null, 'updated_at' => $occurredAt]);
 
             return $this->hydrator->hydrate($record->fresh(), 'reused', $this->pollAfterMs);
+        });
+    }
+
+    public function withReadyDownload(
+        ReportExecutionContext $context,
+        string $exportId,
+        DateTimeImmutable $occurredAt,
+        ReportAuthorizationFence $fence,
+        Closure $presign,
+    ): ReportDownloadLink {
+        return DB::transaction(function () use ($context, $exportId, $occurredAt, $fence, $presign): ReportDownloadLink {
+            $record = $this->locked($context, $exportId);
+            $this->assertExportFence($context, $record, $fence);
+            $fence->assertCurrent($context);
+            if ($this->expired($record->expires_at, $occurredAt) || $record->status === ReportExportStatus::EXPIRED->value) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_EXPIRED);
+            }
+            if ($record->status !== ReportExportStatus::READY->value) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_NOT_READY);
+            }
+
+            $parent = ReportRunRecord::query()
+                ->whereKey($record->run_id)
+                ->where('organization_id', $record->organization_id)
+                ->lockForUpdate()
+                ->first();
+            if (! $parent instanceof ReportRunRecord
+                || $this->expired($parent->expires_at, $occurredAt)
+                || $parent->status === 'expired') {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_EXPIRED);
+            }
+            if ($parent->status !== 'ready') {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
+            }
+            $this->assertParentIdentity($record);
+
+            return $presign($this->hydrator->hydrate($record, 'reused', $this->pollAfterMs));
         });
     }
 
@@ -280,6 +341,7 @@ final class EloquentReportExportStore implements ReportExportStore
         $scope = $source->query->scope;
         $snapshot = $source->snapshot;
         $seal = $snapshot->seal;
+
         return [
             'id' => $id, 'run_id' => $source->run->id, 'organization_id' => $context->scope->organizationId, 'requester_actor_id' => $context->actor->id, 'correlation_lineage_id' => $correlationLineageId, 'report_code' => $source->query->definition->code, 'status' => ReportExportStatus::QUEUED->value,
             'definition_hash' => $source->query->definition->definitionHash->value, 'query_hash' => $source->query->queryHash->value, 'source_hash' => $snapshot->sourceHash->value, 'result_hash' => $source->resultHash->value, 'export_hash' => $identity['export_hash'], 'idempotency_key_hash' => $idempotencyKey->hash, 'input_fingerprint' => $identity['input_fingerprint'],
@@ -292,24 +354,196 @@ final class EloquentReportExportStore implements ReportExportStore
         ];
     }
 
-    private function transitionSubject(ReportExportRecord $record, ReportExportStatus $status): array { return ['export_id' => (string) $record->id, 'run_id' => (string) $record->run_id, 'report_code' => (string) $record->report_code, 'status' => $status->value, 'format' => (string) $record->format]; }
-    private function assertParentIdentity(ReportExportRecord $record): void { $run = ReportRunRecord::query()->whereKey($record->run_id)->where('organization_id', $record->organization_id)->lockForUpdate()->first(); if (! $run instanceof ReportRunRecord || $run->status !== 'ready') { throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY); } foreach ($this->parentIdentityPairs($record, $run) as [$exportValue, $runValue]) { if (! $this->identityValuesMatch($exportValue, $runValue)) { throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR); } } }
-    private function parentIdentityPairs(ReportExportRecord $record, ReportRunRecord $run): array { return [
-        [$record->report_code, $run->report_code], [$record->definition_hash, $run->definition_hash], [$record->query_hash, $run->query_hash], [$record->source_hash, $run->source_hash], [$record->result_hash, $run->result_hash],
-        [$record->scope_holding_organization_ids, $run->scope_holding_organization_ids], [$record->scope_project_ids, $run->scope_project_ids], [$record->scope_resources, $run->scope_resources], [$record->scope_timezone, $run->scope_timezone],
-        [$record->snapshot_kind, $run->snapshot_kind], [$record->snapshot_id, $run->snapshot_id], [$record->snapshot_generated_at, $run->snapshot_generated_at], [$record->snapshot_stale_at, $run->snapshot_stale_at], [$record->snapshot_watermarks, $run->snapshot_watermarks], [$record->snapshot_classification, $run->snapshot_classification],
-        [$record->snapshot_seal_key_id, $run->snapshot_seal_key_id], [$record->snapshot_seal_algorithm, $run->snapshot_seal_algorithm], [$record->snapshot_sealed_payload_hash, $run->snapshot_sealed_payload_hash], [$record->snapshot_seal_signature, $run->snapshot_seal_signature], [$record->snapshot_sealed_at, $run->snapshot_sealed_at],
-        [$record->data_classification, $run->data_classification], [$record->sensitive_column_ids, $run->sensitive_column_ids], [$record->audit_column_ids, $run->audit_column_ids], [$record->totals_sensitive, $run->totals_sensitive], [$record->totals_audit, $run->totals_audit], [$record->provenance_audit, $run->provenance_audit],
-        [$record->contract_version, $run->contract_version], [$record->formula_version, $run->formula_version], [$record->source_schema_version, $run->source_schema_version], [$record->renderer_version, $run->renderer_version],
-    ]; }
-    private function identityValuesMatch(mixed $left, mixed $right): bool { if (is_string($left) && is_string($right)) { return hash_equals($left, $right); } if ($left instanceof DateTimeInterface && $right instanceof DateTimeInterface) { return $left->format('U.u') === $right->format('U.u'); } return $left === $right; }
-    private function find(ReportExecutionContext $context, string $id): ReportExportRecord { $record = ReportExportRecord::query()->where('organization_id', $context->scope->organizationId)->whereKey($id)->first(); if (! $record instanceof ReportExportRecord) { throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND); } return $record; }
-    private function locked(ReportExecutionContext $context, string $id): ReportExportRecord { $record = ReportExportRecord::query()->where('organization_id', $context->scope->organizationId)->whereKey($id)->lockForUpdate()->first(); if (! $record instanceof ReportExportRecord) { throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND); } return $record; }
-    private function cas(ReportExportRecord $record, ReportExportStatus $expected, array $values): void { foreach ($values as $key => $value) { if ($value instanceof DateTimeImmutable) { $values[$key] = $this->timestamp($value); } } if (ReportExportRecord::query()->whereKey($record->id)->where('organization_id', $record->organization_id)->where('status', $expected->value)->update($values) !== 1) { throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_NOT_READY); } }
-    private function assertLeaseInput(string $token, DateTimeImmutable $expiresAt, DateTimeImmutable $occurredAt): void { if (! Str::isUuid($token) || $expiresAt != $occurredAt->modify('+960 seconds')) { throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID); } }
-    private function hasLiveLease(ReportExportRecord $record, string $token, DateTimeImmutable $occurredAt): bool { $expiresAt = $record->execution_lease_expires_at; $heartbeatAt = $record->execution_heartbeat_at; return is_string($record->execution_lease_token) && hash_equals($record->execution_lease_token, $token) && $expiresAt instanceof DateTimeInterface && $heartbeatAt instanceof DateTimeInterface && DateTimeImmutable::createFromInterface($expiresAt) > $occurredAt && DateTimeImmutable::createFromInterface($expiresAt) == DateTimeImmutable::createFromInterface($heartbeatAt)->modify('+960 seconds'); }
-    private function timestamp(DateTimeImmutable $value): string { return $value->format('Y-m-d H:i:s.uP'); }
-    private function utc(DateTimeImmutable $value): string { return $value->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\\TH:i:s.u\\Z'); }
+    private function transitionSubject(ReportExportRecord $record, ReportExportStatus $status): array
+    {
+        return ['export_id' => (string) $record->id, 'run_id' => (string) $record->run_id, 'report_code' => (string) $record->report_code, 'status' => $status->value, 'format' => (string) $record->format];
+    }
+
+    private function assertParentIdentity(ReportExportRecord $record): void
+    {
+        $run = ReportRunRecord::query()->whereKey($record->run_id)->where('organization_id', $record->organization_id)->lockForUpdate()->first();
+        if (! $run instanceof ReportRunRecord || $run->status !== 'ready') {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
+        }
+        foreach ($this->parentIdentityPairs($record, $run) as [$exportValue, $runValue]) {
+            if (! $this->identityValuesMatch($exportValue, $runValue)) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+            }
+        }
+    }
+
+    private function parentIdentityPairs(ReportExportRecord $record, ReportRunRecord $run): array
+    {
+        return [
+            [$record->report_code, $run->report_code], [$record->definition_hash, $run->definition_hash], [$record->query_hash, $run->query_hash], [$record->source_hash, $run->source_hash], [$record->result_hash, $run->result_hash],
+            [$record->scope_holding_organization_ids, $run->scope_holding_organization_ids], [$record->scope_project_ids, $run->scope_project_ids], [$record->scope_resources, $run->scope_resources], [$record->scope_timezone, $run->scope_timezone],
+            [$record->snapshot_kind, $run->snapshot_kind], [$record->snapshot_id, $run->snapshot_id], [$record->snapshot_generated_at, $run->snapshot_generated_at], [$record->snapshot_stale_at, $run->snapshot_stale_at], [$record->snapshot_watermarks, $run->snapshot_watermarks], [$record->snapshot_classification, $run->snapshot_classification],
+            [$record->snapshot_seal_key_id, $run->snapshot_seal_key_id], [$record->snapshot_seal_algorithm, $run->snapshot_seal_algorithm], [$record->snapshot_sealed_payload_hash, $run->snapshot_sealed_payload_hash], [$record->snapshot_seal_signature, $run->snapshot_seal_signature], [$record->snapshot_sealed_at, $run->snapshot_sealed_at],
+            [$record->data_classification, $run->data_classification], [$record->sensitive_column_ids, $run->sensitive_column_ids], [$record->audit_column_ids, $run->audit_column_ids], [$record->totals_sensitive, $run->totals_sensitive], [$record->totals_audit, $run->totals_audit], [$record->provenance_audit, $run->provenance_audit],
+            [$record->contract_version, $run->contract_version], [$record->formula_version, $run->formula_version], [$record->source_schema_version, $run->source_schema_version], [$record->renderer_version, $run->renderer_version],
+        ];
+    }
+
+    private function identityValuesMatch(mixed $left, mixed $right): bool
+    {
+        if (is_string($left) && is_string($right)) {
+            return hash_equals($left, $right);
+        }
+        if ($left instanceof DateTimeInterface && $right instanceof DateTimeInterface) {
+            return $left->format('U.u') === $right->format('U.u');
+        }
+
+        return $left === $right;
+    }
+
+    private function assertRunFence(
+        ReportExecutionContext $context,
+        ReportRunExportSource $source,
+        ReportRunRecord $record,
+        ReportAuthorizationFence $fence,
+    ): void {
+        $subject = $fence->subject;
+        $snapshot = $subject->snapshot;
+        $this->assertExactRecordScope($context, $record);
+        if ($subject->aggregateKind !== ReportDispatchAggregate::RUN
+            || ! hash_equals($record->id, $subject->aggregateId)
+            || ! hash_equals($record->id, $source->run->id)
+            || $snapshot === null
+            || ! hash_equals((string) $record->definition_hash, $subject->definition->definitionHash->value)
+            || ! hash_equals((string) $record->definition_hash, $source->query->definition->definitionHash->value)
+            || ! hash_equals((string) $record->query_hash, $source->query->queryHash->value)
+            || ! hash_equals((string) $record->source_hash, $source->snapshot->sourceHash->value)
+            || ! hash_equals((string) $record->result_hash, $source->resultHash->value)
+            || ! hash_equals((string) $record->snapshot_id, $snapshot->id)
+            || ! hash_equals((string) $record->snapshot_id, $source->snapshot->id)
+            || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)
+            || ! hash_equals((string) $record->formula_version, $snapshot->formulaVersion)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+        }
+    }
+
+    private function assertExportFence(
+        ReportExecutionContext $context,
+        ReportExportRecord $record,
+        ReportAuthorizationFence $fence,
+    ): void {
+        $subject = $fence->subject;
+        $snapshot = $subject->snapshot;
+        $status = ReportExportStatus::tryFrom((string) $record->status);
+        $artifactRetained = in_array(
+            $status,
+            [ReportExportStatus::READY, ReportExportStatus::EXPIRED],
+            true,
+        );
+        $artifactMatches = $artifactRetained
+            ? $subject->artifactIdentityHash !== null
+                && hash_equals((string) $record->artifact_checksum, $subject->artifactIdentityHash->value)
+            : $subject->artifactIdentityHash === null;
+        $this->assertExactRecordScope($context, $record);
+        if ($subject->aggregateKind !== ReportDispatchAggregate::EXPORT
+            || ! hash_equals((string) $record->id, $subject->aggregateId)
+            || $snapshot === null
+            || $subject->parentRunId === null
+            || ! hash_equals((string) $record->run_id, $subject->parentRunId)
+            || ! hash_equals((string) $record->definition_hash, $subject->definition->definitionHash->value)
+            || ! hash_equals((string) $record->snapshot_id, $snapshot->id)
+            || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)
+            || ! hash_equals((string) $record->formula_version, $snapshot->formulaVersion)
+            || ! $artifactMatches) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+        }
+    }
+
+    private function assertExactRecordScope(
+        ReportExecutionContext $context,
+        ReportExportRecord|ReportRunRecord $record,
+    ): void {
+        $stored = [
+            'organization_id' => (int) $record->organization_id,
+            'holding_organization_ids' => array_map('intval', (array) $record->scope_holding_organization_ids),
+            'project_ids' => array_map('intval', (array) $record->scope_project_ids),
+            'resources' => (array) $record->scope_resources,
+            'timezone' => (string) $record->scope_timezone,
+        ];
+        if ($context->scope->canonicalIdentity() !== $stored) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+        }
+    }
+
+    private function find(ReportExecutionContext $context, string $id): ReportExportRecord
+    {
+        $record = ReportExportRecord::query()
+            ->where('organization_id', $context->scope->organizationId)
+            ->whereKey($id)
+            ->first();
+        if (! $record instanceof ReportExportRecord) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+        }
+        $this->assertExactRecordScope($context, $record);
+
+        return $record;
+    }
+
+    private function locked(ReportExecutionContext $context, string $id): ReportExportRecord
+    {
+        $record = ReportExportRecord::query()
+            ->where('organization_id', $context->scope->organizationId)
+            ->whereKey($id)
+            ->lockForUpdate()
+            ->first();
+        if (! $record instanceof ReportExportRecord) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
+        }
+        $this->assertExactRecordScope($context, $record);
+
+        return $record;
+    }
+
+    private function cas(ReportExportRecord $record, ReportExportStatus $expected, array $values): void
+    {
+        foreach ($values as $key => $value) {
+            if ($value instanceof DateTimeImmutable) {
+                $values[$key] = $this->timestamp($value);
+            }
+        }
+        if (ReportExportRecord::query()->whereKey($record->id)->where('organization_id', $record->organization_id)->where('status', $expected->value)->update($values) !== 1) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_NOT_READY);
+        }
+    }
+
+    private function assertLeaseInput(string $token, DateTimeImmutable $expiresAt, DateTimeImmutable $occurredAt): void
+    {
+        if (! Str::isUuid($token) || $expiresAt != $occurredAt->modify('+960 seconds')) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
+        }
+    }
+
+    private function hasLiveLease(ReportExportRecord $record, string $token, DateTimeImmutable $occurredAt): bool
+    {
+        $expiresAt = $record->execution_lease_expires_at;
+        $heartbeatAt = $record->execution_heartbeat_at;
+
+        return is_string($record->execution_lease_token) && hash_equals($record->execution_lease_token, $token) && $expiresAt instanceof DateTimeInterface && $heartbeatAt instanceof DateTimeInterface && DateTimeImmutable::createFromInterface($expiresAt) > $occurredAt && DateTimeImmutable::createFromInterface($expiresAt) == DateTimeImmutable::createFromInterface($heartbeatAt)->modify('+960 seconds');
+    }
+
+    private function timestamp(DateTimeImmutable $value): string
+    {
+        return $value->format('Y-m-d H:i:s.uP');
+    }
+
+    private function utc(DateTimeImmutable $value): string
+    {
+        return $value->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\\TH:i:s.u\\Z');
+    }
+
+    private function expired(mixed $value, DateTimeImmutable $occurredAt): bool
+    {
+        if (! $value instanceof DateTimeInterface) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        }
+
+        return DateTimeImmutable::createFromInterface($value) <= $occurredAt;
+    }
 
     private function isRetryable(ReportErrorCode $errorCode): bool
     {

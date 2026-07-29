@@ -22,7 +22,7 @@ use ReflectionMethod;
 
 final class EloquentReportExportStoreTest extends TestCase
 {
-    public function test_export_store_contract_has_the_closed_seven_method_surface(): void
+    public function test_export_store_contract_includes_fenced_download_boundary(): void
     {
         $methods = array_map(static fn ($method): string => $method->getName(), (new ReflectionClass(ReportExportStore::class))->getMethods());
         sort($methods);
@@ -35,6 +35,7 @@ final class EloquentReportExportStoreTest extends TestCase
             'sealReady',
             'startRendering',
             'startUploading',
+            'withReadyDownload',
         ], $methods);
     }
 
@@ -94,7 +95,7 @@ final class EloquentReportExportStoreTest extends TestCase
         $source = file_get_contents(__DIR__.'/../../../../app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportExportStore.php');
 
         self::assertIsString($source);
-        self::assertStringContainsString("->whereKey(\$source->run->id)", $source);
+        self::assertStringContainsString('->whereKey($source->run->id)', $source);
         self::assertStringContainsString("'correlation_lineage_id' => \$correlationLineageId", $source);
     }
 
@@ -109,23 +110,37 @@ final class EloquentReportExportStoreTest extends TestCase
     private function store(): EloquentReportExportStore
     {
         return new EloquentReportExportStore(
-            new class implements ReportExecutionClock {
+            new class implements ReportExecutionClock
+            {
                 public function now(): DateTimeImmutable
                 {
                     return new DateTimeImmutable('2026-07-28T10:00:00Z');
                 }
             },
-            new class implements ReportTransitionAudit {
+            new class implements ReportTransitionAudit
+            {
                 public function append(string $eventId, string $eventType, ReportExecutionContext $context, array $subject, DateTimeImmutable $occurredAt): void {}
             },
             new ReportExportHydrator,
-            new class implements ReportDispatchIntentStore {
+            new class implements ReportDispatchIntentStore
+            {
                 public function addRunIntent(string $runId, int $organizationId, string $eventKey, DateTimeImmutable $occurredAt): void {}
+
                 public function addExportIntent(string $exportId, int $organizationId, string $eventKey, DateTimeImmutable $occurredAt): void {}
-                public function claimDue(int $limit, DateTimeImmutable $now, DateTimeImmutable $leasedUntil, string $leaseToken): array { return []; }
+
+                public function claimDue(int $limit, DateTimeImmutable $now, DateTimeImmutable $leasedUntil, string $leaseToken): array
+                {
+                    return [];
+                }
+
                 public function markPublished(string $intentId, string $leaseToken, DateTimeImmutable $occurredAt): void {}
+
                 public function markPublicationFailed(string $intentId, string $leaseToken, ReportErrorCode $errorCode, DateTimeImmutable $occurredAt, DateTimeImmutable $nextAttemptAt): void {}
-                public function reclaimExpiredLeases(int $limit, DateTimeImmutable $occurredAt): int { return 0; }
+
+                public function reclaimExpiredLeases(int $limit, DateTimeImmutable $occurredAt): int
+                {
+                    return 0;
+                }
             },
             3600,
             1000,
