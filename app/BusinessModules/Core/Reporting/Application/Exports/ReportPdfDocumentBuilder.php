@@ -1,0 +1,193 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Core\Reporting\Application\Exports;
+
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
+use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
+use App\BusinessModules\Core\Reporting\Application\Rows\ReportRowChunk;
+use DateTimeZone;
+use Throwable;
+
+final readonly class ReportPdfDocumentBuilder
+{
+    public function __construct(private ReportExportLimits $limits)
+    {
+    }
+
+    /** @param iterable<ReportRowChunk> $chunks */
+    public function build(
+        ReportRunExportSource $source,
+        CreateReportExportData $data,
+        iterable $chunks,
+        ReportPdfRenderBudget $budget,
+        ReportArtifactStream $stream,
+    ): ReportPdfDocument {
+        $this->assertColumns($source, $data);
+        $headers = $this->headers($source, $data);
+        $rows = [];
+        $rowCount = 0;
+        $startedAt = hrtime(true);
+
+        foreach ($chunks as $chunk) {
+            $this->assertChunk($source, $chunk, $stream, $startedAt);
+            $projectedRows = $rowCount + count($chunk->rows);
+            if ($projectedRows > $budget->maxDetailRows || $projectedRows > $this->limits->maxRows) {
+                throw $this->limit();
+            }
+
+            foreach ($chunk->rows as $row) {
+                $cells = [];
+                foreach ($data->columns as $columnId) {
+                    if (!array_key_exists($columnId, $row->values)) {
+                        throw $this->limit();
+                    }
+
+                    $cells[] = self::normalizeCell($row->values[$columnId], $data->timezone);
+                }
+                $rows[] = $cells;
+            }
+            $rowCount = $projectedRows;
+            unset($chunk);
+        }
+
+        if ($rowCount !== $source->result->metadata->rowCount) {
+            throw $this->limit();
+        }
+
+        $totals = [];
+        foreach ($data->columns as $columnId) {
+            if (array_key_exists($columnId, $source->result->totals)) {
+                $totals[$columnId] = self::normalizeCell($source->result->totals[$columnId], $data->timezone);
+            }
+        }
+
+        try {
+            return new ReportPdfDocument($headers, $rows, $totals, $this->metadata($source, $data));
+        } catch (Throwable $exception) {
+            throw $this->limit($exception);
+        }
+    }
+
+    public static function normalizeCell(mixed $value, DateTimeZone $timezone): string
+    {
+        if ($value === null) {
+            return '';
+        }
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+        if (is_int($value) || is_string($value)) {
+            return (string) $value;
+        }
+        if (is_float($value) && is_finite($value)) {
+            return json_encode($value, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
+        }
+        throw ReportContractException::fromCode(ReportErrorCode::REPORT_EXPORT_LIMIT_EXCEEDED);
+    }
+
+    private function assertColumns(ReportRunExportSource $source, CreateReportExportData $data): void
+    {
+        if (count($data->columns) > $this->limits->maxColumns) {
+            throw $this->limit();
+        }
+
+        $schemaIds = array_fill_keys(array_column($source->result->rowSchema, 'id'), true);
+        foreach ($data->columns as $columnId) {
+            if (!isset($schemaIds[$columnId])) {
+                throw $this->limit();
+            }
+        }
+    }
+
+    private function assertChunk(
+        ReportRunExportSource $source,
+        mixed $chunk,
+        ReportArtifactStream $stream,
+        int $startedAt,
+    ): void {
+        if ($stream->cancellationRequested()
+            || !$chunk instanceof ReportRowChunk
+            || count($chunk->rows) > $this->limits->maxChunkRows
+            || !hash_equals($source->snapshot->id, $chunk->snapshotId)
+            || !hash_equals($source->run->queryHash->value, $chunk->queryHash->value)
+            || !hash_equals($source->snapshot->sourceHash->value, $chunk->sourceHash->value)
+            || (hrtime(true) - $startedAt) > $this->limits->maxElapsedSeconds * 1_000_000_000) {
+            throw $this->limit();
+        }
+    }
+
+    private function headers(ReportRunExportSource $source, CreateReportExportData $data): array
+    {
+        $schema = [];
+        foreach ($source->result->rowSchema as $column) {
+            $schema[$column['id']] = $column;
+        }
+
+        return array_map(
+            static function (string $columnId) use ($schema, $data): array {
+                $column = $schema[$columnId];
+                $localizedLabels = $column['labels'] ?? null;
+                $label = is_array($localizedLabels) && isset($localizedLabels[$data->locale])
+                    ? $localizedLabels[$data->locale]
+                    : ($column['label'] ?? $columnId);
+
+                return ['id' => $columnId, 'label' => is_string($label) && trim($label) !== '' ? $label : $columnId];
+            },
+            $data->columns,
+        );
+    }
+
+    private function metadata(ReportRunExportSource $source, CreateReportExportData $data): array
+    {
+        $seal = $source->snapshot->seal;
+
+        return [
+            'report_code' => $source->run->reportCode,
+            'run_id' => $source->run->id,
+            'definition_hash' => $source->run->definitionHash->value,
+            'query_hash' => $source->run->queryHash->value,
+            'source_hash' => $source->snapshot->sourceHash->value,
+            'result_hash' => $source->resultHash->value,
+            'snapshot' => [
+                'kind' => $source->snapshot->kind,
+                'id' => $source->snapshot->id,
+                'classification' => $source->snapshot->classification->value,
+                'seal' => $seal === null ? null : [
+                    'key_id' => $seal->keyId,
+                    'algorithm' => $seal->algorithm,
+                    'sealed_payload_hash' => $seal->sealedPayloadHash->value,
+                    'signature' => $seal->signature,
+                    'sealed_at' => $seal->sealedAt->format('Y-m-d\TH:i:s.uP'),
+                ],
+            ],
+            'data_classification' => $source->dataClassification->value,
+            'output_classification' => [
+                'default' => $source->outputClassification->defaultClassification->value,
+                'sensitive_columns' => $source->outputClassification->sensitiveColumnIds,
+                'audit_columns' => $source->outputClassification->auditColumnIds,
+                'totals_sensitive' => $source->outputClassification->totalsSensitive,
+                'totals_audit' => $source->outputClassification->totalsAudit,
+                'provenance_audit' => $source->outputClassification->provenanceAudit,
+            ],
+            'columns' => $data->columns,
+            'locale' => $data->locale,
+            'timezone' => $data->timezone->getName(),
+            'contract_version' => $source->contractVersion,
+            'formula_version' => $source->formulaVersion,
+            'source_schema_version' => $source->sourceSchemaVersion,
+            'renderer_version' => $source->rendererVersion,
+        ];
+    }
+
+    private function limit(?Throwable $previous = null): ReportContractException
+    {
+        return ReportContractException::fromCode(
+            ReportErrorCode::REPORT_EXPORT_LIMIT_EXCEEDED,
+            previous: $previous,
+        );
+    }
+}
