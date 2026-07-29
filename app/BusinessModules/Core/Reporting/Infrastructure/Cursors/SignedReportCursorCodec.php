@@ -8,6 +8,8 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExe
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursorKeyset;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -163,6 +165,10 @@ final readonly class SignedReportCursorCodec
                 $queryHash,
                 $snapshot->sourceHash,
                 $sort,
+                new ReportCursorKeyset(
+                    $payload['last_sort_value'],
+                    $payload['last_stable_row_key'],
+                ),
                 $expiresAt,
             );
         } catch (Throwable $exception) {
@@ -218,7 +224,6 @@ final readonly class SignedReportCursorCodec
         return $this->sign($payload, 'token');
     }
 
-    /** @return array{row_key:string,column_id:string} */
     public function decodeDrillDownCell(
         string $token,
         int $organizationId,
@@ -226,7 +231,7 @@ final readonly class SignedReportCursorCodec
         string $runId,
         ReportSnapshotRef $snapshot,
         Sha256Hash $queryHash,
-    ): array {
+    ): ReportDrillDownCell {
         try {
             $payload = $this->verifiedPayload($token, self::DRILL_DOWN_PAYLOAD_FIELDS);
             $this->assertLifetime($payload);
@@ -247,10 +252,10 @@ final readonly class SignedReportCursorCodec
                 throw new InvalidArgumentException('report_drill_down_cell_identity_mismatch');
             }
 
-            return [
-                'row_key' => $payload['row_key'],
-                'column_id' => $payload['column_id'],
-            ];
+            return new ReportDrillDownCell(
+                $payload['row_key'],
+                $payload['column_id'],
+            );
         } catch (Throwable $exception) {
             if ($exception instanceof ReportContractException) {
                 throw $exception;
