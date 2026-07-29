@@ -118,6 +118,14 @@ final class AppendReportAuditEventJobTest extends TestCase
             '2026-07-30T10:01:00.000000Z',
             $store->failures[0]['next_attempt_at']->format('Y-m-d\TH:i:s.u\Z'),
         );
+
+        $container = new Container;
+        $container->instance(ReportAuditIntentStore::class, $store);
+        Container::setInstance($container);
+        $job->failed($exception);
+
+        self::assertCount(1, $store->failures);
+        self::assertSame(2, $store->loadCalls);
     }
 
     public function test_constructor_rejects_every_non_ulid_identifier(): void
@@ -188,6 +196,8 @@ final class JobAuditIntentStore implements ReportAuditIntentStore
 
     public array $failures = [];
 
+    private bool $leaseProcessed = false;
+
     public function __construct(
         private readonly ?ReportAuditIntentLease $lease,
         private readonly ?ReportAuditIntent $intent = null,
@@ -210,6 +220,9 @@ final class JobAuditIntentStore implements ReportAuditIntentStore
     public function loadLeased(string $intentId, string $leaseToken): ReportAuditIntent
     {
         $this->loadCalls++;
+        if ($this->leaseProcessed) {
+            throw new \LogicException('report_audit_lease_not_found');
+        }
 
         return $this->intent ?? throw new \LogicException('missing intent');
     }
@@ -228,6 +241,7 @@ final class JobAuditIntentStore implements ReportAuditIntentStore
             'occurred_at' => $occurredAt,
             'next_attempt_at' => $nextAttemptAt,
         ];
+        $this->leaseProcessed = true;
     }
 
     public function reclaimExpired(int $limit, DateTimeImmutable $occurredAt): int

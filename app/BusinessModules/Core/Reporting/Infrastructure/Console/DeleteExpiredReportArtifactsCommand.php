@@ -8,11 +8,13 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExe
 use App\BusinessModules\Core\Reporting\Application\Retention\DeleteExpiredReportArtifactsService;
 use Illuminate\Console\Command;
 
+use function trans_message;
+
 final class DeleteExpiredReportArtifactsCommand extends Command
 {
     protected $signature = 'reports:retention:delete-artifacts';
 
-    protected $description = 'Удаляет версии файлов отчётов после окончания периода хранения';
+    protected $description;
 
     public function __construct(
         private readonly DeleteExpiredReportArtifactsService $service,
@@ -20,6 +22,7 @@ final class DeleteExpiredReportArtifactsCommand extends Command
         private readonly int $batchSize = 100,
     ) {
         parent::__construct();
+        $this->description = trans_message('reports.commands.delete_expired_artifacts');
     }
 
     public function handle(): int

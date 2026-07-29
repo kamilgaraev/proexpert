@@ -83,7 +83,7 @@ final class DeleteExpiredReportArtifactsServiceTest extends TestCase
         );
     }
 
-    public function test_deletion_contract_fences_grace_tenant_state_exact_version_and_idempotency_before_io(): void
+    public function test_deletion_contract_uses_durable_lease_and_finalizes_after_external_io(): void
     {
         $source = (string) file_get_contents(
             (new \ReflectionClass(DeleteExpiredReportArtifactsService::class))->getFileName(),
@@ -92,37 +92,36 @@ final class DeleteExpiredReportArtifactsServiceTest extends TestCase
         foreach ([
             "->where('status', ReportExportStatus::EXPIRED->value)",
             "->where('expired_at', '<=', \$this->timestamp(\$cutoff))",
+            "->whereNull('artifact_deleted_at')",
             "->where('organization_id', \$organizationId)",
             '->lockForUpdate()',
-            '$record->artifact_path !== $expectedPath',
-            '$record->artifact_version_id !== $expectedVersionId',
+            "'artifact_deletion_lease_token' => \$leaseToken",
+            "'artifact_deletion_lease_expires_at' => \$this->timestamp(\$leaseExpiresAt)",
             "ReportAuditIntentRecord::query()->where('event_key', \$eventKey)->exists()",
-            '$this->files->deleteVersion($path, $versionId);',
-            "'version_id' => \$versionId",
+            "\$this->files->deleteVersion(\$claim['path'], \$claim['version_id']);",
+            "'version_id' => \$claim['version_id']",
+            "'artifact_deleted_at' => \$this->timestamp(\$occurredAt)",
         ] as $requiredFence) {
             self::assertStringContainsString($requiredFence, $source);
         }
 
-        $lock = strpos($source, '->lockForUpdate()');
-        $identity = strpos($source, '$this->assertDeletable($record, $cutoff);');
-        $deduplication = strpos($source, "ReportAuditIntentRecord::query()->where('event_key', \$eventKey)->exists()");
-        $delete = strpos($source, '$this->files->deleteVersion($path, $versionId);');
-        $audit = strpos($source, '$this->audit->append(');
-
-        self::assertIsInt($lock);
-        self::assertIsInt($identity);
-        self::assertIsInt($deduplication);
+        $claim = strpos($source, '$claim = $this->claimArtifact(');
+        $delete = strpos($source, "\$this->files->deleteVersion(\$claim['path'], \$claim['version_id']);");
+        $finalize = strpos($source, 'return $this->finalizeDeletion(');
+        self::assertIsInt($claim);
         self::assertIsInt($delete);
-        self::assertIsInt($audit);
-        self::assertLessThan($identity, $lock);
-        self::assertLessThan($deduplication, $identity);
-        self::assertLessThan($delete, $deduplication);
-        self::assertLessThan($audit, $delete);
+        self::assertIsInt($finalize);
+        self::assertLessThan($delete, $claim);
+        self::assertLessThan($finalize, $delete);
+        self::assertStringNotContainsString(
+            "DB::transaction(function () use (\n            \$exportId,\n            \$organizationId,\n            \$expectedPath",
+            $source,
+        );
         self::assertStringNotContainsString("'artifact_path' => null", $source);
         self::assertStringNotContainsString("'artifact_version_id' => null", $source);
     }
 
-    public function test_storage_failure_remains_retryable_and_is_counted_without_false_deletion(): void
+    public function test_storage_and_finalize_failures_release_the_claim_without_false_deletion(): void
     {
         $source = (string) file_get_contents(
             (new \ReflectionClass(DeleteExpiredReportArtifactsService::class))->getFileName(),
@@ -131,7 +130,27 @@ final class DeleteExpiredReportArtifactsServiceTest extends TestCase
         self::assertStringContainsString('catch (Throwable $throwable)', $source);
         self::assertStringContainsString("\$summary['failed']++;", $source);
         self::assertStringContainsString("\$summary[\$deleted ? 'deleted' : 'skipped']++;", $source);
-        self::assertStringNotContainsString('->update([', $source);
+        self::assertSame(2, substr_count($source, '$this->releaseClaim('));
+        self::assertStringContainsString("'artifact_deleted_at' => \$this->timestamp(\$occurredAt)", $source);
+    }
+
+    public function test_completed_rows_are_excluded_from_later_batches_to_prevent_starvation(): void
+    {
+        $source = (string) file_get_contents(
+            (new \ReflectionClass(DeleteExpiredReportArtifactsService::class))->getFileName(),
+        );
+
+        $eligibility = strpos($source, "->whereNull('artifact_deleted_at')");
+        $limit = strpos($source, '->limit($limit)');
+        self::assertIsInt($eligibility);
+        self::assertIsInt($limit);
+        self::assertLessThan($limit, $eligibility);
+        self::assertStringContainsString(
+            'CREATE INDEX report_exports_artifact_deletion_due_idx',
+            (string) file_get_contents(
+                dirname(__DIR__, 4).'/database/migrations/2026_07_26_000005_create_report_exports_table.php',
+            ),
+        );
     }
 }
 

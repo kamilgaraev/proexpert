@@ -16,6 +16,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use LogicException;
 use Throwable;
 
 final class AppendReportAuditEventJob implements ShouldQueue
@@ -90,6 +91,8 @@ final class AppendReportAuditEventJob implements ShouldQueue
             $store = app(ReportAuditIntentStore::class);
             $intent = $store->loadLeased($this->intentId, $leaseToken);
             $this->recordFailure($store, $intent, $leaseToken);
+        } catch (LogicException) {
+            return;
         } catch (Throwable $failure) {
             $this->logFailureRecordingError($failure);
         }

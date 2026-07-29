@@ -8,11 +8,13 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExe
 use App\BusinessModules\Core\Reporting\Application\Retention\ExpireReportsService;
 use Illuminate\Console\Command;
 
+use function trans_message;
+
 final class ExpireReportsCommand extends Command
 {
     protected $signature = 'reports:retention:expire';
 
-    protected $description = 'Завершает срок хранения готовых отчётов и экспортов';
+    protected $description;
 
     public function __construct(
         private readonly ExpireReportsService $service,
@@ -20,6 +22,7 @@ final class ExpireReportsCommand extends Command
         private readonly int $batchSize = 100,
     ) {
         parent::__construct();
+        $this->description = trans_message('reports.commands.expire');
     }
 
     public function handle(): int
