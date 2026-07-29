@@ -98,6 +98,7 @@
             "reason": "manifest_projection_mismatch"
         },
         "task_4i": {
+            "commit_sha": "19d69642a16e4bace5572ad51ef3c625a6912990",
             "subject": "fix[reports]: \u0432\u044b\u0440\u043e\u0432\u043d\u044f\u0442\u044c \u0444\u0430\u0437\u043e\u0432\u044b\u0435 \u043c\u0430\u043d\u0438\u0444\u0435\u0441\u0442\u044b",
             "parent_commit_sha": "f541756b404a8b882577f0482ab9f68b82e0a09b",
             "tracked_paths": [
@@ -114,9 +115,26 @@
                 "tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php",
                 "tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php"
             ],
+            "state": "historical_red",
+            "reason": "ledger_assertion_count_omission"
+        },
+        "task_4j": {
+            "subject": "fix[reports]: \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u044c \u0441\u0447\u0435\u0442\u0447\u0438\u043a\u0438 contract evidence",
+            "parent_commit_sha": "19d69642a16e4bace5572ad51ef3c625a6912990",
+            "tracked_paths": [
+                "docs/reports/contracts/plan-1a-completion.schema.json",
+                "docs/reports/contracts/plan-1a-contract-lock.json",
+                "docs/reports/contracts/plan-1a-contract-lock.sha256",
+                "docs/reports/contracts/plan-1a-gate-evidence.schema.json",
+                "scripts/reporting/build-plan-1a-evidence.php",
+                "tests/Architecture/Reporting/PlanOneAHandoffContractTest.php",
+                "tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php",
+                "tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json",
+                "tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json"
+            ],
             "ledger_command_counts": {
                 "tests": 504,
-                "assertions": 5064
+                "assertions": 5074
             }
         },
         "task_5": {
@@ -155,7 +173,7 @@
             ]
         },
         "phases": {
-            "POST_TASK_4I_PRE_TASK_5": {
+            "POST_TASK_4J_PRE_TASK_5": {
                 "task_5_state": "pending",
                 "dispatch_allowlist": [
                     "app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php",

@@ -97,16 +97,16 @@ final class PlanOneAHandoffContractTest extends TestCase
         $phase = \PlanOneAExecutionPhaseAuthority::trackedContract();
         self::assertCount(13, $phase['task_4f']['tracked_paths']);
         self::assertSame(
-            ['tracked_paths' => 12, 'ledger_command_counts' => ['tests' => 504, 'assertions' => 5064]],
+            ['tracked_paths' => 9, 'ledger_command_counts' => ['tests' => 504, 'assertions' => 5074]],
             [
-                'tracked_paths' => count($phase['task_4i']['tracked_paths']),
-                'ledger_command_counts' => $phase['task_4i']['ledger_command_counts'],
+                'tracked_paths' => count($phase['task_4j']['tracked_paths']),
+                'ledger_command_counts' => $phase['task_4j']['ledger_command_counts'],
             ],
         );
         self::assertSame(108, $phase['ownership']['product_union']);
         self::assertSame(0, $phase['ownership']['product_overlap']);
         self::assertSame(
-            ['POST_TASK_4I_PRE_TASK_5', 'POST_TASK_5'],
+            ['POST_TASK_4J_PRE_TASK_5', 'POST_TASK_5'],
             array_keys($phase['phases']),
         );
         self::assertSame($phase, $this->lock()['execution_phases']);
