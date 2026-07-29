@@ -18,6 +18,7 @@ final readonly class WarehouseInventoryEventRecorder
         WarehouseMovement $movement,
         string $eventType,
         ?string $transferPairKey,
+        ?array $backfillBasis = null,
     ): WarehouseInventoryEvent {
         if (! in_array($eventType, WarehouseInventoryEvent::EVENT_TYPES, true)) {
             throw new DomainException('Unsupported warehouse inventory event type.');
@@ -29,7 +30,7 @@ final readonly class WarehouseInventoryEventRecorder
             throw new DomainException('Warehouse transfer event requires an exact pair key.');
         }
 
-        $metadata = is_array($movement->metadata) ? $movement->metadata : [];
+        $metadata = $backfillBasis ?? (is_array($movement->metadata) ? $movement->metadata : []);
         $sourceVersion = $this->requiredPositiveInt($metadata, 'reporting_source_version');
         $unitDimension = $this->requiredString($metadata, 'unit_dimension');
         $unitCode = $this->requiredString($metadata, 'unit_code');
@@ -59,6 +60,7 @@ final readonly class WarehouseInventoryEventRecorder
             'currency' => $currency,
             'currency_source' => $currencySource,
             'occurred_at' => $occurredAt,
+            'opening_basis' => $this->openingBasis($metadata),
             'source_refs' => array_values(array_filter([
                 ['type' => 'warehouse_movement', 'id' => (int) $movement->id],
                 $movement->project_material_delivery_id === null ? null : [
@@ -137,14 +139,38 @@ final readonly class WarehouseInventoryEventRecorder
         if ($movement->price === null) {
             return [null, null, null];
         }
-        $currency = $this->requiredString($metadata, 'currency');
-        $currencySource = $this->requiredString($metadata, 'currency_source');
+        $currency = $metadata['currency'] ?? null;
+        $currencySource = $metadata['currency_source'] ?? null;
+        if (! is_string($currency)
+            || trim($currency) === ''
+            || ! is_string($currencySource)
+            || trim($currencySource) === '') {
+            return [null, null, null];
+        }
         $minor = BigDecimal::of((string) $movement->price)->multipliedBy(100);
         if ($minor->isNegative()) {
             throw new DomainException('Warehouse inventory unit price cannot be negative.');
         }
 
-        return [$minor->toScale(0, RoundingMode::Unnecessary)->toInt(), $currency, $currencySource];
+        return [
+            $minor->toScale(0, RoundingMode::Unnecessary)->toInt(),
+            trim($currency),
+            trim($currencySource),
+        ];
+    }
+
+    private function openingBasis(array $metadata): ?string
+    {
+        $basis = $metadata['reporting_opening_basis'] ?? null;
+        if ($basis === null) {
+            return null;
+        }
+        if (! is_string($basis)
+            || ! in_array($basis, ['verified_zero', 'opening_inventory', 'prior_verified_closing'], true)) {
+            throw new DomainException('Warehouse inventory opening basis is invalid.');
+        }
+
+        return $basis;
     }
 
     private function requiredString(array $metadata, string $key): string

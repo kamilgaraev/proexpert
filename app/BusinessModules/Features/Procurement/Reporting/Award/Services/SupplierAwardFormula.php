@@ -56,11 +56,13 @@ final readonly class SupplierAwardFormula
         $count = count($amounts);
         $middle = intdiv($count, 2);
         $median = $count % 2 === 1
-            ? $amounts[$middle]
-            : intdiv($amounts[$middle - 1] + $amounts[$middle], 2);
+            ? BigDecimal::of($amounts[$middle])
+            : BigDecimal::of($amounts[$middle - 1])
+                ->plus($amounts[$middle])
+                ->dividedBy(2, 1, RoundingMode::Unnecessary);
         $cheapest = $amounts[0];
         $premium = $selected->amountMinor - $cheapest;
-        $medianVariance = $selected->amountMinor - $median;
+        $medianVariance = BigDecimal::of($selected->amountMinor)->minus($median);
 
         $ids = array_map(
             static fn (ComparableProposalVersion $proposal): int => $proposal->proposalVersionId,
@@ -73,11 +75,11 @@ final readonly class SupplierAwardFormula
             respondedCount: count(array_unique(array_column($proposals, 'supplierId'))),
             selectedAmountMinor: $selected->amountMinor,
             cheapestAmountMinor: $cheapest,
-            medianAmountMinor: $median,
+            medianAmountMinor: (string) $median,
             premiumMinor: $premium,
             premiumRatio: self::ratio($premium, $cheapest),
-            medianVarianceMinor: $medianVariance,
-            medianVarianceRatio: self::ratio($medianVariance, $median),
+            medianVarianceMinor: (string) $medianVariance,
+            medianVarianceRatio: self::decimalRatio($medianVariance, $median),
             participationRatio: self::ratio(count(array_unique(array_column($proposals, 'supplierId'))), count(array_unique($invitedSupplierIds))),
             comparableSetHash: hash('sha256', implode(',', $ids)),
         );
@@ -94,5 +96,14 @@ final readonly class SupplierAwardFormula
             8,
             RoundingMode::HalfUp,
         );
+    }
+
+    private static function decimalRatio(BigDecimal $numerator, BigDecimal $denominator): string
+    {
+        if ($denominator->isZero()) {
+            throw new DomainException('Ratio denominator cannot be zero.');
+        }
+
+        return (string) $numerator->dividedBy($denominator, 8, RoundingMode::HalfUp);
     }
 }

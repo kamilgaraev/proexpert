@@ -43,6 +43,8 @@ final readonly class SupplyReliabilityDrillDownProvider implements ReportDrillDo
                 'reversed_event_id',
                 'reason_code',
             ],
+            sourceResourceKind: 'purchase_order_item',
+            sourceResourceIdColumn: 'purchase_order_item_id',
         );
     }
 }

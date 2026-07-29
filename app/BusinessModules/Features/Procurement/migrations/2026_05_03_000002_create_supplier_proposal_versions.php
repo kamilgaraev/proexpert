@@ -29,45 +29,8 @@ return new class extends Migration
             $table->index(['organization_id', 'supplier_proposal_id']);
         });
 
-        DB::table('supplier_proposals')
-            ->orderBy('id')
-            ->chunkById(500, function ($proposals): void {
-                $now = now();
-
-                foreach ($proposals as $proposal) {
-                    DB::table('supplier_proposal_versions')->insert([
-                        'organization_id' => $proposal->organization_id,
-                        'supplier_proposal_id' => $proposal->id,
-                        'version_number' => 1,
-                        'commercial_snapshot' => json_encode([
-                            'proposal_number' => $proposal->proposal_number,
-                            'proposal_date' => $proposal->proposal_date,
-                            'subtotal_amount' => (float) ($proposal->subtotal_amount ?? 0),
-                            'delivery_amount' => (float) ($proposal->delivery_amount ?? 0),
-                            'vat_amount' => (float) ($proposal->vat_amount ?? 0),
-                            'total_amount' => (float) ($proposal->total_amount ?? 0),
-                            'currency' => $proposal->currency ?? 'RUB',
-                            'vat_mode' => 'included',
-                            'vat_rate' => null,
-                            'valid_until' => $proposal->valid_until,
-                            'delivery_due_date' => null,
-                            'lead_time_days' => null,
-                            'payment_terms' => $proposal->payment_terms ?? null,
-                            'delivery_terms' => $proposal->delivery_terms ?? null,
-                            'warranty_terms' => null,
-                            'lines' => $this->proposalLines((int) $proposal->id),
-                        ], JSON_THROW_ON_ERROR),
-                        'attachment_snapshot' => json_encode([
-                            'intake_attachment_ids' => [],
-                        ], JSON_THROW_ON_ERROR),
-                        'created_by' => null,
-                        'created_at' => $proposal->created_at ?? $now,
-                    ]);
-                }
-            });
-
         Schema::table('supplier_proposal_decisions', function (Blueprint $table): void {
-            if (!Schema::hasColumn('supplier_proposal_decisions', 'winning_supplier_proposal_version_id')) {
+            if (! Schema::hasColumn('supplier_proposal_decisions', 'winning_supplier_proposal_version_id')) {
                 $table->foreignId('winning_supplier_proposal_version_id')
                     ->nullable()
                     ->after('winning_supplier_proposal_id')
@@ -75,7 +38,7 @@ return new class extends Migration
                     ->nullOnDelete();
             }
 
-            if (!Schema::hasColumn('supplier_proposal_decisions', 'cheapest_supplier_proposal_version_id')) {
+            if (! Schema::hasColumn('supplier_proposal_decisions', 'cheapest_supplier_proposal_version_id')) {
                 $table->foreignId('cheapest_supplier_proposal_version_id')
                     ->nullable()
                     ->after('cheapest_supplier_proposal_id')
@@ -85,7 +48,7 @@ return new class extends Migration
         });
 
         Schema::table('purchase_orders', function (Blueprint $table): void {
-            if (!Schema::hasColumn('purchase_orders', 'accepted_supplier_proposal_version_id')) {
+            if (! Schema::hasColumn('purchase_orders', 'accepted_supplier_proposal_version_id')) {
                 $table->foreignId('accepted_supplier_proposal_version_id')
                     ->nullable()
                     ->after('accepted_supplier_proposal_id')
@@ -112,26 +75,5 @@ return new class extends Migration
         });
 
         Schema::dropIfExists('supplier_proposal_versions');
-    }
-
-    private function proposalLines(int $proposalId): array
-    {
-        return DB::table('supplier_proposal_lines')
-            ->where('supplier_proposal_id', $proposalId)
-            ->orderBy('id')
-            ->get()
-            ->map(static fn ($line): array => [
-                'id' => $line->id,
-                'supplier_request_line_id' => $line->supplier_request_line_id,
-                'material_id' => $line->material_id,
-                'name' => $line->name,
-                'quantity' => (float) $line->quantity,
-                'unit' => $line->unit,
-                'unit_price' => (float) $line->unit_price,
-                'total_amount' => (float) $line->total_amount,
-                'comment' => $line->comment,
-            ])
-            ->values()
-            ->all();
     }
 };

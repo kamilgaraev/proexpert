@@ -16,5 +16,9 @@ final readonly class SupplyLineFact
         public string $unitCode,
         public string $conversionVersion,
         public array $events,
+        public ?DateTimeImmutable $asOf = null,
+        public ?int $orderedValueMinor = null,
+        public ?string $currency = null,
+        public ?string $valueBasis = null,
     ) {}
 }

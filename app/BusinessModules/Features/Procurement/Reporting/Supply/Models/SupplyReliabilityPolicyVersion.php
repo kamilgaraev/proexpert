@@ -25,6 +25,7 @@ final class SupplyReliabilityPolicyVersion extends Model
             (int) $this->getAttribute('on_time_cutoff_seconds'),
             (bool) $this->getAttribute('exclude_cancellation_before_send'),
             (array) $this->getAttribute('post_send_exclusion_reason_codes'),
+            (int) $this->getAttribute('maturity_seconds'),
         );
     }
 
@@ -37,6 +38,7 @@ final class SupplyReliabilityPolicyVersion extends Model
             'exclude_cancellation_before_send' => 'boolean',
             'post_send_exclusion_reason_codes' => 'array',
             'freshness_ttl_seconds' => 'integer',
+            'maturity_seconds' => 'integer',
             'effective_from' => 'immutable_datetime',
             'effective_to' => 'immutable_datetime',
             'created_at' => 'immutable_datetime',

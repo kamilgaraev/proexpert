@@ -9,6 +9,7 @@ use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\Reporting\ProcurementReportingLifecycleRecorder;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Models\User;
@@ -37,7 +38,8 @@ class PurchaseRequestService
 
     public function __construct(
         private readonly PurchaseRequestNumberGenerator $numberGenerator,
-        private readonly ProjectMaterialDeliveryService $deliveryService
+        private readonly ProjectMaterialDeliveryService $deliveryService,
+        private readonly ProcurementReportingLifecycleRecorder $reportingLifecycle,
     ) {}
 
     public function find(int $id, int $organizationId): ?PurchaseRequest
@@ -143,6 +145,7 @@ class PurchaseRequestService
             }
 
             $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest, $quantityOverride, $metadata);
+            $this->reportingLifecycle->requestCreated($purchaseRequest, $actorId);
 
             $this->dispatchCreatedAfterCommit($purchaseRequest);
             DB::commit();
@@ -210,6 +213,7 @@ class PurchaseRequestService
             if ($siteRequest) {
                 $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest);
             }
+            $this->reportingLifecycle->requestCreated($purchaseRequest, $actorId);
 
             $this->dispatchCreatedAfterCommit($purchaseRequest);
             DB::commit();
@@ -233,6 +237,7 @@ class PurchaseRequestService
             $request->update([
                 'status' => PurchaseRequestStatusEnum::APPROVED,
             ]);
+            $this->reportingLifecycle->requestApproved($request, $userId);
 
             DB::commit();
 
@@ -260,6 +265,7 @@ class PurchaseRequestService
                 'status' => PurchaseRequestStatusEnum::REJECTED,
                 'notes' => ($request->notes ? $request->notes."\n\n" : '')."Отклонена: {$reason}",
             ]);
+            $this->reportingLifecycle->requestCancelled($request, $userId);
 
             DB::commit();
 

@@ -10,14 +10,20 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Readiness\SupplierAwardReadinessProbe;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Services\SupplierAwardSnapshotMaterializer;
 
 final readonly class SupplierAwardCompetitivenessReportProvider implements ReportDataProvider
 {
-    public function __construct(private SupplierAwardSnapshotMaterializer $materializer) {}
+    public function __construct(
+        private SupplierAwardSnapshotMaterializer $materializer,
+        private SupplierAwardReadinessProbe $readiness,
+    ) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query, ReportProgress $progress): ReportSnapshotRef
     {
+        $this->readiness->assertReady($context, $query);
+
         return $this->materializer->materialize($context, $query, $progress);
     }
 

@@ -47,6 +47,10 @@ final readonly class InventoryRiskSnapshotMaterializer
         ['id' => 'available_quantity'],
         ['id' => 'consumption_quantity'],
         ['id' => 'turnover'],
+        ['id' => 'cost_turnover'],
+        ['id' => 'days_on_hand'],
+        ['id' => 'stockout_at'],
+        ['id' => 'consumption_value_minor'],
         ['id' => 'on_hand_value_minor'],
         ['id' => 'currency'],
         ['id' => 'recommended_order_quantity'],
@@ -202,6 +206,10 @@ final readonly class InventoryRiskSnapshotMaterializer
                     'available_quantity' => $metric->availableQuantity,
                     'consumption_quantity' => $metric->consumptionQuantity,
                     'turnover' => $metric->turnover,
+                    'cost_turnover' => $metric->costTurnover,
+                    'days_on_hand' => $metric->daysOnHand,
+                    'stockout_at' => $metric->stockoutAt,
+                    'consumption_value_minor' => $metric->consumptionValueMinor,
                     'on_hand_value_minor' => $metric->onHandValueMinor,
                     'currency' => $metric->currency,
                     'recommended_order_quantity' => $metric->recommendedOrderQuantity,
@@ -297,6 +305,10 @@ final readonly class InventoryRiskSnapshotMaterializer
                     (string) $event->unit_code,
                     (string) $event->conversion_version,
                     $event->transfer_pair_key,
+                    $event->unit_price_minor,
+                    $event->currency,
+                    $event->currency_source,
+                    $event->occurred_at->toDateTimeImmutable(),
                 );
             })
             ->values()
@@ -352,6 +364,7 @@ final readonly class InventoryRiskSnapshotMaterializer
             (string) $demand->unit_dimension,
             (string) $demand->unit_code,
             (string) $demand->conversion_version,
+            $demand->approved_at->toDateTimeImmutable(),
         );
     }
 

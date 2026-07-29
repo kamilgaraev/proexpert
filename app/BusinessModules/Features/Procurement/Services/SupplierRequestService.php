@@ -11,6 +11,7 @@ use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierParty;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Reporting\ProcurementReportingLifecycleRecorder;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -23,9 +24,9 @@ class SupplierRequestService
         private readonly SupplierPartyService $supplierPartyService,
         private readonly ProcurementAuditService $auditService,
         private readonly SupplierRequestVersionService $versionService,
-        private readonly ProcurementLifecycleService $lifecycleService
-    ) {
-    }
+        private readonly ProcurementLifecycleService $lifecycleService,
+        private readonly ProcurementReportingLifecycleRecorder $reportingLifecycle,
+    ) {}
 
     public function create(int $organizationId, array $data, ?int $actorId = null): SupplierRequest
     {
@@ -50,7 +51,7 @@ class SupplierRequestService
             if ($supplierId !== null) {
                 $supplierParty = $this->supplierPartyService->resolveRegisteredParty($organizationId, (int) $supplierId);
             } else {
-                if (!$externalSupplierContact instanceof ExternalSupplierContact) {
+                if (! $externalSupplierContact instanceof ExternalSupplierContact) {
                     throw ValidationException::withMessages([
                         'supplier' => trans_message('procurement.supplier_requests.single_supplier_source_required'),
                     ]);
@@ -143,7 +144,7 @@ class SupplierRequestService
     {
         $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
 
-        if (!$supplierRequest->canBeSent()) {
+        if (! $supplierRequest->canBeSent()) {
             throw ValidationException::withMessages([
                 'status' => trans_message('procurement.supplier_requests.cannot_be_sent'),
             ]);
@@ -170,6 +171,7 @@ class SupplierRequestService
 
             $supplierRequest->loadMissing('purchaseRequest');
             $version = $this->versionService->createSentVersion($supplierRequest->refresh(), $actorId);
+            $this->reportingLifecycle->solicitationSent($supplierRequest->refresh(), $actorId);
             $snapshot = is_array($supplierRequest->supplier_snapshot) ? $supplierRequest->supplier_snapshot : [];
             $emailQueuedTo = $this->queuePublicLinkEmail($supplierRequest);
 
@@ -202,7 +204,7 @@ class SupplierRequestService
     {
         $supplierRequest = $this->lifecycleService->syncSupplierRequestExpiry($supplierRequest);
 
-        if (!$supplierRequest->canBeCancelled()) {
+        if (! $supplierRequest->canBeCancelled()) {
             throw ValidationException::withMessages([
                 'status' => trans_message('procurement.supplier_requests.cannot_be_cancelled'),
             ]);
@@ -250,7 +252,7 @@ class SupplierRequestService
 
     private function resolveExternalSupplierContact(int $organizationId, array $data): ?ExternalSupplierContact
     {
-        if (!isset($data['external_supplier'])) {
+        if (! isset($data['external_supplier'])) {
             return null;
         }
 
@@ -313,9 +315,9 @@ class SupplierRequestService
 
     private function generateRequestNumber(): string
     {
-        $prefix = 'ЗПС-' . now()->format('Ym');
+        $prefix = 'ЗПС-'.now()->format('Ym');
         $lastNumber = SupplierRequest::query()
-            ->where('request_number', 'like', $prefix . '-%')
+            ->where('request_number', 'like', $prefix.'-%')
             ->count() + 1;
 
         return sprintf('%s-%04d', $prefix, $lastNumber);

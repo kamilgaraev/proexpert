@@ -16,13 +16,15 @@ final readonly class ProcurementCyclePolicy
         public array $businessWeekdays,
         public string $businessDayStart,
         public string $businessDayEnd,
+        public int $cohortMaturitySeconds = 0,
     ) {
         if (! in_array($timezone, timezone_identifiers_list(), true)
             || preg_match('/^\d{2}:\d{2}:\d{2}$/D', $businessDayStart) !== 1
             || preg_match('/^\d{2}:\d{2}:\d{2}$/D', $businessDayEnd) !== 1
             || $businessDayEnd <= $businessDayStart
             || ! array_is_list($businessWeekdays)
-            || $businessWeekdays === []) {
+            || $businessWeekdays === []
+            || $cohortMaturitySeconds < 0) {
             throw new InvalidArgumentException('Procurement cycle business calendar is invalid.');
         }
         $weekdays = [];

@@ -15,6 +15,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Reporting\ProcurementReportingLifecycleRecorder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
@@ -30,7 +31,8 @@ class SupplierProposalService
         private readonly SupplierProposalVersionService $versionService,
         private readonly SupplierRequestVersionService $requestVersionService,
         private readonly ProcurementLifecycleService $lifecycleService,
-        private readonly SupplierPartyService $supplierPartyService
+        private readonly SupplierPartyService $supplierPartyService,
+        private readonly ProcurementReportingLifecycleRecorder $reportingLifecycle,
     ) {}
 
     public function createFromSupplierRequest(
@@ -109,6 +111,7 @@ class SupplierProposalService
                 $stage = 'create_version';
                 $proposal->load('intake');
                 $this->versionService->createInitialVersion($proposal, $actorId);
+                $this->reportingLifecycle->supplierResponded($proposal->refresh(), $actorId);
 
                 $stage = 'mark_request_responded';
                 $supplierRequest->update([

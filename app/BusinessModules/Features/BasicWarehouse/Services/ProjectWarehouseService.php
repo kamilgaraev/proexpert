@@ -10,6 +10,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\Models\Project;
 use App\Models\User;
 use DomainException;
+use Illuminate\Support\Str;
 
 use function trans_message;
 
@@ -17,8 +18,7 @@ final class ProjectWarehouseService
 {
     public function __construct(
         private readonly WarehouseService $warehouseService
-    ) {
-    }
+    ) {}
 
     public function getOrCreateProjectWarehouse(int $organizationId, int $projectId, User $actor): OrganizationWarehouse
     {
@@ -40,8 +40,8 @@ final class ProjectWarehouseService
         return OrganizationWarehouse::query()->create([
             'organization_id' => $organizationId,
             'project_id' => $projectId,
-            'name' => 'Объектовый склад: ' . $project->name,
-            'code' => 'PRJ-' . $projectId,
+            'name' => 'Объектовый склад: '.$project->name,
+            'code' => 'PRJ-'.$projectId,
             'warehouse_type' => OrganizationWarehouse::TYPE_PROJECT,
             'is_main' => false,
             'is_active' => true,
@@ -59,7 +59,7 @@ final class ProjectWarehouseService
         ?int $responsibleUserId,
         ?string $notes
     ): WarehouseMovement {
-        if (!$delivery->warehouse_id) {
+        if (! $delivery->warehouse_id) {
             throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.source_required'));
         }
 
@@ -68,6 +68,7 @@ final class ProjectWarehouseService
             (int) $delivery->project_id,
             $actor
         );
+        $transferPairKey = 'project-delivery:'.$delivery->id.':'.Str::ulid();
 
         $result = $this->warehouseService->writeOffAsset(
             (int) $delivery->organization_id,
@@ -80,6 +81,8 @@ final class ProjectWarehouseService
                 'related_user_id' => $responsibleUserId,
                 'project_material_delivery_id' => $delivery->id,
                 'operation_category' => WarehouseMovement::CATEGORY_PROJECT_DELIVERY,
+                'reporting_event_type' => 'transfer_out',
+                'transfer_pair_key' => $transferPairKey,
                 'reason' => $notes ?? trans_message('basic_warehouse.project_material_deliveries.shipped'),
             ]
         );
@@ -111,6 +114,15 @@ final class ProjectWarehouseService
             : $this->getOrCreateProjectWarehouse((int) $delivery->organization_id, (int) $delivery->project_id, $actor);
 
         $price = (float) ($delivery->outboundMovement?->price ?? $delivery->material?->default_price ?? 0);
+        $outboundMetadata = is_array($delivery->outboundMovement?->metadata)
+            ? $delivery->outboundMovement->metadata
+            : [];
+        $transferPairKey = $outboundMetadata['transfer_pair_key'] ?? null;
+        if (! is_string($transferPairKey) || trim($transferPairKey) === '') {
+            throw new DomainException(
+                trans_message('basic_warehouse.project_material_deliveries.errors.transfer_pair_required')
+            );
+        }
 
         $result = $this->warehouseService->receiveAsset(
             (int) $delivery->organization_id,
@@ -123,6 +135,8 @@ final class ProjectWarehouseService
                 'user_id' => $actor->id,
                 'project_material_delivery_id' => $delivery->id,
                 'operation_category' => WarehouseMovement::CATEGORY_PROJECT_DELIVERY,
+                'reporting_event_type' => 'transfer_in',
+                'transfer_pair_key' => $transferPairKey,
                 'reason' => $notes ?? trans_message('basic_warehouse.project_material_deliveries.received'),
             ]
         );

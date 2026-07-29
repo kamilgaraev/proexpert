@@ -40,6 +40,21 @@ final class SupplierAwardFormulaTest extends TestCase
         );
     }
 
+    public function test_even_median_preserves_exact_half_minor_unit(): void
+    {
+        $metric = (new SupplierAwardFormula)->calculate(
+            [10, 11],
+            [
+                $this->proposal(101, 10, 100),
+                $this->proposal(102, 11, 101),
+            ],
+            102,
+        );
+
+        self::assertSame('100.5', $metric->medianAmountMinor);
+        self::assertSame('0.5', $metric->medianVarianceMinor);
+    }
+
     private function proposal(
         int $id,
         int $supplierId,

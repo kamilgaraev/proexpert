@@ -13,5 +13,9 @@ final readonly class ProcurementCycleMetric
         public int $slaNumerator,
         public int $slaDenominator,
         public bool $closed,
+        public bool $mature,
+        public string $outcomeCode,
+        public \DateTimeImmutable $startedAt,
+        public ?\DateTimeImmutable $outcomeAt,
     ) {}
 }

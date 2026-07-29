@@ -8,6 +8,7 @@ use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use LogicException;
 
 class SupplierProposalVersion extends Model
 {
@@ -33,6 +34,16 @@ class SupplierProposalVersion extends Model
         'commercial_snapshot' => '{}',
         'attachment_snapshot' => '{}',
     ];
+
+    protected static function booted(): void
+    {
+        static::updating(static function (): never {
+            throw new LogicException('Supplier proposal versions are immutable.');
+        });
+        static::deleting(static function (): never {
+            throw new LogicException('Supplier proposal versions are immutable.');
+        });
+    }
 
     public function organization(): BelongsTo
     {

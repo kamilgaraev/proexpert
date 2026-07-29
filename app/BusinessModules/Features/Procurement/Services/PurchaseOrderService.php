@@ -10,10 +10,10 @@ use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDelivery
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
-use App\DTOs\Contract\ContractDossierCreationResult;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
-use App\Models\Contract;
+use App\BusinessModules\Features\Procurement\Reporting\ProcurementReportingLifecycleRecorder;
+use App\DTOs\Contract\ContractDossierCreationResult;
 use App\Models\Supplier;
 use App\Models\User;
 use Illuminate\Support\Collection;
@@ -31,7 +31,8 @@ class PurchaseOrderService
         private readonly ProcurementAuditService $auditService,
         private readonly ProcurementLifecycleService $lifecycleService,
         private readonly PurchaseOrderPaymentGateService $paymentGateService,
-        private readonly ProjectMaterialDeliveryService $deliveryService
+        private readonly ProjectMaterialDeliveryService $deliveryService,
+        private readonly ProcurementReportingLifecycleRecorder $reportingLifecycle,
     ) {}
 
     public function create(PurchaseRequest $request, int $supplierId, array $data, ?int $actorId = null): PurchaseOrder
@@ -78,6 +79,7 @@ class PurchaseOrderService
 
             $siteRequest = $request->siteRequest;
             if ($siteRequest && ($siteRequest->material_id || $siteRequest->material_name)) {
+                $requestLineId = $request->lines()->value('id');
                 $order->items()->create([
                     'material_id' => $siteRequest->material_id,
                     'material_name' => $siteRequest->material_name,
@@ -85,6 +87,7 @@ class PurchaseOrderService
                     'unit' => $siteRequest->material_unit ?? 'шт.',
                     'unit_price' => 0,
                     'total_price' => 0,
+                    'metadata' => ['purchase_request_line_id' => $requestLineId],
                 ]);
             }
 
@@ -134,6 +137,7 @@ class PurchaseOrderService
         DB::beginTransaction();
 
         try {
+            $this->reportingLifecycle->prepareOrderPromises($order);
             $pdfPath = $this->pdfService->store($order);
             $temporaryUrl = $this->pdfService->getTemporaryUrl($order, $pdfPath, 1440);
 
@@ -150,6 +154,7 @@ class PurchaseOrderService
                     'sent_by_user_id' => auth()->id(),
                 ]),
             ]);
+            $this->reportingLifecycle->orderSent($order->refresh(), auth()->id());
 
             DB::commit();
 
@@ -178,6 +183,7 @@ class PurchaseOrderService
                 'confirmed_at' => now(),
                 'total_amount' => $proposalData['total_amount'] ?? $order->total_amount,
             ]);
+            $this->reportingLifecycle->orderConfirmed($order->refresh());
 
             $this->syncDeliveryFromOrder($order, $order->purchaseRequest);
 
@@ -238,13 +244,17 @@ class PurchaseOrderService
                 $quantity = (float) $item['quantity_received'];
                 $price = (float) $item['price'];
 
-                $receipt->lines()->create([
+                $receiptLine = $receipt->lines()->create([
                     'purchase_order_item_id' => (int) $item['item_id'],
                     'quantity_received' => $quantity,
                     'price' => $price,
                     'total_amount' => round($quantity * $price, 2),
-                    'metadata' => $item['metadata'] ?? null,
+                    'metadata' => array_merge(
+                        is_array($item['metadata'] ?? null) ? $item['metadata'] : [],
+                        ['reporting_source_version' => 1],
+                    ),
                 ]);
+                $this->reportingLifecycle->receipt($receiptLine, $userId);
             }
 
             $order->update([

@@ -35,6 +35,9 @@ final readonly class ProcurementCycleSnapshotMaterializer
     private const ROW_SCHEMA = [
         ['id' => 'row_key'],
         ['id' => 'cohort_date'],
+        ['id' => 'outcome_cohort_date'],
+        ['id' => 'cohort_mature'],
+        ['id' => 'outcome_code'],
         ['id' => 'purchase_request_id'],
         ['id' => 'purchase_request_line_id'],
         ['id' => 'stage'],
@@ -155,6 +158,11 @@ final readonly class ProcurementCycleSnapshotMaterializer
                     'stage_started_at' => $last->occurred_at,
                     'closed_at' => $metric->closed ? $last->occurred_at : null,
                     'cohort_date' => $first->occurred_at->setTimezone($context->scope->timezone)->format('Y-m-d'),
+                    'outcome_cohort_date' => $metric->outcomeAt?->setTimezone(
+                        $context->scope->timezone,
+                    )->format('Y-m-d'),
+                    'cohort_mature' => $metric->mature,
+                    'outcome_code' => $metric->outcomeCode,
                     'stage_timestamps' => $timestamps,
                     'stage_duration_seconds' => $metric->stageDurationSeconds,
                     'total_duration_seconds' => $metric->totalDurationSeconds,
@@ -165,6 +173,35 @@ final readonly class ProcurementCycleSnapshotMaterializer
             }
 
             $generatedAt = new DateTimeImmutable;
+            $startCohorts = [];
+            $outcomeCohorts = [];
+            foreach ($rows as $row) {
+                $startDate = (string) $row['cohort_date'];
+                $startCohorts[$startDate] ??= [
+                    'started_count' => 0,
+                    'open_count' => 0,
+                    'fully_received_count' => 0,
+                    'cancelled_count' => 0,
+                ];
+                $startCohorts[$startDate]['started_count']++;
+                $startCohorts[$startDate][$row['outcome_code'].'_count']++;
+                if ($row['outcome_cohort_date'] !== null) {
+                    $outcomeDate = (string) $row['outcome_cohort_date'];
+                    $outcomeCohorts[$outcomeDate] ??= [
+                        'outcome_count' => 0,
+                        'mature_count' => 0,
+                        'fully_received_count' => 0,
+                        'cancelled_count' => 0,
+                    ];
+                    $outcomeCohorts[$outcomeDate]['outcome_count']++;
+                    $outcomeCohorts[$outcomeDate][$row['outcome_code'].'_count']++;
+                    if ($row['cohort_mature']) {
+                        $outcomeCohorts[$outcomeDate]['mature_count']++;
+                    }
+                }
+            }
+            ksort($startCohorts, SORT_STRING);
+            ksort($outcomeCohorts, SORT_STRING);
             $totals = [
                 'row_count' => count($rows),
                 'sla_numerator' => $slaNumerator,
@@ -176,6 +213,8 @@ final readonly class ProcurementCycleSnapshotMaterializer
                         8,
                         RoundingMode::HalfUp,
                     ),
+                'start_cohorts' => $startCohorts,
+                'outcome_cohorts' => $outcomeCohorts,
             ];
             $snapshot = ProcurementCycleSnapshot::query()->create([
                 'id' => (string) Str::ulid(),

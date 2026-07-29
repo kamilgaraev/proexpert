@@ -10,6 +10,7 @@ use App\BusinessModules\Features\Procurement\Reporting\Cycle\DTO\ProcurementProc
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Exceptions\NonMonotonicProcurementTimeline;
 use App\BusinessModules\Features\Procurement\Reporting\Cycle\Services\ProcurementCycleFormula;
 use DateTimeImmutable;
+use DomainException;
 use PHPUnit\Framework\TestCase;
 
 final class ProcurementCycleFormulaTest extends TestCase
@@ -64,6 +65,43 @@ final class ProcurementCycleFormulaTest extends TestCase
         self::assertSame(14_400, $metric->stageDurationSeconds['request_approved']);
         self::assertSame(21_600, $metric->totalDurationSeconds);
         self::assertFalse($metric->closed);
+    }
+
+    public function test_process_requires_start_and_rejects_events_after_terminal_outcome(): void
+    {
+        $this->expectException(DomainException::class);
+
+        (new ProcurementCycleFormula)->calculate(
+            ProcurementProcessTimeline::fromEvents([
+                $this->event('request_created', '2026-07-13T09:00:00+03:00'),
+                $this->event('cancelled', '2026-07-13T10:00:00+03:00'),
+                $this->event('order_sent', '2026-07-13T11:00:00+03:00'),
+            ]),
+            $this->policy('2026-07-13T15:00:00+03:00'),
+        );
+    }
+
+    public function test_outcome_cohort_is_mature_only_after_policy_window(): void
+    {
+        $metric = (new ProcurementCycleFormula)->calculate(
+            ProcurementProcessTimeline::fromEvents([
+                $this->event('request_created', '2026-07-13T09:00:00+03:00'),
+                $this->event('fully_received', '2026-07-13T10:00:00+03:00'),
+            ]),
+            new ProcurementCyclePolicy(
+                new DateTimeImmutable('2026-07-13T10:59:59+03:00'),
+                [],
+                'Europe/Moscow',
+                [1, 2, 3, 4, 5],
+                '09:00:00',
+                '18:00:00',
+                3600,
+            ),
+        );
+
+        self::assertFalse($metric->mature);
+        self::assertSame('fully_received', $metric->outcomeCode);
+        self::assertSame('2026-07-13T10:00:00+03:00', $metric->outcomeAt?->format(DATE_ATOM));
     }
 
     private function event(string $code, string $occurredAt): ProcurementProcessEvent

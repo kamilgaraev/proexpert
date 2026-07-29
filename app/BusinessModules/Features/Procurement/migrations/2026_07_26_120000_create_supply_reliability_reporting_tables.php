@@ -22,6 +22,8 @@ return new class extends Migration
             $table->unsignedBigInteger('warehouse_id')->nullable();
             $table->unsignedBigInteger('material_id')->nullable();
             $table->decimal('ordered_quantity', 24, 6);
+            $table->unsignedBigInteger('ordered_value_minor')->nullable();
+            $table->string('value_basis', 128)->nullable();
             $table->string('unit_dimension', 32);
             $table->string('unit_code', 32);
             $table->string('conversion_version', 64);
@@ -91,6 +93,7 @@ return new class extends Migration
             $table->decimal('quantity_tolerance', 24, 6);
             $table->boolean('exclude_cancellation_before_send');
             $table->jsonb('post_send_exclusion_reason_codes');
+            $table->unsignedInteger('maturity_seconds')->default(0);
             $table->unsignedInteger('freshness_ttl_seconds')->default(86400);
             $table->timestampTz('effective_from');
             $table->timestampTz('effective_to')->nullable();
@@ -147,9 +150,17 @@ return new class extends Migration
             $table->boolean('eligible');
             $table->boolean('on_time');
             $table->boolean('in_full');
+            $table->boolean('stable_in_full');
+            $table->boolean('mature');
             $table->boolean('otif');
             $table->unsignedSmallInteger('otif_numerator');
             $table->unsignedSmallInteger('eligible_denominator');
+            $table->decimal('quantity_otif_numerator', 24, 6);
+            $table->decimal('quantity_otif_denominator', 24, 6);
+            $table->unsignedBigInteger('value_otif_numerator_minor')->nullable();
+            $table->unsignedBigInteger('value_otif_denominator_minor')->nullable();
+            $table->char('value_currency', 3)->nullable();
+            $table->string('value_basis', 128)->nullable();
             $table->jsonb('quality_warnings');
             $table->unique(['organization_id', 'snapshot_id', 'row_key'], 'supply_row_key_unique');
             $table->index(
@@ -192,11 +203,14 @@ return new class extends Migration
         DB::statement("ALTER TABLE supply_lifecycle_events ADD CONSTRAINT supply_event_type_check CHECK (event_type IN ('sent','confirmed','received','receipt_reversed','returned','cancelled'))");
         DB::statement("ALTER TABLE supply_lifecycle_events ADD CONSTRAINT supply_event_quantity_sign_check CHECK ((event_type = 'received' AND signed_quantity > 0) OR (event_type IN ('receipt_reversed','returned') AND signed_quantity < 0) OR (event_type IN ('sent','confirmed','cancelled') AND signed_quantity = 0))");
         DB::statement("ALTER TABLE supply_lifecycle_events ADD CONSTRAINT supply_event_reversal_check CHECK ((event_type = 'receipt_reversed' AND reversed_event_id IS NOT NULL) OR (event_type <> 'receipt_reversed' AND reversed_event_id IS NULL))");
-        DB::statement('ALTER TABLE supply_reliability_policy_versions ADD CONSTRAINT supply_policy_tolerance_check CHECK (quantity_tolerance >= 0 AND on_time_cutoff_seconds >= 0)');
+        DB::statement('ALTER TABLE supply_reliability_policy_versions ADD CONSTRAINT supply_policy_tolerance_check CHECK (quantity_tolerance >= 0 AND on_time_cutoff_seconds >= 0 AND maturity_seconds >= 0)');
         DB::statement("ALTER TABLE supply_reliability_snapshots ADD CONSTRAINT supply_snapshot_quality_check CHECK (quality_status IN ('complete','partial','invalid'))");
         DB::statement("ALTER TABLE supply_reliability_snapshots ADD CONSTRAINT supply_snapshot_reconciliation_check CHECK (reconciliation_status IN ('matched','mismatch','not_applicable'))");
         DB::statement('ALTER TABLE supply_reliability_snapshots ADD CONSTRAINT supply_snapshot_otif_check CHECK (otif_numerator <= eligible_count)');
         DB::statement('ALTER TABLE supply_reliability_rows ADD CONSTRAINT supply_row_otif_check CHECK (otif_numerator <= eligible_denominator AND eligible_denominator <= 1)');
+        DB::statement('ALTER TABLE supply_reliability_rows ADD CONSTRAINT supply_row_quantity_otif_check CHECK (quantity_otif_numerator >= 0 AND quantity_otif_numerator <= quantity_otif_denominator)');
+        DB::statement('ALTER TABLE supply_reliability_rows ADD CONSTRAINT supply_row_value_otif_check CHECK (value_otif_numerator_minor IS NULL OR (value_otif_denominator_minor IS NOT NULL AND value_otif_numerator_minor <= value_otif_denominator_minor))');
+        DB::statement('ALTER TABLE supply_reliability_rows ADD CONSTRAINT supply_row_value_basis_check CHECK ((value_otif_numerator_minor IS NULL AND value_currency IS NULL AND value_basis IS NULL) OR (value_otif_numerator_minor IS NOT NULL AND value_currency IS NOT NULL AND value_basis IS NOT NULL))');
     }
 
     private function installAppendOnlyTriggers(array $tables): void

@@ -22,6 +22,20 @@ final readonly class SupplyLifecycleEventRecorder
         return $this->recordLineEvent($line, 'received', (string) $line->quantity_received, $occurredAt);
     }
 
+    public function receiptBackfill(
+        PurchaseReceiptLine $line,
+        CarbonImmutable $occurredAt,
+        int $sourceVersion,
+    ): SupplyLifecycleEvent {
+        return $this->recordLineEvent(
+            $line,
+            'received',
+            (string) $line->quantity_received,
+            $occurredAt,
+            sourceVersion: $sourceVersion,
+        );
+    }
+
     public function reversal(
         PurchaseReceiptLine $line,
         string $reasonCode,
@@ -155,6 +169,7 @@ final readonly class SupplyLifecycleEventRecorder
         CarbonImmutable $occurredAt,
         ?string $reasonCode = null,
         ?int $reversedEventId = null,
+        ?int $sourceVersion = null,
     ): SupplyLifecycleEvent {
         $item = $line->purchaseOrderItem;
         $promise = PurchaseOrderPromiseVersion::query()
@@ -166,7 +181,7 @@ final readonly class SupplyLifecycleEventRecorder
             throw new DomainException('Original purchase order promise is required before receipt.');
         }
         $metadata = is_array($line->metadata) ? $line->metadata : [];
-        $sourceVersion = $metadata['reporting_source_version'] ?? null;
+        $sourceVersion ??= $metadata['reporting_source_version'] ?? null;
         if (! is_int($sourceVersion) || $sourceVersion < 1) {
             throw new DomainException('Receipt reporting source version is required.');
         }
@@ -182,7 +197,7 @@ final readonly class SupplyLifecycleEventRecorder
             'purchase_receipt_line:'.$line->getKey().':'.$sourceVersion.':'.$eventType,
             $reasonCode,
             $reversedEventId,
-            ['purchase_receipt_id' => (int) $line->purchase_receipt_id],
+            evidence: ['purchase_receipt_id' => (int) $line->purchase_receipt_id],
         );
     }
 

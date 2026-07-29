@@ -15,9 +15,11 @@ final readonly class SupplyReliabilityPolicy
         public int $onTimeCutoffSeconds = 0,
         public bool $excludeCancellationBeforeSend = true,
         public array $postSendCancellationExclusionReasons = [],
+        public int $maturitySeconds = 0,
     ) {
         if (BigDecimal::of($quantityTolerance)->isNegative()
             || $onTimeCutoffSeconds < 0
+            || $maturitySeconds < 0
             || ! array_is_list($postSendCancellationExclusionReasons)) {
             throw new InvalidArgumentException('Supply reliability policy is invalid.');
         }

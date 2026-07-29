@@ -14,14 +14,11 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
-use App\BusinessModules\Features\Procurement\Reporting\Award\DTO\ComparableProposalVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardDecisionVersion;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardRow;
 use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardSnapshot;
 use App\Support\Reporting\OwnerSnapshotResultFactory;
 use App\Support\Reporting\OwnerSnapshotSourceHash;
-use Brick\Math\BigDecimal;
-use Brick\Math\RoundingMode;
 use DateTimeImmutable;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -51,6 +48,7 @@ final readonly class SupplierAwardSnapshotMaterializer
     public function __construct(
         private SupplierAwardFormula $formula,
         private SupplierProposalComparabilityPolicy $comparability,
+        private ComparableProposalVersionFactory $proposalFactory,
         private OwnerSnapshotSourceHash $sourceHashes,
         private OwnerSnapshotResultFactory $results,
     ) {}
@@ -146,7 +144,7 @@ final readonly class SupplierAwardSnapshotMaterializer
                         if (! $version instanceof SupplierProposalVersion) {
                             throw new DomainException('Pinned proposal version is unavailable.');
                         }
-                        $proposals[] = $this->proposal($version);
+                        $proposals[] = $this->proposalFactory->make($version);
                     }
                     $partition = $this->comparability->partition(
                         $proposals,
@@ -165,7 +163,7 @@ final readonly class SupplierAwardSnapshotMaterializer
                         || ! $selected->supplierProposal instanceof SupplierProposal) {
                         throw new DomainException('Selected proposal version is unavailable.');
                     }
-                    $selectedData = $this->proposal($selected);
+                    $selectedData = $this->proposalFactory->make($selected);
                 } catch (Throwable) {
                     $gapCount++;
 
@@ -268,43 +266,6 @@ final readonly class SupplierAwardSnapshotMaterializer
             self::ROW_SCHEMA,
             ['drill_down' => true, 'export' => true],
             ReportReconciliationStatus::NOT_APPLICABLE,
-        );
-    }
-
-    private function proposal(SupplierProposalVersion $version): ComparableProposalVersion
-    {
-        $snapshot = $version->commercial_snapshot;
-        $lines = is_array($snapshot['lines'] ?? null) ? $snapshot['lines'] : [];
-        $line = $lines[0] ?? null;
-        $proposal = $version->supplierProposal;
-        if (! is_array($line)
-            || ! $proposal instanceof SupplierProposal
-            || $proposal->supplier_party_id === null
-            || ! isset($snapshot['total_amount'], $snapshot['currency'], $snapshot['vat_mode'], $line['quantity'], $line['unit'])) {
-            throw new DomainException('Proposal version lacks an exact comparison basis.');
-        }
-        $amount = BigDecimal::of((string) $snapshot['total_amount'])
-            ->multipliedBy(100)
-            ->toScale(0, RoundingMode::Unnecessary)
-            ->toInt();
-        $specificationHash = hash('sha256', CanonicalJson::encode(array_map(
-            static fn (array $item): array => [
-                'material_id' => $item['material_id'] ?? null,
-                'name' => $item['name'] ?? null,
-            ],
-            $lines,
-        )));
-
-        return new ComparableProposalVersion(
-            (int) $version->getKey(),
-            (int) $proposal->supplier_party_id,
-            $amount,
-            (string) $snapshot['currency'],
-            $specificationHash,
-            (string) $line['quantity'],
-            (string) $line['unit'],
-            (string) $snapshot['vat_mode'].':'.(string) ($snapshot['vat_rate'] ?? ''),
-            (string) ($snapshot['delivery_terms'] ?? '').':'.(string) ($snapshot['delivery_amount'] ?? ''),
         );
     }
 

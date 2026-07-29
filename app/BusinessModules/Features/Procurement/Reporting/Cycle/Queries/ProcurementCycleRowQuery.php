@@ -85,6 +85,9 @@ final readonly class ProcurementCycleRowQuery implements ReportDrillDownProvider
                 'purchase_order_id',
                 'purchase_receipt_id',
             ],
+            sourceResourceKind: 'purchase_request_line',
+            sourceResourceIdColumn: 'purchase_request_line_id',
+            requiresAudit: true,
         );
     }
 }

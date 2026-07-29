@@ -95,6 +95,68 @@ final class SupplyReliabilityFormulaTest extends TestCase
         self::assertSame('0.50000000', $summary->otifRatio);
     }
 
+    public function test_in_full_is_not_restored_after_a_later_return_breaks_stability(): void
+    {
+        $metric = (new SupplyReliabilityFormula)->line(
+            $this->line([
+                $this->event('sent', '0', '2026-07-01T12:00:00+03:00'),
+                $this->event('received', '10', '2026-07-09T12:00:00+03:00'),
+                $this->event('returned', '-2', '2026-07-11T12:00:00+03:00'),
+                $this->event('received', '2', '2026-07-12T12:00:00+03:00'),
+            ]),
+            new SupplyReliabilityPolicy,
+        );
+
+        self::assertSame('10.000', $metric->netReceivedQuantity);
+        self::assertFalse($metric->stableInFull);
+        self::assertFalse($metric->inFull);
+    }
+
+    public function test_as_of_maturity_and_quantity_value_otif_have_independent_denominators(): void
+    {
+        $formula = new SupplyReliabilityFormula;
+        $immature = $formula->line(
+            new SupplyLineFact(
+                '10.000',
+                new DateTimeImmutable('2026-07-10T18:00:00+03:00'),
+                'count',
+                'piece',
+                'unit-v1',
+                [$this->event('sent', '0', '2026-07-01T12:00:00+03:00')],
+                new DateTimeImmutable('2026-07-10T17:59:59+03:00'),
+                1_000,
+                'RUB',
+                'gross-delivered',
+            ),
+            new SupplyReliabilityPolicy,
+        );
+        $partial = $formula->line(
+            new SupplyLineFact(
+                '10.000',
+                new DateTimeImmutable('2026-07-10T18:00:00+03:00'),
+                'count',
+                'piece',
+                'unit-v1',
+                [
+                    $this->event('sent', '0', '2026-07-01T12:00:00+03:00'),
+                    $this->event('received', '7', '2026-07-09T12:00:00+03:00'),
+                ],
+                new DateTimeImmutable('2026-07-11T00:00:00+03:00'),
+                1_000,
+                'RUB',
+                'gross-delivered',
+            ),
+            new SupplyReliabilityPolicy,
+        );
+
+        self::assertFalse($immature->mature);
+        self::assertSame(0, $immature->eligibleDenominator);
+        self::assertSame('7.000', $partial->quantityOtifNumerator);
+        self::assertSame('10.000', $partial->quantityOtifDenominator);
+        self::assertSame(700, $partial->valueOtifNumeratorMinor);
+        self::assertSame(1_000, $partial->valueOtifDenominatorMinor);
+    }
+
     private function line(array $events): SupplyLineFact
     {
         return new SupplyLineFact(

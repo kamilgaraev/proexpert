@@ -21,12 +21,16 @@ final readonly class SupplyLifecycleFact
         public string $sourceEventId,
         public ?string $reversedEventId = null,
         public ?string $reasonCode = null,
+        public ?int $valueMinor = null,
     ) {
         if (! in_array($type, self::TYPES, true)) {
             throw new InvalidArgumentException('Unsupported supply lifecycle event type.');
         }
         if ($unitDimension === '' || $unitCode === '' || $conversionVersion === '' || $sourceEventId === '') {
             throw new InvalidArgumentException('Supply lifecycle unit and source identity are required.');
+        }
+        if ($valueMinor !== null && $valueMinor < 0) {
+            throw new InvalidArgumentException('Supply lifecycle value cannot be negative.');
         }
     }
 }

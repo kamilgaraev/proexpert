@@ -16,7 +16,7 @@ class SupplierProposalVersionService
 
     public function createInitialVersion(SupplierProposal $proposal, ?int $actorId = null): SupplierProposalVersion
     {
-        $proposal->loadMissing(['lines', 'intake']);
+        $proposal->loadMissing(['lines.supplierRequestLine', 'intake']);
 
         $version = SupplierProposalVersion::query()->create([
             'organization_id' => $proposal->organization_id,
@@ -49,13 +49,13 @@ class SupplierProposalVersionService
         return [
             'proposal_number' => $proposal->proposal_number,
             'proposal_date' => $proposal->proposal_date?->format('Y-m-d'),
-            'subtotal_amount' => (float) $proposal->subtotal_amount,
-            'delivery_amount' => (float) $proposal->delivery_amount,
-            'vat_amount' => (float) $proposal->vat_amount,
-            'total_amount' => (float) $proposal->total_amount,
+            'subtotal_amount' => (string) $proposal->subtotal_amount,
+            'delivery_amount' => (string) $proposal->delivery_amount,
+            'vat_amount' => (string) $proposal->vat_amount,
+            'total_amount' => (string) $proposal->total_amount,
             'currency' => $proposal->currency,
             'vat_mode' => $proposal->vat_mode,
-            'vat_rate' => $proposal->vat_rate === null ? null : (float) $proposal->vat_rate,
+            'vat_rate' => $proposal->vat_rate === null ? null : (string) $proposal->vat_rate,
             'delivery_terms' => $proposal->delivery_terms,
             'payment_terms' => $proposal->payment_terms,
             'warranty_terms' => $proposal->warranty_terms,
@@ -67,11 +67,12 @@ class SupplierProposalVersionService
                 'supplier_request_line_id' => $line->supplier_request_line_id,
                 'material_id' => $line->material_id,
                 'name' => $line->name,
-                'quantity' => (float) $line->quantity,
+                'quantity' => (string) $line->quantity,
                 'unit' => $line->unit,
-                'unit_price' => (float) $line->unit_price,
-                'total_amount' => (float) $line->total_amount,
+                'unit_price' => (string) $line->unit_price,
+                'total_amount' => (string) $line->total_amount,
                 'comment' => $line->comment,
+                'specification' => $line->supplierRequestLine?->specification,
             ])->values()->all(),
         ];
     }

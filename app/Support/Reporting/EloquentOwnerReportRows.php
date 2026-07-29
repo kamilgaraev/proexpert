@@ -42,8 +42,7 @@ final readonly class EloquentOwnerReportRows
 
         $query = $this->rowQuery($context, $snapshot, $rowModel, $projectColumn);
         $this->applyCursor($query, $sort, $cursor, $snapshot);
-        $query->orderBy($sort->field, $sort->direction->value)
-            ->orderBy('row_key', $sort->direction->value);
+        $this->applyOrder($query, $sort);
 
         $records = $query->limit($limit + 1)->get();
         $hasMore = $records->count() > $limit;
@@ -76,22 +75,29 @@ final readonly class EloquentOwnerReportRows
     ): iterable {
         $this->snapshotRecord($context, $snapshot, $snapshotModel);
         $this->assertSort($sort, $allowedSortFields);
-        $offset = 0;
+        $lastSortValue = null;
+        $lastRowKey = null;
+        $hasPosition = false;
 
         do {
-            $records = $this->rowQuery($context, $snapshot, $rowModel, $projectColumn)
-                ->orderBy($sort->field, $sort->direction->value)
-                ->orderBy('row_key', $sort->direction->value)
-                ->offset($offset)
-                ->limit($chunkSize)
-                ->get();
+            $query = $this->rowQuery($context, $snapshot, $rowModel, $projectColumn);
+            if ($hasPosition) {
+                $this->applyPosition($query, $sort, $lastSortValue, (string) $lastRowKey);
+            }
+            $this->applyOrder($query, $sort);
+            $records = $query->limit($chunkSize)->get();
 
             foreach ($records as $record) {
                 yield $this->publicRow($record);
             }
 
             $count = $records->count();
-            $offset += $count;
+            $last = $records->last();
+            if ($last instanceof Model) {
+                $lastSortValue = $last->getAttribute($sort->field);
+                $lastRowKey = (string) $last->getAttribute('row_key');
+                $hasPosition = true;
+            }
         } while ($count === $chunkSize);
     }
 
@@ -147,16 +153,44 @@ final readonly class EloquentOwnerReportRows
         if ($cursor === null) {
             return;
         }
+        if ($cursor->sort->field !== $sort->field
+            || $cursor->sort->direction !== $sort->direction
+            || ! hash_equals($cursor->sourceHash->value, $snapshot->sourceHash->value)) {
+            throw new DomainException('Report cursor identity does not match the requested window.');
+        }
 
         $position = $this->tokens->cursor($cursor->token, $snapshot);
+        $this->applyPosition($query, $sort, $position['sort_value'], $position['row_key']);
+    }
+
+    private function applyPosition(
+        Builder $query,
+        ReportWindowSort $sort,
+        mixed $sortValue,
+        string $rowKey,
+    ): void {
         $operator = $sort->direction === ReportSortDirection::ASC ? '>' : '<';
-        $query->where(function (Builder $builder) use ($sort, $position, $operator): void {
-            $builder->where($sort->field, $operator, $position['sort_value'])
-                ->orWhere(function (Builder $tie) use ($sort, $position, $operator): void {
-                    $tie->where($sort->field, $position['sort_value'])
-                        ->where('row_key', $operator, $position['row_key']);
-                });
+        if ($sortValue === null) {
+            $query->whereNull($sort->field)
+                ->where('row_key', $operator, $rowKey);
+
+            return;
+        }
+        $query->where(function (Builder $builder) use ($sort, $sortValue, $rowKey, $operator): void {
+            $builder->where($sort->field, $operator, $sortValue)
+                ->orWhere(function (Builder $tie) use ($sort, $sortValue, $rowKey, $operator): void {
+                    $tie->where($sort->field, $sortValue)
+                        ->where('row_key', $operator, $rowKey);
+                })
+                ->orWhereNull($sort->field);
         });
+    }
+
+    private function applyOrder(Builder $query, ReportWindowSort $sort): void
+    {
+        $query->orderByRaw("CASE WHEN {$sort->field} IS NULL THEN 1 ELSE 0 END ASC")
+            ->orderBy($sort->field, $sort->direction->value)
+            ->orderBy('row_key', $sort->direction->value);
     }
 
     private function publicRow(Model $row): array

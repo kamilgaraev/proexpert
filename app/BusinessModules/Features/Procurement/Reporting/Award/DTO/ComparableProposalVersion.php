@@ -18,8 +18,16 @@ final readonly class ComparableProposalVersion
         public string $unit,
         public string $vatBasis,
         public string $freightBasis,
+        public ?string $unitDimension = null,
+        public ?string $conversionVersion = null,
     ) {
-        if ($amountMinor < 0 || $currency === '') {
+        if ($amountMinor < 0
+            || trim($currency) === ''
+            || trim($materialSpecificationHash) === ''
+            || trim($quantity) === ''
+            || trim($unit) === ''
+            || trim($vatBasis) === ''
+            || trim($freightBasis) === '') {
             throw new InvalidArgumentException('Proposal amount and currency are invalid.');
         }
     }
@@ -30,6 +38,8 @@ final readonly class ComparableProposalVersion
             $this->materialSpecificationHash,
             $this->quantity,
             $this->unit,
+            $this->unitDimension ?? 'unproven',
+            $this->conversionVersion ?? 'unproven',
             $this->vatBasis,
             $this->freightBasis,
             $this->currency,

@@ -31,6 +31,8 @@ final class ProcurementCycleRow extends Model
             'stage_started_at' => 'immutable_datetime',
             'closed_at' => 'immutable_datetime',
             'cohort_date' => 'immutable_date',
+            'outcome_cohort_date' => 'immutable_date',
+            'cohort_mature' => 'boolean',
             'stage_timestamps' => 'array',
             'stage_duration_seconds' => 'array',
             'total_duration_seconds' => 'integer',

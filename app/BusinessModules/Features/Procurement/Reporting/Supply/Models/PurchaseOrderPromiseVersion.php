@@ -33,6 +33,7 @@ final class PurchaseOrderPromiseVersion extends Model
             'effective_from' => 'immutable_datetime',
             'effective_to' => 'immutable_datetime',
             'source_version' => 'integer',
+            'ordered_value_minor' => 'integer',
             'recorded_at' => 'immutable_datetime',
         ];
     }

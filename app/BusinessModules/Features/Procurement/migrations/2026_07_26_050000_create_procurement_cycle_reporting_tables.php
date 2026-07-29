@@ -50,6 +50,7 @@ return new class extends Migration
             $table->time('business_day_end');
             $table->jsonb('stage_sla_seconds');
             $table->unsignedInteger('freshness_ttl_seconds')->default(86400);
+            $table->unsignedInteger('cohort_maturity_seconds')->default(0);
             $table->timestampTz('effective_from');
             $table->timestampTz('effective_to')->nullable();
             $table->char('source_hash', 64);
@@ -101,6 +102,9 @@ return new class extends Migration
             $table->timestampTz('stage_started_at');
             $table->timestampTz('closed_at')->nullable();
             $table->date('cohort_date');
+            $table->date('outcome_cohort_date')->nullable();
+            $table->boolean('cohort_mature');
+            $table->string('outcome_code', 32);
             $table->jsonb('stage_timestamps');
             $table->jsonb('stage_duration_seconds');
             $table->unsignedBigInteger('total_duration_seconds');

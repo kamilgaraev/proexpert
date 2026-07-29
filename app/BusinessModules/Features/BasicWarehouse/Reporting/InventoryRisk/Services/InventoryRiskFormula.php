@@ -28,6 +28,10 @@ final readonly class InventoryRiskFormula
         $this->assertSameUnit($opening, $closing);
 
         $consumption = BigDecimal::zero();
+        $consumptionValue = BigDecimal::zero();
+        $hasConsumptionCostBasis = true;
+        $consumptionCurrency = null;
+        $consumptionCostBasis = null;
         $movementDelta = BigDecimal::zero();
         foreach ($movementFacts as $movement) {
             if (
@@ -43,6 +47,26 @@ final readonly class InventoryRiskFormula
             }
             if ($movement->type === 'issue') {
                 $consumption = $consumption->plus($quantity);
+            } elseif ($movement->type === 'return') {
+                $consumption = $consumption->minus($quantity);
+            }
+            if (in_array($movement->type, ['issue', 'return'], true)) {
+                if ($movement->unitCostMinor === null
+                    || $movement->currency === null
+                    || $movement->costBasis === null) {
+                    $hasConsumptionCostBasis = false;
+                } else {
+                    if (($consumptionCurrency !== null && $consumptionCurrency !== $movement->currency)
+                        || ($consumptionCostBasis !== null && $consumptionCostBasis !== $movement->costBasis)) {
+                        throw new DomainException('Inventory consumption valuation basis must be uniform.');
+                    }
+                    $consumptionCurrency = $movement->currency;
+                    $consumptionCostBasis = $movement->costBasis;
+                    $movementValue = $quantity->multipliedBy($movement->unitCostMinor);
+                    $consumptionValue = $movement->type === 'issue'
+                        ? $consumptionValue->plus($movementValue)
+                        : $consumptionValue->minus($movementValue);
+                }
             }
             $movementDelta = match ($movement->type) {
                 'receipt', 'transfer_in', 'return' => $movementDelta->plus($quantity),
@@ -55,7 +79,11 @@ final readonly class InventoryRiskFormula
         $openingOnHand = BigDecimal::of($opening->onHandQuantity);
         $closingOnHand = BigDecimal::of($closing->onHandQuantity);
         $reserved = BigDecimal::of($closing->reservedQuantity);
-        if ($openingOnHand->isNegative() || $closingOnHand->isNegative() || $reserved->isNegative()) {
+        if ($openingOnHand->isNegative()
+            || $closingOnHand->isNegative()
+            || $reserved->isNegative()
+            || $consumption->isNegative()
+            || $consumptionValue->isNegative()) {
             throw new DomainException('Inventory balances cannot be negative.');
         }
         if (! $openingOnHand->plus($movementDelta)->isEqualTo($closingOnHand)) {
@@ -70,6 +98,7 @@ final readonly class InventoryRiskFormula
             ->dividedBy(BigDecimal::of(2), 6, RoundingMode::Unnecessary);
         $warnings = [];
         $value = null;
+        $openingValue = null;
         if ($closing->unitPriceMinor === null || $closing->currency === null || $closing->currencySource === null) {
             $warnings[] = 'missing_valuation_basis';
         } else {
@@ -79,11 +108,55 @@ final readonly class InventoryRiskFormula
             }
             $value = $valueDecimal->toInt();
         }
+        if ($opening->unitPriceMinor !== null
+            && $opening->currency !== null
+            && $opening->currencySource !== null
+            && $opening->currency === $closing->currency
+            && $opening->currencySource === $closing->currencySource) {
+            $openingValue = $openingOnHand->multipliedBy($opening->unitPriceMinor);
+        }
+        $consumptionValueMinor = null;
+        $costTurnover = null;
+        if (! $consumption->isZero() && ! $hasConsumptionCostBasis) {
+            $warnings[] = 'missing_cost_turnover_basis';
+        } elseif ($hasConsumptionCostBasis && ! $consumptionValue->isZero()) {
+            $normalizedValue = $consumptionValue->strippedOfTrailingZeros();
+            if ($normalizedValue->getScale() > 0) {
+                throw new DomainException('Inventory consumption value is not representable in minor currency units.');
+            }
+            $consumptionValueMinor = $normalizedValue->toInt();
+            if ($openingValue !== null && $value !== null && $consumptionCurrency === $closing->currency) {
+                $averageValue = $openingValue
+                    ->plus($value)
+                    ->dividedBy(2, 6, RoundingMode::Unnecessary);
+                $costTurnover = $averageValue->isZero()
+                    ? null
+                    : (string) $consumptionValue->dividedBy($averageValue, 8, RoundingMode::HalfUp);
+            } else {
+                $warnings[] = 'missing_cost_turnover_basis';
+            }
+        }
 
         $recommended = null;
-        if ($demand !== null && $policy !== null) {
+        $daysOnHand = null;
+        $stockoutAt = null;
+        if ($demand !== null) {
             $this->assertDemandUnit($closing, $demand);
-            if ($available->isLessThanOrEqualTo($policy->reorderPointQuantity)) {
+            if ($demand->horizonDays < 1 || BigDecimal::of($demand->approvedQuantity)->isNegative()) {
+                throw new DomainException('Inventory dated demand basis is invalid.');
+            }
+            $dailyDemand = BigDecimal::of($demand->approvedQuantity)
+                ->dividedBy($demand->horizonDays, 12, RoundingMode::HalfUp);
+            if (! $dailyDemand->isZero()) {
+                $daysOnHandDecimal = $available->dividedBy($dailyDemand, 8, RoundingMode::HalfUp);
+                $daysOnHand = (string) $daysOnHandDecimal;
+                if ($demand->approvedAt !== null) {
+                    $stockoutAt = $demand->approvedAt
+                        ->modify('+'.$daysOnHandDecimal->toScale(0, RoundingMode::Floor).' days')
+                        ->format(DATE_ATOM);
+                }
+            }
+            if ($policy !== null && $available->isLessThanOrEqualTo($policy->reorderPointQuantity)) {
                 $recommendedDecimal = BigDecimal::of($policy->targetQuantity)
                     ->minus($available)
                     ->plus($demand->approvedQuantity)
@@ -101,6 +174,10 @@ final readonly class InventoryRiskFormula
             turnover: $averageOnHand->isZero()
                 ? null
                 : (string) $consumption->dividedBy($averageOnHand, 8, RoundingMode::HalfUp),
+            costTurnover: $costTurnover,
+            daysOnHand: $daysOnHand,
+            stockoutAt: $stockoutAt,
+            consumptionValueMinor: $consumptionValueMinor,
             onHandValueMinor: $value,
             currency: $value === null ? null : $closing->currency,
             recommendedOrderQuantity: $recommended,

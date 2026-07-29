@@ -35,8 +35,12 @@ final class SupplyReliabilityRow extends Model
             'on_time' => 'boolean',
             'in_full' => 'boolean',
             'otif' => 'boolean',
+            'mature' => 'boolean',
+            'stable_in_full' => 'boolean',
             'otif_numerator' => 'integer',
             'eligible_denominator' => 'integer',
+            'value_otif_numerator_minor' => 'integer',
+            'value_otif_denominator_minor' => 'integer',
             'quality_warnings' => 'array',
         ];
     }

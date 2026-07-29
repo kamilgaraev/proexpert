@@ -30,6 +30,7 @@ return new class extends Migration
             $table->char('currency', 3)->nullable();
             $table->string('currency_source', 64)->nullable();
             $table->timestampTz('occurred_at');
+            $table->string('opening_basis', 32)->nullable();
             $table->char('source_hash', 64);
             $table->jsonb('source_refs');
             $table->timestampTz('recorded_at')->useCurrent();
@@ -192,6 +193,10 @@ return new class extends Migration
             $table->decimal('available_quantity', 24, 6);
             $table->decimal('consumption_quantity', 24, 6);
             $table->decimal('turnover', 20, 8)->nullable();
+            $table->decimal('cost_turnover', 20, 8)->nullable();
+            $table->decimal('days_on_hand', 20, 8)->nullable();
+            $table->timestampTz('stockout_at')->nullable();
+            $table->bigInteger('consumption_value_minor')->nullable();
             $table->bigInteger('on_hand_value_minor')->nullable();
             $table->char('currency', 3)->nullable();
             $table->decimal('recommended_order_quantity', 24, 6)->nullable();
@@ -252,6 +257,7 @@ SQL);
         DB::statement("ALTER TABLE warehouse_inventory_events ADD CONSTRAINT inventory_event_pair_key_check CHECK ((event_type IN ('transfer_in','transfer_out') AND transfer_pair_key IS NOT NULL) OR (event_type NOT IN ('transfer_in','transfer_out') AND transfer_pair_key IS NULL))");
         DB::statement('ALTER TABLE warehouse_inventory_events ADD CONSTRAINT inventory_event_valuation_check CHECK ((unit_price_minor IS NULL AND currency IS NULL AND currency_source IS NULL) OR (unit_price_minor IS NOT NULL AND currency IS NOT NULL AND currency_source IS NOT NULL))');
         DB::statement('ALTER TABLE warehouse_inventory_events ADD CONSTRAINT inventory_event_price_check CHECK (unit_price_minor IS NULL OR unit_price_minor >= 0)');
+        DB::statement("ALTER TABLE warehouse_inventory_events ADD CONSTRAINT inventory_event_opening_basis_check CHECK (opening_basis IS NULL OR opening_basis IN ('verified_zero','opening_inventory','prior_verified_closing'))");
         DB::statement('ALTER TABLE warehouse_daily_balance_rows ADD CONSTRAINT daily_balance_nonnegative_check CHECK (opening_on_hand >= 0 AND closing_on_hand >= 0 AND reserved_quantity >= 0 AND available_quantity >= 0)');
         DB::statement('ALTER TABLE warehouse_daily_balance_rows ADD CONSTRAINT daily_balance_available_check CHECK (available_quantity = closing_on_hand - reserved_quantity)');
         DB::statement('ALTER TABLE warehouse_daily_balance_rows ADD CONSTRAINT daily_balance_equation_check CHECK (closing_on_hand = opening_on_hand + receipts + inbound_transfers + returns + positive_adjustments - issues - outbound_transfers - negative_adjustments)');
@@ -260,7 +266,7 @@ SQL);
         DB::statement("ALTER TABLE inventory_risk_snapshots ADD CONSTRAINT inventory_risk_quality_check CHECK (quality_status IN ('complete','partial','invalid'))");
         DB::statement("ALTER TABLE inventory_risk_snapshots ADD CONSTRAINT inventory_risk_reconciliation_check CHECK (reconciliation_status IN ('matched','mismatch','not_applicable'))");
         DB::statement('ALTER TABLE inventory_risk_rows ADD CONSTRAINT inventory_risk_available_check CHECK (available_quantity = closing_on_hand - reserved_quantity AND available_quantity >= 0)');
-        DB::statement('ALTER TABLE inventory_risk_rows ADD CONSTRAINT inventory_risk_values_check CHECK ((turnover IS NULL OR turnover >= 0) AND (on_hand_value_minor IS NULL OR on_hand_value_minor >= 0) AND (recommended_order_quantity IS NULL OR recommended_order_quantity >= 0))');
+        DB::statement('ALTER TABLE inventory_risk_rows ADD CONSTRAINT inventory_risk_values_check CHECK ((turnover IS NULL OR turnover >= 0) AND (cost_turnover IS NULL OR cost_turnover >= 0) AND (days_on_hand IS NULL OR days_on_hand >= 0) AND (consumption_value_minor IS NULL OR consumption_value_minor >= 0) AND (on_hand_value_minor IS NULL OR on_hand_value_minor >= 0) AND (recommended_order_quantity IS NULL OR recommended_order_quantity >= 0))');
         $this->installTransferPairConstraint();
         $this->installDailyRecurrenceConstraint();
     }
@@ -283,7 +289,7 @@ BEGIN
       FROM warehouse_inventory_events
      WHERE organization_id = NEW.organization_id
        AND transfer_pair_key = NEW.transfer_pair_key;
-    IF pair_count <> 2 OR on_hand_sum <> 0 OR dimension_count <> 1 THEN
+    IF dimension_count <> 1 OR on_hand_sum > 0 THEN
         RAISE EXCEPTION 'warehouse transfer pair is incomplete' USING ERRCODE = '23514';
     END IF;
     RETURN NEW;

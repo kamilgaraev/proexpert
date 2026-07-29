@@ -9,6 +9,7 @@ use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\DTO\Inve
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\DTO\InventoryMovementFact;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\DTO\InventoryReorderPolicy;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\InventoryRiskFormula;
+use DateTimeImmutable;
 use DomainException;
 use PHPUnit\Framework\TestCase;
 
@@ -87,6 +88,51 @@ final class InventoryRiskFormulaTest extends TestCase
 
         self::assertSame('0.000', $metric->consumptionQuantity);
         self::assertSame('8.000', $metric->availableQuantity);
+    }
+
+    public function test_return_reduces_quantity_and_cost_consumption_and_dated_demand_sets_stockout(): void
+    {
+        $metric = (new InventoryRiskFormula)->row(
+            $this->balance('10.000', '0.000'),
+            $this->balance('8.000', '0.000'),
+            [
+                new InventoryMovementFact(
+                    'issue',
+                    '4.000',
+                    'count',
+                    'piece',
+                    'unit-v1',
+                    unitCostMinor: 500,
+                    currency: 'RUB',
+                    costBasis: 'fifo-v1',
+                ),
+                new InventoryMovementFact(
+                    'return',
+                    '2.000',
+                    'count',
+                    'piece',
+                    'unit-v1',
+                    unitCostMinor: 500,
+                    currency: 'RUB',
+                    costBasis: 'fifo-v1',
+                ),
+            ],
+            new InventoryDemandFact(
+                '30.000',
+                30,
+                'count',
+                'piece',
+                'unit-v1',
+                new DateTimeImmutable('2026-07-01T00:00:00+03:00'),
+            ),
+            null,
+        );
+
+        self::assertSame('2.000', $metric->consumptionQuantity);
+        self::assertSame(1_000, $metric->consumptionValueMinor);
+        self::assertSame('0.22222222', $metric->costTurnover);
+        self::assertSame('8.00000000', $metric->daysOnHand);
+        self::assertSame('2026-07-09T00:00:00+03:00', $metric->stockoutAt);
     }
 
     private function balance(

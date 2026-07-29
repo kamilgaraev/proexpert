@@ -11,7 +11,14 @@ use App\BusinessModules\Features\Procurement\Http\Resources\SupplierProposalDeci
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
+use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Models\SupplierAwardDecisionVersion;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Services\ComparableProposalVersionFactory;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Services\SupplierAwardDecisionVersionRecorder;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Services\SupplierAwardFormula;
+use App\BusinessModules\Features\Procurement\Reporting\Award\Services\SupplierProposalComparabilityPolicy;
+use App\BusinessModules\Features\Procurement\Reporting\ProcurementReportingLifecycleRecorder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -22,7 +29,12 @@ class SupplierProposalComparisonService
     public function __construct(
         private readonly ProcurementApprovalService $approvalService,
         private readonly ProcurementAuditService $auditService,
-        private readonly SupplierProposalService $proposalService
+        private readonly SupplierProposalService $proposalService,
+        private readonly ComparableProposalVersionFactory $comparableProposalFactory,
+        private readonly SupplierProposalComparabilityPolicy $comparabilityPolicy,
+        private readonly SupplierAwardFormula $awardFormula,
+        private readonly SupplierAwardDecisionVersionRecorder $awardDecisionVersions,
+        private readonly ProcurementReportingLifecycleRecorder $reportingLifecycle,
     ) {}
 
     public function comparisonForRequest(SupplierRequest $supplierRequest, bool $includeDecision = true): array
@@ -264,6 +276,7 @@ class SupplierProposalComparisonService
                 ? SupplierProposalDecisionEnum::SELECTED
                 : SupplierProposalDecisionEnum::APPROVAL_REQUIRED;
             $decision->save();
+            $this->recordReportingDecision($decision, $comparison, $lockedSupplierRequest->purchaseRequest);
 
             $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
 
@@ -391,6 +404,7 @@ class SupplierProposalComparisonService
                 ? SupplierProposalDecisionEnum::SELECTED
                 : SupplierProposalDecisionEnum::APPROVAL_REQUIRED;
             $decision->save();
+            $this->recordReportingDecision($decision, $comparison, $lockedPurchaseRequest);
 
             $snapshot = is_array($proposal->supplier_snapshot) ? $proposal->supplier_snapshot : [];
 
@@ -603,6 +617,81 @@ class SupplierProposalComparisonService
                 'comment' => $line->comment,
             ])->values()->all(),
         ];
+    }
+
+    private function recordReportingDecision(
+        SupplierProposalDecision $decision,
+        array $comparison,
+        PurchaseRequest $purchaseRequest,
+    ): void {
+        $versionIds = collect($comparison['rows'] ?? [])
+            ->pluck('current_version_id')
+            ->filter(static fn (mixed $id): bool => is_int($id) && $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+        $versions = SupplierProposalVersion::query()
+            ->with('supplierProposal')
+            ->where('organization_id', $decision->organization_id)
+            ->whereIn('id', $versionIds)
+            ->orderBy('id')
+            ->get();
+        $typed = $versions
+            ->map(fn (SupplierProposalVersion $version) => $this->comparableProposalFactory->make($version))
+            ->values()
+            ->all();
+        $selectedVersionId = (int) $decision->winning_supplier_proposal_version_id;
+        $partition = $this->comparabilityPolicy->partition($typed, $selectedVersionId);
+        $invitedSupplierIds = SupplierRequest::query()
+            ->where('organization_id', $decision->organization_id)
+            ->where('purchase_request_id', $purchaseRequest->id)
+            ->whereNotNull('supplier_party_id')
+            ->whereNotNull('sent_at')
+            ->where('sent_at', '<=', $decision->selected_at)
+            ->pluck('supplier_party_id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+        $metric = $this->awardFormula->calculate(
+            $invitedSupplierIds,
+            $partition->comparable,
+            $selectedVersionId,
+        );
+        $sorted = $partition->comparable;
+        usort(
+            $sorted,
+            static fn ($left, $right): int => [$left->amountMinor, $left->proposalVersionId]
+                <=> [$right->amountMinor, $right->proposalVersionId],
+        );
+        $cheapestVersionId = $sorted[0]->proposalVersionId;
+        $medianVersionId = $sorted[intdiv(count($sorted) - 1, 2)]->proposalVersionId;
+        $decisionVersion = ((int) SupplierAwardDecisionVersion::query()
+            ->where('organization_id', $decision->organization_id)
+            ->where('decision_id', $decision->id)
+            ->max('decision_version')) + 1;
+        $this->awardDecisionVersions->record(
+            organizationId: (int) $decision->organization_id,
+            decisionId: (int) $decision->id,
+            decisionVersion: $decisionVersion,
+            supplierRequestId: (int) $decision->supplier_request_id,
+            selectedProposalVersionId: $selectedVersionId,
+            cheapestProposalVersionId: $cheapestVersionId,
+            medianProposalVersionId: $medianVersionId,
+            invitedSupplierIds: $invitedSupplierIds,
+            comparableProposalVersionIds: array_map(
+                static fn ($proposal): int => $proposal->proposalVersionId,
+                $partition->comparable,
+            ),
+            excludedComparisons: $partition->excludedReasonByProposalVersionId,
+            comparableSetHash: $metric->comparableSetHash,
+            isLowestPriceSelected: $selectedVersionId === $cheapestVersionId,
+            decisionReason: $decision->decision_reason,
+            selectedAt: $decision->selected_at,
+            purchaseRequestId: (int) $purchaseRequest->id,
+            selectedBy: $decision->selected_by,
+        );
+        $this->reportingLifecycle->awardDecided($decision);
     }
 
     private function comparisonTotal(SupplierProposal $proposal): float

@@ -10,5 +10,12 @@ final readonly class SupplyReliabilitySummary
         public int $otifNumerator,
         public int $eligibleDenominator,
         public ?string $otifRatio,
+        public string $quantityOtifNumerator = '0.000',
+        public string $quantityOtifDenominator = '0.000',
+        public ?string $quantityOtifRatio = null,
+        public ?int $valueOtifNumeratorMinor = null,
+        public ?int $valueOtifDenominatorMinor = null,
+        public ?string $valueOtifRatio = null,
+        public array $valueOtifByBasis = [],
     ) {}
 }

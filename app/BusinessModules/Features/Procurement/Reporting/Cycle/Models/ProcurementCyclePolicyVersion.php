@@ -28,6 +28,7 @@ final class ProcurementCyclePolicyVersion extends Model
             (array) $this->getAttribute('business_weekdays'),
             (string) $this->getAttribute('business_day_start'),
             (string) $this->getAttribute('business_day_end'),
+            (int) $this->getAttribute('cohort_maturity_seconds'),
         );
     }
 
@@ -41,6 +42,7 @@ final class ProcurementCyclePolicyVersion extends Model
             'effective_from' => 'immutable_datetime',
             'effective_to' => 'immutable_datetime',
             'freshness_ttl_seconds' => 'integer',
+            'cohort_maturity_seconds' => 'integer',
             'created_at' => 'immutable_datetime',
         ];
     }

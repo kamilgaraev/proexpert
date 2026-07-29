@@ -2,15 +2,15 @@
 
 namespace App\BusinessModules\Features\Procurement\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
+use App\Models\Contract;
 use App\Models\Organization;
 use App\Models\Supplier;
-use App\Models\Contract;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
  * Модель заказа поставщику
@@ -48,8 +48,8 @@ class PurchaseOrder extends Model
         'status' => PurchaseOrderStatusEnum::class,
         'order_date' => 'date',
         'delivery_date' => 'date',
-        'sent_at' => 'date',
-        'confirmed_at' => 'date',
+        'sent_at' => 'immutable_datetime',
+        'confirmed_at' => 'immutable_datetime',
         'total_amount' => 'decimal:2',
         'supplier_snapshot' => 'array',
         'metadata' => 'array',
@@ -165,6 +165,7 @@ class PurchaseOrder extends Model
     public function scopeWithStatus($query, string|PurchaseOrderStatusEnum $status)
     {
         $value = $status instanceof PurchaseOrderStatusEnum ? $status->value : $status;
+
         return $query->where('status', $value);
     }
 

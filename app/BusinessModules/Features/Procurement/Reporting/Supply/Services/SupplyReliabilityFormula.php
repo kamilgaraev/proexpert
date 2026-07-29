@@ -27,11 +27,20 @@ final readonly class SupplyReliabilityFormula
         $reversedReceipts = [];
         $sourceEventIds = [];
         $ordered = BigDecimal::of($fact->orderedQuantity);
+        $required = $ordered->minus($policy->quantityTolerance);
+        $reachedInFull = false;
+        $stabilityBroken = false;
         if (! $ordered->isPositive()) {
             throw new DomainException('Supply ordered quantity must be positive.');
         }
+        if ($required->isNegative()) {
+            throw new DomainException('Supply quantity tolerance cannot exceed ordered quantity.');
+        }
 
         foreach ($fact->events as $event) {
+            if ($fact->asOf !== null && $event->occurredAt > $fact->asOf) {
+                throw new DomainException('Supply lifecycle event cannot be later than as_of.');
+            }
             if (
                 $event->unitDimension !== $fact->unitDimension
                 || $event->unitCode !== $fact->unitCode
@@ -95,19 +104,49 @@ final readonly class SupplyReliabilityFormula
                     throw new DomainException('Supply confirmation requires an earlier sent event.');
                 }
             }
+            if ($net->isGreaterThanOrEqualTo($required)) {
+                $reachedInFull = true;
+            } elseif ($reachedInFull && in_array($event->type, ['receipt_reversed', 'returned'], true)) {
+                $stabilityBroken = true;
+            }
         }
         if ($net->isNegative() || $onTimeReceived->isNegative()) {
             throw new DomainException('Supply returns cannot exceed recorded receipts.');
         }
 
-        $eligible = ! $cancelled || ! $cancellationExcluded;
-        $required = $ordered->minus($policy->quantityTolerance);
-        if ($required->isNegative()) {
-            throw new DomainException('Supply quantity tolerance cannot exceed ordered quantity.');
-        }
+        $evaluationAt = $fact->asOf
+            ?? (
+                $lastOccurredAt !== null && $lastOccurredAt > $fact->originalPromiseAt
+                    ? $lastOccurredAt
+                    : $fact->originalPromiseAt
+            );
+        $mature = $cancelled
+            || $evaluationAt->getTimestamp() >= $cutoff + $policy->maturitySeconds;
+        $eligible = $mature && (! $cancelled || ! $cancellationExcluded);
         $onTime = $onTimeReceived->isGreaterThanOrEqualTo($required);
-        $inFull = $net->isGreaterThanOrEqualTo($required);
+        $stableInFull = $net->isGreaterThanOrEqualTo($required) && ! $stabilityBroken;
+        $inFull = $stableInFull;
         $otif = $eligible && $onTime && $inFull;
+        $qualifyingQuantity = $eligible
+            ? BigDecimal::max(
+                BigDecimal::zero(),
+                BigDecimal::min($onTimeReceived, $net, $ordered),
+            )
+            : BigDecimal::zero();
+        $valueNumerator = null;
+        $valueDenominator = null;
+        if ($fact->orderedValueMinor !== null) {
+            if ($fact->orderedValueMinor < 0 || $fact->currency === null || $fact->valueBasis === null) {
+                throw new DomainException('Supply value OTIF basis is incomplete.');
+            }
+            $valueDenominator = $eligible ? $fact->orderedValueMinor : 0;
+            $valueNumerator = $eligible
+                ? BigDecimal::of($fact->orderedValueMinor)
+                    ->multipliedBy($qualifyingQuantity)
+                    ->dividedBy($ordered, 0, RoundingMode::Down)
+                    ->toInt()
+                : 0;
+        }
 
         return new SupplyLineMetric(
             netReceivedQuantity: (string) $net->toScale(3, RoundingMode::Unnecessary),
@@ -117,6 +156,16 @@ final readonly class SupplyReliabilityFormula
             otif: $otif,
             otifNumerator: $otif ? 1 : 0,
             eligibleDenominator: $eligible ? 1 : 0,
+            mature: $mature,
+            stableInFull: $stableInFull,
+            quantityOtifNumerator: (string) $qualifyingQuantity->toScale(3, RoundingMode::Unnecessary),
+            quantityOtifDenominator: $eligible
+                ? (string) $ordered->toScale(3, RoundingMode::Unnecessary)
+                : '0.000',
+            valueOtifNumeratorMinor: $valueNumerator,
+            valueOtifDenominatorMinor: $valueDenominator,
+            valueCurrency: $fact->orderedValueMinor === null ? null : $fact->currency,
+            valueBasis: $fact->orderedValueMinor === null ? null : $fact->valueBasis,
         );
     }
 
@@ -125,10 +174,41 @@ final readonly class SupplyReliabilityFormula
     {
         $numerator = 0;
         $denominator = 0;
+        $quantityNumerator = BigDecimal::zero();
+        $quantityDenominator = BigDecimal::zero();
+        $valueByBasis = [];
         foreach ($metrics as $metric) {
             $numerator += $metric->otifNumerator;
             $denominator += $metric->eligibleDenominator;
+            $quantityNumerator = $quantityNumerator->plus($metric->quantityOtifNumerator);
+            $quantityDenominator = $quantityDenominator->plus($metric->quantityOtifDenominator);
+            if ($metric->valueOtifNumeratorMinor !== null && $metric->valueOtifDenominatorMinor !== null) {
+                if ($metric->valueCurrency === null || $metric->valueBasis === null) {
+                    throw new DomainException('Supply value OTIF metric basis is incomplete.');
+                }
+                $key = $metric->valueCurrency.'|'.$metric->valueBasis;
+                $valueByBasis[$key] ??= [
+                    'currency' => $metric->valueCurrency,
+                    'value_basis' => $metric->valueBasis,
+                    'numerator_minor' => 0,
+                    'denominator_minor' => 0,
+                ];
+                $valueByBasis[$key]['numerator_minor'] += $metric->valueOtifNumeratorMinor;
+                $valueByBasis[$key]['denominator_minor'] += $metric->valueOtifDenominatorMinor;
+            }
         }
+        ksort($valueByBasis, SORT_STRING);
+        foreach ($valueByBasis as &$valueMetric) {
+            $valueMetric['ratio'] = $valueMetric['denominator_minor'] === 0
+                ? null
+                : (string) BigDecimal::of($valueMetric['numerator_minor'])->dividedBy(
+                    $valueMetric['denominator_minor'],
+                    8,
+                    RoundingMode::HalfUp,
+                );
+        }
+        unset($valueMetric);
+        $singleValueMetric = count($valueByBasis) === 1 ? reset($valueByBasis) : null;
 
         return new SupplyReliabilitySummary(
             otifNumerator: $numerator,
@@ -140,6 +220,23 @@ final readonly class SupplyReliabilityFormula
                     8,
                     RoundingMode::HalfUp,
                 ),
+            quantityOtifNumerator: (string) $quantityNumerator->toScale(3, RoundingMode::Unnecessary),
+            quantityOtifDenominator: (string) $quantityDenominator->toScale(3, RoundingMode::Unnecessary),
+            quantityOtifRatio: $quantityDenominator->isZero()
+                ? null
+                : (string) $quantityNumerator->dividedBy(
+                    $quantityDenominator,
+                    8,
+                    RoundingMode::HalfUp,
+                ),
+            valueOtifNumeratorMinor: is_array($singleValueMetric)
+                ? $singleValueMetric['numerator_minor']
+                : null,
+            valueOtifDenominatorMinor: is_array($singleValueMetric)
+                ? $singleValueMetric['denominator_minor']
+                : null,
+            valueOtifRatio: is_array($singleValueMetric) ? $singleValueMetric['ratio'] : null,
+            valueOtifByBasis: array_values($valueByBasis),
         );
     }
 

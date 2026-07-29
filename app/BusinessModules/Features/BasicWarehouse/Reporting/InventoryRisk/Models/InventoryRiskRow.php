@@ -26,6 +26,8 @@ final class InventoryRiskRow extends Model
             'material_id' => 'integer',
             'balance_date' => 'immutable_date',
             'on_hand_value_minor' => 'integer',
+            'consumption_value_minor' => 'integer',
+            'stockout_at' => 'immutable_datetime',
             'demand_snapshot_id' => 'integer',
             'reorder_policy_version_id' => 'integer',
             'quality_warnings' => 'array',

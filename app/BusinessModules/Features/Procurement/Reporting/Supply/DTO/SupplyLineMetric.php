@@ -14,5 +14,13 @@ final readonly class SupplyLineMetric
         public bool $otif,
         public int $otifNumerator,
         public int $eligibleDenominator,
+        public bool $mature,
+        public bool $stableInFull,
+        public string $quantityOtifNumerator = '0.000',
+        public string $quantityOtifDenominator = '0.000',
+        public ?int $valueOtifNumeratorMinor = null,
+        public ?int $valueOtifDenominatorMinor = null,
+        public ?string $valueCurrency = null,
+        public ?string $valueBasis = null,
     ) {}
 }

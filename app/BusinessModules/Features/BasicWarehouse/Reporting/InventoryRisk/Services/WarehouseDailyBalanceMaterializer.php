@@ -260,10 +260,10 @@ final readonly class WarehouseDailyBalanceMaterializer
     {
         return $events->contains(
             static fn (WarehouseInventoryEvent $event): bool => in_array(
-                $event->event_type,
-                ['receipt', 'return', 'adjustment'],
+                $event->opening_basis,
+                ['verified_zero', 'opening_inventory', 'prior_verified_closing'],
                 true,
-            ) && BigDecimal::of((string) $event->on_hand_delta)->isPositive(),
+            ),
         );
     }
 

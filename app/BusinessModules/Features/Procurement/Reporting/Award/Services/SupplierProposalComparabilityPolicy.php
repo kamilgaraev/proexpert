@@ -51,11 +51,15 @@ final readonly class SupplierProposalComparabilityPolicy
         if (! hash_equals($selected->materialSpecificationHash, $candidate->materialSpecificationHash)) {
             return 'specification_mismatch';
         }
-        if ($selected->quantity !== $candidate->quantity) {
+        if (! hash_equals($selected->quantity, $candidate->quantity)) {
             return 'quantity_mismatch';
         }
         if ($selected->unit !== $candidate->unit) {
             return 'unit_mismatch';
+        }
+        if ($selected->unitDimension !== $candidate->unitDimension
+            || $selected->conversionVersion !== $candidate->conversionVersion) {
+            return 'unit_conversion_basis_mismatch';
         }
         if ($selected->vatBasis !== $candidate->vatBasis) {
             return 'vat_basis_mismatch';

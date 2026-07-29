@@ -10,14 +10,20 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Features\Procurement\Reporting\Supply\Readiness\SupplyReliabilityReadinessProbe;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Services\SupplyReliabilitySnapshotMaterializer;
 
 final readonly class SupplyReliabilityReportProvider implements ReportDataProvider
 {
-    public function __construct(private SupplyReliabilitySnapshotMaterializer $materializer) {}
+    public function __construct(
+        private SupplyReliabilitySnapshotMaterializer $materializer,
+        private SupplyReliabilityReadinessProbe $readiness,
+    ) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query, ReportProgress $progress): ReportSnapshotRef
     {
+        $this->readiness->assertReady($context, $query);
+
         return $this->materializer->materialize($context, $query, $progress);
     }
 

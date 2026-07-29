@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\DTO;
 
+use DateTimeImmutable;
+
 final readonly class InventoryDemandFact
 {
     public function __construct(
@@ -12,5 +14,6 @@ final readonly class InventoryDemandFact
         public string $unitDimension,
         public string $unitCode,
         public string $conversionVersion,
+        public ?DateTimeImmutable $approvedAt = null,
     ) {}
 }

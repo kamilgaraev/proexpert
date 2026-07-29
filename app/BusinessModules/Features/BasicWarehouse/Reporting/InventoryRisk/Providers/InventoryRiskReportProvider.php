@@ -10,14 +10,20 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Readiness\InventoryRiskReadinessProbe;
 use App\BusinessModules\Features\BasicWarehouse\Reporting\InventoryRisk\Services\InventoryRiskSnapshotMaterializer;
 
 final readonly class InventoryRiskReportProvider implements ReportDataProvider
 {
-    public function __construct(private InventoryRiskSnapshotMaterializer $materializer) {}
+    public function __construct(
+        private InventoryRiskSnapshotMaterializer $materializer,
+        private InventoryRiskReadinessProbe $readiness,
+    ) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query, ReportProgress $progress): ReportSnapshotRef
     {
+        $this->readiness->assertReady($context, $query);
+
         return $this->materializer->materialize($context, $query, $progress);
     }
 

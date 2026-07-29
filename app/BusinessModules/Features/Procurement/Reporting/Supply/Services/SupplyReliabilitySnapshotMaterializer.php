@@ -45,7 +45,15 @@ final readonly class SupplyReliabilitySnapshotMaterializer
         ['id' => 'eligible'],
         ['id' => 'on_time'],
         ['id' => 'in_full'],
+        ['id' => 'stable_in_full'],
+        ['id' => 'mature'],
         ['id' => 'otif'],
+        ['id' => 'quantity_otif_numerator'],
+        ['id' => 'quantity_otif_denominator'],
+        ['id' => 'value_otif_numerator_minor'],
+        ['id' => 'value_otif_denominator_minor'],
+        ['id' => 'value_currency'],
+        ['id' => 'value_basis'],
         ['id' => 'quality_warnings'],
     ];
 
@@ -146,6 +154,12 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                             (string) $promise->unit_code,
                             (string) $promise->conversion_version,
                             $facts,
+                            new DateTimeImmutable($query->asOf->format(DATE_ATOM)),
+                            $promise->ordered_value_minor === null
+                                ? null
+                                : (int) $promise->ordered_value_minor,
+                            $promise->currency,
+                            $promise->value_basis,
                         ),
                         $policy->policy(),
                     );
@@ -186,9 +200,17 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                     'eligible' => $metric->eligible,
                     'on_time' => $metric->onTime,
                     'in_full' => $metric->inFull,
+                    'stable_in_full' => $metric->stableInFull,
+                    'mature' => $metric->mature,
                     'otif' => $metric->otif,
                     'otif_numerator' => $metric->otifNumerator,
                     'eligible_denominator' => $metric->eligibleDenominator,
+                    'quantity_otif_numerator' => $metric->quantityOtifNumerator,
+                    'quantity_otif_denominator' => $metric->quantityOtifDenominator,
+                    'value_otif_numerator_minor' => $metric->valueOtifNumeratorMinor,
+                    'value_otif_denominator_minor' => $metric->valueOtifDenominatorMinor,
+                    'value_currency' => $metric->valueCurrency,
+                    'value_basis' => $metric->valueBasis,
                     'quality_warnings' => [],
                 ];
             }
@@ -199,6 +221,13 @@ final readonly class SupplyReliabilitySnapshotMaterializer
                 'otif_numerator' => $summary->otifNumerator,
                 'eligible_denominator' => $summary->eligibleDenominator,
                 'otif_ratio' => $summary->otifRatio,
+                'quantity_otif_numerator' => $summary->quantityOtifNumerator,
+                'quantity_otif_denominator' => $summary->quantityOtifDenominator,
+                'quantity_otif_ratio' => $summary->quantityOtifRatio,
+                'value_otif_numerator_minor' => $summary->valueOtifNumeratorMinor,
+                'value_otif_denominator_minor' => $summary->valueOtifDenominatorMinor,
+                'value_otif_ratio' => $summary->valueOtifRatio,
+                'value_otif_by_basis' => $summary->valueOtifByBasis,
             ];
             $snapshot = SupplyReliabilitySnapshot::query()->create([
                 'id' => (string) Str::ulid(),

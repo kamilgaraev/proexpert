@@ -25,9 +25,18 @@ final readonly class EloquentOwnerDrillDown
         string $sourceRelationColumn,
         array $publicColumns,
         array $additionalRelationColumns = [],
+        ?string $sourceResourceKind = null,
+        ?string $sourceResourceIdColumn = null,
+        bool $requiresAudit = false,
+        bool $requiresSensitive = false,
     ): ReportDrillDownResult {
         if ($context->scope->canonicalIdentity() !== $snapshot->scope->canonicalIdentity()) {
             throw new DomainException('Report scope does not match snapshot scope.');
+        }
+        if (! $context->visibility->canView
+            || ($requiresAudit && ! $context->visibility->canViewAudit)
+            || ($requiresSensitive && ! $context->visibility->canViewSensitive)) {
+            throw new DomainException('Report drill-down is unavailable for the current access scope.');
         }
 
         $rowKey = $this->tokens->drillDownRowKey($request->token, $snapshot);
@@ -40,6 +49,14 @@ final readonly class EloquentOwnerDrillDown
         $relationId = $row->getAttribute($rowRelationColumn);
         if (! is_int($relationId) && ! ctype_digit((string) $relationId)) {
             throw new DomainException('Report drill-down source identity is invalid.');
+        }
+        if ($sourceResourceKind !== null) {
+            $resourceColumn = $sourceResourceIdColumn ?? $rowRelationColumn;
+            $resourceId = $row->getAttribute($resourceColumn);
+            if ((! is_int($resourceId) && ! ctype_digit((string) $resourceId))
+                || ! $this->sourceResourceAllowed($context, $sourceResourceKind, (int) $resourceId)) {
+                throw new DomainException('Report drill-down source is outside the authorized resource scope.');
+            }
         }
 
         /** @var Model $source */
@@ -78,5 +95,26 @@ final readonly class EloquentOwnerDrillDown
             $hasMore && $last instanceof Model ? (string) $last->getKey() : null,
             [],
         );
+    }
+
+    private function sourceResourceAllowed(
+        ReportExecutionContext $context,
+        string $kind,
+        int $resourceId,
+    ): bool {
+        $constrained = false;
+        foreach ($context->scope->resources as $resource) {
+            if ($resource->kind !== $kind) {
+                continue;
+            }
+            $constrained = true;
+            if ($resource->id === $resourceId
+                && ($resource->projectId === null
+                    || in_array($resource->projectId, $context->scope->projectIds, true))) {
+                return true;
+            }
+        }
+
+        return ! $constrained;
     }
 }

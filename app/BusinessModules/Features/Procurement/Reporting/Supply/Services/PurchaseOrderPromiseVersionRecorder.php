@@ -7,6 +7,8 @@ namespace App\BusinessModules\Features\Procurement\Reporting\Supply\Services;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Reporting\Supply\Models\PurchaseOrderPromiseVersion;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -35,7 +37,32 @@ final readonly class PurchaseOrderPromiseVersionRecorder
                 throw new DomainException('Original promise must be captured before the order is sent.');
             }
 
-            return $this->create($item, $promisedAt, 1, null);
+            return $this->create($item, $promisedAt, 1, null, CarbonImmutable::now('UTC'));
+        });
+    }
+
+    public function captureBackfillOriginal(
+        PurchaseOrderItem $item,
+        CarbonImmutable $promisedAt,
+        CarbonImmutable $sentAt,
+        array $basis,
+    ): PurchaseOrderPromiseVersion {
+        return DB::transaction(function () use ($basis, $item, $promisedAt, $sentAt): PurchaseOrderPromiseVersion {
+            $existing = PurchaseOrderPromiseVersion::query()
+                ->where('organization_id', $this->organizationId($item))
+                ->where('purchase_order_item_id', $item->getKey())
+                ->where('promise_version', 1)
+                ->lockForUpdate()
+                ->first();
+            if ($existing instanceof PurchaseOrderPromiseVersion) {
+                if (! $existing->promised_at->equalTo($promisedAt)) {
+                    throw new DomainException('Backfilled original promise conflicts with the pinned version.');
+                }
+
+                return $existing;
+            }
+
+            return $this->create($item, $promisedAt, 1, null, $sentAt, $basis);
         });
     }
 
@@ -73,7 +100,13 @@ final readonly class PurchaseOrderPromiseVersionRecorder
                 throw new DomainException('Purchase order promise source version must be monotonic.');
             }
 
-            return $this->create($item, $promisedAt, ((int) $previous->promise_version) + 1, (int) $previous->id);
+            return $this->create(
+                $item,
+                $promisedAt,
+                ((int) $previous->promise_version) + 1,
+                (int) $previous->id,
+                CarbonImmutable::now('UTC'),
+            );
         });
     }
 
@@ -82,16 +115,28 @@ final readonly class PurchaseOrderPromiseVersionRecorder
         CarbonImmutable $promisedAt,
         int $version,
         ?int $supersedesId,
+        CarbonImmutable $effectiveFrom,
+        ?array $backfillBasis = null,
     ): PurchaseOrderPromiseVersion {
         $order = $item->purchaseOrder;
-        $metadata = is_array($item->metadata) ? $item->metadata : [];
+        $metadata = $backfillBasis ?? (is_array($item->metadata) ? $item->metadata : []);
         $orderMetadata = is_array($order->metadata) ? $order->metadata : [];
         $unitDimension = $this->requiredString($metadata, 'unit_dimension');
         $conversionVersion = $this->requiredString($metadata, 'unit_conversion_version');
         $taxBasis = $this->requiredString($metadata + $orderMetadata, 'tax_basis');
         $freightBasis = $this->requiredString($metadata + $orderMetadata, 'freight_basis');
         $sourceVersion = $this->requiredPositiveInt($metadata, 'reporting_source_version');
-        $projectId = $order->purchaseRequest?->project_id;
+        $projectId = $order->purchaseRequest?->siteRequest?->project_id;
+        $orderedValueMinor = BigDecimal::of((string) $item->total_price)
+            ->multipliedBy(100)
+            ->toScale(0, RoundingMode::Unnecessary)
+            ->toInt();
+        $valueBasis = implode(':', [
+            trim((string) $order->currency),
+            trim((string) $order->pricing_source),
+            $taxBasis,
+            $freightBasis,
+        ]);
         $attributes = [
             'organization_id' => (int) $order->organization_id,
             'purchase_order_id' => (int) $order->id,
@@ -102,6 +147,8 @@ final readonly class PurchaseOrderPromiseVersionRecorder
             'warehouse_id' => $orderMetadata['warehouse_id'] ?? null,
             'material_id' => $item->material_id,
             'ordered_quantity' => (string) $item->quantity,
+            'ordered_value_minor' => $orderedValueMinor,
+            'value_basis' => $valueBasis,
             'unit_dimension' => $unitDimension,
             'unit_code' => trim((string) $item->unit),
             'conversion_version' => $conversionVersion,
@@ -113,7 +160,7 @@ final readonly class PurchaseOrderPromiseVersionRecorder
             'freight_basis' => $freightBasis,
             'source_version' => $sourceVersion,
             'supersedes_id' => $supersedesId,
-            'effective_from' => CarbonImmutable::now('UTC'),
+            'effective_from' => $effectiveFrom,
             'effective_to' => null,
         ];
         $canonical = $attributes;

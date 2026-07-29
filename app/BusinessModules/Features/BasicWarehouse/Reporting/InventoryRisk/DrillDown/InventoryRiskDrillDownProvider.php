@@ -44,6 +44,8 @@ final readonly class InventoryRiskDrillDownProvider implements ReportDrillDownPr
                 'source_refs',
             ],
             ['warehouse_id', 'project_id'],
+            sourceResourceKind: 'warehouse',
+            sourceResourceIdColumn: 'warehouse_id',
         );
     }
 }
