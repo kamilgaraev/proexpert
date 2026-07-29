@@ -14,6 +14,8 @@ use Throwable;
 
 final readonly class SafetySiteAssignmentService
 {
+    private const MAPPING_SOURCE = 'workforce_employee_assignments';
+
     public function assign(
         int $organizationId,
         int $projectId,
@@ -29,6 +31,9 @@ final readonly class SafetySiteAssignmentService
         if (! $from instanceof CarbonImmutable || ($to !== null && $to < $from)) {
             throw new DomainException('REPORT_SOURCE_UNAVAILABLE');
         }
+        if ($mappingSource !== self::MAPPING_SOURCE) {
+            throw new DomainException('REPORT_SOURCE_UNAVAILABLE');
+        }
 
         return DB::transaction(function () use (
             $organizationId,
@@ -38,7 +43,6 @@ final readonly class SafetySiteAssignmentService
             $employeeId,
             $validFrom,
             $validTo,
-            $mappingSource,
         ): SafetySiteWorkforceAssignment {
             $siteExists = SafetySite::query()
                 ->whereKey($siteId)
@@ -51,6 +55,11 @@ final readonly class SafetySiteAssignmentService
                 ->where('organization_id', $organizationId)
                 ->where('project_id', $projectId)
                 ->where('employee_id', $employeeId)
+                ->where('status', 'active')
+                ->whereDate('valid_from', '<=', $validFrom)
+                ->where(static function ($query) use ($validTo): void {
+                    $query->whereNull('valid_to')->orWhereDate('valid_to', '>=', $validTo ?? '9999-12-31');
+                })
                 ->whereNull('deleted_at')
                 ->lockForUpdate()
                 ->exists();
@@ -72,7 +81,7 @@ final readonly class SafetySiteAssignmentService
 
             $payload = [
                 'employee_id' => $employeeId,
-                'mapping_source' => $mappingSource,
+                'mapping_source' => self::MAPPING_SOURCE,
                 'organization_id' => $organizationId,
                 'project_id' => $projectId,
                 'safety_site_id' => $siteId,

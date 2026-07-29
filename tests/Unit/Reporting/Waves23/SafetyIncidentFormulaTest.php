@@ -36,14 +36,18 @@ final class SafetyIncidentFormulaTest extends TestCase
             1,
             'resolved',
             $input['action_status'],
-            new DateTimeImmutable($input['resolved_at']),
+            new DateTimeImmutable($input['verified_at']),
             null,
             new DateTimeImmutable($input['resolved_at']),
             new DateTimeImmutable($input['verified_at']),
             $input['evidence_id'],
         );
         $policy = (new SafetyIncidentPolicyVersion)->forceFill([
-            'terminal_statuses' => ['verified'],
+            'terminal_statuses' => [
+                'incident' => ['closed'],
+                'violation' => ['resolved'],
+                'corrective_action' => ['verified'],
+            ],
             'closure_evidence_required' => true,
         ]);
 
@@ -66,11 +70,103 @@ final class SafetyIncidentFormulaTest extends TestCase
             'evidence-17',
         );
         $policy = (new SafetyIncidentPolicyVersion)->forceFill([
-            'terminal_statuses' => ['verified'],
+            'terminal_statuses' => [
+                'incident' => ['closed'],
+                'violation' => ['resolved'],
+                'corrective_action' => ['verified'],
+            ],
             'closure_evidence_required' => true,
         ]);
 
         self::assertTrue((new SafetyIncidentFormula)->actionClosure($fact, $policy));
+    }
+
+    #[Test]
+    public function incident_and_violation_closures_require_their_pinned_status_and_evidence(): void
+    {
+        $policy = (new SafetyIncidentPolicyVersion)->forceFill([
+            'terminal_statuses' => [
+                'incident' => ['closed'],
+                'violation' => ['resolved'],
+                'corrective_action' => ['verified'],
+            ],
+            'closure_evidence_required' => true,
+        ]);
+        $formula = new SafetyIncidentFormula;
+        $closedIncident = new SafetyTransitionFact(
+            'incident',
+            1,
+            'corrective_actions',
+            'closed',
+            new DateTimeImmutable('2026-07-10T12:00:00+03:00'),
+            null,
+            null,
+            null,
+            'incident-evidence',
+        );
+        $resolvedViolation = new SafetyTransitionFact(
+            'violation',
+            2,
+            'open',
+            'resolved',
+            new DateTimeImmutable('2026-07-11T12:00:00+03:00'),
+            new DateTimeImmutable('2026-07-12T00:00:00+03:00'),
+            new DateTimeImmutable('2026-07-11T12:00:00+03:00'),
+            null,
+            'violation-evidence',
+        );
+        $missingEvidence = new SafetyTransitionFact(
+            'incident',
+            3,
+            'corrective_actions',
+            'closed',
+            new DateTimeImmutable('2026-07-10T12:00:00+03:00'),
+            null,
+            null,
+            null,
+            null,
+        );
+
+        self::assertTrue($formula->isClosure($closedIncident, $policy));
+        self::assertTrue($formula->isClosure($resolvedViolation, $policy));
+        self::assertFalse($formula->isClosure($missingEvidence, $policy));
+    }
+
+    #[Test]
+    public function reopen_is_terminal_to_non_terminal_not_terminal_without_evidence(): void
+    {
+        $policy = (new SafetyIncidentPolicyVersion)->forceFill([
+            'terminal_statuses' => [
+                'incident' => ['closed'],
+                'violation' => ['resolved'],
+                'corrective_action' => ['verified'],
+            ],
+            'closure_evidence_required' => true,
+        ]);
+        $formula = new SafetyIncidentFormula;
+
+        self::assertTrue($formula->isReopen(new SafetyTransitionFact(
+            'incident',
+            1,
+            'closed',
+            'investigation',
+            new DateTimeImmutable('2026-07-12T12:00:00+03:00'),
+            null,
+            null,
+            null,
+            null,
+        ), $policy));
+        self::assertFalse($formula->isReopen(new SafetyTransitionFact(
+            'incident',
+            1,
+            'closed',
+            'closed',
+            new DateTimeImmutable('2026-07-12T12:00:00+03:00'),
+            null,
+            null,
+            null,
+            null,
+        ), $policy));
     }
 
     private function fixture(string $case): array

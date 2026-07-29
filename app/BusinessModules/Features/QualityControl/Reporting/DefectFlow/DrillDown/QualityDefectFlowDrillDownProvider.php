@@ -11,7 +11,9 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResourceLink;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Support\ScopedReportSourceGuard;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Models\QualityDefectFlowRow;
 
 final readonly class QualityDefectFlowDrillDownProvider implements ReportDrillDownProvider
@@ -30,6 +32,16 @@ final readonly class QualityDefectFlowDrillDownProvider implements ReportDrillDo
         if (! $row instanceof QualityDefectFlowRow) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
+        ScopedReportSourceGuard::assertAccessible($context, (int) $row->project_id, [
+            new ReportScopedResource('quality_defect', (int) $row->quality_defect_id, (int) $row->project_id),
+            ...($row->schedule_task_id === null ? [] : [
+                new ReportScopedResource('schedule_task', (int) $row->schedule_task_id, (int) $row->project_id),
+                new ReportScopedResource('task', (int) $row->schedule_task_id, (int) $row->project_id),
+            ]),
+            ...($row->contractor_id === null ? [] : [
+                new ReportScopedResource('contractor', (int) $row->contractor_id, (int) $row->project_id),
+            ]),
+        ]);
 
         return new ReportDrillDownResult(
             rows: [[

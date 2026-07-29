@@ -34,11 +34,15 @@ final readonly class WorkforceAdmissionFormula
             $seen[$state->code] = true;
 
             $expired = $state->validUntil !== null && $state->validUntil < $snapshotDate;
-            $waiverWithoutEvidence = $state->status === 'waived' && $state->evidenceId === null;
+            $invalidWaiver = $state->status === 'waived'
+                && (
+                    ! $state->waiverAllowed
+                    || ($state->waiverEvidenceRequired && $state->evidenceId === null)
+                );
             $invalid = in_array($state->status, ['missing', 'expired', 'failed', 'not_fit'], true)
                 || $expired
                 || ! $state->verified
-                || $waiverWithoutEvidence;
+                || $invalidWaiver;
 
             if ($state->mandatory && $invalid) {
                 $blockers[] = $state->code;
@@ -127,10 +131,23 @@ final readonly class WorkforceAdmissionFormula
             throw new InvalidArgumentException('workforce_admission_requirement_invalid');
         }
 
+        $status = $requirement['status'] ?? null;
+        if (! is_string($status) || ! in_array($status, [
+            'fulfilled',
+            'missing',
+            'expired',
+            'failed',
+            'not_fit',
+            'restricted',
+            'waived',
+        ], true)) {
+            throw new InvalidArgumentException('workforce_admission_requirement_invalid');
+        }
+
         return new AdmissionRequirementState(
             code: (string) ($requirement['code'] ?? ''),
             type: (string) ($requirement['type'] ?? $requirement['code'] ?? ''),
-            status: (string) ($requirement['status'] ?? 'missing'),
+            status: $status,
             mandatory: (bool) ($requirement['mandatory'] ?? true),
             verified: (bool) ($requirement['verified'] ?? false),
             validUntil: is_string($validUntil)
@@ -139,6 +156,8 @@ final readonly class WorkforceAdmissionFormula
             evidenceType: isset($requirement['evidence_type']) ? (string) $requirement['evidence_type'] : null,
             evidenceId: isset($requirement['evidence_id']) ? (int) $requirement['evidence_id'] : null,
             medicalDetails: is_array($requirement['medical_details'] ?? null) ? $requirement['medical_details'] : null,
+            waiverAllowed: (bool) ($requirement['waiver_allowed'] ?? false),
+            waiverEvidenceRequired: (bool) ($requirement['waiver_evidence_required'] ?? true),
         );
     }
 

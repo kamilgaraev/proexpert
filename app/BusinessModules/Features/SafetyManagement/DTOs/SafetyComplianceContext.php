@@ -20,5 +20,6 @@ final readonly class SafetyComplianceContext
         public ?int $permitId = null,
         public ?int $workOrderLineId = null,
         public ?int $siteId = null,
+        public ?CarbonInterface $evidenceCutoff = null,
     ) {}
 }

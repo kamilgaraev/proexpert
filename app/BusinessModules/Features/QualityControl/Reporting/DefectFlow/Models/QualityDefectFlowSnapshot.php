@@ -19,6 +19,7 @@ final class QualityDefectFlowSnapshot extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'policy_version_ids' => 'array',
         'as_of' => 'immutable_datetime',
         'source_watermark' => 'immutable_datetime',
         'generated_at' => 'immutable_datetime',
@@ -29,6 +30,14 @@ final class QualityDefectFlowSnapshot extends Model
         'reopened_count' => 'integer',
         'closed_count' => 'integer',
         'closing_count' => 'integer',
+        'due_count' => 'integer',
+        'overdue_count' => 'integer',
+        'overdue_pct' => 'decimal:4',
+        'mature_cohort_count' => 'integer',
+        'first_pass_count' => 'integer',
+        'mature_reopened_count' => 'integer',
+        'reopen_rate' => 'decimal:4',
+        'first_pass_yield' => 'decimal:4',
         'eligible_count' => 'integer',
         'projected_count' => 'integer',
         'gap_count' => 'integer',

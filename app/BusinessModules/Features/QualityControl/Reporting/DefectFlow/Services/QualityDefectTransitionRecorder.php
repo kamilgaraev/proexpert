@@ -39,9 +39,17 @@ final readonly class QualityDefectTransitionRecorder
                     'type' => (string) $photo->type,
                 ])
                 ->all();
+            if (trim((string) $history->comment) !== '') {
+                $evidenceRefs[] = [
+                    'hash' => hash('sha256', trim((string) $history->comment)),
+                    'id' => (int) $history->id,
+                    'type' => 'status_comment',
+                ];
+            }
             $payload = [
                 'actor_user_id' => $history->changed_by === null ? null : (int) $history->changed_by,
                 'contractor_id' => $defect->contractor_id === null ? null : (int) $defect->contractor_id,
+                'due_date' => $defect->due_date?->toDateString(),
                 'evidence_refs' => $evidenceRefs,
                 'event_version' => $version,
                 'from_status' => $history->from_status?->value,

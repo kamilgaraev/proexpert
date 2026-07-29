@@ -19,6 +19,8 @@ final readonly class AdmissionRequirementState
         public ?string $evidenceType,
         public ?int $evidenceId,
         public ?array $medicalDetails = null,
+        public bool $waiverAllowed = false,
+        public bool $waiverEvidenceRequired = true,
     ) {
         if (trim($code) === '' || trim($type) === '' || trim($status) === '' || ($evidenceId !== null && $evidenceId < 1)) {
             throw new InvalidArgumentException('admission_requirement_state_invalid');

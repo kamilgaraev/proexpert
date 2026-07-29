@@ -30,6 +30,7 @@ final readonly class SafetyIncidentReadinessProbe implements ReportDefinitionRea
             ->where('organization_id', $context->scope->organizationId)
             ->where('definition_hash', $query->definition->definitionHash->value)
             ->where('formula_version', $query->definition->formulaVersion)
+            ->where('query_hash', $query->queryHash->value)
             ->where('as_of', $query->asOf)
             ->latest('generated_at')
             ->first();
@@ -49,8 +50,8 @@ final readonly class SafetyIncidentReadinessProbe implements ReportDefinitionRea
             (int) $snapshot->gap_count,
             (int) $snapshot->unknown_count,
             (bool) $snapshot->exposure_complete,
-            (string) $snapshot->source_hash,
-            hash('sha256', (string) $snapshot->id.':'.(string) $snapshot->source_hash),
+            (string) $snapshot->input_hash,
+            (string) $snapshot->output_hash,
             $ready ? DateTimeImmutable::createFromInterface($snapshot->generated_at) : null,
         );
     }

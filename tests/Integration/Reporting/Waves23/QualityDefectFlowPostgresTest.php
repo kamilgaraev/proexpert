@@ -20,19 +20,33 @@ final class QualityDefectFlowPostgresTest extends TestCase
     {
         $this->requirePostgres();
         $constraints = collect(DB::select(
-            'select conname from pg_constraint where conname in (?, ?, ?)',
+            'select conname from pg_constraint where conname in (?, ?, ?, ?, ?, ?)',
             [
                 'quality_defect_transition_version_unique',
                 'quality_defect_flow_row_unique',
                 'quality_defect_flow_snapshot_counts_check',
+                'quality_defect_flow_snapshot_due_check',
+                'quality_defect_flow_snapshot_mature_check',
+                'quality_defect_flow_policy_no_overlap',
             ],
         ))->pluck('conname')->sort()->values()->all();
 
         self::assertSame([
+            'quality_defect_flow_policy_no_overlap',
             'quality_defect_flow_row_unique',
             'quality_defect_flow_snapshot_counts_check',
+            'quality_defect_flow_snapshot_due_check',
+            'quality_defect_flow_snapshot_mature_check',
             'quality_defect_transition_version_unique',
         ], $constraints);
+
+        $triggers = collect(DB::select(
+            "select tgname from pg_trigger where not tgisinternal and tgname in ('quality_defect_transition_events_immutable', 'quality_defect_flow_policies_immutable')",
+        ))->pluck('tgname')->sort()->values()->all();
+        self::assertSame([
+            'quality_defect_flow_policies_immutable',
+            'quality_defect_transition_events_immutable',
+        ], $triggers);
     }
 
     private function requirePostgres(): void

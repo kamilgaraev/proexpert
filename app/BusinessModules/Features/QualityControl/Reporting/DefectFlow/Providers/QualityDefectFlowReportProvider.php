@@ -60,6 +60,14 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
                 'reopened' => (int) $record->reopened_count,
                 'closed' => (int) $record->closed_count,
                 'closing' => (int) $record->closing_count,
+                'due' => (int) $record->due_count,
+                'overdue' => (int) $record->overdue_count,
+                'overdue_pct' => $record->overdue_pct,
+                'mature_cohort' => (int) $record->mature_cohort_count,
+                'first_pass' => (int) $record->first_pass_count,
+                'mature_reopened' => (int) $record->mature_reopened_count,
+                'reopen_rate' => $record->reopen_rate,
+                'first_pass_yield' => $record->first_pass_yield,
             ],
             freshness: $this->freshness($snapshot),
             quality: $quality,
@@ -128,13 +136,32 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
 
     private function quality(QualityDefectFlowSnapshot $snapshot): ReportQuality
     {
-        $complete = (int) $snapshot->gap_count === 0 && (int) $snapshot->unknown_count === 0;
+        $emptyMatureCohort = (int) $snapshot->mature_cohort_count === 0;
+        $emptyDueCohort = (int) $snapshot->due_count === 0;
+        $sourceComplete = (int) $snapshot->gap_count === 0 && (int) $snapshot->unknown_count === 0;
+        $complete = $sourceComplete && ! $emptyMatureCohort && ! $emptyDueCohort;
         $warnings = [];
         if ((int) $snapshot->gap_count > 0) {
             $warnings[] = new ReportWarning('DEFECT_HISTORY_GAP', ReportWarningSeverity::CRITICAL, null, (int) $snapshot->gap_count);
         }
         if ((int) $snapshot->unknown_count > 0) {
             $warnings[] = new ReportWarning('DEFECT_CLOSURE_EVIDENCE_MISSING', ReportWarningSeverity::CRITICAL, 'closed', (int) $snapshot->unknown_count);
+        }
+        if ($emptyMatureCohort) {
+            $warnings[] = new ReportWarning(
+                'DEFECT_MATURE_COHORT_EMPTY',
+                ReportWarningSeverity::WARNING,
+                'first_pass_yield',
+                0,
+            );
+        }
+        if ($emptyDueCohort) {
+            $warnings[] = new ReportWarning(
+                'DEFECT_DUE_COHORT_EMPTY',
+                ReportWarningSeverity::WARNING,
+                'overdue_pct',
+                0,
+            );
         }
 
         return new ReportQuality(
@@ -146,8 +173,13 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
             ),
             warnings: $warnings,
             unmatchedCount: (int) $snapshot->gap_count,
-            reconciliation: $complete ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
-            unknownMetrics: (int) $snapshot->unknown_count > 0 ? ['first_pass_yield'] : [],
+            reconciliation: $sourceComplete ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
+            unknownMetrics: [
+                ...((int) $snapshot->unknown_count > 0 || $emptyMatureCohort
+                    ? ['first_pass_yield', 'reopen_rate']
+                    : []),
+                ...($emptyDueCohort ? ['overdue_pct'] : []),
+            ],
             excludedSources: [],
         );
     }
@@ -173,7 +205,7 @@ final readonly class QualityDefectFlowReportProvider implements ReportDataProvid
     {
         return array_map(
             static fn (string $id): array => ['id' => $id],
-            ['row_key', 'cohort_date', 'project_id', 'contractor_id', 'quality_defect_id', 'event_version', 'severity', 'status', 'created', 'reopened', 'closed', 'closing', 'cycle_days', 'evidence_refs'],
+            ['row_key', 'cohort_date', 'project_id', 'contractor_id', 'schedule_task_id', 'quality_defect_id', 'event_version', 'severity', 'status', 'created', 'reopened', 'closed', 'closing', 'cycle_days', 'due_date', 'evidence_refs'],
         );
     }
 }

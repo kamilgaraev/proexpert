@@ -23,7 +23,8 @@ final readonly class SafetyTransitionFact
         if (! in_array($subjectType, ['incident', 'violation', 'corrective_action'], true)
             || $subjectId < 1
             || trim($toStatus) === ''
-            || ($verifiedAt !== null && ($resolvedAt === null || $verifiedAt < $resolvedAt))) {
+            || ($resolvedAt !== null && $resolvedAt > $occurredAt)
+            || ($verifiedAt !== null && ($resolvedAt === null || $verifiedAt < $resolvedAt || $verifiedAt > $occurredAt))) {
             throw new InvalidArgumentException('safety_transition_fact_invalid');
         }
     }

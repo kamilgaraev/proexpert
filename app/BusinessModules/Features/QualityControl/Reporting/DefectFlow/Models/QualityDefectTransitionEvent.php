@@ -16,6 +16,7 @@ final class QualityDefectTransitionEvent extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'due_date' => 'immutable_date',
         'occurred_at' => 'immutable_datetime',
         'recorded_at' => 'immutable_datetime',
         'event_version' => 'integer',

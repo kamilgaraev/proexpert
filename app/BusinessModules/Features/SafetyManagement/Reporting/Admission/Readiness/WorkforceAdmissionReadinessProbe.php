@@ -30,6 +30,7 @@ final readonly class WorkforceAdmissionReadinessProbe implements ReportDefinitio
             ->where('organization_id', $context->scope->organizationId)
             ->where('definition_hash', $query->definition->definitionHash->value)
             ->where('formula_version', $query->definition->formulaVersion)
+            ->where('query_hash', $query->queryHash->value)
             ->where('snapshot_date', $query->asOf->format('Y-m-d'))
             ->latest('generated_at')
             ->first();
@@ -47,8 +48,8 @@ final readonly class WorkforceAdmissionReadinessProbe implements ReportDefinitio
             (int) $snapshot->projected_count,
             (int) $snapshot->gap_count,
             (int) $snapshot->unknown_count,
-            (string) $snapshot->source_hash,
-            hash('sha256', (string) $snapshot->id.':'.(string) $snapshot->source_hash),
+            (string) $snapshot->input_hash,
+            (string) $snapshot->output_hash,
             $ready ? DateTimeImmutable::createFromInterface($snapshot->generated_at) : null,
         );
     }

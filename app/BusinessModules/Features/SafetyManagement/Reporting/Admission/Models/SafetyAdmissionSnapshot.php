@@ -19,6 +19,7 @@ final class SafetyAdmissionSnapshot extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'policy_version_ids' => 'array',
         'snapshot_date' => 'immutable_date',
         'source_watermark' => 'immutable_datetime',
         'generated_at' => 'immutable_datetime',

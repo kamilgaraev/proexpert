@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\DTO\SafetyTransitionFact;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyExposureDay;
@@ -17,9 +18,11 @@ use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Mode
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetySite;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyTransitionEvent;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Throwable;
 
 final readonly class SafetyIncidentSnapshotMaterializer
 {
@@ -29,28 +32,80 @@ final readonly class SafetyIncidentSnapshotMaterializer
     {
         $organizationId = $context->scope->organizationId;
         $asOf = CarbonImmutable::instance($query->asOf);
-        $periodFrom = $this->periodFrom($query, $asOf);
-        $policy = $this->policy($organizationId, $context->scope->projectIds, $asOf);
-        $events = SafetyTransitionEvent::query()
+        [$periodFrom, $periodTo] = $this->period($query, $asOf);
+        $events = $this->events(
+            $organizationId,
+            $context->scope->projectIds,
+            $context->scope->resources,
+            $query,
+            $periodTo,
+        );
+        $events = $this->filterSubjects($events, $query, $periodFrom, $periodTo);
+        $projectIds = $events->pluck('project_id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->merge($context->scope->projectIds)
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+        $policies = $this->policies($organizationId, $projectIds, $asOf);
+        $policyIds = collect($policies)->pluck('id')->map(static fn (mixed $id): int => (int) $id)->unique()->sort()->values()->all();
+        $siteIds = $events->pluck('safety_site_id')->filter()->map(static fn (mixed $id): int => (int) $id)->unique()->values()->all();
+        $sites = SafetySite::query()
             ->where('organization_id', $organizationId)
-            ->where('occurred_at', '<=', $asOf)
-            ->when($context->scope->projectIds !== [], static fn ($query) => $query->whereIn('project_id', $context->scope->projectIds))
-            ->orderBy('subject_type')
-            ->orderBy('subject_id')
-            ->orderBy('event_version')
-            ->get();
-        $exposure = SafetyExposureDay::query()
-            ->where('organization_id', $organizationId)
-            ->whereBetween('exposure_date', [$periodFrom->toDateString(), $asOf->toDateString()])
-            ->when($context->scope->projectIds !== [], static fn ($query) => $query->whereIn('project_id', $context->scope->projectIds))
-            ->orderBy('safety_site_id')
-            ->orderBy('exposure_date')
-            ->get();
-        $sourceHash = hash('sha256', CanonicalJson::encode([
-            'events' => $events->pluck('event_hash')->all(),
-            'exposure' => $exposure->pluck('source_hash')->all(),
+            ->whereIn('id', $siteIds)
+            ->get()
+            ->keyBy('id');
+        $exposure = $this->exposure(
+            $organizationId,
+            $context->scope->projectIds,
+            $context->scope->resources,
+            $query,
+            $periodFrom,
+            $periodTo,
+        );
+        $analysis = $this->analyze($events, $periodFrom, $periodTo, $asOf, $policies, $sites);
+        $coverage = $this->exposureCoverage(
+            $organizationId,
+            $context->scope->projectIds,
+            $query,
+            $periodFrom,
+            $periodTo,
+            $exposure,
+            $context->scope->resources,
+        );
+        $multipliers = collect($policies)->pluck('frequency_multiplier')->map(static fn (mixed $value): int => (int) $value)->unique();
+        if ($multipliers->count() !== 1) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+        }
+        $qualifying = count(array_filter(
+            $analysis['rows'],
+            static function (array $row) use ($policies): bool {
+                $policy = $policies[$row['project_id']] ?? null;
+
+                return $policy instanceof SafetyIncidentPolicyVersion
+                    && $row['subject_type'] === 'incident'
+                    && $row['created_flag']
+                    && in_array($row['category'], $policy->qualifying_incident_types, true);
+            },
+        ));
+        $frequency = $coverage['complete']
+            ? $this->formula->frequency($qualifying, $coverage['hours'], (int) $multipliers->first())
+            : null;
+        $analysis['exposure'] = $coverage;
+        $analysis['incident_frequency'] = $frequency;
+        $inputHash = hash('sha256', CanonicalJson::encode([
+            'event_hashes' => $events->pluck('event_hash')->all(),
+            'exposure_hashes' => $exposure->pluck('source_hash')->all(),
+            'filters' => $query->filters->values,
             'period_from' => $periodFrom->toAtomString(),
-            'policy_hash' => (string) $policy->source_hash,
+            'period_to' => $periodTo->toAtomString(),
+            'policy_hashes' => collect($policies)->pluck('source_hash')->unique()->sort()->values()->all(),
+        ]));
+        $outputHash = hash('sha256', CanonicalJson::encode($analysis));
+        $sourceHash = hash('sha256', CanonicalJson::encode([
+            'input_hash' => $inputHash,
+            'output_hash' => $outputHash,
             'query_hash' => $query->queryHash->value,
         ]));
         $scopeHash = hash('sha256', CanonicalJson::encode($context->scope->canonicalIdentity()));
@@ -66,38 +121,31 @@ final readonly class SafetyIncidentSnapshotMaterializer
         }
 
         return DB::transaction(function () use (
-            $context,
             $query,
             $organizationId,
             $asOf,
-            $periodFrom,
-            $policy,
+            $policyIds,
             $events,
-            $exposure,
+            $analysis,
+            $coverage,
+            $frequency,
+            $inputHash,
+            $outputHash,
             $sourceHash,
             $scopeHash,
         ): SafetyIncidentSnapshot {
-            $analysis = $this->analyze($events, $periodFrom, $asOf, $policy);
-            $coverage = $this->exposureCoverage($organizationId, $context->scope->projectIds, $periodFrom, $asOf, $exposure);
-            $qualifying = count(array_filter(
-                $analysis['rows'],
-                static fn (array $row): bool => $row['subject_type'] === 'incident'
-                    && $row['created_flag']
-                    && in_array($row['category'], $policy->qualifying_incident_types ?? [], true),
-            ));
-            $frequency = $coverage['complete']
-                ? $this->formula->frequency($qualifying, $coverage['hours'], (int) $policy->frequency_multiplier)
-                : null;
             $generatedAt = CarbonImmutable::now();
-            $unknowns = $analysis['unknowns'] + ($coverage['complete'] ? 0 : 1);
             $snapshot = SafetyIncidentSnapshot::query()->create([
                 'id' => (string) Str::ulid(),
                 'organization_id' => $organizationId,
                 'project_id' => count($query->scope->projectIds) === 1 ? $query->scope->projectIds[0] : null,
-                'policy_version_id' => $policy->id,
+                'policy_version_ids' => $policyIds,
                 'scope_hash' => $scopeHash,
                 'definition_hash' => $query->definition->definitionHash->value,
                 'formula_version' => $query->definition->formulaVersion,
+                'query_hash' => $query->queryHash->value,
+                'input_hash' => $inputHash,
+                'output_hash' => $outputHash,
                 'source_hash' => $sourceHash,
                 'as_of' => $asOf,
                 'source_watermark' => $events->max('occurred_at') ?? $asOf,
@@ -107,13 +155,15 @@ final readonly class SafetyIncidentSnapshotMaterializer
                 'action_due_count' => $analysis['action_due_count'],
                 'action_overdue_count' => $analysis['action_overdue_count'],
                 'action_closed_on_time_count' => $analysis['action_closed_on_time_count'],
+                'opening_backlog_count' => $analysis['opening_backlog_count'],
+                'closing_backlog_count' => $analysis['closing_backlog_count'],
                 'exposure_hours' => $coverage['complete'] ? $coverage['hours'] : null,
                 'exposure_complete' => $coverage['complete'],
                 'incident_frequency' => $frequency,
                 'eligible_count' => count($analysis['rows']),
                 'projected_count' => count($analysis['rows']),
                 'gap_count' => $analysis['gaps'],
-                'unknown_count' => $unknowns,
+                'unknown_count' => $analysis['unknowns'],
                 'generated_at' => $generatedAt,
                 'stale_at' => $generatedAt->addDay(),
             ]);
@@ -128,83 +178,218 @@ final readonly class SafetyIncidentSnapshotMaterializer
         });
     }
 
-    private function policy(int $organizationId, array $projectIds, CarbonImmutable $asOf): SafetyIncidentPolicyVersion
-    {
-        $projectId = count($projectIds) === 1 ? $projectIds[0] : null;
-        $policy = SafetyIncidentPolicyVersion::query()
+    private function events(
+        int $organizationId,
+        array $scopeProjectIds,
+        array $scopeResources,
+        ReportQuery $query,
+        CarbonImmutable $periodTo,
+    ): Collection {
+        $builder = SafetyTransitionEvent::query()
             ->where('organization_id', $organizationId)
-            ->whereDate('effective_from', '<=', $asOf->toDateString())
-            ->where(static function ($query) use ($asOf): void {
-                $query->whereNull('effective_until')->orWhereDate('effective_until', '>=', $asOf->toDateString());
-            })
-            ->where(static function ($query) use ($projectId): void {
-                $query->whereNull('project_id');
-                if ($projectId !== null) {
-                    $query->orWhere('project_id', $projectId);
-                }
-            })
-            ->orderByRaw('project_id IS NULL')
-            ->orderByDesc('effective_from')
-            ->first();
-        if (! $policy instanceof SafetyIncidentPolicyVersion) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
-        }
+            ->where('occurred_at', '<=', $periodTo)
+            ->when($scopeProjectIds !== [], static fn (Builder $builder) => $builder->whereIn('project_id', $scopeProjectIds));
+        $this->applyFilter($builder, 'project_id', $query->filters->values['project_id'] ?? null);
+        $this->applyFilter($builder, 'safety_site_id', $query->filters->values['safety_site_id'] ?? $query->filters->values['site_id'] ?? null);
+        $this->applyFilter($builder, 'contractor_id', $query->filters->values['contractor_id'] ?? null);
+        $this->applyFilter($builder, 'subject_type', $query->filters->values['subject_type'] ?? null);
+        $this->applyFilter($builder, 'category', $query->filters->values['category'] ?? null);
+        $this->applyFilter($builder, 'severity', $query->filters->values['severity'] ?? null);
+        $this->applyFilter($builder, 'owner_user_id', $query->filters->values['owner_user_id'] ?? null);
+        $this->applyResourceScope($builder, $scopeResources);
 
-        return $policy;
+        return $builder
+            ->orderBy('subject_type')
+            ->orderBy('subject_id')
+            ->orderBy('event_version')
+            ->orderBy('id')
+            ->get();
     }
 
-    private function periodFrom(ReportQuery $query, CarbonImmutable $asOf): CarbonImmutable
-    {
-        $value = $query->filters->values['period_from'] ?? null;
-        if (! is_string($value)) {
-            return $asOf->startOfMonth();
-        }
+    private function exposure(
+        int $organizationId,
+        array $scopeProjectIds,
+        array $scopeResources,
+        ReportQuery $query,
+        CarbonImmutable $periodFrom,
+        CarbonImmutable $periodTo,
+    ): Collection {
+        $builder = SafetyExposureDay::query()
+            ->where('organization_id', $organizationId)
+            ->whereBetween('exposure_date', [$periodFrom->toDateString(), $periodTo->toDateString()])
+            ->when($scopeProjectIds !== [], static fn (Builder $builder) => $builder->whereIn('project_id', $scopeProjectIds));
+        $this->applyFilter($builder, 'project_id', $query->filters->values['project_id'] ?? null);
+        $this->applyFilter($builder, 'safety_site_id', $query->filters->values['safety_site_id'] ?? $query->filters->values['site_id'] ?? null);
+        $this->applyExposureResourceScope($builder, $scopeResources);
 
-        try {
-            $date = CarbonImmutable::parse($value, $query->scope->timezone);
-        } catch (\Throwable $exception) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_RANGE_INVALID, previous: $exception);
-        }
-        if ($date > $asOf) {
+        return $builder->orderBy('safety_site_id')->orderBy('exposure_date')->get();
+    }
+
+    private function filterSubjects(
+        Collection $events,
+        ReportQuery $query,
+        CarbonImmutable $periodFrom,
+        CarbonImmutable $periodTo,
+    ): Collection {
+        $statusFilter = $this->filterValues($query->filters->values['status'] ?? null);
+        $dueFrom = $this->optionalDate($query->filters->values['due_from'] ?? null, $query, CarbonImmutable::create(1, 1, 1));
+        $dueTo = $this->optionalDate($query->filters->values['due_to'] ?? null, $query, CarbonImmutable::create(9999, 12, 31));
+        if ($dueFrom > $dueTo) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_RANGE_INVALID);
         }
 
-        return $date;
+        $allowed = [];
+        foreach ($events->groupBy(static fn (SafetyTransitionEvent $event): string => $event->subject_type.':'.$event->subject_id) as $key => $timeline) {
+            $last = $timeline->last();
+            $dueDate = $timeline->pluck('due_date')->filter()->last();
+            if ($statusFilter !== [] && ! in_array((string) $last->to_status, $statusFilter, true)) {
+                continue;
+            }
+            if ($dueDate !== null) {
+                $dueDate = CarbonImmutable::instance($dueDate);
+                if ($dueDate < $dueFrom || $dueDate > $dueTo) {
+                    continue;
+                }
+            } elseif (($query->filters->values['due_from'] ?? null) !== null || ($query->filters->values['due_to'] ?? null) !== null) {
+                continue;
+            }
+            $allowed[$key] = true;
+        }
+
+        return $events
+            ->filter(static fn (SafetyTransitionEvent $event): bool => isset($allowed[$event->subject_type.':'.$event->subject_id]))
+            ->values();
+    }
+
+    private function policies(int $organizationId, array $projectIds, CarbonImmutable $asOf): array
+    {
+        $keys = $projectIds === [] ? [0] : $projectIds;
+        $policies = [];
+        foreach ($keys as $projectId) {
+            $policy = SafetyIncidentPolicyVersion::query()
+                ->where('organization_id', $organizationId)
+                ->where('created_at', '<=', $asOf)
+                ->whereDate('effective_from', '<=', $asOf->toDateString())
+                ->where(static function (Builder $builder) use ($asOf): void {
+                    $builder->whereNull('effective_until')
+                        ->orWhereDate('effective_until', '>=', $asOf->toDateString());
+                })
+                ->where(static function (Builder $builder) use ($projectId): void {
+                    $builder->whereNull('project_id');
+                    if ($projectId > 0) {
+                        $builder->orWhere('project_id', $projectId);
+                    }
+                })
+                ->orderByRaw('project_id IS NULL')
+                ->first();
+            if (! $policy instanceof SafetyIncidentPolicyVersion) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+            }
+            $statusesByType = $policy->terminal_statuses;
+            if ($policy->calendar_code !== 'calendar_days'
+                || $policy->overdue_rule !== 'site_local_end_of_day'
+                || ! is_array($policy->qualifying_incident_types)
+                || $policy->qualifying_incident_types === []
+                || array_filter($policy->qualifying_incident_types, 'is_string') !== $policy->qualifying_incident_types
+                || (int) $policy->frequency_multiplier < 1
+                || ! is_array($statusesByType)) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+            }
+            foreach (['incident', 'violation', 'corrective_action'] as $subjectType) {
+                $statuses = $statusesByType[$subjectType] ?? null;
+                if (! is_array($statuses) || $statuses === [] || array_filter($statuses, 'is_string') !== $statuses) {
+                    throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+                }
+            }
+            $policies[$projectId] = $policy;
+        }
+
+        return $policies;
+    }
+
+    private function period(ReportQuery $query, CarbonImmutable $asOf): array
+    {
+        $periodFromValue = $query->filters->values['period_from'] ?? null;
+        $periodToValue = $query->filters->values['period_to'] ?? null;
+        $periodFrom = $this->optionalDate($periodFromValue, $query, $asOf->startOfMonth());
+        $periodTo = $this->optionalDate($periodToValue, $query, $asOf);
+        if (is_string($periodFromValue) && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $periodFromValue) === 1) {
+            $periodFrom = $periodFrom->startOfDay();
+        }
+        if (is_string($periodToValue) && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $periodToValue) === 1) {
+            $periodTo = $periodTo->endOfDay()->min($asOf);
+        }
+        if ($periodFrom > $periodTo || $periodTo > $asOf) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_RANGE_INVALID);
+        }
+
+        return [$periodFrom, $periodTo];
+    }
+
+    private function optionalDate(mixed $value, ReportQuery $query, CarbonImmutable $default): CarbonImmutable
+    {
+        if ($value === null) {
+            return $default;
+        }
+        if (! is_string($value)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_RANGE_INVALID);
+        }
+        try {
+            return CarbonImmutable::parse($value, $query->scope->timezone);
+        } catch (Throwable $exception) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_RANGE_INVALID, previous: $exception);
+        }
     }
 
     private function analyze(
         Collection $events,
         CarbonImmutable $periodFrom,
+        CarbonImmutable $periodTo,
         CarbonImmutable $asOf,
-        SafetyIncidentPolicyVersion $policy,
+        array $policies,
+        Collection $sites,
     ): array {
         $rows = [];
         $lastVersion = [];
         $lastStatus = [];
-        $firstAt = [];
-        $state = [];
+        $lastOccurredAt = [];
+        $states = [];
+        $openingState = [];
         $gaps = 0;
         $unknowns = 0;
         $incidentSubjects = [];
         $violationSubjects = [];
-        $actionDue = [];
-        $actionOverdue = [];
-        $actionClosedOnTime = [];
 
         foreach ($events as $event) {
-            if (! $event instanceof SafetyTransitionEvent) {
-                continue;
+            $policy = $policies[(int) $event->project_id] ?? null;
+            if (! $policy instanceof SafetyIncidentPolicyVersion) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
             }
             $key = $event->subject_type.':'.$event->subject_id;
             $occurredAt = CarbonImmutable::instance($event->occurred_at);
-            $firstAt[$key] ??= $occurredAt;
+            $states[$key] ??= [
+                'first_at' => $occurredAt,
+                'current_open' => false,
+                'due_date' => $event->due_date === null ? null : CarbonImmutable::instance($event->due_date),
+                'closed_on_time' => false,
+                'site_id' => $event->safety_site_id === null ? null : (int) $event->safety_site_id,
+            ];
+            if ($states[$key]['due_date'] === null && $event->due_date !== null) {
+                $states[$key]['due_date'] = CarbonImmutable::instance($event->due_date);
+            }
+            if ($states[$key]['site_id'] === null && $event->safety_site_id !== null) {
+                $states[$key]['site_id'] = (int) $event->safety_site_id;
+            }
+
             $expectedVersion = ($lastVersion[$key] ?? 0) + 1;
-            if ($event->event_version !== $expectedVersion
-                || ($event->event_version > 1 && ($event->from_status ?? null) !== ($lastStatus[$key] ?? null))) {
+            if ((int) $event->event_version !== $expectedVersion
+                || ((int) $event->event_version > 1 && $event->from_status !== ($lastStatus[$key] ?? null))
+                || (isset($lastOccurredAt[$key]) && $occurredAt < $lastOccurredAt[$key])) {
                 $gaps++;
             }
             $lastVersion[$key] = (int) $event->event_version;
             $lastStatus[$key] = (string) $event->to_status;
+            $lastOccurredAt[$key] = $occurredAt;
 
             $fact = new SafetyTransitionFact(
                 subjectType: (string) $event->subject_type,
@@ -213,51 +398,57 @@ final readonly class SafetyIncidentSnapshotMaterializer
                 toStatus: (string) $event->to_status,
                 occurredAt: $occurredAt->toDateTimeImmutable(),
                 dueAt: $event->due_date?->toDateTimeImmutable(),
-                resolvedAt: in_array($event->to_status, ['resolved', 'verified'], true) ? $occurredAt->toDateTimeImmutable() : null,
-                verifiedAt: $event->to_status === 'verified' ? $occurredAt->toDateTimeImmutable() : null,
+                resolvedAt: $event->resolved_at?->toDateTimeImmutable(),
+                verifiedAt: $event->verified_at?->toDateTimeImmutable(),
                 evidenceId: $event->evidence_id,
             );
-            $closureVerified = $this->formula->actionClosure($fact, $policy);
-            $terminal = $event->subject_type === 'corrective_action'
-                ? $closureVerified
-                : in_array($event->to_status, $policy->terminal_statuses ?? [], true);
-            $reopened = in_array($event->from_status, $policy->terminal_statuses ?? [], true) && ! $terminal;
-            $state[$key] = ! $terminal;
+            $wasOpen = $states[$key]['current_open'];
+            $closureVerified = $this->formula->isClosure($fact, $policy);
+            $reopened = $this->formula->isReopen($fact, $policy) && ! $wasOpen;
+            $states[$key]['current_open'] = ! $closureVerified;
             if ($event->safety_site_id === null) {
                 $unknowns++;
             }
-            if ($event->subject_type === 'corrective_action' && in_array($event->to_status, ['resolved', 'verified'], true) && ! $closureVerified) {
+            if ($this->isConfiguredTerminal($event, $policy) && ! $closureVerified) {
                 $unknowns++;
             }
+            if ($closureVerified && $states[$key]['due_date'] !== null) {
+                $timezone = $this->timezone($states[$key]['site_id'], $sites);
+                if ($timezone !== null) {
+                    $closureAt = $event->verified_at === null
+                        ? $occurredAt
+                        : CarbonImmutable::instance($event->verified_at);
+                    $states[$key]['closed_on_time'] = $closureAt->setTimezone($timezone)->startOfDay()
+                        <= $states[$key]['due_date']->startOfDay();
+                }
+            }
             if ($occurredAt < $periodFrom) {
+                $openingState[$key] = ! $closureVerified;
+                continue;
+            }
+            if ($occurredAt > $periodTo) {
                 continue;
             }
 
             $created = $event->from_status === null;
             if ($created && $event->subject_type === 'incident') {
-                $incidentSubjects[$event->subject_id] = true;
+                $incidentSubjects[(int) $event->subject_id] = true;
             }
             if ($created && $event->subject_type === 'violation') {
-                $violationSubjects[$event->subject_id] = true;
+                $violationSubjects[(int) $event->subject_id] = true;
             }
-            if ($event->subject_type === 'corrective_action' && $event->due_date !== null && $event->due_date <= $asOf) {
-                $actionDue[$event->subject_id] = true;
-                if (! $terminal && $event->due_date < $asOf->startOfDay()) {
-                    $actionOverdue[$event->subject_id] = true;
-                }
-                if ($closureVerified && $occurredAt->startOfDay() <= $event->due_date) {
-                    $actionClosedOnTime[$event->subject_id] = true;
-                }
-            }
-
+            $siteTimezone = $this->timezone($states[$key]['site_id'], $sites);
             $rows[] = [
                 'project_id' => (int) $event->project_id,
                 'safety_site_id' => $event->safety_site_id === null ? null : (int) $event->safety_site_id,
+                'contractor_id' => $event->contractor_id === null ? null : (int) $event->contractor_id,
                 'subject_type' => (string) $event->subject_type,
                 'subject_id' => (int) $event->subject_id,
                 'event_version' => (int) $event->event_version,
                 'row_key' => sprintf('%s:%d:event:%d', $event->subject_type, $event->subject_id, $event->event_version),
-                'event_date' => $occurredAt->toDateString(),
+                'event_date' => ($siteTimezone === null
+                    ? $occurredAt
+                    : $occurredAt->setTimezone($siteTimezone))->toDateString(),
                 'category' => $event->category,
                 'severity' => (string) $event->severity,
                 'status' => (string) $event->to_status,
@@ -266,13 +457,36 @@ final readonly class SafetyIncidentSnapshotMaterializer
                 'opening_flag' => false,
                 'created_flag' => $created,
                 'reopened_flag' => $reopened,
-                'closed_flag' => $terminal,
+                'closed_flag' => $closureVerified,
                 'closing_flag' => false,
                 'closure_verified' => $closureVerified,
-                'closure_days' => $terminal ? $firstAt[$key]->diffInDays($occurredAt) : null,
+                'closure_days' => $closureVerified ? $states[$key]['first_at']->diffInDays($occurredAt) : null,
                 'evidence_type' => $event->evidence_type,
                 'evidence_id' => $event->evidence_id,
             ];
+        }
+
+        $actionDue = 0;
+        $actionOverdue = 0;
+        $actionClosedOnTime = 0;
+        foreach ($states as $key => $state) {
+            if (! str_starts_with($key, 'corrective_action:') || $state['due_date'] === null) {
+                continue;
+            }
+            $timezone = $this->timezone($state['site_id'], $sites);
+            if ($timezone === null) {
+                continue;
+            }
+            $localAsOf = $asOf->setTimezone($timezone)->startOfDay();
+            if ($state['due_date']->startOfDay() <= $localAsOf) {
+                $actionDue++;
+                if ($state['current_open'] && $state['due_date']->startOfDay() < $localAsOf) {
+                    $actionOverdue++;
+                }
+                if (! $state['current_open'] && $state['closed_on_time']) {
+                    $actionClosedOnTime++;
+                }
+            }
         }
 
         $lastRow = [];
@@ -280,7 +494,8 @@ final readonly class SafetyIncidentSnapshotMaterializer
             $lastRow[$row['subject_type'].':'.$row['subject_id']] = $index;
         }
         foreach ($lastRow as $key => $index) {
-            $rows[$index]['closing_flag'] = $state[$key] ?? false;
+            $rows[$index]['closing_flag'] = $states[$key]['current_open'];
+            $rows[$index]['opening_flag'] = $openingState[$key] ?? false;
         }
 
         return [
@@ -289,36 +504,193 @@ final readonly class SafetyIncidentSnapshotMaterializer
             'unknowns' => $unknowns,
             'incident_count' => count($incidentSubjects),
             'violation_count' => count($violationSubjects),
-            'action_due_count' => count($actionDue),
-            'action_overdue_count' => count($actionOverdue),
-            'action_closed_on_time_count' => count($actionClosedOnTime),
+            'action_due_count' => $actionDue,
+            'action_overdue_count' => $actionOverdue,
+            'action_closed_on_time_count' => $actionClosedOnTime,
+            'opening_backlog_count' => count(array_filter($openingState)),
+            'closing_backlog_count' => count(array_filter($states, static fn (array $state): bool => $state['current_open'])),
         ];
     }
 
     private function exposureCoverage(
         int $organizationId,
         array $projectIds,
+        ReportQuery $query,
         CarbonImmutable $periodFrom,
-        CarbonImmutable $asOf,
+        CarbonImmutable $periodTo,
         Collection $exposure,
+        array $scopeResources,
     ): array {
-        $siteCount = SafetySite::query()
+        $sites = SafetySite::query()
             ->where('organization_id', $organizationId)
             ->where('is_active', true)
-            ->when($projectIds !== [], static fn ($query) => $query->whereIn('project_id', $projectIds))
-            ->count();
-        $expected = $siteCount * ($periodFrom->diffInDays($asOf->startOfDay()) + 1);
-        $complete = $expected > 0 && $exposure->count() === $expected && $exposure->every('complete');
+            ->where('created_at', '<=', $periodTo)
+            ->when($projectIds !== [], static fn (Builder $builder) => $builder->whereIn('project_id', $projectIds));
+        $this->applyFilter($sites, 'project_id', $query->filters->values['project_id'] ?? null);
+        $this->applyFilter($sites, 'id', $query->filters->values['safety_site_id'] ?? $query->filters->values['site_id'] ?? null);
+        $this->applyExposureResourceScope($sites, $scopeResources, 'id');
+        $siteIds = $sites->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
+        $expected = count($siteIds) * ($periodFrom->startOfDay()->diffInDays($periodTo->startOfDay()) + 1);
+        $actualKeys = $exposure
+            ->map(static fn (SafetyExposureDay $day): string => $day->safety_site_id.':'.$day->exposure_date->toDateString())
+            ->unique();
+        $contractorScoped = $this->filterValues($query->filters->values['contractor_id'] ?? null) !== []
+            || collect($scopeResources)->contains(
+                static fn (mixed $resource): bool => $resource instanceof ReportScopedResource
+                    && $resource->kind === 'contractor',
+            );
+        $subjectScoped = collect($scopeResources)->contains(
+            static fn (mixed $resource): bool => $resource instanceof ReportScopedResource
+                && in_array($resource->kind, [
+                    'safety_incident',
+                    'safety_violation',
+                    'safety_corrective_action',
+                ], true),
+        );
+        $complete = ! $contractorScoped
+            && ! $subjectScoped
+            && $expected > 0
+            && $actualKeys->count() === $expected
+            && $exposure->every(static fn (SafetyExposureDay $day): bool => (bool) $day->complete);
         $scaledHours = 0;
         foreach ($exposure as $day) {
-            $value = (string) $day->exposure_hours;
-            [$whole, $fraction] = array_pad(explode('.', $value, 2), 2, '');
+            [$whole, $fraction] = array_pad(explode('.', (string) $day->exposure_hours, 2), 2, '');
             $scaledHours += ((int) $whole * 10_000) + (int) str_pad($fraction, 4, '0');
         }
 
         return [
             'complete' => $complete,
+            'expected_days' => $expected,
+            'projected_days' => $actualKeys->count(),
             'hours' => sprintf('%d.%04d', intdiv($scaledHours, 10_000), $scaledHours % 10_000),
         ];
+    }
+
+    private function isConfiguredTerminal(
+        SafetyTransitionEvent $event,
+        SafetyIncidentPolicyVersion $policy,
+    ): bool {
+        $byType = $policy->terminal_statuses;
+        $statuses = is_array($byType) ? ($byType[$event->subject_type] ?? []) : [];
+
+        return is_array($statuses) && in_array((string) $event->to_status, $statuses, true);
+    }
+
+    private function timezone(?int $siteId, Collection $sites): ?string
+    {
+        $site = $siteId === null ? null : $sites->get($siteId);
+        if (! $site instanceof SafetySite || trim((string) $site->timezone) === '') {
+            return null;
+        }
+
+        try {
+            return (new \DateTimeZone((string) $site->timezone))->getName();
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private function applyFilter(Builder $builder, string $column, mixed $value): void
+    {
+        $values = $this->filterValues($value);
+        if ($values !== []) {
+            $builder->whereIn($column, $values);
+        }
+    }
+
+    private function applyResourceScope(Builder $builder, array $resources): void
+    {
+        if ($resources === []) {
+            return;
+        }
+
+        $supported = array_values(array_filter(
+            $resources,
+            static fn (mixed $resource): bool => $resource instanceof ReportScopedResource
+                && in_array($resource->kind, [
+                    'contractor',
+                    'project',
+                    'safety_corrective_action',
+                    'safety_incident',
+                    'safety_site',
+                    'safety_violation',
+                ], true),
+        ));
+        if ($supported === []) {
+            $builder->whereRaw('1 = 0');
+
+            return;
+        }
+
+        $builder->where(static function (Builder $builder) use ($supported): void {
+            foreach ($supported as $resource) {
+                $builder->orWhere(static function (Builder $builder) use ($resource): void {
+                    match ($resource->kind) {
+                        'contractor' => $builder->where('contractor_id', $resource->id),
+                        'project' => $builder->where('project_id', $resource->id),
+                        'safety_site' => $builder->where('safety_site_id', $resource->id),
+                        'safety_incident' => $builder
+                            ->where('subject_type', 'incident')
+                            ->where('subject_id', $resource->id),
+                        'safety_violation' => $builder
+                            ->where('subject_type', 'violation')
+                            ->where('subject_id', $resource->id),
+                        'safety_corrective_action' => $builder
+                            ->where('subject_type', 'corrective_action')
+                            ->where('subject_id', $resource->id),
+                    };
+                    if ($resource->projectId !== null) {
+                        $builder->where('project_id', $resource->projectId);
+                    }
+                });
+            }
+        });
+    }
+
+    private function applyExposureResourceScope(
+        Builder $builder,
+        array $resources,
+        string $siteColumn = 'safety_site_id',
+    ): void
+    {
+        if ($resources === []) {
+            return;
+        }
+
+        $supported = array_values(array_filter(
+            $resources,
+            static fn (mixed $resource): bool => $resource instanceof ReportScopedResource
+                && in_array($resource->kind, ['project', 'safety_site'], true),
+        ));
+        if ($supported === []) {
+            return;
+        }
+
+        $builder->where(static function (Builder $builder) use ($siteColumn, $supported): void {
+            foreach ($supported as $resource) {
+                $builder->orWhere(static function (Builder $builder) use ($resource, $siteColumn): void {
+                    if ($resource->kind === 'project') {
+                        $builder->where('project_id', $resource->id);
+                    } else {
+                        $builder->where($siteColumn, $resource->id);
+                    }
+                    if ($resource->projectId !== null) {
+                        $builder->where('project_id', $resource->projectId);
+                    }
+                });
+            }
+        });
+    }
+
+    private function filterValues(mixed $value): array
+    {
+        if ($value === null || $value === '') {
+            return [];
+        }
+
+        return array_values(array_filter(
+            is_array($value) ? $value : [$value],
+            static fn (mixed $item): bool => is_int($item) || is_string($item),
+        ));
     }
 }

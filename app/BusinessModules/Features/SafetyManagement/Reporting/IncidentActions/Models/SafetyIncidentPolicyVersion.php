@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use LogicException;
 
 final class SafetyIncidentPolicyVersion extends Model
 {
@@ -20,4 +21,10 @@ final class SafetyIncidentPolicyVersion extends Model
         'closure_evidence_required' => 'boolean',
         'frequency_multiplier' => 'integer',
     ];
+
+    protected static function booted(): void
+    {
+        self::updating(static fn (): never => throw new LogicException('safety_incident_policy_version_immutable'));
+        self::deleting(static fn (): never => throw new LogicException('safety_incident_policy_version_immutable'));
+    }
 }

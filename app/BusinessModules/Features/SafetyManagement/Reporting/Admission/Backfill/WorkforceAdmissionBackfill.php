@@ -32,7 +32,8 @@ final readonly class WorkforceAdmissionBackfill
 
     public function apply(Collection $batch): array
     {
-        $hashes = [];
+        $inputHashes = [];
+        $outputHashes = [];
         $gaps = 0;
         foreach ($batch as $assignment) {
             if (! $assignment instanceof SafetySiteWorkforceAssignment) {
@@ -56,16 +57,25 @@ final readonly class WorkforceAdmissionBackfill
 
                 continue;
             }
-            $hashes[] = $expected;
+            if ($assignment->mapping_source !== 'workforce_employee_assignments') {
+                $gaps++;
+
+                continue;
+            }
+            $inputHashes[] = $expected;
+            $outputHashes[] = hash('sha256', CanonicalJson::encode([
+                'mapping_id' => (int) $assignment->id,
+                'source_hash' => (string) $assignment->source_hash,
+            ]));
         }
 
         return [
             'source_count' => $batch->count(),
-            'projected_count' => count($hashes),
+            'projected_count' => count($outputHashes),
             'gap_count' => $gaps,
             'unknown_count' => 0,
-            'input_hash' => hash('sha256', implode('', $hashes)),
-            'output_hash' => hash('sha256', implode('', $hashes)),
+            'input_hash' => hash('sha256', implode('', $inputHashes)),
+            'output_hash' => hash('sha256', implode('', $outputHashes)),
         ];
     }
 }

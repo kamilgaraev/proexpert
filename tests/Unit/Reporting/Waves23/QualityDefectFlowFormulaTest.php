@@ -47,7 +47,7 @@ final class QualityDefectFlowFormulaTest extends TestCase
         $formula = new QualityDefectFlowFormula;
         $coverage = $formula->matureCohort([$timeline], $policy, new DateTimeImmutable('2026-07-26T00:00:00+03:00'));
 
-        self::assertSame($fixture['expected']['reopened'], $formula->isReopen($timeline));
+        self::assertSame($fixture['expected']['reopened'], $formula->isReopen($timeline, $policy));
         self::assertSame($fixture['expected']['mature_numerator'], $coverage->numerator);
         self::assertSame($fixture['expected']['mature_denominator'], $coverage->denominator);
         self::assertSame($fixture['expected']['mature_ratio'], $coverage->ratio);
@@ -90,6 +90,15 @@ final class QualityDefectFlowFormulaTest extends TestCase
         self::assertSame('1', $coverage->denominator);
         self::assertSame('1.0000', $coverage->ratio);
         self::assertTrue((new QualityDefectFlowFormula)->isReopen($reopen, $policy));
+    }
+
+    #[Test]
+    public function percentages_use_percent_units_and_keep_a_zero_denominator_unknown(): void
+    {
+        $formula = new QualityDefectFlowFormula;
+
+        self::assertSame('25.0000', $formula->percentage(1, 4));
+        self::assertNull($formula->percentage(0, 0));
     }
 
     private function fixture(string $case): array

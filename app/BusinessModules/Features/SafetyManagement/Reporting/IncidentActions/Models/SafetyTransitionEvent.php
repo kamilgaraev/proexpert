@@ -17,6 +17,8 @@ final class SafetyTransitionEvent extends Model
 
     protected $casts = [
         'due_date' => 'immutable_date',
+        'resolved_at' => 'immutable_datetime',
+        'verified_at' => 'immutable_datetime',
         'occurred_at' => 'immutable_datetime',
         'recorded_at' => 'immutable_datetime',
         'event_version' => 'integer',

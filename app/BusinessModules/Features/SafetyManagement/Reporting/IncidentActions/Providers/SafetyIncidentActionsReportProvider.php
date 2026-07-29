@@ -67,6 +67,12 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
                 'corrective_action_due' => (int) $record->action_due_count,
                 'corrective_action_overdue' => (int) $record->action_overdue_count,
                 'on_time_closure_count' => (int) $record->action_closed_on_time_count,
+                'on_time_closure_pct' => $this->percent(
+                    (int) $record->action_closed_on_time_count,
+                    (int) $record->action_due_count,
+                ),
+                'opening_backlog' => (int) $record->opening_backlog_count,
+                'closing_backlog' => (int) $record->closing_backlog_count,
                 'exposure_hours' => $record->exposure_complete ? (string) $record->exposure_hours : null,
                 'incident_frequency' => $record->exposure_complete ? $record->incident_frequency : null,
             ],
@@ -88,7 +94,7 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
             ),
             array_map(
                 static fn (string $id): array => ['id' => $id],
-                ['row_key', 'event_date', 'project_id', 'safety_site_id', 'subject_type', 'subject_id', 'event_version', 'category', 'severity', 'status', 'owner_user_id', 'due_date', 'created', 'reopened', 'closed', 'closure_verified', 'closure_days', 'evidence_id'],
+                ['row_key', 'event_date', 'project_id', 'safety_site_id', 'contractor_id', 'subject_type', 'subject_id', 'event_version', 'category', 'severity', 'status', 'owner_user_id', 'due_date', 'created', 'reopened', 'closed', 'closure_verified', 'closure_days', 'evidence_id'],
             ),
             ['drill_down' => true, 'evidence_redaction' => true, 'snapshot_export_parity' => true],
         );
@@ -111,7 +117,8 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
 
     private function quality(SafetyIncidentSnapshot $snapshot): ReportQuality
     {
-        $complete = (int) $snapshot->gap_count === 0 && (int) $snapshot->unknown_count === 0 && (bool) $snapshot->exposure_complete;
+        $sourceComplete = (int) $snapshot->gap_count === 0 && (int) $snapshot->unknown_count === 0;
+        $complete = $sourceComplete && (bool) $snapshot->exposure_complete;
         $warnings = [];
         if (! (bool) $snapshot->exposure_complete) {
             $warnings[] = new ReportWarning('SAFETY_EXPOSURE_INCOMPLETE', ReportWarningSeverity::CRITICAL, 'incident_frequency', 1);
@@ -128,7 +135,7 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
             new ReportCoverage((string) $numerator, (string) $denominator, $this->ratio($numerator, $denominator)),
             $warnings,
             (int) $snapshot->gap_count,
-            $complete ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
+            $sourceComplete ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
             ! (bool) $snapshot->exposure_complete ? ['incident_frequency'] : [],
             [],
         );
@@ -140,6 +147,16 @@ final readonly class SafetyIncidentActionsReportProvider implements ReportDataPr
             return null;
         }
         $scaled = intdiv($numerator * 10_000 + intdiv($denominator, 2), $denominator);
+
+        return sprintf('%d.%04d', intdiv($scaled, 10_000), $scaled % 10_000);
+    }
+
+    private function percent(int $numerator, int $denominator): ?string
+    {
+        if ($denominator === 0) {
+            return null;
+        }
+        $scaled = intdiv($numerator * 1_000_000 + intdiv($denominator, 2), $denominator);
 
         return sprintf('%d.%04d', intdiv($scaled, 10_000), $scaled % 10_000);
     }

@@ -7,23 +7,28 @@ namespace App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Quer
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
+use App\BusinessModules\Core\Reporting\Support\ScopedReportSourceGuard;
+use App\BusinessModules\Core\Reporting\Support\SnapshotRowKeyset;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionRow;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionSnapshot;
 use Illuminate\Database\Eloquent\Builder;
 
 final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
 {
-    private const SORTS = ['snapshot_date', 'project_id', 'safety_site_id', 'employee_id', 'requirement_code', 'status', 'valid_until'];
+    private const SORTS = ['snapshot_date', 'project_id', 'safety_site_id', 'workforce_assignment_id', 'employee_id', 'requirement_code', 'requirement_type', 'status', 'mandatory', 'blocked', 'valid_until'];
 
     public function page(
         ReportExecutionContext $context,
@@ -36,11 +41,13 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
         $record = $this->snapshot($context, $snapshot);
         $query = $this->rows($context, $snapshot);
         if ($cursor !== null) {
-            $payload = $this->payload($cursor->token, $snapshot, $sort);
-            $this->applyAfter($query, $sort, $payload['last_sort_value'], $payload['last_stable_row_key']);
+            if ($cursor->queryHash->value !== $record->query_hash) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_CURSOR_INVALID);
+            }
+            $payload = SnapshotRowKeyset::payload($cursor, $snapshot, $sort);
+            SnapshotRowKeyset::after($query, $sort, $payload['last_sort_value'], $payload['last_stable_row_key']);
         }
-        $direction = $sort->direction === ReportSortDirection::ASC ? 'asc' : 'desc';
-        $records = $query->orderBy($sort->field, $direction)->orderBy('row_key', $direction)->limit($limit + 1)->get();
+        $records = SnapshotRowKeyset::order($query, $sort)->limit($limit + 1)->get();
         $hasMore = $records->count() > $limit;
 
         return new ReportPage(
@@ -62,10 +69,28 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
         int $chunkSize,
     ): iterable {
         $this->assertSort($sort);
-        $direction = $sort->direction === ReportSortDirection::ASC ? 'asc' : 'desc';
-        foreach ($this->rows($context, $snapshot)->orderBy($sort->field, $direction)->orderBy('row_key', $direction)->lazy($chunkSize) as $row) {
-            yield $this->serialize($row, $context);
-        }
+        $record = $this->snapshot($context, $snapshot);
+        $lastSortValue = null;
+        $lastRowKey = null;
+        do {
+            $query = $this->rows($context, $snapshot);
+            if ($lastRowKey !== null) {
+                SnapshotRowKeyset::after($query, $sort, $lastSortValue, $lastRowKey);
+            }
+            $records = SnapshotRowKeyset::order($query, $sort)->limit($chunkSize)->get();
+            foreach ($records as $row) {
+                $values = $this->serialize($row, $context);
+                yield [
+                    'query_hash' => (string) $record->query_hash,
+                    'row_key' => (string) $row->row_key,
+                    'snapshot_id' => (string) $record->id,
+                    'source_hash' => (string) $record->source_hash,
+                    'values' => $values,
+                ];
+                $lastSortValue = $values[$sort->field] ?? null;
+                $lastRowKey = (string) $row->row_key;
+            }
+        } while ($records->count() === $chunkSize);
     }
 
     private function assertSort(ReportWindowSort $sort): void
@@ -90,6 +115,8 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
             ->whereKey($snapshot->id)
             ->where('organization_id', $context->scope->organizationId)
             ->where('source_hash', $snapshot->sourceHash->value)
+            ->where('definition_hash', $snapshot->definitionHash->value)
+            ->where('formula_version', $snapshot->formulaVersion)
             ->first();
         if (! $record instanceof SafetyAdmissionSnapshot) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
@@ -100,6 +127,12 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
 
     private function serialize(SafetyAdmissionRow $row, ReportExecutionContext $context): array
     {
+        ScopedReportSourceGuard::assertAccessible($context, (int) $row->project_id, [
+            new ReportScopedResource('workforce_assignment', (int) $row->workforce_assignment_id, (int) $row->project_id),
+            new ReportScopedResource('workforce_employee', (int) $row->employee_id, (int) $row->project_id),
+            new ReportScopedResource('safety_site', (int) $row->safety_site_id, (int) $row->project_id),
+        ]);
+
         $medical = $row->requirement_type === 'medical_exam';
         $canViewMedical = $context->visibility->canViewSensitive;
         $status = (string) $row->status;
@@ -109,21 +142,29 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
                 : (in_array($status, ['expired', 'missing'], true) ? $status : 'valid');
         }
 
-        return [
+        $values = [
             'row_key' => (string) $row->row_key,
             'snapshot_date' => $row->snapshot_date->toDateString(),
             'project_id' => (int) $row->project_id,
             'safety_site_id' => (int) $row->safety_site_id,
+            'workforce_assignment_id' => (int) $row->workforce_assignment_id,
             'employee_id' => (int) $row->employee_id,
             'requirement_code' => (string) $row->requirement_code,
             'requirement_type' => (string) $row->requirement_type,
             'status' => $status,
+            'mandatory' => (bool) $row->mandatory,
             'blocked' => (bool) $row->blocked,
             'verified' => (bool) $row->verified,
             'valid_until' => $row->valid_until?->toDateString(),
-            'evidence_id' => $medical && ! $canViewMedical ? null : $row->evidence_id,
-            'medical_details' => $canViewMedical ? $row->medical_details : null,
         ];
+        if (! $medical) {
+            $values['evidence_id'] = $row->evidence_id;
+        } elseif ($canViewMedical) {
+            $values['evidence_id'] = null;
+            $values['medical_details'] = $row->medical_details;
+        }
+
+        return $values;
     }
 
     private function totals(SafetyAdmissionSnapshot $snapshot): array
@@ -133,6 +174,10 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
             'admitted_people' => (int) $snapshot->admitted_people,
             'partial_people' => (int) $snapshot->partial_people,
             'not_admitted_people' => (int) $snapshot->not_admitted_people,
+            'compliance_pct' => $this->percent(
+                (int) $snapshot->admitted_people,
+                (int) $snapshot->evaluated_people,
+            ),
             'blocker_count' => (int) $snapshot->blocker_count,
             'expiring_count' => (int) $snapshot->expiring_count,
             'unverified_coverage' => (int) $snapshot->unverified_count,
@@ -141,14 +186,27 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
 
     private function quality(SafetyAdmissionSnapshot $snapshot): ReportQuality
     {
-        $complete = (int) $snapshot->gap_count === 0 && (int) $snapshot->unknown_count === 0;
+        $sourceComplete = (int) $snapshot->gap_count === 0 && (int) $snapshot->unknown_count === 0;
+        $warnings = [];
+        if ((int) $snapshot->unknown_count > 0) {
+            $warnings[] = new ReportWarning(
+                'ADMISSION_EVIDENCE_UNVERIFIED',
+                ReportWarningSeverity::CRITICAL,
+                'unverified_coverage',
+                (int) $snapshot->unknown_count,
+            );
+        }
 
         return new ReportQuality(
-            $complete ? ReportQualityStatus::COMPLETE : ReportQualityStatus::PARTIAL,
-            null,
-            [],
+            $sourceComplete ? ReportQualityStatus::COMPLETE : ReportQualityStatus::PARTIAL,
+            new ReportCoverage(
+                (string) $snapshot->projected_count,
+                (string) $snapshot->eligible_count,
+                $this->ratio((int) $snapshot->projected_count, (int) $snapshot->eligible_count),
+            ),
+            $warnings,
             (int) $snapshot->gap_count,
-            $complete ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
+            $sourceComplete ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH,
             [],
             [],
         );
@@ -161,36 +219,24 @@ final readonly class WorkforceAdmissionRowQuery implements ReportRowQuery
             : ReportFreshnessStatus::FRESH;
     }
 
-    private function payload(string $token, ReportSnapshotRef $snapshot, ReportWindowSort $sort): array
+    private function ratio(int $numerator, int $denominator): ?string
     {
-        $encoded = explode('.', $token, 2)[0] ?? '';
-        $decoded = base64_decode(strtr($encoded, '-_', '+/').str_repeat('=', (4 - strlen($encoded) % 4) % 4), true);
-        $payload = is_string($decoded) ? json_decode($decoded, true) : null;
-        if (! is_array($payload)
-            || ($payload['snapshot_id'] ?? null) !== $snapshot->id
-            || ($payload['source_hash'] ?? null) !== $snapshot->sourceHash->value
-            || ($payload['sort_field'] ?? null) !== $sort->field
-            || ($payload['sort_direction'] ?? null) !== $sort->direction->value
-            || ! is_string($payload['last_stable_row_key'] ?? null)) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_CURSOR_INVALID);
+        if ($denominator === 0) {
+            return null;
         }
+        $scaled = intdiv($numerator * 10_000 + intdiv($denominator, 2), $denominator);
 
-        return $payload;
+        return sprintf('%d.%04d', intdiv($scaled, 10_000), $scaled % 10_000);
     }
 
-    private function applyAfter(Builder $query, ReportWindowSort $sort, mixed $value, string $rowKey): void
+    private function percent(int $numerator, int $denominator): ?string
     {
-        $operator = $sort->direction === ReportSortDirection::ASC ? '>' : '<';
-        $query->where(static function (Builder $query) use ($sort, $value, $rowKey, $operator): void {
-            if ($value === null) {
-                $query->whereNull($sort->field)->where('row_key', $operator, $rowKey);
+        if ($denominator === 0) {
+            return null;
+        }
+        $scaled = intdiv($numerator * 10_000 + intdiv($denominator, 2), $denominator);
 
-                return;
-            }
-            $query->where($sort->field, $operator, $value)
-                ->orWhere(static function (Builder $query) use ($sort, $value, $rowKey, $operator): void {
-                    $query->where($sort->field, $value)->where('row_key', $operator, $rowKey);
-                });
-        });
+        return sprintf('%d.%02d', intdiv($scaled, 100), $scaled % 100);
     }
+
 }

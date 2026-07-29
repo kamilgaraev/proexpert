@@ -10,6 +10,7 @@ use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyViolation;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetySite;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyTransitionEvent;
+use App\Models\Contractor;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -54,6 +55,7 @@ final readonly class SafetyTransitionRecorder
             $payload = [
                 'actor_user_id' => $actorUserId,
                 'category' => $this->category($subject),
+                'contractor_id' => $this->contractorId($subject),
                 'due_date' => $subject instanceof SafetyIncident ? null : $subject->due_date?->toDateString(),
                 'event_version' => $version,
                 'evidence_id' => $evidenceId,
@@ -63,11 +65,17 @@ final readonly class SafetyTransitionRecorder
                 'organization_id' => (int) $subject->organization_id,
                 'owner_user_id' => $this->ownerUserId($subject),
                 'project_id' => (int) $subject->project_id,
+                'resolved_at' => $subject instanceof SafetyCorrectiveAction || $subject instanceof SafetyViolation
+                    ? $subject->resolved_at?->format(DATE_ATOM)
+                    : null,
                 'safety_site_id' => $siteId,
                 'severity' => (string) $subject->severity,
                 'subject_id' => (int) $subject->id,
                 'subject_type' => $subjectType,
                 'to_status' => $toStatus,
+                'verified_at' => $subject instanceof SafetyCorrectiveAction
+                    ? $subject->verified_at?->format(DATE_ATOM)
+                    : null,
             ];
 
             return SafetyTransitionEvent::query()->create($payload + [
@@ -120,22 +128,83 @@ final readonly class SafetyTransitionRecorder
         return $matches ? $siteId : null;
     }
 
+    private function contractorId(SafetyIncident|SafetyViolation|SafetyCorrectiveAction $subject): ?int
+    {
+        $contractorId = $subject->metadata['contractor_id'] ?? null;
+        if (! is_int($contractorId) && ! (is_string($contractorId) && ctype_digit($contractorId))) {
+            return null;
+        }
+
+        $contractorId = (int) $contractorId;
+
+        return Contractor::query()
+            ->whereKey($contractorId)
+            ->where('organization_id', $subject->organization_id)
+            ->exists()
+                ? $contractorId
+                : null;
+    }
+
     private function evidence(
         SafetyIncident|SafetyViolation|SafetyCorrectiveAction $subject,
         string $toStatus,
     ): array {
-        $metadata = $subject->metadata ?? [];
-        $id = match (true) {
-            $subject instanceof SafetyCorrectiveAction && $toStatus === 'verified' => $metadata['verification_evidence_id'] ?? null,
-            $subject instanceof SafetyIncident && $toStatus === 'closed' => $metadata['investigation_evidence_id'] ?? null,
-            $subject instanceof SafetyViolation && $toStatus === 'resolved' => $metadata['resolution_evidence_id'] ?? null,
+        $evidence = match (true) {
+            $subject instanceof SafetyCorrectiveAction && $toStatus === 'verified'
+                && trim((string) $subject->resolution_comment) !== ''
+                && trim((string) $subject->verification_comment) !== ''
+                && $subject->resolved_at !== null
+                && $subject->verified_at !== null => [
+                    'type' => 'corrective_action_verification',
+                    'value' => [
+                        'resolution_comment' => trim((string) $subject->resolution_comment),
+                        'resolved_at' => $subject->resolved_at->format(DATE_ATOM),
+                        'verification_comment' => trim((string) $subject->verification_comment),
+                        'verified_at' => $subject->verified_at->format(DATE_ATOM),
+                    ],
+                ],
+            $subject instanceof SafetyIncident && $toStatus === 'closed'
+                && trim((string) $subject->root_cause) !== ''
+                && $subject->closed_at !== null => [
+                    'type' => 'incident_closure',
+                    'value' => [
+                        'closed_at' => $subject->closed_at->format(DATE_ATOM),
+                        'corrective_actions' => trim((string) $subject->corrective_actions),
+                        'root_cause' => trim((string) $subject->root_cause),
+                    ],
+                ],
+            $subject instanceof SafetyIncident && $toStatus === 'cancelled'
+                && trim((string) $subject->cancellation_reason) !== ''
+                && $subject->cancelled_at !== null => [
+                    'type' => 'incident_cancellation',
+                    'value' => [
+                        'cancelled_at' => $subject->cancelled_at->format(DATE_ATOM),
+                        'cancellation_reason' => trim((string) $subject->cancellation_reason),
+                    ],
+                ],
+            $subject instanceof SafetyViolation && $toStatus === 'resolved'
+                && trim((string) $subject->resolution_comment) !== ''
+                && $subject->resolved_at !== null => [
+                    'type' => 'violation_resolution',
+                    'value' => [
+                        'resolution_comment' => trim((string) $subject->resolution_comment),
+                        'resolved_at' => $subject->resolved_at->format(DATE_ATOM),
+                    ],
+                ],
             default => null,
         };
 
-        if (! is_int($id) && ! (is_string($id) && trim($id) !== '')) {
+        if ($evidence === null) {
             return [null, null];
         }
 
-        return ['owner_evidence', (string) $id];
+        return [
+            $evidence['type'],
+            hash('sha256', CanonicalJson::encode([
+                'subject_id' => (int) $subject->id,
+                'subject_type' => $this->subjectType($subject),
+                'value' => $evidence['value'],
+            ])),
+        ];
     }
 }

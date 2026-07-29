@@ -1160,24 +1160,26 @@ final class SafetyManagementService
     {
         $this->assertProjectBelongsToOrganization((int) $data['project_id'], $organizationId);
 
-        $incident = SafetyIncident::query()->create([
-            'organization_id' => $organizationId,
-            'project_id' => (int) $data['project_id'],
-            'reported_by_user_id' => $userId,
-            'incident_number' => $this->nextNumber('HSE-I', $organizationId),
-            'title' => $data['title'],
-            'incident_type' => $data['incident_type'],
-            'severity' => $data['severity'],
-            'status' => 'reported',
-            'occurred_at' => $data['occurred_at'],
-            'location_name' => $data['location_name'] ?? null,
-            'description' => $data['description'] ?? null,
-            'immediate_actions' => $data['immediate_actions'] ?? null,
-            'metadata' => $data['metadata'] ?? null,
-        ]);
-        $this->transitionRecorder->record($incident, null, 'reported', $userId, $incident->created_at);
+        return DB::transaction(function () use ($organizationId, $userId, $data): SafetyIncident {
+            $incident = SafetyIncident::query()->create([
+                'organization_id' => $organizationId,
+                'project_id' => (int) $data['project_id'],
+                'reported_by_user_id' => $userId,
+                'incident_number' => $this->nextNumber('HSE-I', $organizationId),
+                'title' => $data['title'],
+                'incident_type' => $data['incident_type'],
+                'severity' => $data['severity'],
+                'status' => 'reported',
+                'occurred_at' => $data['occurred_at'],
+                'location_name' => $data['location_name'] ?? null,
+                'description' => $data['description'] ?? null,
+                'immediate_actions' => $data['immediate_actions'] ?? null,
+                'metadata' => $data['metadata'] ?? null,
+            ]);
+            $this->transitionRecorder->record($incident, null, 'reported', $userId, $incident->occurred_at);
 
-        return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
+            return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
+        });
     }
 
     public function findIncident(int $organizationId, int $id): ?SafetyIncident
@@ -1189,117 +1191,131 @@ final class SafetyManagementService
 
     public function triageIncident(SafetyIncident $incident, int $userId, ?string $comment): SafetyIncident
     {
-        if ($incident->status !== 'reported') {
-            throw new DomainException(trans_message('safety_management.errors.incident_triage_invalid_status'));
-        }
+        return DB::transaction(function () use ($incident, $userId, $comment): SafetyIncident {
+            $incident = $this->lockIncident($incident);
+            if ($incident->status !== 'reported') {
+                throw new DomainException(trans_message('safety_management.errors.incident_triage_invalid_status'));
+            }
 
-        $changedAt = now();
-        $incident->update([
-            'status' => 'triage',
-            'triaged_by_user_id' => $userId,
-            'triaged_at' => $changedAt,
-            'triage_comment' => $comment,
-        ]);
-        $this->transitionRecorder->record($incident, 'reported', 'triage', $userId, $changedAt);
+            $changedAt = now();
+            $incident->update([
+                'status' => 'triage',
+                'triaged_by_user_id' => $userId,
+                'triaged_at' => $changedAt,
+                'triage_comment' => $comment,
+            ]);
+            $this->transitionRecorder->record($incident, 'reported', 'triage', $userId, $changedAt);
 
-        return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
+            return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
+        });
     }
 
     public function startIncidentInvestigation(SafetyIncident $incident, int $assigneeId): SafetyIncident
     {
-        if ($incident->status !== 'triage') {
-            throw new DomainException(trans_message('safety_management.errors.incident_start_invalid_status'));
-        }
-
         $this->assertOptionalUserBelongsToOrganization($assigneeId, (int) $incident->organization_id);
 
-        $changedAt = now();
-        $incident->update([
-            'status' => 'investigation',
-            'assigned_to_user_id' => $assigneeId,
-            'investigation_started_at' => $changedAt,
-        ]);
-        $this->transitionRecorder->record($incident, 'triage', 'investigation', $assigneeId, $changedAt);
+        return DB::transaction(function () use ($incident, $assigneeId): SafetyIncident {
+            $incident = $this->lockIncident($incident);
+            if ($incident->status !== 'triage') {
+                throw new DomainException(trans_message('safety_management.errors.incident_start_invalid_status'));
+            }
 
-        return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
+            $changedAt = now();
+            $incident->update([
+                'status' => 'investigation',
+                'assigned_to_user_id' => $assigneeId,
+                'investigation_started_at' => $changedAt,
+            ]);
+            $this->transitionRecorder->record($incident, 'triage', 'investigation', $assigneeId, $changedAt);
+
+            return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
+        });
     }
 
     public function startCorrectiveActions(SafetyIncident $incident, ?string $rootCause): SafetyIncident
     {
-        if ($incident->status !== 'investigation') {
-            throw new DomainException(trans_message('safety_management.errors.incident_corrective_actions_invalid_status'));
-        }
+        return DB::transaction(function () use ($incident, $rootCause): SafetyIncident {
+            $incident = $this->lockIncident($incident);
+            if ($incident->status !== 'investigation') {
+                throw new DomainException(trans_message('safety_management.errors.incident_corrective_actions_invalid_status'));
+            }
 
-        $changedAt = now();
-        $incident->update([
-            'status' => 'corrective_actions',
-            'root_cause' => trim((string) $rootCause) ?: $incident->root_cause,
-            'corrective_actions_started_at' => $changedAt,
-        ]);
-        $this->transitionRecorder->record($incident, 'investigation', 'corrective_actions', null, $changedAt);
+            $changedAt = now();
+            $incident->update([
+                'status' => 'corrective_actions',
+                'root_cause' => trim((string) $rootCause) ?: $incident->root_cause,
+                'corrective_actions_started_at' => $changedAt,
+            ]);
+            $this->transitionRecorder->record($incident, 'investigation', 'corrective_actions', null, $changedAt);
 
-        return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
+            return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
+        });
     }
 
     public function cancelIncident(SafetyIncident $incident, int $userId, string $reason): SafetyIncident
     {
-        if (! in_array($incident->status, ['reported', 'triage', 'investigation'], true)) {
-            throw new DomainException(trans_message('safety_management.errors.incident_cancel_invalid_status'));
-        }
+        return DB::transaction(function () use ($incident, $userId, $reason): SafetyIncident {
+            $incident = $this->lockIncident($incident);
+            if (! in_array($incident->status, ['reported', 'triage', 'investigation'], true)) {
+                throw new DomainException(trans_message('safety_management.errors.incident_cancel_invalid_status'));
+            }
 
-        $fromStatus = (string) $incident->status;
-        $changedAt = now();
-        $incident->update([
-            'status' => 'cancelled',
-            'cancelled_by_user_id' => $userId,
-            'cancelled_at' => $changedAt,
-            'cancellation_reason' => trim($reason),
-        ]);
-        $this->transitionRecorder->record($incident, $fromStatus, 'cancelled', $userId, $changedAt);
+            $fromStatus = (string) $incident->status;
+            $changedAt = now();
+            $incident->update([
+                'status' => 'cancelled',
+                'cancelled_by_user_id' => $userId,
+                'cancelled_at' => $changedAt,
+                'cancellation_reason' => trim($reason),
+            ]);
+            $this->transitionRecorder->record($incident, $fromStatus, 'cancelled', $userId, $changedAt);
 
-        return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
+            return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
+        });
     }
 
     public function closeIncident(SafetyIncident $incident, int $userId, array $data): SafetyIncident
     {
-        if ($incident->status !== 'corrective_actions') {
-            throw new DomainException(trans_message('safety_management.errors.incident_close_invalid_status'));
-        }
-
-        $rootCause = trim((string) ($data['root_cause'] ?? $incident->root_cause ?? ''));
-        $correctiveActions = trim((string) ($data['corrective_actions'] ?? $incident->corrective_actions ?? ''));
-
-        if ($rootCause === '') {
-            throw new DomainException(trans_message('safety_management.errors.incident_close_evidence_required'));
-        }
-
-        if (in_array($incident->severity, ['major', 'critical', 'high'], true)) {
-            $openActions = SafetyCorrectiveAction::query()
-                ->where('incident_id', $incident->id)
-                ->whereIn('status', ['open', 'resolved'])
-                ->exists();
-
-            $hasVerifiedActions = SafetyCorrectiveAction::query()
-                ->where('incident_id', $incident->id)
-                ->where('status', 'verified')
-                ->exists();
-
-            if ($openActions || ! $hasVerifiedActions) {
-                throw new DomainException(trans_message('safety_management.errors.incident_close_corrective_actions_required'));
+        return DB::transaction(function () use ($incident, $userId, $data): SafetyIncident {
+            $incident = $this->lockIncident($incident);
+            if ($incident->status !== 'corrective_actions') {
+                throw new DomainException(trans_message('safety_management.errors.incident_close_invalid_status'));
             }
-        }
 
-        $changedAt = now();
-        $incident->update([
-            'status' => 'closed',
-            'root_cause' => $rootCause,
-            'corrective_actions' => $correctiveActions,
-            'closed_at' => $changedAt,
-            'closed_by_user_id' => $userId,
-        ]);
-        $this->transitionRecorder->record($incident, 'corrective_actions', 'closed', $userId, $changedAt);
+            $rootCause = trim((string) ($data['root_cause'] ?? $incident->root_cause ?? ''));
+            $correctiveActions = trim((string) ($data['corrective_actions'] ?? $incident->corrective_actions ?? ''));
 
-        return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
+            if ($rootCause === '') {
+                throw new DomainException(trans_message('safety_management.errors.incident_close_evidence_required'));
+            }
+
+            if (in_array($incident->severity, ['major', 'critical', 'high'], true)) {
+                $openActions = SafetyCorrectiveAction::query()
+                    ->where('incident_id', $incident->id)
+                    ->whereIn('status', ['open', 'resolved'])
+                    ->exists();
+                $hasVerifiedActions = SafetyCorrectiveAction::query()
+                    ->where('incident_id', $incident->id)
+                    ->where('status', 'verified')
+                    ->exists();
+
+                if ($openActions || ! $hasVerifiedActions) {
+                    throw new DomainException(trans_message('safety_management.errors.incident_close_corrective_actions_required'));
+                }
+            }
+
+            $changedAt = now();
+            $incident->update([
+                'status' => 'closed',
+                'root_cause' => $rootCause,
+                'corrective_actions' => $correctiveActions,
+                'closed_at' => $changedAt,
+                'closed_by_user_id' => $userId,
+            ]);
+            $this->transitionRecorder->record($incident, 'corrective_actions', 'closed', $userId, $changedAt);
+
+            return $incident->fresh(['project:id,name', 'assignedUser:id,name']);
+        });
     }
 
     public function createViolation(int $organizationId, int $userId, array $data): SafetyViolation
@@ -1307,24 +1323,26 @@ final class SafetyManagementService
         $this->assertProjectBelongsToOrganization((int) $data['project_id'], $organizationId);
         $this->assertOptionalUserBelongsToOrganization($data['assigned_to_user_id'] ?? null, $organizationId);
 
-        $violation = SafetyViolation::query()->create([
-            'organization_id' => $organizationId,
-            'project_id' => (int) $data['project_id'],
-            'created_by_user_id' => $userId,
-            'assigned_to_user_id' => $data['assigned_to_user_id'] ?? null,
-            'violation_number' => $this->nextNumber('HSE-V', $organizationId),
-            'title' => $data['title'],
-            'severity' => $data['severity'],
-            'status' => 'open',
-            'location_name' => $data['location_name'] ?? null,
-            'description' => $data['description'] ?? null,
-            'corrective_action' => $data['corrective_action'] ?? null,
-            'due_date' => $data['due_date'] ?? null,
-            'metadata' => $data['metadata'] ?? null,
-        ]);
-        $this->transitionRecorder->record($violation, null, 'open', $userId, $violation->created_at);
+        return DB::transaction(function () use ($organizationId, $userId, $data): SafetyViolation {
+            $violation = SafetyViolation::query()->create([
+                'organization_id' => $organizationId,
+                'project_id' => (int) $data['project_id'],
+                'created_by_user_id' => $userId,
+                'assigned_to_user_id' => $data['assigned_to_user_id'] ?? null,
+                'violation_number' => $this->nextNumber('HSE-V', $organizationId),
+                'title' => $data['title'],
+                'severity' => $data['severity'],
+                'status' => 'open',
+                'location_name' => $data['location_name'] ?? null,
+                'description' => $data['description'] ?? null,
+                'corrective_action' => $data['corrective_action'] ?? null,
+                'due_date' => $data['due_date'] ?? null,
+                'metadata' => $data['metadata'] ?? null,
+            ]);
+            $this->transitionRecorder->record($violation, null, 'open', $userId, $violation->created_at);
 
-        return $violation->fresh(['project:id,name', 'assignedUser:id,name']);
+            return $violation->fresh(['project:id,name', 'assignedUser:id,name']);
+        });
     }
 
     public function findViolation(int $organizationId, int $id): ?SafetyViolation
@@ -1336,24 +1354,27 @@ final class SafetyManagementService
 
     public function resolveViolation(SafetyViolation $violation, int $userId, string $comment): SafetyViolation
     {
-        if ($violation->status !== 'open') {
-            throw new DomainException(trans_message('safety_management.errors.violation_resolve_invalid_status'));
-        }
+        return DB::transaction(function () use ($violation, $userId, $comment): SafetyViolation {
+            $violation = $this->lockViolation($violation);
+            if ($violation->status !== 'open') {
+                throw new DomainException(trans_message('safety_management.errors.violation_resolve_invalid_status'));
+            }
 
-        if (trim($comment) === '') {
-            throw new DomainException(trans_message('safety_management.errors.violation_resolution_required'));
-        }
+            if (trim($comment) === '') {
+                throw new DomainException(trans_message('safety_management.errors.violation_resolution_required'));
+            }
 
-        $changedAt = now();
-        $violation->update([
-            'status' => 'resolved',
-            'resolved_at' => $changedAt,
-            'resolved_by_user_id' => $userId,
-            'resolution_comment' => trim($comment),
-        ]);
-        $this->transitionRecorder->record($violation, 'open', 'resolved', $userId, $changedAt);
+            $changedAt = now();
+            $violation->update([
+                'status' => 'resolved',
+                'resolved_at' => $changedAt,
+                'resolved_by_user_id' => $userId,
+                'resolution_comment' => trim($comment),
+            ]);
+            $this->transitionRecorder->record($violation, 'open', 'resolved', $userId, $changedAt);
 
-        return $violation->fresh(['project:id,name', 'assignedUser:id,name']);
+            return $violation->fresh(['project:id,name', 'assignedUser:id,name']);
+        });
     }
 
     public function createBriefing(int $organizationId, int $userId, array $data): SafetyBriefing
@@ -1581,25 +1602,34 @@ final class SafetyManagementService
         $projectId = (int) ($incident?->project_id ?? $violation?->project_id);
         $this->assertOptionalUserBelongsToOrganization($data['assigned_to_user_id'] ?? null, $organizationId);
 
-        $action = SafetyCorrectiveAction::query()->create([
-            'organization_id' => $organizationId,
-            'project_id' => $projectId,
-            'incident_id' => $incident?->id,
-            'violation_id' => $violation?->id,
-            'created_by_user_id' => $userId,
-            'assigned_to_user_id' => $data['assigned_to_user_id'] ?? null,
-            'action_number' => $this->nextNumber('HSE-C', $organizationId),
-            'title' => $data['title'],
-            'description' => $data['description'] ?? null,
-            'source_type' => $incident !== null ? 'incident' : 'violation',
-            'severity' => $data['severity'] ?? ($incident?->severity ?? $violation?->severity ?? 'major'),
-            'status' => 'open',
-            'due_date' => $data['due_date'] ?? null,
-            'metadata' => $data['metadata'] ?? null,
-        ]);
-        $this->transitionRecorder->record($action, null, 'open', $userId, $action->created_at);
+        return DB::transaction(function () use (
+            $organizationId,
+            $projectId,
+            $incident,
+            $violation,
+            $userId,
+            $data,
+        ): SafetyCorrectiveAction {
+            $action = SafetyCorrectiveAction::query()->create([
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'incident_id' => $incident?->id,
+                'violation_id' => $violation?->id,
+                'created_by_user_id' => $userId,
+                'assigned_to_user_id' => $data['assigned_to_user_id'] ?? null,
+                'action_number' => $this->nextNumber('HSE-C', $organizationId),
+                'title' => $data['title'],
+                'description' => $data['description'] ?? null,
+                'source_type' => $incident !== null ? 'incident' : 'violation',
+                'severity' => $data['severity'] ?? ($incident?->severity ?? $violation?->severity ?? 'major'),
+                'status' => 'open',
+                'due_date' => $data['due_date'] ?? null,
+                'metadata' => $data['metadata'] ?? null,
+            ]);
+            $this->transitionRecorder->record($action, null, 'open', $userId, $action->created_at);
 
-        return $action->fresh(['project:id,name', 'assignedUser:id,name']);
+            return $action->fresh(['project:id,name', 'assignedUser:id,name']);
+        });
     }
 
     public function findCorrectiveAction(int $organizationId, int $id): ?SafetyCorrectiveAction
@@ -1611,42 +1641,48 @@ final class SafetyManagementService
 
     public function resolveCorrectiveAction(SafetyCorrectiveAction $action, int $userId, string $comment): SafetyCorrectiveAction
     {
-        if ($action->status !== 'open') {
-            throw new DomainException(trans_message('safety_management.errors.corrective_action_resolve_invalid_status'));
-        }
+        return DB::transaction(function () use ($action, $userId, $comment): SafetyCorrectiveAction {
+            $action = $this->lockCorrectiveAction($action);
+            if ($action->status !== 'open') {
+                throw new DomainException(trans_message('safety_management.errors.corrective_action_resolve_invalid_status'));
+            }
 
-        if (trim($comment) === '') {
-            throw new DomainException(trans_message('safety_management.errors.corrective_action_resolution_required'));
-        }
+            if (trim($comment) === '') {
+                throw new DomainException(trans_message('safety_management.errors.corrective_action_resolution_required'));
+            }
 
-        $changedAt = now();
-        $action->update([
-            'status' => 'resolved',
-            'resolved_by_user_id' => $userId,
-            'resolved_at' => $changedAt,
-            'resolution_comment' => trim($comment),
-        ]);
-        $this->transitionRecorder->record($action, 'open', 'resolved', $userId, $changedAt);
+            $changedAt = now();
+            $action->update([
+                'status' => 'resolved',
+                'resolved_by_user_id' => $userId,
+                'resolved_at' => $changedAt,
+                'resolution_comment' => trim($comment),
+            ]);
+            $this->transitionRecorder->record($action, 'open', 'resolved', $userId, $changedAt);
 
-        return $action->fresh(['project:id,name', 'assignedUser:id,name']);
+            return $action->fresh(['project:id,name', 'assignedUser:id,name']);
+        });
     }
 
     public function verifyCorrectiveAction(SafetyCorrectiveAction $action, int $userId, string $comment): SafetyCorrectiveAction
     {
-        if ($action->status !== 'resolved') {
-            throw new DomainException(trans_message('safety_management.errors.corrective_action_verify_invalid_status'));
-        }
+        return DB::transaction(function () use ($action, $userId, $comment): SafetyCorrectiveAction {
+            $action = $this->lockCorrectiveAction($action);
+            if ($action->status !== 'resolved') {
+                throw new DomainException(trans_message('safety_management.errors.corrective_action_verify_invalid_status'));
+            }
 
-        $changedAt = now();
-        $action->update([
-            'status' => 'verified',
-            'verified_by_user_id' => $userId,
-            'verified_at' => $changedAt,
-            'verification_comment' => trim($comment),
-        ]);
-        $this->transitionRecorder->record($action, 'resolved', 'verified', $userId, $changedAt);
+            $changedAt = now();
+            $action->update([
+                'status' => 'verified',
+                'verified_by_user_id' => $userId,
+                'verified_at' => $changedAt,
+                'verification_comment' => trim($comment),
+            ]);
+            $this->transitionRecorder->record($action, 'resolved', 'verified', $userId, $changedAt);
 
-        return $action->fresh(['project:id,name', 'assignedUser:id,name']);
+            return $action->fresh(['project:id,name', 'assignedUser:id,name']);
+        });
     }
 
     public function findInspection(int $organizationId, int $id): ?SafetyInspection
@@ -1662,6 +1698,30 @@ final class SafetyManagementService
         return SafetyInspectionFinding::forOrganization($organizationId)
             ->with(['project:id,name', 'assignedUser:id,name'])
             ->find($id);
+    }
+
+    private function lockIncident(SafetyIncident $incident): SafetyIncident
+    {
+        return SafetyIncident::forOrganization((int) $incident->organization_id)
+            ->whereKey($incident->getKey())
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
+
+    private function lockViolation(SafetyViolation $violation): SafetyViolation
+    {
+        return SafetyViolation::forOrganization((int) $violation->organization_id)
+            ->whereKey($violation->getKey())
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
+
+    private function lockCorrectiveAction(SafetyCorrectiveAction $action): SafetyCorrectiveAction
+    {
+        return SafetyCorrectiveAction::forOrganization((int) $action->organization_id)
+            ->whereKey($action->getKey())
+            ->lockForUpdate()
+            ->firstOrFail();
     }
 
     private function replacePermitParticipants(SafetyWorkPermit $permit, array $participants): void

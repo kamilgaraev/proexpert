@@ -11,7 +11,9 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResourceLink;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Support\ScopedReportSourceGuard;
 use App\BusinessModules\Features\SafetyManagement\Reporting\IncidentActions\Models\SafetyIncidentRow;
 
 final readonly class SafetyIncidentDrillDownProvider implements ReportDrillDownProvider
@@ -36,6 +38,15 @@ final readonly class SafetyIncidentDrillDownProvider implements ReportDrillDownP
             'violation' => ['safety_violation', 'admin.safety_management.violations.index'],
             default => ['safety_corrective_action', 'admin.safety_management.corrective_actions.index'],
         };
+        ScopedReportSourceGuard::assertAccessible($context, (int) $row->project_id, [
+            new ReportScopedResource($resource[0], (int) $row->subject_id, (int) $row->project_id),
+            ...($row->safety_site_id === null ? [] : [
+                new ReportScopedResource('safety_site', (int) $row->safety_site_id, (int) $row->project_id),
+            ]),
+            ...($row->contractor_id === null ? [] : [
+                new ReportScopedResource('contractor', (int) $row->contractor_id, (int) $row->project_id),
+            ]),
+        ]);
 
         return new ReportDrillDownResult(
             [[

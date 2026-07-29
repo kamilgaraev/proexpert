@@ -27,11 +27,24 @@ final readonly class QualityDefectFlowFormula
         return $closing;
     }
 
+    public function percentage(int $numerator, int $denominator): ?string
+    {
+        if ($numerator < 0 || $denominator < 0 || $numerator > $denominator) {
+            throw new InvalidArgumentException('quality_defect_flow_percentage_invalid');
+        }
+        if ($denominator === 0) {
+            return null;
+        }
+        $scaled = intdiv($numerator * 1_000_000 + intdiv($denominator, 2), $denominator);
+
+        return sprintf('%d.%04d', intdiv($scaled, 10_000), $scaled % 10_000);
+    }
+
     public function isReopen(
         QualityDefectTransitionEvent|DefectTransitionTimeline $event,
-        ?QualityDefectFlowPolicyVersion $policy = null,
+        QualityDefectFlowPolicyVersion $policy,
     ): bool {
-        $terminalStatuses = $policy?->terminal_statuses ?? ['resolved', 'verified', 'cancelled'];
+        $terminalStatuses = $this->terminalStatuses($policy);
 
         return in_array($event->fromStatus ?? $event->from_status, $terminalStatuses, true)
             && ! in_array($event->toStatus ?? $event->to_status, $terminalStatuses, true);
@@ -46,7 +59,7 @@ final readonly class QualityDefectFlowFormula
             ? $event->closureEvidencePresent
             : ($event->evidence_refs ?? []) !== [];
 
-        return in_array($toStatus, $policy->terminal_statuses ?? [], true)
+        return in_array($toStatus, $this->terminalStatuses($policy), true)
             && (! (bool) $policy->closure_evidence_required || $evidencePresent);
     }
 
@@ -73,7 +86,7 @@ final readonly class QualityDefectFlowFormula
             $eligible[$timeline->defectId]['resolved'] = $eligible[$timeline->defectId]['resolved']
                 || (
                     $timeline->resolvedAt !== null
-                    && in_array($timeline->toStatus, $policy->terminal_statuses ?? [], true)
+                    && in_array($timeline->toStatus, $this->terminalStatuses($policy), true)
                     && (
                         ! (bool) $policy->closure_evidence_required
                         || $timeline->closureEvidencePresent
@@ -104,5 +117,15 @@ final readonly class QualityDefectFlowFormula
         $scaled = intdiv($numerator * 10_000 + intdiv($denominator, 2), $denominator);
 
         return sprintf('%d.%04d', intdiv($scaled, 10_000), $scaled % 10_000);
+    }
+
+    private function terminalStatuses(QualityDefectFlowPolicyVersion $policy): array
+    {
+        $statuses = $policy->terminal_statuses;
+        if (! is_array($statuses) || $statuses === [] || array_filter($statuses, 'is_string') !== $statuses) {
+            throw new InvalidArgumentException('quality_defect_flow_terminal_statuses_invalid');
+        }
+
+        return array_values(array_unique($statuses));
     }
 }

@@ -15,8 +15,8 @@ return new class extends Migration
 
         Schema::create('safety_site_workforce_assignments', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('project_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('organization_id')->constrained()->restrictOnDelete();
+            $table->foreignId('project_id')->constrained()->restrictOnDelete();
             $table->foreignId('safety_site_id')->constrained('safety_sites')->restrictOnDelete();
             $table->foreignId('workforce_assignment_id')->constrained('workforce_employee_assignments')->restrictOnDelete();
             $table->foreignId('employee_id')->constrained('workforce_employees')->restrictOnDelete();
@@ -24,7 +24,8 @@ return new class extends Migration
             $table->date('valid_to')->nullable();
             $table->string('mapping_source', 80);
             $table->char('source_hash', 64);
-            $table->timestampsTz();
+            $table->timestampTz('created_at');
+            $table->timestampTz('updated_at');
 
             $table->unique(
                 ['organization_id', 'safety_site_id', 'workforce_assignment_id', 'valid_from'],
@@ -38,8 +39,8 @@ return new class extends Migration
 
         Schema::create('safety_admission_policy_versions', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('project_id')->constrained()->cascadeOnDelete();
+            $table->foreignId('organization_id')->constrained()->restrictOnDelete();
+            $table->foreignId('project_id')->constrained()->restrictOnDelete();
             $table->foreignId('safety_site_id')->nullable()->constrained('safety_sites')->restrictOnDelete();
             $table->string('version', 80);
             $table->date('effective_from');
@@ -48,7 +49,8 @@ return new class extends Migration
             $table->unsignedSmallInteger('expiring_soon_days')->default(30);
             $table->boolean('waiver_evidence_required')->default(true);
             $table->char('source_hash', 64);
-            $table->timestampsTz();
+            $table->timestampTz('created_at');
+            $table->timestampTz('updated_at');
 
             $table->unique(['organization_id', 'project_id', 'safety_site_id', 'version'], 'safety_admission_policy_version_unique');
             $table->index(
@@ -62,10 +64,13 @@ return new class extends Migration
             $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
             $table->foreignId('project_id')->nullable()->constrained()->cascadeOnDelete();
             $table->foreignId('safety_site_id')->nullable()->constrained('safety_sites')->restrictOnDelete();
-            $table->foreignId('policy_version_id')->constrained('safety_admission_policy_versions')->restrictOnDelete();
+            $table->jsonb('policy_version_ids');
             $table->char('scope_hash', 64);
             $table->char('definition_hash', 64);
             $table->string('formula_version', 80);
+            $table->char('query_hash', 64);
+            $table->char('input_hash', 64);
+            $table->char('output_hash', 64);
             $table->char('source_hash', 64);
             $table->date('snapshot_date');
             $table->timestampTz('source_watermark');
@@ -124,13 +129,31 @@ return new class extends Migration
         });
 
         DB::statement('ALTER TABLE safety_site_workforce_assignments ADD CONSTRAINT safety_site_workforce_assignment_dates_check CHECK (valid_to IS NULL OR valid_to >= valid_from)');
+        DB::statement("ALTER TABLE safety_site_workforce_assignments ADD CONSTRAINT safety_site_workforce_assignment_source_check CHECK (mapping_source = 'workforce_employee_assignments')");
         DB::statement("ALTER TABLE safety_site_workforce_assignments ADD CONSTRAINT safety_site_workforce_assignment_hash_check CHECK (source_hash ~ '^[a-f0-9]{64}$')");
-        DB::statement("ALTER TABLE safety_site_workforce_assignments ADD CONSTRAINT safety_site_workforce_assignment_no_overlap EXCLUDE USING gist (organization_id WITH =, workforce_assignment_id WITH =, daterange(valid_from, COALESCE(valid_to, 'infinity'::date), '[]') WITH &&)");
+        DB::statement("ALTER TABLE safety_site_workforce_assignments ADD CONSTRAINT safety_site_workforce_assignment_no_overlap EXCLUDE USING gist (organization_id WITH =, workforce_assignment_id WITH =, (daterange(valid_from, COALESCE(valid_to, 'infinity'::date), '[]')) WITH &&)");
         DB::statement('ALTER TABLE safety_admission_policy_versions ADD CONSTRAINT safety_admission_policy_dates_check CHECK (effective_until IS NULL OR effective_until >= effective_from)');
         DB::statement("ALTER TABLE safety_admission_policy_versions ADD CONSTRAINT safety_admission_policy_hash_check CHECK (source_hash ~ '^[a-f0-9]{64}$')");
-        DB::statement("ALTER TABLE safety_admission_snapshots ADD CONSTRAINT safety_admission_snapshot_hashes_check CHECK (scope_hash ~ '^[a-f0-9]{64}$' AND definition_hash ~ '^[a-f0-9]{64}$' AND source_hash ~ '^[a-f0-9]{64}$')");
+        DB::statement("ALTER TABLE safety_admission_policy_versions ADD CONSTRAINT safety_admission_policy_requirements_check CHECK (jsonb_typeof(mandatory_requirements) = 'array' AND jsonb_array_length(mandatory_requirements) > 0)");
+        DB::statement('CREATE UNIQUE INDEX safety_admission_policy_scope_version_unique ON safety_admission_policy_versions (organization_id, project_id, COALESCE(safety_site_id, 0), version)');
+        DB::statement("ALTER TABLE safety_admission_policy_versions ADD CONSTRAINT safety_admission_policy_no_overlap EXCLUDE USING gist (organization_id WITH =, project_id WITH =, (COALESCE(safety_site_id, 0)) WITH =, (daterange(effective_from, COALESCE(effective_until, 'infinity'::date), '[]')) WITH &&)");
+        DB::statement("ALTER TABLE safety_admission_snapshots ADD CONSTRAINT safety_admission_snapshot_hashes_check CHECK (scope_hash ~ '^[a-f0-9]{64}$' AND definition_hash ~ '^[a-f0-9]{64}$' AND query_hash ~ '^[a-f0-9]{64}$' AND input_hash ~ '^[a-f0-9]{64}$' AND output_hash ~ '^[a-f0-9]{64}$' AND source_hash ~ '^[a-f0-9]{64}$')");
         DB::statement('ALTER TABLE safety_admission_snapshots ADD CONSTRAINT safety_admission_snapshot_counts_check CHECK (evaluated_people = admitted_people + partial_people + not_admitted_people AND projected_count <= eligible_count AND row_count = projected_count)');
-        DB::statement("ALTER TABLE safety_admission_rows ADD CONSTRAINT safety_admission_row_type_check CHECK (row_type IN ('requirement', 'person_summary'))");
+        DB::statement("ALTER TABLE safety_admission_rows ADD CONSTRAINT safety_admission_row_type_check CHECK (row_type = 'requirement')");
+        DB::unprepared(<<<'SQL'
+CREATE FUNCTION safety_admission_immutable_guard() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'safety_admission_record_immutable' USING ERRCODE = '55000';
+END;
+$$;
+CREATE TRIGGER safety_site_workforce_assignments_immutable
+BEFORE UPDATE OR DELETE ON safety_site_workforce_assignments
+FOR EACH ROW EXECUTE FUNCTION safety_admission_immutable_guard();
+CREATE TRIGGER safety_admission_policies_immutable
+BEFORE UPDATE OR DELETE ON safety_admission_policy_versions
+FOR EACH ROW EXECUTE FUNCTION safety_admission_immutable_guard();
+SQL);
     }
 
     public function down(): void
@@ -139,5 +162,6 @@ return new class extends Migration
         Schema::dropIfExists('safety_admission_snapshots');
         Schema::dropIfExists('safety_admission_policy_versions');
         Schema::dropIfExists('safety_site_workforce_assignments');
+        DB::statement('DROP FUNCTION IF EXISTS safety_admission_immutable_guard()');
     }
 };

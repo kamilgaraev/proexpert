@@ -19,6 +19,7 @@ final class SafetyIncidentSnapshot extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'policy_version_ids' => 'array',
         'as_of' => 'immutable_datetime',
         'source_watermark' => 'immutable_datetime',
         'generated_at' => 'immutable_datetime',
@@ -27,6 +28,8 @@ final class SafetyIncidentSnapshot extends Model
         'incident_frequency' => 'decimal:4',
         'exposure_complete' => 'boolean',
         'row_count' => 'integer',
+        'opening_backlog_count' => 'integer',
+        'closing_backlog_count' => 'integer',
         'incident_count' => 'integer',
         'violation_count' => 'integer',
         'action_due_count' => 'integer',

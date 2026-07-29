@@ -88,6 +88,73 @@ final class WorkforceAdmissionFormulaTest extends TestCase
         );
     }
 
+    #[Test]
+    public function waiver_is_blocking_unless_policy_allows_it_and_required_evidence_exists(): void
+    {
+        $formula = new WorkforceAdmissionFormula;
+        $blocked = $formula->evaluate(1, 20, 30, '2026-07-26', [[
+            'code' => 'training',
+            'type' => 'training',
+            'status' => 'waived',
+            'mandatory' => true,
+            'verified' => true,
+            'valid_until' => null,
+            'evidence_type' => 'employee_requirement',
+            'evidence_id' => 7,
+            'waiver_allowed' => false,
+            'waiver_evidence_required' => true,
+        ]]);
+        $allowed = $formula->evaluate(1, 20, 30, '2026-07-26', [[
+            'code' => 'training',
+            'type' => 'training',
+            'status' => 'waived',
+            'mandatory' => true,
+            'verified' => true,
+            'valid_until' => null,
+            'evidence_type' => null,
+            'evidence_id' => null,
+            'waiver_allowed' => true,
+            'waiver_evidence_required' => false,
+        ]]);
+
+        self::assertSame('not_admitted', $blocked->status);
+        self::assertSame(['training'], $blocked->blockerCodes);
+        self::assertSame('partial', $allowed->status);
+        self::assertSame([], $allowed->blockerCodes);
+    }
+
+    #[Test]
+    public function failed_employee_lifecycle_is_a_mandatory_blocker(): void
+    {
+        $metric = (new WorkforceAdmissionFormula)->evaluate(1, 20, 30, '2026-07-26', [[
+            'code' => 'employment_lifecycle:employee_dismissed',
+            'type' => 'employment_lifecycle',
+            'status' => 'failed',
+            'mandatory' => true,
+            'verified' => true,
+            'valid_until' => null,
+            'evidence_type' => 'workforce_employee',
+            'evidence_id' => null,
+        ]]);
+
+        self::assertSame('not_admitted', $metric->status);
+        self::assertSame(['employment_lifecycle:employee_dismissed'], $metric->blockerCodes);
+    }
+
+    #[Test]
+    public function missing_status_is_not_silently_replaced_by_a_fallback(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('workforce_admission_requirement_invalid');
+
+        (new WorkforceAdmissionFormula)->evaluate(1, 20, 30, '2026-07-26', [[
+            'code' => 'training',
+            'type' => 'training',
+            'mandatory' => true,
+            'verified' => false,
+        ]]);
+    }
+
     private function fixture(string $case): array
     {
         $json = file_get_contents(__DIR__."/../../../Fixtures/Reporting/waves-2-3/R25/{$case}.json");

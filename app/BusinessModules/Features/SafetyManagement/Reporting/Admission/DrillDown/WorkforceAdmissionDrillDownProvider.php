@@ -11,7 +11,9 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResourceLink;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Support\ScopedReportSourceGuard;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Models\SafetyAdmissionRow;
 
 final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillDownProvider
@@ -30,6 +32,11 @@ final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillD
         if (! $row instanceof SafetyAdmissionRow) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
+        ScopedReportSourceGuard::assertAccessible($context, (int) $row->project_id, [
+            new ReportScopedResource('workforce_assignment', (int) $row->workforce_assignment_id, (int) $row->project_id),
+            new ReportScopedResource('workforce_employee', (int) $row->employee_id, (int) $row->project_id),
+            new ReportScopedResource('safety_site', (int) $row->safety_site_id, (int) $row->project_id),
+        ]);
 
         $medical = $row->requirement_type === 'medical_exam';
         $canViewMedical = $context->visibility->canViewSensitive;
@@ -46,24 +53,30 @@ final readonly class WorkforceAdmissionDrillDownProvider implements ReportDrillD
             default => 'admin.safety_management.employee_requirements.index',
         };
 
+        $values = [
+            'row_key' => (string) $row->row_key,
+            'employee_id' => (int) $row->employee_id,
+            'requirement_code' => (string) $row->requirement_code,
+            'requirement_type' => (string) $row->requirement_type,
+            'status' => $status,
+            'blocked' => (bool) $row->blocked,
+            'valid_until' => $row->valid_until?->toDateString(),
+        ];
+        if (! $medical) {
+            $values['evidence_id'] = $row->evidence_id;
+        } elseif ($canViewMedical) {
+            $values['evidence_id'] = null;
+            $values['medical_details'] = $row->medical_details;
+        }
+
         return new ReportDrillDownResult(
-            [[
-                'row_key' => (string) $row->row_key,
-                'employee_id' => (int) $row->employee_id,
-                'requirement_code' => (string) $row->requirement_code,
-                'requirement_type' => (string) $row->requirement_type,
-                'status' => $status,
-                'blocked' => (bool) $row->blocked,
-                'valid_until' => $row->valid_until?->toDateString(),
-                'evidence_id' => $medical && ! $canViewMedical ? null : $row->evidence_id,
-                'medical_details' => $canViewMedical ? $row->medical_details : null,
-            ]],
+            [$values],
             null,
             [new ReportResourceLink(
                 'safety_requirement',
                 'requirement_'.(int) $row->id,
                 $route,
-                ['id' => (int) $row->evidence_id > 0 ? (int) $row->evidence_id : (int) $row->employee_id],
+                ['id' => $medical ? (int) $row->employee_id : ((int) $row->evidence_id > 0 ? (int) $row->evidence_id : (int) $row->employee_id)],
                 $medical && ! $canViewMedical ? 'forbidden' : 'available',
             )],
         );

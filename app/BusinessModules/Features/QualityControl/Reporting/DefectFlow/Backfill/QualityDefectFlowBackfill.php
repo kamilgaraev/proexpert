@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Backfill;
 
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefectStatusHistory;
 use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services\QualityDefectTransitionRecorder;
 use Illuminate\Support\Collection;
@@ -44,12 +45,23 @@ final readonly class QualityDefectFlowBackfill
 
                 continue;
             }
-            $inputHashes[] = hash('sha256', implode(':', [
-                $history->id,
-                $history->quality_defect_id,
-                $history->from_status?->value ?? 'null',
-                $history->to_status->value,
-                $history->changed_at?->toAtomString(),
+            $inputHashes[] = hash('sha256', CanonicalJson::encode([
+                'changed_at' => $history->changed_at?->toAtomString(),
+                'changed_by' => $history->changed_by,
+                'comment_hash' => hash('sha256', trim((string) $history->comment)),
+                'contractor_id' => $history->defect->contractor_id,
+                'defect_id' => $history->quality_defect_id,
+                'due_date' => $history->defect->due_date?->toDateString(),
+                'from_status' => $history->from_status?->value,
+                'history_id' => $history->id,
+                'photo_refs' => $history->defect->photos
+                    ->map(static fn ($photo): array => ['id' => (int) $photo->id, 'type' => (string) $photo->type])
+                    ->sortBy('id')
+                    ->values()
+                    ->all(),
+                'project_id' => $history->defect->project_id,
+                'severity' => $history->defect->severity->value,
+                'to_status' => $history->to_status->value,
             ]));
             $outputHashes[] = $this->recorder->record($history->defect, $history)->event_hash;
         }
