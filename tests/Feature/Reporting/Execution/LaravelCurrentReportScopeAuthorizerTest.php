@@ -67,6 +67,33 @@ final class LaravelCurrentReportScopeAuthorizerTest extends TestCase
         self::assertSame(CurrentReportAuthorization::class, (string) $exact->getReturnType());
     }
 
+    public function test_exact_many_executes_real_authorizer_and_returns_typed_list(): void
+    {
+        [$actor, $organization] = $this->actorFixture();
+        $scope = new ReportScope(
+            (int) $organization->id,
+            [(int) $organization->id],
+            [],
+            [],
+            new DateTimeZone('UTC'),
+        );
+        $targets = [
+            $this->target(ReportOperation::RUN, $scope),
+            $this->target(ReportOperation::VIEW_SENSITIVE, $scope),
+        ];
+
+        $authorizations = $this->authorizer()->authorizeExactMany(
+            (int) $actor->id,
+            $scope,
+            $targets,
+        );
+
+        self::assertCount(2, $authorizations);
+        self::assertContainsOnlyInstancesOf(CurrentReportAuthorization::class, $authorizations);
+        self::assertSame($targets[0], $authorizations[0]->target);
+        self::assertSame($targets[1], $authorizations[1]->target);
+    }
+
     public function test_inactive_actor_is_denied(): void
     {
         [$actor, $organization] = $this->actorFixture();

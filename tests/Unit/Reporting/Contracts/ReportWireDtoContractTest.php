@@ -6,7 +6,10 @@ namespace Tests\Unit\Reporting\Contracts;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursorKeyset;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
@@ -265,11 +268,58 @@ final class ReportWireDtoContractTest extends TestCase
     #[Test]
     public function cursor_requires_uppercase_ulid_and_future_expiry(): void
     {
-        $cursor = new ReportCursor('signed.cursor', $this->ulid(), $this->hash(), $this->hash('b'), $this->sort(), new DateTimeImmutable('+1 hour'));
+        $keyset = new ReportCursorKeyset('value', 'row-1');
+        $cursor = new ReportCursor('signed.cursor', $this->ulid(), $this->hash(), $this->hash('b'), $this->sort(), $keyset, new DateTimeImmutable('+1 hour'));
 
         self::assertSame($this->ulid(), $cursor->runId);
+        self::assertSame($keyset, $cursor->keyset);
         $this->expectException(InvalidArgumentException::class);
-        new ReportCursor('', strtolower($this->ulid()), $this->hash(), $this->hash('b'), $this->sort(), new DateTimeImmutable('-1 second'));
+        new ReportCursor('', strtolower($this->ulid()), $this->hash(), $this->hash('b'), $this->sort(), $keyset, new DateTimeImmutable('-1 second'));
+    }
+
+    #[Test]
+    public function cursor_keyset_rejects_non_finite_values_and_noncanonical_row_keys(): void
+    {
+        foreach ([
+            [NAN, 'row-1'],
+            [INF, 'row-1'],
+            ['value', ' row-1'],
+            ['value', str_repeat('r', 257)],
+        ] as [$lastSortValue, $lastStableRowKey]) {
+            try {
+                new ReportCursorKeyset($lastSortValue, $lastStableRowKey);
+                self::fail('Invalid cursor keyset must be rejected.');
+            } catch (InvalidArgumentException $exception) {
+                self::assertSame('report_cursor_keyset_invalid', $exception->getMessage());
+            }
+        }
+    }
+
+    #[Test]
+    public function drill_down_owner_input_contains_only_a_validated_cell_and_window(): void
+    {
+        $cell = new ReportDrillDownCell('row-1', 'amount');
+        $input = new ReportDrillDownInput($cell, 'details-page-2', 100);
+
+        self::assertSame($cell, $input->cell);
+        self::assertSame('details-page-2', $input->cursor);
+        self::assertSame(100, $input->limit);
+        self::assertFalse(property_exists($input, 'token'));
+
+        foreach ([
+            fn () => new ReportDrillDownCell('', 'amount'),
+            fn () => new ReportDrillDownCell('row-1', 'Amount'),
+            fn () => new ReportDrillDownCell(str_repeat('r', 257), 'amount'),
+            fn () => new ReportDrillDownInput($cell, null, 0),
+            fn () => new ReportDrillDownInput($cell, null, 101),
+        ] as $invalidInput) {
+            try {
+                $invalidInput();
+                self::fail('Invalid drill-down owner input must be rejected.');
+            } catch (InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
     }
 
     #[Test]
@@ -577,9 +627,11 @@ final class ReportWireDtoContractTest extends TestCase
             ReportProvenance::class => [['sourceOfTruth', 'string', false], ['sourceRefs', 'array', false], ['sourceHash', Sha256Hash::class, false], ['externalConfirmationRole', 'string', true]],
             ReportResultMetadata::class => [['snapshot', ReportSnapshotRef::class, false], ['rowCount', 'int', false], ['generatedAt', DateTimeImmutable::class, false], ['staleAt', DateTimeImmutable::class, true]],
             ReportResult::class => [['metadata', ReportResultMetadata::class, false], ['totals', 'array', false], ['freshness', ReportFreshnessStatus::class, false], ['quality', ReportQuality::class, false], ['provenance', ReportProvenance::class, false], ['rowSchema', 'array', false], ['capabilities', 'array', false]],
-            ReportCursor::class => [['token', 'string', false], ['runId', 'string', false], ['queryHash', Sha256Hash::class, false], ['sourceHash', Sha256Hash::class, false], ['sort', ReportWindowSort::class, false], ['expiresAt', DateTimeImmutable::class, false]],
+            ReportCursor::class => [['token', 'string', false], ['runId', 'string', false], ['queryHash', Sha256Hash::class, false], ['sourceHash', Sha256Hash::class, false], ['sort', ReportWindowSort::class, false], ['keyset', ReportCursorKeyset::class, false], ['expiresAt', DateTimeImmutable::class, false]],
             ReportPage::class => [['rows', 'array', false], ['totals', 'array', false], ['freshness', ReportFreshnessStatus::class, false], ['quality', ReportQuality::class, false], ['nextCursor', 'string', true], ['limit', 'int', false], ['hasMore', 'bool', false], ['sort', ReportWindowSort::class, false]],
             ReportDrillDownRequest::class => [['token', 'string', false], ['cursor', 'string', true], ['limit', 'int', false]],
+            ReportDrillDownCell::class => [['rowKey', 'string', false], ['columnId', 'string', false]],
+            ReportDrillDownInput::class => [['cell', ReportDrillDownCell::class, false], ['cursor', 'string', true], ['limit', 'int', false]],
             ReportResourceLink::class => [['resourceType', 'string', false], ['resourceId', 'string', false], ['routeName', 'string', false], ['params', 'array', false], ['availability', 'string', false]],
             ReportDrillDownResult::class => [['rows', 'array', false], ['nextCursor', 'string', true], ['resourceLinks', 'array', false]],
             ReportRun::class => [['id', 'string', false], ['reportCode', 'string', false], ['status', ReportRunStatus::class, false], ['definitionHash', Sha256Hash::class, false], ['contractVersion', 'string', false], ['formulaVersion', 'string', false], ['sourceSchemaVersion', 'string', false], ['rendererVersion', 'string', false], ['queryHash', Sha256Hash::class, false], ['sourceHash', Sha256Hash::class, true], ['progress', 'int', false], ['rowCount', 'int', true], ['resultMetadata', ReportResultMetadata::class, true], ['totals', 'array', false], ['freshness', ReportFreshnessStatus::class, true], ['quality', ReportQuality::class, true], ['provenance', ReportProvenance::class, true], ['createdAt', DateTimeImmutable::class, false], ['updatedAt', DateTimeImmutable::class, false], ['readyAt', DateTimeImmutable::class, true], ['expiresAt', DateTimeImmutable::class, false], ['cancelRequestedAt', DateTimeImmutable::class, true], ['httpDisposition', 'string', false], ['pollAfterMs', 'int', true]],

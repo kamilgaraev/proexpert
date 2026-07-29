@@ -41,7 +41,16 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
                 ? $this->snapshot($record, $query->scope)
                 : null;
 
-            return new ReportAuthorizationSubject(ReportDispatchAggregate::RUN, $this->string($record->id), $query->definition, $query->scope, $snapshot, null, null);
+            return new ReportAuthorizationSubject(
+                ReportDispatchAggregate::RUN,
+                $this->string($record->id),
+                $query->definition,
+                $query->scope,
+                $snapshot,
+                null,
+                null,
+                $snapshot === null ? null : ReportRunAuthorizationIdentity::fromRecord($record),
+            );
         } catch (ReportContractException $exception) {
             throw $exception;
         } catch (Throwable $exception) {
@@ -133,6 +142,14 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
 
     private function parentIdentityPairs(ReportExportRecord $export, ReportRunRecord $run): array
     {
+        $definitionSnapshot = $run->definition_snapshot;
+        $outputClassification = is_array($definitionSnapshot)
+            ? ($definitionSnapshot['output_classification'] ?? null)
+            : null;
+        if (! is_array($outputClassification)) {
+            throw new \InvalidArgumentException('report_export_parent_identity_mismatch');
+        }
+
         return [
             [$export->report_code, $run->report_code],
             [$export->definition_hash, $run->definition_hash],
@@ -153,9 +170,9 @@ final class EloquentReportAuthorizationSubjectReader implements ReportAuthorizat
             [$export->data_classification, $run->data_classification],
             [$export->sensitive_column_ids, $run->sensitive_column_ids],
             [$export->audit_column_ids, $run->audit_column_ids],
-            [$export->totals_sensitive, $run->totals_sensitive],
-            [$export->totals_audit, $run->totals_audit],
-            [$export->provenance_audit, $run->provenance_audit],
+            [$export->totals_sensitive, $outputClassification['totals_sensitive'] ?? null],
+            [$export->totals_audit, $outputClassification['totals_audit'] ?? null],
+            [$export->provenance_audit, $outputClassification['provenance_audit'] ?? null],
             [$export->contract_version, $run->contract_version],
             [$export->formula_version, $run->formula_version],
             [$export->source_schema_version, $run->source_schema_version],

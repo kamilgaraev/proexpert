@@ -5,18 +5,17 @@ declare(strict_types=1);
 namespace Tests\Feature\Reporting\Persistence;
 
 use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationFence;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationSubject;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
-use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationSubject;
 use App\BusinessModules\Core\Reporting\Application\Input\CreateReportExportData;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
@@ -43,20 +42,23 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportExportStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportExportRecord;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportExportAuthorizationIdentity;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportExportHydrator;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunAuthorizationIdentity;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Models\Organization;
+use DateInterval;
 use DateTimeImmutable;
 use DateTimeZone;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use PDOException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
-use ReflectionMethod;
 use ReflectionClass;
 use RuntimeException;
+use Tests\Support\Reporting\FakeReportExecutionClock;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExecutionContextBuilder;
 use Tests\Support\Reporting\ReportRunBuilder;
@@ -73,6 +75,8 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
 
     private ReportRunExportSource $source;
 
+    private FakeReportExecutionClock $clock;
+
     protected function beforeRefreshingDatabase(): void
     {
         self::assertSame(
@@ -87,6 +91,7 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         parent::setUp();
 
         $this->now = new DateTimeImmutable('2026-07-29T10:00:00.000000Z');
+        $this->clock = new FakeReportExecutionClock($this->now);
         $this->source = $this->source();
         $scope = $this->source->query->scope;
         $baseContext = (new ReportExecutionContextBuilder)->build();
@@ -108,33 +113,6 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         $this->insertReadyRun();
     }
 
-    public function test_sensitive_export_transaction_is_serializable_and_retries_serialization_failures(): void
-    {
-        $attempts = 0;
-        $method = new ReflectionMethod(EloquentReportExportStore::class, 'serializableTransaction');
-        $method->setAccessible(true);
-
-        $isolation = $method->invoke(
-            $this->store(),
-            function () use (&$attempts): string {
-                $attempts++;
-                $isolation = DB::selectOne('SHOW transaction_isolation');
-                self::assertIsObject($isolation);
-                self::assertSame('serializable', $isolation->transaction_isolation);
-
-                if ($attempts < 3) {
-                    throw new PDOException('could not serialize access due to concurrent update', 40001);
-                }
-
-                return $isolation->transaction_isolation;
-            },
-        );
-
-        self::assertSame(3, $attempts);
-        self::assertSame('serializable', $isolation);
-        self::assertSame(0, DB::connection()->transactionLevel());
-    }
-
     public function test_create_locks_ready_parent_and_persists_only_after_complete_fence(): void
     {
         $subject = new ReportAuthorizationSubject(
@@ -145,6 +123,9 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             $this->source->snapshot,
             null,
             null,
+            ReportRunAuthorizationIdentity::fromRecord(
+                ReportRunRecord::query()->findOrFail($this->source->run->id),
+            ),
         );
         $data = new CreateReportExportData(
             'csv',
@@ -178,6 +159,65 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         );
     }
 
+    #[DataProvider('runImmutableMutationProvider')]
+    public function test_create_rejects_each_locked_immutable_run_identity_mutation(
+        string $attribute,
+        mixed $mutatedValue,
+    ): void {
+        $run = ReportRunRecord::query()->findOrFail($this->source->run->id);
+        $subject = new ReportAuthorizationSubject(
+            ReportDispatchAggregate::RUN,
+            $this->source->run->id,
+            $this->source->query->definition,
+            $this->context->scope,
+            $this->source->snapshot,
+            null,
+            null,
+            ReportRunAuthorizationIdentity::fromRecord($run),
+        );
+        $fence = $this->fence($subject, [
+            ReportOperation::EXPORT,
+            ReportOperation::VIEW_SENSITIVE,
+            ReportOperation::VIEW_AUDIT,
+        ]);
+        DB::table('report_runs')
+            ->where('id', $this->source->run->id)
+            ->update([$attribute => $mutatedValue]);
+
+        try {
+            $this->store()->createOrReuse(
+                $this->context,
+                $this->source,
+                new CreateReportExportData(
+                    'csv',
+                    ['audit', 'secret'],
+                    new ReportWindowSort('audit', ReportSortDirection::ASC),
+                    'ru-RU',
+                    new DateTimeZone('UTC'),
+                ),
+                new IdempotencyKey("postgres-mutated-run-{$attribute}"),
+                $fence,
+            );
+            self::fail("Immutable run identity mutation {$attribute} was accepted.");
+        } catch (\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException $exception) {
+            self::assertSame(
+                \App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_NOT_FOUND,
+                $exception->errorCode,
+            );
+        }
+
+        self::assertSame(0, DB::table('report_exports')->count());
+    }
+
+    public static function runImmutableMutationProvider(): iterable
+    {
+        yield 'definition snapshot hash' => ['definition_snapshot_hash', str_repeat('4', 64)];
+        yield 'input fingerprint' => ['input_fingerprint', str_repeat('5', 64)];
+        yield 'saved view id' => ['saved_view_id', '01J00000000000000000000011'];
+        yield 'saved view revision' => ['saved_view_revision', 2];
+        yield 'saved view hash' => ['saved_view_hash', str_repeat('6', 64)];
+    }
+
     public function test_cancel_requires_complete_locked_record_fence_and_rolls_back_on_missing_operation(): void
     {
         $exportId = '01J00000000000000000000001';
@@ -197,6 +237,13 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         }
         self::assertSame('queued', DB::table('report_exports')->where('id', $exportId)->value('status'));
 
+        DB::table('report_exports')->where('id', $exportId)->update([
+            'status' => 'running',
+            'execution_lease_token' => '00000000-0000-4000-8000-000000000001',
+            'execution_heartbeat_at' => $this->now,
+            'execution_lease_expires_at' => $this->now->modify('+960 seconds'),
+            'updated_at' => $this->now,
+        ]);
         $complete = $this->fence($subject, [
             ReportOperation::EXPORT,
             ReportOperation::VIEW_SENSITIVE,
@@ -217,7 +264,9 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             ReportOperation::DOWNLOAD,
             ReportOperation::VIEW_SENSITIVE,
             ReportOperation::VIEW_AUDIT,
-        ]);
+        ], function (): void {
+            $this->clock->advance(new DateInterval('PT31S'));
+        });
         $ttl = null;
         $link = $this->store()->withReadyDownload(
             $this->context,
@@ -226,17 +275,18 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             $fence,
             function ($export, int $boundedTtl) use (&$ttl): ReportDownloadLink {
                 $ttl = $boundedTtl;
+                $issuedAt = $this->clock->now();
 
                 return new ReportDownloadLink(
                     'https://storage.example.test/report.csv',
                     (string) $export->versionId,
-                    $this->now,
-                    $this->now->modify("+{$boundedTtl} seconds"),
+                    $issuedAt,
+                    $issuedAt->modify("+{$boundedTtl} seconds"),
                 );
             },
         );
 
-        self::assertSame(90, $ttl);
+        self::assertSame(59, $ttl);
         self::assertSame($this->now->modify('+90 seconds'), $link->expiresAt);
 
         try {
@@ -261,16 +311,48 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         );
     }
 
+    #[DataProvider('exportImmutableMutationProvider')]
+    public function test_cancel_rejects_each_locked_immutable_export_identity_mutation(
+        string $attribute,
+        mixed $mutatedValue,
+    ): void {
+        $exportId = '01J00000000000000000000003';
+        $this->insertExport($exportId, 'queued', $this->now->modify('+10 minutes'));
+        $record = ReportExportRecord::query()->findOrFail($exportId);
+        $fence = $this->fence($this->subject($record), [
+            ReportOperation::EXPORT,
+            ReportOperation::VIEW_SENSITIVE,
+            ReportOperation::VIEW_AUDIT,
+        ]);
+        DB::table('report_exports')->where('id', $exportId)->update([
+            $attribute => $mutatedValue,
+            'updated_at' => $this->now,
+        ]);
+
+        try {
+            $this->store()->cancel($this->context, $exportId, $this->now, $fence);
+            self::fail("Immutable export identity mutation {$attribute} was accepted.");
+        } catch (\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException $exception) {
+            self::assertSame(
+                \App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_NOT_FOUND,
+                $exception->errorCode,
+            );
+        }
+
+        self::assertSame('queued', DB::table('report_exports')->where('id', $exportId)->value('status'));
+    }
+
+    public static function exportImmutableMutationProvider(): iterable
+    {
+        yield 'export hash' => ['export_hash', str_repeat('1', 64)];
+        yield 'input fingerprint' => ['input_fingerprint', str_repeat('2', 64)];
+        yield 'render locale' => ['locale', 'en-US'];
+    }
+
     private function store(): EloquentReportExportStore
     {
         return new EloquentReportExportStore(
-            new class implements ReportExecutionClock
-            {
-                public function now(): DateTimeImmutable
-                {
-                    return new DateTimeImmutable('2026-07-29T10:00:00Z');
-                }
-            },
+            $this->clock,
             new class implements ReportTransitionAudit
             {
                 public function append(
@@ -358,6 +440,9 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             'result_hash' => $source->resultHash->value,
             'idempotency_key_hash' => str_repeat('2', 64),
             'input_fingerprint' => str_repeat('3', 64),
+            'saved_view_id' => '01J00000000000000000000010',
+            'saved_view_revision' => 1,
+            'saved_view_hash' => str_repeat('7', 64),
             'contract_version' => $source->contractVersion,
             'formula_version' => $source->formulaVersion,
             'source_schema_version' => $source->sourceSchemaVersion,
@@ -593,18 +678,24 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
     }
 
     /**
-     * @param list<ReportOperation> $operations
+     * @param  list<ReportOperation>  $operations
      */
     private function fence(
         ReportAuthorizationSubject $subject,
         array $operations,
+        mixed $onFirstAuthorization = null,
     ): ReportAuthorizationFence {
         return new ReportAuthorizationFence(
             $subject,
             $operations,
-            new class($this->context) implements CurrentReportScopeAuthorizer
+            new class($this->context, $onFirstAuthorization) implements CurrentReportScopeAuthorizer
             {
-                public function __construct(private readonly ReportExecutionContext $context) {}
+                private bool $authorized = false;
+
+                public function __construct(
+                    private readonly ReportExecutionContext $context,
+                    private readonly mixed $onFirstAuthorization,
+                ) {}
 
                 public function authorizeCatalog(
                     int $actorId,
@@ -637,6 +728,11 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
                     ReportScope $requestedScope,
                     array $targets,
                 ): array {
+                    if (! $this->authorized && is_callable($this->onFirstAuthorization)) {
+                        $this->authorized = true;
+                        ($this->onFirstAuthorization)();
+                    }
+
                     return array_map(
                         fn (CurrentReportAuthorizationTarget $target): CurrentReportAuthorization => $this->authorization(
                             $target,

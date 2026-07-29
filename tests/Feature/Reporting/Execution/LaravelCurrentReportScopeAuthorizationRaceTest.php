@@ -14,8 +14,12 @@ use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthor
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
+use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelCurrentReportAbacEvaluator;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\LaravelReportScopedResourceAuthorizerRegistry;
 use App\BusinessModules\Core\Reporting\Infrastructure\Execution\LaravelCurrentReportScopeAuthorizer;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\RoleCondition;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -64,6 +68,151 @@ final class LaravelCurrentReportScopeAuthorizationRaceTest extends TestCase
             $this->expectException(ReportContractException::class);
             $authorizer->authorizeExact((int) $actor->id, $scope, $this->target());
         } finally {
+            $harness->cleanup();
+        }
+    }
+
+    public function test_exact_many_locks_membership_until_serializable_authorization_commits(): void
+    {
+        [$actor, $organization] = $this->actorFixture('all');
+        $harness = $this->harness('exact-many-membership-lock');
+        $children = [];
+        $triggered = false;
+        $evaluator = new RecordingCurrentEvaluator(function () use (
+            &$triggered,
+            &$children,
+            $harness,
+            $actor,
+            $organization,
+        ): void {
+            if ($triggered) {
+                return;
+            }
+            $triggered = true;
+            $children[] = $harness->spawn(
+                5,
+                static fn (): array => [
+                    'updated' => DB::table('organization_user')
+                        ->where('user_id', $actor->id)
+                        ->where('organization_id', $organization->id)
+                        ->update(['is_active' => false]),
+                ],
+            );
+            $harness->release(5);
+            $backendPid = $harness->waitForWorkerBackendPid(5);
+            $harness->waitForPostgresWait(
+                $harness->independentConnection('report_exact_many_observer'),
+                $backendPid,
+            );
+        });
+        $authorizer = $this->authorizer($evaluator, []);
+        $scope = new ReportScope(
+            (int) $organization->id,
+            [(int) $organization->id],
+            [],
+            [],
+            new DateTimeZone('UTC'),
+        );
+
+        try {
+            $authorizations = DB::transaction(function () use ($authorizer, $actor, $scope): array {
+                DB::statement('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+
+                return $authorizer->authorizeExactMany(
+                    (int) $actor->id,
+                    $scope,
+                    [$this->target()],
+                );
+            }, 3);
+            self::assertCount(1, $authorizations);
+
+            $harness->waitForChildren($children);
+            $children = [];
+            self::assertSame(['updated' => 1], $harness->result(5));
+
+            $this->expectException(ReportContractException::class);
+            $authorizer->authorizeExactMany((int) $actor->id, $scope, [$this->target()]);
+        } finally {
+            $harness->terminateAndReap($children);
+            $harness->cleanup();
+        }
+    }
+
+    public function test_project_count_fence_locks_out_of_scope_assignment_until_authorization_commits(): void
+    {
+        [$actor, $organization] = $this->actorFixture('all');
+        $outOfScopeProject = Project::factory()->create([
+            'organization_id' => $organization->id,
+            'status' => 'active',
+            'is_archived' => false,
+        ]);
+        $actor->assignedProjects()->attach($outOfScopeProject->id, [
+            'role' => 'member',
+            'is_active' => true,
+            'assigned_at' => now(),
+        ]);
+        $this->grantProjectCountRole($actor, $organization, 1);
+
+        $harness = $this->harness('project-count-out-of-scope-lock');
+        $children = [];
+        $observedWait = false;
+        $evaluator = new TriggeringCurrentEvaluator(
+            new LaravelCurrentReportAbacEvaluator,
+            function () use (
+                &$children,
+                &$observedWait,
+                $harness,
+                $actor,
+                $outOfScopeProject,
+            ): void {
+                $children[] = $harness->spawn(
+                    6,
+                    static fn (): array => [
+                        'updated' => DB::table('project_user')
+                            ->where('user_id', $actor->id)
+                            ->where('project_id', $outOfScopeProject->id)
+                            ->update(['is_active' => false]),
+                    ],
+                );
+                $harness->release(6);
+                $backendPid = $harness->waitForWorkerBackendPid(6);
+                $harness->waitForPostgresWait(
+                    $harness->independentConnection('report_project_count_observer'),
+                    $backendPid,
+                );
+                $observedWait = true;
+            },
+        );
+        $authorizer = $this->authorizer($evaluator, []);
+        $scope = new ReportScope(
+            (int) $organization->id,
+            [(int) $organization->id],
+            [],
+            [],
+            new DateTimeZone('UTC'),
+        );
+
+        try {
+            try {
+                $authorizer->authorizeExactMany((int) $actor->id, $scope, [$this->target()]);
+                self::fail('Project-count authorization used the concurrently revoked assignment.');
+            } catch (ReportContractException) {
+            }
+
+            $harness->waitForChildren($children);
+            $children = [];
+            self::assertTrue($observedWait);
+            self::assertSame(['updated' => 1], $harness->result(6));
+
+            $authorizations = $authorizer->authorizeExactMany(
+                (int) $actor->id,
+                $scope,
+                [$this->target()],
+            );
+            self::assertCount(1, $authorizations);
+            self::assertTrue($authorizations[0]->visibility->canRun);
+        } finally {
+            $harness->terminateAndReap($children);
             $harness->cleanup();
         }
     }
@@ -266,6 +415,38 @@ final class LaravelCurrentReportScopeAuthorizationRaceTest extends TestCase
         );
     }
 
+    private function grantProjectCountRole(User $actor, Organization $organization, int $maxProjects): void
+    {
+        DB::table('organization_custom_roles')->insert([
+            'organization_id' => $organization->id,
+            'name' => 'Project count report role',
+            'slug' => 'project_count_report_role',
+            'system_permissions' => json_encode(['reports.view', 'reports.run'], JSON_THROW_ON_ERROR),
+            'module_permissions' => '{}',
+            'interface_access' => '["lk"]',
+            'conditions' => null,
+            'is_active' => true,
+            'created_by' => $actor->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $assignment = UserRoleAssignment::query()->create([
+            'user_id' => $actor->id,
+            'role_slug' => 'project_count_report_role',
+            'role_type' => UserRoleAssignment::TYPE_CUSTOM,
+            'context_id' => AuthorizationContext::getOrganizationContext((int) $organization->id)->id,
+            'assigned_by' => $actor->id,
+            'expires_at' => null,
+            'is_active' => true,
+        ]);
+        RoleCondition::query()->create([
+            'assignment_id' => $assignment->id,
+            'condition_type' => 'project_count',
+            'condition_data' => ['max_projects' => $maxProjects],
+            'is_active' => true,
+        ]);
+    }
+
     private function target(): CurrentReportAuthorizationTarget
     {
         return new CurrentReportAuthorizationTarget(
@@ -329,6 +510,29 @@ final class RecordingCurrentEvaluator implements CurrentReportAbacEvaluator
             $facts->resource,
             $granted,
         );
+    }
+}
+
+final class TriggeringCurrentEvaluator implements CurrentReportAbacEvaluator
+{
+    private bool $triggered = false;
+
+    public function __construct(
+        private readonly CurrentReportAbacEvaluator $delegate,
+        private readonly mixed $onFirstEvaluation,
+    ) {}
+
+    public function evaluate(
+        int $actorId,
+        string $permission,
+        CurrentReportAuthorizationFacts $facts,
+    ): CurrentReportPermissionDecision {
+        if (! $this->triggered && is_callable($this->onFirstEvaluation)) {
+            $this->triggered = true;
+            ($this->onFirstEvaluation)();
+        }
+
+        return $this->delegate->evaluate($actorId, $permission, $facts);
     }
 }
 

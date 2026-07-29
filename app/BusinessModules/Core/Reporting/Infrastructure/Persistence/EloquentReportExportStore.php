@@ -475,6 +475,11 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
     ): void {
         $subject = $fence->subject;
         $snapshot = $subject->snapshot;
+        $runIdentityMatches = $subject->exportIdentityHash !== null
+            && hash_equals(
+                ReportRunAuthorizationIdentity::fromRecord($record)->value,
+                $subject->exportIdentityHash->value,
+            );
         $this->assertExactRecordScope($context, $record);
         if ($subject->aggregateKind !== ReportDispatchAggregate::RUN
             || ! hash_equals($record->id, $subject->aggregateId)
@@ -488,7 +493,8 @@ final class EloquentReportExportStore implements ReportExportStore, ReportReadyD
             || ! hash_equals((string) $record->snapshot_id, $snapshot->id)
             || ! hash_equals((string) $record->snapshot_id, $source->snapshot->id)
             || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)
-            || ! hash_equals((string) $record->formula_version, $snapshot->formulaVersion)) {
+            || ! hash_equals((string) $record->formula_version, $snapshot->formulaVersion)
+            || ! $runIdentityMatches) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
     }

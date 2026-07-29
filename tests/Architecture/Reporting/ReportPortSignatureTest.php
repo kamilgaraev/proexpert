@@ -31,6 +31,7 @@ final class ReportPortSignatureTest extends TestCase
             'authorizeCatalog' => [['actorId', 'int'], ['organizationId', 'int'], ['timezone', 'DateTimeZone'], ['targets', 'array'], 'App\\BusinessModules\\Core\\Reporting\\Application\\Access\\ReportCatalogAuthorization'],
             'authorizeForOrganization' => [['actorId', 'int'], ['organizationId', 'int'], ['timezone', 'DateTimeZone'], ['target', 'App\\BusinessModules\\Core\\Reporting\\Application\\Execution\\CurrentReportAuthorizationTarget'], 'App\\BusinessModules\\Core\\Reporting\\Application\\Execution\\CurrentReportAuthorization'],
             'authorizeExact' => [['actorId', 'int'], ['requestedScope', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportScope'], ['target', 'App\\BusinessModules\\Core\\Reporting\\Application\\Execution\\CurrentReportAuthorizationTarget'], 'App\\BusinessModules\\Core\\Reporting\\Application\\Execution\\CurrentReportAuthorization'],
+            'authorizeExactMany' => [['actorId', 'int'], ['requestedScope', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportScope'], ['targets', 'array'], 'array'],
         ]);
         $this->assertPort(ReportDataProvider::class, [
             'materialize' => [['context', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportExecutionContext'], ['query', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportQuery'], ['progress', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportProgress'], 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportSnapshotRef'],
@@ -41,7 +42,7 @@ final class ReportPortSignatureTest extends TestCase
             'cursor' => [['context', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportExecutionContext'], ['snapshot', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportSnapshotRef'], ['sort', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportWindowSort'], ['chunkSize', 'int'], 'iterable'],
         ]);
         $this->assertPort(ReportDrillDownProvider::class, [
-            'drillDown' => [['context', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportExecutionContext'], ['snapshot', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportSnapshotRef'], ['request', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDrillDownRequest'], 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDrillDownResult'],
+            'drillDown' => [['context', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportExecutionContext'], ['snapshot', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportSnapshotRef'], ['input', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDrillDownInput'], 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDrillDownResult'],
         ]);
         $this->assertPort(ReportDefinitionReadinessProbe::class, [
             'supports' => [['definition', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportDefinition'], 'bool'],
