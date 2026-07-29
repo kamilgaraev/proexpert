@@ -59,8 +59,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
     public function __construct(
         private ConnectionInterface $connection,
         private ProjectLaborCostFormula $formula,
-    ) {
-    }
+    ) {}
 
     public function forEmployee(int $organizationId, int $employeeId): array
     {
@@ -92,6 +91,17 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         if ($scope->organizationId !== $query->scope->organizationId) {
             throw new InvalidArgumentException('project_labor_cost_scope_invalid');
         }
+        $this->assertNoPostAsOfMutations($scope, $query, [
+            'time_entries',
+            'completed_works',
+            'time_tracking_labor_rate_versions',
+            'workforce_employees',
+            'projects',
+            'schedule_tasks',
+            'work_types',
+            'measurement_units',
+            'contractors',
+        ]);
         [$periodFrom, $periodTo] = $this->period($query);
         $projectIds = $this->projectIds($scope, $query);
         $employeeIds = $this->authorizedIds($scope, 'employee', $this->ids($query, 'employee_ids'));
@@ -104,7 +114,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         $this->assertOrganizationIds('work_types', $scope, $workTypeIds);
         $this->assertOrganizationIds('contractors', $scope, $contractorIds);
         $billable = $query->filters->values['billable'] ?? null;
-        if ($billable !== null && !is_bool($billable)) {
+        if ($billable !== null && ! is_bool($billable)) {
             throw new InvalidArgumentException('project_labor_cost_filter_invalid');
         }
         $entries = $this->connection->table('time_entries as entry')
@@ -134,6 +144,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
             })
             ->where('entry.organization_id', $scope->organizationId)
             ->where('entry.status', 'approved')
+            ->where('entry.approved_at', '<=', $query->asOf->format('Y-m-d H:i:sP'))
             ->whereNull('entry.deleted_at')
             ->whereNull('employee.deleted_at')
             ->whereBetween('entry.work_date', [$periodFrom, $periodTo])
@@ -158,7 +169,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
                 static fn (Builder $builder): Builder => $builder->where('entry.is_billable', $billable),
             )
             ->when(
-                $statuses !== [] && !in_array('approved', $statuses, true),
+                $statuses !== [] && ! in_array('approved', $statuses, true),
                 static fn (Builder $builder): Builder => $builder->whereRaw('1 = 0'),
             )
             ->select([
@@ -200,6 +211,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
                         ->on('contractor.organization_id', '=', 'accepted.organization_id');
                 })
                 ->where('accepted.organization_id', $scope->organizationId)
+                ->where('accepted.created_at', '<=', $query->asOf->format('Y-m-d H:i:sP'))
                 ->where('accepted.status', 'confirmed')
                 ->whereNull('accepted.deleted_at')
                 ->whereBetween('accepted.completion_date', [$periodFrom, $periodTo])
@@ -249,6 +261,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
                 ->where('organization_id', $scope->organizationId)
                 ->whereIn('employee_id', $rateEmployeeIds)
                 ->where('status', 'approved')
+                ->where('approved_at', '<=', $query->asOf->format('Y-m-d H:i:sP'))
                 ->whereDate('valid_from', '<=', $periodTo)
                 ->orderBy('employee_id')
                 ->orderBy('valid_from')
@@ -349,11 +362,11 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         $record = $this->snapshot($context, $snapshot);
         $schema = $this->json($record->row_schema);
         $totals = $this->json($record->totals);
-        if (!$context->visibility->canViewSensitive) {
+        if (! $context->visibility->canViewSensitive) {
             $sensitive = ['rate', 'cost', 'currency', 'variance', 'cost_per_accepted_unit'];
             $schema = array_values(array_filter(
                 $schema,
-                static fn (array $column): bool => !in_array($column['id'] ?? null, $sensitive, true),
+                static fn (array $column): bool => ! in_array($column['id'] ?? null, $sensitive, true),
             ));
             foreach ($sensitive as $field) {
                 unset($totals[$field]);
@@ -393,11 +406,11 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         ?ReportCursor $cursor,
         int $limit,
     ): ReportPage {
-        if ($limit < 1 || $limit > 100 || !in_array($sort->field, self::SORTS, true)) {
+        if ($limit < 1 || $limit > 100 || ! in_array($sort->field, self::SORTS, true)) {
             throw new InvalidArgumentException('project_labor_cost_page_invalid');
         }
         if (in_array($sort->field, ['rate', 'cost', 'variance', 'cost_per_accepted_unit'], true)
-            && !$context->visibility->canViewSensitive) {
+            && ! $context->visibility->canViewSensitive) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
         $record = $this->snapshot($context, $snapshot);
@@ -427,7 +440,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
             fn (object $row): array => $this->visibleRow($this->json($row->row_payload), $context),
         )->all();
         $totals = $this->json($record->totals);
-        if (!$context->visibility->canViewSensitive) {
+        if (! $context->visibility->canViewSensitive) {
             unset($totals['cost'], $totals['currency']);
         }
 
@@ -449,12 +462,12 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         ReportWindowSort $sort,
         int $chunkSize,
     ): iterable {
-        if ($chunkSize < 1 || $chunkSize > 5000 || !in_array($sort->field, self::SORTS, true)) {
+        if ($chunkSize < 1 || $chunkSize > 5000 || ! in_array($sort->field, self::SORTS, true)) {
             throw new InvalidArgumentException('project_labor_cost_chunk_invalid');
         }
 
         if (in_array($sort->field, ['rate', 'cost', 'variance', 'cost_per_accepted_unit'], true)
-            && !$context->visibility->canViewSensitive) {
+            && ! $context->visibility->canViewSensitive) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
         $record = $this->snapshot($context, $snapshot);
@@ -539,7 +552,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         int $sourceCount,
     ): ReportSnapshotRef {
         $id = (string) Str::ulid();
-        $generatedAt = new DateTimeImmutable();
+        $generatedAt = new DateTimeImmutable;
         $staleAt = $generatedAt->add(new DateInterval('P1D'));
         $sourceManifest = $this->sourceManifest($rows, $sourceCount);
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
@@ -687,7 +700,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
             return 0;
         }
         if (preg_match('/^(0|[1-9][0-9]*)\.([a-f0-9]{64})$/D', $cursor, $matches) !== 1
-            || !hash_equals(hash('sha256', $rowKey.'|'.$matches[1]), $matches[2])) {
+            || ! hash_equals(hash('sha256', $rowKey.'|'.$matches[1]), $matches[2])) {
             throw new InvalidArgumentException('project_labor_cost_drill_down_cursor_invalid');
         }
 
@@ -753,7 +766,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
     private function visibleRow(array $row, ReportExecutionContext $context): array
     {
         if ($context->scope->projectIds !== []
-            && !in_array((int) $row['project_id'], $context->scope->projectIds, true)) {
+            && ! in_array((int) $row['project_id'], $context->scope->projectIds, true)) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
         $this->assertScopedResource(
@@ -780,7 +793,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
                 (int) $row['project_id'],
             );
         }
-        if (!$context->visibility->canViewSensitive) {
+        if (! $context->visibility->canViewSensitive) {
             unset(
                 $row['rate_version_id'],
                 $row['rate'],
@@ -905,7 +918,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
     private function assertMaterializedRowScope(ReportScope $scope, array $row): void
     {
         $projectId = (int) $row['project_id'];
-        if ($scope->projectIds !== [] && !in_array($projectId, $scope->projectIds, true)) {
+        if ($scope->projectIds !== [] && ! in_array($projectId, $scope->projectIds, true)) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
         foreach ($row['source_refs'] as $ref) {
@@ -947,6 +960,23 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
         return $requested;
     }
 
+    private function assertNoPostAsOfMutations(
+        ReportScope $scope,
+        ReportQuery $query,
+        array $tables,
+    ): void {
+        $asOf = $query->asOf->format('Y-m-d H:i:sP');
+        foreach ($tables as $table) {
+            if ($this->connection->table($table)
+                ->where('organization_id', $scope->organizationId)
+                ->where('created_at', '<=', $asOf)
+                ->where('updated_at', '>', $asOf)
+                ->exists()) {
+                throw new DomainException('TIME_TRACKING_HISTORICAL_SOURCE_UNAVAILABLE');
+            }
+        }
+    }
+
     private function assertScopedResource(
         ReportScope $scope,
         string $kind,
@@ -974,11 +1004,11 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
     private function ids(ReportQuery $query, string $filter): array
     {
         $values = $query->filters->values[$filter] ?? [];
-        if (!is_array($values) || !array_is_list($values)) {
+        if (! is_array($values) || ! array_is_list($values)) {
             throw new InvalidArgumentException('project_labor_cost_filter_invalid');
         }
         foreach ($values as $value) {
-            if (!is_int($value) || $value < 1) {
+            if (! is_int($value) || $value < 1) {
                 throw new InvalidArgumentException('project_labor_cost_filter_invalid');
             }
         }
@@ -989,11 +1019,11 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
     private function strings(ReportQuery $query, string $filter): array
     {
         $values = $query->filters->values[$filter] ?? [];
-        if (!is_array($values) || !array_is_list($values)) {
+        if (! is_array($values) || ! array_is_list($values)) {
             throw new InvalidArgumentException('project_labor_cost_filter_invalid');
         }
         foreach ($values as $value) {
-            if (!is_string($value) || $value === '') {
+            if (! is_string($value) || $value === '') {
                 throw new InvalidArgumentException('project_labor_cost_filter_invalid');
             }
         }
@@ -1036,7 +1066,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
     {
         $from = $query->filters->values['period_from'] ?? null;
         $to = $query->filters->values['period_to'] ?? null;
-        if (!is_string($from) || !is_string($to) || $from > $to || $to > $query->asOf->format('Y-m-d')) {
+        if (! is_string($from) || ! is_string($to) || $from > $to || $to > $query->asOf->format('Y-m-d')) {
             throw new InvalidArgumentException('project_labor_cost_period_invalid');
         }
 
@@ -1112,7 +1142,7 @@ final readonly class DatabaseProjectLaborCostAdapter implements ProjectLaborCost
             return $value;
         }
         $decoded = json_decode((string) $value, true);
-        if (!is_array($decoded)) {
+        if (! is_array($decoded)) {
             throw new DomainException('REPORT_SNAPSHOT_CORRUPT');
         }
 

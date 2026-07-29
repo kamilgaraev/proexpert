@@ -13,12 +13,16 @@ use App\BusinessModules\Features\WorkforceManagement\Reporting\DTO\EffectiveAssi
 use App\BusinessModules\Features\WorkforceManagement\Reporting\EffectiveAssignmentResolver;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\AttendanceExecutionFormula;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\Formulas\WorkforceCapacityFormula;
+use App\BusinessModules\Features\WorkforceManagement\Reporting\Infrastructure\DatabaseWorkforceReportAdapter;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceCapacityProvider;
 use App\BusinessModules\Features\WorkforceManagement\Reporting\WorkforceReportQueryService;
 use DateTimeImmutable;
 use DomainException;
+use Illuminate\Database\ConnectionInterface;
+use Illuminate\Support\Collection;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use ReflectionMethod;
 
 final class WorkforceOperationsSourceTest extends TestCase
 {
@@ -45,7 +49,7 @@ final class WorkforceOperationsSourceTest extends TestCase
         $resolver = new EffectiveAssignmentResolver($this->assignmentSource([$duplicate, $duplicate]));
 
         $resolution = $resolver->forDate(10, 7, new DateTimeImmutable('2026-07-20'));
-        $metrics = (new WorkforceCapacityFormula())->calculate(
+        $metrics = (new WorkforceCapacityFormula)->calculate(
             approvedFte: '1.00',
             assignments: $resolution->assignments,
             plannedCapacityHours: '168.00',
@@ -64,7 +68,7 @@ final class WorkforceOperationsSourceTest extends TestCase
     #[Test]
     public function planned_fte_is_conserved_across_project_rows(): void
     {
-        $formula = new WorkforceCapacityFormula();
+        $formula = new WorkforceCapacityFormula;
 
         $underfilled = $formula->allocatePlannedFte('1.00', [
             'project:20' => '0.40',
@@ -87,6 +91,45 @@ final class WorkforceOperationsSourceTest extends TestCase
     }
 
     #[Test]
+    public function project_filter_is_applied_after_full_fte_allocation(): void
+    {
+        $formula = new WorkforceCapacityFormula;
+        $fullAllocation = $formula->allocatePlannedFte('0.50', [
+            'project:20' => '0.40',
+            'project:21' => '0.40',
+        ]);
+        $filteredBeforeAllocation = $formula->allocatePlannedFte('0.50', [
+            'project:20' => '0.40',
+        ]);
+
+        self::assertSame('0.25', $fullAllocation['project:20']);
+        self::assertSame('0.40', $filteredBeforeAllocation['project:20']);
+    }
+
+    #[Test]
+    public function scan_events_are_grouped_by_employee_day_site_and_shift_grain(): void
+    {
+        $adapter = new DatabaseWorkforceReportAdapter(
+            $this->createMock(ConnectionInterface::class),
+            new WorkforceCapacityFormula,
+            new AttendanceExecutionFormula,
+        );
+        $method = new ReflectionMethod($adapter, 'attendanceGrains');
+        $method->setAccessible(true);
+        $scans = new Collection([
+            (object) ['id' => 1, 'metadata' => json_encode(['site_id' => 10, 'shift_id' => 20])],
+            (object) ['id' => 2, 'metadata' => json_encode(['site_id' => 10, 'shift_id' => 20])],
+            (object) ['id' => 3, 'metadata' => json_encode(['site_id' => 10, 'shift_id' => 21])],
+        ]);
+
+        $grains = $method->invoke($adapter, $scans, 10, 20);
+
+        self::assertCount(2, $grains);
+        self::assertSame([1, 2], $grains[0]['scans']->pluck('id')->all());
+        self::assertSame([3], $grains[1]['scans']->pluck('id')->all());
+    }
+
+    #[Test]
     public function adjacent_assignments_use_half_open_shared_boundary(): void
     {
         $resolver = new EffectiveAssignmentResolver($this->assignmentSource([
@@ -95,7 +138,7 @@ final class WorkforceOperationsSourceTest extends TestCase
         ]));
 
         $resolution = $resolver->forDate(10, 7, new DateTimeImmutable('2026-07-15'));
-        $metrics = (new WorkforceCapacityFormula())->calculate(
+        $metrics = (new WorkforceCapacityFormula)->calculate(
             approvedFte: '2.00',
             assignments: $resolution->assignments,
             plannedCapacityHours: '336.00',
@@ -131,7 +174,7 @@ final class WorkforceOperationsSourceTest extends TestCase
     #[Test]
     public function approved_absence_preserves_execution_and_zero_denominator_is_null(): void
     {
-        $formula = new AttendanceExecutionFormula();
+        $formula = new AttendanceExecutionFormula;
 
         $covered = $formula->calculate(
             eligibleHours: '8.00',
@@ -163,7 +206,7 @@ final class WorkforceOperationsSourceTest extends TestCase
     #[Test]
     public function attendance_conserves_eligible_hours_and_separates_overtime(): void
     {
-        $metrics = (new AttendanceExecutionFormula())->calculate(
+        $metrics = (new AttendanceExecutionFormula)->calculate(
             eligibleHours: '8.00',
             presentHours: '10.00',
             approvedAbsenceHours: '3.00',
@@ -182,10 +225,9 @@ final class WorkforceOperationsSourceTest extends TestCase
 
     private function assignmentSource(array $assignments): EffectiveAssignmentSource
     {
-        return new class($assignments) implements EffectiveAssignmentSource {
-            public function __construct(private readonly array $assignments)
-            {
-            }
+        return new class($assignments) implements EffectiveAssignmentSource
+        {
+            public function __construct(private readonly array $assignments) {}
 
             public function forEmployee(int $organizationId, int $employeeId): array
             {

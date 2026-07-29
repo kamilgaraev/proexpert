@@ -51,7 +51,7 @@ final class LaborPayrollSourceTest extends TestCase
             $this->rate(1, '2026-07-01', '2026-07-16', '25.00', 'USD'),
             $this->rate(2, '2026-07-16', null, '30.00', 'USD'),
         ]));
-        $formula = new ProjectLaborCostFormula();
+        $formula = new ProjectLaborCostFormula;
         $entry = new ProjectLaborEntryFact(
             timeEntryId: 41,
             organizationId: 10,
@@ -85,7 +85,7 @@ final class LaborPayrollSourceTest extends TestCase
     #[Test]
     public function non_approved_entries_and_ambiguous_rates_fail_closed(): void
     {
-        $formula = new ProjectLaborCostFormula();
+        $formula = new ProjectLaborCostFormula;
         $draft = new ProjectLaborEntryFact(
             timeEntryId: 41,
             organizationId: 10,
@@ -136,7 +136,7 @@ final class LaborPayrollSourceTest extends TestCase
             acceptedUnit: null,
         );
 
-        $metrics = (new ProjectLaborCostFormula())->calculate(
+        $metrics = (new ProjectLaborCostFormula)->calculate(
             $entry,
             $resolver->atDate(10, 7, $entry->workDate),
             null,
@@ -153,7 +153,7 @@ final class LaborPayrollSourceTest extends TestCase
     #[Test]
     public function payroll_blockers_dominate_readiness_and_zero_source_coverage_is_null(): void
     {
-        $formula = new PayrollReadinessFormula();
+        $formula = new PayrollReadinessFormula;
         $blocked = $formula->calculate(
             sourceRowCount: 10,
             coveredSourceRowCount: 9,
@@ -189,7 +189,7 @@ final class LaborPayrollSourceTest extends TestCase
     #[Test]
     public function payroll_source_currency_changes_source_identity(): void
     {
-        $formula = new PayrollSourceRateFormula();
+        $formula = new PayrollSourceRateFormula;
         $usd = $formula->calculate(
             hours: '8.0000',
             rate: '225.0000',
@@ -212,8 +212,8 @@ final class LaborPayrollSourceTest extends TestCase
     {
         $adapter = new DatabasePayrollReadinessAdapter(
             $this->createMock(ConnectionInterface::class),
-            new PayrollReadinessFormula(),
-            new PayrollSourceRateFormula(),
+            new PayrollReadinessFormula,
+            new PayrollSourceRateFormula,
         );
         $rowHash = new ReflectionMethod($adapter, 'rowHash');
         $rowHash->setAccessible(true);
@@ -244,7 +244,7 @@ final class LaborPayrollSourceTest extends TestCase
     #[Test]
     public function payroll_uses_decimal_effective_hourly_rate_and_explicit_currency(): void
     {
-        $amount = (new PayrollSourceRateFormula())->calculate(
+        $amount = (new PayrollSourceRateFormula)->calculate(
             hours: '7.1250',
             rate: '123.4567',
             rateType: 'hourly',
@@ -257,22 +257,37 @@ final class LaborPayrollSourceTest extends TestCase
     }
 
     #[Test]
-    public function management_pnl_sources_remain_compile_safe_without_budgeting_prerequisites(): void
+    public function payroll_totals_are_derived_only_from_filtered_snapshot_rows(): void
     {
-        self::assertFalse(class_exists(
-            'App\\BusinessModules\\Features\\TimeTracking\\Reporting\\TimeTrackingManagementPnlComponentSource',
-        ));
-        self::assertFalse(class_exists(
-            'App\\BusinessModules\\Features\\WorkforceManagement\\Reporting\\PayrollManagementPnlComponentSource',
-        ));
+        $adapter = new DatabasePayrollReadinessAdapter(
+            $this->createMock(ConnectionInterface::class),
+            new PayrollReadinessFormula,
+            new PayrollSourceRateFormula,
+        );
+        $totals = new ReflectionMethod($adapter, 'totals');
+        $totals->setAccessible(true);
+        $result = $totals->invoke($adapter, [[
+            'row_type' => 'source',
+            'hours' => '8.0000',
+            'rate' => '100.0000',
+            'amount' => '800.0000',
+            'currency' => 'RUB',
+            'issue_code' => null,
+            'severity' => null,
+        ]]);
+
+        self::assertSame(1, $result['source_rows']);
+        self::assertSame(1, $result['covered_source_rows']);
+        self::assertSame(['RUB' => '800.00'], $result['source_amounts']);
+        self::assertSame(0, $result['blocking_issues']);
+        self::assertTrue($result['ready']);
     }
 
     private function rateSource(array $rates): EffectiveLaborRateSource
     {
-        return new class($rates) implements EffectiveLaborRateSource {
-            public function __construct(private readonly array $rates)
-            {
-            }
+        return new class($rates) implements EffectiveLaborRateSource
+        {
+            public function __construct(private readonly array $rates) {}
 
             public function forEmployee(int $organizationId, int $employeeId): array
             {

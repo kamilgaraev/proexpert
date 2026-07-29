@@ -67,8 +67,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         private ConnectionInterface $connection,
         private PayrollReadinessFormula $formula,
         private PayrollSourceRateFormula $sourceRateFormula,
-    ) {
-    }
+    ) {}
 
     public function buildVersion(int $organizationId, int $periodId, int $actorId): PayrollCalculationVersion
     {
@@ -159,7 +158,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                     return $this->versionDto($version);
                 }
                 $this->assertCurrentVersion($version);
-                if (!hash_equals(
+                if (! hash_equals(
                     (string) $version->source_hash,
                     $this->sourceHash($this->canonicalSourceRows(
                         $organizationId,
@@ -287,7 +286,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                 if ($periodStatus !== 'locked') {
                     throw new DomainException('PAYROLL_PERIOD_NOT_LOCKED');
                 }
-                if (!hash_equals(
+                if (! hash_equals(
                     (string) $version->source_hash,
                     $this->sourceHash($this->canonicalSourceRows(
                         $organizationId,
@@ -329,11 +328,11 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             throw new InvalidArgumentException('payroll_readiness_scope_invalid');
         }
         $periodIds = $query->filters->values['payroll_period_ids'] ?? null;
-        if (!is_array($periodIds) || !array_is_list($periodIds) || $periodIds === []) {
+        if (! is_array($periodIds) || ! array_is_list($periodIds) || $periodIds === []) {
             throw new InvalidArgumentException('payroll_readiness_periods_invalid');
         }
         $periodIds = array_values(array_unique(array_map(static function (mixed $id): int {
-            if (!is_int($id) || $id < 1) {
+            if (! is_int($id) || $id < 1) {
                 throw new InvalidArgumentException('payroll_readiness_periods_invalid');
             }
 
@@ -358,13 +357,29 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             ->where('version.organization_id', $scope->organizationId)
             ->whereIn('version.payroll_period_id', $periodIds)
             ->whereIn('version.status', ['validated', 'locked'])
+            ->where('version.created_at', '<=', $query->asOf->format('Y-m-d H:i:sP'))
+            ->where(static function (Builder $builder) use ($query): void {
+                $asOf = $query->asOf->format('Y-m-d H:i:sP');
+                $builder->where(static fn (Builder $validated): Builder => $validated
+                    ->where('version.status', 'validated')
+                    ->where('version.validated_at', '<=', $asOf))
+                    ->orWhere(static fn (Builder $locked): Builder => $locked
+                        ->where('version.status', 'locked')
+                        ->where('version.locked_at', '<=', $asOf));
+            })
             ->whereRaw(
                 "version.version = (
                     SELECT MAX(v2.version)
                     FROM workforce_payroll_calculation_versions v2
                     WHERE v2.organization_id = version.organization_id
                       AND v2.payroll_period_id = version.payroll_period_id
+                      AND v2.created_at <= ?
+                      AND (
+                          (v2.status = 'validated' AND v2.validated_at <= ?)
+                          OR (v2.status = 'locked' AND v2.locked_at <= ?)
+                      )
                 )",
+                array_fill(0, 3, $query->asOf->format('Y-m-d H:i:sP')),
             )
             ->get([
                 'version.*',
@@ -378,7 +393,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         foreach ($versions as $version) {
             if ($scope->projectIds !== []
                 && ($version->period_project_id === null
-                    || !in_array((int) $version->period_project_id, $scope->projectIds, true))) {
+                    || ! in_array((int) $version->period_project_id, $scope->projectIds, true))) {
                 throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
             }
         }
@@ -480,7 +495,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                 'rate_type' => $source->rate_type,
                 'amount' => $source->amount,
                 'currency' => $source->currency,
-                'issue_id' => $issue?->source_issue_id === null ? null : (int) $issue->source_issue_id,
+                'issue_id' => $issue === null ? null : (int) $issue->id,
                 'issue_code' => $issue?->issue_code,
                 'severity' => $issue?->severity,
                 'status' => $issue?->severity === 'blocking'
@@ -495,6 +510,9 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             }
         }
         foreach ($issues as $issue) {
+            if ($sourceTypes !== []) {
+                continue;
+            }
             $version = $versionsById->get((int) $issue->calculation_version_id);
             if ($version === null) {
                 throw new DomainException('PAYROLL_CALCULATION_VERSION_NOT_FOUND');
@@ -518,7 +536,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                 'rate_type' => null,
                 'amount' => null,
                 'currency' => null,
-                'issue_id' => $issue->source_issue_id === null ? null : (int) $issue->source_issue_id,
+                'issue_id' => (int) $issue->id,
                 'issue_code' => (string) $issue->issue_code,
                 'severity' => (string) $issue->severity,
                 'status' => $issue->severity === 'blocking' ? 'blocked' : 'warning',
@@ -542,10 +560,10 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         $record = $this->snapshot($context, $snapshot);
         $totals = $this->json($record->totals);
         $schema = $this->json($record->row_schema);
-        if (!$context->visibility->canViewSensitive) {
+        if (! $context->visibility->canViewSensitive) {
             $schema = array_values(array_filter(
                 $schema,
-                static fn (array $column): bool => !in_array(
+                static fn (array $column): bool => ! in_array(
                     $column['id'] ?? null,
                     ['rate', 'rate_type', 'amount', 'currency'],
                     true,
@@ -587,10 +605,10 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         ?ReportCursor $cursor,
         int $limit,
     ): ReportPage {
-        if ($limit < 1 || $limit > 100 || !in_array($sort->field, self::SORTS, true)) {
+        if ($limit < 1 || $limit > 100 || ! in_array($sort->field, self::SORTS, true)) {
             throw new InvalidArgumentException('payroll_readiness_page_invalid');
         }
-        if ($sort->field === 'amount' && !$context->visibility->canViewSensitive) {
+        if ($sort->field === 'amount' && ! $context->visibility->canViewSensitive) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
         $record = $this->snapshot($context, $snapshot);
@@ -615,7 +633,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             fn (object $row): array => $this->visibleRow($this->json($row->row_payload), $context),
         )->all();
         $totals = $this->json($record->totals);
-        if (!$context->visibility->canViewSensitive) {
+        if (! $context->visibility->canViewSensitive) {
             unset($totals['source_amounts']);
         }
 
@@ -637,10 +655,10 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         ReportWindowSort $sort,
         int $chunkSize,
     ): iterable {
-        if ($chunkSize < 1 || $chunkSize > 5000 || !in_array($sort->field, self::SORTS, true)) {
+        if ($chunkSize < 1 || $chunkSize > 5000 || ! in_array($sort->field, self::SORTS, true)) {
             throw new InvalidArgumentException('payroll_readiness_chunk_invalid');
         }
-        if ($sort->field === 'amount' && !$context->visibility->canViewSensitive) {
+        if ($sort->field === 'amount' && ! $context->visibility->canViewSensitive) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
         $record = $this->snapshot($context, $snapshot);
@@ -720,7 +738,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         Collection $issues,
     ): ReportSnapshotRef {
         $id = (string) Str::ulid();
-        $generatedAt = new DateTimeImmutable();
+        $generatedAt = new DateTimeImmutable;
         $staleAt = $generatedAt->add(new DateInterval('P1D'));
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
             'organization_id' => $scope->organizationId,
@@ -746,7 +764,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             'rows' => $rows,
             'schema_version' => self::SCHEMA_VERSION,
         ])));
-        $totals = $this->totals($sourceRows, $issues);
+        $totals = $this->totals($rows);
         $sourceManifest = $versions->map(
             static fn (object $version): array => [
                 'source' => 'payroll_calculation',
@@ -760,11 +778,17 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             ],
         )->values()->all();
         $warningCodes = array_values(array_unique(array_filter(array_merge(
-            $issues->pluck('issue_code')->map(static fn (mixed $code): string => (string) $code)->all(),
+            array_map(
+                static fn (array $row): string => (string) ($row['issue_code'] ?? ''),
+                $rows,
+            ),
             (int) $totals['unrated_source_rows'] > 0 ? ['PAYROLL_EFFECTIVE_RATE_MISSING'] : [],
         ))));
         $quality = $totals['readiness_state'] === 'ready' ? 'complete' : 'partial';
-        $reconciliation = 'matched';
+        $reconciliation = (int) $totals['source_rows'] > 0
+            && (int) $totals['covered_source_rows'] === (int) $totals['source_rows']
+                ? 'matched'
+                : 'mismatch';
         $schema = array_map(
             static fn (string $column): array => ['id' => $column],
             [
@@ -855,8 +879,16 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         );
     }
 
-    private function totals(Collection $sourceRows, Collection $issues): array
+    private function totals(array $rows): array
     {
+        $sourceRows = array_values(array_filter(
+            $rows,
+            static fn (array $row): bool => $row['row_type'] === 'source',
+        ));
+        $issueRows = array_values(array_filter(
+            $rows,
+            static fn (array $row): bool => $row['row_type'] === 'issue',
+        ));
         $hours = BigDecimal::zero();
         $amounts = [];
         $unassignedHours = BigDecimal::zero();
@@ -864,46 +896,46 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
         $coveredCount = 0;
         $implicitMissingRateCount = 0;
         foreach ($sourceRows as $row) {
-            $rowHours = BigDecimal::of((string) $row->hours);
+            $rowHours = BigDecimal::of((string) $row['hours']);
             $hours = $hours->plus($rowHours);
-            if ($row->amount !== null && $row->currency !== null) {
-                $currency = (string) $row->currency;
-                $amounts[$currency] = ($amounts[$currency] ?? BigDecimal::zero())->plus((string) $row->amount);
+            if ($row['amount'] !== null && $row['currency'] !== null) {
+                $currency = (string) $row['currency'];
+                $amounts[$currency] = ($amounts[$currency] ?? BigDecimal::zero())->plus((string) $row['amount']);
             }
-            $matchingIssues = $issues->filter(
-                static fn (object $issue): bool => (int) $issue->calculation_version_id
-                    === (int) $row->calculation_version_id
-                    && ($issue->employee_id === null || (int) $issue->employee_id === (int) $row->employee_id)
-                    && ($issue->project_id === null
-                        || (int) $issue->project_id === ($row->project_id === null ? null : (int) $row->project_id)),
-            );
-            $issueCodes = $matchingIssues
-                ->pluck('issue_code')
-                ->map(static fn (mixed $code): string => strtolower((string) $code));
-            if ($issueCodes->contains(
-                static fn (string $code): bool => str_contains($code, 'assignment') || str_contains($code, 'project'),
-            )) {
+            $issueCode = strtolower((string) ($row['issue_code'] ?? ''));
+            if (str_contains($issueCode, 'assignment') || str_contains($issueCode, 'project')) {
                 $unassignedHours = $unassignedHours->plus($rowHours);
             }
-            $rateMissing = $row->rate === null || $row->currency === null || $row->amount === null;
-            if ($rateMissing || $issueCodes->contains(
-                static fn (string $code): bool => str_contains($code, 'rate') || str_contains($code, 'tariff'),
-            )) {
+            $rateMissing = $row['rate'] === null || $row['currency'] === null || $row['amount'] === null;
+            if ($rateMissing || str_contains($issueCode, 'rate') || str_contains($issueCode, 'tariff')) {
                 $unratedHours = $unratedHours->plus($rowHours);
             }
-            $hasBlockingIssue = $matchingIssues->contains(
-                static fn (object $issue): bool => $issue->severity === 'blocking',
-            );
-            if (!$hasBlockingIssue && !$rateMissing) {
+            $hasBlockingIssue = $row['severity'] === 'blocking';
+            if (! $hasBlockingIssue && ! $rateMissing) {
                 $coveredCount++;
             }
-            if ($rateMissing && !$hasBlockingIssue) {
+            if ($rateMissing && ! $hasBlockingIssue) {
                 $implicitMissingRateCount++;
             }
         }
-        $sourceCount = $sourceRows->count();
-        $blockingCount = $issues->where('severity', 'blocking')->count() + $implicitMissingRateCount;
-        $warningCount = $issues->where('severity', 'warning')->count();
+        $sourceCount = count($sourceRows);
+        $blockingIssues = [];
+        $warningIssues = [];
+        foreach ([...$sourceRows, ...$issueRows] as $row) {
+            if (! in_array($row['severity'], ['blocking', 'warning'], true)) {
+                continue;
+            }
+            $identity = ($row['issue_id'] ?? null) === null
+                ? (string) ($row['row_key'] ?? hash('sha256', CanonicalJson::encode($row)))
+                : 'issue:'.(int) $row['issue_id'];
+            if ($row['severity'] === 'blocking') {
+                $blockingIssues[$identity] = true;
+            } else {
+                $warningIssues[$identity] = true;
+            }
+        }
+        $blockingCount = count($blockingIssues) + $implicitMissingRateCount;
+        $warningCount = count($warningIssues);
         $metrics = $this->formula->calculate(
             sourceRowCount: $sourceCount,
             coveredSourceRowCount: $coveredCount,
@@ -1008,7 +1040,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             return 0;
         }
         if (preg_match('/^(0|[1-9][0-9]*)\.([a-f0-9]{64})$/D', $cursor, $matches) !== 1
-            || !hash_equals(hash('sha256', $rowKey.'|'.$matches[1]), $matches[2])) {
+            || ! hash_equals(hash('sha256', $rowKey.'|'.$matches[1]), $matches[2])) {
             throw new InvalidArgumentException('payroll_readiness_drill_down_cursor_invalid');
         }
 
@@ -1067,10 +1099,10 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
                 }
             }
         }
-        if (!$context->visibility->canViewAudit) {
+        if (! $context->visibility->canViewAudit) {
             unset($row['audit_refs'], $row['calculation_version_id'], $row['issue_id']);
         }
-        if (!$context->visibility->canViewSensitive) {
+        if (! $context->visibility->canViewSensitive) {
             unset($row['rate'], $row['rate_type'], $row['amount'], $row['currency']);
             $row['source_refs'] = array_values(array_filter(
                 $row['source_refs'],
@@ -1084,11 +1116,11 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
     private function ids(ReportQuery $query, string $filter): array
     {
         $values = $query->filters->values[$filter] ?? [];
-        if (!is_array($values) || !array_is_list($values)) {
+        if (! is_array($values) || ! array_is_list($values)) {
             throw new InvalidArgumentException('payroll_readiness_filter_invalid');
         }
         foreach ($values as $value) {
-            if (!is_int($value) || $value < 1) {
+            if (! is_int($value) || $value < 1) {
                 throw new InvalidArgumentException('payroll_readiness_filter_invalid');
             }
         }
@@ -1179,8 +1211,8 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
         if ($projectId !== null
-            && ($scope->projectIds !== [] && !in_array($projectId, $scope->projectIds, true)
-                || $resourceProjectIds !== [] && !in_array($projectId, $resourceProjectIds, true))) {
+            && ($scope->projectIds !== [] && ! in_array($projectId, $scope->projectIds, true)
+                || $resourceProjectIds !== [] && ! in_array($projectId, $resourceProjectIds, true))) {
             throw new DomainException('REPORT_FILTER_VALUE_NOT_FOUND');
         }
     }
@@ -1235,11 +1267,11 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
     private function strings(ReportQuery $query, string $filter): array
     {
         $values = $query->filters->values[$filter] ?? [];
-        if (!is_array($values) || !array_is_list($values)) {
+        if (! is_array($values) || ! array_is_list($values)) {
             throw new InvalidArgumentException('payroll_readiness_filter_invalid');
         }
         foreach ($values as $value) {
-            if (!is_string($value) || $value === '') {
+            if (! is_string($value) || $value === '') {
                 throw new InvalidArgumentException('payroll_readiness_filter_invalid');
             }
         }
@@ -1418,7 +1450,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             'production_labor_output_entry' => 'production_labor_output_entries',
         ];
         foreach ($issues->groupBy('entity_type') as $entityType => $typedIssues) {
-            if (!is_string($entityType) || !isset($tables[$entityType])) {
+            if (! is_string($entityType) || ! isset($tables[$entityType])) {
                 throw new DomainException('PAYROLL_VALIDATION_ISSUE_SOURCE_INVALID');
             }
             $ids = $typedIssues->pluck('entity_id')
@@ -1485,7 +1517,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
 
     private function assertActor(int $organizationId, int $actorId): void
     {
-        if ($actorId < 1 || !$this->connection->table('organization_user')
+        if ($actorId < 1 || ! $this->connection->table('organization_user')
             ->where('organization_id', $organizationId)
             ->where('user_id', $actorId)
             ->where('is_active', true)
@@ -1556,6 +1588,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             || $cursor->sort->direction !== $sort->direction) {
             throw new InvalidArgumentException('payroll_readiness_cursor_invalid');
         }
+
         return $cursor->keyset;
     }
 
@@ -1586,7 +1619,7 @@ final readonly class DatabasePayrollReadinessAdapter implements PayrollReadiness
             return $value;
         }
         $decoded = json_decode((string) $value, true);
-        if (!is_array($decoded)) {
+        if (! is_array($decoded)) {
             throw new DomainException('REPORT_SNAPSHOT_CORRUPT');
         }
 
