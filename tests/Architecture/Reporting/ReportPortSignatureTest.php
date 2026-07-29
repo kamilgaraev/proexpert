@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Architecture\Reporting;
 
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\CandidateReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionBindingAssembler;
@@ -26,6 +27,11 @@ final class ReportPortSignatureTest extends TestCase
     #[Test]
     public function every_owner_port_method_has_the_exact_public_signature(): void
     {
+        $this->assertPort(CurrentReportScopeAuthorizer::class, [
+            'authorizeCatalog' => [['actorId', 'int'], ['organizationId', 'int'], ['timezone', 'DateTimeZone'], ['targets', 'array'], 'App\\BusinessModules\\Core\\Reporting\\Application\\Access\\ReportCatalogAuthorization'],
+            'authorizeForOrganization' => [['actorId', 'int'], ['organizationId', 'int'], ['timezone', 'DateTimeZone'], ['target', 'App\\BusinessModules\\Core\\Reporting\\Application\\Execution\\CurrentReportAuthorizationTarget'], 'App\\BusinessModules\\Core\\Reporting\\Application\\Execution\\CurrentReportAuthorization'],
+            'authorizeExact' => [['actorId', 'int'], ['requestedScope', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportScope'], ['target', 'App\\BusinessModules\\Core\\Reporting\\Application\\Execution\\CurrentReportAuthorizationTarget'], 'App\\BusinessModules\\Core\\Reporting\\Application\\Execution\\CurrentReportAuthorization'],
+        ]);
         $this->assertPort(ReportDataProvider::class, [
             'materialize' => [['context', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportExecutionContext'], ['query', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportQuery'], ['progress', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportProgress'], 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportSnapshotRef'],
             'result' => [['context', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportExecutionContext'], ['snapshot', 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportSnapshotRef'], 'App\\BusinessModules\\Core\\Reporting\\Domain\\DTO\\ReportResult'],

@@ -28,12 +28,63 @@
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
     },
+    "taskFourEEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subject",
+        "parent_commit_sha",
+        "lineage",
+        "manifest_count",
+        "typed_resource_contract",
+        "typed_decision_contract",
+        "queue_authorization",
+        "prohibitions",
+        "migration_cutover",
+        "resource_registry",
+        "authorization_matrices",
+        "ownership_audit"
+      ],
+      "properties": {
+        "subject": {"const": "feat[reports]: типизировать ресурсы и текущую авторизацию"},
+        "parent_commit_sha": {"const": "1934f947a44aa5221b5aa4cbd8c03963f5f1c005"},
+        "lineage": {
+          "const": ["Task 4a exact53", "Task 4b exact39", "Task 4a2 exact16", "Task 4c exact15", "Task 4d exact6", "Task 4e exact78"]
+        },
+        "manifest_count": {"const": 78},
+        "typed_resource_contract": {"const": "passed"},
+        "typed_decision_contract": {"const": "passed"},
+        "queue_authorization": {"const": "uncached_repeatable_read_passed"},
+        "prohibitions": {"const": "passed"},
+        "migration_cutover": {"const": "static_contract_passed_not_executed_locally"},
+        "resource_registry": {"const": "passed"},
+        "authorization_matrices": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["organization_scope", "project_scope", "current_abac", "typed_resources", "repeatable_read_races"],
+          "properties": {
+            "organization_scope": {"$ref": "#/$defs/organizationMatrix"},
+            "project_scope": {"$ref": "#/$defs/projectMatrix"},
+            "current_abac": {"$ref": "#/$defs/abacMatrix"},
+            "typed_resources": {"$ref": "#/$defs/resourceMatrix"},
+            "repeatable_read_races": {"$ref": "#/$defs/raceMatrix"}
+          }
+        },
+        "ownership_audit": {"$ref": "#/$defs/ownershipAudit"}
+      }
+    },
     "stringList": {
       "type": "array",
       "items": {
         "type": "string"
       }
     },
+    "organizationMatrix": {"type": "array", "minItems": 11, "maxItems": 11, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "projectMatrix": {"type": "array", "minItems": 8, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "abacMatrix": {"type": "array", "minItems": 16, "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "resourceMatrix": {"type": "array", "minItems": 17, "maxItems": 17, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "raceMatrix": {"type": "array", "minItems": 8, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "ownershipAudit": {"type": "object", "additionalProperties": false, "required": ["task_4e", "task_5", "union", "overlap", "unowned", "extra"], "properties": {"task_4e": {"const": 78}, "task_5": {"const": 30}, "union": {"const": 108}, "overlap": {"const": 0}, "unowned": {"const": 0}, "extra": {"const": 0}}},
     "routeItem": {
       "type": "object",
       "additionalProperties": false,
@@ -897,7 +948,8 @@
         "verification_mode",
         "producer_commit_sha",
         "executed_at",
-        "commands"
+        "commands",
+        "task_4e"
       ],
       "properties": {
         "artifact_id": {
@@ -917,6 +969,9 @@
         },
         "executed_at": {
           "$ref": "#/$defs/timestamp"
+        },
+        "task_4e": {
+          "$ref": "#/$defs/taskFourEEvidence"
         },
         "commands": {
           "type": "array",
@@ -951,10 +1006,10 @@
                   "const": 0
                 },
                 "tests": {
-                  "const": 406
+                  "const": 505
                 },
                 "assertions": {
-                  "const": 3356
+                  "const": 9800
                 },
                 "skipped": {
                   "const": 0
@@ -2107,7 +2162,8 @@
         "verification_mode",
         "producer_commit_sha",
         "executed_at",
-        "commands"
+        "commands",
+        "task_4e"
       ],
       "properties": {
         "artifact_id": {
@@ -2127,6 +2183,9 @@
         },
         "executed_at": {
           "$ref": "#/$defs/timestamp"
+        },
+        "task_4e": {
+          "$ref": "#/$defs/taskFourEEvidence"
         },
         "commands": {
           "type": "array",
@@ -2152,7 +2211,7 @@
                 },
                 "command": {
                   "type": "string",
-                  "const": "C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe -c C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64 vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportValueObjectContractTest.php tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php tests/Unit/Reporting/Input/ReportInputNormalizerTest.php tests/Unit/Reporting/Access/OrganizationReportScopeResolverTest.php tests/Unit/Reporting/Access/ReportAccessServiceTest.php tests/Unit/Reporting/Access/ReportingPermissionTranslationTest.php tests/Unit/Reporting/Http/ReportResourceSchemaTest.php tests/Unit/Reporting/Http/ReportFormRequestContractTest.php tests/Unit/Reporting/Errors/ReportErrorCatalogTest.php tests/Unit/Reporting/Errors/ReportErrorResponseFactoryTest.php tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php tests/Architecture/Reporting/ReportPortSignatureTest.php tests/Architecture/Reporting/ThinReportControllerTest.php tests/Unit/Reporting/Http/ReportControllerContractTest.php tests/Architecture/Reporting/ReportingRouteSnapshotTest.php tests/Architecture/Reporting/PlanOneAHandoffContractTest.php tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php tests/Unit/Reporting/Execution/ExecutionContractsTest.php"
+                  "const": "C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe -c C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64 vendor/bin/phpunit tests/Unit/Reporting/Contracts/ReportValueObjectContractTest.php tests/Unit/Reporting/Contracts/ReportDefinitionContractTest.php tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php tests/Unit/Reporting/Contracts/ReportBindingLifecycleContractTest.php tests/Unit/Reporting/Contracts/ReportScopedResourceContractTest.php tests/Unit/Reporting/Input/ReportInputNormalizerTest.php tests/Unit/Reporting/Access/OrganizationReportScopeResolverTest.php tests/Unit/Reporting/Access/ReportAccessServiceTest.php tests/Unit/Reporting/Access/ReportingPermissionTranslationTest.php tests/Unit/Reporting/Http/ReportResourceSchemaTest.php tests/Unit/Reporting/Http/ReportFormRequestContractTest.php tests/Unit/Reporting/Errors/ReportErrorCatalogTest.php tests/Unit/Reporting/Errors/ReportErrorResponseFactoryTest.php tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php tests/Architecture/Reporting/ReportPortSignatureTest.php tests/Architecture/Reporting/ThinReportControllerTest.php tests/Unit/Reporting/Http/ReportControllerContractTest.php tests/Architecture/Reporting/ReportingRouteSnapshotTest.php tests/Architecture/Reporting/PlanOneAHandoffContractTest.php tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php tests/Unit/Reporting/Execution/ExecutionContractsTest.php tests/Unit/Reporting/Contracts/ReportScopedResourceContractTest.php tests/Unit/Reporting/Execution/CurrentReportAuthorizationTargetTest.php tests/Unit/Reporting/Access/ReportAuthorizationSubjectTest.php tests/Unit/Reporting/Access/ReportHttpAuthorizationOrchestratorTest.php tests/Unit/Reporting/Access/LaravelReportHttpAuthorizationTargetResolverTest.php tests/Unit/Reporting/Access/ReportScopedResourceAuthorizerContractTest.php tests/Unit/Reporting/Access/CurrentReportAuthorizationFactsTest.php tests/Unit/Reporting/Access/CurrentReportPermissionDecisionTest.php tests/Unit/Reporting/Access/ReportScopedResourceAccessDecisionTest.php tests/Architecture/Reporting/ReportCurrentAuthorizationContractTest.php tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php"
                 },
                 "status": {
                   "const": "passed"
@@ -2161,10 +2220,10 @@
                   "const": 0
                 },
                 "tests": {
-                  "const": 406
+                  "const": 505
                 },
                 "assertions": {
-                  "const": 3356
+                  "const": 9800
                 },
                 "skipped": {
                   "const": 0

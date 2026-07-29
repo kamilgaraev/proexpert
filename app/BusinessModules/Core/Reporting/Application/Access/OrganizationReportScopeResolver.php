@@ -22,7 +22,7 @@ final class OrganizationReportScopeResolver
                 $authorization->organizationId,
                 $authorization->holdingOrganizationIds,
                 $authorization->projectIds,
-                $authorization->resourceIds,
+                $authorization->resources,
                 $authorization->timezone,
             );
         } catch (Throwable $exception) {

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Http\Admin\Controllers;
 
-use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportHttpAuthorizationOrchestrator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportDownloadLinkAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportExportAction;
@@ -22,20 +22,20 @@ use Illuminate\Http\JsonResponse;
 final readonly class ReportExportController
 {
     public function __construct(
-        private ReportExecutionContextFactory $contexts,
+        private ReportHttpAuthorizationOrchestrator $authorization,
         private CreateReportExportAction $create,
         private GetReportExportAction $get,
         private RetryReportExportAction $retryAction,
         private CancelReportExportAction $cancelAction,
         private CreateReportDownloadLinkAction $download,
-    ) {
-    }
+    ) {}
 
     public function store(CreateReportExportRequest $request): JsonResponse
     {
         $key = new IdempotencyKey((string) $request->header('Idempotency-Key'));
+        $authorization = $this->authorization->createExport($request, $request->runId());
         $export = $this->create->handle(
-            $this->contexts->fromHttp($request),
+            $authorization['context'],
             $request->routeId(),
             $request->toData(),
             $key,
@@ -47,7 +47,8 @@ final readonly class ReportExportController
 
     public function show(ReportExportRouteRequest $request): JsonResponse
     {
-        $export = $this->get->handle($this->contexts->fromHttp($request), $request->routeId());
+        $authorization = $this->authorization->showExport($request, $request->exportId());
+        $export = $this->get->handle($authorization['context'], $request->exportId());
 
         return AdminResponse::success(new ReportExportResource($export));
     }
@@ -55,7 +56,8 @@ final readonly class ReportExportController
     public function retry(ReportExportRouteRequest $request): JsonResponse
     {
         $key = new IdempotencyKey((string) $request->header('Idempotency-Key'));
-        $export = $this->retryAction->handle($this->contexts->fromHttp($request), $request->routeId(), $key);
+        $authorization = $this->authorization->retryExport($request, $request->exportId());
+        $export = $this->retryAction->handle($authorization['context'], $request->exportId(), $key);
 
         return AdminResponse::success(new ReportExportResource($export), null, $export->httpStatus)
             ->withHeaders($export->responseHeaders());
@@ -63,7 +65,8 @@ final readonly class ReportExportController
 
     public function cancel(ReportExportRouteRequest $request): JsonResponse
     {
-        $export = $this->cancelAction->handle($this->contexts->fromHttp($request), $request->routeId());
+        $authorization = $this->authorization->cancelExport($request, $request->exportId());
+        $export = $this->cancelAction->handle($authorization['context'], $request->exportId());
 
         return AdminResponse::success(new ReportExportResource($export), null, $export->httpStatus)
             ->withHeaders($export->responseHeaders());
@@ -71,8 +74,9 @@ final readonly class ReportExportController
 
     public function downloadLink(CreateReportDownloadLinkRequest $request): JsonResponse
     {
+        $authorization = $this->authorization->download($request, $request->exportId());
         $link = $this->download->handle(
-            $this->contexts->fromHttp($request),
+            $authorization['context'],
             $request->toData(),
         );
 

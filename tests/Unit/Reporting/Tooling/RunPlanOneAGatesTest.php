@@ -14,6 +14,7 @@ require_once dirname(__DIR__, 4).'/scripts/reporting/run-plan-1a-gates.php';
 final class RunPlanOneAGatesTest extends TestCase
 {
     private const PHP = 'C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe';
+
     private const PHP_DIR = 'C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64';
 
     private array $temporaryDirectories = [];
@@ -30,6 +31,41 @@ final class RunPlanOneAGatesTest extends TestCase
         sort($sorted, SORT_STRING);
         self::assertSame($sorted, $constants['TASK_FOUR_A2_PATHS']);
         self::assertSame(['Task 4a exact53', 'Task 4b exact39', 'Task 4a2 exact16'], $constants['TASK_FOUR_A2_LINEAGE']);
+    }
+
+    public function test_runner_declares_the_forward_only_task_four_e_contract(): void
+    {
+        $constants = (new ReflectionClass(\PlanOneAGates::class))->getConstants();
+
+        self::assertSame('feat[reports]: типизировать ресурсы и текущую авторизацию', $constants['TASK_FOUR_E_SUBJECT']);
+        self::assertSame('1934f947a44aa5221b5aa4cbd8c03963f5f1c005', $constants['TASK_FOUR_E_PARENT']);
+        self::assertCount(78, $constants['TASK_FOUR_E_PATHS']);
+        self::assertSame($constants['TASK_FOUR_E_PATHS'], array_values(array_unique($constants['TASK_FOUR_E_PATHS'])));
+        self::assertSame(
+            ['Task 4a exact53', 'Task 4b exact39', 'Task 4a2 exact16', 'Task 4c exact15', 'Task 4d exact6', 'Task 4e exact78'],
+            $constants['TASK_FOUR_E_LINEAGE'],
+        );
+    }
+
+    public function test_runner_emits_task_four_e_matrix_inventories_from_real_test_providers(): void
+    {
+        $inventories = $this->invokeStatic('taskFourEMatrixInventories', []);
+
+        self::assertSame([
+            'organization_scope' => 11,
+            'project_scope' => 8,
+            'current_abac' => 16,
+            'typed_resources' => 17,
+            'repeatable_read_races' => 8,
+        ], array_map('count', $inventories));
+        self::assertContains(
+            'test_closed_abac_behavior_matrix::one bad assignment does not mask a valid assignment',
+            $inventories['current_abac'],
+        );
+        self::assertContains(
+            'test_handler_exceptions_are_normalized_to_scope_forbidden::runtime exception',
+            $inventories['typed_resources'],
+        );
     }
 
     public function test_historical_task_four_a_and_four_b_mutation_families_are_rejected(): void
@@ -333,7 +369,7 @@ final class RunPlanOneAGatesTest extends TestCase
     public function test_hermetic_boundary_sentinels_fail_closed_for_every_external_side_effect_family(): void
     {
         foreach (['database', 'network', 'queue', 'mail', 'storage', 'filesystem'] as $boundary) {
-            $ledger = new \Tests\Support\Reporting\HermeticBoundaryLedger();
+            $ledger = new \Tests\Support\Reporting\HermeticBoundaryLedger;
 
             try {
                 $ledger->breach($boundary);
@@ -541,7 +577,7 @@ final class RunPlanOneAGatesTest extends TestCase
 
     public function test_reflection_harness_substitution_is_rejected_before_execution(): void
     {
-        $this->setStaticProperty('harnessOverride', static fn (): \stdClass => new \stdClass());
+        $this->setStaticProperty('harnessOverride', static fn (): \stdClass => new \stdClass);
 
         try {
             $this->invokeStatic('build', [
@@ -933,7 +969,7 @@ final class RunPlanOneAGatesTest extends TestCase
     {
         $schema = json_decode((string) file_get_contents($this->root().'/docs/reports/contracts/plan-1a-gate-evidence.schema.json'));
 
-        return (new CompliantValidator())->validate(json_decode(json_encode($value, JSON_THROW_ON_ERROR)), $schema)->isValid();
+        return (new CompliantValidator)->validate(json_decode(json_encode($value, JSON_THROW_ON_ERROR)), $schema)->isValid();
     }
 
     private function assertEveryMutationRejected(string $fixture, array $mutations): void
@@ -992,7 +1028,7 @@ final class RunPlanOneAGatesTest extends TestCase
             '--commit-sha='.$this->git($repository, ['rev-parse', 'HEAD']),
             '--output-directory=build/reports',
         ];
-        if (!in_array('--verify-existing', $extra, true)) {
+        if (! in_array('--verify-existing', $extra, true)) {
             $arguments[] = '--executed-at=2026-07-26T00:00:00Z';
         }
         $arguments = [...$arguments, ...$extra];
@@ -1222,7 +1258,7 @@ final class RunPlanOneAGatesTest extends TestCase
     private function write(string $path, string $bytes): void
     {
         $directory = dirname($path);
-        if (!is_dir($directory)) {
+        if (! is_dir($directory)) {
             mkdir($directory, 0777, true);
         }
         file_put_contents($path, $bytes);
@@ -1239,7 +1275,7 @@ final class RunPlanOneAGatesTest extends TestCase
 
     private function removeTree(string $directory): void
     {
-        if (!is_dir($directory)) {
+        if (! is_dir($directory)) {
             return;
         }
         $iterator = new \RecursiveIteratorIterator(
@@ -1247,7 +1283,7 @@ final class RunPlanOneAGatesTest extends TestCase
             \RecursiveIteratorIterator::CHILD_FIRST,
         );
         foreach ($iterator as $item) {
-            if ($item->isDir() && !$item->isLink()) {
+            if ($item->isDir() && ! $item->isLink()) {
                 chmod($item->getPathname(), 0777);
                 rmdir($item->getPathname());
             } else {

@@ -3,7 +3,7 @@
   "$id": "urn:most:reporting:plan-1a-completion:v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["plan", "status", "commit_sha", "contract_lock_sha256", "resource_schema_sha256", "route_snapshot_sha256", "commands", "ci_http_matrices"],
+  "required": ["plan", "status", "commit_sha", "contract_lock_sha256", "resource_schema_sha256", "route_snapshot_sha256", "commands", "ci_http_matrices", "task_4e"],
   "properties": {
     "plan": {"const": "1a"},
     "status": {"const": "passed"},
@@ -29,9 +29,43 @@
         "authorization": {"$ref": "#/$defs/httpAuthorization"},
         "malformed_requests": {"$ref": "#/$defs/httpMalformed"}
       }
+    },
+    "task_4e": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "parent_commit_sha", "commit_sha", "lineage", "manifest_count", "authorization_matrices", "ownership_audit", "migration_cutover", "untyped_compatibility_absent", "request_global_authority_absent"],
+      "properties": {
+        "subject": {"const": "feat[reports]: типизировать ресурсы и текущую авторизацию"},
+        "parent_commit_sha": {"const": "1934f947a44aa5221b5aa4cbd8c03963f5f1c005"},
+        "commit_sha": {"$ref": "#/$defs/sha1"},
+        "lineage": {"const": ["Task 4a exact53", "Task 4b exact39", "Task 4a2 exact16", "Task 4c exact15", "Task 4d exact6", "Task 4e exact78"]},
+        "manifest_count": {"const": 78},
+        "authorization_matrices": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["organization_scope", "project_scope", "current_abac", "typed_resources", "repeatable_read_races"],
+          "properties": {
+            "organization_scope": {"$ref": "#/$defs/organizationMatrix"},
+            "project_scope": {"$ref": "#/$defs/projectMatrix"},
+            "current_abac": {"$ref": "#/$defs/abacMatrix"},
+            "typed_resources": {"$ref": "#/$defs/resourceMatrix"},
+            "repeatable_read_races": {"$ref": "#/$defs/raceMatrix"}
+          }
+        },
+        "ownership_audit": {"$ref": "#/$defs/ownershipAudit"},
+        "migration_cutover": {"const": "static_contract_passed_not_executed_locally"},
+        "untyped_compatibility_absent": {"const": true},
+        "request_global_authority_absent": {"const": true}
+      }
     }
   },
   "$defs": {
+    "organizationMatrix": {"type": "array", "minItems": 11, "maxItems": 11, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "projectMatrix": {"type": "array", "minItems": 8, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "abacMatrix": {"type": "array", "minItems": 16, "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "resourceMatrix": {"type": "array", "minItems": 17, "maxItems": 17, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "raceMatrix": {"type": "array", "minItems": 8, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "ownershipAudit": {"type": "object", "additionalProperties": false, "required": ["task_4e", "task_5", "union", "overlap", "unowned", "extra"], "properties": {"task_4e": {"const": 78}, "task_5": {"const": 30}, "union": {"const": 108}, "overlap": {"const": 0}, "unowned": {"const": 0}, "extra": {"const": 0}}},
     "sha1": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
     "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "timestamp": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
@@ -53,7 +87,7 @@
     "contractCommand": {
       "allOf": [
         {"$ref": "#/$defs/commandBase"},
-        {"properties": {"command_id": {"const": "plan1a_contract_tests"}, "tests": {"const": 406}, "assertions": {"const": 3356}}}
+        {"properties": {"command_id": {"const": "plan1a_contract_tests"}, "tests": {"const": 505}, "assertions": {"const": 9800}}}
       ]
     },
     "staticCommand": {

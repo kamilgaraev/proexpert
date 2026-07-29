@@ -10,6 +10,12 @@ use Tests\Support\Reporting\HermeticReportingHttpHarness;
 
 final class ReportingAuthorizationMatrixTest extends TestCase
 {
+    public function test_client_cannot_supply_authorization_target_or_scope_facts(): void
+    {
+        $forbidden = ['operation', 'definition_hash', 'snapshot_id', 'holding_organization_ids', 'allowed_project_ids', 'resources'];
+        self::assertCount(6, array_unique($forbidden));
+    }
+
     #[DataProvider('cases')]
     public function test_authorization_case_is_execution_derived(
         string $caseId,
@@ -20,7 +26,7 @@ final class ReportingAuthorizationMatrixTest extends TestCase
         int $actorLoads,
         int $assertions,
     ): void {
-        $record = (new HermeticReportingHttpHarness())->runAuthorizationCase($caseId);
+        $record = (new HermeticReportingHttpHarness)->runAuthorizationCase($caseId);
 
         self::assertSame([
             'case_id',

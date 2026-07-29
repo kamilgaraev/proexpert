@@ -9,7 +9,6 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReport
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunHydrator;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
-use DateTimeImmutable;
 use Illuminate\Container\Container;
 use Illuminate\Database\Query\Expression;
 use Illuminate\Database\Schema\Blueprint;
@@ -157,7 +156,7 @@ final class ReportRunHydratorTest extends TestCase
     public function test_hydrates_queued_run_and_reconstructs_exact_query(): void
     {
         $record = $this->record();
-        $hydrator = new ReportRunHydrator();
+        $hydrator = new ReportRunHydrator;
 
         $query = $hydrator->query($record);
         $run = $hydrator->hydrate($record, 'created', 1250);
@@ -173,7 +172,7 @@ final class ReportRunHydratorTest extends TestCase
 
     public function test_migration_emits_microsecond_timestamptz_for_every_persisted_instant(): void
     {
-        $application = new Container();
+        $application = new Container;
         $schema = Mockery::mock();
         $database = Mockery::mock();
         $blueprint = null;
@@ -238,7 +237,7 @@ final class ReportRunHydratorTest extends TestCase
         $mutate($record);
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator())->hydrate($record, 'reused', 1250);
+        (new ReportRunHydrator)->hydrate($record, 'reused', 1250);
     }
 
     public static function errorCodeCorruptions(): iterable
@@ -265,7 +264,7 @@ final class ReportRunHydratorTest extends TestCase
         $record->definition_snapshot = $snapshot;
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator())->query($record);
+        (new ReportRunHydrator)->query($record);
     }
 
     public static function definitionMemberMutations(): iterable
@@ -296,12 +295,12 @@ final class ReportRunHydratorTest extends TestCase
         $record->row_schema = [['id' => 'mutated']];
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator())->hydrate($record, 'reused', 1250);
+        (new ReportRunHydrator)->hydrate($record, 'reused', 1250);
     }
 
     public function test_ready_fixture_hydrates_before_integrity_mutations(): void
     {
-        $run = (new ReportRunHydrator())->hydrate($this->readyRecord(), 'reused', 1250);
+        $run = (new ReportRunHydrator)->hydrate($this->readyRecord(), 'reused', 1250);
 
         self::assertSame('ready', $run->status->value);
         self::assertSame(1, $run->rowCount);
@@ -311,7 +310,7 @@ final class ReportRunHydratorTest extends TestCase
     {
         $record = $this->readyRecord();
 
-        $source = (new ReportRunHydrator())->exportSource($record, 1250);
+        $source = (new ReportRunHydrator)->exportSource($record, 1250);
 
         self::assertSame('ready', $source->run->status->value);
         self::assertSame($record->result_hash, $source->resultHash->value);
@@ -331,7 +330,7 @@ final class ReportRunHydratorTest extends TestCase
         $attributes['updated_at'] = '2026-07-26T00:10:00.000000Z';
         $record->setRawAttributes($attributes);
 
-        $source = (new ReportRunHydrator())->retrySource($record, 1250);
+        $source = (new ReportRunHydrator)->retrySource($record, 1250);
 
         self::assertSame('failed', $source->run->status->value);
         self::assertSame('REPORT_SOURCE_UNAVAILABLE', $source->errorCode?->value);
@@ -345,7 +344,7 @@ final class ReportRunHydratorTest extends TestCase
         $mutate($record);
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator())->hydrate($record, 'reused', 1250);
+        (new ReportRunHydrator)->hydrate($record, 'reused', 1250);
     }
 
     public static function leaseCorruptions(): iterable
@@ -376,7 +375,7 @@ final class ReportRunHydratorTest extends TestCase
         $record->capabilities = ['unexpected'];
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator())->hydrate($record, 'reused', 1250);
+        (new ReportRunHydrator)->hydrate($record, 'reused', 1250);
     }
 
     #[DataProvider('sealedResultMutations')]
@@ -386,7 +385,7 @@ final class ReportRunHydratorTest extends TestCase
         $record->{$attribute} = $replacement;
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator())->hydrate($record, 'reused', 1250);
+        (new ReportRunHydrator)->hydrate($record, 'reused', 1250);
     }
 
     public static function sealedResultMutations(): iterable
@@ -438,7 +437,7 @@ final class ReportRunHydratorTest extends TestCase
         $mutate($record);
 
         $this->expectException(\Throwable::class);
-        (new ReportRunHydrator())->query($record);
+        (new ReportRunHydrator)->query($record);
     }
 
     public static function corruptions(): iterable
@@ -538,7 +537,7 @@ final class ReportRunHydratorTest extends TestCase
                 'organization_id' => 10,
                 'holding_organization_ids' => [10, 11],
                 'project_ids' => [20],
-                'resource_ids' => [30],
+                'resources' => [['kind' => 'task', 'id' => 30, 'project_id' => 20]],
                 'timezone' => 'UTC',
             ],
         ];
@@ -551,7 +550,7 @@ final class ReportRunHydratorTest extends TestCase
             'saved_view' => null,
         ]));
 
-        $record = new ReportRunRecord();
+        $record = new ReportRunRecord;
         $record->setRawAttributes([
             'id' => '01J3R6W7H8K9M0NPQRSTVWXYZ1',
             'organization_id' => 10,
@@ -572,7 +571,7 @@ final class ReportRunHydratorTest extends TestCase
             'canonical_query_json' => $canonical,
             'scope_holding_organization_ids' => '[10,11]',
             'scope_project_ids' => '[20]',
-            'scope_resource_ids' => '[30]',
+            'scope_resources' => '[{"id":30,"project_id":20,"kind":"task"}]',
             'scope_timezone' => 'UTC',
             'filters' => '{"period":"month"}',
             'comparison' => '[]',
@@ -638,7 +637,7 @@ final class ReportRunHydratorTest extends TestCase
                         'organization_id' => 10,
                         'holding_organization_ids' => [10, 11],
                         'project_ids' => [20],
-                        'resource_ids' => [30],
+                        'resources' => [['kind' => 'task', 'id' => 30, 'project_id' => 20]],
                         'timezone' => 'UTC',
                     ],
                     'definition_hash' => str_repeat('a', 64),

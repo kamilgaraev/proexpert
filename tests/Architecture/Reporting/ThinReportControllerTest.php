@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Architecture\Reporting;
 
-use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthorization;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportHttpAuthorizationOrchestrator;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\ReportFormRequest;
 use Illuminate\Http\JsonResponse;
-use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\TestCase;
 use PhpParser\Node;
 use PhpParser\Node\Expr\Array_;
+use PhpParser\Node\Expr\ClassConstFetch;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\New_;
@@ -21,6 +21,8 @@ use PhpParser\NodeFinder;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\NameResolver;
 use PhpParser\ParserFactory;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;
 
@@ -70,7 +72,7 @@ final class ThinReportControllerTest extends TestCase
             str_ends_with($controller, 'ReportExportController') => 6,
             default => 2,
         }, $dependencies);
-        self::assertSame(ReportExecutionContextFactory::class, (string) $dependencies[0]->getType());
+        self::assertSame(ReportHttpAuthorizationOrchestrator::class, (string) $dependencies[0]->getType());
         foreach (array_slice($dependencies, 1) as $dependency) {
             $type = (string) $dependency->getType();
             self::assertTrue(interface_exists($type), $type);
@@ -123,7 +125,7 @@ final class ThinReportControllerTest extends TestCase
         string $imports,
         string $body,
     ): void {
-        $source = "<?php\n".$imports."\nfinal class Mutant { public function endpoint(): void { ".$body." } }";
+        $source = "<?php\n".$imports."\nfinal class Mutant { public function endpoint(): void { ".$body.' } }';
 
         self::assertContains($category, ThinControllerContractAnalyzer::violations($source));
     }
@@ -141,10 +143,24 @@ final class ThinReportControllerTest extends TestCase
             'container app' => ['container', '', 'app(\\stdClass::class);'],
             'container resolve' => ['container', '', 'resolve(\\stdClass::class);'],
             'container static' => ['container', 'use Illuminate\\Container\\Container as IoC;', 'IoC::getInstance()->make(\\stdClass::class);'],
+            'operation enum' => [
+                'operation_enum',
+                'use App\\BusinessModules\\Core\\Reporting\\Domain\\Enums\\ReportOperation;',
+                '$operation = ReportOperation::VIEW;',
+            ],
+            'authorization target' => [
+                'authorization_target',
+                'use App\\BusinessModules\\Core\\Reporting\\Application\\Execution\\CurrentReportAuthorizationTarget;',
+                'new CurrentReportAuthorizationTarget($definition, $operation, null);',
+            ],
             'direct json' => ['direct_json', '', 'response()->json(["ok" => true]);'],
             'six-key payload' => ['oversized_array', '', '$payload = ["a"=>1,"b"=>2,"c"=>3,"d"=>4,"e"=>5,"f"=>6];'],
             'second action' => ['action_calls', '', '$this->first->handle(); $this->second->handle();'],
-            'second context' => ['context_calls', '', '$this->contexts->fromHttp($request); $this->contexts->fromHttp($request);'],
+            'second authorization' => [
+                'context_calls',
+                '',
+                '$this->authorization->showRun($request, "a"); $this->authorization->showRun($request, "a");',
+            ],
             'second resource' => [
                 'resource_constructions',
                 '',
@@ -164,7 +180,11 @@ final class ThinReportControllerTest extends TestCase
         $context = $root.'Domain\\DTO\\ReportExecutionContext';
 
         return [
-            'catalog' => [$root.'Application\\Contracts\\GetReportCatalogAction', [$context], $root.'Domain\\DTO\\ReportCatalogView'],
+            'catalog' => [
+                $root.'Application\\Contracts\\GetReportCatalogAction',
+                [$context, ReportCatalogAuthorization::class],
+                $root.'Domain\\DTO\\ReportCatalogView',
+            ],
             'create run' => [$root.'Application\\Contracts\\CreateReportRunAction', [$context, $root.'Application\\Input\\CreateReportRunData', $root.'Domain\\ValueObjects\\IdempotencyKey'], $root.'Domain\\DTO\\ReportRun'],
             'get run' => [$root.'Application\\Contracts\\GetReportRunAction', [$context, 'string'], $root.'Domain\\DTO\\ReportRun'],
             'rows' => [$root.'Application\\Contracts\\GetReportRowsAction', [$context, 'string', $root.'Domain\\DTO\\ReportRowsWindow'], $root.'Domain\\DTO\\ReportPage'],
@@ -205,15 +225,15 @@ final class ThinControllerContractAnalyzer
 {
     public static function violations(string $source): array
     {
-        $statements = (new ParserFactory())->createForNewestSupportedVersion()->parse($source);
+        $statements = (new ParserFactory)->createForNewestSupportedVersion()->parse($source);
         if ($statements === null) {
             return ['parse'];
         }
 
-        $traverser = new NodeTraverser();
-        $traverser->addVisitor(new NameResolver());
+        $traverser = new NodeTraverser;
+        $traverser->addVisitor(new NameResolver);
         $statements = $traverser->traverse($statements);
-        $finder = new NodeFinder();
+        $finder = new NodeFinder;
         $violations = [];
 
         foreach ($finder->findInstanceOf($statements, Node::class) as $node) {
@@ -251,11 +271,22 @@ final class ThinControllerContractAnalyzer
                 }
             }
 
+            if ($node instanceof ClassConstFetch
+                && str_ends_with(strtolower(self::className($node->class)), '\\reportoperation')) {
+                $violations[] = 'operation_enum';
+            }
+
             if ($node instanceof StaticCall || $node instanceof New_) {
                 $class = self::className($node->class);
                 $lower = strtolower($class);
                 $method = $node instanceof StaticCall ? strtolower(self::identifier($node->name)) : '';
 
+                if (str_ends_with($lower, '\\reportoperation')) {
+                    $violations[] = 'operation_enum';
+                }
+                if (str_ends_with($lower, '\\currentreportauthorizationtarget')) {
+                    $violations[] = 'authorization_target';
+                }
                 if (str_contains($lower, '\\database\\')
                     || str_contains($lower, '\\models\\')
                     || str_ends_with($lower, '\\db')
@@ -278,7 +309,7 @@ final class ThinControllerContractAnalyzer
         }
 
         foreach ($finder->findInstanceOf($statements, ClassMethod::class) as $method) {
-            if (!$method->isPublic() || $method->name->toString() === '__construct') {
+            if (! $method->isPublic() || $method->name->toString() === '__construct') {
                 continue;
             }
 
@@ -286,7 +317,20 @@ final class ThinControllerContractAnalyzer
             $contextCalls = count($finder->find(
                 $nodes,
                 static fn (Node $node): bool => $node instanceof MethodCall
-                    && self::identifier($node->name) === 'fromHttp',
+                    && in_array(self::identifier($node->name), [
+                        'createRun',
+                        'showRun',
+                        'retryRun',
+                        'cancelRun',
+                        'rows',
+                        'drillDown',
+                        'createExport',
+                        'showExport',
+                        'retryExport',
+                        'cancelExport',
+                        'download',
+                        'catalog',
+                    ], true),
             ));
             $actionCalls = count($finder->find(
                 $nodes,
@@ -324,7 +368,7 @@ final class ThinControllerContractAnalyzer
 
     private static function className(Node|string $class): string
     {
-        if (!$class instanceof Name) {
+        if (! $class instanceof Name) {
             return is_string($class) ? $class : '';
         }
 

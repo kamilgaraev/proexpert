@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Contracts;
 
-use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewReferenceResolver;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
+use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportSavedViewReferenceResolver;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -22,9 +22,16 @@ use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionParameter;
+use ReflectionProperty;
 
 final class ReportProviderPortContractTest extends TestCase
 {
+    public function test_provider_scope_exposes_only_typed_resources_collection(): void
+    {
+        self::assertSame('array', (string) (new ReflectionProperty(ReportScope::class, 'resources'))->getType());
+        self::assertFalse(property_exists(ReportScope::class, 'resourceIds'));
+    }
+
     public function test_saved_view_resolver_has_exact_typed_surface(): void
     {
         $resolver = new ReflectionClass(ReportSavedViewReferenceResolver::class);

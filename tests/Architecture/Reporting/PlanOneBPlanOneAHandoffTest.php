@@ -16,14 +16,15 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotIdentityViolationReason;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Exceptions\ReportSnapshotIdentityViolation;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -69,6 +70,21 @@ final class PlanOneBPlanOneAHandoffTest extends TestCase
             self::assertNotNull($constructor, $class);
             self::assertSame($signature, array_map($this->parameterSignature(...), $constructor->getParameters()), $class);
         }
+    }
+
+    public function test_forward_only_task_four_e_typed_resource_constructor_is_handed_off_exactly(): void
+    {
+        $constructor = (new ReflectionClass(ReportScopedResource::class))->getConstructor();
+
+        self::assertNotNull($constructor);
+        self::assertSame(
+            ['kind:string', 'id:int', 'projectId:?int'],
+            array_map($this->parameterSignature(...), $constructor->getParameters()),
+        );
+        self::assertSame(
+            ['kind' => 'contract', 'id' => 17, 'project_id' => 3],
+            (new ReportScopedResource('contract', 17, 3))->canonicalIdentity(),
+        );
     }
 
     public function test_imported_provider_ports_remain_exact(): void

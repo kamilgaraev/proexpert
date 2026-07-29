@@ -4,19 +4,20 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchIntent;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchLease;
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchTopic;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportDispatchIntentRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use DateTimeImmutable;
@@ -44,7 +45,7 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
     public function claimDue(int $limit, DateTimeImmutable $now, DateTimeImmutable $leasedUntil, string $leaseToken): array
     {
         $this->assertBatch($limit);
-        if (!Str::isUuid($leaseToken) || $leasedUntil <= $now) {
+        if (! Str::isUuid($leaseToken) || $leasedUntil <= $now) {
             throw new InvalidArgumentException('report_dispatch_lease_invalid');
         }
 
@@ -108,7 +109,7 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
                 ->where('lease_token', $leaseToken)
                 ->lockForUpdate()
                 ->first();
-            if (!$record instanceof ReportDispatchIntentRecord) {
+            if (! $record instanceof ReportDispatchIntentRecord) {
                 return;
             }
 
@@ -205,7 +206,7 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
             ->where('organization_id', $intent->organization_id)
             ->lockForUpdate()
             ->first();
-        if (!$run instanceof ReportRunRecord || $run->status !== ReportRunStatus::QUEUED->value) {
+        if (! $run instanceof ReportRunRecord || $run->status !== ReportRunStatus::QUEUED->value) {
             return;
         }
         $updated = ReportRunRecord::query()
@@ -242,18 +243,18 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
         $timezone = new DateTimeZone((string) $run->scope_timezone);
         $holdingOrganizationIds = array_map('intval', $run->scope_holding_organization_ids);
         $projectIds = array_map('intval', $run->scope_project_ids);
-        $resourceIds = array_map('intval', $run->scope_resource_ids);
+        $resources = $this->typedResources($run->scope_resources);
 
         return new ReportExecutionContext(
             new ReportActor((int) $run->requester_actor_id, 'active', []),
-            new ReportScope((int) $run->organization_id, $holdingOrganizationIds, $projectIds, $resourceIds, $timezone),
+            new ReportScope((int) $run->organization_id, $holdingOrganizationIds, $projectIds, $resources, $timezone),
             new ReportVisibility(true, false, false, false, false, false, false),
             new AuthorizationDecisionContext(
                 'queue',
                 (int) $run->organization_id,
                 $holdingOrganizationIds,
                 $projectIds,
-                $resourceIds,
+                $resources,
                 $timezone,
                 "reports:run:{$run->id}:dispatch-failure",
                 null,
@@ -261,12 +262,50 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
         );
     }
 
+    private function typedResources(mixed $value): array
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            throw new InvalidArgumentException('report_scope_resources_invalid');
+        }
+
+        $resources = [];
+        $inputCanonical = [];
+        foreach ($value as $item) {
+            $keys = is_array($item) ? array_keys($item) : [];
+            sort($keys, SORT_STRING);
+            if (! is_array($item)
+                || array_is_list($item)
+                || $keys !== ['id', 'kind', 'project_id']
+                || ! is_string($item['kind'])
+                || ! is_int($item['id'])
+                || (! is_int($item['project_id']) && $item['project_id'] !== null)) {
+                throw new InvalidArgumentException('report_scope_resources_invalid');
+            }
+            $resources[] = new ReportScopedResource($item['kind'], $item['id'], $item['project_id']);
+            $inputCanonical[] = [
+                'kind' => $item['kind'],
+                'id' => $item['id'],
+                'project_id' => $item['project_id'],
+            ];
+        }
+
+        $canonical = array_map(
+            static fn (ReportScopedResource $resource): array => $resource->canonicalIdentity(),
+            (new ReportScope(1, [1], [], $resources, new DateTimeZone('UTC')))->resources,
+        );
+        if ($canonical !== $inputCanonical) {
+            throw new InvalidArgumentException('report_scope_resources_invalid');
+        }
+
+        return $resources;
+    }
+
     private function add(string $aggregateId, int $organizationId, string $eventKey, ReportDispatchAggregate $aggregate, ReportDispatchTopic $topic, DateTimeImmutable $occurredAt): void
     {
         if (DB::transactionLevel() < 1) {
             throw new LogicException('report_dispatch_intent_transaction_required');
         }
-        if (!$this->isUlid($aggregateId) || $organizationId < 1 || $eventKey === '' || strlen($eventKey) > 512) {
+        if (! $this->isUlid($aggregateId) || $organizationId < 1 || $eventKey === '' || strlen($eventKey) > 512) {
             throw new InvalidArgumentException('report_dispatch_intent_invalid');
         }
 
@@ -291,7 +330,7 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
         }
         $existing = ReportDispatchIntentRecord::query()->where('event_key', $eventKey)->lockForUpdate()->first();
         if (
-            !$existing instanceof ReportDispatchIntentRecord
+            ! $existing instanceof ReportDispatchIntentRecord
             || (int) $existing->organization_id !== $organizationId
             || $existing->aggregate_type !== $aggregate->value
             || $existing->aggregate_id !== $aggregateId

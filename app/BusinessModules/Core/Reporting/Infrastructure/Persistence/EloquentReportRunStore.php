@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 
 use App\BusinessModules\Core\Reporting\Application\Audit\ReportTransitionAudit;
-use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportDispatchIntentStore;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRunStore;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
@@ -125,10 +125,10 @@ final class EloquentReportRunStore implements ReportRunStore
                 ->where('idempotency_key_hash', $idempotencyKey->hash)
                 ->lockForUpdate()
                 ->first();
-            if (!$record instanceof ReportRunRecord) {
+            if (! $record instanceof ReportRunRecord) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
             }
-            if (!hash_equals((string) $record->input_fingerprint, $fingerprint)) {
+            if (! hash_equals((string) $record->input_fingerprint, $fingerprint)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_IDEMPOTENCY_CONFLICT);
             }
 
@@ -177,8 +177,8 @@ final class EloquentReportRunStore implements ReportRunStore
             $this->hydrator->query($record);
             if ($record->status === ReportRunStatus::MATERIALIZING->value) {
                 if (
-                    !$this->hasActiveLease($record, $leaseToken, $occurredAt)
-                    || !$this->isMonotonicLeaseRenewal($record, $leaseExpiresAt, $occurredAt)
+                    ! $this->hasActiveLease($record, $leaseToken, $occurredAt)
+                    || ! $this->isMonotonicLeaseRenewal($record, $leaseExpiresAt, $occurredAt)
                 ) {
                     throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
                 }
@@ -226,7 +226,7 @@ final class EloquentReportRunStore implements ReportRunStore
         return DB::transaction(function () use ($context, $runId, $leaseToken, $progress, $leaseExpiresAt, $occurredAt): ReportRun {
             $record = $this->locked($context, $runId);
             $this->hydrator->query($record);
-            if (!$this->hasActiveLease($record, $leaseToken, $occurredAt) || $progress->percent() < (int) $record->progress || $progress->percent() >= 100) {
+            if (! $this->hasActiveLease($record, $leaseToken, $occurredAt) || $progress->percent() < (int) $record->progress || $progress->percent() >= 100) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
             $this->cas($record, ReportRunStatus::MATERIALIZING, [
@@ -250,13 +250,13 @@ final class EloquentReportRunStore implements ReportRunStore
 
             if ($record->status === ReportRunStatus::READY->value) {
                 $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs);
-                if (!hash_equals((string) $record->result_hash, (string) $identity['result_hash'])) {
+                if (! hash_equals((string) $record->result_hash, (string) $identity['result_hash'])) {
                     throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
                 }
 
                 return $this->hydrator->hydrate($record, 'reused', $this->pollAfterMs);
             }
-            if (!$this->hasActiveLease($record, $leaseToken, $occurredAt)) {
+            if (! $this->hasActiveLease($record, $leaseToken, $occurredAt)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
 
@@ -307,12 +307,12 @@ final class EloquentReportRunStore implements ReportRunStore
         return DB::transaction(function () use ($context, $runId, $leaseToken, $errorCode, $occurredAt): ReportRun {
             $record = $this->locked($context, $runId);
             $this->hydrator->query($record);
-            if (!in_array($record->status, [ReportRunStatus::QUEUED->value, ReportRunStatus::MATERIALIZING->value], true)) {
+            if (! in_array($record->status, [ReportRunStatus::QUEUED->value, ReportRunStatus::MATERIALIZING->value], true)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
             if (
                 ($record->status === ReportRunStatus::QUEUED->value && $leaseToken !== null)
-                || ($record->status === ReportRunStatus::MATERIALIZING->value && ($leaseToken === null || !$this->hasActiveLease($record, $leaseToken, $occurredAt)))
+                || ($record->status === ReportRunStatus::MATERIALIZING->value && ($leaseToken === null || ! $this->hasActiveLease($record, $leaseToken, $occurredAt)))
             ) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
@@ -349,7 +349,7 @@ final class EloquentReportRunStore implements ReportRunStore
         return DB::transaction(function () use ($context, $runId, $occurredAt): ReportRun {
             $record = $this->locked($context, $runId);
             $this->hydrator->query($record);
-            if (!in_array($record->status, [ReportRunStatus::QUEUED->value, ReportRunStatus::MATERIALIZING->value], true)) {
+            if (! in_array($record->status, [ReportRunStatus::QUEUED->value, ReportRunStatus::MATERIALIZING->value], true)) {
                 throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
             }
             $this->audit->append(
@@ -415,7 +415,7 @@ final class EloquentReportRunStore implements ReportRunStore
     private function findIncludingExpired(ReportExecutionContext $context, string $runId): ReportRunRecord
     {
         $record = $this->scope($context)->whereKey($runId)->first();
-        if (!$record instanceof ReportRunRecord) {
+        if (! $record instanceof ReportRunRecord) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
 
@@ -425,7 +425,7 @@ final class EloquentReportRunStore implements ReportRunStore
     private function locked(ReportExecutionContext $context, string $runId): ReportRunRecord
     {
         $record = $this->scope($context)->whereKey($runId)->lockForUpdate()->first();
-        if (!$record instanceof ReportRunRecord) {
+        if (! $record instanceof ReportRunRecord) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_NOT_FOUND);
         }
         if ($record->status === ReportRunStatus::EXPIRED->value) {
@@ -450,8 +450,7 @@ final class EloquentReportRunStore implements ReportRunStore
         string $definitionSnapshotCanonical,
         string $definitionSnapshotHash,
         DateTimeImmutable $now,
-    ): array
-    {
+    ): array {
         $definition = $query->definition;
 
         return [
@@ -475,7 +474,10 @@ final class EloquentReportRunStore implements ReportRunStore
             'canonical_query_json' => $query->canonicalJson,
             'scope_holding_organization_ids' => CanonicalJson::encode($query->scope->holdingOrganizationIds),
             'scope_project_ids' => CanonicalJson::encode($query->scope->projectIds),
-            'scope_resource_ids' => CanonicalJson::encode($query->scope->resourceIds),
+            'scope_resources' => CanonicalJson::encode(array_map(
+                static fn (\App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource $resource): array => $resource->canonicalIdentity(),
+                $query->scope->resources,
+            )),
             'scope_timezone' => $query->scope->timezone->getName(),
             'filters' => CanonicalJson::encode($query->filters->values),
             'comparison' => CanonicalJson::encode($query->comparison),
@@ -646,9 +648,9 @@ final class EloquentReportRunStore implements ReportRunStore
         if (CanonicalJson::encode($this->snapshotProjection($snapshot))
                 !== CanonicalJson::encode($this->snapshotProjection($result->metadata->snapshot))
             || $snapshot->scope->canonicalIdentity() !== $query->scope->canonicalIdentity()
-            || !hash_equals($snapshot->definitionHash->value, (string) $record->definition_hash)
-            || !hash_equals($snapshot->sourceHash->value, $sourceHash->value)
-            || !hash_equals($result->provenance->sourceHash->value, $sourceHash->value)
+            || ! hash_equals($snapshot->definitionHash->value, (string) $record->definition_hash)
+            || ! hash_equals($snapshot->sourceHash->value, $sourceHash->value)
+            || ! hash_equals($result->provenance->sourceHash->value, $sourceHash->value)
             || $snapshot->formulaVersion !== $record->formula_version
             || $snapshot->classification !== $query->definition->snapshotClassification) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
@@ -699,7 +701,7 @@ final class EloquentReportRunStore implements ReportRunStore
 
     private function assertLeaseInput(string $leaseToken, DateTimeImmutable $leaseExpiresAt, DateTimeImmutable $occurredAt): void
     {
-        if (!Str::isUuid($leaseToken) || $leaseExpiresAt <= $occurredAt) {
+        if (! Str::isUuid($leaseToken) || $leaseExpiresAt <= $occurredAt) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_REQUEST_INVALID);
         }
     }
@@ -737,7 +739,7 @@ final class EloquentReportRunStore implements ReportRunStore
         if ($value instanceof DateTimeInterface) {
             return DateTimeImmutable::createFromInterface($value);
         }
-        if (!is_string($value) || $value === '') {
+        if (! is_string($value) || $value === '') {
             return null;
         }
 
@@ -748,6 +750,6 @@ final class EloquentReportRunStore implements ReportRunStore
     {
         $expiresAt = $this->immutableInstant($expiresAtValue);
 
-        return !$expiresAt instanceof DateTimeImmutable || $expiresAt <= $now;
+        return ! $expiresAt instanceof DateTimeImmutable || $expiresAt <= $now;
     }
 }

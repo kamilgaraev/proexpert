@@ -6,9 +6,9 @@ namespace Tests\Unit\Reporting\Contracts;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExport;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProvenance;
@@ -17,20 +17,21 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResourceLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotSeal;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportExportStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotIdentityViolationReason;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportWarningSeverity;
 use App\BusinessModules\Core\Reporting\Domain\Exceptions\ReportSnapshotIdentityViolation;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
@@ -44,6 +45,15 @@ use ReflectionNamedType;
 
 final class ReportWireDtoContractTest extends TestCase
 {
+    public function test_scope_wire_identity_uses_closed_typed_resources(): void
+    {
+        $scope = new ReportScope(1, [1], [], [new ReportScopedResource('task', 7, null)], new DateTimeZone('UTC'));
+        self::assertSame(
+            [['kind' => 'task', 'id' => 7, 'project_id' => null]],
+            $scope->canonicalIdentity()['resources'],
+        );
+    }
+
     #[Test]
     public function snapshot_keeps_its_identity(): void
     {

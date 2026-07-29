@@ -27,7 +27,7 @@ final class ReportRunRecord extends Model
         'row_count' => 'integer',
         'scope_holding_organization_ids' => 'array',
         'scope_project_ids' => 'array',
-        'scope_resource_ids' => 'array',
+        'scope_resources' => 'array',
         'filters' => 'array',
         'comparison' => 'array',
         'sensitive_column_ids' => 'array',

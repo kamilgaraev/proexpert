@@ -18,6 +18,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRowsWindow;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
@@ -65,7 +66,7 @@ final class ReportExecutionContractTest extends TestCase
             'channel' => 'http',
             'organization_id' => 10,
             'project_ids' => [6],
-            'resource_ids' => [9],
+            'resources' => [['kind' => 'task', 'id' => 9, 'project_id' => 6]],
         ], $context->toAuthorizationArray());
     }
 
@@ -93,17 +94,23 @@ final class ReportExecutionContractTest extends TestCase
     #[Test]
     public function scope_canonicalizes_identifier_lists_and_identity(): void
     {
-        $scope = new ReportScope(2, [3, 2], [8, 4], [9, 1], new DateTimeZone('Europe/Moscow'));
+        $scope = new ReportScope(2, [3, 2], [8, 4], [
+            new ReportScopedResource('task', 9, null),
+            new ReportScopedResource('asset', 1, null),
+        ], new DateTimeZone('Europe/Moscow'));
 
         self::assertSame([2, 3], $scope->holdingOrganizationIds);
         self::assertSame(2, $scope->organizationId);
         self::assertSame([4, 8], $scope->projectIds);
-        self::assertSame([1, 9], $scope->resourceIds);
+        self::assertSame(['asset', 'task'], array_map(static fn (ReportScopedResource $resource): string => $resource->kind, $scope->resources));
         self::assertSame([
             'organization_id' => 2,
             'holding_organization_ids' => [2, 3],
             'project_ids' => [4, 8],
-            'resource_ids' => [1, 9],
+            'resources' => [
+                ['kind' => 'asset', 'id' => 1, 'project_id' => null],
+                ['kind' => 'task', 'id' => 9, 'project_id' => null],
+            ],
             'timezone' => 'Europe/Moscow',
         ], $scope->canonicalIdentity());
     }
@@ -232,7 +239,7 @@ final class ReportExecutionContractTest extends TestCase
     #[Test]
     public function execution_context_rejects_scope_mismatch(): void
     {
-        $authorization = new AuthorizationDecisionContext('http', 11, [11], [6], [9], new DateTimeZone('UTC'), 'correlation-1', null);
+        $authorization = new AuthorizationDecisionContext('http', 11, [11], [6], [new ReportScopedResource('task', 9, 6)], new DateTimeZone('UTC'), 'correlation-1', null);
 
         $this->expectExceptionObject(new InvalidArgumentException('execution_context_scope_mismatch'));
         new ReportExecutionContext($this->actor(), $this->scope(), new ReportVisibility(true, false, false, false, false, false, false), $authorization);
@@ -309,12 +316,12 @@ final class ReportExecutionContractTest extends TestCase
 
     private function authorization(): AuthorizationDecisionContext
     {
-        return new AuthorizationDecisionContext('http', 10, [10], [6], [9], new DateTimeZone('UTC'), 'correlation-1', null);
+        return new AuthorizationDecisionContext('http', 10, [10], [6], [new ReportScopedResource('task', 9, 6)], new DateTimeZone('UTC'), 'correlation-1', null);
     }
 
     private function scope(): ReportScope
     {
-        return new ReportScope(10, [10], [6], [9], new DateTimeZone('UTC'));
+        return new ReportScope(10, [10], [6], [new ReportScopedResource('task', 9, 6)], new DateTimeZone('UTC'));
     }
 
     private function policy(): ReportPermissionPolicy

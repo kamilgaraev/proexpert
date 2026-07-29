@@ -5,19 +5,19 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Access;
 
 use App\BusinessModules\Core\Reporting\Application\Access\OrganizationReportScopeResolver;
-use App\BusinessModules\Core\Reporting\Application\Access\ReportActorLoader;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
-use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
-use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCatalog;
-use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
+use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Domain\Authorization\Services\PermissionResolver;
 use App\Domain\Authorization\Services\RoleScanner;
 use App\Models\User;
-use App\Services\Logging\Context\RequestContext;
 use App\Services\Logging\LoggingService;
 use DateTimeZone;
 use Illuminate\Container\Container;
@@ -31,89 +31,47 @@ final class OrganizationReportScopeResolverTest extends TestCase
     {
         $authorization = $this->authorization();
 
-        $scope = (new OrganizationReportScopeResolver())->resolve($this->actor(), $authorization);
+        $scope = (new OrganizationReportScopeResolver)->resolve($this->actor(), $authorization);
 
         self::assertSame(7, $scope->organizationId);
         self::assertSame([7, 9], $scope->holdingOrganizationIds);
         self::assertSame([101], $scope->projectIds);
-        self::assertSame([501], $scope->resourceIds);
+        self::assertSame(
+            [['kind' => 'task', 'id' => 501, 'project_id' => 101]],
+            array_map(static fn (ReportScopedResource $resource): array => $resource->canonicalIdentity(), $scope->resources),
+        );
         self::assertSame('Europe/Moscow', $scope->timezone->getName());
     }
 
     public function test_rejects_scope_without_current_organization_in_holding_set(): void
     {
-        $this->expectScopeForbidden();
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_scope_holding_organization_missing');
 
-        (new OrganizationReportScopeResolver())->resolve(
+        (new OrganizationReportScopeResolver)->resolve(
             $this->actor(),
             new AuthorizationDecisionContext('queue', 7, [9], [], [], new DateTimeZone('UTC'), 'corr', null),
         );
     }
 
-    public function test_factory_reloads_active_actor_and_derives_global_visibility(): void
+    public function test_factory_builds_context_only_from_atomic_current_authorization(): void
     {
-        $loader = $this->loader($this->actor([
-            'reports.download',
-            'reports.export',
-            'reports.manage',
-            'reports.run',
-            'reports.view',
-        ]));
-        $factory = new ReportExecutionContextFactory(
-            $loader,
-            new OrganizationReportScopeResolver(),
-            $this->requestContext(),
+        $definition = (new \Tests\Support\Reporting\ReportDefinitionBuilder)->payload();
+        $authorization = new CurrentReportAuthorization(
+            $this->actor(['reports.view']),
+            $this->authorization(),
+            new ReportVisibility(true, false, false, false, false, false, false),
+            new CurrentReportAuthorizationTarget($definition, ReportOperation::VIEW, null),
         );
 
-        $context = $factory->create(41, $this->authorization());
+        $context = (new ReportExecutionContextFactory)->fromCurrentAuthorization($authorization);
 
         self::assertSame(41, $context->actor->id);
         self::assertTrue($context->visibility->canView);
-        self::assertTrue($context->visibility->canRun);
-        self::assertTrue($context->visibility->canExport);
-        self::assertTrue($context->visibility->canDownload);
-        self::assertTrue($context->visibility->canManage);
+        self::assertSame($this->authorization()->toAuthorizationArray(), $context->authorization->toAuthorizationArray());
     }
 
-    public function test_factory_converts_inactive_or_missing_actor_to_scope_forbidden(): void
-    {
-        $loader = new class implements ReportActorLoader {
-            public function loadActive(int $actorId): ReportActor
-            {
-                throw new \RuntimeException('actor_not_active');
-            }
-        };
-        $factory = new ReportExecutionContextFactory($loader, new OrganizationReportScopeResolver(), $this->requestContext());
-        $this->expectScopeForbidden();
-
-        $factory->create(41, $this->authorization());
-    }
-
-    public function test_factory_scrubs_actor_loader_contract_code_and_safe_fields(): void
-    {
-        $loader = new class implements ReportActorLoader {
-            public function loadActive(int $actorId): ReportActor
-            {
-                throw ReportContractException::fromCode(
-                    ReportErrorCode::REPORT_NOT_FOUND,
-                    ['fields' => 'snapshot_id'],
-                );
-            }
-        };
-        $factory = new ReportExecutionContextFactory($loader, new OrganizationReportScopeResolver(), $this->requestContext());
-
-        try {
-            $factory->create(41, $this->authorization());
-            self::fail('Expected actor boundary denial.');
-        } catch (ReportContractException $error) {
-            self::assertSame(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, $error->errorCode);
-            self::assertSame(403, ReportErrorCatalog::descriptor($error->errorCode)->httpStatus);
-            self::assertSame([], $error->safeFields);
-            self::assertInstanceOf(ReportContractException::class, $error->getPrevious());
-        }
-    }
-
-    public function test_from_http_ignores_client_scope_fields_and_keeps_only_route_metadata(): void
+    public function test_http_facts_ignore_every_client_and_ambient_authority_field(): void
     {
         $request = Request::create(
             '/api/v1/admin/reports?organization_id=999',
@@ -121,13 +79,15 @@ final class OrganizationReportScopeResolverTest extends TestCase
             ['organization_id' => 998, 'user_id' => 997, 'permission' => 'reports.manage'],
         );
         $request->headers->set('X-Organization-Id', '996');
-        $request->setUserResolver(static fn (?string $guard = null): object => new class {
+        $request->setUserResolver(static fn (?string $guard = null): object => new class
+        {
             public function getAuthIdentifier(): int
             {
                 return 41;
             }
         });
-        $request->setRouteResolver(static fn (): object => new class {
+        $request->setRouteResolver(static fn (): object => new class
+        {
             public function getName(): string
             {
                 return 'admin.reports.catalog';
@@ -137,63 +97,45 @@ final class OrganizationReportScopeResolverTest extends TestCase
             'current_organization_id' => 7,
             'holding_organization_ids' => [7, 9],
             'allowed_project_ids' => [101],
-            'allowed_resource_ids' => [501],
+            'resources' => [['kind' => 'forged', 'id' => 501, 'project_id' => 101]],
             'organization_timezone' => 'Europe/Moscow',
         ]);
-        $factory = new ReportExecutionContextFactory($this->loader($this->actor()), new OrganizationReportScopeResolver(), $this->requestContext());
+        $facts = (new ReportExecutionContextFactory)->httpFacts($request);
 
-        $context = $factory->fromHttp($request);
-
-        self::assertSame(7, $context->scope->organizationId);
-        self::assertSame(41, $context->actor->id);
-        self::assertSame(['route' => 'admin.reports.catalog'], $context->authorization->transportMetadata);
-        self::assertSame('corr-server', $context->correlationId());
+        self::assertSame(['actor_id' => 41, 'organization_id' => 7], $facts);
     }
 
-    public function test_from_http_rejects_missing_authenticated_actor(): void
+    public function test_http_facts_reject_missing_authenticated_actor(): void
     {
         $request = Request::create('/api/v1/admin/reports');
         $request->setUserResolver(static fn (): null => null);
         $request->attributes->set('current_organization_id', 7);
-        $factory = new ReportExecutionContextFactory($this->loader($this->actor()), new OrganizationReportScopeResolver(), $this->requestContext());
-        $this->expectScopeForbidden();
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_http_authorization_facts_invalid');
 
-        $factory->fromHttp($request);
+        (new ReportExecutionContextFactory)->httpFacts($request);
     }
 
-    public function test_from_http_rejects_missing_server_organization(): void
+    public function test_http_facts_reject_missing_server_organization(): void
     {
         $request = $this->validHttpRequest();
         $request->attributes->remove('current_organization_id');
-        $factory = new ReportExecutionContextFactory($this->loader($this->actor()), new OrganizationReportScopeResolver(), $this->requestContext());
-        $this->expectScopeForbidden();
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('report_http_authorization_facts_invalid');
 
-        $factory->fromHttp($request);
-    }
-
-    public function test_from_http_rejects_invalid_server_timezone(): void
-    {
-        $request = $this->validHttpRequest();
-        $request->attributes->set('organization_timezone', 'Not/A_Timezone');
-        $factory = new ReportExecutionContextFactory($this->loader($this->actor()), new OrganizationReportScopeResolver(), $this->requestContext());
-        $this->expectScopeForbidden();
-
-        $factory->fromHttp($request);
+        (new ReportExecutionContextFactory)->httpFacts($request);
     }
 
     public function test_authorization_bridge_forwards_queue_context_without_http_request(): void
     {
         $previousContainer = Container::getInstance();
-        $container = new Container();
+        $container = new Container;
         $container->bind('request', static function (): never {
             throw new \RuntimeException('ambient_request_was_resolved');
         });
         Container::setInstance($container);
-        $service = new class(
-            $this->createMock(RoleScanner::class),
-            $this->createMock(PermissionResolver::class),
-            $this->createMock(LoggingService::class),
-        ) extends AuthorizationService {
+        $service = new class($this->createMock(RoleScanner::class), $this->createMock(PermissionResolver::class), $this->createMock(LoggingService::class)) extends AuthorizationService
+        {
             public function getUserRoles(User $user, ?AuthorizationContext $context = null): Collection
             {
                 return collect();
@@ -204,7 +146,7 @@ final class OrganizationReportScopeResolverTest extends TestCase
                 return null;
             }
         };
-        $user = new User();
+        $user = new User;
         $user->id = 41;
 
         try {
@@ -226,45 +168,18 @@ final class OrganizationReportScopeResolverTest extends TestCase
             7,
             [7, 9],
             [101],
-            [501],
+            [new ReportScopedResource('task', 501, 101)],
             new DateTimeZone('Europe/Moscow'),
             'corr-server',
             null,
         );
     }
 
-    private function loader(ReportActor $actor): ReportActorLoader
-    {
-        return new class($actor) implements ReportActorLoader {
-            public function __construct(private readonly ReportActor $actor)
-            {
-            }
-
-            public function loadActive(int $actorId): ReportActor
-            {
-                return new ReportActor($actorId, $this->actor->status, $this->actor->permissionSlugs);
-            }
-        };
-    }
-
-    private function requestContext(): RequestContext
-    {
-        return new class extends RequestContext {
-            public function __construct()
-            {
-            }
-
-            public function getCorrelationId(): string
-            {
-                return 'corr-server';
-            }
-        };
-    }
-
     private function validHttpRequest(): Request
     {
         $request = Request::create('/api/v1/admin/reports');
-        $request->setUserResolver(static fn (): object => new class {
+        $request->setUserResolver(static fn (): object => new class
+        {
             public function getAuthIdentifier(): int
             {
                 return 41;
@@ -277,11 +192,5 @@ final class OrganizationReportScopeResolverTest extends TestCase
         ]);
 
         return $request;
-    }
-
-    private function expectScopeForbidden(): void
-    {
-        $this->expectException(ReportContractException::class);
-        $this->expectExceptionMessage(ReportErrorCode::REPORT_SCOPE_FORBIDDEN->value);
     }
 }

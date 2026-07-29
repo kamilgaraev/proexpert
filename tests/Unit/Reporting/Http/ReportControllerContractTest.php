@@ -4,21 +4,35 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Http;
 
-use App\BusinessModules\Core\Reporting\Application\Access\OrganizationReportScopeResolver;
-use App\BusinessModules\Core\Reporting\Application\Access\ReportActorLoader;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportAuthorizationSubject;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportHttpAuthorizationOrchestrator;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportAuthorizationSubjectReader;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Access\ReportHttpAuthorizationTargetResolver;
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\CurrentReportScopeAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
+use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorization;
+use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthorizationTarget;
+use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCatalogView;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDownloadLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportOperation;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Http\Admin\Controllers\ReportCatalogController;
@@ -34,14 +48,15 @@ use App\BusinessModules\Core\Reporting\Http\Admin\Requests\GetReportCatalogReque
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\GetReportRowsRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\ReportExportRouteRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\ReportRunRouteRequest;
-use App\Services\Logging\Context\RequestContext;
 use DateTimeImmutable;
+use DateTimeZone;
 use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Database\ConnectionInterface;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Routing\Route;
-use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
 use Tests\Support\Reporting\FakeReportingActions;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
 use Tests\Support\Reporting\ReportExportBuilder;
@@ -50,33 +65,158 @@ use Tests\Support\Reporting\ReportRunBuilder;
 final class ReportControllerContractTest extends TestCase
 {
     private const RUN_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
+
     private const EXPORT_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAW';
 
     private Application $app;
-    private ReportExecutionContextFactory $contexts;
+
+    private ReportHttpAuthorizationOrchestrator $contexts;
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->app = require dirname(__DIR__, 4).'/bootstrap/app.php';
         $this->app->make(Kernel::class)->bootstrap();
-        $loader = new class implements ReportActorLoader {
-            public function loadActive(int $actorId): ReportActor
-            {
-                return new ReportActor($actorId, 'active', [
+        $definition = (new ReportDefinitionBuilder)->payload();
+        $scope = new ReportScope(41, [41], [], [], new DateTimeZone('UTC'));
+        $snapshot = new ReportSnapshotRef(
+            'report',
+            'snapshot',
+            $scope,
+            $definition->definitionHash,
+            $definition->formulaVersion,
+            new Sha256Hash(str_repeat('b', 64)),
+            new DateTimeImmutable('2026-07-29T00:00:00.000000Z'),
+            null,
+            [],
+            ReportSnapshotClassification::OPERATIONAL,
+            null,
+        );
+        $runSubject = new ReportAuthorizationSubject(
+            ReportDispatchAggregate::RUN,
+            self::RUN_ID,
+            $definition,
+            $scope,
+            $snapshot,
+            null,
+            null,
+        );
+        $exportSubject = new ReportAuthorizationSubject(
+            ReportDispatchAggregate::EXPORT,
+            self::EXPORT_ID,
+            $definition,
+            $scope,
+            $snapshot,
+            self::RUN_ID,
+            new Sha256Hash(str_repeat('e', 64)),
+        );
+        $subjects = $this->createMock(ReportAuthorizationSubjectReader::class);
+        $subjects->method('run')->willReturn($runSubject);
+        $subjects->method('export')->willReturn($exportSubject);
+        $targets = $this->createMock(ReportHttpAuthorizationTargetResolver::class);
+        $targets->method('createRun')->willReturn(
+            new CurrentReportAuthorizationTarget($definition, ReportOperation::RUN, null),
+        );
+        $targets->method('run')->willReturnCallback(
+            static fn (string $runId, ReportOperation $operation): CurrentReportAuthorizationTarget => new CurrentReportAuthorizationTarget(
+                $definition,
+                $operation,
+                $operation === ReportOperation::RUN ? null : $snapshot,
+            ),
+        );
+        $targets->method('createExport')->willReturn(
+            new CurrentReportAuthorizationTarget($definition, ReportOperation::EXPORT, $snapshot),
+        );
+        $targets->method('export')->willReturnCallback(
+            static fn (string $exportId, ReportOperation $operation): CurrentReportAuthorizationTarget => new CurrentReportAuthorizationTarget($definition, $operation, $snapshot),
+        );
+        $targets->method('catalog')->willReturn([
+            new CurrentReportAuthorizationTarget($definition, ReportOperation::VIEW, null),
+        ]);
+        $authorizer = $this->createMock(CurrentReportScopeAuthorizer::class);
+        $makeAuthorization = static function (
+            int $actorId,
+            ReportScope $authorizedScope,
+            CurrentReportAuthorizationTarget $target,
+        ): CurrentReportAuthorization {
+            return new CurrentReportAuthorization(
+                new ReportActor($actorId, 'active', [
                     'reports.download',
                     'reports.export',
                     'reports.run',
                     'reports.view',
-                ]);
-            }
+                ]),
+                new AuthorizationDecisionContext(
+                    'http',
+                    $authorizedScope->organizationId,
+                    $authorizedScope->holdingOrganizationIds,
+                    $authorizedScope->projectIds,
+                    $authorizedScope->resources,
+                    $authorizedScope->timezone,
+                    'report-controller-test',
+                    null,
+                ),
+                new ReportVisibility(true, true, true, true, false, false, false),
+                $target,
+            );
         };
-        $requestContext = new RequestContext();
-        $requestContext->setCorrelationId('report-controller-test');
-        $this->contexts = new ReportExecutionContextFactory(
-            $loader,
-            new OrganizationReportScopeResolver(),
-            $requestContext,
+        $authorizer->method('authorizeForOrganization')->willReturnCallback(
+            static fn (
+                int $actorId,
+                int $organizationId,
+                DateTimeZone $timezone,
+                CurrentReportAuthorizationTarget $target,
+            ): CurrentReportAuthorization => $makeAuthorization(
+                $actorId,
+                new ReportScope($organizationId, [$organizationId], [], [], $timezone),
+                $target,
+            ),
+        );
+        $authorizer->method('authorizeCatalog')->willReturnCallback(
+            static function (
+                int $actorId,
+                int $organizationId,
+                DateTimeZone $timezone,
+                array $catalogTargets,
+            ) use ($makeAuthorization): ReportCatalogAuthorization {
+                $scope = new ReportScope($organizationId, [$organizationId], [], [], $timezone);
+                $authorizations = [];
+                $context = null;
+                foreach ($catalogTargets as $target) {
+                    $authorization = $makeAuthorization($actorId, $scope, $target);
+                    $authorizations[$target->definition->definitionHash->value] = $authorization;
+                    $context ??= new ReportExecutionContext(
+                        $authorization->actor,
+                        $scope,
+                        $authorization->visibility,
+                        $authorization->decision,
+                    );
+                }
+
+                if (! $context instanceof ReportExecutionContext) {
+                    throw new \InvalidArgumentException('report_catalog_authorization_invalid');
+                }
+
+                return new ReportCatalogAuthorization($context, $authorizations);
+            },
+        );
+        $authorizer->method('authorizeExact')->willReturnCallback(
+            static fn (
+                int $actorId,
+                ReportScope $requestedScope,
+                CurrentReportAuthorizationTarget $target,
+            ): CurrentReportAuthorization => $makeAuthorization($actorId, $requestedScope, $target),
+        );
+        $database = $this->createMock(ConnectionInterface::class);
+        $database->method('transaction')
+            ->willReturnCallback(static fn (\Closure $callback): mixed => $callback());
+        $database->method('statement')->willReturn(true);
+        $this->contexts = new ReportHttpAuthorizationOrchestrator(
+            $database,
+            new ReportExecutionContextFactory,
+            $targets,
+            $subjects,
+            $authorizer,
         );
     }
 
@@ -93,7 +233,7 @@ final class ReportControllerContractTest extends TestCase
         $catalog = new ReportCatalogView(
             '1.0.0',
             new Sha256Hash(str_repeat('9', 64)),
-            [(new ReportDefinitionBuilder())->contractVersion('1.0.0')->payload()],
+            [(new ReportDefinitionBuilder)->contractVersion('1.0.0')->payload()],
         );
         $page = new ReportPage(
             [['row_key' => 'row-1', 'value' => 7]],
@@ -158,8 +298,8 @@ final class ReportControllerContractTest extends TestCase
 
     public function test_all_run_endpoints_forward_exact_data_id_and_key_with_dto_status_and_headers(): void
     {
-        $queued = (new ReportRunBuilder())->id(self::RUN_ID)->queued();
-        $ready = (new ReportRunBuilder())->id(self::RUN_ID)->ready();
+        $queued = (new ReportRunBuilder)->id(self::RUN_ID)->queued();
+        $ready = (new ReportRunBuilder)->id(self::RUN_ID)->ready();
         $fake = new FakeReportingActions([
             'createRun' => $ready,
             'getRun' => $ready,
@@ -207,8 +347,8 @@ final class ReportControllerContractTest extends TestCase
 
     public function test_all_export_endpoints_forward_exact_data_id_and_key_with_dto_status_and_headers(): void
     {
-        $queued = (new ReportExportBuilder())->id(self::EXPORT_ID)->runId(self::RUN_ID)->queued();
-        $ready = (new ReportExportBuilder())->id(self::EXPORT_ID)->runId(self::RUN_ID)->ready();
+        $queued = (new ReportExportBuilder)->id(self::EXPORT_ID)->runId(self::RUN_ID)->queued();
+        $ready = (new ReportExportBuilder)->id(self::EXPORT_ID)->runId(self::RUN_ID)->ready();
         $link = new ReportDownloadLink(
             'https://storage.example/reports/export',
             'version-1',
@@ -275,7 +415,7 @@ final class ReportControllerContractTest extends TestCase
 
     public function test_invalid_idempotency_key_fails_before_action_and_action_exception_is_not_swallowed(): void
     {
-        $queued = (new ReportRunBuilder())->id(self::RUN_ID)->queued();
+        $queued = (new ReportRunBuilder)->id(self::RUN_ID)->queued();
         $fake = new FakeReportingActions(['createRun' => $queued]);
         $controller = new ReportRunController(
             $this->contexts,
@@ -312,7 +452,7 @@ final class ReportControllerContractTest extends TestCase
     #[DataProvider('invalidReportCodeProvider')]
     public function test_invalid_report_code_is_rejected_before_context_and_action(mixed $reportCode): void
     {
-        $queued = (new ReportRunBuilder())->id(self::RUN_ID)->queued();
+        $queued = (new ReportRunBuilder)->id(self::RUN_ID)->queued();
         $fake = new FakeReportingActions(['createRun' => $queued]);
 
         try {
@@ -363,7 +503,8 @@ final class ReportControllerContractTest extends TestCase
             $route->setParameter($routeName, $routeId);
             $request->setRouteResolver(static fn () => $route);
         }
-        $request->setUserResolver(static fn (?string $guard = null): object => new class {
+        $request->setUserResolver(static fn (?string $guard = null): object => new class
+        {
             public function getAuthIdentifier(): int
             {
                 return 17;

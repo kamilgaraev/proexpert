@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Support\Reporting;
 
+use App\BusinessModules\Core\Reporting\Application\Access\ReportCatalogAuthorization;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportExportAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CancelReportRunAction;
 use App\BusinessModules\Core\Reporting\Application\Contracts\CreateReportDownloadLinkAction;
@@ -35,16 +36,27 @@ use Throwable;
 final class FakeReportingActions
 {
     public readonly GetReportCatalogAction $catalogAction;
+
     public readonly CreateReportRunAction $createRunAction;
+
     public readonly GetReportRunAction $getRunAction;
+
     public readonly GetReportRowsAction $rowsAction;
+
     public readonly GetReportDrillDownAction $drillDownAction;
+
     public readonly RetryReportRunAction $retryRunAction;
+
     public readonly CancelReportRunAction $cancelRunAction;
+
     public readonly CreateReportExportAction $createExportAction;
+
     public readonly GetReportExportAction $getExportAction;
+
     public readonly RetryReportExportAction $retryExportAction;
+
     public readonly CancelReportExportAction $cancelExportAction;
+
     public readonly CreateReportDownloadLinkAction $downloadLinkAction;
 
     public array $calls = [
@@ -66,53 +78,115 @@ final class FakeReportingActions
 
     public function __construct(private array $returns)
     {
-        $this->catalogAction = new class($this) implements GetReportCatalogAction {
+        $this->catalogAction = new class($this) implements GetReportCatalogAction
+        {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context): ReportCatalogView { return $this->fake->catalog($context); }
+
+            public function handle(
+                ReportExecutionContext $context,
+                ReportCatalogAuthorization $authorization,
+            ): ReportCatalogView {
+                return $this->fake->catalog($context, $authorization);
+            }
         };
-        $this->createRunAction = new class($this) implements CreateReportRunAction {
+        $this->createRunAction = new class($this) implements CreateReportRunAction
+        {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, CreateReportRunData $data, IdempotencyKey $key): ReportRun { return $this->fake->createRun($context, $data, $key); }
+
+            public function handle(ReportExecutionContext $context, CreateReportRunData $data, IdempotencyKey $key): ReportRun
+            {
+                return $this->fake->createRun($context, $data, $key);
+            }
         };
-        $this->getRunAction = new class($this) implements GetReportRunAction {
+        $this->getRunAction = new class($this) implements GetReportRunAction
+        {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, string $runId): ReportRun { return $this->fake->getRun($context, $runId); }
+
+            public function handle(ReportExecutionContext $context, string $runId): ReportRun
+            {
+                return $this->fake->getRun($context, $runId);
+            }
         };
-        $this->rowsAction = new class($this) implements GetReportRowsAction {
+        $this->rowsAction = new class($this) implements GetReportRowsAction
+        {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, string $runId, ReportRowsWindow $window): ReportPage { return $this->fake->rows($context, $runId, $window); }
+
+            public function handle(ReportExecutionContext $context, string $runId, ReportRowsWindow $window): ReportPage
+            {
+                return $this->fake->rows($context, $runId, $window);
+            }
         };
-        $this->drillDownAction = new class($this) implements GetReportDrillDownAction {
+        $this->drillDownAction = new class($this) implements GetReportDrillDownAction
+        {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, string $runId, ReportDrillDownRequest $request): ReportDrillDownResult { return $this->fake->drillDown($context, $runId, $request); }
+
+            public function handle(ReportExecutionContext $context, string $runId, ReportDrillDownRequest $request): ReportDrillDownResult
+            {
+                return $this->fake->drillDown($context, $runId, $request);
+            }
         };
-        $this->retryRunAction = new class($this) implements RetryReportRunAction {
+        $this->retryRunAction = new class($this) implements RetryReportRunAction
+        {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, string $runId, IdempotencyKey $key): ReportRun { return $this->fake->retryRun($context, $runId, $key); }
+
+            public function handle(ReportExecutionContext $context, string $runId, IdempotencyKey $key): ReportRun
+            {
+                return $this->fake->retryRun($context, $runId, $key);
+            }
         };
-        $this->cancelRunAction = new class($this) implements CancelReportRunAction {
+        $this->cancelRunAction = new class($this) implements CancelReportRunAction
+        {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, string $runId): ReportRun { return $this->fake->cancelRun($context, $runId); }
+
+            public function handle(ReportExecutionContext $context, string $runId): ReportRun
+            {
+                return $this->fake->cancelRun($context, $runId);
+            }
         };
-        $this->createExportAction = new class($this) implements CreateReportExportAction {
+        $this->createExportAction = new class($this) implements CreateReportExportAction
+        {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, string $runId, CreateReportExportData $data, IdempotencyKey $key): ReportExport { return $this->fake->createExport($context, $runId, $data, $key); }
+
+            public function handle(ReportExecutionContext $context, string $runId, CreateReportExportData $data, IdempotencyKey $key): ReportExport
+            {
+                return $this->fake->createExport($context, $runId, $data, $key);
+            }
         };
-        $this->getExportAction = new class($this) implements GetReportExportAction {
+        $this->getExportAction = new class($this) implements GetReportExportAction
+        {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, string $exportId): ReportExport { return $this->fake->getExport($context, $exportId); }
+
+            public function handle(ReportExecutionContext $context, string $exportId): ReportExport
+            {
+                return $this->fake->getExport($context, $exportId);
+            }
         };
-        $this->retryExportAction = new class($this) implements RetryReportExportAction {
+        $this->retryExportAction = new class($this) implements RetryReportExportAction
+        {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, string $exportId, IdempotencyKey $key): ReportExport { return $this->fake->retryExport($context, $exportId, $key); }
+
+            public function handle(ReportExecutionContext $context, string $exportId, IdempotencyKey $key): ReportExport
+            {
+                return $this->fake->retryExport($context, $exportId, $key);
+            }
         };
-        $this->cancelExportAction = new class($this) implements CancelReportExportAction {
+        $this->cancelExportAction = new class($this) implements CancelReportExportAction
+        {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, string $exportId): ReportExport { return $this->fake->cancelExport($context, $exportId); }
+
+            public function handle(ReportExecutionContext $context, string $exportId): ReportExport
+            {
+                return $this->fake->cancelExport($context, $exportId);
+            }
         };
-        $this->downloadLinkAction = new class($this) implements CreateReportDownloadLinkAction {
+        $this->downloadLinkAction = new class($this) implements CreateReportDownloadLinkAction
+        {
             public function __construct(private readonly FakeReportingActions $fake) {}
-            public function handle(ReportExecutionContext $context, CreateReportDownloadLinkData $data): ReportDownloadLink { return $this->fake->downloadLink($context, $data); }
+
+            public function handle(ReportExecutionContext $context, CreateReportDownloadLinkData $data): ReportDownloadLink
+            {
+                return $this->fake->downloadLink($context, $data);
+            }
         };
     }
 
@@ -122,9 +196,11 @@ final class FakeReportingActions
         $this->exceptions[$method] = $exception;
     }
 
-    public function catalog(ReportExecutionContext $context): ReportCatalogView
-    {
-        $result = $this->record('catalog', [$context]);
+    public function catalog(
+        ReportExecutionContext $context,
+        ReportCatalogAuthorization $authorization,
+    ): ReportCatalogView {
+        $result = $this->record('catalog', [$context, $authorization]);
         assert($result instanceof ReportCatalogView);
 
         return $result;
@@ -227,7 +303,7 @@ final class FakeReportingActions
         }
 
         $result = $this->returns[$method] ?? null;
-        if (!is_object($result)) {
+        if (! is_object($result)) {
             throw new LogicException('No reporting fake return configured for '.$method.'.');
         }
 
@@ -236,7 +312,7 @@ final class FakeReportingActions
 
     private function assertMethod(string $method): void
     {
-        if (!array_key_exists($method, $this->calls)) {
+        if (! array_key_exists($method, $this->calls)) {
             throw new LogicException('Unknown reporting fake method.');
         }
     }

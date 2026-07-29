@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Http\Admin\Controllers;
 
-use App\BusinessModules\Core\Reporting\Application\Access\ReportExecutionContextFactory;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportHttpAuthorizationOrchestrator;
 use App\BusinessModules\Core\Reporting\Application\Contracts\GetReportRowsAction;
 use App\BusinessModules\Core\Reporting\Http\Admin\Requests\GetReportRowsRequest;
 use App\BusinessModules\Core\Reporting\Http\Admin\Resources\ReportRowsResource;
@@ -14,15 +14,15 @@ use Illuminate\Http\JsonResponse;
 final readonly class ReportRowsController
 {
     public function __construct(
-        private ReportExecutionContextFactory $contexts,
+        private ReportHttpAuthorizationOrchestrator $authorization,
         private GetReportRowsAction $get,
-    ) {
-    }
+    ) {}
 
     public function __invoke(GetReportRowsRequest $request): JsonResponse
     {
+        $authorization = $this->authorization->rows($request, $request->runId());
         $page = $this->get->handle(
-            $this->contexts->fromHttp($request),
+            $authorization['context'],
             $request->routeId(),
             $request->toWindow(),
         );

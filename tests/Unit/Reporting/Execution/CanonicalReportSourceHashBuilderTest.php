@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Execution;
 
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProvenance;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProvenance;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotSeal;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
@@ -49,7 +50,7 @@ use Tests\Support\Reporting\ReportDefinitionBuilder;
 
 final class CanonicalReportSourceHashBuilderTest extends TestCase
 {
-    private const BASELINE_HASH = 'a2ff28c5d14cea9368812ae15531598452f94aff1b5866751b4ff1aee55a50f9';
+    private const BASELINE_HASH = '3a8c083820d41fd05aff4dea7580b5f6bc8e76249b7aa1c961994766d475a82f';
 
     public function test_closed_projection_has_the_exact_known_digest(): void
     {
@@ -57,7 +58,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
 
         self::assertSame(
             self::BASELINE_HASH,
-            (new CanonicalReportSourceHashBuilder())->build($query, $snapshot, $result)->value,
+            (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result)->value,
         );
     }
 
@@ -70,7 +71,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
             [],
             [$mutation => $value],
         );
-        $builder = new CanonicalReportSourceHashBuilder();
+        $builder = new CanonicalReportSourceHashBuilder;
 
         self::assertNotSame(
             $builder->build($baselineQuery, $baselineSnapshot, $baselineResult)->value,
@@ -96,7 +97,10 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
             'scope organization' => ['organization_id', 2],
             'scope holding organizations' => ['holding_organization_ids', [1, 2]],
             'scope projects' => ['project_ids', [9, 10]],
-            'scope resources' => ['resource_ids', [7, 8]],
+            'scope resources' => ['resources', [
+                new ReportScopedResource('task', 7, 9),
+                new ReportScopedResource('task', 8, 9),
+            ]],
             'scope timezone' => ['timezone', 'UTC'],
             'snapshot definition hash' => ['snapshot_definition_hash', str_repeat('b', 64)],
             'snapshot formula version' => ['snapshot_formula_version', 'formula-snapshot-v2'],
@@ -124,10 +128,10 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
         ]);
         $before = $result->provenance->sourceRefs;
 
-        $hash = (new CanonicalReportSourceHashBuilder())->build($query, $snapshot, $result);
+        $hash = (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
         [, , $reordered] = $this->fixture(array_reverse($before));
 
-        self::assertSame($hash->value, (new CanonicalReportSourceHashBuilder())->build($query, $snapshot, $reordered)->value);
+        self::assertSame($hash->value, (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $reordered)->value);
         self::assertSame($before, $result->provenance->sourceRefs);
     }
 
@@ -156,7 +160,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
         $sources = [$this->sourceFromProjection($first), $this->sourceFromProjection($second)];
         [$query, $snapshot, $result] = $this->fixture($sources);
         [, , $reversed] = $this->fixture(array_reverse($sources));
-        $builder = new CanonicalReportSourceHashBuilder();
+        $builder = new CanonicalReportSourceHashBuilder;
 
         self::assertSame(
             $builder->build($query, $snapshot, $result)->value,
@@ -236,7 +240,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
             [],
             ['source_hash' => str_repeat('e', 64)],
         );
-        $builder = new CanonicalReportSourceHashBuilder();
+        $builder = new CanonicalReportSourceHashBuilder;
 
         self::assertSame(
             $builder->build($query, $snapshot, $result)->value,
@@ -256,7 +260,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
             [],
             ['official_seal_payload_hash' => str_repeat('e', 64)],
         );
-        $builder = new CanonicalReportSourceHashBuilder();
+        $builder = new CanonicalReportSourceHashBuilder;
 
         self::assertSame(
             $builder->build($query, $firstSnapshot, $firstResult)->value,
@@ -273,7 +277,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('report_source_hash_invalid');
-        (new CanonicalReportSourceHashBuilder())->build($query, $snapshot, $result);
+        (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
     }
 
     #[DataProvider('invalidDecimalProvider')]
@@ -283,7 +287,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('report_source_hash_invalid');
-        (new CanonicalReportSourceHashBuilder())->build($query, $snapshot, $result);
+        (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
     }
 
     public static function invalidDecimalProvider(): array
@@ -305,7 +309,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
     {
         [$query, $snapshot, $result] = $this->fixture([$this->source('alpha', 'v1', 3, 'a')], ['metric' => $value]);
 
-        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/D', (new CanonicalReportSourceHashBuilder())->build($query, $snapshot, $result)->value);
+        self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/D', (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result)->value);
     }
 
     public static function validDecimalProvider(): array
@@ -320,10 +324,10 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
             $organizationId,
             $overrides['holding_organization_ids'] ?? [$organizationId],
             $overrides['project_ids'] ?? [9],
-            $overrides['resource_ids'] ?? [7],
+            $overrides['resources'] ?? [new ReportScopedResource('task', 7, 9)],
             new DateTimeZone($overrides['timezone'] ?? 'Europe/Moscow'),
         );
-        $definition = (new ReportDefinitionBuilder())
+        $definition = (new ReportDefinitionBuilder)
             ->definitionHash(new Sha256Hash($overrides['definition_hash'] ?? str_repeat('a', 64)))
             ->contractVersion($overrides['contract_version'] ?? '1')
             ->formulaVersion($overrides['query_formula_version'] ?? '1')
@@ -439,12 +443,12 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
 
     private function sourceRefComparatorContractViolations(string $source): array
     {
-        $nodes = (new ParserFactory())->createForNewestSupportedVersion()->parse($source);
+        $nodes = (new ParserFactory)->createForNewestSupportedVersion()->parse($source);
         if ($nodes === null) {
             return ['source_did_not_parse'];
         }
 
-        $finder = new NodeFinder();
+        $finder = new NodeFinder;
         $constants = $finder->findInstanceOf($nodes, ClassConst::class);
         $sortConstant = null;
         foreach ($constants as $constantStatement) {
@@ -465,7 +469,7 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
             'row_count',
             'hash',
         ];
-        if (!$sortConstant instanceof Array_) {
+        if (! $sortConstant instanceof Array_) {
             $violations[] = 'sort_constant_missing';
         } else {
             $actualFields = [];
@@ -488,52 +492,52 @@ final class CanonicalReportSourceHashBuilderTest extends TestCase
                 break;
             }
         }
-        if (!$usortClosure instanceof Closure) {
+        if (! $usortClosure instanceof Closure) {
             return [...$violations, 'source_refs_usort_closure_missing'];
         }
         if (count($usortClosure->params) !== 2
-            || !$this->isVariable($usortClosure->params[0]->var, 'left')
-            || !$this->isVariable($usortClosure->params[1]->var, 'right')) {
+            || ! $this->isVariable($usortClosure->params[0]->var, 'left')
+            || ! $this->isVariable($usortClosure->params[1]->var, 'right')) {
             $violations[] = 'comparator_parameters_not_exact';
         }
 
         $statements = $usortClosure->stmts ?? [];
         $loop = $statements[0] ?? null;
-        if (!$loop instanceof Foreach_
-            || !$loop->expr instanceof ClassConstFetch
-            || !$loop->expr->class instanceof Name
+        if (! $loop instanceof Foreach_
+            || ! $loop->expr instanceof ClassConstFetch
+            || ! $loop->expr->class instanceof Name
             || strtolower($loop->expr->class->toString()) !== 'self'
             || $loop->expr->name->toString() !== 'SOURCE_REF_SORT_FIELDS'
-            || !$this->isVariable($loop->valueVar, 'field')) {
+            || ! $this->isVariable($loop->valueVar, 'field')) {
             $violations[] = 'foreach_not_bound_to_sort_constant';
         } else {
             $assignmentStatement = $loop->stmts[0] ?? null;
             $assignment = $assignmentStatement instanceof Expression ? $assignmentStatement->expr : null;
-            if (!$assignment instanceof Assign
-                || !$this->isVariable($assignment->var, 'comparison')
-                || !$assignment->expr instanceof Spaceship
-                || !$this->isIndexedVariable($assignment->expr->left, 'left', 'field')
-                || !$this->isIndexedVariable($assignment->expr->right, 'right', 'field')) {
+            if (! $assignment instanceof Assign
+                || ! $this->isVariable($assignment->var, 'comparison')
+                || ! $assignment->expr instanceof Spaceship
+                || ! $this->isIndexedVariable($assignment->expr->left, 'left', 'field')
+                || ! $this->isIndexedVariable($assignment->expr->right, 'right', 'field')) {
                 $violations[] = 'spaceship_data_flow_not_exact';
             }
 
             $nonzeroBranch = $loop->stmts[1] ?? null;
             $nonzeroReturn = $nonzeroBranch instanceof If_ ? ($nonzeroBranch->stmts[0] ?? null) : null;
-            if (!$nonzeroBranch instanceof If_
-                || !$nonzeroBranch->cond instanceof NotIdentical
-                || !$this->isVariable($nonzeroBranch->cond->left, 'comparison')
-                || !$nonzeroBranch->cond->right instanceof Int_
+            if (! $nonzeroBranch instanceof If_
+                || ! $nonzeroBranch->cond instanceof NotIdentical
+                || ! $this->isVariable($nonzeroBranch->cond->left, 'comparison')
+                || ! $nonzeroBranch->cond->right instanceof Int_
                 || $nonzeroBranch->cond->right->value !== 0
-                || !$nonzeroReturn instanceof Return_
-                || !$this->isVariable($nonzeroReturn->expr, 'comparison')
+                || ! $nonzeroReturn instanceof Return_
+                || ! $this->isVariable($nonzeroReturn->expr, 'comparison')
                 || count($loop->stmts) !== 2) {
                 $violations[] = 'first_nonzero_return_not_exact';
             }
         }
 
         $terminalReturn = $statements[1] ?? null;
-        if (!$terminalReturn instanceof Return_
-            || !$terminalReturn->expr instanceof Int_
+        if (! $terminalReturn instanceof Return_
+            || ! $terminalReturn->expr instanceof Int_
             || $terminalReturn->expr->value !== 0
             || count($statements) !== 2) {
             $violations[] = 'terminal_zero_return_not_exact';

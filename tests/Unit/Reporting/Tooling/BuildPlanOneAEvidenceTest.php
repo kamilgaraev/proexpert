@@ -15,6 +15,7 @@ require_once dirname(__DIR__, 4).'/scripts/reporting/build-plan-1a-evidence.php'
 final class BuildPlanOneAEvidenceTest extends TestCase
 {
     private const PHP = 'C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe';
+
     private const PHP_DIR = 'C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64';
 
     private array $temporaryDirectories = [];
@@ -100,6 +101,71 @@ final class BuildPlanOneAEvidenceTest extends TestCase
         sort($sorted, SORT_STRING);
         self::assertSame($sorted, $constants['TASK_FOUR_A2_PATHS']);
         self::assertSame(['Task 4a exact53', 'Task 4b exact39', 'Task 4a2 exact16'], $constants['TASK_FOUR_A2_LINEAGE']);
+    }
+
+    public function test_builder_declares_the_forward_only_task_four_e_contract(): void
+    {
+        $constants = (new ReflectionClass(\PlanOneAEvidence::class))->getConstants();
+
+        self::assertSame('feat[reports]: типизировать ресурсы и текущую авторизацию', $constants['TASK_FOUR_E_SUBJECT']);
+        self::assertSame('1934f947a44aa5221b5aa4cbd8c03963f5f1c005', $constants['TASK_FOUR_E_PARENT']);
+        self::assertCount(78, $constants['TASK_FOUR_E_PATHS']);
+        self::assertSame($constants['TASK_FOUR_E_PATHS'], array_values(array_unique($constants['TASK_FOUR_E_PATHS'])));
+        self::assertSame(
+            ['Task 4a exact53', 'Task 4b exact39', 'Task 4a2 exact16', 'Task 4c exact15', 'Task 4d exact6', 'Task 4e exact78'],
+            $constants['TASK_FOUR_E_LINEAGE'],
+        );
+
+        $lock = json_decode((string) file_get_contents($this->root().'/docs/reports/contracts/plan-1a-contract-lock.json'), true, 512, JSON_THROW_ON_ERROR);
+        $builder = new \PlanOneAEvidence($this->repository());
+        $this->invoke($builder, 'validateTaskFourELock', [$lock]);
+
+        foreach (['subject', 'parent_commit_sha', 'tracked_paths', 'lineage', 'typed_resources', 'typed_decisions', 'queue_authorization', 'prohibitions', 'migration_cutover', 'resource_registry', 'authorization_matrices', 'ownership_audit'] as $field) {
+            $candidate = $lock;
+            unset($candidate['task_4e'][$field]);
+            try {
+                $this->invoke($builder, 'validateTaskFourELock', [$candidate]);
+                self::fail('Missing Task 4e field was accepted: '.$field);
+            } catch (\PlanOneAEvidenceFailure $failure) {
+                self::assertSame('PLAN_1A_TASK_4E_LOCK_INVALID', $failure->getMessage());
+            }
+        }
+    }
+
+    public function test_completion_requires_closed_task_four_e_evidence(): void
+    {
+        $completion = $this->completion();
+        self::assertArrayHasKey('task_4e', $completion);
+        self::assertTrue($this->completionValidates($completion));
+
+        unset($completion['task_4e']['authorization_matrices']['repeatable_read_races']);
+        self::assertFalse($this->completionValidates($completion));
+    }
+
+    public function test_task_four_e_matrix_inventories_are_derived_from_real_test_methods_and_providers(): void
+    {
+        $builder = new \PlanOneAEvidence($this->repository());
+        $inventories = $this->invoke($builder, 'taskFourEMatrixInventories', []);
+
+        self::assertSame([
+            'organization_scope' => 11,
+            'project_scope' => 8,
+            'current_abac' => 16,
+            'typed_resources' => 17,
+            'repeatable_read_races' => 8,
+        ], array_map('count', $inventories));
+        self::assertContains(
+            'test_closed_abac_behavior_matrix::current organization role',
+            $inventories['current_abac'],
+        );
+        self::assertContains(
+            'test_each_decision_identity_mutation_is_normalized_to_scope_forbidden::actor id',
+            $inventories['typed_resources'],
+        );
+        self::assertContains(
+            'test_system_role_change_is_snapshot_consistent_and_next_invocation_denies',
+            $inventories['repeatable_read_races'],
+        );
     }
 
     public function test_task_four_a2_lock_rejects_every_closed_contract_mutation(): void
@@ -898,7 +964,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
                     'plan-1a-command-ledger.json' => 'plan-1a-command-ledger.valid.json',
                     default => null,
                 }
-                : null;
+            : null;
             $bytes = is_string($fixture)
                 ? (string) file_get_contents($this->root().'/tests/Fixtures/Reporting/Evidence/'.$fixture)
                 : 'stale-'.$failureStage;
@@ -1009,7 +1075,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
     {
         $schema = json_decode((string) file_get_contents($this->root().'/docs/reports/contracts/plan-1a-completion.schema.json'));
 
-        return (new CompliantValidator())->validate(json_decode(json_encode($value, JSON_THROW_ON_ERROR)), $schema)->isValid();
+        return (new CompliantValidator)->validate(json_decode(json_encode($value, JSON_THROW_ON_ERROR)), $schema)->isValid();
     }
 
     private function taskSevenEvidence(): array
@@ -1054,7 +1120,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
 
     private function digestCount(mixed $value): int
     {
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             return 0;
         }
         $count = 0;
@@ -1240,7 +1306,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
         $this->git($repository, ['add', '--', ...$this->taskSevenPaths()]);
         $message = "feat[reports]: зафиксированы схемы ресурсов отчётности\n\n"
             ."Reports-Plan1a-Task: 7\n"
-            ."Reports-Plan1a-Base-Commit: ".($baseTrailer ?? $base)."\n"
+            .'Reports-Plan1a-Base-Commit: '.($baseTrailer ?? $base)."\n"
             .$extraTrailer;
         $this->git($repository, ['commit', '-m', $message]);
         $owner = $this->git($repository, ['rev-parse', 'HEAD']);
@@ -1285,7 +1351,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
     {
         return array_values(array_filter(
             $this->taskFourA2Paths(),
-            static fn (string $path): bool => !in_array($path, [
+            static fn (string $path): bool => ! in_array($path, [
                 'docs/reports/contracts/plan-1a-contract-lock.json',
                 'docs/reports/contracts/plan-1a-contract-lock.sha256',
             ], true),
@@ -1354,7 +1420,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
     private function write(string $path, string $bytes): void
     {
         $directory = dirname($path);
-        if (!is_dir($directory)) {
+        if (! is_dir($directory)) {
             mkdir($directory, 0777, true);
         }
         file_put_contents($path, $bytes);
@@ -1371,7 +1437,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
 
     private function removeTree(string $directory): void
     {
-        if (!is_dir($directory)) {
+        if (! is_dir($directory)) {
             return;
         }
         $iterator = new \RecursiveIteratorIterator(
@@ -1379,7 +1445,7 @@ final class BuildPlanOneAEvidenceTest extends TestCase
             \RecursiveIteratorIterator::CHILD_FIRST,
         );
         foreach ($iterator as $item) {
-            if ($item->isDir() && !$item->isLink()) {
+            if ($item->isDir() && ! $item->isLink()) {
                 chmod($item->getPathname(), 0777);
                 rmdir($item->getPathname());
             } else {

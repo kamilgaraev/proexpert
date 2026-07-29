@@ -11,8 +11,8 @@ use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunRetrySourc
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportOutputClassification;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPermissionPolicy;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProvenance;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
@@ -21,12 +21,13 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportRun;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSavedViewRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotSeal;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWarning;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportDataClassification;
+use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportPublicationReadiness;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
@@ -106,7 +107,7 @@ final class ReportRunHydrator
         try {
             $snapshot = $this->closedArray($record->definition_snapshot, self::DEFINITION_KEYS);
             $snapshotCanonical = \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode($snapshot);
-            if (!hash_equals(hash('sha256', $snapshotCanonical), $this->string($record->definition_snapshot_hash))) {
+            if (! hash_equals(hash('sha256', $snapshotCanonical), $this->string($record->definition_snapshot_hash))) {
                 throw new \InvalidArgumentException('report_definition_snapshot_digest_mismatch');
             }
             $policy = $this->closedArray($snapshot['permission_policy'], [
@@ -156,7 +157,7 @@ final class ReportRunHydrator
                 [$definition->snapshotClassification->value, $record->snapshot_classification],
                 [$definition->outputClassification->defaultClassification->value, $record->data_classification],
             ] as [$actual, $stored]) {
-                if (!is_string($stored) || !hash_equals($actual, $stored)) {
+                if (! is_string($stored) || ! hash_equals($actual, $stored)) {
                     throw new \InvalidArgumentException('report_definition_snapshot_mismatch');
                 }
             }
@@ -170,7 +171,7 @@ final class ReportRunHydrator
                 $this->integer($record->organization_id),
                 $this->array($record->scope_holding_organization_ids),
                 $this->array($record->scope_project_ids),
-                $this->array($record->scope_resource_ids),
+                $this->typedResources($record->scope_resources),
                 new DateTimeZone($this->string($record->scope_timezone)),
             );
             $query = new ReportQuery(
@@ -182,8 +183,8 @@ final class ReportRunHydrator
                 $this->string($record->locale),
             );
 
-            if (!hash_equals($query->queryHash->value, $this->string($record->query_hash))
-                || !hash_equals($query->canonicalJson, $this->string($record->canonical_query_json))) {
+            if (! hash_equals($query->queryHash->value, $this->string($record->query_hash))
+                || ! hash_equals($query->canonicalJson, $this->string($record->canonical_query_json))) {
                 throw new \InvalidArgumentException('report_query_identity_mismatch');
             }
             $fingerprint = hash('sha256', \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode([
@@ -191,7 +192,7 @@ final class ReportRunHydrator
                 'query' => json_decode($query->canonicalJson, true, 512, JSON_THROW_ON_ERROR),
                 'saved_view' => $savedView,
             ]));
-            if (!hash_equals($fingerprint, $this->string($record->input_fingerprint))) {
+            if (! hash_equals($fingerprint, $this->string($record->input_fingerprint))) {
                 throw new \InvalidArgumentException('report_input_fingerprint_mismatch');
             }
 
@@ -201,6 +202,46 @@ final class ReportRunHydrator
         } catch (Throwable $exception) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR, [], $exception);
         }
+    }
+
+    private function typedResources(mixed $value): array
+    {
+        $projection = $this->array($value);
+        if (! array_is_list($projection)) {
+            throw new \InvalidArgumentException('report_scope_resources_invalid');
+        }
+
+        $resources = [];
+        $inputCanonical = [];
+        foreach ($projection as $item) {
+            $keys = is_array($item) ? array_keys($item) : [];
+            sort($keys, SORT_STRING);
+            if (! is_array($item)
+                || array_is_list($item)
+                || $keys !== ['id', 'kind', 'project_id']
+                || ! is_string($item['kind'])
+                || ! is_int($item['id'])
+                || (! is_int($item['project_id']) && $item['project_id'] !== null)) {
+                throw new \InvalidArgumentException('report_scope_resources_invalid');
+            }
+            $resources[] = new ReportScopedResource($item['kind'], $item['id'], $item['project_id']);
+            $inputCanonical[] = [
+                'kind' => $item['kind'],
+                'id' => $item['id'],
+                'project_id' => $item['project_id'],
+            ];
+        }
+
+        $scope = new ReportScope(1, [1], [], $resources, new DateTimeZone('UTC'));
+        $canonical = array_map(
+            static fn (ReportScopedResource $resource): array => $resource->canonicalIdentity(),
+            $scope->resources,
+        );
+        if ($canonical !== $inputCanonical) {
+            throw new \InvalidArgumentException('report_scope_resources_noncanonical');
+        }
+
+        return $resources;
     }
 
     public function retrySource(ReportRunRecord $record, int $pollAfterMs): ReportRunRetrySource
@@ -303,13 +344,13 @@ final class ReportRunHydrator
         $result = new ReportResult($metadata, $totals, $freshness, $quality, $provenance, $rowSchema, $capabilities);
 
         if ($this->integer($record->row_count) !== $result->metadata->rowCount
-            || !hash_equals($sourceHash->value, $result->provenance->sourceHash->value)) {
+            || ! hash_equals($sourceHash->value, $result->provenance->sourceHash->value)) {
             throw new \InvalidArgumentException('report_result_identity_mismatch');
         }
         $resultHash = hash('sha256', \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode(
             $this->resultProjection($result),
         ));
-        if (!hash_equals($resultHash, $this->string($record->result_hash))) {
+        if (! hash_equals($resultHash, $this->string($record->result_hash))) {
             throw new \InvalidArgumentException('report_result_digest_mismatch');
         }
 
@@ -363,7 +404,7 @@ final class ReportRunHydrator
             $this->raw($record, 'snapshot_sealed_at'),
         ];
         $present = array_map(static fn (mixed $value): bool => $value !== null, $values);
-        if (!in_array(true, $present, true)) {
+        if (! in_array(true, $present, true)) {
             return null;
         }
         if (in_array(false, $present, true)) {
@@ -387,7 +428,7 @@ final class ReportRunHydrator
             $this->raw($record, 'saved_view_hash'),
         ];
         $present = array_map(static fn (mixed $value): bool => $value !== null, $values);
-        if (!in_array(true, $present, true)) {
+        if (! in_array(true, $present, true)) {
             return null;
         }
         if (in_array(false, $present, true)) {
@@ -445,7 +486,7 @@ final class ReportRunHydrator
     {
         $errorCode = $this->raw($record, 'error_code');
         if ($status === ReportRunStatus::FAILED) {
-            if (!is_string($errorCode) || ReportErrorCode::tryFrom($errorCode) === null) {
+            if (! is_string($errorCode) || ReportErrorCode::tryFrom($errorCode) === null) {
                 throw new \InvalidArgumentException('report_error_code_invalid');
             }
 
@@ -472,7 +513,7 @@ final class ReportRunHydrator
         }
         if (
             in_array(false, $present, true)
-            || !is_string($token)
+            || ! is_string($token)
             || preg_match('/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/Di', $token) !== 1
             || $this->date($expiresAt) <= $this->date($heartbeatAt)
         ) {
@@ -593,7 +634,7 @@ final class ReportRunHydrator
 
     private function array(mixed $value): array
     {
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             throw new \InvalidArgumentException('report_persistence_type_invalid');
         }
 
@@ -602,7 +643,7 @@ final class ReportRunHydrator
 
     private function string(mixed $value): string
     {
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             throw new \InvalidArgumentException('report_persistence_type_invalid');
         }
 
@@ -611,7 +652,7 @@ final class ReportRunHydrator
 
     private function integer(mixed $value): int
     {
-        if (!is_int($value)) {
+        if (! is_int($value)) {
             throw new \InvalidArgumentException('report_persistence_type_invalid');
         }
 
@@ -620,7 +661,7 @@ final class ReportRunHydrator
 
     private function boolean(mixed $value): bool
     {
-        if (!is_bool($value)) {
+        if (! is_bool($value)) {
             throw new \InvalidArgumentException('report_persistence_type_invalid');
         }
 

@@ -5,17 +5,18 @@ declare(strict_types=1);
 namespace Tests\Unit\Reporting\Execution;
 
 use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportSnapshotSealVerifier;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Application\Execution\CanonicalReportSourceHashBuilder;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealValidator;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportSnapshotSealVerificationInput;
-use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
-use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProvenance;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResultMetadata;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotSeal;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceRef;
@@ -34,8 +35,8 @@ final class ReportSnapshotSealValidatorTest extends TestCase
     public function test_operational_identity_is_validated_without_verifier_call(): void
     {
         [$query, $snapshot, $result] = $this->fixture(false);
-        $verifier = new RecordingSealVerifier();
-        $hash = (new CanonicalReportSourceHashBuilder())->build($query, $snapshot, $result);
+        $verifier = new RecordingSealVerifier;
+        $hash = (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
         $snapshot = $this->withSourceHash($snapshot, $hash);
         $result = $this->withSnapshot($result, $snapshot, $hash);
 
@@ -47,8 +48,8 @@ final class ReportSnapshotSealValidatorTest extends TestCase
     public function test_official_identity_delegates_exact_verification_input(): void
     {
         [$query, $snapshot, $result] = $this->fixture(true);
-        $verifier = new RecordingSealVerifier();
-        $hash = (new CanonicalReportSourceHashBuilder())->build($query, $snapshot, $result);
+        $verifier = new RecordingSealVerifier;
+        $hash = (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
         $snapshot = $this->withSourceHash($snapshot, $hash);
         $result = $this->withSnapshot($result, $snapshot, $hash);
 
@@ -62,10 +63,10 @@ final class ReportSnapshotSealValidatorTest extends TestCase
     public function test_definition_or_result_identity_drift_fails_closed(): void
     {
         [$query, $snapshot, $result] = $this->fixture(false);
-        $hash = (new CanonicalReportSourceHashBuilder())->build($query, $snapshot, $result);
+        $hash = (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
 
         $this->expectException(\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException::class);
-        (new ReportSnapshotSealValidator(new RecordingSealVerifier()))->assertSealable(
+        (new ReportSnapshotSealValidator(new RecordingSealVerifier))->assertSealable(
             $query,
             $snapshot,
             $result,
@@ -76,11 +77,11 @@ final class ReportSnapshotSealValidatorTest extends TestCase
     public function test_each_validator_identity_equality_fails_independently(): void
     {
         [$query, $snapshot, $result] = $this->fixture(false);
-        $hash = (new CanonicalReportSourceHashBuilder())->build($query, $snapshot, $result);
+        $hash = (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
         $snapshot = $this->withSourceHash($snapshot, $hash);
         $result = $this->withSnapshot($result, $snapshot, $hash);
         $otherHash = new Sha256Hash(str_repeat('e', 64));
-        $otherScope = new ReportScope(1, [1], [2], [], new DateTimeZone('UTC'));
+        $otherScope = new ReportScope(1, [1], [2], [new ReportScopedResource('task', 2, 2)], new DateTimeZone('UTC'));
         $mutations = [
             'definition_hash' => [
                 $this->copySnapshot($snapshot, definitionHash: $otherHash),
@@ -124,7 +125,7 @@ final class ReportSnapshotSealValidatorTest extends TestCase
         foreach ($mutations as $name => [$mutatedSnapshot, $mutatedResult, $calculated]) {
             $candidateResult = $mutatedResult ?? $this->withSnapshot($result, $mutatedSnapshot, $mutatedSnapshot->sourceHash);
             try {
-                (new ReportSnapshotSealValidator(new RecordingSealVerifier()))->assertSealable(
+                (new ReportSnapshotSealValidator(new RecordingSealVerifier))->assertSealable(
                     $query,
                     $mutatedSnapshot,
                     $candidateResult,
@@ -140,7 +141,7 @@ final class ReportSnapshotSealValidatorTest extends TestCase
     public function test_complete_metadata_snapshot_and_exact_metadata_instants_are_independently_locked(): void
     {
         [$query, $snapshot, $result] = $this->fixture(false);
-        $hash = (new CanonicalReportSourceHashBuilder())->build($query, $snapshot, $result);
+        $hash = (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
         $snapshot = $this->withSourceHash($snapshot, $hash);
         $result = $this->withSnapshot($result, $snapshot, $hash);
         $differentSnapshot = $this->copySnapshot($snapshot, id: 'snapshot-2');
@@ -167,7 +168,7 @@ final class ReportSnapshotSealValidatorTest extends TestCase
 
         foreach ($cases as $name => $candidate) {
             try {
-                (new ReportSnapshotSealValidator(new RecordingSealVerifier()))->assertSealable($query, $snapshot, $candidate, $hash);
+                (new ReportSnapshotSealValidator(new RecordingSealVerifier))->assertSealable($query, $snapshot, $candidate, $hash);
                 self::fail("Mutation {$name} was accepted.");
             } catch (ReportContractException $exception) {
                 self::assertSame(ReportErrorCode::REPORT_INTERNAL_ERROR, $exception->errorCode, $name);
@@ -178,7 +179,7 @@ final class ReportSnapshotSealValidatorTest extends TestCase
     public function test_classification_drift_and_official_seal_payload_drift_fail_with_exact_codes(): void
     {
         [$operationalQuery, $operationalSnapshot, $operationalResult] = $this->fixture(false);
-        $hash = (new CanonicalReportSourceHashBuilder())->build($operationalQuery, $operationalSnapshot, $operationalResult);
+        $hash = (new CanonicalReportSourceHashBuilder)->build($operationalQuery, $operationalSnapshot, $operationalResult);
         $forgedOfficial = $this->forgeSnapshot($operationalSnapshot, [
             'sourceHash' => $hash,
             'classification' => ReportSnapshotClassification::OFFICIAL,
@@ -187,14 +188,14 @@ final class ReportSnapshotSealValidatorTest extends TestCase
         $forgedResult = $this->withSnapshot($operationalResult, $forgedOfficial, $hash);
 
         try {
-            (new ReportSnapshotSealValidator(new RecordingSealVerifier()))->assertSealable($operationalQuery, $forgedOfficial, $forgedResult, $hash);
+            (new ReportSnapshotSealValidator(new RecordingSealVerifier))->assertSealable($operationalQuery, $forgedOfficial, $forgedResult, $hash);
             self::fail('Classification drift was accepted.');
         } catch (ReportContractException $exception) {
             self::assertSame(ReportErrorCode::REPORT_INTERNAL_ERROR, $exception->errorCode);
         }
 
         [$officialQuery, $officialSnapshot, $officialResult] = $this->fixture(true);
-        $officialHash = (new CanonicalReportSourceHashBuilder())->build($officialQuery, $officialSnapshot, $officialResult);
+        $officialHash = (new CanonicalReportSourceHashBuilder)->build($officialQuery, $officialSnapshot, $officialResult);
         $wrongSeal = new ReportSnapshotSeal(
             $officialSnapshot->seal->keyId,
             $officialSnapshot->seal->algorithm,
@@ -206,7 +207,7 @@ final class ReportSnapshotSealValidatorTest extends TestCase
         $forgedResult = $this->withSnapshot($officialResult, $forgedOfficial, $officialHash);
 
         try {
-            (new ReportSnapshotSealValidator(new RecordingSealVerifier()))->assertSealable($officialQuery, $forgedOfficial, $forgedResult, $officialHash);
+            (new ReportSnapshotSealValidator(new RecordingSealVerifier))->assertSealable($officialQuery, $forgedOfficial, $forgedResult, $officialHash);
             self::fail('Seal payload drift was accepted.');
         } catch (ReportContractException $exception) {
             self::assertSame(ReportErrorCode::REPORT_OFFICIAL_SNAPSHOT_UNSEALED, $exception->errorCode);
@@ -216,7 +217,7 @@ final class ReportSnapshotSealValidatorTest extends TestCase
     public function test_forged_operational_seal_is_rejected_without_calling_verifier(): void
     {
         [$query, $snapshot, $result] = $this->fixture(false);
-        $hash = (new CanonicalReportSourceHashBuilder())->build($query, $snapshot, $result);
+        $hash = (new CanonicalReportSourceHashBuilder)->build($query, $snapshot, $result);
         $seal = new ReportSnapshotSeal(
             'seal-key-1',
             'ed25519-sha256',
@@ -226,7 +227,7 @@ final class ReportSnapshotSealValidatorTest extends TestCase
         );
         $forged = $this->forgeSnapshot($snapshot, ['sourceHash' => $hash, 'seal' => $seal]);
         $forgedResult = $this->withSnapshot($result, $forged, $hash);
-        $verifier = new RecordingSealVerifier();
+        $verifier = new RecordingSealVerifier;
 
         try {
             (new ReportSnapshotSealValidator($verifier))->assertSealable($query, $forged, $forgedResult, $hash);
@@ -240,7 +241,7 @@ final class ReportSnapshotSealValidatorTest extends TestCase
     private function fixture(bool $official): array
     {
         $classification = $official ? ReportSnapshotClassification::OFFICIAL : ReportSnapshotClassification::OPERATIONAL;
-        $definition = (new ReportDefinitionBuilder())->snapshotClassification($classification)->payload();
+        $definition = (new ReportDefinitionBuilder)->snapshotClassification($classification)->payload();
         $scope = new ReportScope(1, [1], [], [], new DateTimeZone('UTC'));
         $query = new ReportQuery($definition, $scope, new \App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet([]), [], new DateTimeImmutable('2026-07-29T07:00:00Z'), 'ru-RU');
         $placeholder = new Sha256Hash(str_repeat('c', 64));
@@ -364,11 +365,12 @@ final class ReportSnapshotSealValidatorTest extends TestCase
 final class RecordingSealVerifier implements ReportSnapshotSealVerifier
 {
     public int $calls = 0;
+
     public ?ReportSnapshotSealVerificationInput $input = null;
 
     public function assertTrusted(ReportSnapshotSealVerificationInput $input): void
     {
-        ++$this->calls;
+        $this->calls++;
         $this->input = $input;
     }
 }

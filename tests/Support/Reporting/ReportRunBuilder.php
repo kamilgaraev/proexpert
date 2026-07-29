@@ -24,29 +24,53 @@ use InvalidArgumentException;
 final class ReportRunBuilder
 {
     private array $explicit = [];
+
     private string $id = '01J00000000000000000000000';
+
     private string $reportCode = 'report';
+
     private ReportRunStatus $status = ReportRunStatus::QUEUED;
+
     private Sha256Hash $definitionHash;
+
     private string $contractVersion = '1';
+
     private string $formulaVersion = '1';
+
     private string $sourceSchemaVersion = '1';
+
     private string $rendererVersion = '1';
+
     private Sha256Hash $queryHash;
+
     private ?Sha256Hash $sourceHash = null;
+
     private int $progress = 0;
+
     private ?int $rowCount = null;
+
     private ?ReportResultMetadata $resultMetadata = null;
+
     private array $totals = [];
+
     private ?ReportFreshnessStatus $freshness = null;
+
     private ?ReportQuality $quality = null;
+
     private ?ReportProvenance $provenance = null;
+
     private DateTimeImmutable $createdAt;
+
     private DateTimeImmutable $updatedAt;
+
     private ?DateTimeImmutable $readyAt = null;
+
     private DateTimeImmutable $expiresAt;
+
     private ?DateTimeImmutable $cancelRequestedAt = null;
+
     private string $httpDisposition = 'created';
+
     private ?int $pollAfterMs = null;
 
     public function __construct()
@@ -58,30 +82,173 @@ final class ReportRunBuilder
         $this->expiresAt = new DateTimeImmutable('2026-01-02T00:00:00+00:00');
     }
 
-    public function id(string $value): self { $this->id = $value; return $this->mark('id'); }
-    public function reportCode(string $value): self { $this->reportCode = $value; return $this->mark('reportCode'); }
-    public function status(ReportRunStatus $value): self { $this->status = $value; return $this->mark('status'); }
-    public function definitionHash(Sha256Hash $value): self { $this->definitionHash = $value; return $this->mark('definitionHash'); }
-    public function contractVersion(string $value): self { $this->contractVersion = $value; return $this->mark('contractVersion'); }
-    public function formulaVersion(string $value): self { $this->formulaVersion = $value; return $this->mark('formulaVersion'); }
-    public function sourceSchemaVersion(string $value): self { $this->sourceSchemaVersion = $value; return $this->mark('sourceSchemaVersion'); }
-    public function rendererVersion(string $value): self { $this->rendererVersion = $value; return $this->mark('rendererVersion'); }
-    public function queryHash(Sha256Hash $value): self { $this->queryHash = $value; return $this->mark('queryHash'); }
-    public function sourceHash(?Sha256Hash $value): self { $this->sourceHash = $value; return $this->mark('sourceHash'); }
-    public function progress(int $value): self { $this->progress = $value; return $this->mark('progress'); }
-    public function rowCount(?int $value): self { $this->rowCount = $value; return $this->mark('rowCount'); }
-    public function resultMetadata(?ReportResultMetadata $value): self { $this->resultMetadata = $value; return $this->mark('resultMetadata'); }
-    public function totals(array $value): self { $this->totals = $value; return $this->mark('totals'); }
-    public function freshness(?ReportFreshnessStatus $value): self { $this->freshness = $value; return $this->mark('freshness'); }
-    public function quality(?ReportQuality $value): self { $this->quality = $value; return $this->mark('quality'); }
-    public function provenance(?ReportProvenance $value): self { $this->provenance = $value; return $this->mark('provenance'); }
-    public function createdAt(DateTimeImmutable $value): self { $this->createdAt = $value; return $this->mark('createdAt'); }
-    public function updatedAt(DateTimeImmutable $value): self { $this->updatedAt = $value; return $this->mark('updatedAt'); }
-    public function readyAt(?DateTimeImmutable $value): self { $this->readyAt = $value; return $this->mark('readyAt'); }
-    public function expiresAt(DateTimeImmutable $value): self { $this->expiresAt = $value; return $this->mark('expiresAt'); }
-    public function cancelRequestedAt(?DateTimeImmutable $value): self { $this->cancelRequestedAt = $value; return $this->mark('cancelRequestedAt'); }
-    public function httpDisposition(string $value): self { $this->httpDisposition = $value; return $this->mark('httpDisposition'); }
-    public function pollAfterMs(?int $value): self { $this->pollAfterMs = $value; return $this->mark('pollAfterMs'); }
+    public function id(string $value): self
+    {
+        $this->id = $value;
+
+        return $this->mark('id');
+    }
+
+    public function reportCode(string $value): self
+    {
+        $this->reportCode = $value;
+
+        return $this->mark('reportCode');
+    }
+
+    public function status(ReportRunStatus $value): self
+    {
+        $this->status = $value;
+
+        return $this->mark('status');
+    }
+
+    public function definitionHash(Sha256Hash $value): self
+    {
+        $this->definitionHash = $value;
+
+        return $this->mark('definitionHash');
+    }
+
+    public function contractVersion(string $value): self
+    {
+        $this->contractVersion = $value;
+
+        return $this->mark('contractVersion');
+    }
+
+    public function formulaVersion(string $value): self
+    {
+        $this->formulaVersion = $value;
+
+        return $this->mark('formulaVersion');
+    }
+
+    public function sourceSchemaVersion(string $value): self
+    {
+        $this->sourceSchemaVersion = $value;
+
+        return $this->mark('sourceSchemaVersion');
+    }
+
+    public function rendererVersion(string $value): self
+    {
+        $this->rendererVersion = $value;
+
+        return $this->mark('rendererVersion');
+    }
+
+    public function queryHash(Sha256Hash $value): self
+    {
+        $this->queryHash = $value;
+
+        return $this->mark('queryHash');
+    }
+
+    public function sourceHash(?Sha256Hash $value): self
+    {
+        $this->sourceHash = $value;
+
+        return $this->mark('sourceHash');
+    }
+
+    public function progress(int $value): self
+    {
+        $this->progress = $value;
+
+        return $this->mark('progress');
+    }
+
+    public function rowCount(?int $value): self
+    {
+        $this->rowCount = $value;
+
+        return $this->mark('rowCount');
+    }
+
+    public function resultMetadata(?ReportResultMetadata $value): self
+    {
+        $this->resultMetadata = $value;
+
+        return $this->mark('resultMetadata');
+    }
+
+    public function totals(array $value): self
+    {
+        $this->totals = $value;
+
+        return $this->mark('totals');
+    }
+
+    public function freshness(?ReportFreshnessStatus $value): self
+    {
+        $this->freshness = $value;
+
+        return $this->mark('freshness');
+    }
+
+    public function quality(?ReportQuality $value): self
+    {
+        $this->quality = $value;
+
+        return $this->mark('quality');
+    }
+
+    public function provenance(?ReportProvenance $value): self
+    {
+        $this->provenance = $value;
+
+        return $this->mark('provenance');
+    }
+
+    public function createdAt(DateTimeImmutable $value): self
+    {
+        $this->createdAt = $value;
+
+        return $this->mark('createdAt');
+    }
+
+    public function updatedAt(DateTimeImmutable $value): self
+    {
+        $this->updatedAt = $value;
+
+        return $this->mark('updatedAt');
+    }
+
+    public function readyAt(?DateTimeImmutable $value): self
+    {
+        $this->readyAt = $value;
+
+        return $this->mark('readyAt');
+    }
+
+    public function expiresAt(DateTimeImmutable $value): self
+    {
+        $this->expiresAt = $value;
+
+        return $this->mark('expiresAt');
+    }
+
+    public function cancelRequestedAt(?DateTimeImmutable $value): self
+    {
+        $this->cancelRequestedAt = $value;
+
+        return $this->mark('cancelRequestedAt');
+    }
+
+    public function httpDisposition(string $value): self
+    {
+        $this->httpDisposition = $value;
+
+        return $this->mark('httpDisposition');
+    }
+
+    public function pollAfterMs(?int $value): self
+    {
+        $this->pollAfterMs = $value;
+
+        return $this->mark('pollAfterMs');
+    }
 
     public function queued(): ReportRun
     {
@@ -106,7 +273,7 @@ final class ReportRunBuilder
         $sourceHash = $this->resolveRequired('sourceHash', $this->sourceHash, new Sha256Hash(str_repeat('c', 64)));
         $rowCount = $this->resolveRequired('rowCount', $this->rowCount, 0);
         $readyAt = $this->resolveRequired('readyAt', $this->readyAt, $this->updatedAt);
-        $metadata = $this->resolveRequired('resultMetadata', $this->resultMetadata, new ReportResultMetadata(new ReportSnapshotRef('report', 'snapshot', new ReportScope(1, [1], [], [], new DateTimeZone('UTC')), $this->definitionHash, $this->formulaVersion, $sourceHash, $readyAt, null, [], ReportSnapshotClassification::OPERATIONAL, null), $rowCount, $readyAt, null));
+        $metadata = $this->resolveRequired('resultMetadata', $this->resultMetadata, new ReportResultMetadata(new ReportSnapshotRef('report', 'snapshot', new ReportScope(1, [1], [], $this->emptyTypedResources(), new DateTimeZone('UTC')), $this->definitionHash, $this->formulaVersion, $sourceHash, $readyAt, null, [], ReportSnapshotClassification::OPERATIONAL, null), $rowCount, $readyAt, null));
         $quality = $this->resolveRequired('quality', $this->quality, new ReportQuality(ReportQualityStatus::COMPLETE, null, [], 0, ReportReconciliationStatus::MATCHED, [], []));
         $provenance = $this->resolveRequired('provenance', $this->provenance, new ReportProvenance('system', [new ReportSourceRef('system', 'report', 'snapshot', 'v1', 'watermark', $rowCount, $sourceHash)], $sourceHash, null));
         $freshness = $this->resolveRequired('freshness', $this->freshness, ReportFreshnessStatus::FRESH);
@@ -133,6 +300,11 @@ final class ReportRunBuilder
         }
 
         return null;
+    }
+
+    private function emptyTypedResources(): array
+    {
+        return [];
     }
 
     private function hasSealedIdentity(): bool

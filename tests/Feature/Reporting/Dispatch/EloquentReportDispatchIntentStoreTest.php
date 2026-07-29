@@ -141,7 +141,7 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
             'canonical_query_json' => '{}',
             'scope_holding_organization_ids' => [1],
             'scope_project_ids' => [],
-            'scope_resource_ids' => [],
+            'scope_resources' => [],
             'scope_timezone' => 'UTC',
             'filters' => [],
             'comparison' => [],
@@ -275,7 +275,7 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
             'canonical_query_json' => '{}',
             'scope_holding_organization_ids' => [1],
             'scope_project_ids' => [],
-            'scope_resource_ids' => [],
+            'scope_resources' => [],
             'scope_timezone' => 'UTC',
             'filters' => [],
             'comparison' => [],
@@ -352,7 +352,7 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
     private function store(): EloquentReportDispatchIntentStore
     {
         return new EloquentReportDispatchIntentStore(
-            new OutboxReportTransitionAudit(new EloquentReportAuditIntentStore()),
+            new OutboxReportTransitionAudit(new EloquentReportAuditIntentStore),
         );
     }
 }

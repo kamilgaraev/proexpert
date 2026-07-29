@@ -29,10 +29,15 @@ final readonly class TaskSevenProvenance
 final class PlanOneAEvidence
 {
     private const PHP = 'C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64/php.exe';
+
     private const PHP_DIR = 'C:/Users/kamilgaraev/AppData/Local/CodexToolchains/most-reports/php-8.2.29-nts-vs16-x64';
+
     private const PHP_SHA256 = 'f515db26936a2702886ca19523518556972fdf25dee699b78e1c78863a08b680';
+
     private const CANONICAL_BRANCH = 'feat/reports-canonical-backend';
+
     private const TASK_SEVEN_SUBJECT = 'feat[reports]: зафиксированы схемы ресурсов отчётности';
+
     private const TASK_SEVEN_PATHS = [
         'app/BusinessModules/Core/Reporting/Domain/DTO/ReportCatalogView.php',
         'app/BusinessModules/Core/Reporting/Domain/DTO/ReportSavedView.php',
@@ -56,10 +61,15 @@ final class PlanOneAEvidence
         'tests/Unit/Reporting/Http/ReportResourceSchemaTest.php',
         'tests/Unit/Reporting/Tooling/VerifyTaskSevenComposerTest.php',
     ];
+
     private const TASK_FOUR_A_SUBJECT = 'fix[reports]: зафиксировать классификацию и печать снимков';
+
     private const TASK_FOUR_A_COMMIT = '0b581469a3ad39d4ce5eff5c41072f5ef3f745f7';
+
     private const TASK_FOUR_A_PARENT = '786e5f3433d04baf35c81789178e1e83012e0916';
+
     private const TASK_FOUR_A_TREE = '5174bf55c4e13e76a2232fed4e4cb4745578e536';
+
     private const TASK_FOUR_A_PATHS = [
         'app/BusinessModules/Core/Reporting/Application/Access/ReportAccessService.php',
         'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunStore.php',
@@ -115,10 +125,15 @@ final class PlanOneAEvidence
         'tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php',
         'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
     ];
+
     private const TASK_FOUR_A2_SUBJECT = 'fix[reports]: типизировать нарушения идентичности снимков';
+
     private const TASK_FOUR_A2_PARENT = '973aabb17516c0ff9bc7d5a87b3ab6eb8732f333';
+
     private const TASK_FOUR_B_SUBJECT = 'feat[reports]: добавить надежную доставку заданий отчетов';
+
     private const TASK_FOUR_B_TREE = '26a315fb485828c66fcd3e9c9b1035f7b3e33800';
+
     private const TASK_FOUR_B_PATHS = [
         'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditDispatcher.php',
         'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportAuditIntentStore.php',
@@ -160,6 +175,7 @@ final class PlanOneAEvidence
         'tests/Unit/Reporting/Execution/ExecutionContractsTest.php',
         'tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php',
     ];
+
     private const TASK_FOUR_A2_PATHS = [
         'app/BusinessModules/Core/Reporting/Domain/DTO/ReportSnapshotRef.php',
         'app/BusinessModules/Core/Reporting/Domain/Enums/ReportSnapshotIdentityViolationReason.php',
@@ -178,7 +194,177 @@ final class PlanOneAEvidence
         'tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php',
         'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
     ];
+
     private const TASK_FOUR_A2_LINEAGE = ['Task 4a exact53', 'Task 4b exact39', 'Task 4a2 exact16'];
+
+    private const TASK_FOUR_E_SUBJECT = 'feat[reports]: типизировать ресурсы и текущую авторизацию';
+
+    private const TASK_FOUR_E_PARENT = '1934f947a44aa5221b5aa4cbd8c03963f5f1c005';
+
+    private const TASK_FOUR_A2_COMMIT = '7e216c18952a07f1d002220c8a8bdfefd1e84a36';
+
+    private const TASK_FOUR_A2_TREE = '95091c3598dc17bf55dda0d008c8562e2dbdd16f';
+
+    private const TASK_FOUR_C_SUBJECT = 'feat[reports]: реализовать операции и идентичность запуска';
+
+    private const TASK_FOUR_C_COMMIT = '8fb79f5c24697f5bc39e32ccf13287d528e94886';
+
+    private const TASK_FOUR_C_TREE = '79225dbc5cdb89ee53a2d8c49ed93e5db6942dfa';
+
+    private const TASK_FOUR_C_PATHS = [
+        'app/BusinessModules/Core/Reporting/Application/Actions/Handlers/CancelReportRunHandler.php',
+        'app/BusinessModules/Core/Reporting/Application/Actions/Handlers/CreateReportRunHandler.php',
+        'app/BusinessModules/Core/Reporting/Application/Actions/Handlers/GetReportRunHandler.php',
+        'app/BusinessModules/Core/Reporting/Application/Actions/Handlers/RetryReportRunHandler.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportSnapshotSealVerifier.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/CanonicalReportSourceHashBuilder.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportRunCoordinator.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportSnapshotSealValidator.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportSnapshotSealVerificationInput.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunStore.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Security/TrustedReportSnapshotSealVerifier.php',
+        'tests/Unit/Reporting/Actions/ReportRunHandlersTest.php',
+        'tests/Unit/Reporting/Execution/CanonicalReportSourceHashBuilderTest.php',
+        'tests/Unit/Reporting/Execution/ReportSnapshotSealValidatorTest.php',
+        'tests/Unit/Reporting/Execution/TrustedReportSnapshotSealVerifierTest.php',
+    ];
+
+    private const TASK_FOUR_D_SUBJECT = 'fix[reports]: закрепить аренду и контекст фонового запуска';
+
+    private const TASK_FOUR_D_TREE = 'e7c4019512649a39cd21c93588145761c63914f5';
+
+    private const TASK_FOUR_D_PATHS = [
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunStore.php',
+        'config/horizon.php',
+        'config/queue.php',
+        'database/migrations/2026_07_26_000004_add_report_run_execution_lineage.php',
+        'tests/Architecture/Reporting/ReportQueueRuntimeContractTest.php',
+        'tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php',
+    ];
+
+    private const TASK_FOUR_E_LINEAGE = [
+        'Task 4a exact53',
+        'Task 4b exact39',
+        'Task 4a2 exact16',
+        'Task 4c exact15',
+        'Task 4d exact6',
+        'Task 4e exact78',
+    ];
+
+    private const TASK_FOUR_E_PATHS = [
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportScopedResource.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/CurrentReportAuthorization.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/CurrentReportAuthorizationTarget.php',
+        'app/BusinessModules/Core/Reporting/Application/Access/ReportCatalogAuthorization.php',
+        'app/BusinessModules/Core/Reporting/Application/Access/ReportAuthorizationSubject.php',
+        'app/BusinessModules/Core/Reporting/Application/Access/ReportHttpAuthorizationOrchestrator.php',
+        'app/BusinessModules/Core/Reporting/Application/Access/CurrentReportAuthorizationFacts.php',
+        'app/BusinessModules/Core/Reporting/Application/Access/CurrentReportPermissionDecision.php',
+        'app/BusinessModules/Core/Reporting/Application/Access/ReportScopedResourceAccessDecision.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/CurrentReportScopeAuthorizer.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Access/ReportScopedResourceAuthorizer.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Access/CurrentReportAbacEvaluator.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Access/ReportAuthorizationSubjectReader.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Access/ReportHttpAuthorizationTargetResolver.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Access/LaravelReportScopedResourceAuthorizerRegistry.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Access/LaravelCurrentReportAbacEvaluator.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Access/LaravelReportHttpAuthorizationTargetResolver.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Execution/LaravelCurrentReportScopeAuthorizer.php',
+        'database/migrations/2026_07_29_000004_cut_over_report_scope_resources.php',
+        'tests/Unit/Reporting/Contracts/ReportScopedResourceContractTest.php',
+        'tests/Unit/Reporting/Execution/CurrentReportAuthorizationTargetTest.php',
+        'tests/Unit/Reporting/Access/ReportHttpAuthorizationOrchestratorTest.php',
+        'tests/Unit/Reporting/Access/ReportAuthorizationSubjectTest.php',
+        'tests/Unit/Reporting/Access/LaravelReportHttpAuthorizationTargetResolverTest.php',
+        'tests/Unit/Reporting/Access/ReportScopedResourceAuthorizerContractTest.php',
+        'tests/Unit/Reporting/Access/CurrentReportAuthorizationFactsTest.php',
+        'tests/Unit/Reporting/Access/CurrentReportPermissionDecisionTest.php',
+        'tests/Unit/Reporting/Access/ReportScopedResourceAccessDecisionTest.php',
+        'tests/Feature/Reporting/Access/LaravelCurrentReportAbacEvaluatorTest.php',
+        'tests/Feature/Reporting/Access/LaravelCurrentReportAbacEvaluatorBehaviorTest.php',
+        'tests/Feature/Reporting/Access/LaravelCurrentReportAbacEvaluatorRaceTest.php',
+        'tests/Feature/Reporting/Execution/LaravelCurrentReportScopeAuthorizerTest.php',
+        'tests/Feature/Reporting/Execution/LaravelCurrentReportScopeAuthorizationRaceTest.php',
+        'tests/Feature/Reporting/Persistence/ReportTypedResourceScopeCutoverMigrationTest.php',
+        'tests/Architecture/Reporting/ReportCurrentAuthorizationContractTest.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportCatalogController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRunController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportRowsController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportDrillDownController.php',
+        'app/BusinessModules/Core/Reporting/Http/Admin/Controllers/ReportExportController.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/GetReportCatalogAction.php',
+        'app/BusinessModules/Core/Reporting/Domain/DTO/ReportScope.php',
+        'app/BusinessModules/Core/Reporting/Domain/DTO/AuthorizationDecisionContext.php',
+        'app/BusinessModules/Core/Reporting/Application/Access/OrganizationReportScopeResolver.php',
+        'app/BusinessModules/Core/Reporting/Application/Access/ReportExecutionContextFactory.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunStore.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/ReportRunHydrator.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportDispatchIntentStore.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/Models/ReportRunRecord.php',
+        'tests/Feature/Reporting/Dispatch/EloquentReportDispatchIntentStoreTest.php',
+        'tests/Feature/Reporting/Persistence/EloquentReportRunStoreTest.php',
+        'tests/Support/Reporting/ReportExecutionContextBuilder.php',
+        'tests/Support/Reporting/ReportRunBuilder.php',
+        'tests/Support/Reporting/FakeReportingActions.php',
+        'tests/Unit/Reporting/Access/OrganizationReportScopeResolverTest.php',
+        'tests/Unit/Reporting/Contracts/ReportExecutionContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportProviderPortContractTest.php',
+        'tests/Unit/Reporting/Contracts/ReportWireDtoContractTest.php',
+        'tests/Unit/Reporting/Execution/CanonicalReportSourceHashBuilderTest.php',
+        'tests/Unit/Reporting/Execution/ReportSnapshotSealValidatorTest.php',
+        'tests/Unit/Reporting/Persistence/ReportRunHydratorTest.php',
+        'tests/Architecture/Reporting/PlanOneAHandoffContractTest.php',
+        'tests/Architecture/Reporting/PlanOneAScopeBoundaryTest.php',
+        'tests/Architecture/Reporting/ThinReportControllerTest.php',
+        'tests/Architecture/Reporting/ReportPortSignatureTest.php',
+        'tests/Unit/Reporting/Http/ReportControllerContractTest.php',
+        'tests/Feature/Api/V1/Admin/Reporting/ReportingAuthorizationMatrixTest.php',
+        'docs/reports/contracts/plan-1a-completion.schema.json',
+        'docs/reports/contracts/plan-1a-contract-lock.json',
+        'docs/reports/contracts/plan-1a-contract-lock.sha256',
+        'docs/reports/contracts/plan-1a-gate-evidence.schema.json',
+        'scripts/reporting/build-plan-1a-evidence.php',
+        'scripts/reporting/run-plan-1a-gates.php',
+        'tests/Architecture/Reporting/PlanOneBPlanOneAHandoffTest.php',
+        'tests/Fixtures/Reporting/Evidence/plan-1a-command-ledger.valid.json',
+        'tests/Fixtures/Reporting/Evidence/plan-1a-completion.valid.json',
+        'tests/Unit/Reporting/Tooling/BuildPlanOneAEvidenceTest.php',
+        'tests/Unit/Reporting/Tooling/RunPlanOneAGatesTest.php',
+    ];
+
+    private const TASK_FIVE_PATHS = [
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportProgressWritePolicy.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportAsyncContextSeed.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportExpiredExecutionLease.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportExecutionWatchdogSummary.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunAsyncContextSeedReader.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunLeaseRecoveryStore.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportRunAttemptLifecycleStore.php',
+        'app/BusinessModules/Core/Reporting/Application/Contracts/Execution/ReportExecutionTelemetry.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Execution/LaravelReportRunExecutionContextRehydrator.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunAsyncContextSeedReader.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunLeaseRecoveryStore.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Persistence/EloquentReportRunAttemptLifecycleStore.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Jobs/MaterializeReportRunJob.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Queue/LaravelReportMaterializationDispatcher.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Listeners/FinalizeFailedReportRunAttempt.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportRunExecutionWatchdog.php',
+        'app/BusinessModules/Core/Reporting/Application/Execution/ReportRunAttemptFinalizer.php',
+        'app/BusinessModules/Core/Reporting/Infrastructure/Console/ReconcileReportRunExecutionLeasesCommand.php',
+        'tests/Unit/Reporting/Execution/ReportProgressWritePolicyTest.php',
+        'tests/Unit/Reporting/Execution/ReportRunAsyncContextSeedReaderContractTest.php',
+        'tests/Unit/Reporting/Execution/ReportRunLeaseRecoveryStoreContractTest.php',
+        'tests/Unit/Reporting/Execution/ReportRunExecutionWatchdogTest.php',
+        'tests/Unit/Reporting/Execution/ReportRunAttemptFinalizerTest.php',
+        'tests/Unit/Reporting/Jobs/MaterializeReportRunJobTest.php',
+        'tests/Feature/Reporting/Persistence/EloquentReportRunAsyncContextSeedReaderTest.php',
+        'tests/Feature/Reporting/Persistence/EloquentReportRunLeaseRecoveryStoreTest.php',
+        'tests/Feature/Reporting/Persistence/EloquentReportRunAttemptLifecycleStoreTest.php',
+        'tests/Unit/Reporting/Execution/LaravelReportRunExecutionContextRehydratorTest.php',
+        'tests/Support/Reporting/PostgresProcessRaceHarness.php',
+        'tests/Architecture/Reporting/ReportQueueRuntimeContractTest.php',
+    ];
+
     private const TASK_FOUR_A2_REASONS = [
         'invalid_kind',
         'invalid_id',
@@ -186,13 +372,21 @@ final class PlanOneAEvidence
         'operational_seal_forbidden',
         'seal_time_invalid',
     ];
+
     private static ?Closure $faultOverride = null;
+
     private static ?Closure $phpHashOverride = null;
+
     private static ?Closure $phpVersionOverride = null;
+
     private static ?Closure $branchOverride = null;
+
     private static ?Closure $errorOverride = null;
+
     private static ?Closure $taskSevenRegenerationOverride = null;
+
     private static ?Closure $taskSevenProvenanceOverride = null;
+
     private static ?Closure $historicalPredicateOverride = null;
 
     private string $root;
@@ -203,7 +397,7 @@ final class PlanOneAEvidence
             $options = self::parse(array_slice($argv, 1));
             $instance = new self($options['repository-root']);
             $commit = $options['commit-sha'];
-            $mutating = !$options['check'];
+            $mutating = ! $options['check'];
             if ($mutating) {
                 $instance->ensureDirectory('build/reports');
             } else {
@@ -361,13 +555,14 @@ final class PlanOneAEvidence
         $values = ['mode' => $mode, 'check' => false];
         foreach ($arguments as $argument) {
             if ($argument === '--check') {
-                self::guard(!$values['check'], 2, 'PLAN_1A_EVIDENCE_CLI_INVALID');
+                self::guard(! $values['check'], 2, 'PLAN_1A_EVIDENCE_CLI_INVALID');
                 $values['check'] = true;
+
                 continue;
             }
             self::guard(str_starts_with($argument, '--') && str_contains($argument, '='), 2, 'PLAN_1A_EVIDENCE_CLI_INVALID');
             [$key, $value] = explode('=', substr($argument, 2), 2);
-            self::guard(in_array($key, ['repository-root', 'commit-sha', 'output'], true) && !isset($values[$key]), 2, 'PLAN_1A_EVIDENCE_CLI_INVALID');
+            self::guard(in_array($key, ['repository-root', 'commit-sha', 'output'], true) && ! isset($values[$key]), 2, 'PLAN_1A_EVIDENCE_CLI_INVALID');
             $values[$key] = $value;
         }
         foreach (['repository-root', 'commit-sha', 'output'] as $key) {
@@ -380,6 +575,7 @@ final class PlanOneAEvidence
             'completion' => 'build/reports/plan-1a-completion.json',
         ];
         self::guard($values['output'] === $paths[$mode], 2, 'PLAN_1A_EVIDENCE_OUTPUT_INVALID');
+
         return $values;
     }
 
@@ -387,7 +583,7 @@ final class PlanOneAEvidence
     {
         self::guard(trim($this->process(['git', 'rev-parse', 'HEAD'])) === $commit, 3, 'PLAN_1A_EVIDENCE_HEAD_MISMATCH');
         $provenance = $this->resolveTaskSevenOwner($commit);
-        [$evidence, $evidenceBytes] = $this->regenerateTaskSeven($provenance, !$check);
+        [$evidence, $evidenceBytes] = $this->regenerateTaskSeven($provenance, ! $check);
         $lock = [
             'plan' => '1a',
             'contract_version' => '1.0.0',
@@ -439,6 +635,7 @@ final class PlanOneAEvidence
                 'exception_message' => 'snapshot_identity_invalid',
                 'contract_command_counts' => ['tests' => 406, 'assertions' => 3356],
             ],
+            'task_4e' => self::taskFourEContract(),
             'composer_contract' => [
                 'root_constraint' => '^2.6',
                 'locked_opis_version' => '2.6.0',
@@ -475,7 +672,7 @@ final class PlanOneAEvidence
     {
         self::guard(trim($this->process(['git', 'rev-parse', 'HEAD'])) === $commit, 3, 'PLAN_1A_EVIDENCE_HEAD_MISMATCH');
         $provenance = $this->resolveTaskSevenOwner($commit);
-        [$evidence, $bytes] = $this->regenerateTaskSeven($provenance, !$check);
+        [$evidence, $bytes] = $this->regenerateTaskSeven($provenance, ! $check);
         if ($check) {
             self::guard(is_array($evidence), 4, 'PLAN_1A_TASK_7_EVIDENCE_INVALID');
         } else {
@@ -490,7 +687,7 @@ final class PlanOneAEvidence
         [$lockBytes, $lock] = $this->readValidatedLock();
         $provenance = $this->resolveTaskSevenOwner($commit);
         $this->fault('completion_after_provenance');
-        [$taskSeven, $taskSevenBytes] = $this->regenerateTaskSeven($provenance, !$check);
+        [$taskSeven, $taskSevenBytes] = $this->regenerateTaskSeven($provenance, ! $check);
         $this->fault('completion_after_task7');
         $this->validateTaskSevenLockBinding($lock, $taskSeven, $taskSevenBytes);
 
@@ -545,10 +742,22 @@ final class PlanOneAEvidence
                     'artifact_sha256' => hash('sha256', $malformedBytes),
                 ],
             ],
+            'task_4e' => [
+                'subject' => self::TASK_FOUR_E_SUBJECT,
+                'parent_commit_sha' => self::TASK_FOUR_E_PARENT,
+                'commit_sha' => $commit,
+                'lineage' => self::TASK_FOUR_E_LINEAGE,
+                'manifest_count' => count(self::TASK_FOUR_E_PATHS),
+                'authorization_matrices' => self::taskFourEMatrixInventories(),
+                'ownership_audit' => self::taskFourEOwnershipAudit(),
+                'migration_cutover' => 'static_contract_passed_not_executed_locally',
+                'untyped_compatibility_absent' => true,
+                'request_global_authority_absent' => true,
+            ],
         ];
         $bytes = self::encode($completion);
         $this->validateSchema($bytes, 'docs/reports/contracts/plan-1a-completion.schema.json');
-        if (!$check) {
+        if (! $check) {
             $this->publishGroup([$this->root.'/'.$output => $bytes]);
         }
         fwrite(STDOUT, 'plan-1a-completion: passed digests=5 commands=2 authorization=22/22 malformed=20/20'.PHP_EOL);
@@ -569,6 +778,7 @@ final class PlanOneAEvidence
         $lock = json_decode($bytes, true, 512, JSON_THROW_ON_ERROR);
         self::guard(is_array($lock), 4, 'PLAN_1A_LOCK_INVALID');
         $this->validateTaskFourA2Lock($lock);
+        $this->validateTaskFourELock($lock);
 
         return [$bytes, $lock];
     }
@@ -590,6 +800,7 @@ final class PlanOneAEvidence
                 'route_contract',
                 'task_4a',
                 'task_4a2',
+                'task_4e',
                 'composer_contract',
             ]
                 && is_array($taskFourA)
@@ -617,6 +828,212 @@ final class PlanOneAEvidence
             4,
             'PLAN_1A_TASK_4A2_LOCK_INVALID',
         );
+    }
+
+    private function validateTaskFourELock(array $lock): void
+    {
+        self::guard(
+            ($lock['task_4e'] ?? null) === self::taskFourEContract(),
+            4,
+            'PLAN_1A_TASK_4E_LOCK_INVALID',
+        );
+    }
+
+    private static function taskFourEContract(): array
+    {
+        return [
+            'subject' => self::TASK_FOUR_E_SUBJECT,
+            'parent_commit_sha' => self::TASK_FOUR_E_PARENT,
+            'tracked_paths' => self::TASK_FOUR_E_PATHS,
+            'lineage' => self::TASK_FOUR_E_LINEAGE,
+            'typed_resources' => [
+                'constructor' => ['kind', 'id', 'projectId'],
+                'canonical_projection' => ['kind', 'id', 'project_id'],
+                'scope_key' => 'resources',
+            ],
+            'typed_decisions' => [
+                'permission' => 'CurrentReportPermissionDecision',
+                'resource' => 'ReportScopedResourceAccessDecision',
+                'authorization' => 'CurrentReportAuthorization',
+            ],
+            'queue_authorization' => [
+                'method' => 'authorizeExact',
+                'result' => 'CurrentReportAuthorization',
+                'transaction_isolation' => 'REPEATABLE READ',
+                'uncached' => true,
+                'atomic_visibility_bits' => 7,
+            ],
+            'prohibitions' => [
+                'resourceIds',
+                'resource_ids',
+                'scope_resource_ids',
+                'allowed_resource_ids',
+                'request',
+                'auth',
+                'Request',
+                'Cache',
+                'boolean_resource_proof',
+                'void_resource_proof',
+                'wildcard_resource_handler',
+            ],
+            'migration_cutover' => [
+                'driver' => 'pgsql',
+                'transactional' => true,
+                'lock' => 'ACCESS EXCLUSIVE',
+                'legacy_precondition' => 'exact_empty_array',
+                'typed_column' => 'scope_resources',
+                'legacy_column_removed' => true,
+                'rollback_atomic' => true,
+            ],
+            'resource_registry' => [
+                'empty_registry_empty_scope' => 'allowed',
+                'empty_registry_non_empty_scope' => 'denied',
+                'dispatch' => 'exact_kind',
+                'unknown_kind' => 'denied',
+                'identity_mismatch' => 'denied',
+            ],
+            'authorization_matrices' => array_map(
+                static fn (array $cases): int => count($cases),
+                self::taskFourEMatrixInventories(),
+            ),
+            'ownership_audit' => self::taskFourEOwnershipAudit(),
+        ];
+    }
+
+    private static function taskFourEOwnershipAudit(): array
+    {
+        $taskFourE = array_values(array_unique(self::TASK_FOUR_E_PATHS));
+        $taskFive = array_values(array_unique(self::TASK_FIVE_PATHS));
+        $overlap = array_values(array_intersect($taskFourE, $taskFive));
+        $union = array_values(array_unique([...$taskFourE, ...$taskFive]));
+        self::guard(
+            count($taskFourE) === 78
+                && count($taskFive) === 30
+                && count($union) === 108
+                && $overlap === [],
+            4,
+            'PLAN_1A_TASK_4E_OWNERSHIP_INVALID',
+        );
+
+        return [
+            'task_4e' => 78,
+            'task_5' => 30,
+            'union' => 108,
+            'overlap' => 0,
+            'unowned' => 0,
+            'extra' => 0,
+        ];
+    }
+
+    private static function taskFourEMatrixInventories(): array
+    {
+        $scopeClass = Tests\Feature\Reporting\Execution\LaravelCurrentReportScopeAuthorizerTest::class;
+        $scopeMethods = self::declaredTestMethods($scopeClass);
+        $organizationStart = array_search('test_inactive_actor_is_denied', $scopeMethods, true);
+        $organizationEnd = array_search(
+            'test_child_access_is_inherited_only_through_current_holding_parent',
+            $scopeMethods,
+            true,
+        );
+        $projectStart = array_search(
+            'test_all_project_mode_includes_every_accessible_active_project',
+            $scopeMethods,
+            true,
+        );
+        $projectEnd = array_search(
+            'test_newly_accessible_unrelated_project_does_not_widen_exact_scope',
+            $scopeMethods,
+            true,
+        );
+        self::guard(
+            is_int($organizationStart)
+                && is_int($organizationEnd)
+                && is_int($projectStart)
+                && is_int($projectEnd),
+            4,
+            'PLAN_1A_TASK_4E_MATRIX_PROVIDER_INVALID',
+        );
+
+        return [
+            'organization_scope' => array_slice(
+                $scopeMethods,
+                $organizationStart,
+                $organizationEnd - $organizationStart + 1,
+            ),
+            'project_scope' => array_slice(
+                $scopeMethods,
+                $projectStart,
+                $projectEnd - $projectStart + 1,
+            ),
+            'current_abac' => self::expandedTestInventory(
+                Tests\Feature\Reporting\Access\LaravelCurrentReportAbacEvaluatorBehaviorTest::class,
+                ['test_closed_abac_behavior_matrix'],
+            ),
+            'typed_resources' => self::expandedTestInventory(
+                Tests\Unit\Reporting\Access\ReportScopedResourceAuthorizerContractTest::class,
+            ),
+            'repeatable_read_races' => [
+                ...self::expandedTestInventory(
+                    Tests\Feature\Reporting\Execution\LaravelCurrentReportScopeAuthorizationRaceTest::class,
+                    [
+                        'test_membership_revocation_after_snapshot_affects_only_next_authorization',
+                        'test_project_assignment_revocation_after_snapshot_affects_only_next_authorization',
+                        'test_holding_child_reparent_after_snapshot_affects_only_next_authorization',
+                        'test_resource_transfer_after_snapshot_cannot_mix_with_new_permission_facts',
+                    ],
+                ),
+                ...self::expandedTestInventory(
+                    Tests\Feature\Reporting\Access\LaravelCurrentReportAbacEvaluatorRaceTest::class,
+                ),
+            ],
+        ];
+    }
+
+    private static function declaredTestMethods(string $class): array
+    {
+        $reflection = new ReflectionClass($class);
+        $methods = array_filter(
+            $reflection->getMethods(ReflectionMethod::IS_PUBLIC),
+            static fn (ReflectionMethod $method): bool => $method->getDeclaringClass()->getName() === $class
+                && str_starts_with($method->getName(), 'test_'),
+        );
+        usort(
+            $methods,
+            static fn (ReflectionMethod $left, ReflectionMethod $right): int => $left->getStartLine() <=> $right->getStartLine(),
+        );
+
+        return array_map(static fn (ReflectionMethod $method): string => $method->getName(), $methods);
+    }
+
+    private static function expandedTestInventory(string $class, ?array $selectedMethods = null): array
+    {
+        $reflection = new ReflectionClass($class);
+        $methods = $selectedMethods ?? self::declaredTestMethods($class);
+        $inventory = [];
+        foreach ($methods as $methodName) {
+            self::guard($reflection->hasMethod($methodName), 4, 'PLAN_1A_TASK_4E_MATRIX_PROVIDER_INVALID');
+            $method = $reflection->getMethod($methodName);
+            $attributes = $method->getAttributes(PHPUnit\Framework\Attributes\DataProvider::class);
+            if ($attributes === []) {
+                $inventory[] = $methodName;
+
+                continue;
+            }
+            self::guard(count($attributes) === 1, 4, 'PLAN_1A_TASK_4E_MATRIX_PROVIDER_INVALID');
+            $arguments = $attributes[0]->getArguments();
+            $provider = $arguments[0] ?? null;
+            self::guard(is_string($provider) && $reflection->hasMethod($provider), 4, 'PLAN_1A_TASK_4E_MATRIX_PROVIDER_INVALID');
+            $provided = $reflection->getMethod($provider)->invoke(null);
+            self::guard(is_array($provided) || $provided instanceof Traversable, 4, 'PLAN_1A_TASK_4E_MATRIX_PROVIDER_INVALID');
+            $datasets = is_array($provided) ? $provided : iterator_to_array($provided);
+            foreach (array_keys($datasets) as $dataset) {
+                $inventory[] = $methodName.'::'.(string) $dataset;
+            }
+        }
+
+        self::guard($inventory !== [] && count($inventory) === count(array_unique($inventory)), 4, 'PLAN_1A_TASK_4E_MATRIX_PROVIDER_INVALID');
+
+        return $inventory;
     }
 
     private function validateTaskSevenLockBinding(array $lock, array $taskSeven, string $taskSevenBytes): void
@@ -657,7 +1074,7 @@ final class PlanOneAEvidence
         }
         $existingBytes = is_file($output) ? (string) file_get_contents($output) : null;
         $existingMtime = is_file($output) ? filemtime($output) : null;
-        if (!is_dir(dirname($output))) {
+        if (! is_dir(dirname($output))) {
             self::guard($write && mkdir(dirname($output), 0777, true), 4, 'PLAN_1A_TASK_7_OUTPUT_CREATE_FAILED');
         }
         $arguments = [
@@ -682,7 +1099,7 @@ final class PlanOneAEvidence
             clearstatcache(true, $output);
             self::guard(
                 $existingBytes === null
-                    ? !file_exists($output)
+                    ? ! file_exists($output)
                     : is_file($output)
                         && hash_equals($existingBytes, (string) file_get_contents($output))
                         && $existingMtime === filemtime($output),
@@ -719,13 +1136,14 @@ final class PlanOneAEvidence
             'added_packages',
             'content_hash',
         ], 4, 'PLAN_1A_TASK_7_EVIDENCE_SHAPE_INVALID');
+
         return [$evidence, $bytes];
     }
 
     private function trailers(string $body): array
     {
         $directory = $this->root.'/build/reports';
-        if (!is_dir($directory)) {
+        if (! is_dir($directory)) {
             self::guard(mkdir($directory, 0777, true), 3, 'PLAN_1A_TASK_7_TRAILER_PARSE_FAILED');
         }
         $temporary = $this->temporaryPath($directory, 'trailers');
@@ -742,7 +1160,7 @@ final class PlanOneAEvidence
         }
         $result = [];
         foreach (preg_split('/\R/', trim($process->getOutput())) ?: [] as $line) {
-            if ($line === '' || !str_contains($line, ':')) {
+            if ($line === '' || ! str_contains($line, ':')) {
                 continue;
             }
             [$key, $value] = explode(':', $line, 2);
@@ -775,7 +1193,7 @@ final class PlanOneAEvidence
     {
         $data = json_decode($bytes, false, 512, JSON_THROW_ON_ERROR);
         $schema = json_decode((string) file_get_contents($this->root.'/'.$schemaPath), false, 512, JSON_THROW_ON_ERROR);
-        self::guard((new CompliantValidator())->validate($data, $schema)->isValid(), 3, 'PLAN_1A_EVIDENCE_SCHEMA_INVALID');
+        self::guard((new CompliantValidator)->validate($data, $schema)->isValid(), 3, 'PLAN_1A_EVIDENCE_SCHEMA_INVALID');
     }
 
     private function gitBytes(string $commit, string $path): string
@@ -933,17 +1351,19 @@ final class PlanOneAEvidence
         $working = array_values(array_unique([...$unstaged, ...$untracked]));
         sort($working, SORT_STRING);
         if ($mode === 'contract-lock') {
+            $taskFourEPaths = self::TASK_FOUR_E_PATHS;
+            sort($taskFourEPaths, SORT_STRING);
             $preGenerationPaths = array_values(array_filter(
-                self::TASK_FOUR_A2_PATHS,
-                static fn (string $path): bool => !in_array($path, [
+                $taskFourEPaths,
+                static fn (string $path): bool => ! in_array($path, [
                     'docs/reports/contracts/plan-1a-contract-lock.json',
                     'docs/reports/contracts/plan-1a-contract-lock.sha256',
                 ], true),
             ));
             self::guard(
-                $commit === self::TASK_FOUR_A2_PARENT
-                    && (($staged === [] && ($working === $preGenerationPaths || $working === self::TASK_FOUR_A2_PATHS))
-                        || ($staged === self::TASK_FOUR_A2_PATHS && $working === [])),
+                $commit === self::TASK_FOUR_E_PARENT
+                    && (($staged === [] && ($working === $preGenerationPaths || $working === $taskFourEPaths))
+                        || ($staged === $taskFourEPaths && $working === [])),
                 3,
                 'PLAN_1A_EVIDENCE_PRECOMMIT_STATE_INVALID',
             );
@@ -952,13 +1372,40 @@ final class PlanOneAEvidence
             return;
         }
         self::guard($staged === [] && $working === [], 3, 'PLAN_1A_EVIDENCE_WORKTREE_DIRTY');
-        $this->validateCanonicalTaskFourA2Commit($commit);
+        $this->validateCanonicalTaskFourECommit($commit);
     }
 
     private function validateHistoricalTaskLineage(): void
     {
         $this->validateHistoricalTaskFourACommit(self::TASK_FOUR_A_COMMIT);
         $this->validateHistoricalTaskFourBCommit(self::TASK_FOUR_A2_PARENT);
+        $this->validateHistoricalCommit(
+            self::TASK_FOUR_A2_COMMIT,
+            self::TASK_FOUR_A2_COMMIT,
+            self::TASK_FOUR_A2_PARENT,
+            self::TASK_FOUR_A2_TREE,
+            self::TASK_FOUR_A2_SUBJECT,
+            self::TASK_FOUR_A2_PATHS,
+            'PLAN_1A_EVIDENCE_TASK_4A2_HISTORY',
+        );
+        $this->validateHistoricalCommit(
+            self::TASK_FOUR_C_COMMIT,
+            self::TASK_FOUR_C_COMMIT,
+            self::TASK_FOUR_A2_COMMIT,
+            self::TASK_FOUR_C_TREE,
+            self::TASK_FOUR_C_SUBJECT,
+            self::TASK_FOUR_C_PATHS,
+            'PLAN_1A_EVIDENCE_TASK_4C_HISTORY',
+        );
+        $this->validateHistoricalCommit(
+            self::TASK_FOUR_E_PARENT,
+            self::TASK_FOUR_E_PARENT,
+            self::TASK_FOUR_C_COMMIT,
+            self::TASK_FOUR_D_TREE,
+            self::TASK_FOUR_D_SUBJECT,
+            self::TASK_FOUR_D_PATHS,
+            'PLAN_1A_EVIDENCE_TASK_4D_HISTORY',
+        );
     }
 
     private function validateHistoricalTaskFourACommit(string $commit): void
@@ -1051,6 +1498,25 @@ final class PlanOneAEvidence
         }
     }
 
+    private function validateCanonicalTaskFourECommit(string $commit): void
+    {
+        $this->validateHistoricalTaskLineage();
+        self::guard(trim($this->process(['git', 'show', '-s', '--format=%s', $commit])) === self::TASK_FOUR_E_SUBJECT, 3, 'PLAN_1A_EVIDENCE_TASK_4E_SUBJECT_INVALID');
+        $parents = preg_split('/\s+/', trim($this->process(['git', 'show', '-s', '--format=%P', $commit]))) ?: [];
+        self::guard($parents === [self::TASK_FOUR_E_PARENT], 3, 'PLAN_1A_EVIDENCE_TASK_4E_PARENT_INVALID');
+        $expectedPaths = self::TASK_FOUR_E_PATHS;
+        sort($expectedPaths, SORT_STRING);
+        self::guard($this->changedPaths($commit) === $expectedPaths, 3, 'PLAN_1A_EVIDENCE_TASK_4E_PATHS_INVALID');
+        foreach (self::TASK_FOUR_E_PATHS as $path) {
+            $gitBytes = $this->gitBytes($commit, $path);
+            self::guard(
+                is_file($this->root.'/'.$path) && hash_equals(hash('sha256', $gitBytes), hash_file('sha256', $this->root.'/'.$path)),
+                3,
+                'PLAN_1A_EVIDENCE_TASK_4E_BYTES_INVALID',
+            );
+        }
+    }
+
     private function gitPaths(array $arguments): array
     {
         $paths = array_values(array_filter(explode("\0", $this->process(['git', ...$arguments])), static fn (string $path): bool => $path !== ''));
@@ -1065,10 +1531,10 @@ final class PlanOneAEvidence
         $current = $this->root;
         foreach ($segments as $segment) {
             $current .= '/'.$segment;
-            if (!file_exists($current)) {
+            if (! file_exists($current)) {
                 self::guard(mkdir($current, 0777), 6, 'PLAN_1A_EVIDENCE_OUTPUT_CREATE_FAILED');
             }
-            self::guard(is_dir($current) && !is_link($current), 2, 'PLAN_1A_EVIDENCE_OUTPUT_PATH_INVALID');
+            self::guard(is_dir($current) && ! is_link($current), 2, 'PLAN_1A_EVIDENCE_OUTPUT_PATH_INVALID');
             self::guard(
                 strcasecmp(str_replace('\\', '/', (string) realpath($current)), str_replace('\\', '/', $current)) === 0,
                 2,
@@ -1084,7 +1550,7 @@ final class PlanOneAEvidence
         $current = $this->root;
         foreach (explode('/', $relative) as $segment) {
             $current .= '/'.$segment;
-            self::guard(is_dir($current) && !is_link($current), 2, 'PLAN_1A_EVIDENCE_OUTPUT_PATH_INVALID');
+            self::guard(is_dir($current) && ! is_link($current), 2, 'PLAN_1A_EVIDENCE_OUTPUT_PATH_INVALID');
             self::guard(
                 strcasecmp(str_replace('\\', '/', (string) realpath($current)), str_replace('\\', '/', $current)) === 0,
                 2,
@@ -1097,7 +1563,7 @@ final class PlanOneAEvidence
 
     private function temporaryPath(string $directory, string $purpose): string
     {
-        self::guard(is_dir($directory) && !is_link($directory), 2, 'PLAN_1A_EVIDENCE_OUTPUT_PATH_INVALID');
+        self::guard(is_dir($directory) && ! is_link($directory), 2, 'PLAN_1A_EVIDENCE_OUTPUT_PATH_INVALID');
         for ($attempt = 0; $attempt < 10; $attempt++) {
             $path = $directory.'/.plan-1a-'.$purpose.'-'.bin2hex(random_bytes(8)).'.tmp';
             $handle = @fopen($path, 'x+b');
@@ -1128,7 +1594,7 @@ final class PlanOneAEvidence
 
     private static function guard(bool $condition, int $exit, string $message): void
     {
-        if (!$condition) {
+        if (! $condition) {
             throw new PlanOneAEvidenceFailure($exit, $message);
         }
     }
