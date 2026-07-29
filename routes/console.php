@@ -7,6 +7,21 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 
+Schedule::command('reports:audit-intents:deliver')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onOneServer();
+
+Schedule::command('reports:retention:expire')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onOneServer();
+
+Schedule::command('reports:retention:delete-artifacts')
+    ->hourly()
+    ->withoutOverlapping(30)
+    ->onOneServer();
+
 Schedule::command('commercial:process-renewals --limit=100')
     ->everyMinute()
     ->timezone('Europe/Moscow')
