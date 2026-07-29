@@ -10,7 +10,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
 use App\BusinessModules\Features\ScheduleManagement\Models\ScheduleBaselineVersion;
-use App\BusinessModules\Features\ScheduleManagement\Reporting\Models\ScheduleTaskStateVersion;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\HistoricalScheduleTaskStateQuery;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Support\Reporting\ReportSourceReadinessFactory;
@@ -19,6 +19,7 @@ final readonly class BaselineScheduleVarianceReadinessProbe implements ReportSou
 {
     public function __construct(
         private ReportSourceReadinessFactory $readiness,
+        private HistoricalScheduleTaskStateQuery $historicalTasks,
     ) {}
 
     public function supports(ReportDefinition $definition): bool
@@ -36,25 +37,46 @@ final readonly class BaselineScheduleVarianceReadinessProbe implements ReportSou
         ReportExecutionContext $context,
         ReportQuery $query,
     ): ReportSourceReadiness {
-        $tasks = ScheduleTask::withTrashed()
+        $projectIds = array_values(array_intersect(
+            $context->scope->projectIds,
+            $this->positiveIntegerFilter($query, 'project_ids') ?: $context->scope->projectIds,
+        ));
+        $scheduleFilter = $this->positiveIntegerFilter($query, 'schedule_ids');
+        $candidateSchedules = ProjectSchedule::query()
             ->where('organization_id', $context->scope->organizationId)
             ->where('created_at', '<=', $query->asOf)
-            ->whereHas('schedule', fn ($builder) => $builder
-                ->whereIn('project_id', $context->scope->projectIds)
-                ->where('is_template', false))
+            ->whereIn('project_id', $projectIds)
+            ->where('is_template', false)
+            ->when($scheduleFilter !== [], fn ($builder) => $builder->whereIn('id', $scheduleFilter))
+            ->orderBy('id')
+            ->get(['id']);
+        $scheduleIds = $candidateSchedules->pluck('id')->map('intval')->all();
+        $allStates = $projectIds === []
+            ? collect()
+            : $this->historicalTasks
+                ->latestForProjects($context->scope->organizationId, $projectIds, $query->asOf)
+                ->whereIn('scheduleId', $scheduleIds);
+        $allTasks = ScheduleTask::withTrashed()
+            ->where('organization_id', $context->scope->organizationId)
+            ->where('created_at', '<=', $query->asOf)
+            ->whereIn('schedule_id', $scheduleIds)
             ->orderBy('id')
             ->get(['id', 'schedule_id']);
-        $states = ScheduleTaskStateVersion::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->whereIn('project_id', $context->scope->projectIds)
-            ->where('effective_at', '<=', $query->asOf)
-            ->whereIn('task_id', $tasks->pluck('id'))
-            ->orderBy('task_id')
-            ->orderByDesc('effective_at')
-            ->orderByDesc('version')
-            ->get()
-            ->unique('task_id')
-            ->keyBy('task_id');
+        $allStatesByTask = $allStates->keyBy('taskId');
+        $selectedStates = $allStates
+            ->filter(fn ($state): bool => $this->matchesTaskFilters($query, $state))
+            ->values();
+        $selectedStateIds = $selectedStates
+            ->pluck('taskId')
+            ->map('intval')
+            ->all();
+        $tasks = $allTasks->filter(
+            fn (ScheduleTask $task): bool => ! $allStatesByTask->has((int) $task->id)
+                || in_array((int) $task->id, $selectedStateIds, true),
+        );
+        $states = $allStatesByTask;
+        $selectedScheduleIds = $selectedStates->pluck('scheduleId')->map('intval')->unique()->values()->all();
+        $schedules = $candidateSchedules->whereIn('id', $selectedScheduleIds)->values();
         $eligible = [];
         $projected = [];
         $gapCount = 0;
@@ -71,21 +93,15 @@ final readonly class BaselineScheduleVarianceReadinessProbe implements ReportSou
             }
             $projected[] = [
                 'kind' => 'schedule_task_state',
-                'source_hash' => (string) $state->source_hash,
+                'source_hash' => $state->sourceHash,
                 'source_id' => (int) $task->id,
             ];
         }
 
-        $schedules = ProjectSchedule::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->whereIn('project_id', $context->scope->projectIds)
-            ->where('is_template', false)
-            ->where('created_at', '<=', $query->asOf)
-            ->orderBy('id')
-            ->get(['id']);
         $baselines = ScheduleBaselineVersion::query()
             ->where('organization_id', $context->scope->organizationId)
-            ->whereIn('project_id', $context->scope->projectIds)
+            ->whereIn('project_id', $projectIds)
+            ->whereIn('schedule_id', $selectedScheduleIds)
             ->where('captured_at', '<=', $query->asOf)
             ->orderBy('schedule_id')
             ->orderByDesc('version')
@@ -117,5 +133,45 @@ final readonly class BaselineScheduleVarianceReadinessProbe implements ReportSou
         ]);
 
         return $this->readiness->make($eligible, $projected, $gapCount, 0, $watermark);
+    }
+
+    private function matchesTaskFilters(ReportQuery $query, object $state): bool
+    {
+        $values = $query->filters->values;
+
+        return $this->matches($values['task_ids'] ?? [], $state->taskId)
+            && $this->matches($values['wbs_ids'] ?? [], $state->wbsCode)
+            && $this->matches($values['owner_ids'] ?? [], $state->ownerId)
+            && $this->matches($values['contractor_ids'] ?? [], $state->contractorId)
+            && $this->matches($values['statuses'] ?? [], $state->status)
+            && (! array_key_exists('critical', $values) || (bool) $values['critical'] === $state->critical);
+    }
+
+    private function positiveIntegerFilter(ReportQuery $query, string $key): array
+    {
+        $values = $query->filters->values[$key] ?? [];
+        if ($values === []) {
+            return [];
+        }
+        if (! is_array($values) || ! array_is_list($values)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(
+            array_map('intval', $values),
+            static fn (int $value): bool => $value > 0,
+        )));
+    }
+
+    private function matches(mixed $filter, int|string|null $value): bool
+    {
+        if ($filter === []) {
+            return true;
+        }
+
+        return is_array($filter)
+            && array_is_list($filter)
+            && $value !== null
+            && in_array((string) $value, array_map('strval', $filter), true);
     }
 }

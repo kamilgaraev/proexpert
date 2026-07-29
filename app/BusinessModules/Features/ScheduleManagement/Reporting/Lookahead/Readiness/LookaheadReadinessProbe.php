@@ -10,9 +10,10 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
 use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
+use App\BusinessModules\Features\ScheduleManagement\Reporting\HistoricalScheduleTaskStateQuery;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\WorkConstraintTransitionEvent;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadReadinessPolicyService;
-use App\BusinessModules\Features\ScheduleManagement\Reporting\Models\ScheduleTaskStateVersion;
+use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Support\Reporting\ReportSourceReadinessFactory;
 use InvalidArgumentException;
@@ -22,8 +23,8 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
     public function __construct(
         private LookaheadReadinessPolicyService $policies,
         private ReportSourceReadinessFactory $readiness,
-    ) {
-    }
+        private HistoricalScheduleTaskStateQuery $historicalTasks,
+    ) {}
 
     public function supports(ReportDefinition $definition): bool
     {
@@ -43,13 +44,17 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
         $eligible = [];
         $projected = [];
         $gapCount = 0;
+        $projectIds = array_values(array_intersect(
+            $context->scope->projectIds,
+            $this->positiveIntegerFilter($query, 'project_ids') ?: $context->scope->projectIds,
+        ));
         try {
             $policySet = $this->policies->activeForProjects(
                 $context->scope->organizationId,
-                $context->scope->projectIds,
+                $projectIds,
                 $query->asOf,
             );
-            foreach ($context->scope->projectIds as $projectId) {
+            foreach ($projectIds as $projectId) {
                 $policy = $policySet->forProject($projectId);
                 $eligible[] = ['kind' => 'policy', 'project_id' => $projectId];
                 $projected[] = [
@@ -59,45 +64,66 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
                 ];
             }
         } catch (InvalidArgumentException) {
-            foreach ($context->scope->projectIds as $projectId) {
+            foreach ($projectIds as $projectId) {
                 $eligible[] = ['kind' => 'policy', 'project_id' => $projectId];
                 $gapCount++;
             }
         }
 
+        $scheduleIds = ProjectSchedule::query()
+            ->where('organization_id', $context->scope->organizationId)
+            ->whereIn('project_id', $projectIds)
+            ->where('is_template', false)
+            ->pluck('id')
+            ->map('intval')
+            ->all();
+        $allStates = $projectIds === []
+            ? collect()
+            : $this->historicalTasks
+                ->latestForProjects($context->scope->organizationId, $projectIds, $query->asOf)
+                ->whereIn('scheduleId', $scheduleIds);
+        $allTasks = ScheduleTask::withTrashed()
+            ->where('organization_id', $context->scope->organizationId)
+            ->where('created_at', '<=', $query->asOf)
+            ->whereIn('schedule_id', $scheduleIds)
+            ->orderBy('id')
+            ->get(['id']);
+        $allStatesByTask = $allStates->keyBy('taskId');
+        $selectedStates = $allStates
+            ->filter(fn ($state): bool => $state->active && $this->matchesTaskFilters($query, $state));
+        $selectedTaskIds = $selectedStates->pluck('taskId')->map('intval')->all();
+        $missingTaskIds = $allTasks
+            ->reject(fn (ScheduleTask $task): bool => $allStatesByTask->has((int) $task->id))
+            ->pluck('id')
+            ->map('intval')
+            ->all();
+
         $constraints = WorkConstraint::withTrashed()
             ->where('organization_id', $context->scope->organizationId)
-            ->whereIn('project_id', $context->scope->projectIds)
+            ->whereIn('schedule_task_id', $selectedTaskIds)
             ->where('created_at', '<=', $query->asOf)
             ->orderBy('id')
             ->get();
         foreach ($constraints as $constraint) {
-            $eligible[] = [
-                'created_at' => $constraint->created_at?->format(DATE_ATOM),
-                'kind' => 'constraint',
-                'overridden_at' => $constraint->overridden_at?->format(DATE_ATOM),
-                'resolved_at' => $constraint->resolved_at?->format(DATE_ATOM),
-                'source_id' => (int) $constraint->id,
-                'status' => (string) $constraint->status,
-            ];
             $events = WorkConstraintTransitionEvent::query()
                 ->where('organization_id', $context->scope->organizationId)
                 ->where('constraint_id', $constraint->id)
                 ->where('occurred_at', '<=', $query->asOf)
                 ->orderBy('event_version')
                 ->get();
-            $requiresFinal = (string) $constraint->status !== 'open'
-                && (
-                    ($constraint->resolved_at !== null && $constraint->resolved_at->lessThanOrEqualTo($query->asOf))
-                    || ($constraint->overridden_at !== null
-                        && $constraint->overridden_at->lessThanOrEqualTo($query->asOf))
-                );
-            $currentStateUnproven = (string) $constraint->status !== 'open'
-                && $constraint->resolved_at === null
-                && $constraint->overridden_at === null
-                && $events->count() < 2;
-            if ($events->isEmpty() || ($requiresFinal && $events->count() < 2) || $currentStateUnproven) {
+            $latest = $events->last();
+            if ($latest !== null && ! $this->matchesConstraintFilters($query, $latest)) {
+                continue;
+            }
+            $eligible[] = [
+                'created_at' => $constraint->created_at?->format(DATE_ATOM),
+                'kind' => 'constraint',
+                'source_id' => (int) $constraint->id,
+            ];
+            $requiresFinal = $latest !== null && (string) $latest->to_status !== 'open';
+            if ($events->isEmpty() || ($requiresFinal && $events->count() < 2)) {
                 $gapCount++;
+
                 continue;
             }
             $projected[] = [
@@ -107,36 +133,18 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
             ];
         }
 
-        $tasks = ScheduleTask::withTrashed()
-            ->where('organization_id', $context->scope->organizationId)
-            ->where('created_at', '<=', $query->asOf)
-            ->whereHas('schedule', fn ($builder) => $builder
-                ->whereIn('project_id', $context->scope->projectIds)
-                ->where('is_template', false))
-            ->orderBy('id')
-            ->get(['id']);
-        $stateRows = ScheduleTaskStateVersion::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->whereIn('project_id', $context->scope->projectIds)
-            ->where('effective_at', '<=', $query->asOf)
-            ->whereIn('task_id', $tasks->pluck('id'))
-            ->orderBy('task_id')
-            ->orderByDesc('effective_at')
-            ->orderByDesc('version')
-            ->get()
-            ->unique('task_id')
-            ->keyBy('task_id');
-        foreach ($tasks as $task) {
-            $eligible[] = ['kind' => 'schedule_task_state', 'source_id' => (int) $task->id];
-            $state = $stateRows->get((int) $task->id);
+        foreach (array_values(array_unique([...$selectedTaskIds, ...$missingTaskIds])) as $taskId) {
+            $eligible[] = ['kind' => 'schedule_task_state', 'source_id' => $taskId];
+            $state = $allStatesByTask->get($taskId);
             if ($state === null) {
                 $gapCount++;
+
                 continue;
             }
             $projected[] = [
                 'kind' => 'schedule_task_state',
-                'source_hash' => (string) $state->source_hash,
-                'source_id' => (int) $task->id,
+                'source_hash' => $state->sourceHash,
+                'source_id' => $taskId,
             ];
         }
 
@@ -144,11 +152,69 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
             'lookahead:'.(int) ($constraints->max('id') ?? 0),
             (int) (WorkConstraintTransitionEvent::query()
                 ->where('organization_id', $context->scope->organizationId)
-                ->whereIn('project_id', $context->scope->projectIds)
+                ->whereIn('project_id', $projectIds)
                 ->max('id') ?? 0),
-            (int) ($stateRows->max('id') ?? 0),
+            (int) ($allStates->max('taskId') ?? 0),
         ]);
 
         return $this->readiness->make($eligible, $projected, $gapCount, 0, $watermark);
+    }
+
+    private function matchesTaskFilters(ReportQuery $query, object $state): bool
+    {
+        $values = $query->filters->values;
+        $horizonDays = $values['horizon_days'] ?? null;
+        if ($horizonDays !== null) {
+            if (! is_numeric($horizonDays) || (int) $horizonDays < 1) {
+                return false;
+            }
+            $horizonEnd = $query->asOf->modify('+'.(int) $horizonDays.' days');
+            if ($state->plannedStart < $query->asOf || $state->plannedStart > $horizonEnd) {
+                return false;
+            }
+        }
+
+        return $this->matches($values['zone_ids'] ?? [], $state->zoneId)
+            && $this->matches($values['wbs_ids'] ?? [], $state->wbsCode)
+            && $this->matches($values['owner_ids'] ?? [], $state->ownerId)
+            && $this->matches($values['contractor_ids'] ?? [], $state->contractorId)
+            && $this->matches($values['task_statuses'] ?? [], $state->status);
+    }
+
+    private function matchesConstraintFilters(ReportQuery $query, object $event): bool
+    {
+        $values = $query->filters->values;
+
+        return $this->matches(
+            $values['constraint_types'] ?? $values['types'] ?? [],
+            $event->constraint_type,
+        )
+            && $this->matches($values['severities'] ?? [], $event->severity)
+            && $this->matches($values['statuses'] ?? [], $event->to_status);
+    }
+
+    private function positiveIntegerFilter(ReportQuery $query, string $key): array
+    {
+        $values = $query->filters->values[$key] ?? [];
+        if (! is_array($values) || ! array_is_list($values)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(
+            array_map('intval', $values),
+            static fn (int $value): bool => $value > 0,
+        )));
+    }
+
+    private function matches(mixed $filter, int|string|null $value): bool
+    {
+        if ($filter === []) {
+            return true;
+        }
+
+        return is_array($filter)
+            && array_is_list($filter)
+            && $value !== null
+            && in_array((string) $value, array_map('strval', $filter), true);
     }
 }

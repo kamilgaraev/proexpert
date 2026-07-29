@@ -17,8 +17,7 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
 {
     public function __construct(
         private ReportSourceReadinessFactory $readiness,
-    ) {
-    }
+    ) {}
 
     public function supports(ReportDefinition $definition): bool
     {
@@ -44,21 +43,12 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
         $eventKeys = $events->mapWithKeys(
             static fn (ProductionAcceptanceEvent $event): array => [self::key($event) => true],
         );
-        $laterKeys = ProductionAcceptanceEvent::query()
-            ->where('organization_id', $context->scope->organizationId)
-            ->whereIn('project_id', $context->scope->projectIds)
-            ->where('recognized_at', '>', $query->asOf)
-            ->get()
-            ->mapWithKeys(
-                static fn (ProductionAcceptanceEvent $event): array => [self::key($event) => true],
-            );
         $eligible = $events->map(static fn (ProductionAcceptanceEvent $event): array => [
             'event_id' => (int) $event->id,
             'source_hash' => (string) $event->source_hash,
         ])->all();
         $projected = $events
-            ->filter(static fn (ProductionAcceptanceEvent $event): bool =>
-                $event->approved_rate_minor !== null
+            ->filter(static fn (ProductionAcceptanceEvent $event): bool => $event->approved_rate_minor !== null
                 && preg_match('/^[A-Z]{3}$/D', (string) $event->currency) === 1
                 && trim((string) $event->currency_source) !== '')
             ->map(static fn (ProductionAcceptanceEvent $event): array => [
@@ -91,7 +81,7 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
             }
             foreach ($this->sourceLines($act) as $sourceLine) {
                 $key = implode(':', [(int) $act->id, $sourceLine['type'], $sourceLine['id']]);
-                if ($eventKeys->has($key) || $laterKeys->has($key)) {
+                if ($eventKeys->has($key)) {
                     continue;
                 }
                 $eligible[] = [

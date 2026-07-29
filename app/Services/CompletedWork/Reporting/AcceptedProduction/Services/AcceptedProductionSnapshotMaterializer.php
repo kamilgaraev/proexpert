@@ -10,11 +10,11 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\Models\ContractPerformanceAct;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\ProductionAcceptanceFact;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionRow;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionSnapshot;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
-use App\Models\ContractPerformanceAct;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
@@ -29,8 +29,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
     public function __construct(
         private AcceptedProductionFormula $formula,
         private ProductionAcceptanceRecognitionGrain $grain,
-    ) {
-    }
+    ) {}
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
     {
@@ -93,94 +92,94 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 $watermark,
                 $facts,
             ): ReportSnapshotRef {
-            $snapshotId = (string) Str::ulid();
-            $rows = $facts->map(function (array $item): array {
-                $metric = $this->formula->row($item['fact']);
+                $snapshotId = (string) Str::ulid();
+                $rows = $facts->map(function (array $item): array {
+                    $metric = $this->formula->row($item['fact']);
 
-                return [$item, $metric];
-            });
-            $totals = $this->totals($rows);
-            $sourceRefs = [[
-                'source' => 'completed_work',
-                'snapshot_kind' => 'accepted_production',
-                'snapshot_id' => 'snapshot_'.strtolower($snapshotId),
-                'schema_version' => 'production_acceptance_events_v1',
-                'watermark' => 'event_'.$watermark,
-                'row_count' => $rows->count(),
-                'hash' => $sourceHash->value,
-            ]];
-            $snapshot = AcceptedProductionSnapshot::query()->create([
-                'id' => $snapshotId,
-                'organization_id' => $scope->organizationId,
-                'as_of' => $query->asOf,
-                'event_watermark' => $watermark,
-                'formula_version' => self::FORMULA_VERSION,
-                'definition_hash' => $query->definition->definitionHash->value,
-                'query_hash' => $query->queryHash->value,
-                'source_hash' => $sourceHash->value,
-                'generated_at' => now(),
-                'stale_at' => now()->addMinutes(15),
-                'watermarks' => ['acceptance_events' => 'event_'.$watermark],
-                'totals' => $totals,
-                'source_refs' => $sourceRefs,
-                'row_schema' => $this->rowSchema(),
-                'row_count' => $rows->count(),
-            ]);
-
-            foreach ($rows as [$item, $metric]) {
-                $event = $item['event'];
-                $rowKey = $this->grain->key($event);
-                $payload = [
-                    'project_id' => (int) $event->project_id,
-                    'performance_act_id' => (int) $event->performance_act_id,
-                    'source_line_type' => (string) $event->source_line_type,
-                    'source_line_id' => (int) $event->source_line_id,
-                    'event_status' => (string) $event->event_type,
-                    'work_id' => $event->work_id === null ? null : (int) $event->work_id,
-                    'task_id' => $event->task_id === null ? null : (int) $event->task_id,
-                    'wbs_code' => $event->wbs_code,
-                    'zone' => $event->zone,
-                    'contractor_id' => $event->contractor_id === null ? null : (int) $event->contractor_id,
-                    'recognized_on' => $event->recognized_at->format('Y-m-d'),
-                    'planned_quantity' => $metric->plannedQuantity,
-                    'reported_quantity' => $metric->reportedQuantity,
-                    'accepted_quantity' => $metric->acceptedQuantity,
-                    'accepted_plan_variance' => $metric->acceptedPlanVariance,
-                    'reported_accepted_variance' => $metric->reportedAcceptedVariance,
-                    'completion_ratio' => $metric->completionRatio,
-                    'unit_dimension' => $metric->unitDimension,
-                    'unit_code' => $metric->unitCode,
-                    'conversion_version' => $metric->conversionVersion,
-                    'currency' => $metric->currency,
-                    'approved_rate_minor' => $item['fact']->approvedRateMinor,
-                    'accepted_amount_minor' => $metric->acceptedAmountMinor,
-                    'unknown_metrics' => $metric->acceptedAmountMinor === null ? ['accepted_amount_minor'] : [],
-                ];
-                AcceptedProductionRow::query()->create([
+                    return [$item, $metric];
+                });
+                $totals = $this->totals($rows);
+                $sourceRefs = [[
+                    'source' => 'completed_work',
+                    'snapshot_kind' => 'accepted_production',
+                    'snapshot_id' => 'snapshot_'.strtolower($snapshotId),
+                    'schema_version' => 'production_acceptance_events_v1',
+                    'watermark' => 'event_'.$watermark,
+                    'row_count' => $rows->count(),
+                    'hash' => $sourceHash->value,
+                ]];
+                $snapshot = AcceptedProductionSnapshot::query()->create([
+                    'id' => $snapshotId,
                     'organization_id' => $scope->organizationId,
-                    'snapshot_id' => $snapshotId,
-                    'row_key' => $rowKey,
-                    'project_id' => (int) $event->project_id,
-                    'performance_act_id' => (int) $event->performance_act_id,
-                    'source_line_type' => (string) $event->source_line_type,
-                    'source_line_id' => (int) $event->source_line_id,
-                    'work_id' => $event->work_id,
-                    'contractor_id' => $event->contractor_id,
-                    'zone' => $event->zone,
-                    'event_status' => (string) $event->event_type,
-                    'recognized_on' => $event->recognized_at->format('Y-m-d'),
-                    'unit_dimension' => (string) $event->unit_dimension,
-                    'unit_code' => (string) $event->unit_code,
-                    'currency' => $event->currency,
-                    'accepted_quantity' => $metric->acceptedQuantity,
-                    'accepted_amount_minor' => $metric->acceptedAmountMinor,
-                    'payload' => $payload,
-                    'source_refs' => [
-                        ...(array) $event->evidence_refs,
-                        ['type' => 'acceptance_event', 'ids' => $item['event_ids']],
-                    ],
+                    'as_of' => $query->asOf,
+                    'event_watermark' => $watermark,
+                    'formula_version' => self::FORMULA_VERSION,
+                    'definition_hash' => $query->definition->definitionHash->value,
+                    'query_hash' => $query->queryHash->value,
+                    'source_hash' => $sourceHash->value,
+                    'generated_at' => now(),
+                    'stale_at' => now()->addMinutes(15),
+                    'watermarks' => ['acceptance_events' => 'event_'.$watermark],
+                    'totals' => $totals,
+                    'source_refs' => $sourceRefs,
+                    'row_schema' => $this->rowSchema(),
+                    'row_count' => $rows->count(),
                 ]);
-            }
+
+                foreach ($rows as [$item, $metric]) {
+                    $event = $item['event'];
+                    $rowKey = $this->grain->key($event);
+                    $payload = [
+                        'project_id' => (int) $event->project_id,
+                        'performance_act_id' => (int) $event->performance_act_id,
+                        'source_line_type' => (string) $event->source_line_type,
+                        'source_line_id' => (int) $event->source_line_id,
+                        'event_status' => (string) $event->event_type,
+                        'work_id' => $event->work_id === null ? null : (int) $event->work_id,
+                        'task_id' => $event->task_id === null ? null : (int) $event->task_id,
+                        'wbs_code' => $event->wbs_code,
+                        'zone' => $event->zone,
+                        'contractor_id' => $event->contractor_id === null ? null : (int) $event->contractor_id,
+                        'recognized_on' => $event->recognized_at->format('Y-m-d'),
+                        'planned_quantity' => $metric->plannedQuantity,
+                        'reported_quantity' => $metric->reportedQuantity,
+                        'accepted_quantity' => $metric->acceptedQuantity,
+                        'accepted_plan_variance' => $metric->acceptedPlanVariance,
+                        'reported_accepted_variance' => $metric->reportedAcceptedVariance,
+                        'completion_ratio' => $metric->completionRatio,
+                        'unit_dimension' => $metric->unitDimension,
+                        'unit_code' => $metric->unitCode,
+                        'conversion_version' => $metric->conversionVersion,
+                        'currency' => $metric->currency,
+                        'approved_rate_minor' => $item['fact']->approvedRateMinor,
+                        'accepted_amount_minor' => $metric->acceptedAmountMinor,
+                        'unknown_metrics' => $metric->acceptedAmountMinor === null ? ['accepted_amount_minor'] : [],
+                    ];
+                    AcceptedProductionRow::query()->create([
+                        'organization_id' => $scope->organizationId,
+                        'snapshot_id' => $snapshotId,
+                        'row_key' => $rowKey,
+                        'project_id' => (int) $event->project_id,
+                        'performance_act_id' => (int) $event->performance_act_id,
+                        'source_line_type' => (string) $event->source_line_type,
+                        'source_line_id' => (int) $event->source_line_id,
+                        'work_id' => $event->work_id,
+                        'contractor_id' => $event->contractor_id,
+                        'zone' => $event->zone,
+                        'event_status' => (string) $event->event_type,
+                        'recognized_on' => $event->recognized_at->format('Y-m-d'),
+                        'unit_dimension' => (string) $event->unit_dimension,
+                        'unit_code' => (string) $event->unit_code,
+                        'currency' => $event->currency,
+                        'accepted_quantity' => $metric->acceptedQuantity,
+                        'accepted_amount_minor' => $metric->acceptedAmountMinor,
+                        'payload' => $payload,
+                        'source_refs' => [
+                            ...(array) $event->evidence_refs,
+                            ['type' => 'acceptance_event', 'ids' => $item['event_ids']],
+                        ],
+                    ]);
+                }
 
                 return $this->reference($scope, $query, $snapshot);
             });
@@ -202,7 +201,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
     {
         $first = $events->first();
         $last = $events->last();
-        if (!$first instanceof ProductionAcceptanceEvent || !$last instanceof ProductionAcceptanceEvent) {
+        if (! $first instanceof ProductionAcceptanceEvent || ! $last instanceof ProductionAcceptanceEvent) {
             throw new InvalidArgumentException('accepted_production_event_group_invalid');
         }
         foreach ($events as $event) {
@@ -223,8 +222,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
             }
         }
         $accepted = $events->reduce(
-            fn (int $carry, ProductionAcceptanceEvent $event): int =>
-                $carry + $this->scaled((string) $event->accepted_quantity_delta),
+            fn (int $carry, ProductionAcceptanceEvent $event): int => $carry + $this->scaled((string) $event->accepted_quantity_delta),
             0,
         );
 
@@ -259,48 +257,6 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 $event->source_line_id,
             ]))
             ->map(static fn (Collection $lineEvents): ?ProductionAcceptanceEvent => $lineEvents->last());
-        $eventActIds = $latestEvents
-            ->filter()
-            ->pluck('performance_act_id')
-            ->map(static fn ($id): int => (int) $id)
-            ->unique()
-            ->values();
-        $currentActs = ContractPerformanceAct::query()
-            ->whereIn('id', $eventActIds)
-            ->whereHas('contract', static fn ($builder) => $builder->where('organization_id', $scope->organizationId))
-            ->get()
-            ->keyBy('id');
-        $laterEventKeys = ProductionAcceptanceEvent::query()
-            ->where('organization_id', $scope->organizationId)
-            ->whereIn('project_id', $scope->projectIds)
-            ->where('recognized_at', '>', $query->asOf)
-            ->get(['performance_act_id', 'source_line_type', 'source_line_id'])
-            ->mapWithKeys(static fn (ProductionAcceptanceEvent $event): array => [
-                implode(':', [
-                    $event->performance_act_id,
-                    $event->source_line_type,
-                    $event->source_line_id,
-                ]) => true,
-            ]);
-        foreach ($latestEvents as $latest) {
-            if (!$latest instanceof ProductionAcceptanceEvent || $latest->event_type !== 'accepted') {
-                continue;
-            }
-            $current = $currentActs->get((int) $latest->performance_act_id);
-            $currentMismatch = !$current instanceof ContractPerformanceAct
-                || (!(bool) $current->is_approved && !in_array($current->status, [
-                    ContractPerformanceAct::STATUS_APPROVED,
-                    ContractPerformanceAct::STATUS_SIGNED,
-                ], true));
-            $eventKey = implode(':', [
-                $latest->performance_act_id,
-                $latest->source_line_type,
-                $latest->source_line_id,
-            ]);
-            if ($currentMismatch && !$laterEventKeys->has($eventKey)) {
-                throw new InvalidArgumentException('accepted_production_current_state_mismatch');
-            }
-        }
         $acts = ContractPerformanceAct::query()
             ->whereIn('project_id', $scope->projectIds)
             ->whereHas('contract', static fn ($builder) => $builder->where('organization_id', $scope->organizationId))
@@ -329,10 +285,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
             foreach ($sourceLineIds as $sourceLineId) {
                 $key = implode(':', [$act->id, $sourceLineType, $sourceLineId]);
                 $latest = $latestEvents->get($key);
-                if (!$latest instanceof ProductionAcceptanceEvent || $latest->event_type !== 'accepted') {
-                    if ($laterEventKeys->has($key)) {
-                        continue;
-                    }
+                if (! $latest instanceof ProductionAcceptanceEvent || $latest->event_type !== 'accepted') {
                     throw new InvalidArgumentException('accepted_production_projection_incomplete');
                 }
             }
@@ -381,8 +334,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
             'groups' => array_values($groups),
             'unknown_metrics' => array_reduce(
                 $groups,
-                static fn (array $carry, array $group): array =>
-                    $group['accepted_amount_minor'] === null ? ['accepted_amount_minor'] : $carry,
+                static fn (array $carry, array $group): array => $group['accepted_amount_minor'] === null ? ['accepted_amount_minor'] : $carry,
                 [],
             ),
         ];
@@ -396,7 +348,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
         $to = $values['period_to'] ?? (is_array($period) ? ($period['to'] ?? null) : null);
         foreach ([$from, $to] as $date) {
             if ($date !== null
-                && (!is_string($date) || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $date) !== 1)
+                && (! is_string($date) || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $date) !== 1)
             ) {
                 throw new InvalidArgumentException('accepted_production_period_filter_invalid');
             }
@@ -431,7 +383,7 @@ final readonly class AcceptedProductionSnapshotMaterializer
         if ($filter === []) {
             return true;
         }
-        if (!is_array($filter) || !array_is_list($filter) || $value === null) {
+        if (! is_array($filter) || ! array_is_list($filter) || $value === null) {
             return false;
         }
 

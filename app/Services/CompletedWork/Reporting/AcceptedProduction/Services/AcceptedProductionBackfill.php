@@ -10,9 +10,7 @@ use InvalidArgumentException;
 
 final readonly class AcceptedProductionBackfill
 {
-    public function __construct(private ProductionAcceptanceEventRecorder $events)
-    {
-    }
+    public function __construct(private ProductionAcceptanceEventRecorder $events) {}
 
     public function run(int $organizationId, array $projectIds, ?int $actorId = null): array
     {
@@ -35,7 +33,7 @@ final readonly class AcceptedProductionBackfill
             ->orderBy('id')
             ->get();
         foreach ($acts as $act) {
-            $recognizedAt = $act->signed_at;
+            $recognizedAt = $act->signed_at ?? $act->approval_date?->toImmutable()->startOfDay();
             if ($recognizedAt === null) {
                 continue;
             }

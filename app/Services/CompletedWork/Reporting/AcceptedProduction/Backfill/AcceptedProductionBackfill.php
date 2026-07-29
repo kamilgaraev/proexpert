@@ -19,8 +19,7 @@ final readonly class AcceptedProductionBackfill implements ReportSourceBackfill
 {
     public function __construct(
         private ProductionAcceptanceEventRecorder $events,
-    ) {
-    }
+    ) {}
 
     public function sourceCode(): string
     {
@@ -53,12 +52,16 @@ final readonly class AcceptedProductionBackfill implements ReportSourceBackfill
             ->where('id', '<=', $watermarkId)
             ->orderBy('id')
             ->limit($limit + 1)
-            ->get(['id', 'project_id', 'signed_at']);
+            ->get(['id', 'project_id', 'signed_at', 'approval_date']);
         $hasMore = $records->count() > $limit;
         $rows = $records->take($limit)
             ->map(static fn (ContractPerformanceAct $act): array => [
                 'project_id' => (int) $act->project_id,
-                'signed_at' => $act->signed_at?->format(DATE_ATOM),
+                'recognized_at' => $act->signed_at?->format(DATE_ATOM)
+                    ?? $act->approval_date?->toImmutable()->startOfDay()->format(DATE_ATOM),
+                'recognition_source' => $act->signed_at !== null
+                    ? 'signed_at'
+                    : ($act->approval_date !== null ? 'approval_date' : null),
                 'source_id' => (int) $act->id,
             ])
             ->values()
@@ -88,14 +91,18 @@ final readonly class AcceptedProductionBackfill implements ReportSourceBackfill
         $projected = [];
         $gaps = 0;
         foreach ($batch->rows as $row) {
-            if (!is_array($row)
-                || !isset($row['source_id'], $row['project_id'])
-                || !in_array((int) $row['project_id'], $context->projectIds, true)
+            if (! is_array($row)
+                || ! isset($row['source_id'], $row['project_id'])
+                || ! in_array((int) $row['project_id'], $context->projectIds, true)
             ) {
                 throw new InvalidArgumentException('accepted_production_backfill_batch_invalid');
             }
-            if (!is_string($row['signed_at'] ?? null) || trim($row['signed_at']) === '') {
+            if (! is_string($row['recognized_at'] ?? null)
+                || trim($row['recognized_at']) === ''
+                || ! in_array($row['recognition_source'] ?? null, ['signed_at', 'approval_date'], true)
+            ) {
                 $gaps++;
+
                 continue;
             }
             $act = ContractPerformanceAct::query()
@@ -104,6 +111,7 @@ final readonly class AcceptedProductionBackfill implements ReportSourceBackfill
                 ->first();
             if ($act === null) {
                 $gaps++;
+
                 continue;
             }
 
@@ -112,7 +120,7 @@ final readonly class AcceptedProductionBackfill implements ReportSourceBackfill
                     $act,
                     'pending',
                     'approved',
-                    CarbonImmutable::parse($row['signed_at']),
+                    CarbonImmutable::parse($row['recognized_at']),
                     null,
                 );
                 $projected[] = [

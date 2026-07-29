@@ -30,8 +30,7 @@ final readonly class BaselineScheduleSnapshotService
 
     public function __construct(
         private HistoricalScheduleTaskStateQuery $historicalTasks,
-    ) {
-    }
+    ) {}
 
     public function capture(
         ProjectSchedule $schedule,
@@ -138,7 +137,7 @@ final readonly class BaselineScheduleSnapshotService
         }
         $asOfFilter = $query->filters->values['as_of'] ?? null;
         if ($asOfFilter !== null
-            && (!is_string($asOfFilter)
+            && (! is_string($asOfFilter)
                 || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $asOfFilter) !== 1
                 || $asOfFilter !== $query->asOf->format('Y-m-d'))
         ) {
@@ -279,102 +278,102 @@ final readonly class BaselineScheduleSnapshotService
 
         try {
             return DB::transaction(function () use ($scope, $query, $sourceRows, $sourceHash, $watermarks): ReportSnapshotRef {
-            $snapshotId = (string) Str::ulid();
-            $metrics = [];
-            $unknown = [];
-            foreach ($sourceRows as $sourceRow) {
-                $metric = BaselineScheduleVarianceRow::fromSource(
-                    $sourceRow['source'],
-                    $query->asOf,
-                );
-                $metrics[] = [$sourceRow, $metric];
-                foreach ($metric->warningCodes as $warningCode) {
-                    $unknown[$warningCode] = true;
+                $snapshotId = (string) Str::ulid();
+                $metrics = [];
+                $unknown = [];
+                foreach ($sourceRows as $sourceRow) {
+                    $metric = BaselineScheduleVarianceRow::fromSource(
+                        $sourceRow['source'],
+                        $query->asOf,
+                    );
+                    $metrics[] = [$sourceRow, $metric];
+                    foreach ($metric->warningCodes as $warningCode) {
+                        $unknown[$warningCode] = true;
+                    }
                 }
-            }
-            $totals = [
-                'critical_delayed_tasks' => count(array_filter(
-                    $metrics,
-                    static fn (array $item): bool => $item[1]->critical
-                        && ($item[1]->endVarianceDays ?? 0) > 0,
-                )),
-                'overdue_tasks' => count(array_filter(
-                    $metrics,
-                    static fn (array $item): bool => $item[1]->overdue,
-                )),
-                'unknown_metrics' => $unknown === [] ? [] : ['baseline_variance'],
-            ];
-            $sourceRef = [[
-                'source' => 'schedule',
-                'snapshot_kind' => 'baseline_schedule',
-                'snapshot_id' => 'snapshot_'.strtolower($snapshotId),
-                'schema_version' => 'schedule_baseline_v1',
-                'watermark' => 'source_'.substr($sourceHash->value, 0, 24),
-                'row_count' => count($metrics),
-                'hash' => $sourceHash->value,
-            ]];
-            $rowSchema = $this->rowSchema();
-            $snapshot = BaselineScheduleSnapshot::query()->create([
-                'id' => $snapshotId,
-                'organization_id' => $scope->organizationId,
-                'as_of' => $query->asOf,
-                'formula_version' => self::FORMULA_VERSION,
-                'definition_hash' => $query->definition->definitionHash->value,
-                'query_hash' => $query->queryHash->value,
-                'source_hash' => $sourceHash->value,
-                'generated_at' => $query->asOf,
-                'stale_at' => $query->asOf->modify('+1 day'),
-                'watermarks' => $watermarks,
-                'totals' => $totals,
-                'source_refs' => $sourceRef,
-                'row_schema' => $rowSchema,
-                'row_count' => count($metrics),
-            ]);
-
-            foreach ($metrics as [$sourceRow, $metric]) {
-                $payload = $metric->toArray() + [
-                    'project_id' => $sourceRow['project_id'],
-                    'baseline_version_id' => $sourceRow['baseline_version_id'],
-                    'dependency_refs' => $sourceRow['dependency_refs'],
-                    'variance_days' => $metric->endVarianceDays,
-                    'planned_start' => $sourceRow['source']->plannedStart->format('Y-m-d'),
-                    'planned_end' => $sourceRow['source']->plannedEnd->format('Y-m-d'),
-                    'unknown_metrics' => $metric->warningCodes === [] ? [] : ['baseline_variance'],
+                $totals = [
+                    'critical_delayed_tasks' => count(array_filter(
+                        $metrics,
+                        static fn (array $item): bool => $item[1]->critical
+                            && ($item[1]->endVarianceDays ?? 0) > 0,
+                    )),
+                    'overdue_tasks' => count(array_filter(
+                        $metrics,
+                        static fn (array $item): bool => $item[1]->overdue,
+                    )),
+                    'unknown_metrics' => $unknown === [] ? [] : ['baseline_variance'],
                 ];
-                BaselineScheduleVarianceRecord::query()->create([
+                $sourceRef = [[
+                    'source' => 'schedule',
+                    'snapshot_kind' => 'baseline_schedule',
+                    'snapshot_id' => 'snapshot_'.strtolower($snapshotId),
+                    'schema_version' => 'schedule_baseline_v1',
+                    'watermark' => 'source_'.substr($sourceHash->value, 0, 24),
+                    'row_count' => count($metrics),
+                    'hash' => $sourceHash->value,
+                ]];
+                $rowSchema = $this->rowSchema();
+                $snapshot = BaselineScheduleSnapshot::query()->create([
+                    'id' => $snapshotId,
                     'organization_id' => $scope->organizationId,
-                    'snapshot_id' => $snapshotId,
-                    'row_key' => implode(':', [
-                        $sourceRow['schedule_id'],
-                        $metric->taskId,
-                        $sourceRow['baseline_version_id'] ?? 'missing',
-                    ]),
-                    'schedule_id' => $sourceRow['schedule_id'],
-                    'task_id' => $metric->taskId,
-                    'baseline_version_id' => $sourceRow['baseline_version_id'],
-                    'wbs_code' => $metric->wbsCode,
-                    'task_name' => $metric->taskName,
-                    'planned_start' => $sourceRow['source']->plannedStart,
-                    'planned_end' => $sourceRow['source']->plannedEnd,
-                    'variance_days' => $metric->endVarianceDays,
-                    'total_float_days' => $metric->totalFloatDays,
-                    'is_critical' => $metric->critical,
-                    'status' => $metric->status,
-                    'payload' => $payload,
-                    'source_refs' => [
-                        ['type' => 'schedule_task', 'id' => $metric->taskId, 'project_id' => $sourceRow['project_id']],
-                        ['type' => 'schedule', 'id' => $sourceRow['schedule_id'], 'project_id' => $sourceRow['project_id']],
-                        ...array_map(
-                            static fn (array $dependency): array => [
-                                'type' => 'task_dependency',
-                                'id' => $dependency['dependency_id'],
-                                'project_id' => $sourceRow['project_id'],
-                            ],
-                            $sourceRow['dependency_refs'],
-                        ),
-                    ],
+                    'as_of' => $query->asOf,
+                    'formula_version' => self::FORMULA_VERSION,
+                    'definition_hash' => $query->definition->definitionHash->value,
+                    'query_hash' => $query->queryHash->value,
+                    'source_hash' => $sourceHash->value,
+                    'generated_at' => $query->asOf,
+                    'stale_at' => $query->asOf->modify('+1 day'),
+                    'watermarks' => $watermarks,
+                    'totals' => $totals,
+                    'source_refs' => $sourceRef,
+                    'row_schema' => $rowSchema,
+                    'row_count' => count($metrics),
                 ]);
-            }
+
+                foreach ($metrics as [$sourceRow, $metric]) {
+                    $payload = $metric->toArray() + [
+                        'project_id' => $sourceRow['project_id'],
+                        'baseline_version_id' => $sourceRow['baseline_version_id'],
+                        'dependency_refs' => $sourceRow['dependency_refs'],
+                        'variance_days' => $metric->endVarianceDays,
+                        'planned_start' => $sourceRow['source']->plannedStart->format('Y-m-d'),
+                        'planned_end' => $sourceRow['source']->plannedEnd->format('Y-m-d'),
+                        'unknown_metrics' => $metric->warningCodes === [] ? [] : ['baseline_variance'],
+                    ];
+                    BaselineScheduleVarianceRecord::query()->create([
+                        'organization_id' => $scope->organizationId,
+                        'snapshot_id' => $snapshotId,
+                        'row_key' => implode(':', [
+                            $sourceRow['schedule_id'],
+                            $metric->taskId,
+                            $sourceRow['baseline_version_id'] ?? 'missing',
+                        ]),
+                        'schedule_id' => $sourceRow['schedule_id'],
+                        'task_id' => $metric->taskId,
+                        'baseline_version_id' => $sourceRow['baseline_version_id'],
+                        'wbs_code' => $metric->wbsCode,
+                        'task_name' => $metric->taskName,
+                        'planned_start' => $sourceRow['source']->plannedStart,
+                        'planned_end' => $sourceRow['source']->plannedEnd,
+                        'variance_days' => $metric->endVarianceDays,
+                        'total_float_days' => $metric->totalFloatDays,
+                        'is_critical' => $metric->critical,
+                        'status' => $metric->status,
+                        'payload' => $payload,
+                        'source_refs' => [
+                            ['type' => 'schedule_task', 'id' => $metric->taskId, 'project_id' => $sourceRow['project_id']],
+                            ['type' => 'schedule', 'id' => $sourceRow['schedule_id'], 'project_id' => $sourceRow['project_id']],
+                            ...array_map(
+                                static fn (array $dependency): array => [
+                                    'type' => 'task_dependency',
+                                    'id' => $dependency['dependency_id'],
+                                    'project_id' => $sourceRow['project_id'],
+                                ],
+                                $sourceRow['dependency_refs'],
+                            ),
+                        ],
+                    ]);
+                }
 
                 return $this->reference($scope, $query, $snapshot);
             });
@@ -437,11 +436,12 @@ final readonly class BaselineScheduleSnapshotService
     {
         $values = $query->filters->values;
 
-        return $this->matches($values['wbs_ids'] ?? [], $state->wbsCode)
+        return $this->matches($values['task_ids'] ?? [], $state->taskId)
+            && $this->matches($values['wbs_ids'] ?? [], $state->wbsCode)
             && $this->matches($values['owner_ids'] ?? [], $state->ownerId)
             && $this->matches($values['contractor_ids'] ?? [], $state->contractorId)
             && $this->matches($values['statuses'] ?? [], $state->status)
-            && (!array_key_exists('critical', $values) || (bool) $values['critical'] === $state->critical);
+            && (! array_key_exists('critical', $values) || (bool) $values['critical'] === $state->critical);
     }
 
     private function positiveIntegerFilter(ReportQuery $query, string $key): array
@@ -450,7 +450,7 @@ final readonly class BaselineScheduleSnapshotService
         if ($values === []) {
             return [];
         }
-        if (!is_array($values) || !array_is_list($values)) {
+        if (! is_array($values) || ! array_is_list($values)) {
             throw new InvalidArgumentException('baseline_schedule_filter_invalid');
         }
 
@@ -467,7 +467,7 @@ final readonly class BaselineScheduleSnapshotService
         if ($filter === []) {
             return true;
         }
-        if (!is_array($filter) || !array_is_list($filter) || $value === null) {
+        if (! is_array($filter) || ! array_is_list($filter) || $value === null) {
             return false;
         }
 

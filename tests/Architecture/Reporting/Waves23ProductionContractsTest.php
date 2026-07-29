@@ -29,7 +29,7 @@ final class Waves23ProductionContractsTest extends TestCase
     }
 
     #[Test]
-    public function accepted_production_reversal_and_delete_are_transactional_and_never_backfill_from_act_date(): void
+    public function accepted_production_reversal_and_backfill_use_canonical_owner_timestamps(): void
     {
         $service = $this->source('app/Services/Contract/ContractPerformanceActService.php');
         $observer = $this->source('app/Observers/ContractPerformanceActObserver.php');
@@ -49,8 +49,11 @@ final class Waves23ProductionContractsTest extends TestCase
             $service,
         );
         self::assertStringContainsString('DB::transactionLevel() < 1', $observer);
-        self::assertStringContainsString('$recognizedAt = $act->signed_at;', $backfill);
-        self::assertStringNotContainsString('$act->approval_date', $backfill);
+        self::assertStringContainsString(
+            '$recognizedAt = $act->signed_at ?? $act->approval_date?->toImmutable()->startOfDay();',
+            $backfill,
+        );
+        self::assertStringNotContainsString('CarbonImmutable::now()', $backfill);
         self::assertStringContainsString('$this->reversals->fromAccepted($acceptedEvent)', $recorder);
         self::assertStringContainsString("'approved_rate_minor' => \$approvedRate->minor", $recorder);
         self::assertStringContainsString(
@@ -61,6 +64,46 @@ final class Waves23ProductionContractsTest extends TestCase
             'BEFORE UPDATE OR DELETE ON production_acceptance_events',
             $migration,
         );
+    }
+
+    #[Test]
+    public function accepted_production_historical_completeness_never_uses_events_after_as_of(): void
+    {
+        $readiness = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Readiness/'
+            .'AcceptedProductionReadinessProbe.php',
+        );
+        $materializer = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionSnapshotMaterializer.php',
+        );
+
+        self::assertStringNotContainsString('$laterKeys', $readiness);
+        self::assertStringNotContainsString('$laterEventKeys', $materializer);
+        self::assertStringContainsString("where('recognized_at', '<=', \$query->asOf)", $readiness);
+        self::assertStringContainsString("where('recognized_at', '<=', \$query->asOf)", $materializer);
+    }
+
+    #[Test]
+    public function schedule_readiness_uses_the_same_query_filters_as_materialization(): void
+    {
+        $baseline = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Readiness/'
+            .'BaselineScheduleVarianceReadinessProbe.php',
+        );
+        $lookahead = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Readiness/'
+            .'LookaheadReadinessProbe.php',
+        );
+
+        foreach (['project_ids', 'schedule_ids', 'task_ids', 'wbs_ids', 'owner_ids', 'contractor_ids', 'statuses', 'critical'] as $filter) {
+            self::assertStringContainsString("'{$filter}'", $baseline);
+        }
+        foreach (['project_ids', 'horizon_days', 'zone_ids', 'wbs_ids', 'owner_ids', 'contractor_ids', 'task_statuses', 'constraint_types', 'severities', 'statuses'] as $filter) {
+            self::assertStringContainsString("'{$filter}'", $lookahead);
+        }
+        self::assertStringContainsString('HistoricalScheduleTaskStateQuery', $baseline);
+        self::assertStringContainsString('HistoricalScheduleTaskStateQuery', $lookahead);
     }
 
     #[Test]
