@@ -33,6 +33,9 @@ final readonly class PortfolioLiquidityRow
         public int $duplicateSourceCount,
         public string $qualityStatus,
         public array $sourceRefs,
+        public array $qualityGaps = [],
+        public array $warnings = [],
+        public string $reconciliationStatus = 'matched',
     ) {
         if (preg_match('/^\d{4}-\d{2}-\d{2}$/D', $forecastDate) !== 1
             || $projectId < 0
@@ -41,7 +44,10 @@ final readonly class PortfolioLiquidityRow
             || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $scenario) !== 1
             || $duplicateSourceCount < 0
             || ! in_array($qualityStatus, ['complete', 'partial', 'invalid'], true)
-            || ! array_is_list($sourceRefs)) {
+            || ! array_is_list($sourceRefs)
+            || ! array_is_list($qualityGaps)
+            || ! array_is_list($warnings)
+            || ! in_array($reconciliationStatus, ['matched', 'mismatch', 'not_applicable'], true)) {
             throw new InvalidArgumentException('portfolio_liquidity_row_invalid');
         }
 
@@ -90,6 +96,9 @@ final readonly class PortfolioLiquidityRow
                 duplicateSourceCount: $duplicates,
                 qualityStatus: $duplicates === 0 ? 'complete' : 'partial',
                 sourceRefs: self::uniqueSourceRefs([...$baseSourceRefs, ...$inflowRefs, ...$outflowRefs]),
+                qualityGaps: [],
+                warnings: $duplicates === 0 ? [] : [['code' => 'DUPLICATE_CASH_FLOW', 'count' => $duplicates]],
+                reconciliationStatus: $duplicates === 0 ? 'matched' : 'mismatch',
             );
             $rows[] = $row;
             $nextOpening = $row->closing;
@@ -115,6 +124,9 @@ final readonly class PortfolioLiquidityRow
             'quality' => $this->qualityStatus,
             'duplicate_source_count' => $this->duplicateSourceCount,
             'source_refs' => $this->sourceRefs,
+            'quality_gaps' => $this->qualityGaps,
+            'warnings' => $this->warnings,
+            'reconciliation_status' => $this->reconciliationStatus,
         ];
     }
 

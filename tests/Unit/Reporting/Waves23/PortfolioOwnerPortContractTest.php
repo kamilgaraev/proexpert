@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\Waves23;
 
+use App\BusinessModules\Core\MultiOrganization\Reporting\Backfill\HoldingPerformanceBackfill;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Providers\HoldingPerformanceReportProvider;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Providers\IntercompanyContractFlowsReportProvider;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Queries\HoldingPerformanceRowQuery;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Queries\IntercompanyContractFlowRowQuery;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\AcceptedWorkHoldingFactProducer;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceFormula;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingPerformanceSnapshotMaterializer;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\IntercompanyContractFlowFormula;
@@ -37,9 +39,21 @@ use DateTimeZone;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use ReflectionClass;
 
 final class PortfolioOwnerPortContractTest extends TestCase
 {
+    #[Test]
+    public function holding_owner_has_transactional_accepted_fact_and_resumable_backfill_ports(): void
+    {
+        self::assertTrue((new ReflectionClass(AcceptedWorkHoldingFactProducer::class))->hasMethod('project'));
+        $backfill = new ReflectionClass(HoldingPerformanceBackfill::class);
+
+        self::assertTrue($backfill->hasMethod('projectAllocationVersions'));
+        self::assertTrue($backfill->hasMethod('projectApprovedActs'));
+        self::assertTrue($backfill->hasMethod('projectPaidTransactions'));
+    }
+
     #[Test]
     public function holding_providers_and_queries_keep_exact_port_split(): void
     {

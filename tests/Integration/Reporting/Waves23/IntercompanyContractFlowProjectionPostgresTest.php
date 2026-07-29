@@ -26,6 +26,7 @@ final class IntercompanyContractFlowProjectionPostgresTest extends TestCase
             'query_hash',
             'hierarchy_watermark',
             'allocation_watermark',
+            'source_schema_version',
         ]));
         self::assertTrue(Schema::hasColumns('intercompany_contract_flow_rows', [
             'organization_id',

@@ -110,6 +110,7 @@ final class CfoProjectPortfolioAggregator
             $target['metrics']['forecast_cost'] = $this->money($forecast['cost'] ?? '0');
             $target['metrics']['forecast_gross_margin'] = $this->money($forecast['gross_margin'] ?? '0');
             $target['drill_down']['project_margin_key'] = $row['drill_down_key'] ?? null;
+            $this->rememberSourceRefs($target['source_refs'], $row['source_refs'] ?? []);
             $this->rememberStrings($target['problem_flags'], $row['problem_flags'] ?? []);
             $this->rememberStrings($target['risk_flags'], $row['risk_flags'] ?? []);
             unset($target);
@@ -137,6 +138,7 @@ final class CfoProjectPortfolioAggregator
                 $metrics['forecast_revenue'] ?? $metrics['forecast_revenue_at_completion'] ?? $target['metrics']['forecast_revenue'],
             );
             $target['drill_down']['wip_forecast_key'] = $row['drill_down_key'] ?? null;
+            $this->rememberSourceRefs($target['source_refs'], $row['source_refs'] ?? []);
             $this->rememberStrings($target['problem_flags'], $row['problem_flags'] ?? []);
             $this->rememberStrings($target['risk_flags'], $row['risk_flags'] ?? []);
             unset($target);
@@ -159,6 +161,7 @@ final class CfoProjectPortfolioAggregator
                 'risk_level' => $this->riskLevel($row['risk_level'] ?? 'low'),
                 'drill_down_key' => $row['drill_down_key'] ?? null,
             ];
+            $this->rememberSourceRefs($target['source_refs'], $row['source_refs'] ?? []);
 
             if (in_array($target['budget_deviation']['risk_level'], ['high', 'critical'], true)) {
                 $this->rememberStrings($target['problem_flags'], ['budget_deviation']);
@@ -181,6 +184,10 @@ final class CfoProjectPortfolioAggregator
             } elseif ($item->direction === PaymentCalendarItem::DIRECTION_OUTFLOW) {
                 $target['cash_gap']['outflows'] = PortfolioDecimal::add($target['cash_gap']['outflows'], $amount);
             }
+            $this->rememberSourceRefs($target['source_refs'], [[
+                'type' => $this->calendarSourceType($item->sourceType),
+                'id' => $item->sourceId,
+            ]]);
 
             unset($target);
         }
@@ -336,6 +343,7 @@ final class CfoProjectPortfolioAggregator
             ],
             'problem_flags' => [],
             'risk_flags' => [],
+            'source_refs' => [['type' => 'project', 'id' => (int) $project['id']]],
             'drill_down' => [
                 'href' => '/budgeting/project-margin?project_id='.(int) $project['id'],
                 'api_href' => '/api/v1/admin/budgeting/project-margin?project_id='.(int) $project['id'],
@@ -400,6 +408,7 @@ final class CfoProjectPortfolioAggregator
         $row['risk_level'] = $riskLevel;
         $row['problem_flags'] = array_values(array_unique($row['problem_flags']));
         $row['risk_flags'] = array_values(array_unique($row['risk_flags']));
+        $row['source_refs'] = array_values($row['source_refs']);
     }
 
     private function projectId(array $row): ?int
@@ -438,6 +447,37 @@ final class CfoProjectPortfolioAggregator
                 $target[] = $value;
             }
         }
+    }
+
+    private function rememberSourceRefs(array &$target, mixed $values): void
+    {
+        if (! is_array($values) || ! array_is_list($values)) {
+            return;
+        }
+
+        foreach ($values as $value) {
+            if (! is_array($value)
+                || ! is_string($value['type'] ?? null)
+                || (! is_int($value['id'] ?? null) && ! is_string($value['id'] ?? null))
+                || trim((string) $value['id']) === '') {
+                continue;
+            }
+
+            $id = $value['id'];
+            if (is_int($id) && $id < 1) {
+                continue;
+            }
+            $target[$value['type'].':'.(string) $id] = ['type' => $value['type'], 'id' => $id];
+        }
+    }
+
+    private function calendarSourceType(string $sourceType): string
+    {
+        return match ($sourceType) {
+            'budget_limit_reservation' => 'budget_reservation',
+            'budget_amount' => 'budget_plan',
+            default => $sourceType,
+        };
     }
 
     private function freshnessStatus(array $marginReport, array $wipReport): string

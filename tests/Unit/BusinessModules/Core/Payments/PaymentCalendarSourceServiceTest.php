@@ -40,8 +40,8 @@ final class PaymentCalendarSourceServiceTest extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
-        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 5) . DIRECTORY_SEPARATOR . 'lang');
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, dirname(__DIR__, 5).DIRECTORY_SEPARATOR.'lang');
         $translator = new Translator($loader, 'ru');
 
         $container->instance('translator', $translator);
@@ -51,7 +51,8 @@ final class PaymentCalendarSourceServiceTest extends TestCase
                 'fallback_locale' => 'ru',
             ],
         ]));
-        $container->instance('app', new class {
+        $container->instance('app', new class
+        {
             public function getLocale(): string
             {
                 return 'ru';
@@ -60,7 +61,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
 
         Facade::setFacadeApplication($container);
 
-        $this->service = new PaymentCalendarSourceService();
+        $this->service = new PaymentCalendarSourceService;
     }
 
     protected function tearDown(): void
@@ -80,8 +81,8 @@ final class PaymentCalendarSourceServiceTest extends TestCase
         $this->assertSame('2026-01-10', $item->date);
         $this->assertSame(PaymentCalendarItem::DIRECTION_OUTFLOW, $item->direction);
         $this->assertSame(PaymentCalendarItem::BUCKET_APPROVED, $item->bucket);
-        $this->assertSame(1_000.0, $item->amount);
-        $this->assertSame(1_000.0, $item->remainingAmount);
+        $this->assertSame('1000.00', $item->amount);
+        $this->assertSame('1000.00', $item->remainingAmount);
         $this->assertSame('RUB', $item->currency);
         $this->assertSame('payment-document:118', $item->cashFlowKey);
         $this->assertSame('payment_document', $item->sourceType);
@@ -121,8 +122,8 @@ final class PaymentCalendarSourceServiceTest extends TestCase
         ]), $this->date('2026-01-01'));
 
         $this->assertInstanceOf(PaymentCalendarItem::class, $item);
-        $this->assertSame(1_000.0, $item->amount);
-        $this->assertSame(750.0, $item->remainingAmount);
+        $this->assertSame('1000.00', $item->amount);
+        $this->assertSame('750.00', $item->remainingAmount);
     }
 
     public function test_reservation_and_payment_with_same_cash_flow_key_are_not_counted_twice(): void
@@ -146,7 +147,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
         $this->assertInstanceOf(PaymentCalendarItem::class, $reservationItem);
         $this->assertSame($paymentItem->cashFlowKey, $reservationItem->cashFlowKey);
 
-        $forecast = (new CashGapForecastService())->forecast(
+        $forecast = (new CashGapForecastService)->forecast(
             new CashGapForecastContext(
                 periodStart: '2026-01-10',
                 periodEnd: '2026-01-10',
@@ -159,7 +160,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
             ],
         )->toArray();
 
-        $this->assertSame(600.0, $forecast['closing_balance']);
+        $this->assertSame('600.00', $forecast['closing_balance']);
         $this->assertSame(1, $forecast['meta']['included_items']);
         $this->assertSame(1, $forecast['meta']['excluded_items']);
     }
@@ -291,7 +292,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
         $cashGapItem = $item->toCashGapForecastItem();
 
         $this->assertSame(CashGapForecastItem::BUCKET_SCHEDULED_OUTFLOW, $cashGapItem->bucket);
-        $this->assertSame(700.0, $cashGapItem->amount);
+        $this->assertSame('700.00', $cashGapItem->amount);
         $this->assertSame('2026-01-05', $cashGapItem->originalDate);
         $this->assertSame(42, $cashGapItem->organizationId);
         $this->assertSame('77', $cashGapItem->budgetArticleId);
@@ -318,7 +319,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
         $this->assertInstanceOf(PaymentCalendarItem::class, $item);
         $this->assertSame(PaymentCalendarItem::BUCKET_BUDGET_PLAN, $item->bucket);
         $this->assertSame(PaymentCalendarItem::DIRECTION_INFLOW, $item->direction);
-        $this->assertSame(1_200.0, $item->remainingAmount);
+        $this->assertSame('1200.00', $item->remainingAmount);
         $this->assertSame('budget-plan:701:2026-01-01:RUB', $item->cashFlowKey);
     }
 
@@ -368,7 +369,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
 
     private function paymentDocument(array $attributes = []): PaymentDocument
     {
-        $document = new PaymentDocument();
+        $document = new PaymentDocument;
         $document->setRawAttributes(array_merge([
             'id' => 118,
             'organization_id' => 42,
@@ -393,7 +394,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
 
     private function paymentSchedule(array $attributes = []): PaymentSchedule
     {
-        $schedule = new PaymentSchedule();
+        $schedule = new PaymentSchedule;
         $schedule->setRawAttributes(array_merge([
             'id' => 501,
             'payment_document_id' => 118,
@@ -409,7 +410,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
 
     private function paymentTransaction(array $attributes = []): PaymentTransaction
     {
-        $transaction = new PaymentTransaction();
+        $transaction = new PaymentTransaction;
         $transaction->setRawAttributes(array_merge([
             'id' => 301,
             'organization_id' => 42,
@@ -429,7 +430,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
 
     private function budgetLimitReservation(array $attributes = []): BudgetLimitReservation
     {
-        $reservation = new BudgetLimitReservation();
+        $reservation = new BudgetLimitReservation;
         $reservation->setRawAttributes(array_merge([
             'id' => 900,
             'organization_id' => 42,
@@ -449,7 +450,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
 
     private function budgetVersion(array $attributes = []): BudgetVersion
     {
-        $version = new BudgetVersion();
+        $version = new BudgetVersion;
         $version->setRawAttributes(array_merge([
             'id' => 601,
             'organization_id' => 42,
@@ -462,7 +463,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
 
     private function budgetArticle(array $attributes = []): BudgetArticle
     {
-        $article = new BudgetArticle();
+        $article = new BudgetArticle;
         $article->setRawAttributes(array_merge([
             'id' => 77,
             'organization_id' => 42,
@@ -475,7 +476,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
 
     private function budgetLine(array $attributes = []): BudgetLine
     {
-        $line = new BudgetLine();
+        $line = new BudgetLine;
         $line->setRawAttributes(array_merge([
             'id' => 701,
             'budget_version_id' => 601,
@@ -491,7 +492,7 @@ final class PaymentCalendarSourceServiceTest extends TestCase
 
     private function budgetAmount(array $attributes = []): BudgetAmount
     {
-        $amount = new BudgetAmount();
+        $amount = new BudgetAmount;
         $amount->setRawAttributes(array_merge([
             'id' => 801,
             'budget_line_id' => 701,

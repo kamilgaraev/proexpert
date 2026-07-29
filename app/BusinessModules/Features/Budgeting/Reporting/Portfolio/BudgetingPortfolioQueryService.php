@@ -8,19 +8,15 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractExceptio
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResourceLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\BudgetingPortfolioSnapshot;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquidityProjection;
@@ -140,7 +136,7 @@ final readonly class BudgetingPortfolioQueryService implements ReportDrillDownPr
             rows: $rows,
             totals: $snapshotRecord->totals,
             freshness: ReportFreshnessStatus::from((string) $snapshotRecord->freshness_status),
-            quality: $this->quality($snapshotRecord),
+            quality: BudgetingPortfolioProjectionService::qualityFromRecord($snapshotRecord),
             nextCursor: null,
             limit: $limit,
             hasMore: $hasMore,
@@ -193,10 +189,14 @@ final readonly class BudgetingPortfolioQueryService implements ReportDrillDownPr
 
         $details = [];
         $links = [];
-        foreach ($this->sourceRefs($record->getAttribute('source_refs')) as $sourceRef) {
+        $sourceRefs = $this->sourceRefs($record->getAttribute('source_refs'));
+        if ($sourceRefs === []) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+        }
+        foreach ($sourceRefs as $sourceRef) {
             $identity = $sourceRef['type'].':'.$sourceRef['id'];
             if (! isset($allowedTypes[$sourceRef['type']]) || ! isset($scoped[$identity])) {
-                continue;
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
             }
             $details[] = [
                 'row_key' => $identity,
@@ -209,7 +209,7 @@ final readonly class BudgetingPortfolioQueryService implements ReportDrillDownPr
                 $sourceRef['type'],
                 'r'.$sourceRef['id'],
                 $this->routeName($sourceRef['type']),
-                ['id' => (int) $sourceRef['id']],
+                ['id' => $sourceRef['id']],
                 'available',
             );
         }
@@ -318,6 +318,9 @@ final readonly class BudgetingPortfolioQueryService implements ReportDrillDownPr
             'closing' => (string) $record->getAttribute('closing'),
             'gap' => (string) $record->getAttribute('gap'),
             'quality' => (string) $record->getAttribute('quality_status'),
+            'quality_gaps' => $record->getAttribute('quality_gaps') ?? [],
+            'warnings' => $record->getAttribute('warnings') ?? [],
+            'reconciliation_status' => (string) $record->getAttribute('reconciliation_status'),
         ];
     }
 
@@ -368,8 +371,9 @@ final readonly class BudgetingPortfolioQueryService implements ReportDrillDownPr
         foreach ($value as $ref) {
             if (! is_array($ref)
                 || ! is_string($ref['type'] ?? null)
-                || (! is_int($ref['id'] ?? null) && ! ctype_digit((string) ($ref['id'] ?? '')))) {
-                continue;
+                || (! is_int($ref['id'] ?? null) && ! is_string($ref['id'] ?? null))
+                || trim((string) $ref['id']) === '') {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
             }
             $refs[] = ['type' => $ref['type'], 'id' => (string) $ref['id']];
         }
@@ -389,20 +393,5 @@ final readonly class BudgetingPortfolioQueryService implements ReportDrillDownPr
             'opening_balance' => 'admin.budgeting.cash-gap.show',
             default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN),
         };
-    }
-
-    private function quality(BudgetingPortfolioSnapshot $snapshot): ReportQuality
-    {
-        $count = (int) $snapshot->row_count;
-
-        return new ReportQuality(
-            ReportQualityStatus::from((string) $snapshot->quality_status),
-            new ReportCoverage((string) $count, (string) $count, $count === 0 ? null : '1.00000000'),
-            [],
-            0,
-            ReportReconciliationStatus::MATCHED,
-            [],
-            [],
-        );
     }
 }

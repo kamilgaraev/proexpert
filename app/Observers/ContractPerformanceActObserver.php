@@ -2,6 +2,7 @@
 
 namespace App\Observers;
 
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\AcceptedWorkHoldingFactProducer;
 use App\Models\ContractPerformanceAct;
 use App\Services\Analytics\EVMService;
 use App\Services\Contract\ContractAuditedMutationService;
@@ -14,16 +15,40 @@ class ContractPerformanceActObserver
     public function __construct(
         private readonly ContractAuditedMutationService $contractMutations,
         private readonly ContractAuditReconciliationService $reconciliation,
+        private readonly AcceptedWorkHoldingFactProducer $acceptedWorkFacts,
     ) {}
 
     public function created(ContractPerformanceAct $act): void
     {
+        if ($act->is_approved
+            && in_array($act->status, [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED], true)) {
+            $this->acceptedWorkFacts->project($act, $act->approval_date ?? $act->created_at);
+        }
+
         $this->recalculateContractTotal($act, 'created');
         $this->invalidateEVMCache($act);
     }
 
     public function updated(ContractPerformanceAct $act): void
     {
+        if ($act->wasChanged(['status', 'is_approved', 'amount', 'project_id', 'contract_id', 'approval_date'])) {
+            $active = $act->is_approved
+                && in_array($act->status, [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED], true);
+            $wasActive = (bool) $act->getOriginal('is_approved')
+                && in_array(
+                    $act->getOriginal('status'),
+                    [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED],
+                    true,
+                );
+            if ($active || $wasActive) {
+                $this->acceptedWorkFacts->project(
+                    $act,
+                    $active ? ($act->approval_date ?? $act->updated_at) : $act->updated_at,
+                    $active,
+                );
+            }
+        }
+
         if ($act->wasChanged(['amount', 'is_approved'])) {
             $this->recalculateContractTotal($act, 'updated');
         }

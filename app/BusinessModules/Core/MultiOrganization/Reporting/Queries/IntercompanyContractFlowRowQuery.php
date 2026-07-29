@@ -112,10 +112,14 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
         }
         $details = [];
         $links = [];
-        foreach ($this->sourceRefs($row->source_refs) as $sourceRef) {
+        $sourceRefs = $this->sourceRefs($row->source_refs);
+        if ($sourceRefs === []) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+        }
+        foreach ($sourceRefs as $sourceRef) {
             $identity = $sourceRef['type'].':'.$sourceRef['id'];
             if (! isset($scoped[$identity])) {
-                continue;
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
             }
             $details[] = [
                 'row_key' => $identity,
@@ -231,11 +235,12 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDown
         }
         $refs = [];
         foreach ($value as $ref) {
-            if (is_array($ref)
-                && is_string($ref['type'] ?? null)
-                && (is_int($ref['id'] ?? null) || ctype_digit((string) ($ref['id'] ?? '')))) {
-                $refs[] = ['type' => $ref['type'], 'id' => (string) $ref['id']];
+            if (! is_array($ref)
+                || ! is_string($ref['type'] ?? null)
+                || (! is_int($ref['id'] ?? null) && ! ctype_digit((string) ($ref['id'] ?? '')))) {
+                throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
             }
+            $refs[] = ['type' => $ref['type'], 'id' => (string) $ref['id']];
         }
 
         return $refs;

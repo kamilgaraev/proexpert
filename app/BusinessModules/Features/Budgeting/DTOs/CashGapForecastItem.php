@@ -4,26 +4,37 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\DTOs;
 
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Support\PortfolioDecimal;
+
 final readonly class CashGapForecastItem
 {
     public const DIRECTION_INFLOW = 'inflow';
+
     public const DIRECTION_OUTFLOW = 'outflow';
 
     public const BUCKET_ACTUAL_INFLOW = 'actual_inflow';
+
     public const BUCKET_PLANNED_INFLOW = 'planned_inflow';
+
     public const BUCKET_OVERDUE_INFLOW = 'overdue_inflow';
+
     public const BUCKET_ACTUAL_OUTFLOW = 'actual_outflow';
+
     public const BUCKET_APPROVED_OUTFLOW = 'approved_outflow';
+
     public const BUCKET_SCHEDULED_OUTFLOW = 'scheduled_outflow';
+
     public const BUCKET_RESERVED_OUTFLOW = 'reserved_outflow';
+
     public const BUCKET_OVERDUE_OUTFLOW = 'overdue_outflow';
+
     public const BUCKET_MANUAL_ADJUSTMENT = 'manual_adjustment';
 
     public function __construct(
         public string $date,
         public string $direction,
         public string $bucket,
-        public float $amount,
+        string|int|float $amount,
         public float $probability = 1.0,
         public ?int $organizationId = null,
         public ?int $projectId = null,
@@ -38,7 +49,13 @@ final readonly class CashGapForecastItem
         public ?string $cashFlowKey = null,
         public array $drillDown = [],
     ) {
+        if (is_float($amount)) {
+            $amount = rtrim(rtrim(sprintf('%.14F', $amount), '0'), '.');
+        }
+        $this->amount = PortfolioDecimal::money($amount);
     }
+
+    public string $amount;
 
     public function isInflow(): bool
     {

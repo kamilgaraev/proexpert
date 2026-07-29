@@ -27,6 +27,7 @@ return new class extends Migration
             $table->string('source_type', 32);
             $table->unsignedBigInteger('source_id');
             $table->unsignedBigInteger('source_version');
+            $table->string('source_schema_version', 64);
             $table->string('monetary_basis', 32);
             $table->string('tax_basis', 32);
             $table->bigInteger('amount_minor');
@@ -76,6 +77,8 @@ return new class extends Migration
         Schema::create('holding_allocation_projection_gaps', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('holding_id');
+            $table->string('hierarchy_version', 64);
             $table->string('source_type', 32);
             $table->unsignedBigInteger('source_id');
             $table->unsignedBigInteger('source_version');
@@ -89,7 +92,7 @@ return new class extends Migration
                 'holding_allocation_gap_source_unique',
             );
             $table->index(
-                ['organization_id', 'monetary_basis', 'resolved_at', 'id'],
+                ['holding_id', 'organization_id', 'monetary_basis', 'resolved_at', 'id'],
                 'holding_allocation_gap_readiness',
             );
         });

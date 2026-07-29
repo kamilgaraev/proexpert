@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\MultiOrganization\Reporting\Services;
 
+use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingHierarchySnapshot;
 use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\IntercompanyFlowMetricRow;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationFactVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationProjectionGap;
@@ -39,7 +40,10 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
 {
     public const CODE = 'intercompany_contract_flows';
 
-    public function __construct(private IntercompanyContractFlowFormula $formula) {}
+    public function __construct(
+        private IntercompanyContractFlowFormula $formula,
+        private HoldingHierarchyResolver $hierarchies = new HoldingHierarchyResolver,
+    ) {}
 
     public function materialize(
         ReportExecutionContext $context,
@@ -47,10 +51,17 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $this->assertQuery($context, $query);
-        $facts = $this->facts($context, $query)->orderBy('id')->get();
+        $hierarchy = $this->hierarchy($context);
+        $facts = $this->facts($context, $query, $hierarchy->holdingId, $hierarchy->organizationIds)
+            ->orderBy('id')
+            ->get();
         $metrics = [];
         $groups = [];
-        $sourcePayload = [];
+        $sourcePayload = [[
+            'holding_id' => $hierarchy->holdingId,
+            'hierarchy_version' => $hierarchy->version,
+            'source_schema_version' => $query->definition->sourceSchemaVersion,
+        ]];
         $unknown = 0;
 
         foreach ($facts as $fact) {
@@ -102,9 +113,15 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             static fn ($aggregate): array => $aggregate->toArray(),
             $this->formula->totals($metrics),
         );
-        $hierarchyGapCount = 0;
+        $hierarchyGapCount = $facts
+            ->filter(static fn (HoldingAllocationFactVersion $fact): bool => ! hash_equals(
+                $hierarchy->version,
+                (string) $fact->hierarchy_version,
+            ))
+            ->count();
         $projectionGaps = HoldingAllocationProjectionGap::query()
-            ->where('organization_id', $context->scope->organizationId)
+            ->where('holding_id', $hierarchy->holdingId)
+            ->whereIn('organization_id', $hierarchy->organizationIds)
             ->where('monetary_basis', 'contracted')
             ->where('observed_at', '<=', $query->asOf)
             ->where(static fn (Builder $builder): Builder => $builder
@@ -130,7 +147,7 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode($sourcePayload)));
         $snapshotId = (string) Str::ulid();
         $watermark = (string) ($facts->max('id') ?? 0);
-        $hierarchyWatermark = hash('sha256', $facts->pluck('hierarchy_version')->unique()->sort()->implode(','));
+        $hierarchyWatermark = $hierarchy->version;
         $sourceRef = new ReportSourceRef(
             'holding_allocations',
             'holding_facts',
@@ -141,15 +158,16 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             $sourceHash,
         );
 
-        DB::transaction(function () use ($context, $query, $rows, $totals, $sourceHash, $snapshotId, $watermark, $hierarchyWatermark, $sourceRef, $unknown, $hierarchyGapCount): void {
+        DB::transaction(function () use ($context, $query, $rows, $totals, $sourceHash, $snapshotId, $watermark, $hierarchyWatermark, $sourceRef, $unknown, $hierarchyGapCount, $hierarchy): void {
             IntercompanyContractFlowSnapshot::query()->create([
                 'id' => $snapshotId,
                 'organization_id' => $context->scope->organizationId,
-                'holding_id' => $context->scope->organizationId,
+                'holding_id' => $hierarchy->holdingId,
                 'definition_hash' => $query->definition->definitionHash->value,
                 'query_hash' => $query->queryHash->value,
                 'source_hash' => $sourceHash->value,
                 'formula_version' => $query->definition->formulaVersion,
+                'source_schema_version' => $query->definition->sourceSchemaVersion,
                 'hierarchy_watermark' => $hierarchyWatermark,
                 'allocation_watermark' => $watermark,
                 'totals' => $totals,
@@ -278,17 +296,23 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         );
     }
 
-    private function facts(ReportExecutionContext $context, ReportQuery $query): Builder
-    {
+    private function facts(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+        int $holdingId,
+        array $organizationIds,
+    ): Builder {
         $builder = HoldingAllocationFactVersion::query()
-            ->where('organization_id', $context->scope->organizationId)
+            ->where('holding_id', $holdingId)
+            ->whereIn('organization_id', $organizationIds)
             ->where('monetary_basis', 'contracted')
-            ->whereIn('contributor_organization_id', $context->scope->holdingOrganizationIds)
+            ->whereIn('contributor_organization_id', $organizationIds)
             ->whereDate('recognized_on', '<=', $query->asOf->format('Y-m-d'))
             ->whereNotExists(function (QueryBuilder $newer) use ($query): void {
                 $newer
                     ->selectRaw('1')
                     ->from('holding_allocation_fact_versions as newer_fact')
+                    ->whereColumn('newer_fact.holding_id', 'holding_allocation_fact_versions.holding_id')
                     ->whereColumn('newer_fact.organization_id', 'holding_allocation_fact_versions.organization_id')
                     ->whereColumn('newer_fact.source_type', 'holding_allocation_fact_versions.source_type')
                     ->whereColumn('newer_fact.source_id', 'holding_allocation_fact_versions.source_id')
@@ -318,6 +342,17 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
         }
 
         return $builder;
+    }
+
+    private function hierarchy(ReportExecutionContext $context): HoldingHierarchySnapshot
+    {
+        $hierarchy = $this->hierarchies->resolve($context->scope->organizationId);
+        if ($hierarchy->holdingId !== $context->scope->organizationId
+            || array_diff($context->scope->holdingOrganizationIds, $hierarchy->organizationIds) !== []) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN);
+        }
+
+        return $hierarchy;
     }
 
     private function projectionRows(array $groups): array

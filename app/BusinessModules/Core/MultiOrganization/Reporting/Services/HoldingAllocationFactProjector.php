@@ -28,11 +28,6 @@ final readonly class HoldingAllocationFactProjector
         Contract $contract,
         ContractProjectAllocation $allocation,
     ): ?HoldingAllocationFactVersion {
-        $type = $allocation->allocation_type;
-        if (! $type instanceof ContractAllocationTypeEnum
-            || ! in_array($type, [ContractAllocationTypeEnum::FIXED, ContractAllocationTypeEnum::PERCENTAGE], true)) {
-            return null;
-        }
         $history = ContractAllocationHistory::query()
             ->where('allocation_id', $allocation->getKey())
             ->latest('id')
@@ -49,6 +44,26 @@ final readonly class HoldingAllocationFactProjector
             return null;
         }
 
+        return $this->recordContractAllocationVersion($contract, $allocation, $history);
+    }
+
+    public function recordContractAllocationVersion(
+        Contract $contract,
+        ContractProjectAllocation $allocation,
+        ContractAllocationHistory $history,
+    ): ?HoldingAllocationFactVersion {
+        if ($history->created_at === null
+            || (int) $history->allocation_id !== (int) $allocation->getKey()
+            || (int) $history->contract_id !== (int) $contract->getKey()) {
+            return null;
+        }
+        $state = $this->allocationState((int) $allocation->getKey(), (int) $history->getKey());
+        $type = ContractAllocationTypeEnum::tryFrom((string) ($state['allocation_type'] ?? ''));
+        $active = ($state['is_active'] ?? true) !== false && $history->action !== 'deleted';
+        if (! $type instanceof ContractAllocationTypeEnum
+            || ! in_array($type, [ContractAllocationTypeEnum::FIXED, ContractAllocationTypeEnum::PERCENTAGE], true)) {
+            return null;
+        }
         try {
             $hierarchy = $this->hierarchies->resolve((int) $contract->organization_id);
         } catch (InvalidArgumentException) {
@@ -62,7 +77,7 @@ final readonly class HoldingAllocationFactProjector
 
             return null;
         }
-        [$currency, $currencySource] = $this->contractCurrency($contract);
+        [$currency, $currencySource] = $this->contractCurrency($contract, $history->created_at);
         if ($currency === null) {
             $this->recordGap([
                 'organization_id' => (int) $contract->organization_id,
@@ -79,10 +94,10 @@ final readonly class HoldingAllocationFactProjector
             : Contractor::query()->whereKey($contract->contractor_id)->value('source_organization_id');
 
         $fixedMinor = $type === ContractAllocationTypeEnum::FIXED
-            ? $this->moneyToMinor((string) $allocation->allocated_amount)
+            ? $this->moneyToMinor($active ? (string) ($state['allocated_amount'] ?? '0') : '0')
             : null;
         $percentage = $type === ContractAllocationTypeEnum::PERCENTAGE
-            ? (string) $allocation->allocated_percentage
+            ? ($active ? (string) ($state['allocated_percentage'] ?? '0') : '0')
             : null;
         $contractMinor = $this->moneyToMinor((string) $contract->total_amount);
         $source = [
@@ -92,12 +107,14 @@ final readonly class HoldingAllocationFactProjector
             'hierarchy_organization_ids' => $hierarchy->organizationIds,
             'contributor_organization_id' => (int) $contract->organization_id,
             'counterparty_organization_id' => $counterpartyOrganizationId === null ? null : (int) $counterpartyOrganizationId,
-            'project_id' => (int) $allocation->project_id,
+            'project_id' => (int) ($state['project_id'] ?? $history->project_id),
             'contract_id' => (int) $contract->getKey(),
             'allocation_id' => (int) $allocation->getKey(),
-            'linked_parent_allocation_id' => null,
-            'linked_incoming_minor' => null,
-            'linked_outgoing_minor' => null,
+            ...$this->linkedEvidence(
+                $contract,
+                (int) ($state['project_id'] ?? $history->project_id),
+                $history->created_at,
+            ),
             'source_type' => 'contract',
             'source_id' => (int) $allocation->getKey(),
             'source_version' => (int) $history->getKey(),
@@ -212,6 +229,7 @@ final readonly class HoldingAllocationFactProjector
                     'linked_parent_allocation_id' => $fact->linkedParentAllocationId,
                     'linked_incoming_minor' => $fact->linkedIncomingMinor,
                     'linked_outgoing_minor' => $fact->linkedOutgoingMinor,
+                    'source_schema_version' => HoldingAllocationFactVersion::SOURCE_SCHEMA_VERSION,
                     'tax_basis' => $fact->taxBasis,
                     'amount_minor' => $fact->amountMinor,
                     'currency' => $fact->currency,
@@ -234,7 +252,7 @@ final readonly class HoldingAllocationFactProjector
                 ->where('organization_id', $fact->organizationId)
                 ->where('source_type', $fact->sourceType)
                 ->where('source_id', $fact->sourceId)
-                ->where('source_version', '<=', $fact->sourceVersion)
+                ->where('source_version', $fact->sourceVersion)
                 ->where('monetary_basis', $fact->monetaryBasis)
                 ->whereNull('resolved_at')
                 ->update(['resolved_at' => now()]);
@@ -291,9 +309,19 @@ final readonly class HoldingAllocationFactProjector
         if (min($organizationId, $sourceId, $sourceVersion) < 1 || $missingFields === []) {
             return;
         }
+        try {
+            $hierarchy = $this->hierarchies->resolve($organizationId);
+            $holdingId = $hierarchy->holdingId;
+            $hierarchyVersion = $hierarchy->version;
+        } catch (InvalidArgumentException) {
+            $holdingId = (int) ($source['holding_id'] ?? $organizationId);
+            $hierarchyVersion = (string) ($source['hierarchy_version'] ?? 'unresolved');
+        }
         sort($missingFields, SORT_STRING);
         $identity = [
             'organization_id' => $organizationId,
+            'holding_id' => $holdingId,
+            'hierarchy_version' => $hierarchyVersion,
             'source_type' => (string) ($source['source_type'] ?? 'unknown'),
             'source_id' => $sourceId,
             'source_version' => $sourceVersion,
@@ -321,12 +349,13 @@ final readonly class HoldingAllocationFactProjector
         return 'unclassified';
     }
 
-    private function contractCurrency(Contract $contract): array
+    private function contractCurrency(Contract $contract, ?\DateTimeInterface $asOf = null): array
     {
         $currencies = PaymentDocument::query()
             ->where('organization_id', $contract->organization_id)
             ->where('invoiceable_type', Contract::class)
             ->where('invoiceable_id', $contract->getKey())
+            ->when($asOf !== null, static fn ($query) => $query->where('created_at', '<=', $asOf))
             ->whereNotNull('currency')
             ->distinct()
             ->pluck('currency')
@@ -337,6 +366,66 @@ final readonly class HoldingAllocationFactProjector
             ->all();
 
         return count($currencies) === 1 ? [$currencies[0], 'payment_document_consensus'] : [null, null];
+    }
+
+    private function allocationState(int $allocationId, int $historyId): array
+    {
+        $state = [];
+        $versions = ContractAllocationHistory::query()
+            ->where('allocation_id', $allocationId)
+            ->where('id', '<=', $historyId)
+            ->orderBy('id')
+            ->get(['action', 'new_values']);
+        foreach ($versions as $version) {
+            if (is_array($version->new_values)) {
+                $state = [...$state, ...$version->new_values];
+            }
+            if ($version->action === 'deleted') {
+                $state['is_active'] = false;
+            }
+        }
+
+        return $state;
+    }
+
+    private function linkedEvidence(Contract $contract, int $projectId, \DateTimeInterface $asOf): array
+    {
+        $parentContractId = (int) ($contract->getAttribute('parent_contract_id') ?? 0);
+        if ($parentContractId < 1) {
+            return [
+                'linked_parent_allocation_id' => null,
+                'linked_incoming_minor' => null,
+                'linked_outgoing_minor' => null,
+            ];
+        }
+        $parent = Contract::query()->find($parentContractId);
+        $parentAllocation = ContractProjectAllocation::withTrashed()
+            ->where('contract_id', $parentContractId)
+            ->where('project_id', $projectId)
+            ->whereHas('history', static fn ($query) => $query->where('created_at', '<=', $asOf))
+            ->latest('id')
+            ->first();
+        $childAllocation = ContractProjectAllocation::withTrashed()
+            ->where('contract_id', $contract->getKey())
+            ->where('project_id', $projectId)
+            ->whereHas('history', static fn ($query) => $query->where('created_at', '<=', $asOf))
+            ->latest('id')
+            ->first();
+        if (! $parent instanceof Contract
+            || ! $parentAllocation instanceof ContractProjectAllocation
+            || ! $childAllocation instanceof ContractProjectAllocation) {
+            return [
+                'linked_parent_allocation_id' => null,
+                'linked_incoming_minor' => null,
+                'linked_outgoing_minor' => null,
+            ];
+        }
+
+        return [
+            'linked_parent_allocation_id' => (int) $parentAllocation->getKey(),
+            'linked_incoming_minor' => $this->moneyToMinor((string) $parentAllocation->calculateAllocatedAmount()),
+            'linked_outgoing_minor' => $this->moneyToMinor((string) $childAllocation->calculateAllocatedAmount()),
+        ];
     }
 
     private function moneyToMinor(string $amount): int

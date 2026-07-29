@@ -58,7 +58,8 @@ final readonly class ProjectHoldingAllocationFacts implements ShouldQueueAfterCo
             ->toScale(0, RoundingMode::HalfUp)
             ->toInt();
         $sourceVersion = $event->transactionId ?? (int) $document->getKey();
-        if ($document->paid_at === null || ! is_string($document->currency) || preg_match('/^[A-Z]{3}$/D', mb_strtoupper($document->currency)) !== 1) {
+        $recognizedAt = $event->recognizedAt ?? $document->paid_at;
+        if ($recognizedAt === null || ! is_string($document->currency) || preg_match('/^[A-Z]{3}$/D', mb_strtoupper($document->currency)) !== 1) {
             $this->projector->recordGap([
                 'organization_id' => $organizationId,
                 'source_type' => $sourceType,
@@ -66,7 +67,7 @@ final readonly class ProjectHoldingAllocationFacts implements ShouldQueueAfterCo
                 'source_version' => $sourceVersion,
                 'monetary_basis' => 'cash',
             ], array_values(array_filter([
-                $document->paid_at === null ? 'recognized_on' : null,
+                $recognizedAt === null ? 'recognized_on' : null,
                 ! is_string($document->currency) ? 'currency' : null,
             ])));
 
@@ -108,7 +109,7 @@ final readonly class ProjectHoldingAllocationFacts implements ShouldQueueAfterCo
             'currency' => mb_strtoupper($document->currency),
             'currency_source' => 'payment_document',
             'tax_basis' => 'payment_amount',
-            'recognized_on' => $document->paid_at->toDateString(),
+            'recognized_on' => $recognizedAt->format('Y-m-d'),
             'source_refs' => [[
                 'type' => 'payment_transaction',
                 'id' => $sourceId,

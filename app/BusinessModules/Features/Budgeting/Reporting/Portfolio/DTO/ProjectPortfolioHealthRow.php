@@ -84,8 +84,34 @@ final readonly class ProjectPortfolioHealthRow
             riskLevel: $risk,
             riskRank: $ranks[$risk] ?? 1,
             asOf: substr($asOf, 0, 10),
-            sourceRefs: [['type' => 'project', 'id' => (int) ($project['id'] ?? 0)]],
+            sourceRefs: self::sourceRefs($row, (int) ($project['id'] ?? 0)),
         );
+    }
+
+    private static function sourceRefs(array $row, int $projectId): array
+    {
+        $sourceRefs = is_array($row['source_refs'] ?? null) && array_is_list($row['source_refs'])
+            ? $row['source_refs']
+            : [];
+        $sourceRefs[] = ['type' => 'project', 'id' => $projectId];
+        $unique = [];
+
+        foreach ($sourceRefs as $sourceRef) {
+            if (! is_array($sourceRef)
+                || ! is_string($sourceRef['type'] ?? null)
+                || (! is_int($sourceRef['id'] ?? null) && ! is_string($sourceRef['id'] ?? null))
+                || trim((string) $sourceRef['id']) === '') {
+                continue;
+            }
+            $id = $sourceRef['id'];
+            if (is_int($id) && $id < 1) {
+                continue;
+            }
+            $unique[$sourceRef['type'].':'.$id] = ['type' => $sourceRef['type'], 'id' => $id];
+        }
+        ksort($unique, SORT_STRING);
+
+        return array_values($unique);
     }
 
     public function toArray(): array

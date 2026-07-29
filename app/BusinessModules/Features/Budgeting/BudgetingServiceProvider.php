@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Budgeting;
 
 use App\BusinessModules\Features\Budgeting\Console\Commands\RecalculateEpmDataMartSnapshotsCommand;
+use App\BusinessModules\Features\Budgeting\Models\BudgetAmount;
+use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
+use App\BusinessModules\Features\Budgeting\Models\CashGapOpeningBalance;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquiditySourceVersionObserver;
 use App\BusinessModules\Features\Budgeting\Services\BudgetCatalogService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportFileReader;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportService;
@@ -20,8 +24,8 @@ use App\BusinessModules\Features\Budgeting\Services\CashGapOpeningBalanceService
 use App\BusinessModules\Features\Budgeting\Services\CfoCommandCenterPayloadBuilder;
 use App\BusinessModules\Features\Budgeting\Services\CfoCommandCenterService;
 use App\BusinessModules\Features\Budgeting\Services\CfoProjectPortfolioAggregator;
-use App\BusinessModules\Features\Budgeting\Services\EpmDataMartHealthService;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartFreshnessService;
+use App\BusinessModules\Features\Budgeting\Services\EpmDataMartHealthService;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartPayloadProjector;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartRecalculationCoordinator;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartRecalculationService;
@@ -59,7 +63,10 @@ final class BudgetingServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        $this->loadMigrationsFrom(__DIR__ . '/migrations');
+        $this->loadMigrationsFrom(__DIR__.'/migrations');
+        BudgetAmount::observe(PortfolioLiquiditySourceVersionObserver::class);
+        BudgetLimitReservation::observe(PortfolioLiquiditySourceVersionObserver::class);
+        CashGapOpeningBalance::observe(PortfolioLiquiditySourceVersionObserver::class);
 
         if ($this->app->runningInConsole()) {
             $this->commands([
@@ -67,7 +74,7 @@ final class BudgetingServiceProvider extends ServiceProvider
             ]);
         }
 
-        $routesPath = __DIR__ . '/routes.php';
+        $routesPath = __DIR__.'/routes.php';
         if (is_file($routesPath)) {
             require $routesPath;
         }

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Budgeting\Reporting\Portfolio;
 
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
+use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
+use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
@@ -29,6 +31,8 @@ use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
 use App\BusinessModules\Features\Budgeting\DTOs\CfoCommandCenterFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginReportFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\WipForecastReportFilters;
+use App\BusinessModules\Features\Budgeting\Models\BudgetLine;
+use App\BusinessModules\Features\Budgeting\Models\WipForecastLine;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\PortfolioLiquidityRow;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\ProjectPortfolioProjectionResult;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\BudgetingPortfolioSnapshot;
@@ -41,6 +45,7 @@ use App\BusinessModules\Features\Budgeting\Services\CfoProjectPortfolioAggregato
 use App\BusinessModules\Features\Budgeting\Services\PlanFactReportService;
 use App\BusinessModules\Features\Budgeting\Services\ProjectMarginReportService;
 use App\BusinessModules\Features\Budgeting\Services\WipForecastReportService;
+use App\Models\ContractPerformanceAct;
 use App\Models\Project;
 use DateTimeImmutable;
 use DateTimeInterface;
@@ -196,6 +201,9 @@ final readonly class BudgetingPortfolioProjectionService
                     'gap' => $row->gap,
                     'quality_status' => $row->qualityStatus,
                     'duplicate_source_count' => $row->duplicateSourceCount,
+                    'quality_gaps' => $row->qualityGaps,
+                    'warnings' => $row->warnings,
+                    'reconciliation_status' => $row->reconciliationStatus,
                     'row_key' => $row->rowKey,
                     'source_refs' => $row->sourceRefs,
                 ]);
@@ -233,7 +241,7 @@ final readonly class BudgetingPortfolioProjectionService
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
         }
 
-        $quality = $this->qualityFromRecord($record);
+        $quality = self::qualityFromRecord($record);
         $sourceRefs = $this->hydrateSourceRefs($record->source_refs);
 
         return new ReportResult(
@@ -380,12 +388,14 @@ final readonly class BudgetingPortfolioProjectionService
         );
     }
 
-    private function qualityFromRecord(BudgetingPortfolioSnapshot $record): ReportQuality
+    public static function qualityFromRecord(BudgetingPortfolioSnapshot $record): ReportQuality
     {
         if ((string) $record->report_code === self::LIQUIDITY_CODE) {
-            $totals = is_array($record->totals) ? $record->totals : [];
-            $gaps = is_array($totals['quality']['gaps'] ?? null) ? $totals['quality']['gaps'] : [];
-            $duplicates = (int) ($totals['quality']['duplicate_source_count'] ?? 0);
+            $totalsValue = $record->getAttribute('totals');
+            $totals = is_array($totalsValue) ? $totalsValue : [];
+            $quality = is_array($totals['quality'] ?? null) ? $totals['quality'] : [];
+            $gaps = is_array($quality['gaps'] ?? null) ? $quality['gaps'] : [];
+            $duplicates = (int) ($quality['duplicate_source_count'] ?? 0);
             $count = (int) $record->row_count;
             $gapCount = count($gaps);
             $empty = $count === 0;
@@ -498,6 +508,14 @@ final readonly class BudgetingPortfolioProjectionService
             $context,
             $query,
         );
+        $provenance = $this->healthProvenance($context, $query);
+        $margin = $this->attachHealthSourceRefs($margin, $provenance, 'margin');
+        $wip = $this->attachHealthSourceRefs($wip, $provenance, 'wip');
+        $planFact['rows'] = $this->attachHealthRowRefs(
+            is_array($planFact['rows'] ?? null) ? $planFact['rows'] : [],
+            $provenance,
+            'plan_fact',
+        );
         $progress->advance(60);
 
         $this->assertCriticalSourcesFresh($margin, $wip);
@@ -545,17 +563,18 @@ final readonly class BudgetingPortfolioProjectionService
         ReportProgress $progress,
     ): ReportSnapshotRef {
         $filters = $this->filters($context, $query, true);
+        $versionedSource = app(PortfolioLiquidityAsOfSource::class)->read(
+            $context->scope->organizationId,
+            $filters->calendarFilters(),
+            $query->asOf,
+        );
         $calendar = $this->scopeCalendar(
-            $this->calendarSources->collect($filters->calendarFilters(), $query->asOf),
+            $versionedSource['calendar'],
             $context,
             $query,
         );
         $currencies = $this->currencies($query, $calendar);
-        $balances = $this->openingBalances->latestApprovedByCurrency(
-            $context->scope->organizationId,
-            $filters->periodStart,
-            $currencies,
-        );
+        $balances = $versionedSource['balances'];
         if ($currencies === []) {
             $currencies = array_keys($balances);
             sort($currencies, SORT_STRING);
@@ -582,6 +601,7 @@ final readonly class BudgetingPortfolioProjectionService
                 $calendar,
             ),
             'opening_balances' => [],
+            'source_versions' => $versionedSource['versions'],
         ];
 
         foreach ($currencies as $currency) {
@@ -993,5 +1013,93 @@ final readonly class BudgetingPortfolioProjectionService
             : ['date', 'project', 'scenario', 'currency', 'opening', 'inflow', 'outflow', 'closing', 'gap', 'quality'];
 
         return array_map(static fn (string $id): array => ['id' => $id], $ids);
+    }
+
+    private function healthProvenance(
+        ReportExecutionContext $context,
+        ReportQuery $query,
+    ): array {
+        $organizationId = $context->scope->organizationId;
+        $asOf = $query->asOf;
+        $refs = [];
+
+        foreach (ContractPerformanceAct::query()
+            ->where('is_approved', true)
+            ->whereDate('approval_date', '<=', $asOf)
+            ->whereHas('contract', static fn (Builder $builder): Builder => $builder->where('organization_id', $organizationId))
+            ->get(['id', 'project_id']) as $act) {
+            $this->addHealthRef($refs, (int) $act->project_id, 'margin', 'approved_act', (int) $act->getKey());
+        }
+        foreach (PaymentTransaction::query()
+            ->where('organization_id', $organizationId)
+            ->where('status', PaymentTransactionStatus::COMPLETED)
+            ->where('created_at', '<=', $asOf)
+            ->get(['id', 'project_id']) as $transaction) {
+            $this->addHealthRef(
+                $refs,
+                (int) $transaction->project_id,
+                'margin',
+                'payment_transaction',
+                (int) $transaction->getKey(),
+            );
+        }
+        foreach (WipForecastLine::query()
+            ->where('organization_id', $organizationId)
+            ->where('created_at', '<=', $asOf)
+            ->get(['id', 'project_id']) as $line) {
+            $this->addHealthRef($refs, (int) $line->project_id, 'wip', 'earned_value', (string) $line->getKey());
+            $this->addHealthRef($refs, (int) $line->project_id, 'wip', 'actual_cost', (string) $line->getKey());
+        }
+        foreach (BudgetLine::query()
+            ->whereHas('version', static fn (Builder $builder): Builder => $builder
+                ->where('organization_id', $organizationId)
+                ->where('created_at', '<=', $asOf))
+            ->get(['id', 'project_id']) as $line) {
+            $this->addHealthRef($refs, (int) $line->project_id, 'plan_fact', 'budget_line', (string) $line->getKey());
+        }
+
+        return $refs;
+    }
+
+    private function addHealthRef(
+        array &$refs,
+        int $projectId,
+        string $group,
+        string $type,
+        int|string $id,
+    ): void {
+        if ($projectId < 1 || (string) $id === '') {
+            return;
+        }
+        $refs[$projectId][$group][$type.':'.(string) $id] = ['type' => $type, 'id' => $id];
+    }
+
+    private function attachHealthSourceRefs(array $report, array $provenance, string $group): array
+    {
+        $report['rows'] = $this->attachHealthRowRefs(
+            is_array($report['rows'] ?? null) ? $report['rows'] : [],
+            $provenance,
+            $group,
+        );
+
+        return $report;
+    }
+
+    private function attachHealthRowRefs(array $rows, array $provenance, string $group): array
+    {
+        foreach ($rows as &$row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $project = is_array($row['project'] ?? null) ? $row['project'] : [];
+            $projectId = (int) ($project['id'] ?? $row['project_id'] ?? 0);
+            $row['source_refs'] = $this->uniqueRefs([
+                ...(is_array($row['source_refs'] ?? null) ? $row['source_refs'] : []),
+                ...array_values($provenance[$projectId][$group] ?? []),
+            ]);
+        }
+        unset($row);
+
+        return $rows;
     }
 }

@@ -18,6 +18,7 @@ return new class extends Migration
             $table->char('query_hash', 64);
             $table->char('source_hash', 64);
             $table->string('formula_version', 64);
+            $table->string('source_schema_version', 64);
             $table->string('hierarchy_watermark', 64);
             $table->string('allocation_watermark', 64);
             $table->string('act_watermark', 64);

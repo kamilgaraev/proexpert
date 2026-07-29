@@ -9,6 +9,8 @@ use LogicException;
 
 final class HoldingAllocationFactVersion extends Model
 {
+    public const SOURCE_SCHEMA_VERSION = 'holding_allocation_facts.v1';
+
     protected $table = 'holding_allocation_fact_versions';
 
     protected $guarded = [];

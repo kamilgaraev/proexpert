@@ -18,6 +18,7 @@ final class HoldingAllocationProjectionGap extends Model
     {
         return [
             'organization_id' => 'integer',
+            'holding_id' => 'integer',
             'source_id' => 'integer',
             'source_version' => 'integer',
             'missing_fields' => 'array',

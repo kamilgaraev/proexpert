@@ -4,12 +4,18 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\DTOs;
 
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Support\PortfolioDecimal;
+
 final readonly class CashGapScenarioAdjustment
 {
     public const ACTION_RESCHEDULE_PAYMENT = 'reschedule_payment';
+
     public const ACTION_CHANGE_INFLOW_PROBABILITY = 'change_inflow_probability';
+
     public const ACTION_EXCLUDE_PAYMENT = 'exclude_payment';
+
     public const ACTION_ADD_TEMPORARY_INFLOW = 'add_temporary_inflow';
+
     public const ACTION_ADD_TEMPORARY_FINANCING = 'add_temporary_financing';
 
     public function __construct(
@@ -19,12 +25,17 @@ final readonly class CashGapScenarioAdjustment
         public int|string|null $sourceId = null,
         public ?string $date = null,
         public ?float $probability = null,
-        public ?float $amount = null,
+        string|int|float|null $amount = null,
         public ?string $currency = null,
         public ?string $description = null,
         public ?string $reason = null,
     ) {
+        $this->amount = $amount === null
+            ? null
+            : PortfolioDecimal::money(self::decimalInput($amount));
     }
+
+    public ?string $amount;
 
     public static function fromArray(array $payload): self
     {
@@ -35,7 +46,9 @@ final readonly class CashGapScenarioAdjustment
             sourceId: $payload['source_id'] ?? null,
             date: self::nullableString($payload['date'] ?? null),
             probability: array_key_exists('probability', $payload) ? (float) $payload['probability'] : null,
-            amount: array_key_exists('amount', $payload) ? (float) $payload['amount'] : null,
+            amount: array_key_exists('amount', $payload)
+                ? PortfolioDecimal::money(self::decimalInput($payload['amount']))
+                : null,
             currency: self::nullableString($payload['currency'] ?? null),
             description: self::nullableString($payload['description'] ?? null),
             reason: self::nullableString($payload['reason'] ?? null),
@@ -74,10 +87,22 @@ final readonly class CashGapScenarioAdjustment
 
     private static function nullableString(mixed $value): ?string
     {
-        if (!is_string($value) || trim($value) === '') {
+        if (! is_string($value) || trim($value) === '') {
             return null;
         }
 
         return trim($value);
+    }
+
+    private static function decimalInput(mixed $value): string|int
+    {
+        if (is_int($value) || is_string($value)) {
+            return $value;
+        }
+        if (is_float($value) && is_finite($value)) {
+            return rtrim(rtrim(sprintf('%.14F', $value), '0'), '.');
+        }
+
+        return '0';
     }
 }

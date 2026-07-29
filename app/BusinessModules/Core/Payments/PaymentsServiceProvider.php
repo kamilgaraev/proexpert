@@ -2,31 +2,32 @@
 
 namespace App\BusinessModules\Core\Payments;
 
-use App\BusinessModules\Core\Payments\Jobs\ProcessOverdueInvoicesJob;
-use App\BusinessModules\Core\Payments\Services\CounterpartyAccountService;
-use App\BusinessModules\Core\Payments\Services\PaymentAccessControl;
-use App\BusinessModules\Core\Payments\Services\PaymentScheduleService;
-use App\BusinessModules\Core\Payments\Services\PaymentTransactionService;
-use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
-use App\BusinessModules\Core\Payments\Services\PaymentDocumentStateMachine;
-use App\BusinessModules\Core\Payments\Services\ApprovalWorkflowService;
-use App\BusinessModules\Core\Payments\Services\PaymentValidationService;
-use App\BusinessModules\Core\Payments\Services\PaymentRequestService;
-use App\BusinessModules\Core\Payments\Services\PaymentScheduleGenerator;
-use App\BusinessModules\Core\Payments\Services\PaymentAuditService;
-use App\BusinessModules\Core\Payments\Services\PaymentExportService;
-use App\BusinessModules\Core\Payments\Services\Reports\CashFlowReportService;
-use App\BusinessModules\Core\Payments\Services\Reports\AgingAnalysisReportService;
-use App\BusinessModules\Core\Payments\Services\OffsetService;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
+use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Observers\PaymentDocumentObserver;
-use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\Event;
-
+use App\BusinessModules\Core\Payments\Services\ApprovalWorkflowService;
+use App\BusinessModules\Core\Payments\Services\CounterpartyAccountService;
 use App\BusinessModules\Core\Payments\Services\Export\PaymentOrderPdfService;
 use App\BusinessModules\Core\Payments\Services\Import\BankStatementImportService;
 use App\BusinessModules\Core\Payments\Services\Integrations\BudgetControlService;
+use App\BusinessModules\Core\Payments\Services\OffsetService;
+use App\BusinessModules\Core\Payments\Services\PaymentAccessControl;
+use App\BusinessModules\Core\Payments\Services\PaymentAuditService;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentStateMachine;
+use App\BusinessModules\Core\Payments\Services\PaymentExportService;
 use App\BusinessModules\Core\Payments\Services\PaymentPurposeGenerator;
+use App\BusinessModules\Core\Payments\Services\PaymentRequestService;
+use App\BusinessModules\Core\Payments\Services\PaymentScheduleGenerator;
+use App\BusinessModules\Core\Payments\Services\PaymentScheduleService;
+use App\BusinessModules\Core\Payments\Services\PaymentTransactionService;
+use App\BusinessModules\Core\Payments\Services\PaymentValidationService;
+use App\BusinessModules\Core\Payments\Services\Reports\AgingAnalysisReportService;
+use App\BusinessModules\Core\Payments\Services\Reports\CashFlowReportService;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquiditySourceVersionObserver;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\ServiceProvider;
 
 class PaymentsServiceProvider extends ServiceProvider
 {
@@ -43,11 +44,11 @@ class PaymentsServiceProvider extends ServiceProvider
         $this->app->singleton(ApprovalWorkflowService::class);
         $this->app->singleton(PaymentValidationService::class);
         $this->app->singleton(PaymentAuditService::class);
-        
+
         // New services
         $this->app->singleton(BudgetControlService::class);
         $this->app->singleton(PaymentPurposeGenerator::class);
-        
+
         // Bind сервисы (новый экземпляр при каждом resolve)
         $this->app->bind(PaymentTransactionService::class);
         $this->app->bind(PaymentScheduleService::class);
@@ -58,11 +59,11 @@ class PaymentsServiceProvider extends ServiceProvider
         $this->app->bind(CashFlowReportService::class);
         $this->app->bind(AgingAnalysisReportService::class);
         $this->app->bind(OffsetService::class);
-        
+
         // New services
         $this->app->bind(PaymentOrderPdfService::class);
         $this->app->bind(BankStatementImportService::class);
-        
+
         // Recipient services
         $this->app->bind(\App\BusinessModules\Core\Payments\Services\PaymentRecipientNotificationService::class);
         $this->app->bind(\App\BusinessModules\Core\Payments\Services\PaymentConfirmationService::class);
@@ -74,17 +75,17 @@ class PaymentsServiceProvider extends ServiceProvider
     public function boot(): void
     {
         // Загрузка миграций
-        $this->loadMigrationsFrom(__DIR__ . '/migrations');
-        
+        $this->loadMigrationsFrom(__DIR__.'/migrations');
+
         // Загрузка маршрутов
-        $this->loadRoutesFrom(__DIR__ . '/routes.php');
-        
+        $this->loadRoutesFrom(__DIR__.'/routes.php');
+
         // Регистрация event listeners
         $this->registerEventListeners();
-        
+
         // Регистрация observers
         $this->registerObservers();
-        
+
         // Регистрация команд для scheduler
         if ($this->app->runningInConsole()) {
             $this->commands([
@@ -104,50 +105,52 @@ class PaymentsServiceProvider extends ServiceProvider
         // $schedule->job(new SendPaymentRemindersJob())->daily();
         // $schedule->job(new SendUpcomingPaymentNotificationsJob())->dailyAt('09:00');
     }
-    
+
     /**
      * Регистрация event listeners
      */
     protected function registerEventListeners(): void
     {
         Event::subscribe(\App\BusinessModules\Core\Payments\Listeners\SendPaymentNotifications::class);
-        
+
         // Уведомления получателям о создании документов
         Event::listen(
             \App\BusinessModules\Core\Payments\Events\PaymentDocumentCreated::class,
             \App\BusinessModules\Core\Payments\Listeners\NotifyRecipientOnDocumentCreated::class
         );
-        
+
         // Уведомления получателям о регистрации платежей
         Event::listen(
             \App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid::class,
             \App\BusinessModules\Core\Payments\Listeners\NotifyRecipientOnPaymentRegistered::class
         );
-        
+
         // Автоматическое создание прихода на склад при оплате
         Event::listen(
             \App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid::class,
             \App\BusinessModules\Core\Payments\Listeners\CreateWarehouseReceiptOnPayment::class
         );
-        
+
         // Уведомление создателю о подтверждении получения
         Event::listen(
             \App\BusinessModules\Core\Payments\Events\PaymentReceiptConfirmed::class,
             \App\BusinessModules\Core\Payments\Listeners\NotifyCreatorOnReceiptConfirmed::class
         );
-        
+
         // Автосоздание счетов из актов (проверит настройку внутри)
         // Нужно зарегистрировать слушание события создания/обновления актов
         // Если у вас есть события ActCreated или ActSigned, добавьте их:
         // Event::listen(ActSigned::class, [AutoCreateInvoiceFromAct::class, 'handle']);
     }
-    
+
     /**
      * Регистрация observers
      */
     protected function registerObservers(): void
     {
         PaymentDocument::observe(PaymentDocumentObserver::class);
+        PaymentDocument::observe(PortfolioLiquiditySourceVersionObserver::class);
+        PaymentSchedule::observe(PortfolioLiquiditySourceVersionObserver::class);
+        PaymentTransaction::observe(PortfolioLiquiditySourceVersionObserver::class);
     }
 }
-

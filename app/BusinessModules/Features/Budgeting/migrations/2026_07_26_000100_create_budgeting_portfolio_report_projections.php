@@ -10,6 +10,27 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::create('budgeting_portfolio_liquidity_source_versions', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('organization_id');
+            $table->string('source_type', 64);
+            $table->string('source_id', 128);
+            $table->char('source_version', 64);
+            $table->dateTimeTz('occurred_at');
+            $table->dateTimeTz('created_at');
+            $table->dateTimeTz('effective_at');
+            $table->jsonb('payload')->nullable();
+            $table->char('source_hash', 64);
+            $table->unique(
+                ['organization_id', 'source_type', 'source_id', 'source_version'],
+                'budgeting_liquidity_source_version_unique',
+            );
+            $table->index(
+                ['organization_id', 'occurred_at', 'effective_at', 'id'],
+                'budgeting_liquidity_source_as_of',
+            );
+        });
+
         Schema::create('budgeting_portfolio_report_snapshots', function (Blueprint $table): void {
             $table->ulid('id')->primary();
             $table->unsignedBigInteger('organization_id');
@@ -76,6 +97,9 @@ return new class extends Migration
             $table->decimal('gap', 20, 2);
             $table->string('quality_status', 16);
             $table->unsignedInteger('duplicate_source_count');
+            $table->jsonb('quality_gaps');
+            $table->jsonb('warnings');
+            $table->string('reconciliation_status', 32);
             $table->string('row_key', 256);
             $table->jsonb('source_refs');
             $table->unique(['organization_id', 'snapshot_id', 'row_key'], 'budgeting_portfolio_liquidity_row_unique');
@@ -92,5 +116,6 @@ return new class extends Migration
         Schema::dropIfExists('budgeting_portfolio_liquidity_rows');
         Schema::dropIfExists('budgeting_project_portfolio_health_rows');
         Schema::dropIfExists('budgeting_portfolio_report_snapshots');
+        Schema::dropIfExists('budgeting_portfolio_liquidity_source_versions');
     }
 };

@@ -10,7 +10,9 @@ use LogicException;
 final class PortfolioLiquidityProjection extends Model
 {
     protected $table = 'budgeting_portfolio_liquidity_rows';
+
     protected $guarded = [];
+
     public $timestamps = false;
 
     protected function casts(): array
@@ -21,12 +23,14 @@ final class PortfolioLiquidityProjection extends Model
             'duplicate_source_count' => 'integer',
             'forecast_date' => 'immutable_date',
             'source_refs' => 'array',
+            'quality_gaps' => 'array',
+            'warnings' => 'array',
         ];
     }
 
     protected static function booted(): void
     {
-        static::updating(static fn (): never => throw new LogicException('report_row_immutable'));
-        static::deleting(static fn (): never => throw new LogicException('report_row_immutable'));
+        self::updating(static fn (): never => throw new LogicException('report_row_immutable'));
+        self::deleting(static fn (): never => throw new LogicException('report_row_immutable'));
     }
 }

@@ -130,6 +130,61 @@ final class BudgetingPortfolioSourceTest extends TestCase
     }
 
     #[Test]
+    public function health_row_keeps_real_margin_wip_plan_fact_limit_and_approval_sources(): void
+    {
+        $filters = new CfoCommandCenterFilters(1, '2026-07-01', '2026-07-31', currency: 'RUB');
+        $projects = [10 => ['id' => 10, 'name' => 'Проект 10', 'status' => 'active']];
+        $calendar = [new \App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem(
+            1,
+            '2026-07-20',
+            null,
+            'outflow',
+            'reserved',
+            '10.00',
+            '10.00',
+            'RUB',
+            1.0,
+            'reserved',
+            'budget_limit_reservation',
+            'reservation-1',
+            'reservation:1',
+            10,
+        )];
+        $result = (new CfoProjectPortfolioAggregator)->buildResult(
+            $filters,
+            $projects,
+            ['rows' => [[
+                'project_id' => 10,
+                'currency' => 'RUB',
+                'actual' => ['revenue' => '100.00', 'cost' => '80.00'],
+                'source_refs' => [['type' => 'approved_act', 'id' => 7]],
+            ]]],
+            ['rows' => [[
+                'project_id' => 10,
+                'currency' => 'RUB',
+                'metrics' => [],
+                'source_refs' => [['type' => 'earned_value', 'id' => 'wip-1']],
+            ]]],
+            [[
+                'project_id' => 10,
+                'currency' => 'RUB',
+                'source_refs' => [['type' => 'budget_line', 'id' => 'line-1']],
+            ]],
+            $calendar,
+            '2026-07-29T00:00:00+00:00',
+            10,
+        );
+
+        self::assertSame([
+            ['type' => 'approved_act', 'id' => 7],
+            ['type' => 'budget_line', 'id' => 'line-1'],
+            ['type' => 'budget_reservation', 'id' => 'reservation-1'],
+            ['type' => 'earned_value', 'id' => 'wip-1'],
+            ['type' => 'project', 'id' => 10],
+        ], $result->row(10, 'RUB')->sourceRefs);
+    }
+
+    #[Test]
     public function project_portfolio_health_provider_contract(): void
     {
         self::assertContains(ReportDataProvider::class, class_implements(ProjectPortfolioHealthProvider::class));
