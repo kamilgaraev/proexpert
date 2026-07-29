@@ -18,6 +18,7 @@ use App\BusinessModules\Core\Reporting\Application\Execution\CurrentReportAuthor
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReconcileCompletedReportArtifacts;
 use App\BusinessModules\Core\Reporting\Application\Exports\ReportArtifactVersionInventory;
+use App\BusinessModules\Core\Reporting\Application\Exports\ReportCompletedArtifactReconciliationResult;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
@@ -61,7 +62,7 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
         [$context, $export, $source, $published, $subject] = $this->fixture();
         $exact = $this->version($context->scope->organizationId, $export, $source);
         $orphan = $exact;
-        $orphan['path'] = "org-1/reports/exports/".self::EXPORT_ID.'/old-part';
+        $orphan['path'] = 'org-1/reports/exports/'.self::EXPORT_ID.'/old-part';
         $orphan['version_id'] = 'old-version';
         $orphan['created_at'] = new DateTimeImmutable('2025-12-31T22:00:00Z');
         $mutations = [];
@@ -106,10 +107,11 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
             new DateTimeImmutable('2026-01-01T00:02:00Z'),
         );
 
+        self::assertInstanceOf(ReportCompletedArtifactReconciliationResult::class, $result);
         self::assertSame(2, $result->scanned);
-        self::assertSame(1, $result->requeued);
+        self::assertSame(1, $result->sealed);
         self::assertSame(0, $result->skipped);
-        self::assertSame(1, $result->failed);
+        self::assertSame(1, $result->deleted);
         self::assertSame(['claim', 'delete', 'seal'], $mutations);
     }
 
@@ -151,7 +153,7 @@ final class ReconcileCompletedReportArtifactsTest extends TestCase
     {
         [$context, $export, $source, $published, $subject] = $this->fixture();
         $orphan = $this->version(1, $export, $source);
-        $orphan['path'] = "org-1/reports/exports/".self::EXPORT_ID.'/old-part';
+        $orphan['path'] = 'org-1/reports/exports/'.self::EXPORT_ID.'/old-part';
         $recovery = $this->createMock(ReportCompletedArtifactRecoveryStore::class);
         $recovery->expects(self::once())
             ->method('claimExpiredUpload')

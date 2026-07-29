@@ -14,7 +14,6 @@ use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportRun
 use App\BusinessModules\Core\Reporting\Application\Dispatch\ReportDispatchAggregate;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
-use App\BusinessModules\Core\Reporting\Application\Execution\ReportExecutionWatchdogSummary;
 use App\BusinessModules\Core\Reporting\Application\Execution\ReportRunExportSource;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\PublishedReportDefinition;
@@ -28,6 +27,27 @@ use App\Services\Storage\DTO\StoredFile;
 use App\Services\Storage\FileService;
 use DateTimeImmutable;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
+
+final readonly class ReportCompletedArtifactReconciliationResult
+{
+    public function __construct(
+        public int $scanned,
+        public int $sealed,
+        public int $skipped,
+        public int $deleted,
+    ) {
+        if (
+            min($scanned, $sealed, $skipped, $deleted) < 0
+            || $sealed > 1
+            || $scanned !== $sealed + $skipped + $deleted
+        ) {
+            throw new InvalidArgumentException(
+                'report_completed_artifact_reconciliation_result_invalid',
+            );
+        }
+    }
+}
 
 final readonly class ReconcileCompletedReportArtifacts
 {
@@ -51,7 +71,7 @@ final readonly class ReconcileCompletedReportArtifacts
         ReportExecutionContext $context,
         string $exportId,
         DateTimeImmutable $occurredAt,
-    ): ReportExecutionWatchdogSummary {
+    ): ReportCompletedArtifactReconciliationResult {
         $export = $this->exports->get($context, $exportId);
         $source = $this->runs->exportSource($context, $export->runId);
         $published = $this->definitions->published($source->run->reportCode);
@@ -98,7 +118,7 @@ final readonly class ReconcileCompletedReportArtifacts
         }
 
         if ($matches === [] && $unmatched === []) {
-            return new ReportExecutionWatchdogSummary(0, 0, 0, 0);
+            return new ReportCompletedArtifactReconciliationResult(0, 0, 0, 0);
         }
 
         $current = $fence->assertCurrent($current);
@@ -123,7 +143,7 @@ final readonly class ReconcileCompletedReportArtifacts
                 $occurredAt,
             );
 
-            return new ReportExecutionWatchdogSummary(
+            return new ReportCompletedArtifactReconciliationResult(
                 count($unmatched),
                 0,
                 $skipped,
@@ -153,7 +173,7 @@ final readonly class ReconcileCompletedReportArtifacts
             $occurredAt,
         );
 
-        return new ReportExecutionWatchdogSummary(
+        return new ReportCompletedArtifactReconciliationResult(
             1 + count($unmatched),
             1,
             $skipped,
@@ -201,7 +221,7 @@ final readonly class ReconcileCompletedReportArtifacts
     }
 
     /**
-     * @param list<string> $columns
+     * @param  list<string>  $columns
      */
     private function fence(
         ReportExecutionContext $context,
@@ -249,7 +269,7 @@ final readonly class ReconcileCompletedReportArtifacts
     }
 
     /**
-     * @param array<string, mixed> $version
+     * @param  array<string, mixed>  $version
      */
     private function matches(
         ReportExecutionContext $context,
@@ -264,7 +284,7 @@ final readonly class ReconcileCompletedReportArtifacts
     }
 
     /**
-     * @param array<string, mixed> $version
+     * @param  array<string, mixed>  $version
      */
     private function hasExpectedMetadata(
         ReportExecutionContext $context,
@@ -306,7 +326,7 @@ final readonly class ReconcileCompletedReportArtifacts
     }
 
     /**
-     * @param array<string, mixed> $version
+     * @param  array<string, mixed>  $version
      */
     private function assertVersion(array $version): void
     {
@@ -340,7 +360,7 @@ final readonly class ReconcileCompletedReportArtifacts
     }
 
     /**
-     * @param list<array<string, mixed>> $versions
+     * @param  list<array<string, mixed>>  $versions
      * @return array{int, int}
      */
     private function deleteUnmatched(
@@ -358,9 +378,9 @@ final readonly class ReconcileCompletedReportArtifacts
                     $version['path'],
                     $version['version_id'],
                 );
-                ++$deleted;
+                $deleted++;
             } else {
-                ++$skipped;
+                $skipped++;
             }
         }
 
