@@ -58,7 +58,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         DateTimeZone $timezone,
         array $targets,
     ): ReportCatalogAuthorization {
-        return $this->catalogTransaction(function () use ($actorId, $organizationId, $timezone, $targets): ReportCatalogAuthorization {
+        return $this->transaction(function () use ($actorId, $organizationId, $timezone, $targets): ReportCatalogAuthorization {
             $actor = $this->activeActor($actorId, $organizationId);
             $holdingIds = $this->accessibleHoldingOrganizationIds($organizationId);
             $projectIds = $this->accessibleProjectIds($actorId, $organizationId, $holdingIds);
@@ -145,6 +145,7 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         }
 
         return $this->transaction(function () use ($actorId, $requestedScope, $targets): array {
+            $this->lockExactAuthorizationFacts($actorId, $requestedScope);
             $actor = $this->activeActor($actorId, $requestedScope->organizationId);
             $allowedHoldingIds = $this->accessibleHoldingOrganizationIds($requestedScope->organizationId);
             foreach ($requestedScope->holdingOrganizationIds as $organizationId) {
@@ -437,14 +438,106 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         }
     }
 
-    private function transaction(callable $callback): CurrentReportAuthorization
+    private function lockExactAuthorizationFacts(int $actorId, ReportScope $scope): void
+    {
+        User::query()->whereKey($actorId)->lockForUpdate()->first();
+
+        Organization::query()
+            ->whereIn('id', $scope->holdingOrganizationIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        DB::table('organization_user')
+            ->where('user_id', $actorId)
+            ->where('organization_id', $scope->organizationId)
+            ->orderBy('organization_id')
+            ->lockForUpdate()
+            ->get();
+
+        if ($scope->projectIds !== []) {
+            Project::query()
+                ->whereIn('id', $scope->projectIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            DB::table('project_user')
+                ->where('user_id', $actorId)
+                ->whereIn('project_id', $scope->projectIds)
+                ->orderBy('project_id')
+                ->lockForUpdate()
+                ->get();
+            DB::table('project_organization')
+                ->whereIn('project_id', $scope->projectIds)
+                ->whereIn('organization_id', $scope->holdingOrganizationIds)
+                ->orderBy('project_id')
+                ->orderBy('organization_id')
+                ->lockForUpdate()
+                ->get();
+        }
+
+        $assignments = DB::table('user_role_assignments')
+            ->where('user_id', $actorId)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get(['id', 'context_id', 'role_slug', 'role_type']);
+        $assignmentIds = $assignments->pluck('id')->map(static fn ($id): int => (int) $id)->all();
+        $contextIds = $assignments->pluck('context_id')->map(static fn ($id): int => (int) $id)->all();
+        $customRoleSlugs = $assignments
+            ->where('role_type', 'custom')
+            ->pluck('role_slug')
+            ->filter(static fn (mixed $slug): bool => is_string($slug) && $slug !== '')
+            ->values()
+            ->all();
+
+        if ($contextIds !== []) {
+            $contexts = DB::table('authorization_contexts')
+                ->whereIn('id', $contextIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get(['id', 'parent_context_id']);
+            $parentContextIds = $contexts->pluck('parent_context_id')
+                ->filter(static fn (mixed $id): bool => $id !== null)
+                ->map(static fn ($id): int => (int) $id)
+                ->all();
+            if ($parentContextIds !== []) {
+                DB::table('authorization_contexts')
+                    ->whereIn('id', $parentContextIds)
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get();
+            }
+        }
+        if ($assignmentIds !== []) {
+            DB::table('role_conditions')
+                ->whereIn('assignment_id', $assignmentIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+        }
+        if ($customRoleSlugs !== []) {
+            DB::table('organization_custom_roles')
+                ->where('organization_id', $scope->organizationId)
+                ->whereIn('slug', $customRoleSlugs)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+        }
+    }
+
+    /**
+     * @template T
+     * @param callable(): T $callback
+     * @return T
+     */
+    private function transaction(callable $callback): mixed
     {
         try {
             if (DB::connection()->transactionLevel() > 0) {
                 return $callback();
             }
 
-            return DB::transaction(function () use ($callback): CurrentReportAuthorization {
+            return DB::transaction(function () use ($callback): mixed {
                 DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
 
                 return $callback();
@@ -456,22 +549,4 @@ final readonly class LaravelCurrentReportScopeAuthorizer implements CurrentRepor
         }
     }
 
-    private function catalogTransaction(callable $callback): ReportCatalogAuthorization
-    {
-        try {
-            if (DB::connection()->transactionLevel() > 0) {
-                return $callback();
-            }
-
-            return DB::transaction(function () use ($callback): ReportCatalogAuthorization {
-                DB::statement('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-
-                return $callback();
-            }, 1);
-        } catch (ReportContractException $exception) {
-            throw $exception;
-        } catch (Throwable $exception) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, previous: $exception);
-        }
-    }
 }

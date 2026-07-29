@@ -68,6 +68,72 @@ final class LaravelCurrentReportScopeAuthorizationRaceTest extends TestCase
         }
     }
 
+    public function test_exact_many_locks_membership_until_serializable_authorization_commits(): void
+    {
+        [$actor, $organization] = $this->actorFixture('all');
+        $harness = $this->harness('exact-many-membership-lock');
+        $children = [];
+        $triggered = false;
+        $evaluator = new RecordingCurrentEvaluator(function () use (
+            &$triggered,
+            &$children,
+            $harness,
+            $actor,
+            $organization,
+        ): void {
+            if ($triggered) {
+                return;
+            }
+            $triggered = true;
+            $children[] = $harness->spawn(
+                5,
+                static fn (): array => [
+                    'updated' => DB::table('organization_user')
+                        ->where('user_id', $actor->id)
+                        ->where('organization_id', $organization->id)
+                        ->update(['is_active' => false]),
+                ],
+            );
+            $harness->release(5);
+            $backendPid = $harness->waitForWorkerBackendPid(5);
+            $harness->waitForPostgresWait(
+                $harness->independentConnection('report_exact_many_observer'),
+                $backendPid,
+            );
+        });
+        $authorizer = $this->authorizer($evaluator, []);
+        $scope = new ReportScope(
+            (int) $organization->id,
+            [(int) $organization->id],
+            [],
+            [],
+            new DateTimeZone('UTC'),
+        );
+
+        try {
+            $authorizations = DB::transaction(function () use ($authorizer, $actor, $scope): array {
+                DB::statement('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
+
+                return $authorizer->authorizeExactMany(
+                    (int) $actor->id,
+                    $scope,
+                    [$this->target()],
+                );
+            }, 3);
+            self::assertCount(1, $authorizations);
+
+            $harness->waitForChildren($children);
+            $children = [];
+            self::assertSame(['updated' => 1], $harness->result(5));
+
+            $this->expectException(ReportContractException::class);
+            $authorizer->authorizeExactMany((int) $actor->id, $scope, [$this->target()]);
+        } finally {
+            $harness->terminateAndReap($children);
+            $harness->cleanup();
+        }
+    }
+
     public function test_project_assignment_revocation_after_snapshot_affects_only_next_authorization(): void
     {
         [$actor, $organization] = $this->actorFixture('assigned');

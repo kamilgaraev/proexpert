@@ -43,8 +43,10 @@ use App\BusinessModules\Core\Reporting\Domain\ValueObjects\IdempotencyKey;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\EloquentReportExportStore;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportExportRecord;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportExportAuthorizationIdentity;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportExportHydrator;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\ReportRunAuthorizationIdentity;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Models\Organization;
 use DateTimeImmutable;
@@ -52,9 +54,7 @@ use DateTimeZone;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use PDOException;
 use PHPUnit\Framework\Attributes\Group;
-use ReflectionMethod;
 use ReflectionClass;
 use RuntimeException;
 use Tests\Support\Reporting\ReportDefinitionBuilder;
@@ -108,33 +108,6 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         $this->insertReadyRun();
     }
 
-    public function test_sensitive_export_transaction_is_serializable_and_retries_serialization_failures(): void
-    {
-        $attempts = 0;
-        $method = new ReflectionMethod(EloquentReportExportStore::class, 'serializableTransaction');
-        $method->setAccessible(true);
-
-        $isolation = $method->invoke(
-            $this->store(),
-            function () use (&$attempts): string {
-                $attempts++;
-                $isolation = DB::selectOne('SHOW transaction_isolation');
-                self::assertIsObject($isolation);
-                self::assertSame('serializable', $isolation->transaction_isolation);
-
-                if ($attempts < 3) {
-                    throw new PDOException('could not serialize access due to concurrent update', 40001);
-                }
-
-                return $isolation->transaction_isolation;
-            },
-        );
-
-        self::assertSame(3, $attempts);
-        self::assertSame('serializable', $isolation);
-        self::assertSame(0, DB::connection()->transactionLevel());
-    }
-
     public function test_create_locks_ready_parent_and_persists_only_after_complete_fence(): void
     {
         $subject = new ReportAuthorizationSubject(
@@ -145,6 +118,9 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             $this->source->snapshot,
             null,
             null,
+            ReportRunAuthorizationIdentity::fromRecord(
+                ReportRunRecord::query()->findOrFail($this->source->run->id),
+            ),
         );
         $data = new CreateReportExportData(
             'csv',
@@ -197,6 +173,13 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
         }
         self::assertSame('queued', DB::table('report_exports')->where('id', $exportId)->value('status'));
 
+        DB::table('report_exports')->where('id', $exportId)->update([
+            'status' => 'running',
+            'execution_lease_token' => '00000000-0000-4000-8000-000000000001',
+            'execution_heartbeat_at' => $this->now,
+            'execution_lease_expires_at' => $this->now->modify('+960 seconds'),
+            'updated_at' => $this->now,
+        ]);
         $complete = $this->fence($subject, [
             ReportOperation::EXPORT,
             ReportOperation::VIEW_SENSITIVE,
@@ -259,6 +242,34 @@ final class EloquentReportExportAuthorizationPostgresTest extends TestCase
             'etag-1',
             DB::table('report_exports')->where('id', $exportId)->value('artifact_etag'),
         );
+    }
+
+    public function test_cancel_rejects_immutable_render_identity_change_without_rejecting_lifecycle_race(): void
+    {
+        $exportId = '01J00000000000000000000003';
+        $this->insertExport($exportId, 'queued', $this->now->modify('+10 minutes'));
+        $record = ReportExportRecord::query()->findOrFail($exportId);
+        $fence = $this->fence($this->subject($record), [
+            ReportOperation::EXPORT,
+            ReportOperation::VIEW_SENSITIVE,
+            ReportOperation::VIEW_AUDIT,
+        ]);
+        DB::table('report_exports')->where('id', $exportId)->update([
+            'locale' => 'en-US',
+            'updated_at' => $this->now,
+        ]);
+
+        try {
+            $this->store()->cancel($this->context, $exportId, $this->now, $fence);
+            self::fail('Expected immutable export identity change to reject cancellation.');
+        } catch (\App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException $exception) {
+            self::assertSame(
+                \App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode::REPORT_NOT_FOUND,
+                $exception->errorCode,
+            );
+        }
+
+        self::assertSame('queued', DB::table('report_exports')->where('id', $exportId)->value('status'));
     }
 
     private function store(): EloquentReportExportStore

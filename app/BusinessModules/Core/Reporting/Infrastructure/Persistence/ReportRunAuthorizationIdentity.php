@@ -4,48 +4,38 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Persistence;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
-use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportExportRecord;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use DateTimeImmutable;
 use DateTimeInterface;
 use DateTimeZone;
 
-final class ReportExportAuthorizationIdentity
+final class ReportRunAuthorizationIdentity
 {
-    public static function fromRecord(ReportExportRecord $record): Sha256Hash
+    public static function fromRecord(ReportRunRecord $record): Sha256Hash
     {
-        $artifact = $record->artifact_checksum === null ? null : [
-            'path' => $record->artifact_path,
-            'version_id' => $record->artifact_version_id,
-            'etag' => $record->artifact_etag,
-            'mime' => $record->artifact_mime,
-            'checksum' => $record->artifact_checksum,
-            'size_bytes' => $record->artifact_size_bytes,
-            'row_count' => $record->row_count,
-        ];
+        $definitionSnapshot = $record->definition_snapshot;
+        $classification = is_array($definitionSnapshot)
+            ? ($definitionSnapshot['output_classification'] ?? null)
+            : null;
+        if (! is_array($classification)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
+        }
+
         $projection = [
             'scope' => [
                 'organization_id' => $record->organization_id,
                 'holding_organization_ids' => $record->scope_holding_organization_ids,
                 'project_ids' => $record->scope_project_ids,
-                'resources' => $record->scope_resources,
+                'resources' => self::resources($record),
                 'timezone' => $record->scope_timezone,
             ],
             'aggregate' => [
-                'export_id' => $record->id,
-                'run_id' => $record->run_id,
+                'run_id' => $record->id,
                 'report_code' => $record->report_code,
-            ],
-            'render_input' => [
-                'format' => $record->format,
-                'selected_columns' => $record->selected_columns,
-                'sort' => [
-                    'field' => $record->sort_field,
-                    'direction' => $record->sort_direction,
-                ],
-                'locale' => $record->locale,
-                'timezone' => $record->render_timezone,
             ],
             'hashes' => [
                 'definition' => $record->definition_hash,
@@ -72,9 +62,9 @@ final class ReportExportAuthorizationIdentity
                 'data' => $record->data_classification,
                 'sensitive_column_ids' => $record->sensitive_column_ids,
                 'audit_column_ids' => $record->audit_column_ids,
-                'totals_sensitive' => $record->totals_sensitive,
-                'totals_audit' => $record->totals_audit,
-                'provenance_audit' => $record->provenance_audit,
+                'totals_sensitive' => $classification['totals_sensitive'] ?? null,
+                'totals_audit' => $classification['totals_audit'] ?? null,
+                'provenance_audit' => $classification['provenance_audit'] ?? null,
             ],
             'versions' => [
                 'contract' => $record->contract_version,
@@ -82,10 +72,26 @@ final class ReportExportAuthorizationIdentity
                 'source_schema' => $record->source_schema_version,
                 'renderer' => $record->renderer_version,
             ],
-            'artifact' => $artifact,
         ];
 
         return new Sha256Hash(hash('sha256', CanonicalJson::encode($projection)));
+    }
+
+    private static function resources(ReportRunRecord $record): array
+    {
+        $resources = $record->getAttribute('scope_resources');
+        if (is_array($resources)) {
+            return $resources;
+        }
+        $raw = $record->getRawOriginal('scope_resource_ids');
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+            if (is_array($decoded) && array_is_list($decoded)) {
+                return $decoded;
+            }
+        }
+
+        throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
     }
 
     private static function nullableInstant(mixed $value): ?string
