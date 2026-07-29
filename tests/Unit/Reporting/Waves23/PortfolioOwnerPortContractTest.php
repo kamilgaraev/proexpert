@@ -20,7 +20,9 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursorKeyset;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownCell;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
@@ -53,7 +55,7 @@ final class PortfolioOwnerPortContractTest extends TestCase
 
     #[Test]
     #[DataProvider('opaquePortCases')]
-    public function opaque_cursor_and_drill_down_token_fail_closed_without_platform_validated_values(
+    public function mismatched_typed_cursor_and_unsupported_drill_down_fail_before_source_lookup(
         ReportRowQuery&ReportDrillDownProvider $query,
         string $kind,
         string $sortField,
@@ -65,8 +67,9 @@ final class PortfolioOwnerPortContractTest extends TestCase
             'opaque.signed',
             '01J00000000000000000000000',
             $this->hash('c'),
-            $snapshot->sourceHash,
+            $this->hash('wrong-source'),
             $sort,
+            new ReportCursorKeyset('last', 'row-1'),
             new DateTimeImmutable('+1 hour'),
         );
 
@@ -78,21 +81,25 @@ final class PortfolioOwnerPortContractTest extends TestCase
         }
 
         try {
-            $query->drillDown($context, $snapshot, new ReportDrillDownRequest('opaque.signed', null, 10));
-            self::fail('Opaque drill-down token must be rejected before any source lookup.');
+            $query->drillDown(
+                $context,
+                $snapshot,
+                new ReportDrillDownInput(new ReportDrillDownCell('row-1', 'unsupported_column'), null, 10),
+            );
+            self::fail('Unsupported drill-down column must be rejected before source lookup.');
         } catch (ReportContractException $exception) {
-            self::assertSame(ReportErrorCode::REPORT_CURSOR_INVALID, $exception->errorCode);
+            self::assertSame(ReportErrorCode::REPORT_FILTER_UNSUPPORTED, $exception->errorCode);
         }
     }
 
     public static function opaquePortCases(): array
     {
-        $holding = new HoldingPerformanceSnapshotMaterializer(new HoldingPerformanceFormula());
-        $intercompany = new IntercompanyContractFlowSnapshotMaterializer(new IntercompanyContractFlowFormula());
+        $holding = new HoldingPerformanceSnapshotMaterializer(new HoldingPerformanceFormula);
+        $intercompany = new IntercompanyContractFlowSnapshotMaterializer(new IntercompanyContractFlowFormula);
 
         return [
-            'project portfolio health' => [new BudgetingPortfolioQueryService(), 'project_portfolio_health', 'risk_rank'],
-            'portfolio liquidity' => [new BudgetingPortfolioQueryService(), 'portfolio_liquidity', 'forecast_date'],
+            'project portfolio health' => [new BudgetingPortfolioQueryService, 'project_portfolio_health', 'risk_rank'],
+            'portfolio liquidity' => [new BudgetingPortfolioQueryService, 'portfolio_liquidity', 'forecast_date'],
             'holding performance' => [new HoldingPerformanceRowQuery($holding), 'holding_performance', 'period_start'],
             'intercompany flows' => [new IntercompanyContractFlowRowQuery($intercompany), 'intercompany_contract_flows', 'period_start'],
         ];

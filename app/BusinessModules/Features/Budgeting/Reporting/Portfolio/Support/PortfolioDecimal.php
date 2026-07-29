@@ -11,7 +11,7 @@ use InvalidArgumentException;
 
 final class PortfolioDecimal
 {
-    public static function money(string|int|float $value): string
+    public static function money(string|int $value): string
     {
         try {
             return (string) BigDecimal::of((string) $value)->toScale(2, RoundingMode::HalfUp);
@@ -65,6 +65,29 @@ final class PortfolioDecimal
     {
         try {
             return BigDecimal::of($value)->isNegative();
+        } catch (MathException) {
+            throw new InvalidArgumentException('portfolio_money_invalid');
+        }
+    }
+
+    public static function compare(string $left, string $right): int
+    {
+        try {
+            return BigDecimal::of($left)->compareTo($right);
+        } catch (MathException) {
+            throw new InvalidArgumentException('portfolio_money_invalid');
+        }
+    }
+
+    public static function cashGapRiskPoints(string $value): string
+    {
+        try {
+            $points = BigDecimal::of($value)->abs()->dividedBy(1000, 2, RoundingMode::HalfUp);
+            if ($points->isGreaterThan(100)) {
+                $points = BigDecimal::of(100);
+            }
+
+            return (string) $points->toScale(2, RoundingMode::HalfUp);
         } catch (MathException) {
             throw new InvalidArgumentException('portfolio_money_invalid');
         }

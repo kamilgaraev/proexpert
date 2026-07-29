@@ -10,13 +10,21 @@ use InvalidArgumentException;
 final readonly class ProjectPortfolioHealthRow
 {
     public string $revenue;
+
     public string $cost;
+
     public string $margin;
+
     public ?string $marginPercent;
+
     public string $wip;
+
     public string $ftc;
+
     public string $eac;
+
     public string $ctc;
+
     public string $rowKey;
 
     public function __construct(
@@ -37,11 +45,11 @@ final readonly class ProjectPortfolioHealthRow
         if ($projectId < 1
             || trim($projectName) === ''
             || preg_match('/^[A-Z]{3}$/D', $currency) !== 1
-            || !in_array($riskLevel, ['low', 'medium', 'high', 'critical'], true)
+            || ! in_array($riskLevel, ['low', 'medium', 'high', 'critical'], true)
             || $riskRank < 1
             || $riskRank > 4
             || preg_match('/^\d{4}-\d{2}-\d{2}$/D', $asOf) !== 1
-            || !array_is_list($sourceRefs)) {
+            || ! array_is_list($sourceRefs)) {
             throw new InvalidArgumentException('project_portfolio_health_row_invalid');
         }
 
@@ -76,13 +84,7 @@ final readonly class ProjectPortfolioHealthRow
             riskLevel: $risk,
             riskRank: $ranks[$risk] ?? 1,
             asOf: substr($asOf, 0, 10),
-            sourceRefs: array_values(array_filter(
-                array_intersect_key(
-                    is_array($row['drill_down'] ?? null) ? $row['drill_down'] : [],
-                    ['project_margin_key' => true, 'wip_forecast_key' => true],
-                ),
-                static fn (mixed $value): bool => is_string($value) && $value !== '',
-            )),
+            sourceRefs: [['type' => 'project', 'id' => (int) ($project['id'] ?? 0)]],
         );
     }
 

@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Features\Budgeting\DTOs\CfoCommandCenterFilters;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\ProjectPortfolioProjectionResult;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Support\PortfolioDecimal;
 
 final class CfoProjectPortfolioAggregator
 {
@@ -80,7 +81,7 @@ final class CfoProjectPortfolioAggregator
         $rows = [];
 
         foreach ($projects as $project) {
-            if (!is_array($project) || !isset($project['id'])) {
+            if (! is_array($project) || ! isset($project['id'])) {
                 continue;
             }
 
@@ -89,12 +90,12 @@ final class CfoProjectPortfolioAggregator
         }
 
         foreach (($marginReport['rows'] ?? []) as $row) {
-            if (!is_array($row)) {
+            if (! is_array($row)) {
                 continue;
             }
 
             $projectId = $this->projectId($row);
-            if ($projectId === null || !isset($projects[$projectId])) {
+            if ($projectId === null || ! isset($projects[$projectId])) {
                 continue;
             }
 
@@ -102,12 +103,12 @@ final class CfoProjectPortfolioAggregator
             $target = &$this->row($rows, $projects[$projectId], $currency, $filters);
             $actual = is_array($row['actual'] ?? null) ? $row['actual'] : [];
             $forecast = is_array($row['forecast'] ?? null) ? $row['forecast'] : [];
-            $target['metrics']['revenue'] = $this->money($actual['revenue'] ?? 0.0);
-            $target['metrics']['cost'] = $this->money($actual['cost'] ?? 0.0);
-            $target['metrics']['gross_margin'] = $this->money($actual['gross_margin'] ?? 0.0);
-            $target['metrics']['forecast_revenue'] = $this->money($forecast['revenue'] ?? 0.0);
-            $target['metrics']['forecast_cost'] = $this->money($forecast['cost'] ?? 0.0);
-            $target['metrics']['forecast_gross_margin'] = $this->money($forecast['gross_margin'] ?? 0.0);
+            $target['metrics']['revenue'] = $this->money($actual['revenue'] ?? '0');
+            $target['metrics']['cost'] = $this->money($actual['cost'] ?? '0');
+            $target['metrics']['gross_margin'] = $this->money($actual['gross_margin'] ?? '0');
+            $target['metrics']['forecast_revenue'] = $this->money($forecast['revenue'] ?? '0');
+            $target['metrics']['forecast_cost'] = $this->money($forecast['cost'] ?? '0');
+            $target['metrics']['forecast_gross_margin'] = $this->money($forecast['gross_margin'] ?? '0');
             $target['drill_down']['project_margin_key'] = $row['drill_down_key'] ?? null;
             $this->rememberStrings($target['problem_flags'], $row['problem_flags'] ?? []);
             $this->rememberStrings($target['risk_flags'], $row['risk_flags'] ?? []);
@@ -115,12 +116,12 @@ final class CfoProjectPortfolioAggregator
         }
 
         foreach (($wipReport['rows'] ?? []) as $row) {
-            if (!is_array($row)) {
+            if (! is_array($row)) {
                 continue;
             }
 
             $projectId = $this->projectId($row);
-            if ($projectId === null || !isset($projects[$projectId])) {
+            if ($projectId === null || ! isset($projects[$projectId])) {
                 continue;
             }
 
@@ -129,7 +130,7 @@ final class CfoProjectPortfolioAggregator
             $target = &$this->row($rows, $projects[$projectId], $currency, $filters);
 
             foreach (['wip', 'wip_total', 'ftc', 'eac', 'ctc', 'forecast_gross_margin'] as $field) {
-                $target['metrics'][$field] = $this->money($metrics[$field] ?? 0.0);
+                $target['metrics'][$field] = $this->money($metrics[$field] ?? '0');
             }
 
             $target['metrics']['forecast_revenue'] = $this->money(
@@ -142,19 +143,19 @@ final class CfoProjectPortfolioAggregator
         }
 
         foreach ($planFactItems as $row) {
-            if (!is_array($row)) {
+            if (! is_array($row)) {
                 continue;
             }
 
             $projectId = $this->projectId($row);
-            if ($projectId === null || !isset($projects[$projectId])) {
+            if ($projectId === null || ! isset($projects[$projectId])) {
                 continue;
             }
 
             $currency = $this->currency($row['currency'] ?? $filters->currency);
             $target = &$this->row($rows, $projects[$projectId], $currency, $filters);
             $target['budget_deviation'] = [
-                'variance_amount' => $this->money($row['variance_amount'] ?? 0.0),
+                'variance_amount' => $this->money($row['variance_amount'] ?? '0'),
                 'risk_level' => $this->riskLevel($row['risk_level'] ?? 'low'),
                 'drill_down_key' => $row['drill_down_key'] ?? null,
             ];
@@ -167,7 +168,7 @@ final class CfoProjectPortfolioAggregator
         }
 
         foreach ($calendarItems as $item) {
-            if (!$item instanceof PaymentCalendarItem || $item->projectId === null || !isset($projects[$item->projectId])) {
+            if (! $item instanceof PaymentCalendarItem || $item->projectId === null || ! isset($projects[$item->projectId])) {
                 continue;
             }
 
@@ -176,9 +177,9 @@ final class CfoProjectPortfolioAggregator
             $amount = $this->money($item->remainingAmount);
 
             if ($item->direction === PaymentCalendarItem::DIRECTION_INFLOW) {
-                $target['cash_gap']['inflows'] = $this->money($target['cash_gap']['inflows'] + $amount);
+                $target['cash_gap']['inflows'] = PortfolioDecimal::add($target['cash_gap']['inflows'], $amount);
             } elseif ($item->direction === PaymentCalendarItem::DIRECTION_OUTFLOW) {
-                $target['cash_gap']['outflows'] = $this->money($target['cash_gap']['outflows'] + $amount);
+                $target['cash_gap']['outflows'] = PortfolioDecimal::add($target['cash_gap']['outflows'], $amount);
             }
 
             unset($target);
@@ -190,15 +191,18 @@ final class CfoProjectPortfolioAggregator
         unset($row);
 
         $rows = array_values($rows);
-        usort($rows, fn (array $left, array $right): int => [
-            -self::RISK_RANK[(string) $left['risk_level']],
-            -(float) $left['score'],
-            (string) ($left['project']['name'] ?? ''),
-        ] <=> [
-            -self::RISK_RANK[(string) $right['risk_level']],
-            -(float) $right['score'],
-            (string) ($right['project']['name'] ?? ''),
-        ]);
+        usort($rows, static function (array $left, array $right): int {
+            $risk = self::RISK_RANK[(string) $right['risk_level']]
+                <=> self::RISK_RANK[(string) $left['risk_level']];
+            if ($risk !== 0) {
+                return $risk;
+            }
+            $score = PortfolioDecimal::compare((string) $right['score'], (string) $left['score']);
+
+            return $score !== 0
+                ? $score
+                : strcmp((string) ($left['project']['name'] ?? ''), (string) ($right['project']['name'] ?? ''));
+        });
 
         return $rows;
     }
@@ -225,25 +229,29 @@ final class CfoProjectPortfolioAggregator
             $currency = (string) $row['currency'];
             $projectId = (int) ($row['project']['id'] ?? 0);
             $byCurrency[$currency] ??= [
-                'revenue' => 0.0,
-                'cost' => 0.0,
-                'gross_margin' => 0.0,
-                'forecast_revenue' => 0.0,
-                'forecast_cost' => 0.0,
-                'forecast_gross_margin' => 0.0,
-                'wip_total' => 0.0,
-                'ftc' => 0.0,
-                'eac' => 0.0,
-                'ctc' => 0.0,
-                'cash_gap_signal' => 0.0,
+                'revenue' => '0.00',
+                'cost' => '0.00',
+                'gross_margin' => '0.00',
+                'forecast_revenue' => '0.00',
+                'forecast_cost' => '0.00',
+                'forecast_gross_margin' => '0.00',
+                'wip_total' => '0.00',
+                'ftc' => '0.00',
+                'eac' => '0.00',
+                'ctc' => '0.00',
+                'cash_gap_signal' => '0.00',
             ];
 
             foreach (['revenue', 'cost', 'gross_margin', 'forecast_revenue', 'forecast_cost', 'forecast_gross_margin', 'wip_total', 'ftc', 'eac', 'ctc'] as $field) {
-                $byCurrency[$currency][$field] = $this->money($byCurrency[$currency][$field] + (float) ($row['metrics'][$field] ?? 0.0));
+                $byCurrency[$currency][$field] = PortfolioDecimal::add(
+                    $byCurrency[$currency][$field],
+                    $this->money($row['metrics'][$field] ?? '0'),
+                );
             }
 
-            $byCurrency[$currency]['cash_gap_signal'] = $this->money(
-                $byCurrency[$currency]['cash_gap_signal'] + (float) ($row['cash_gap']['signal'] ?? 0.0),
+            $byCurrency[$currency]['cash_gap_signal'] = PortfolioDecimal::add(
+                $byCurrency[$currency]['cash_gap_signal'],
+                $this->money($row['cash_gap']['signal'] ?? '0'),
             );
 
             foreach ($row['problem_flags'] as $flag) {
@@ -299,38 +307,38 @@ final class CfoProjectPortfolioAggregator
                 'project_manager' => $project['project_manager'] ?? null,
             ],
             'currency' => $currency,
-            'score' => 0.0,
+            'score' => '0.00',
             'risk_level' => 'low',
             'metrics' => [
-                'revenue' => 0.0,
-                'cost' => 0.0,
-                'gross_margin' => 0.0,
-                'forecast_revenue' => 0.0,
-                'forecast_cost' => 0.0,
-                'forecast_gross_margin' => 0.0,
-                'wip' => 0.0,
-                'wip_total' => 0.0,
-                'ftc' => 0.0,
-                'eac' => 0.0,
-                'ctc' => 0.0,
-                'cash_gap_signal' => 0.0,
+                'revenue' => '0.00',
+                'cost' => '0.00',
+                'gross_margin' => '0.00',
+                'forecast_revenue' => '0.00',
+                'forecast_cost' => '0.00',
+                'forecast_gross_margin' => '0.00',
+                'wip' => '0.00',
+                'wip_total' => '0.00',
+                'ftc' => '0.00',
+                'eac' => '0.00',
+                'ctc' => '0.00',
+                'cash_gap_signal' => '0.00',
             ],
             'budget_deviation' => [
-                'variance_amount' => 0.0,
+                'variance_amount' => '0.00',
                 'risk_level' => 'low',
                 'drill_down_key' => null,
             ],
             'cash_gap' => [
-                'inflows' => 0.0,
-                'outflows' => 0.0,
-                'signal' => 0.0,
+                'inflows' => '0.00',
+                'outflows' => '0.00',
+                'signal' => '0.00',
                 'has_gap' => false,
             ],
             'problem_flags' => [],
             'risk_flags' => [],
             'drill_down' => [
-                'href' => '/budgeting/project-margin?project_id=' . (int) $project['id'],
-                'api_href' => '/api/v1/admin/budgeting/project-margin?project_id=' . (int) $project['id'],
+                'href' => '/budgeting/project-margin?project_id='.(int) $project['id'],
+                'api_href' => '/api/v1/admin/budgeting/project-margin?project_id='.(int) $project['id'],
                 'project_margin_key' => null,
                 'wip_forecast_key' => null,
                 'period' => $filters->period(),
@@ -348,30 +356,34 @@ final class CfoProjectPortfolioAggregator
 
     private function finalizeRow(array &$row): void
     {
-        $signal = $this->money((float) $row['cash_gap']['inflows'] - (float) $row['cash_gap']['outflows']);
+        $signal = PortfolioDecimal::subtract($row['cash_gap']['inflows'], $row['cash_gap']['outflows']);
         $row['cash_gap']['signal'] = $signal;
-        $row['cash_gap']['has_gap'] = $signal < 0.0;
+        $row['cash_gap']['has_gap'] = PortfolioDecimal::isNegative($signal);
         $row['metrics']['cash_gap_signal'] = $signal;
 
         if ($row['cash_gap']['has_gap']) {
             $this->rememberStrings($row['risk_flags'], ['cash_gap_risk']);
         }
 
-        if ((float) $row['metrics']['gross_margin'] < 0.0 || (float) $row['metrics']['forecast_gross_margin'] < 0.0) {
+        if (PortfolioDecimal::isNegative($row['metrics']['gross_margin'])
+            || PortfolioDecimal::isNegative($row['metrics']['forecast_gross_margin'])) {
             $this->rememberStrings($row['risk_flags'], ['negative_margin']);
         }
 
-        $score = 0.0;
+        $score = '0.00';
         if ($row['cash_gap']['has_gap']) {
-            $score += min(100.0, abs((float) $row['cash_gap']['signal']) / 1000.0);
+            $score = PortfolioDecimal::add($score, PortfolioDecimal::cashGapRiskPoints($row['cash_gap']['signal']));
         }
 
         if (in_array('budget_deviation', $row['problem_flags'], true)) {
-            $score += self::RISK_RANK[(string) $row['budget_deviation']['risk_level']] * 10.0;
+            $score = PortfolioDecimal::add(
+                $score,
+                (string) (self::RISK_RANK[(string) $row['budget_deviation']['risk_level']] * 10),
+            );
         }
 
         if (in_array('negative_margin', $row['risk_flags'], true)) {
-            $score += 90.0;
+            $score = PortfolioDecimal::add($score, '90.00');
         }
 
         $riskLevel = 'low';
@@ -384,7 +396,7 @@ final class CfoProjectPortfolioAggregator
             $riskLevel = $this->highestRisk($riskLevel, 'critical');
         }
 
-        $row['score'] = $this->money($score);
+        $row['score'] = $score;
         $row['risk_level'] = $riskLevel;
         $row['problem_flags'] = array_values(array_unique($row['problem_flags']));
         $row['risk_flags'] = array_values(array_unique($row['risk_flags']));
@@ -400,7 +412,7 @@ final class CfoProjectPortfolioAggregator
 
     private function key(int $projectId, string $currency): string
     {
-        return $projectId . '|' . $currency;
+        return $projectId.'|'.$currency;
     }
 
     private function riskLevel(mixed $value): string
@@ -417,7 +429,7 @@ final class CfoProjectPortfolioAggregator
 
     private function rememberStrings(array &$target, mixed $values): void
     {
-        if (!is_array($values)) {
+        if (! is_array($values)) {
             return;
         }
 
@@ -452,8 +464,15 @@ final class CfoProjectPortfolioAggregator
         return is_string($value) && trim($value) !== '' ? mb_strtoupper(trim($value)) : 'RUB';
     }
 
-    private function money(mixed $amount): float
+    private function money(mixed $amount): string
     {
-        return round((float) $amount, 2);
+        if (is_int($amount) || is_string($amount)) {
+            return PortfolioDecimal::money($amount);
+        }
+        if (is_float($amount) && is_finite($amount)) {
+            return PortfolioDecimal::money(rtrim(rtrim(sprintf('%.14F', $amount), '0'), '.'));
+        }
+
+        return PortfolioDecimal::money('0');
     }
 }

@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\MultiOrganization\Reporting\Listeners;
 
-use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationFactVersion;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingAllocationFactProjector;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Services\HoldingHierarchyResolver;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid;
 use App\Models\Contract;
 use App\Models\ContractProjectAllocation;
@@ -15,14 +15,17 @@ use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
 
 final readonly class ProjectHoldingAllocationFacts implements ShouldQueueAfterCommit
 {
-    public function __construct(private HoldingAllocationFactProjector $projector)
-    {
-    }
+    public function __construct(
+        private HoldingAllocationFactProjector $projector,
+        private HoldingHierarchyResolver $hierarchies,
+    ) {}
 
     public function handle(PaymentDocumentPaid $event): void
     {
         $document = $event->document;
-        $contractId = (int) ($document->contract_id ?? 0);
+        $contractId = $document->invoiceable_type === Contract::class
+            ? (int) $document->invoiceable_id
+            : 0;
         $projectId = (int) ($document->project_id ?? 0);
         $organizationId = (int) ($document->organization_id ?? 0);
         if (min($contractId, $projectId, $organizationId) < 1) {
@@ -35,7 +38,7 @@ final readonly class ProjectHoldingAllocationFacts implements ShouldQueueAfterCo
             ->where('project_id', $projectId)
             ->where('is_active', true)
             ->first();
-        if (!$contract instanceof Contract || !$allocation instanceof ContractProjectAllocation) {
+        if (! $contract instanceof Contract || ! $allocation instanceof ContractProjectAllocation) {
             return;
         }
 
@@ -54,59 +57,63 @@ final readonly class ProjectHoldingAllocationFacts implements ShouldQueueAfterCo
             ->multipliedBy(100)
             ->toScale(0, RoundingMode::HalfUp)
             ->toInt();
-        $fact = $this->projector->project([
+        $sourceVersion = $event->transactionId ?? (int) $document->getKey();
+        if ($document->paid_at === null || ! is_string($document->currency) || preg_match('/^[A-Z]{3}$/D', mb_strtoupper($document->currency)) !== 1) {
+            $this->projector->recordGap([
+                'organization_id' => $organizationId,
+                'source_type' => $sourceType,
+                'source_id' => $sourceId,
+                'source_version' => $sourceVersion,
+                'monetary_basis' => 'cash',
+            ], array_values(array_filter([
+                $document->paid_at === null ? 'recognized_on' : null,
+                ! is_string($document->currency) ? 'currency' : null,
+            ])));
+
+            return;
+        }
+        try {
+            $hierarchy = $this->hierarchies->resolve($organizationId);
+        } catch (\InvalidArgumentException) {
+            $this->projector->recordGap([
+                'organization_id' => $organizationId,
+                'source_type' => $sourceType,
+                'source_id' => $sourceId,
+                'source_version' => $sourceVersion,
+                'monetary_basis' => 'cash',
+            ], ['hierarchy']);
+
+            return;
+        }
+        $source = [
             'organization_id' => $organizationId,
-            'holding_id' => $organizationId,
+            'holding_id' => $hierarchy->holdingId,
+            'hierarchy_version' => $hierarchy->version,
+            'hierarchy_organization_ids' => $hierarchy->organizationIds,
             'contributor_organization_id' => $organizationId,
             'counterparty_organization_id' => $document->counterparty_organization_id ?? null,
             'project_id' => $projectId,
             'contract_id' => $contractId,
             'allocation_id' => (int) $allocation->getKey(),
+            'linked_parent_allocation_id' => null,
+            'linked_incoming_minor' => null,
+            'linked_outgoing_minor' => null,
             'source_type' => $sourceType,
             'source_id' => $sourceId,
-            'source_version' => $sourceId,
+            'source_version' => $sourceVersion,
             'monetary_basis' => 'cash',
             'allocated_amount_minor' => null,
             'allocated_percentage' => $percentage,
             'contract_amount_minor' => $paymentAmountMinor,
-            'currency' => $document->currency ?? null,
-            'recognized_on' => $document->paid_at?->toDateString() ?? now()->toDateString(),
-            'flow_class' => 'unclassified',
+            'currency' => mb_strtoupper($document->currency),
+            'currency_source' => 'payment_document',
+            'tax_basis' => 'payment_amount',
+            'recognized_on' => $document->paid_at->toDateString(),
             'source_refs' => [[
                 'type' => 'payment_transaction',
                 'id' => $sourceId,
             ]],
-        ]);
-
-        HoldingAllocationFactVersion::query()->firstOrCreate(
-            [
-                'organization_id' => $fact->organizationId,
-                'source_type' => $fact->sourceType,
-                'source_id' => $fact->sourceId,
-                'source_version' => $fact->sourceVersion,
-                'monetary_basis' => $fact->monetaryBasis,
-            ],
-            [
-                'holding_id' => $fact->holdingId,
-                'hierarchy_version' => 'unresolved',
-                'contributor_organization_id' => $fact->contributorOrganizationId,
-                'counterparty_organization_id' => $fact->counterpartyOrganizationId,
-                'project_id' => $fact->projectId,
-                'contract_id' => $fact->contractId,
-                'linked_parent_allocation_id' => null,
-                'tax_basis' => 'source',
-                'amount_minor' => $fact->amountMinor,
-                'currency' => $fact->currency,
-                'currency_source' => $fact->currencySource,
-                'recognized_on' => $fact->recognizedOn,
-                'flow_class' => $fact->flowClass,
-                'allocated_amount_minor' => null,
-                'allocated_percentage' => $percentage,
-                'contract_amount_minor' => $paymentAmountMinor,
-                'source_refs' => $fact->sourceRefs,
-                'source_hash' => hash('sha256', json_encode($fact, JSON_THROW_ON_ERROR)),
-                'projected_at' => now(),
-            ],
-        );
+        ];
+        $this->projector->persist($this->projector->project($source), $source);
     }
 }

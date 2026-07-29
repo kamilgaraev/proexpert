@@ -7,6 +7,7 @@ namespace App\BusinessModules\Core\MultiOrganization\Reporting\Services;
 use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingAllocationFact;
 use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\HoldingPerformanceMetricRow;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationFactVersion;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationProjectionGap;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingPerformanceRow;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingPerformanceSnapshot;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
@@ -39,9 +40,7 @@ final readonly class HoldingPerformanceSnapshotMaterializer
 {
     public const CODE = 'holding_performance';
 
-    public function __construct(private HoldingPerformanceFormula $formula)
-    {
-    }
+    public function __construct(private HoldingPerformanceFormula $formula) {}
 
     public function materialize(
         ReportExecutionContext $context,
@@ -65,18 +64,37 @@ final readonly class HoldingPerformanceSnapshotMaterializer
 
         $totals = $this->formula->totals($metricRows);
         $projectionRows = $this->projectionRows($metricRows);
-        $hierarchyGapCount = $facts->filter(
-            static fn (HoldingAllocationFactVersion $fact): bool => (string) $fact->hierarchy_version === 'unresolved',
-        )->count();
+        $hierarchyGapCount = 0;
+        $projectionGaps = HoldingAllocationProjectionGap::query()
+            ->where('organization_id', $context->scope->organizationId)
+            ->where('observed_at', '<=', $query->asOf)
+            ->where(static fn (Builder $builder): Builder => $builder
+                ->whereNull('resolved_at')
+                ->orWhere('resolved_at', '>', $query->asOf))
+            ->orderBy('id')
+            ->get(['id', 'source_hash', 'missing_fields']);
+        $projectionGapCount = $projectionGaps->count();
+        foreach ($projectionGaps as $gap) {
+            $sourcePayload[] = [
+                'gap_id' => (int) $gap->getKey(),
+                'source_hash' => (string) $gap->source_hash,
+                'missing_fields' => $gap->missing_fields,
+            ];
+        }
         $totals['quality']['hierarchy_gap_count'] = $hierarchyGapCount;
+        $totals['quality']['projection_gap_count'] = $projectionGapCount;
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode($sourcePayload)));
         $snapshotId = (string) Str::ulid();
         $generatedAt = $query->asOf;
         $unknown = (int) $totals['quality']['unknown_currency_count'];
-        $watermark = (string) ($facts->max('id') ?? 0);
-        $sourceRef = $this->sourceRef($snapshotId, count($sourcePayload), $watermark, $sourceHash);
+        $watermarks = [
+            'allocation' => (string) ($facts->where('monetary_basis', 'contracted')->max('id') ?? 0),
+            'act' => (string) ($facts->where('monetary_basis', 'accepted_accrual')->max('id') ?? 0),
+            'payment' => (string) ($facts->where('monetary_basis', 'cash')->max('id') ?? 0),
+        ];
+        $sourceRef = $this->sourceRef($snapshotId, count($sourcePayload), implode('_', $watermarks), $sourceHash);
 
-        DB::transaction(function () use ($context, $query, $snapshotId, $generatedAt, $sourceHash, $watermark, $totals, $unknown, $hierarchyGapCount, $sourceRef, $projectionRows): void {
+        DB::transaction(function () use ($context, $query, $snapshotId, $generatedAt, $sourceHash, $watermarks, $totals, $unknown, $hierarchyGapCount, $projectionGapCount, $sourceRef, $projectionRows, $facts): void {
             HoldingPerformanceSnapshot::query()->create([
                 'id' => $snapshotId,
                 'organization_id' => $context->scope->organizationId,
@@ -85,13 +103,13 @@ final readonly class HoldingPerformanceSnapshotMaterializer
                 'query_hash' => $query->queryHash->value,
                 'source_hash' => $sourceHash->value,
                 'formula_version' => $query->definition->formulaVersion,
-                'hierarchy_watermark' => hash('sha256', implode(',', $context->scope->holdingOrganizationIds)),
-                'allocation_watermark' => $watermark,
-                'act_watermark' => $watermark,
-                'payment_watermark' => $watermark,
+                'hierarchy_watermark' => hash('sha256', $facts->pluck('hierarchy_version')->unique()->sort()->implode(',')),
+                'allocation_watermark' => $watermarks['allocation'],
+                'act_watermark' => $watermarks['act'],
+                'payment_watermark' => $watermarks['payment'],
                 'totals' => $totals,
                 'source_refs' => [$this->serializeSourceRef($sourceRef)],
-                'quality_status' => $unknown === 0 && $hierarchyGapCount === 0 && $projectionRows !== []
+                'quality_status' => $unknown === 0 && $hierarchyGapCount === 0 && $projectionGapCount === 0 && $projectionRows !== []
                     ? ReportQualityStatus::COMPLETE->value
                     : ReportQualityStatus::PARTIAL->value,
                 'freshness_status' => ReportFreshnessStatus::FRESH->value,
@@ -155,9 +173,9 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             ->where('organization_id', $context->scope->organizationId)
             ->whereKey($snapshot->id)
             ->first();
-        if (!$record instanceof HoldingPerformanceSnapshot
+        if (! $record instanceof HoldingPerformanceSnapshot
             || $snapshot->kind !== self::CODE
-            || !hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)) {
+            || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
         }
 
@@ -173,11 +191,15 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         $hierarchyGaps = is_array($totals)
             ? (int) ($totals['quality']['hierarchy_gap_count'] ?? 0)
             : 0;
+        $projectionGaps = is_array($totals)
+            ? (int) ($totals['quality']['projection_gap_count'] ?? 0)
+            : 0;
         $eligible = is_array($totals)
             ? (int) ($totals['quality']['eligible_count'] ?? 0)
             : 0;
+        $eligible += $projectionGaps;
         $empty = $eligible === 0;
-        $unmatched = max($unknown, $hierarchyGaps);
+        $unmatched = $unknown + $hierarchyGaps + $projectionGaps;
         $matched = max(0, $eligible - $unmatched);
 
         return new ReportQuality(
@@ -188,16 +210,19 @@ final readonly class HoldingPerformanceSnapshotMaterializer
                 : array_values(array_filter([
                     $unknown === 0 ? null : new ReportWarning('UNKNOWN_CURRENCY', ReportWarningSeverity::CRITICAL, 'currency', $unknown),
                     $hierarchyGaps === 0 ? null : new ReportWarning('HIERARCHY_VERSION_MISSING', ReportWarningSeverity::CRITICAL, null, $hierarchyGaps),
+                    $projectionGaps === 0 ? null : new ReportWarning('SOURCE_FACT_GAP', ReportWarningSeverity::CRITICAL, null, $projectionGaps),
                 ])),
             $unmatched,
             $empty ? ReportReconciliationStatus::NOT_APPLICABLE : ($unmatched === 0 ? ReportReconciliationStatus::MATCHED : ReportReconciliationStatus::MISMATCH),
             $empty ? ['source_coverage'] : array_values(array_filter([
                 $unknown === 0 ? null : 'currency',
                 $hierarchyGaps === 0 ? null : 'hierarchy_version',
+                $projectionGaps === 0 ? null : 'source_facts',
             ])),
             $empty ? ['owner_snapshot'] : array_values(array_filter([
                 $unknown === 0 ? null : 'unknown_currency',
                 $hierarchyGaps === 0 ? null : 'unknown_hierarchy',
+                $projectionGaps === 0 ? null : 'projection_gaps',
             ])),
         );
     }
@@ -207,18 +232,17 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         $builder = HoldingAllocationFactVersion::query()
             ->where('organization_id', $context->scope->organizationId)
             ->whereIn('contributor_organization_id', $context->scope->holdingOrganizationIds)
-            ->where(function (Builder $builder): void {
-                $builder
-                    ->where('monetary_basis', '!=', 'contracted')
-                    ->orWhereNotExists(function (QueryBuilder $query): void {
-                        $query
-                            ->selectRaw('1')
-                            ->from('holding_allocation_fact_versions as newer_fact')
-                            ->whereColumn('newer_fact.organization_id', 'holding_allocation_fact_versions.organization_id')
-                            ->whereColumn('newer_fact.allocation_id', 'holding_allocation_fact_versions.allocation_id')
-                            ->where('newer_fact.monetary_basis', 'contracted')
-                            ->whereColumn('newer_fact.source_version', '>', 'holding_allocation_fact_versions.source_version');
-                    });
+            ->whereDate('recognized_on', '<=', $query->asOf->format('Y-m-d'))
+            ->whereNotExists(function (QueryBuilder $newer) use ($query): void {
+                $newer
+                    ->selectRaw('1')
+                    ->from('holding_allocation_fact_versions as newer_fact')
+                    ->whereColumn('newer_fact.organization_id', 'holding_allocation_fact_versions.organization_id')
+                    ->whereColumn('newer_fact.source_type', 'holding_allocation_fact_versions.source_type')
+                    ->whereColumn('newer_fact.source_id', 'holding_allocation_fact_versions.source_id')
+                    ->whereColumn('newer_fact.monetary_basis', 'holding_allocation_fact_versions.monetary_basis')
+                    ->whereDate('newer_fact.recognized_on', '<=', $query->asOf->format('Y-m-d'))
+                    ->whereColumn('newer_fact.source_version', '>', 'holding_allocation_fact_versions.source_version');
             });
         if ($context->scope->projectIds !== []) {
             $builder->whereIn('project_id', $context->scope->projectIds);
@@ -249,12 +273,15 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         return new HoldingAllocationFact(
             (int) $record->organization_id,
             (int) $record->holding_id,
+            (string) $record->hierarchy_version,
             (int) $record->contributor_organization_id,
             $record->counterparty_organization_id === null ? null : (int) $record->counterparty_organization_id,
             (int) $record->project_id,
             (int) $record->contract_id,
             (int) $record->allocation_id,
             $record->linked_parent_allocation_id === null ? null : (int) $record->linked_parent_allocation_id,
+            $record->linked_incoming_minor === null ? null : (int) $record->linked_incoming_minor,
+            $record->linked_outgoing_minor === null ? null : (int) $record->linked_outgoing_minor,
             (string) $record->source_type,
             (int) $record->source_id,
             (int) $record->source_version,
@@ -262,6 +289,7 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             (int) $record->amount_minor,
             $record->currency === null ? null : (string) $record->currency,
             (string) $record->currency_source,
+            (string) $record->tax_basis,
             $record->recognized_on->format('Y-m-d'),
             (string) $record->flow_class,
             $record->source_refs,
@@ -282,7 +310,7 @@ final readonly class HoldingPerformanceSnapshotMaterializer
             ]);
             $rowKey = hash('sha256', $identity);
 
-            if (!isset($rows[$rowKey])) {
+            if (! isset($rows[$rowKey])) {
                 $rows[$rowKey] = new HoldingPerformanceMetricRow(
                     $metric->organizationId,
                     $metric->holdingId,
@@ -372,9 +400,9 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         return new ReportSourceRef(
             'holding_allocations',
             'holding_facts',
-            'snapshot_' . strtolower($snapshotId),
+            'snapshot_'.strtolower($snapshotId),
             'holding_facts_v1',
-            'watermark_' . $watermark,
+            'watermark_'.$watermark,
             $count,
             $hash,
         );

@@ -31,7 +31,18 @@ final class HoldingPerformanceProjectionPostgresTest extends TestCase
             'currency',
             'recognized_on',
             'flow_class',
+            'linked_incoming_minor',
+            'linked_outgoing_minor',
             'source_hash',
+        ]));
+        self::assertTrue(Schema::hasColumns('holding_allocation_projection_gaps', [
+            'organization_id',
+            'source_type',
+            'source_id',
+            'source_version',
+            'monetary_basis',
+            'missing_fields',
+            'resolved_at',
         ]));
         self::assertTrue(Schema::hasColumns('holding_performance_snapshots', [
             'organization_id',

@@ -22,6 +22,8 @@ return new class extends Migration
             $table->unsignedBigInteger('contract_id');
             $table->unsignedBigInteger('allocation_id');
             $table->unsignedBigInteger('linked_parent_allocation_id')->nullable();
+            $table->bigInteger('linked_incoming_minor')->nullable();
+            $table->bigInteger('linked_outgoing_minor')->nullable();
             $table->string('source_type', 32);
             $table->unsignedBigInteger('source_id');
             $table->unsignedBigInteger('source_version');
@@ -49,26 +51,53 @@ return new class extends Migration
         });
 
         DB::statement(
-            "ALTER TABLE holding_allocation_fact_versions ADD CONSTRAINT holding_allocation_method_check "
-            . "CHECK ((allocated_amount_minor IS NOT NULL AND allocated_percentage IS NULL) "
-            . "OR (allocated_amount_minor IS NULL AND allocated_percentage IS NOT NULL AND contract_amount_minor IS NOT NULL))",
+            'ALTER TABLE holding_allocation_fact_versions ADD CONSTRAINT holding_allocation_method_check '
+            .'CHECK ((allocated_amount_minor IS NOT NULL AND allocated_percentage IS NULL) '
+            .'OR (allocated_amount_minor IS NULL AND allocated_percentage IS NOT NULL AND contract_amount_minor IS NOT NULL))',
         );
         DB::statement(
-            "ALTER TABLE holding_allocation_fact_versions ADD CONSTRAINT holding_allocation_basis_check "
-            . "CHECK (monetary_basis IN ('contracted', 'accepted_accrual', 'cash'))",
+            'ALTER TABLE holding_allocation_fact_versions ADD CONSTRAINT holding_allocation_basis_check '
+            ."CHECK (monetary_basis IN ('contracted', 'accepted_accrual', 'cash'))",
         );
         DB::statement(
-            "ALTER TABLE holding_allocation_fact_versions ADD CONSTRAINT holding_allocation_flow_check "
-            . "CHECK (flow_class IN ('internal', 'external', 'unclassified'))",
+            'ALTER TABLE holding_allocation_fact_versions ADD CONSTRAINT holding_allocation_flow_check '
+            ."CHECK (flow_class IN ('internal', 'external', 'unclassified'))",
         );
         DB::statement(
-            "ALTER TABLE holding_allocation_fact_versions ADD CONSTRAINT holding_allocation_currency_check "
-            . "CHECK (currency IS NULL OR currency ~ '^[A-Z]{3}$')",
+            'ALTER TABLE holding_allocation_fact_versions ADD CONSTRAINT holding_allocation_currency_check '
+            ."CHECK (currency IS NULL OR currency ~ '^[A-Z]{3}$')",
         );
+        DB::statement(
+            'ALTER TABLE holding_allocation_fact_versions ADD CONSTRAINT holding_allocation_link_evidence_check '
+            .'CHECK ((linked_parent_allocation_id IS NULL AND linked_incoming_minor IS NULL AND linked_outgoing_minor IS NULL) '
+            .'OR (linked_parent_allocation_id IS NOT NULL AND linked_incoming_minor IS NOT NULL AND linked_outgoing_minor IS NOT NULL))',
+        );
+
+        Schema::create('holding_allocation_projection_gaps', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('organization_id');
+            $table->string('source_type', 32);
+            $table->unsignedBigInteger('source_id');
+            $table->unsignedBigInteger('source_version');
+            $table->string('monetary_basis', 32);
+            $table->jsonb('missing_fields');
+            $table->char('source_hash', 64);
+            $table->dateTimeTz('observed_at');
+            $table->dateTimeTz('resolved_at')->nullable();
+            $table->unique(
+                ['organization_id', 'source_type', 'source_id', 'source_version', 'monetary_basis', 'source_hash'],
+                'holding_allocation_gap_source_unique',
+            );
+            $table->index(
+                ['organization_id', 'monetary_basis', 'resolved_at', 'id'],
+                'holding_allocation_gap_readiness',
+            );
+        });
     }
 
     public function down(): void
     {
+        Schema::dropIfExists('holding_allocation_projection_gaps');
         Schema::dropIfExists('holding_allocation_fact_versions');
     }
 };

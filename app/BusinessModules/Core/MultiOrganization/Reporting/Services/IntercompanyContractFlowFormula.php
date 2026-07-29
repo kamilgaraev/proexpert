@@ -16,10 +16,10 @@ final readonly class IntercompanyContractFlowFormula
     {
         $currency = null;
         $buckets = ['internal' => 0, 'external' => 0, 'unclassified' => 0];
-        $spread = 0;
+        $spread = null;
 
         foreach ($rows as $row) {
-            if (!$row instanceof IntercompanyFlowMetricRow) {
+            if (! $row instanceof IntercompanyFlowMetricRow) {
                 throw new InvalidArgumentException('intercompany_flow_rows_invalid');
             }
             $currency ??= $row->currency;
@@ -28,7 +28,9 @@ final readonly class IntercompanyContractFlowFormula
             }
 
             $buckets[$row->flowClass] += $row->amountMinor;
-            $spread += $row->spreadMinor ?? 0;
+            if ($row->spreadMinor !== null) {
+                $spread = ($spread ?? 0) + $row->spreadMinor;
+            }
         }
 
         $currency ??= 'RUB';
@@ -51,7 +53,7 @@ final readonly class IntercompanyContractFlowFormula
     {
         $grouped = [];
         foreach ($rows as $row) {
-            if (!$row instanceof IntercompanyFlowMetricRow) {
+            if (! $row instanceof IntercompanyFlowMetricRow) {
                 throw new InvalidArgumentException('intercompany_flow_rows_invalid');
             }
             $grouped[$row->currency][] = $row;

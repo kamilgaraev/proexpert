@@ -14,21 +14,22 @@ final class IntercompanyContractFlowFormulaTest extends TestCase
     #[Test]
     public function flow_buckets_reconcile_and_linked_spread_is_not_margin(): void
     {
-        $result = (new IntercompanyContractFlowFormula())->aggregate([
-            IntercompanyFlowMetricRow::internal(7_000, 'RUB'),
+        $result = (new IntercompanyContractFlowFormula)->aggregate([
+            IntercompanyFlowMetricRow::internal(7_000, 'RUB', 450),
             IntercompanyFlowMetricRow::external(2_000, 'RUB'),
             IntercompanyFlowMetricRow::unclassified(1_000, 'RUB'),
         ]);
 
         self::assertSame(10_000, $result->totalMinor);
         self::assertSame('0.70000000', $result->internalShare);
+        self::assertSame(450, $result->linkedSpreadMinor);
         self::assertArrayNotHasKey('margin_minor', $result->toArray());
     }
 
     #[Test]
     public function zero_total_has_null_shares_and_currencies_are_separate(): void
     {
-        $formula = new IntercompanyContractFlowFormula();
+        $formula = new IntercompanyContractFlowFormula;
 
         $zero = $formula->aggregate([IntercompanyFlowMetricRow::internal(0, 'RUB')]);
         self::assertNull($zero->internalShare);

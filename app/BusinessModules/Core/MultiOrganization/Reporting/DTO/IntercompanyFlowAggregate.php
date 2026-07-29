@@ -15,9 +15,8 @@ final readonly class IntercompanyFlowAggregate
         public ?string $internalShare,
         public ?string $externalShare,
         public ?string $unclassifiedShare,
-        public int $linkedSpreadMinor,
-    ) {
-    }
+        public ?int $linkedSpreadMinor,
+    ) {}
 
     public function toArray(): array
     {

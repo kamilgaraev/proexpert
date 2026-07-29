@@ -10,7 +10,9 @@ use LogicException;
 final class HoldingAllocationFactVersion extends Model
 {
     protected $table = 'holding_allocation_fact_versions';
+
     protected $guarded = [];
+
     public $timestamps = false;
 
     protected function casts(): array
@@ -24,6 +26,8 @@ final class HoldingAllocationFactVersion extends Model
             'contract_id' => 'integer',
             'allocation_id' => 'integer',
             'linked_parent_allocation_id' => 'integer',
+            'linked_incoming_minor' => 'integer',
+            'linked_outgoing_minor' => 'integer',
             'source_id' => 'integer',
             'source_version' => 'integer',
             'amount_minor' => 'integer',
@@ -38,7 +42,7 @@ final class HoldingAllocationFactVersion extends Model
 
     protected static function booted(): void
     {
-        static::updating(static fn (): never => throw new LogicException('holding_fact_immutable'));
-        static::deleting(static fn (): never => throw new LogicException('holding_fact_immutable'));
+        self::updating(static fn (): never => throw new LogicException('holding_fact_immutable'));
+        self::deleting(static fn (): never => throw new LogicException('holding_fact_immutable'));
     }
 }

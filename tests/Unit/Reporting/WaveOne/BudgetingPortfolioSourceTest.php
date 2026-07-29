@@ -4,19 +4,34 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Reporting\WaveOne;
 
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
+use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDataProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\AuthorizationDecisionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportActor;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportFilterSet;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportProgress;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
 use App\BusinessModules\Features\Budgeting\DTOs\CfoCommandCenterFilters;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\BudgetingPortfolioProjectionService;
+use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\BudgetingPortfolioQueryService;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\PortfolioLiquidityRow;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\ProjectPortfolioHealthRow;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\ProjectPortfolioProjectionResult;
-use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\BudgetingPortfolioQueryService;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityProvider;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\ProjectPortfolioHealthProvider;
 use App\BusinessModules\Features\Budgeting\Services\CfoProjectPortfolioAggregator;
+use DateTimeImmutable;
+use DateTimeZone;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use ReflectionClass;
+use Tests\Support\Reporting\ReportDefinitionBuilder;
 
 final class BudgetingPortfolioSourceTest extends TestCase
 {
@@ -104,7 +119,7 @@ final class BudgetingPortfolioSourceTest extends TestCase
             'actual' => ['revenue' => 150.0, 'cost' => 100.0, 'gross_margin' => 50.0],
         ]]];
 
-        $aggregator = new CfoProjectPortfolioAggregator();
+        $aggregator = new CfoProjectPortfolioAggregator;
         $typed = $aggregator->buildResult($filters, $projects, $margin, ['rows' => []], [], [], '2026-07-29T00:00:00+00:00', 10);
 
         self::assertSame(
@@ -127,5 +142,61 @@ final class BudgetingPortfolioSourceTest extends TestCase
         self::assertContains(ReportDataProvider::class, class_implements(PortfolioLiquidityProvider::class));
         self::assertContains(ReportRowQuery::class, class_implements(BudgetingPortfolioQueryService::class));
         self::assertContains(ReportDrillDownProvider::class, class_implements(BudgetingPortfolioQueryService::class));
+    }
+
+    #[Test]
+    public function production_materializer_requires_all_canonical_owner_sources_and_has_no_prepared_fallback(): void
+    {
+        $reflection = new ReflectionClass(BudgetingPortfolioProjectionService::class);
+        $types = array_map(
+            static fn (\ReflectionParameter $parameter): string => (string) $parameter->getType(),
+            $reflection->getConstructor()?->getParameters() ?? [],
+        );
+
+        self::assertSame([
+            'App\BusinessModules\Features\Budgeting\Services\ProjectMarginReportService',
+            'App\BusinessModules\Features\Budgeting\Services\WipForecastReportService',
+            'App\BusinessModules\Features\Budgeting\Services\PlanFactReportService',
+            'App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService',
+            'App\BusinessModules\Features\Budgeting\Services\CashGapOpeningBalanceService',
+            'App\BusinessModules\Features\Budgeting\Services\CashGapForecastService',
+            'App\BusinessModules\Features\Budgeting\Services\CfoProjectPortfolioAggregator',
+        ], $types);
+        self::assertFalse($reflection->hasMethod('materializePrepared'));
+    }
+
+    #[Test]
+    public function production_materializer_rejects_project_filter_outside_authorized_scope(): void
+    {
+        $timezone = new DateTimeZone('UTC');
+        $scope = new ReportScope(1, [1], [10], [], $timezone);
+        $context = new ReportExecutionContext(
+            new ReportActor(7, 'active', ['reports.view']),
+            $scope,
+            new ReportVisibility(true, false, false, false, false, false, false),
+            new AuthorizationDecisionContext('http', 1, [1], [10], [], $timezone, 'scope-test', null),
+        );
+        $query = new ReportQuery(
+            (new ReportDefinitionBuilder)->code(BudgetingPortfolioProjectionService::HEALTH_CODE)->payload(),
+            $scope,
+            new ReportFilterSet(['project_ids' => [11]]),
+            [],
+            new DateTimeImmutable('2026-07-29T00:00:00+00:00'),
+            'ru',
+        );
+        $materializer = (new ReflectionClass(BudgetingPortfolioProjectionService::class))
+            ->newInstanceWithoutConstructor();
+
+        try {
+            $materializer->materialize(
+                $context,
+                $query,
+                new ReportProgress(0),
+                BudgetingPortfolioProjectionService::HEALTH_CODE,
+            );
+            self::fail('Project filter outside authorized scope must be rejected before source access.');
+        } catch (ReportContractException $exception) {
+            self::assertSame(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, $exception->errorCode);
+        }
     }
 }

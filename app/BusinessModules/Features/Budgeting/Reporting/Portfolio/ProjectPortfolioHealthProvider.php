@@ -13,13 +13,11 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 
 final readonly class ProjectPortfolioHealthProvider implements ReportDataProvider
 {
-    public function __construct(private BudgetingPortfolioProjectionService $projection)
-    {
-    }
+    public function __construct(private BudgetingPortfolioProjectionService $projection) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query, ReportProgress $progress): ReportSnapshotRef
     {
-        return $this->projection->materializePrepared(
+        return $this->projection->materialize(
             $context,
             $query,
             $progress,

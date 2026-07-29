@@ -10,10 +10,15 @@ use InvalidArgumentException;
 final readonly class PortfolioLiquidityRow
 {
     public string $opening;
+
     public string $inflow;
+
     public string $outflow;
+
     public string $closing;
+
     public string $gap;
+
     public string $rowKey;
 
     public function __construct(
@@ -30,13 +35,13 @@ final readonly class PortfolioLiquidityRow
         public array $sourceRefs,
     ) {
         if (preg_match('/^\d{4}-\d{2}-\d{2}$/D', $forecastDate) !== 1
-            || $projectId < 1
+            || $projectId < 0
             || trim($projectName) === ''
             || preg_match('/^[A-Z]{3}$/D', $currency) !== 1
             || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $scenario) !== 1
             || $duplicateSourceCount < 0
-            || !in_array($qualityStatus, ['complete', 'partial', 'invalid'], true)
-            || !array_is_list($sourceRefs)) {
+            || ! in_array($qualityStatus, ['complete', 'partial', 'invalid'], true)
+            || ! array_is_list($sourceRefs)) {
             throw new InvalidArgumentException('portfolio_liquidity_row_invalid');
         }
 
@@ -66,7 +71,7 @@ final readonly class PortfolioLiquidityRow
         $nextOpening = PortfolioDecimal::money($opening);
 
         foreach ($days as $day) {
-            if (!is_array($day)) {
+            if (! is_array($day)) {
                 throw new InvalidArgumentException('portfolio_liquidity_days_invalid');
             }
 
@@ -84,7 +89,7 @@ final readonly class PortfolioLiquidityRow
                 outflow: $outflow,
                 duplicateSourceCount: $duplicates,
                 qualityStatus: $duplicates === 0 ? 'complete' : 'partial',
-                sourceRefs: array_values(array_unique(array_merge($baseSourceRefs, $inflowRefs, $outflowRefs))),
+                sourceRefs: self::uniqueSourceRefs([...$baseSourceRefs, ...$inflowRefs, ...$outflowRefs]),
             );
             $rows[] = $row;
             $nextOpening = $row->closing;
@@ -115,7 +120,7 @@ final readonly class PortfolioLiquidityRow
 
     private static function sumUnique(mixed $items): array
     {
-        if (!is_array($items) || !array_is_list($items)) {
+        if (! is_array($items) || ! array_is_list($items)) {
             throw new InvalidArgumentException('portfolio_liquidity_flows_invalid');
         }
 
@@ -124,15 +129,16 @@ final readonly class PortfolioLiquidityRow
         $duplicates = 0;
 
         foreach ($items as $item) {
-            if (!is_array($item)
-                || !isset($item['key'], $item['amount'])
-                || !is_string($item['key'])
+            if (! is_array($item)
+                || ! isset($item['key'], $item['amount'])
+                || ! is_string($item['key'])
                 || trim($item['key']) === '') {
                 throw new InvalidArgumentException('portfolio_liquidity_flows_invalid');
             }
 
             if (isset($seen[$item['key']])) {
                 $duplicates++;
+
                 continue;
             }
 
@@ -140,6 +146,33 @@ final readonly class PortfolioLiquidityRow
             $sum = PortfolioDecimal::add($sum, PortfolioDecimal::money($item['amount']));
         }
 
-        return [$sum, array_keys($seen), $duplicates];
+        return [
+            $sum,
+            array_map(
+                static fn (string $key): array => ['type' => 'payment_document', 'id' => $key],
+                array_keys($seen),
+            ),
+            $duplicates,
+        ];
+    }
+
+    private static function uniqueSourceRefs(array $sourceRefs): array
+    {
+        $unique = [];
+        foreach ($sourceRefs as $sourceRef) {
+            if (! is_array($sourceRef)
+                || ! is_string($sourceRef['type'] ?? null)
+                || (! is_int($sourceRef['id'] ?? null) && ! is_string($sourceRef['id'] ?? null))) {
+                continue;
+            }
+            $key = $sourceRef['type'].':'.(string) $sourceRef['id'];
+            $unique[$key] = [
+                'type' => $sourceRef['type'],
+                'id' => $sourceRef['id'],
+            ];
+        }
+        ksort($unique, SORT_STRING);
+
+        return array_values($unique);
     }
 }

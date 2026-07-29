@@ -10,26 +10,74 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCoverage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuality;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResourceLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
-use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\DTO\ValidatedPortfolioDrillDownCell;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\BudgetingPortfolioSnapshot;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\PortfolioLiquidityProjection;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\Models\ProjectPortfolioHealthProjection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
-final readonly class BudgetingPortfolioQueryService implements ReportRowQuery, ReportDrillDownProvider
+final readonly class BudgetingPortfolioQueryService implements ReportDrillDownProvider, ReportRowQuery
 {
+    private const HEALTH_COLUMNS = [
+        'project',
+        'currency',
+        'revenue',
+        'cost',
+        'margin',
+        'margin_percent',
+        'wip',
+        'ftc',
+        'eac',
+        'ctc',
+        'risk',
+    ];
+
+    private const LIQUIDITY_COLUMNS = [
+        'date',
+        'project',
+        'scenario',
+        'currency',
+        'opening',
+        'inflow',
+        'outflow',
+        'closing',
+        'gap',
+        'quality',
+    ];
+
+    private const HEALTH_SOURCE_TYPES = [
+        'project',
+        'budget_line',
+        'approved_act',
+        'payment_transaction',
+        'payment_document',
+        'earned_value',
+        'actual_cost',
+        'budget_reservation',
+    ];
+
+    private const LIQUIDITY_SOURCE_TYPES = [
+        'project',
+        'payment_transaction',
+        'payment_schedule',
+        'payment_document',
+        'budget_reservation',
+        'budget_plan',
+        'opening_balance',
+    ];
+
     private const HEALTH_SORTS = [
         'risk_rank',
         'project_name',
@@ -64,15 +112,24 @@ final readonly class BudgetingPortfolioQueryService implements ReportRowQuery, R
     ): ReportPage {
         $this->assertIdentity($context, $snapshot);
         $this->assertSort($snapshot, $sort);
+
         if ($cursor !== null) {
-            throw ReportContractException::fromCode(
-                ReportErrorCode::REPORT_CURSOR_INVALID,
-                ['fields' => ['cursor']],
-            );
+            $this->assertCursor($cursor, $snapshot, $sort);
         }
 
         $snapshotRecord = $this->snapshot($context, $snapshot);
-        $query = $this->orderedQuery($context, $snapshot, $sort)->limit($limit + 1);
+        $query = $this->rowQuery($context, $snapshot);
+        if ($cursor !== null) {
+            $this->applyAfter(
+                $query,
+                $sort->field,
+                $sort->direction,
+                $cursor->keyset->lastSortValue,
+                $cursor->keyset->lastStableRowKey,
+            );
+        }
+
+        $query = $this->orderedQuery($query, $sort)->limit($limit + 1);
         $records = $query->get();
         $hasMore = $records->count() > $limit;
         $rows = $records->take($limit)->map(
@@ -99,70 +156,75 @@ final readonly class BudgetingPortfolioQueryService implements ReportRowQuery, R
     ): iterable {
         $this->assertIdentity($context, $snapshot);
         $this->assertSort($snapshot, $sort);
-        $queryHash = $snapshot->watermarks['query_hash'] ?? null;
-        if (!is_string($queryHash) || preg_match('/^[a-f0-9]{64}$/D', $queryHash) !== 1) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
-        }
-
-        foreach ($this->orderedQuery($context, $snapshot, $sort)->cursor() as $record) {
-            yield [
-                'row_key' => (string) $record->getAttribute('row_key'),
-                'values' => $this->row($snapshot, $record),
-                'snapshot_id' => $snapshot->id,
-                'query_hash' => $queryHash,
-                'source_hash' => $snapshot->sourceHash->value,
-            ];
+        foreach ($this->orderedQuery($this->rowQuery($context, $snapshot), $sort)->cursor() as $record) {
+            yield $this->row($snapshot, $record);
         }
     }
 
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         $this->assertIdentity($context, $snapshot);
-
-        throw ReportContractException::fromCode(
-            ReportErrorCode::REPORT_CURSOR_INVALID,
-            ['fields' => ['token']],
-        );
-    }
-
-    public function drillDownValidated(
-        ReportExecutionContext $context,
-        ReportSnapshotRef $snapshot,
-        ValidatedPortfolioDrillDownCell $cell,
-    ): ReportDrillDownResult {
-        $this->assertIdentity($context, $snapshot);
+        $allowedColumns = $snapshot->kind === BudgetingPortfolioProjectionService::HEALTH_CODE
+            ? self::HEALTH_COLUMNS
+            : self::LIQUIDITY_COLUMNS;
+        if (! in_array($input->cell->columnId, $allowedColumns, true)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_UNSUPPORTED);
+        }
         $record = $this->rowQuery($context, $snapshot)
-            ->where('row_key', $cell->rowKey)
+            ->where('row_key', $input->cell->rowKey)
             ->first();
-        if (!$record instanceof Model) {
+        if (! $record instanceof Model) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND);
         }
 
-        $row = $this->row($snapshot, $record);
-        $sourceRefs = is_array($row['source_refs'] ?? null) ? $row['source_refs'] : [];
-        $details = [];
-        foreach ($sourceRefs as $index => $sourceRef) {
-            $details[] = [
-                'row_key' => $cell->rowKey . ':source:' . $index,
-                'column_id' => $cell->columnId,
-                'source_ref' => $sourceRef,
-            ];
+        $allowedTypes = array_fill_keys(
+            $snapshot->kind === BudgetingPortfolioProjectionService::HEALTH_CODE
+                ? self::HEALTH_SOURCE_TYPES
+                : self::LIQUIDITY_SOURCE_TYPES,
+            true,
+        );
+        $scoped = [];
+        foreach ($context->scope->resources as $resource) {
+            $scoped[$resource->kind.':'.$resource->id] = true;
         }
 
-        return new ReportDrillDownResult($details, null, []);
+        $details = [];
+        $links = [];
+        foreach ($this->sourceRefs($record->getAttribute('source_refs')) as $sourceRef) {
+            $identity = $sourceRef['type'].':'.$sourceRef['id'];
+            if (! isset($allowedTypes[$sourceRef['type']]) || ! isset($scoped[$identity])) {
+                continue;
+            }
+            $details[] = [
+                'row_key' => $identity,
+                'column_id' => $input->cell->columnId,
+                'source_type' => $sourceRef['type'],
+                'source_id' => $sourceRef['id'],
+                'snapshot_row_key' => $input->cell->rowKey,
+            ];
+            $links[] = new ReportResourceLink(
+                $sourceRef['type'],
+                'r'.$sourceRef['id'],
+                $this->routeName($sourceRef['type']),
+                ['id' => (int) $sourceRef['id']],
+                'available',
+            );
+        }
+
+        return new ReportDrillDownResult($details, null, $links);
     }
 
     private function orderedQuery(
-        ReportExecutionContext $context,
-        ReportSnapshotRef $snapshot,
+        Builder $query,
         ReportWindowSort $sort,
     ): Builder {
         $direction = $sort->direction === ReportSortDirection::ASC ? 'asc' : 'desc';
 
-        return $this->rowQuery($context, $snapshot)
+        return $query
+            ->orderByRaw($sort->field.' IS NULL ASC')
             ->orderBy($sort->field, $direction)
             ->orderBy('row_key', $direction);
     }
@@ -187,8 +249,8 @@ final readonly class BudgetingPortfolioQueryService implements ReportRowQuery, R
             ->where('report_code', $snapshot->kind)
             ->whereKey($snapshot->id)
             ->first();
-        if (!$record instanceof BudgetingPortfolioSnapshot
-            || !hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)) {
+        if (! $record instanceof BudgetingPortfolioSnapshot
+            || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
         }
 
@@ -198,7 +260,7 @@ final readonly class BudgetingPortfolioQueryService implements ReportRowQuery, R
     private function assertIdentity(ReportExecutionContext $context, ReportSnapshotRef $snapshot): void
     {
         if ($context->scope->canonicalIdentity() !== $snapshot->scope->canonicalIdentity()
-            || !in_array($snapshot->kind, [
+            || ! in_array($snapshot->kind, [
                 BudgetingPortfolioProjectionService::HEALTH_CODE,
                 BudgetingPortfolioProjectionService::LIQUIDITY_CODE,
             ], true)) {
@@ -211,7 +273,7 @@ final readonly class BudgetingPortfolioQueryService implements ReportRowQuery, R
         $allowed = $snapshot->kind === BudgetingPortfolioProjectionService::HEALTH_CODE
             ? self::HEALTH_SORTS
             : self::LIQUIDITY_SORTS;
-        if (!in_array($sort->field, $allowed, true)) {
+        if (! in_array($sort->field, $allowed, true)) {
             throw ReportContractException::fromCode(
                 ReportErrorCode::REPORT_SORT_UNSUPPORTED,
                 ['fields' => ['sort']],
@@ -221,20 +283,112 @@ final readonly class BudgetingPortfolioQueryService implements ReportRowQuery, R
 
     private function row(ReportSnapshotRef $snapshot, Model $record): array
     {
-        $attributes = $record->attributesToArray();
-        unset($attributes['id'], $attributes['organization_id'], $attributes['snapshot_id']);
-        $attributes['row_key'] = (string) $record->getAttribute('row_key');
-
         if ($snapshot->kind === BudgetingPortfolioProjectionService::HEALTH_CODE) {
-            $attributes['project'] = $attributes['project_name'];
-            $attributes['risk'] = $attributes['risk_level'];
-        } else {
-            $attributes['date'] = $attributes['forecast_date'];
-            $attributes['project'] = $attributes['project_name'];
-            $attributes['quality'] = $attributes['quality_status'];
+            return [
+                'row_key' => (string) $record->getAttribute('row_key'),
+                'risk_rank' => (int) $record->getAttribute('risk_rank'),
+                'project_name' => (string) $record->getAttribute('project_name'),
+                'project' => (string) $record->getAttribute('project_name'),
+                'currency' => (string) $record->getAttribute('currency'),
+                'revenue' => (string) $record->getAttribute('revenue'),
+                'cost' => (string) $record->getAttribute('cost'),
+                'margin' => (string) $record->getAttribute('margin'),
+                'margin_percent' => $record->getAttribute('margin_percent'),
+                'wip' => (string) $record->getAttribute('wip'),
+                'ftc' => (string) $record->getAttribute('ftc'),
+                'eac' => (string) $record->getAttribute('eac'),
+                'ctc' => (string) $record->getAttribute('ctc'),
+                'risk' => (string) $record->getAttribute('risk_level'),
+            ];
         }
 
-        return $attributes;
+        return [
+            'row_key' => (string) $record->getAttribute('row_key'),
+            'forecast_date' => $record->getAttribute('forecast_date')?->format('Y-m-d')
+                ?? (string) $record->getAttribute('forecast_date'),
+            'date' => $record->getAttribute('forecast_date')?->format('Y-m-d')
+                ?? (string) $record->getAttribute('forecast_date'),
+            'project_name' => (string) $record->getAttribute('project_name'),
+            'project' => (string) $record->getAttribute('project_name'),
+            'scenario' => (string) $record->getAttribute('scenario'),
+            'currency' => (string) $record->getAttribute('currency'),
+            'opening' => (string) $record->getAttribute('opening'),
+            'inflow' => (string) $record->getAttribute('inflow'),
+            'outflow' => (string) $record->getAttribute('outflow'),
+            'closing' => (string) $record->getAttribute('closing'),
+            'gap' => (string) $record->getAttribute('gap'),
+            'quality' => (string) $record->getAttribute('quality_status'),
+        ];
+    }
+
+    private function assertCursor(
+        ReportCursor $cursor,
+        ReportSnapshotRef $snapshot,
+        ReportWindowSort $sort,
+    ): void {
+        if (! hash_equals($snapshot->sourceHash->value, $cursor->sourceHash->value)
+            || $cursor->sort->field !== $sort->field
+            || $cursor->sort->direction !== $sort->direction) {
+            throw ReportContractException::fromCode(
+                ReportErrorCode::REPORT_CURSOR_INVALID,
+                ['fields' => ['cursor']],
+            );
+        }
+    }
+
+    private function applyAfter(
+        Builder $query,
+        string $column,
+        ReportSortDirection $direction,
+        string|int|float|bool|null $value,
+        string $rowKey,
+    ): void {
+        $operator = $direction === ReportSortDirection::ASC ? '>' : '<';
+        if ($value === null) {
+            $query->whereNull($column)->where('row_key', $operator, $rowKey);
+
+            return;
+        }
+
+        $query->where(static fn (Builder $after): Builder => $after
+            ->where($column, $operator, $value)
+            ->orWhere(static fn (Builder $tie): Builder => $tie
+                ->where($column, $value)
+                ->where('row_key', $operator, $rowKey))
+            ->orWhereNull($column));
+    }
+
+    private function sourceRefs(mixed $value): array
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            return [];
+        }
+
+        $refs = [];
+        foreach ($value as $ref) {
+            if (! is_array($ref)
+                || ! is_string($ref['type'] ?? null)
+                || (! is_int($ref['id'] ?? null) && ! ctype_digit((string) ($ref['id'] ?? '')))) {
+                continue;
+            }
+            $refs[] = ['type' => $ref['type'], 'id' => (string) $ref['id']];
+        }
+
+        return $refs;
+    }
+
+    private function routeName(string $type): string
+    {
+        return match ($type) {
+            'project' => 'admin.projects.show',
+            'budget_line', 'budget_plan' => 'admin.budgeting.lines.show',
+            'approved_act' => 'admin.contracts.acts.show',
+            'payment_transaction', 'payment_document', 'payment_schedule' => 'admin.payments.show',
+            'budget_reservation' => 'admin.budgeting.reservations.show',
+            'earned_value', 'actual_cost' => 'admin.budgeting.wip.show',
+            'opening_balance' => 'admin.budgeting.cash-gap.show',
+            default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN),
+        };
     }
 
     private function quality(BudgetingPortfolioSnapshot $snapshot): ReportQuality

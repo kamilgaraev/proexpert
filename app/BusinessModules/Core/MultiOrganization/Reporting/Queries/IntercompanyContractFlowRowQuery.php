@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\MultiOrganization\Reporting\Queries;
 
-use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\ValidatedHoldingDrillDownCell;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\IntercompanyContractFlowRow;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Services\IntercompanyContractFlowSnapshotMaterializer;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
@@ -12,17 +11,18 @@ use App\BusinessModules\Core\Reporting\Application\Errors\ReportErrorCode;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportCursor;
-use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportPage;
+use App\BusinessModules\Core\Reporting\Domain\DTO\ReportResourceLink;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use Illuminate\Database\Eloquent\Builder;
 
-final readonly class IntercompanyContractFlowRowQuery implements ReportRowQuery, ReportDrillDownProvider
+final readonly class IntercompanyContractFlowRowQuery implements ReportDrillDownProvider, ReportRowQuery
 {
     private const SORTS = [
         'period_start',
@@ -39,9 +39,7 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportRowQuery,
         'linked_spread_minor',
     ];
 
-    public function __construct(private IntercompanyContractFlowSnapshotMaterializer $materializer)
-    {
-    }
+    public function __construct(private IntercompanyContractFlowSnapshotMaterializer $materializer) {}
 
     public function page(
         ReportExecutionContext $context,
@@ -52,11 +50,21 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportRowQuery,
     ): ReportPage {
         $this->assertRequest($context, $snapshot, $sort);
         if ($cursor !== null) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_CURSOR_INVALID, ['fields' => ['cursor']]);
+            $this->assertCursor($cursor, $snapshot, $sort);
+        }
+        $builder = $this->base($context, $snapshot);
+        if ($cursor !== null) {
+            $this->applyAfter(
+                $builder,
+                $sort->field,
+                $sort->direction,
+                $cursor->keyset->lastSortValue,
+                $cursor->keyset->lastStableRowKey,
+            );
         }
 
         $snapshotRecord = $this->materializer->snapshot($context, $snapshot);
-        $records = $this->ordered($context, $snapshot, $sort)->limit($limit + 1)->get();
+        $records = $this->ordered($builder, $sort)->limit($limit + 1)->get();
         $hasMore = $records->count() > $limit;
         $rows = $records->take($limit)->map($this->row(...))->values()->all();
 
@@ -79,63 +87,63 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportRowQuery,
         int $chunkSize,
     ): iterable {
         $this->assertRequest($context, $snapshot, $sort);
-        $queryHash = $snapshot->watermarks['query_hash'] ?? null;
-        if (!is_string($queryHash)) {
-            throw ReportContractException::fromCode(ReportErrorCode::REPORT_INTERNAL_ERROR);
-        }
-
-        foreach ($this->ordered($context, $snapshot, $sort)->cursor() as $record) {
-            yield [
-                'row_key' => (string) $record->row_key,
-                'values' => $this->row($record),
-                'snapshot_id' => $snapshot->id,
-                'query_hash' => $queryHash,
-                'source_hash' => $snapshot->sourceHash->value,
-            ];
+        foreach ($this->ordered($this->base($context, $snapshot), $sort)->cursor() as $record) {
+            yield $this->row($record);
         }
     }
 
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-        ReportDrillDownRequest $request,
+        ReportDrillDownInput $input,
     ): ReportDrillDownResult {
         $this->assertSnapshot($context, $snapshot);
-
-        throw ReportContractException::fromCode(ReportErrorCode::REPORT_CURSOR_INVALID, ['fields' => ['token']]);
-    }
-
-    public function drillDownValidated(
-        ReportExecutionContext $context,
-        ReportSnapshotRef $snapshot,
-        ValidatedHoldingDrillDownCell $cell,
-    ): ReportDrillDownResult {
-        $this->assertSnapshot($context, $snapshot);
-        $row = $this->base($context, $snapshot)->where('row_key', $cell->rowKey)->first();
-        if (!$row instanceof IntercompanyContractFlowRow) {
+        if (! in_array($input->cell->columnId, self::SORTS, true)) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_UNSUPPORTED);
+        }
+        $row = $this->base($context, $snapshot)->where('row_key', $input->cell->rowKey)->first();
+        if (! $row instanceof IntercompanyContractFlowRow) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_FILTER_VALUE_NOT_FOUND);
         }
 
+        $scoped = [];
+        foreach ($context->scope->resources as $resource) {
+            $scoped[$resource->kind.':'.$resource->id] = true;
+        }
         $details = [];
-        foreach ($row->source_refs as $index => $sourceRef) {
+        $links = [];
+        foreach ($this->sourceRefs($row->source_refs) as $sourceRef) {
+            $identity = $sourceRef['type'].':'.$sourceRef['id'];
+            if (! isset($scoped[$identity])) {
+                continue;
+            }
             $details[] = [
-                'row_key' => $cell->rowKey . ':source:' . $index,
-                'column_id' => $cell->columnId,
-                'source_ref' => $sourceRef,
+                'row_key' => $identity,
+                'column_id' => $input->cell->columnId,
+                'source_type' => $sourceRef['type'],
+                'source_id' => $sourceRef['id'],
+                'snapshot_row_key' => $input->cell->rowKey,
             ];
+            $links[] = new ReportResourceLink(
+                $sourceRef['type'],
+                'r'.$sourceRef['id'],
+                $this->routeName($sourceRef['type']),
+                ['id' => (int) $sourceRef['id']],
+                'available',
+            );
         }
 
-        return new ReportDrillDownResult($details, null, []);
+        return new ReportDrillDownResult($details, null, $links);
     }
 
     private function ordered(
-        ReportExecutionContext $context,
-        ReportSnapshotRef $snapshot,
+        Builder $builder,
         ReportWindowSort $sort,
     ): Builder {
         $direction = $sort->direction === ReportSortDirection::ASC ? 'asc' : 'desc';
 
-        return $this->base($context, $snapshot)
+        return $builder
+            ->orderByRaw($sort->field.' IS NULL ASC')
             ->orderBy($sort->field, $direction)
             ->orderBy('row_key', $direction);
     }
@@ -153,7 +161,7 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportRowQuery,
         ReportWindowSort $sort,
     ): void {
         $this->assertSnapshot($context, $snapshot);
-        if (!in_array($sort->field, self::SORTS, true)) {
+        if (! in_array($sort->field, self::SORTS, true)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SORT_UNSUPPORTED, ['fields' => ['sort']]);
         }
     }
@@ -183,7 +191,63 @@ final readonly class IntercompanyContractFlowRowQuery implements ReportRowQuery,
             'external_share' => $record->external_share === null ? null : (string) $record->external_share,
             'unclassified_share' => $record->unclassified_share === null ? null : (string) $record->unclassified_share,
             'linked_spread_minor' => $record->linked_spread_minor === null ? null : (int) $record->linked_spread_minor,
-            'source_refs' => $record->source_refs,
         ];
+    }
+
+    private function assertCursor(ReportCursor $cursor, ReportSnapshotRef $snapshot, ReportWindowSort $sort): void
+    {
+        if (! hash_equals($snapshot->sourceHash->value, $cursor->sourceHash->value)
+            || $cursor->sort->field !== $sort->field
+            || $cursor->sort->direction !== $sort->direction) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_CURSOR_INVALID, ['fields' => ['cursor']]);
+        }
+    }
+
+    private function applyAfter(
+        Builder $builder,
+        string $column,
+        ReportSortDirection $direction,
+        string|int|float|bool|null $value,
+        string $rowKey,
+    ): void {
+        $operator = $direction === ReportSortDirection::ASC ? '>' : '<';
+        if ($value === null) {
+            $builder->whereNull($column)->where('row_key', $operator, $rowKey);
+
+            return;
+        }
+        $builder->where(static fn (Builder $after): Builder => $after
+            ->where($column, $operator, $value)
+            ->orWhere(static fn (Builder $tie): Builder => $tie
+                ->where($column, $value)
+                ->where('row_key', $operator, $rowKey))
+            ->orWhereNull($column));
+    }
+
+    private function sourceRefs(mixed $value): array
+    {
+        if (! is_array($value)) {
+            return [];
+        }
+        $refs = [];
+        foreach ($value as $ref) {
+            if (is_array($ref)
+                && is_string($ref['type'] ?? null)
+                && (is_int($ref['id'] ?? null) || ctype_digit((string) ($ref['id'] ?? '')))) {
+                $refs[] = ['type' => $ref['type'], 'id' => (string) $ref['id']];
+            }
+        }
+
+        return $refs;
+    }
+
+    private function routeName(string $type): string
+    {
+        return match ($type) {
+            'contract_allocation' => 'admin.contracts.show',
+            'approved_act' => 'admin.contracts.acts.show',
+            'payment_document', 'payment_transaction' => 'admin.payments.show',
+            default => throw ReportContractException::fromCode(ReportErrorCode::REPORT_SCOPE_FORBIDDEN),
+        };
     }
 }

@@ -6,6 +6,7 @@ namespace App\BusinessModules\Core\MultiOrganization\Reporting\Services;
 
 use App\BusinessModules\Core\MultiOrganization\Reporting\DTO\IntercompanyFlowMetricRow;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationFactVersion;
+use App\BusinessModules\Core\MultiOrganization\Reporting\Models\HoldingAllocationProjectionGap;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\IntercompanyContractFlowRow;
 use App\BusinessModules\Core\MultiOrganization\Reporting\Models\IntercompanyContractFlowSnapshot;
 use App\BusinessModules\Core\Reporting\Application\Errors\ReportContractException;
@@ -38,9 +39,7 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
 {
     public const CODE = 'intercompany_contract_flows';
 
-    public function __construct(private IntercompanyContractFlowFormula $formula)
-    {
-    }
+    public function __construct(private IntercompanyContractFlowFormula $formula) {}
 
     public function materialize(
         ReportExecutionContext $context,
@@ -58,14 +57,18 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             $currency = $fact->currency === null ? null : (string) $fact->currency;
             $sourceRefs = is_array($fact->source_refs) ? $fact->source_refs : [];
             $metric = null;
-            if ($currency === null) {
+            $linkedEvidenceMissing = $fact->linked_parent_allocation_id !== null
+                && ($fact->linked_incoming_minor === null || $fact->linked_outgoing_minor === null);
+            if ($currency === null || (string) $fact->flow_class === 'unclassified' || $linkedEvidenceMissing) {
                 $unknown++;
             } else {
                 $metric = new IntercompanyFlowMetricRow(
                     (string) $fact->flow_class,
                     (int) $fact->amount_minor,
                     $currency,
-                    $fact->linked_parent_allocation_id === null ? null : (int) $fact->amount_minor,
+                    $fact->linked_parent_allocation_id === null
+                        ? null
+                        : (int) $fact->linked_incoming_minor - (int) $fact->linked_outgoing_minor,
                     $sourceRefs,
                 );
                 $metrics[] = $metric;
@@ -99,28 +102,46 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             static fn ($aggregate): array => $aggregate->toArray(),
             $this->formula->totals($metrics),
         );
-        $hierarchyGapCount = $facts->filter(
-            static fn (HoldingAllocationFactVersion $fact): bool => (string) $fact->hierarchy_version === 'unresolved',
-        )->count();
+        $hierarchyGapCount = 0;
+        $projectionGaps = HoldingAllocationProjectionGap::query()
+            ->where('organization_id', $context->scope->organizationId)
+            ->where('monetary_basis', 'contracted')
+            ->where('observed_at', '<=', $query->asOf)
+            ->where(static fn (Builder $builder): Builder => $builder
+                ->whereNull('resolved_at')
+                ->orWhere('resolved_at', '>', $query->asOf))
+            ->orderBy('id')
+            ->get(['id', 'source_hash', 'missing_fields']);
+        $projectionGapCount = $projectionGaps->count();
+        foreach ($projectionGaps as $gap) {
+            $sourcePayload[] = [
+                'gap_id' => (int) $gap->getKey(),
+                'source_hash' => (string) $gap->source_hash,
+                'missing_fields' => $gap->missing_fields,
+            ];
+        }
+        $unknown += $projectionGapCount;
         $totals['quality'] = [
-            'eligible_count' => $facts->count(),
+            'eligible_count' => $facts->count() + $projectionGapCount,
             'unknown_currency_count' => $unknown,
             'hierarchy_gap_count' => $hierarchyGapCount,
+            'projection_gap_count' => $projectionGapCount,
         ];
         $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode($sourcePayload)));
         $snapshotId = (string) Str::ulid();
         $watermark = (string) ($facts->max('id') ?? 0);
+        $hierarchyWatermark = hash('sha256', $facts->pluck('hierarchy_version')->unique()->sort()->implode(','));
         $sourceRef = new ReportSourceRef(
             'holding_allocations',
             'holding_facts',
-            'snapshot_' . strtolower($snapshotId),
+            'snapshot_'.strtolower($snapshotId),
             'holding_facts_v1',
-            'watermark_' . $watermark,
+            'watermark_'.$watermark,
             count($sourcePayload),
             $sourceHash,
         );
 
-        DB::transaction(function () use ($context, $query, $rows, $totals, $sourceHash, $snapshotId, $watermark, $sourceRef, $unknown, $hierarchyGapCount): void {
+        DB::transaction(function () use ($context, $query, $rows, $totals, $sourceHash, $snapshotId, $watermark, $hierarchyWatermark, $sourceRef, $unknown, $hierarchyGapCount): void {
             IntercompanyContractFlowSnapshot::query()->create([
                 'id' => $snapshotId,
                 'organization_id' => $context->scope->organizationId,
@@ -129,7 +150,7 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
                 'query_hash' => $query->queryHash->value,
                 'source_hash' => $sourceHash->value,
                 'formula_version' => $query->definition->formulaVersion,
-                'hierarchy_watermark' => hash('sha256', implode(',', $context->scope->holdingOrganizationIds)),
+                'hierarchy_watermark' => $hierarchyWatermark,
                 'allocation_watermark' => $watermark,
                 'totals' => $totals,
                 'source_refs' => [[
@@ -210,9 +231,9 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             ->where('organization_id', $context->scope->organizationId)
             ->whereKey($snapshot->id)
             ->first();
-        if (!$record instanceof IntercompanyContractFlowSnapshot
+        if (! $record instanceof IntercompanyContractFlowSnapshot
             || $snapshot->kind !== self::CODE
-            || !hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)) {
+            || ! hash_equals((string) $record->source_hash, $snapshot->sourceHash->value)) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SNAPSHOT_NOT_READY);
         }
 
@@ -263,13 +284,16 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
             ->where('organization_id', $context->scope->organizationId)
             ->where('monetary_basis', 'contracted')
             ->whereIn('contributor_organization_id', $context->scope->holdingOrganizationIds)
-            ->whereNotExists(function (QueryBuilder $query): void {
-                $query
+            ->whereDate('recognized_on', '<=', $query->asOf->format('Y-m-d'))
+            ->whereNotExists(function (QueryBuilder $newer) use ($query): void {
+                $newer
                     ->selectRaw('1')
                     ->from('holding_allocation_fact_versions as newer_fact')
                     ->whereColumn('newer_fact.organization_id', 'holding_allocation_fact_versions.organization_id')
-                    ->whereColumn('newer_fact.allocation_id', 'holding_allocation_fact_versions.allocation_id')
-                    ->where('newer_fact.monetary_basis', 'contracted')
+                    ->whereColumn('newer_fact.source_type', 'holding_allocation_fact_versions.source_type')
+                    ->whereColumn('newer_fact.source_id', 'holding_allocation_fact_versions.source_id')
+                    ->whereColumn('newer_fact.monetary_basis', 'holding_allocation_fact_versions.monetary_basis')
+                    ->whereDate('newer_fact.recognized_on', '<=', $query->asOf->format('Y-m-d'))
                     ->whereColumn('newer_fact.source_version', '>', 'holding_allocation_fact_versions.source_version');
             });
         if ($context->scope->projectIds !== []) {
@@ -320,6 +344,7 @@ final readonly class IntercompanyContractFlowSnapshotMaterializer
                     'row_key' => $rowKey,
                     'source_refs' => $group['source_refs'],
                 ];
+
                 continue;
             }
 
