@@ -20,6 +20,7 @@ final class ContractorScorecardPolicyVersion extends Model
         'components' => 'array',
         'cohort_rules' => 'array',
         'minimum_coverage' => 'decimal:8',
+        'minimum_sample_size' => 'integer',
         'effective_from' => 'immutable_datetime',
         'effective_to' => 'immutable_datetime',
     ];

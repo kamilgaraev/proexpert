@@ -706,6 +706,7 @@ class CustomerPortalService
         DB::transaction(function () use ($user, $request, $status): void {
             $occurredAt = CarbonImmutable::now();
             $terminal = in_array($status, ['completed', 'rejected'], true);
+            $wasTerminal = in_array((string) $request->status, ['completed', 'rejected'], true);
             $metadata = $request->metadata ?? [];
             $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
             $history[] = [
@@ -727,7 +728,11 @@ class CustomerPortalService
             ]);
             $this->workflowEventRecorder->recordRequest(
                 $request->fresh(),
-                $terminal ? CustomerWorkflowEventType::RESOLVED : CustomerWorkflowEventType::STATUS_CHANGED,
+                match (true) {
+                    $terminal => CustomerWorkflowEventType::RESOLVED,
+                    $wasTerminal => CustomerWorkflowEventType::REOPENED,
+                    default => CustomerWorkflowEventType::STATUS_CHANGED,
+                },
                 $user,
                 $occurredAt,
             );

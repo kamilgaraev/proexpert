@@ -27,9 +27,7 @@ final readonly class HandoverReadinessSnapshotMaterializer
 {
     public const FORMULA_VERSION = 'handover.v1';
 
-    public function __construct(private HandoverReadinessFormula $formula)
-    {
-    }
+    public function __construct(private HandoverReadinessFormula $formula) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): ReportSnapshotRef
     {
@@ -49,8 +47,7 @@ final readonly class HandoverReadinessSnapshotMaterializer
             ->orderBy('gate_code')
             ->orderByDesc('gate_version')
             ->get()
-            ->unique(static fn (HandoverGateVersion $gate): string =>
-                $gate->acceptance_scope_id.':'.$gate->gate_code)
+            ->unique(static fn (HandoverGateVersion $gate): string => $gate->acceptance_scope_id.':'.$gate->gate_code)
             ->values();
 
         if ($gates->isEmpty()) {
@@ -65,12 +62,14 @@ final readonly class HandoverReadinessSnapshotMaterializer
             ->orderBy('id')
             ->get();
         $sourceProjection = [
+            'as_of' => $query->asOf->format(DATE_ATOM),
             'event_hashes' => $events->pluck('evidence_hash')->all(),
             'gate_versions' => $gates->map(static fn (HandoverGateVersion $gate): array => [
                 'id' => (int) $gate->id,
+                'source_hash' => (string) $gate->source_hash,
                 'version' => (int) $gate->gate_version,
-                'updated_at' => $gate->updated_at?->toISOString(),
             ])->all(),
+            'scope' => $query->scope->canonicalIdentity(),
         ];
         $sourceHash = hash('sha256', CanonicalJson::encode($sourceProjection));
         $generatedAt = CarbonImmutable::now('UTC');
@@ -106,6 +105,7 @@ final readonly class HandoverReadinessSnapshotMaterializer
                 'generated_at' => $generatedAt,
                 'stale_at' => $generatedAt->addMinutes(15),
                 'watermarks' => [
+                    'as_of' => $query->asOf->format(DATE_ATOM),
                     'source_schema_version' => 'handover-readiness.v1',
                     'last_event_id' => (int) ($events->max('id') ?? 0),
                     'last_gate_version_id' => (int) ($gates->max('id') ?? 0),
@@ -131,6 +131,7 @@ final readonly class HandoverReadinessSnapshotMaterializer
                         $event->source_code === null ? null : (string) $event->source_code,
                         (string) $event->status,
                         CarbonImmutable::instance($event->occurred_at),
+                        (int) $event->source_version,
                     );
                 }
                 $metric = $this->formula->evaluate(

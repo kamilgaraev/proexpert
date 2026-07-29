@@ -15,7 +15,7 @@ final class ContractorScorecardFormulaTest extends TestCase
     #[Test]
     public function components_keep_source_units_and_never_emit_composite(): void
     {
-        $formula = new ContractorScorecardFormula();
+        $formula = new ContractorScorecardFormula;
         $review = $formula->component('marketplace_review', 'score_0_5', [
             new ContractorComponentSignal('4.0', true),
             new ContractorComponentSignal('5.0', true),
@@ -34,7 +34,7 @@ final class ContractorScorecardFormulaTest extends TestCase
     #[Test]
     public function missing_observations_produce_unknown_mean_and_zero_coverage(): void
     {
-        $metric = (new ContractorScorecardFormula())->component(
+        $metric = (new ContractorScorecardFormula)->component(
             'quality_defect_rate',
             'ratio',
             [new ContractorComponentSignal(null, true)],
@@ -52,10 +52,28 @@ final class ContractorScorecardFormulaTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('contractor_component_signal_out_of_bounds');
 
-        (new ContractorScorecardFormula())->component(
+        (new ContractorScorecardFormula)->component(
             'marketplace_review',
             'score_0_5',
             [new ContractorComponentSignal('5.1', true)],
         );
+    }
+
+    #[Test]
+    public function ineligible_source_rows_never_enter_sample_or_coverage(): void
+    {
+        $metric = (new ContractorScorecardFormula)->component(
+            'supply_otif',
+            'ratio',
+            [
+                new ContractorComponentSignal('1', false),
+                new ContractorComponentSignal('0', true),
+            ],
+        );
+
+        self::assertSame(1, $metric->eligibleCount);
+        self::assertSame(1, $metric->sampleSize);
+        self::assertSame('0.00000000', $metric->mean);
+        self::assertSame('1.00000000', $metric->coverage);
     }
 }

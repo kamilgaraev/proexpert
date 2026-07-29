@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Customer\Reporting\Sla\DrillDown;
 
+use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceObjectAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Rows\StableDrillDownPage;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
@@ -15,6 +17,8 @@ use JsonException;
 
 final readonly class CustomerSlaDrillDownProvider implements ReportDrillDownProvider
 {
+    public function __construct(private ReportSourceObjectAuthorizer $sources) {}
+
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
@@ -32,16 +36,35 @@ final readonly class CustomerSlaDrillDownProvider implements ReportDrillDownProv
             ->where('snapshot_id', $snapshot->id)
             ->where('row_key', $rowKey)
             ->firstOrFail();
-        $events = array_slice(array_map(
-            static fn (array $ref): array => [
-                'row_key' => (string) $ref['event_id'],
-                'event_id' => (string) $ref['event_id'],
-                'event_type' => (string) $ref['event_type'],
-            ],
+        $sourceType = 'customer_'.(string) $row->workflow_type;
+        $availability = $this->sources->availability(
+            $context,
+            $sourceType,
+            (int) $row->workflow_id,
+            (int) $row->organization_id,
+            $row->project_id === null ? null : (int) $row->project_id,
+        );
+        $events = array_map(
+            static fn (array $ref): array => $availability === 'available'
+                ? [
+                    'row_key' => (string) $ref['event_id'],
+                    'event_id' => (string) $ref['event_id'],
+                    'event_type' => (string) $ref['event_type'],
+                    'availability' => $availability,
+                ]
+                : [
+                    'row_key' => 'redacted:'.hash('sha256', (string) $ref['event_id']),
+                    'availability' => 'redacted',
+                ],
             $row->event_refs,
-        ), 0, $request->limit);
+        );
+        $page = StableDrillDownPage::fromRows(
+            $events,
+            $request->cursor,
+            $request->limit,
+        );
 
-        return new ReportDrillDownResult($events, null, []);
+        return new ReportDrillDownResult($page->rows, $page->nextCursor, []);
     }
 
     private function rowKey(string $token, ReportSnapshotRef $snapshot): string
@@ -54,10 +77,10 @@ final readonly class CustomerSlaDrillDownProvider implements ReportDrillDownProv
             $payload = null;
         }
         if (
-            !is_array($payload)
+            ! is_array($payload)
             || ($payload['snapshot_id'] ?? null) !== $snapshot->id
             || ($payload['source_hash'] ?? null) !== $snapshot->sourceHash->value
-            || !is_string($payload['row_key'] ?? null)
+            || ! is_string($payload['row_key'] ?? null)
         ) {
             throw new InvalidArgumentException('customer_sla_drill_down_token_invalid');
         }

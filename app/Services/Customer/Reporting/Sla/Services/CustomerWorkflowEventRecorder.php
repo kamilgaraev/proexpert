@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Models\CustomerIssue;
 use App\Models\CustomerRequest;
 use App\Models\User;
+use App\Services\Customer\Reporting\Sla\Enums\CustomerActorSide;
 use App\Services\Customer\Reporting\Sla\Enums\CustomerWorkflowEventType;
 use App\Services\Customer\Reporting\Sla\Models\CustomerWorkflowEvent;
 use Carbon\CarbonImmutable;
@@ -18,9 +19,7 @@ use InvalidArgumentException;
 
 final readonly class CustomerWorkflowEventRecorder
 {
-    public function __construct(private CustomerActorSideResolver $actorSides)
-    {
-    }
+    public function __construct(private CustomerActorSideResolver $actorSides) {}
 
     public function recordIssue(
         CustomerIssue $issue,
@@ -28,7 +27,7 @@ final readonly class CustomerWorkflowEventRecorder
         User $actor,
         CarbonImmutable $occurredAt,
     ): CustomerWorkflowEvent {
-        return $this->record('issue', $issue, $type, $actor, $occurredAt);
+        return $this->record('issue', $issue, $type, $actor, $occurredAt, false, null, null, null, null);
     }
 
     public function recordRequest(
@@ -37,7 +36,55 @@ final readonly class CustomerWorkflowEventRecorder
         User $actor,
         CarbonImmutable $occurredAt,
     ): CustomerWorkflowEvent {
-        return $this->record('request', $request, $type, $actor, $occurredAt);
+        return $this->record('request', $request, $type, $actor, $occurredAt, false, null, null, null, null);
+    }
+
+    public function recordHistoricalIssue(
+        CustomerIssue $issue,
+        CustomerWorkflowEventType $type,
+        User $actor,
+        CarbonImmutable $occurredAt,
+        CustomerActorSide $actorSide,
+        ?int $customerOrganizationId,
+        ?string $priorStatus = null,
+        ?string $currentStatus = null,
+    ): CustomerWorkflowEvent {
+        return $this->record(
+            'issue',
+            $issue,
+            $type,
+            $actor,
+            $occurredAt,
+            true,
+            $actorSide,
+            $customerOrganizationId,
+            $priorStatus,
+            $currentStatus,
+        );
+    }
+
+    public function recordHistoricalRequest(
+        CustomerRequest $request,
+        CustomerWorkflowEventType $type,
+        User $actor,
+        CarbonImmutable $occurredAt,
+        CustomerActorSide $actorSide,
+        ?int $customerOrganizationId,
+        ?string $priorStatus = null,
+        ?string $currentStatus = null,
+    ): CustomerWorkflowEvent {
+        return $this->record(
+            'request',
+            $request,
+            $type,
+            $actor,
+            $occurredAt,
+            true,
+            $actorSide,
+            $customerOrganizationId,
+            $priorStatus,
+            $currentStatus,
+        );
     }
 
     private function record(
@@ -46,8 +93,13 @@ final readonly class CustomerWorkflowEventRecorder
         CustomerWorkflowEventType $type,
         User $actor,
         CarbonImmutable $occurredAt,
+        bool $historical,
+        ?CustomerActorSide $fixedActorSide,
+        ?int $fixedCustomerOrganizationId,
+        ?string $fixedPriorStatus,
+        ?string $fixedCurrentStatus,
     ): CustomerWorkflowEvent {
-        if (!$workflow->exists || !$actor->exists) {
+        if (! $workflow->exists || ! $actor->exists) {
             throw new InvalidArgumentException('customer_workflow_event_invalid');
         }
 
@@ -57,7 +109,17 @@ final readonly class CustomerWorkflowEventRecorder
             $type,
             $actor,
             $occurredAt,
+            $historical,
+            $fixedActorSide,
+            $fixedCustomerOrganizationId,
+            $fixedPriorStatus,
+            $fixedCurrentStatus,
         ): CustomerWorkflowEvent {
+            DB::table($workflow->getTable())
+                ->where($workflow->getKeyName(), (int) $workflow->getKey())
+                ->where('organization_id', (int) $workflow->getAttribute('organization_id'))
+                ->lockForUpdate()
+                ->firstOrFail();
             $existing = CustomerWorkflowEvent::query()
                 ->where('organization_id', (int) $workflow->getAttribute('organization_id'))
                 ->where('workflow_type', $workflowType)
@@ -80,19 +142,28 @@ final readonly class CustomerWorkflowEventRecorder
             if (
                 ($last !== null && $occurredAt < $last->occurred_at)
                 || ($type === CustomerWorkflowEventType::OPENED && $last !== null)
-                || ($type !== CustomerWorkflowEventType::OPENED && !$this->openedEventExists($workflowType, $workflow))
+                || ($type !== CustomerWorkflowEventType::OPENED && ! $this->openedEventExists($workflowType, $workflow))
             ) {
                 throw new InvalidArgumentException('customer_workflow_event_sequence_invalid');
             }
             $sourceVersion = $last === null ? 1 : ((int) $last->source_version) + 1;
-            $customerOrganizationId = $this->customerOrganizationId($workflow);
-            $actorSide = $this->actorSides->resolve(
-                (int) $workflow->getAttribute('organization_id'),
-                $customerOrganizationId,
-                $this->actorOrganizationIds($actor),
-            );
-            $priorStatus = $last?->current_status;
-            $currentStatus = (string) $workflow->getAttribute('status');
+            $customerOrganizationId = $historical
+                ? $fixedCustomerOrganizationId
+                : $this->customerOrganizationId($workflow);
+            $actorSide = $historical
+                ? ($fixedActorSide ?? CustomerActorSide::UNKNOWN)
+                : $this->actorSides->resolve(
+                    (int) $workflow->getAttribute('organization_id'),
+                    $customerOrganizationId,
+                    $this->actorOrganizationIds($actor),
+                );
+            $priorStatus = $historical ? $fixedPriorStatus : $last?->current_status;
+            $currentStatus = $historical
+                ? $fixedCurrentStatus
+                : (string) $workflow->getAttribute('status');
+            if (! is_string($currentStatus) || trim($currentStatus) === '') {
+                throw new InvalidArgumentException('customer_workflow_event_status_invalid');
+            }
             $metadata = $workflow->getAttribute('metadata');
             $priority = is_array($metadata) && is_string($metadata['priority'] ?? null)
                 ? $metadata['priority']

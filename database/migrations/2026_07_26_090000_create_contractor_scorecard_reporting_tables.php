@@ -18,6 +18,8 @@ return new class extends Migration
             $table->jsonb('components');
             $table->jsonb('cohort_rules');
             $table->decimal('minimum_coverage', 12, 8);
+            $table->unsignedInteger('minimum_sample_size');
+            $table->char('source_hash', 64);
             $table->timestampTz('effective_from', 6);
             $table->timestampTz('effective_to', 6)->nullable();
             $table->timestampsTz(6);
@@ -42,7 +44,7 @@ return new class extends Migration
             $table->jsonb('watermarks');
             $table->unsignedBigInteger('row_count')->default(0);
 
-            $table->unique(['organization_id', 'source_tuple_hash', 'definition_hash'], 'contractor_scorecard_snapshot_identity_unique');
+            $table->unique(['organization_id', 'source_hash', 'definition_hash'], 'contractor_scorecard_snapshot_identity_unique');
             $table->index(['organization_id', 'generated_at', 'id'], 'contractor_scorecard_snapshot_generated_idx');
         });
 
@@ -73,7 +75,7 @@ return new class extends Migration
             $table->char('snapshot_id', 26);
             $table->unsignedBigInteger('profile_id');
             $table->unsignedBigInteger('category_id');
-            $table->unsignedBigInteger('project_id')->nullable();
+            $table->unsignedBigInteger('project_id');
             $table->string('cohort_key', 64);
             $table->string('component_code', 64);
             $table->string('unit_code', 32);
@@ -96,15 +98,40 @@ return new class extends Migration
         });
 
         foreach ([
-            "ALTER TABLE contractor_scorecard_policy_versions ADD CONSTRAINT contractor_scorecard_policy_coverage_check CHECK (minimum_coverage >= 0 AND minimum_coverage <= 1)",
-            "ALTER TABLE contractor_scorecard_policy_versions ADD CONSTRAINT contractor_scorecard_policy_interval_check CHECK (effective_to IS NULL OR effective_to > effective_from)",
+            'ALTER TABLE contractor_scorecard_policy_versions ADD CONSTRAINT contractor_scorecard_policy_coverage_check CHECK (minimum_coverage >= 0 AND minimum_coverage <= 1)',
+            'ALTER TABLE contractor_scorecard_policy_versions ADD CONSTRAINT contractor_scorecard_policy_sample_check CHECK (minimum_sample_size > 0)',
+            "ALTER TABLE contractor_scorecard_policy_versions ADD CONSTRAINT contractor_scorecard_policy_hash_check CHECK (source_hash ~ '^[a-f0-9]{64}$')",
+            'ALTER TABLE contractor_scorecard_policy_versions ADD CONSTRAINT contractor_scorecard_policy_interval_check CHECK (effective_to IS NULL OR effective_to > effective_from)',
             "ALTER TABLE contractor_scorecard_snapshots ADD CONSTRAINT contractor_scorecard_snapshot_hash_check CHECK (definition_hash ~ '^[a-f0-9]{64}$' AND source_hash ~ '^[a-f0-9]{64}$' AND source_tuple_hash ~ '^[a-f0-9]{64}$')",
-            "ALTER TABLE contractor_scorecard_snapshots ADD CONSTRAINT contractor_scorecard_snapshot_time_check CHECK (stale_at IS NULL OR stale_at >= generated_at)",
+            'ALTER TABLE contractor_scorecard_snapshots ADD CONSTRAINT contractor_scorecard_snapshot_time_check CHECK (stale_at IS NULL OR stale_at >= generated_at)',
             "ALTER TABLE contractor_scorecard_snapshot_sources ADD CONSTRAINT contractor_scorecard_source_hash_check CHECK (source_hash ~ '^[a-f0-9]{64}$')",
-            "ALTER TABLE contractor_scorecard_rows ADD CONSTRAINT contractor_scorecard_row_counts_check CHECK (sample_size <= eligible_count)",
-            "ALTER TABLE contractor_scorecard_rows ADD CONSTRAINT contractor_scorecard_row_coverage_check CHECK ((eligible_count = 0 AND coverage IS NULL) OR (eligible_count > 0 AND coverage >= 0 AND coverage <= 1))",
+            'ALTER TABLE contractor_scorecard_rows ADD CONSTRAINT contractor_scorecard_row_counts_check CHECK (sample_size <= eligible_count)',
+            'ALTER TABLE contractor_scorecard_rows ADD CONSTRAINT contractor_scorecard_row_coverage_check CHECK ((eligible_count = 0 AND coverage IS NULL) OR (eligible_count > 0 AND coverage >= 0 AND coverage <= 1))',
         ] as $statement) {
             DB::statement($statement);
+        }
+
+        DB::statement(<<<'SQL'
+            CREATE OR REPLACE FUNCTION most_prevent_reporting_mutation_v1()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                RAISE EXCEPTION 'reporting_fact_is_immutable';
+            END;
+            $$
+            SQL);
+
+        foreach ([
+            'contractor_scorecard_policy_versions',
+            'contractor_scorecard_snapshots',
+            'contractor_scorecard_snapshot_sources',
+            'contractor_scorecard_rows',
+        ] as $table) {
+            DB::statement(
+                "CREATE TRIGGER {$table}_append_only BEFORE UPDATE OR DELETE ON {$table} "
+                .'FOR EACH ROW EXECUTE FUNCTION most_prevent_reporting_mutation_v1()',
+            );
         }
     }
 

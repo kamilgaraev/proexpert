@@ -17,11 +17,13 @@ final class HandoverPackageDocument extends Model
         'status',
         'external_url',
         'approved_at',
+        'approved_by_user_id',
     ];
 
     protected $casts = [
         'is_required' => 'boolean',
         'approved_at' => 'datetime',
+        'approved_by_user_id' => 'integer',
     ];
 
     public function package(): BelongsTo

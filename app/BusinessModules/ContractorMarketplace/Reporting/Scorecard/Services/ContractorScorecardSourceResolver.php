@@ -17,6 +17,7 @@ use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportR
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use Carbon\CarbonImmutable;
 use DateTimeImmutable;
+use Illuminate\Support\Facades\DB;
 use Throwable;
 
 final readonly class ContractorScorecardSourceResolver
@@ -67,7 +68,7 @@ final readonly class ContractorScorecardSourceResolver
             ->where('organization_id', $context->scope->organizationId)
             ->where('report_code', $code)
             ->where('status', 'ready')
-            ->where('as_of', '<=', $query->asOf)
+            ->where('as_of', $query->asOf)
             ->whereNotNull('snapshot_id')
             ->whereNotNull('source_hash')
             ->orderByDesc('as_of')
@@ -80,9 +81,14 @@ final readonly class ContractorScorecardSourceResolver
             return $projects === $query->scope->projectIds
                 && $candidate->scope_holding_organization_ids === $query->scope->holdingOrganizationIds;
         });
-        if (!$record instanceof ReportRunRecord || $record->snapshot_stale_at === null) {
+        if (
+            ! $record instanceof ReportRunRecord
+            || $record->snapshot_stale_at === null
+            || $record->snapshot_generated_at === null
+        ) {
             throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
         }
+        $this->assertOwnerSnapshotReady($record, $code, $query);
 
         return new ReportSnapshotRef(
             $code,
@@ -95,7 +101,7 @@ final readonly class ContractorScorecardSourceResolver
             DateTimeImmutable::createFromInterface($record->snapshot_stale_at),
             array_merge($record->snapshot_watermarks ?? [], [
                 'source_schema_version' => (string) $record->source_schema_version,
-                'as_of' => $query->asOf->format(DATE_ATOM),
+                'as_of' => $record->as_of->format(DATE_ATOM),
                 'cohort_key' => $query->filters->values['cohort'] ?? null,
                 'project_ids' => $query->scope->projectIds,
             ]),
@@ -132,7 +138,11 @@ final readonly class ContractorScorecardSourceResolver
                 : (string) $review->financial_discipline_score,
             'created_at' => $review->created_at?->toISOString(),
         ])->all();
-        $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode($projection)));
+        $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
+            'as_of' => $query->asOf->format(DATE_ATOM),
+            'rows' => $projection,
+            'scope' => $query->scope->canonicalIdentity(),
+        ])));
         $generatedAt = CarbonImmutable::instance($query->asOf);
 
         return new ReportSnapshotRef(
@@ -143,7 +153,7 @@ final readonly class ContractorScorecardSourceResolver
             'marketplace-reviews.v1',
             $sourceHash,
             DateTimeImmutable::createFromInterface($generatedAt),
-            DateTimeImmutable::createFromInterface($generatedAt->addDay()),
+            null,
             [
                 'source_schema_version' => 'marketplace-reviews.v1',
                 'as_of' => $query->asOf->format(DATE_ATOM),
@@ -155,5 +165,59 @@ final readonly class ContractorScorecardSourceResolver
             ReportSnapshotClassification::OPERATIONAL,
             null,
         );
+    }
+
+    private function assertOwnerSnapshotReady(
+        ReportRunRecord $record,
+        string $code,
+        ReportQuery $query,
+    ): void {
+        $snapshot = match ($code) {
+            'baseline_schedule_variance' => DB::table('baseline_schedule_variance_snapshots')
+                ->where('id', $record->snapshot_id)
+                ->where('organization_id', $record->organization_id)
+                ->first(),
+            'supply_reliability' => DB::table('supply_reliability_snapshots')
+                ->where('id', $record->snapshot_id)
+                ->where('organization_id', $record->organization_id)
+                ->where('quality_status', 'complete')
+                ->where('reconciliation_status', 'matched')
+                ->where('gap_count', 0)
+                ->first(),
+            'quality_defect_flow' => DB::table('quality_defect_flow_snapshots')
+                ->where('id', $record->snapshot_id)
+                ->where('organization_id', $record->organization_id)
+                ->where('gap_count', 0)
+                ->where('unknown_count', 0)
+                ->whereColumn('eligible_count', 'projected_count')
+                ->first(),
+            'safety_incident_actions' => DB::table('safety_incident_snapshots')
+                ->where('id', $record->snapshot_id)
+                ->where('organization_id', $record->organization_id)
+                ->where('gap_count', 0)
+                ->where('unknown_count', 0)
+                ->whereColumn('eligible_count', 'projected_count')
+                ->first(),
+            default => null,
+        };
+        if (
+            ! is_object($snapshot)
+            || ! hash_equals((string) $snapshot->source_hash, (string) $record->source_hash)
+            || ! hash_equals((string) $snapshot->formula_version, (string) $record->formula_version)
+            || CarbonImmutable::parse((string) $snapshot->generated_at)
+                ->notEqualTo(CarbonImmutable::instance($record->snapshot_generated_at))
+            || $snapshot->stale_at === null
+            || CarbonImmutable::parse((string) $snapshot->stale_at)->lessThanOrEqualTo(CarbonImmutable::now('UTC'))
+        ) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+        }
+
+        $snapshotAsOf = CarbonImmutable::parse((string) $snapshot->as_of);
+        $sameAsOf = $code === 'baseline_schedule_variance'
+            ? $snapshotAsOf->toDateString() === CarbonImmutable::instance($query->asOf)->toDateString()
+            : $snapshotAsOf->equalTo(CarbonImmutable::instance($query->asOf));
+        if (! $sameAsOf) {
+            throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
+        }
     }
 }

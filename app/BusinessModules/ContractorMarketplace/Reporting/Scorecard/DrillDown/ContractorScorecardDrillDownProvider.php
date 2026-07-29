@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DrillDown;
 
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\ContractorScorecardRow;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceObjectAuthorizer;
+use App\BusinessModules\Core\Reporting\Application\Rows\StableDrillDownPage;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownRequest;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownResult;
@@ -15,6 +17,8 @@ use JsonException;
 
 final readonly class ContractorScorecardDrillDownProvider implements ReportDrillDownProvider
 {
+    public function __construct(private ReportSourceObjectAuthorizer $sources) {}
+
     public function drillDown(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
@@ -32,16 +36,37 @@ final readonly class ContractorScorecardDrillDownProvider implements ReportDrill
             ->where('snapshot_id', $snapshot->id)
             ->where('row_key', $rowKey)
             ->firstOrFail();
-        $evidence = array_slice(array_map(
-            static fn (array $ref): array => [
-                'row_key' => 'offer:'.(int) $ref['offer_id'].':review:'.(int) $ref['review_id'],
-                'offer_id' => (int) $ref['offer_id'],
-                'review_id' => (int) $ref['review_id'],
-            ],
-            $row->evidence_refs,
-        ), 0, $request->limit);
+        $evidence = [];
+        foreach ($row->evidence_refs as $ref) {
+            $sourceType = isset($ref['review_id'])
+                ? 'marketplace_review'
+                : (string) ($ref['source_report_code'] ?? '');
+            $sourceId = isset($ref['review_id'])
+                ? (int) $ref['review_id']
+                : (int) ($ref['source_row_id'] ?? 0);
+            $availability = $this->sources->availability(
+                $context,
+                $sourceType,
+                $sourceId,
+                (int) $row->organization_id,
+                $row->project_id === null ? null : (int) $row->project_id,
+            );
+            $rowKey = $sourceType.':'.$sourceId;
+            $evidence[] = $availability === 'available'
+                ? ['row_key' => $rowKey, ...$ref, 'availability' => $availability]
+                : [
+                    'row_key' => 'redacted:'.hash('sha256', $rowKey),
+                    'source_type' => $sourceType,
+                    'availability' => 'redacted',
+                ];
+        }
+        $page = StableDrillDownPage::fromRows(
+            $evidence,
+            $request->cursor,
+            $request->limit,
+        );
 
-        return new ReportDrillDownResult($evidence, null, []);
+        return new ReportDrillDownResult($page->rows, $page->nextCursor, []);
     }
 
     private function rowKey(string $token, ReportSnapshotRef $snapshot): string
@@ -54,10 +79,10 @@ final readonly class ContractorScorecardDrillDownProvider implements ReportDrill
             $payload = null;
         }
         if (
-            !is_array($payload)
+            ! is_array($payload)
             || ($payload['snapshot_id'] ?? null) !== $snapshot->id
             || ($payload['source_hash'] ?? null) !== $snapshot->sourceHash->value
-            || !is_string($payload['row_key'] ?? null)
+            || ! is_string($payload['row_key'] ?? null)
         ) {
             throw new InvalidArgumentException('contractor_scorecard_drill_down_token_invalid');
         }

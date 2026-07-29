@@ -24,7 +24,7 @@ final readonly class ContractorScorecardFormula
     ): ContractorComponentMetric {
         if (
             preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $componentCode) !== 1
-            || !array_key_exists($unitCode, self::BOUNDS)
+            || ! array_key_exists($unitCode, self::BOUNDS)
         ) {
             throw new InvalidArgumentException('contractor_component_definition_invalid');
         }
@@ -35,11 +35,13 @@ final readonly class ContractorScorecardFormula
         [$minimum, $maximum] = self::BOUNDS[$unitCode];
 
         foreach ($signals as $signal) {
-            if (!$signal instanceof ContractorComponentSignal) {
+            if (! $signal instanceof ContractorComponentSignal) {
                 throw new InvalidArgumentException('contractor_component_signal_invalid');
             }
             if ($signal->eligible) {
                 $eligibleCount++;
+            } else {
+                continue;
             }
             if ($signal->value === null) {
                 continue;
@@ -68,7 +70,7 @@ final readonly class ContractorScorecardFormula
     {
         $serialized = ['components' => []];
         foreach ($metrics as $metric) {
-            if (!$metric instanceof ContractorComponentMetric) {
+            if (! $metric instanceof ContractorComponentMetric) {
                 throw new InvalidArgumentException('contractor_component_metric_invalid');
             }
             $serialized['components'][] = [

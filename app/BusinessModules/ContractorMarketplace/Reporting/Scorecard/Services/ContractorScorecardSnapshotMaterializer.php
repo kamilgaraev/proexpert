@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Services;
 
 use App\BusinessModules\ContractorMarketplace\Domain\Models\MarketplaceHiringOfferReview;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorComponentMetric;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorComponentSignal;
+use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorObjectiveObservationIndex;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\ContractorScorecardPolicyVersion;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\ContractorScorecardRow;
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\ContractorScorecardSnapshot;
@@ -36,9 +38,9 @@ final readonly class ContractorScorecardSnapshotMaterializer
 
     public function __construct(
         private ContractorScorecardSourceResolver $sources,
+        private ContractorScorecardObservationReader $observations,
         private ContractorScorecardFormula $formula,
-    ) {
-    }
+    ) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): ReportSnapshotRef
     {
@@ -58,10 +60,12 @@ final readonly class ContractorScorecardSnapshotMaterializer
             ->orderByDesc('effective_from')
             ->orderByDesc('id')
             ->first();
-        if (!$policy instanceof ContractorScorecardPolicyVersion) {
+        if (! $policy instanceof ContractorScorecardPolicyVersion) {
             throw new InvalidArgumentException('contractor_scorecard_policy_unavailable');
         }
         $components = $this->components($policy);
+        $this->assertPinnedSources($tuple, $components);
+        $objectiveObservations = $this->observations->load($tuple);
         $reviews = MarketplaceHiringOfferReview::query()
             ->where('reviewer_organization_id', $query->scope->organizationId)
             ->where('created_at', '<=', $query->asOf)
@@ -78,10 +82,18 @@ final readonly class ContractorScorecardSnapshotMaterializer
         ]));
         $sourceHash = hash('sha256', CanonicalJson::encode([
             'policy_id' => (int) $policy->id,
+            'policy_source_hash' => (string) $policy->source_hash,
             'policy_version' => (string) $policy->version,
+            'scope' => $query->scope->canonicalIdentity(),
+            'as_of' => $query->asOf->format(DATE_ATOM),
             'source_tuple_hash' => $tuple->hash(),
         ]));
         $generatedAt = CarbonImmutable::now('UTC');
+        $staleAt = collect($tuple->refs())
+            ->map(static fn (ReportSnapshotRef $ref): ?CarbonImmutable => $ref->staleAt === null ? null : CarbonImmutable::instance($ref->staleAt))
+            ->filter()
+            ->sort()
+            ->first();
         $snapshotId = (string) Str::ulid();
         $rowCount = $groups->count() * count($components);
 
@@ -91,14 +103,16 @@ final readonly class ContractorScorecardSnapshotMaterializer
             $policy,
             $components,
             $groups,
+            $objectiveObservations,
             $sourceHash,
             $generatedAt,
+            $staleAt,
             $snapshotId,
             $rowCount,
         ): void {
             $existing = ContractorScorecardSnapshot::query()
                 ->where('organization_id', $query->scope->organizationId)
-                ->where('source_tuple_hash', $tuple->hash())
+                ->where('source_hash', $sourceHash)
                 ->where('definition_hash', $query->definition->definitionHash->value)
                 ->lockForUpdate()
                 ->first();
@@ -117,8 +131,9 @@ final readonly class ContractorScorecardSnapshotMaterializer
                 'filters' => $query->filters->values,
                 'as_of' => $query->asOf,
                 'generated_at' => $generatedAt,
-                'stale_at' => $generatedAt->addDay(),
+                'stale_at' => $staleAt,
                 'watermarks' => [
+                    'as_of' => $query->asOf->format(DATE_ATOM),
                     'source_schema_version' => 'contractor-scorecard.v1',
                     'source_tuple_hash' => $tuple->hash(),
                 ],
@@ -139,17 +154,24 @@ final readonly class ContractorScorecardSnapshotMaterializer
 
             foreach ($groups as $group) {
                 $first = $group->first();
-                if (!$first instanceof MarketplaceHiringOfferReview) {
+                if (! $first instanceof MarketplaceHiringOfferReview) {
                     continue;
                 }
                 $cohortKey = $this->cohortKey($group, $policy);
                 foreach ($components as $component) {
-                    $signals = $this->signals($group, $component);
-                    $metric = $this->formula->component(
+                    $observations = $this->componentObservations(
+                        $group,
+                        $component,
+                        $objectiveObservations,
+                        (int) $first->contractor_profile_id,
+                        (int) $first->project_id,
+                    );
+                    $rawMetric = $this->formula->component(
                         $component['code'],
                         $component['unit_code'],
-                        $signals,
+                        $observations['signals'],
                     );
+                    $metric = $this->applyPublicationThresholds($rawMetric, $policy);
                     $rowKey = implode(':', [
                         (int) $first->contractor_profile_id,
                         (int) $first->category_id,
@@ -170,10 +192,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
                         'sample_size' => $metric->sampleSize,
                         'eligible_count' => $metric->eligibleCount,
                         'coverage' => $metric->coverage,
-                        'evidence_refs' => $group->map(static fn (MarketplaceHiringOfferReview $review): array => [
-                            'offer_id' => (int) $review->offer_id,
-                            'review_id' => (int) $review->id,
-                        ])->values()->all(),
+                        'evidence_refs' => $observations['evidence'],
                         'row_key' => $rowKey,
                     ]);
                 }
@@ -182,7 +201,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
 
         $snapshot = ContractorScorecardSnapshot::query()
             ->where('organization_id', $query->scope->organizationId)
-            ->where('source_tuple_hash', $tuple->hash())
+            ->where('source_hash', $sourceHash)
             ->where('definition_hash', $query->definition->definitionHash->value)
             ->firstOrFail();
 
@@ -203,17 +222,18 @@ final readonly class ContractorScorecardSnapshotMaterializer
 
     private function components(ContractorScorecardPolicyVersion $policy): array
     {
-        if (!is_array($policy->components) || !array_is_list($policy->components) || $policy->components === []) {
+        if (! is_array($policy->components) || ! array_is_list($policy->components) || $policy->components === []) {
             throw new InvalidArgumentException('contractor_scorecard_components_invalid');
         }
         $codes = [];
         foreach ($policy->components as $component) {
             if (
-                !is_array($component)
-                || array_keys($component) !== ['code', 'unit_code', 'source_report_code']
-                || !is_string($component['code'])
-                || !is_string($component['unit_code'])
-                || !is_string($component['source_report_code'])
+                ! is_array($component)
+                || ! is_string($component['code'] ?? null)
+                || ! is_string($component['unit_code'] ?? null)
+                || ! is_string($component['source_report_code'] ?? null)
+                || ! is_string($component['source_formula_version'] ?? null)
+                || ! is_string($component['source_schema_version'] ?? null)
                 || isset($codes[$component['code']])
             ) {
                 throw new InvalidArgumentException('contractor_scorecard_components_invalid');
@@ -224,29 +244,85 @@ final readonly class ContractorScorecardSnapshotMaterializer
         return $policy->components;
     }
 
-    private function signals(Collection $reviews, array $component): array
-    {
-        $field = self::REVIEW_FIELDS[$component['code']] ?? null;
+    private function componentObservations(
+        Collection $reviews,
+        array $component,
+        ContractorObjectiveObservationIndex $objectiveObservations,
+        int $profileId,
+        int $projectId,
+    ): array {
+        $field = $component['source_metric'] ?? self::REVIEW_FIELDS[$component['code']] ?? null;
         if ($component['source_report_code'] === 'marketplace_reviews') {
-            if ($field === null) {
+            if ($field === null || ! in_array($field, self::REVIEW_FIELDS, true)) {
                 throw new InvalidArgumentException('contractor_scorecard_review_component_invalid');
             }
 
-            return $reviews->map(static fn (MarketplaceHiringOfferReview $review): ContractorComponentSignal =>
-                new ContractorComponentSignal(
+            return [
+                'signals' => $reviews->map(static fn (MarketplaceHiringOfferReview $review): ContractorComponentSignal => new ContractorComponentSignal(
                     $review->getAttribute($field) === null ? null : (string) $review->getAttribute($field),
                     true,
-                ))->all();
+                ))->all(),
+                'evidence' => $reviews->map(static fn (MarketplaceHiringOfferReview $review): array => [
+                'offer_id' => (int) $review->offer_id,
+                'review_id' => (int) $review->id,
+                ])->values()->all(),
+            ];
         }
 
-        return [new ContractorComponentSignal(null, true)];
+        return $objectiveObservations->observations(
+            $component['source_report_code'],
+            $profileId,
+            $projectId,
+            $component['unit_code'],
+        );
+    }
+
+    private function assertPinnedSources(
+        \App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO\ContractorScorecardSourceTuple $tuple,
+        array $components,
+    ): void {
+        $refs = [];
+        foreach ($tuple->refs() as $ref) {
+            $refs[$ref->kind] = $ref;
+        }
+        foreach ($components as $component) {
+            $ref = $refs[$component['source_report_code']] ?? null;
+            if (
+                ! $ref instanceof ReportSnapshotRef
+                || ! hash_equals($ref->formulaVersion, $component['source_formula_version'])
+                || ! hash_equals(
+                    (string) $ref->watermarks['source_schema_version'],
+                    $component['source_schema_version'],
+                )
+            ) {
+                throw new InvalidArgumentException('contractor_scorecard_policy_source_incompatible');
+            }
+        }
+    }
+
+    private function applyPublicationThresholds(
+        ContractorComponentMetric $metric,
+        ContractorScorecardPolicyVersion $policy,
+    ): ContractorComponentMetric {
+        $publishable = $metric->sampleSize >= (int) $policy->minimum_sample_size
+            && $metric->coverage !== null
+            && bccomp($metric->coverage, (string) $policy->minimum_coverage, 8) >= 0;
+
+        return new ContractorComponentMetric(
+            $metric->componentCode,
+            $metric->unitCode,
+            $publishable ? $metric->mean : null,
+            $metric->sampleSize,
+            $metric->eligibleCount,
+            $metric->coverage,
+        );
     }
 
     private function cohortKey(Collection $reviews, ContractorScorecardPolicyVersion $policy): string
     {
         $period = $policy->cohort_rules['period'] ?? null;
         $last = $reviews->max('created_at');
-        if (!$last instanceof \DateTimeInterface || !in_array($period, ['month', 'quarter', 'year'], true)) {
+        if (! $last instanceof \DateTimeInterface || ! in_array($period, ['month', 'quarter', 'year'], true)) {
             throw new InvalidArgumentException('contractor_scorecard_cohort_invalid');
         }
         $date = CarbonImmutable::instance($last);

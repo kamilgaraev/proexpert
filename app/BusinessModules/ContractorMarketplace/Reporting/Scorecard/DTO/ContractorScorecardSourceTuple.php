@@ -26,8 +26,7 @@ final readonly class ContractorScorecardSourceTuple
         public ReportSnapshotRef $qualityDefectFlow,
         public ReportSnapshotRef $safetyIncidentActions,
         public ReportSnapshotRef $marketplaceReviews,
-    ) {
-    }
+    ) {}
 
     public function assertCompatible(
         ReportExecutionContext $context,
@@ -38,12 +37,13 @@ final readonly class ContractorScorecardSourceTuple
         $scopeIdentity = $query->scope->canonicalIdentity();
         $cohortKey = $query->filters->values['cohort'] ?? null;
         $asOf = $query->asOf->format(DATE_ATOM);
+        $now = new \DateTimeImmutable('now');
 
         if (
             $kinds !== self::EXPECTED_KINDS
             || count(array_unique($kinds)) !== count(self::EXPECTED_KINDS)
             || $context->scope->canonicalIdentity() !== $scopeIdentity
-            || ($cohortKey !== null && !is_string($cohortKey))
+            || ($cohortKey !== null && ! is_string($cohortKey))
         ) {
             throw new InvalidArgumentException('contractor_scorecard_source_tuple_incompatible');
         }
@@ -51,10 +51,10 @@ final readonly class ContractorScorecardSourceTuple
         foreach ($refs as $ref) {
             if (
                 $ref->scope->canonicalIdentity() !== $scopeIdentity
-                || $ref->generatedAt > $query->asOf
-                || ($ref->staleAt !== null && $ref->staleAt <= $query->asOf)
-                || !isset($ref->watermarks['source_schema_version'])
-                || !is_string($ref->watermarks['source_schema_version'])
+                || $ref->generatedAt > $now
+                || ($ref->staleAt !== null && $ref->staleAt <= $now)
+                || ! isset($ref->watermarks['source_schema_version'])
+                || ! is_string($ref->watermarks['source_schema_version'])
                 || trim($ref->watermarks['source_schema_version']) === ''
                 || ($ref->watermarks['as_of'] ?? null) !== $asOf
                 || ($ref->watermarks['cohort_key'] ?? null) !== $cohortKey

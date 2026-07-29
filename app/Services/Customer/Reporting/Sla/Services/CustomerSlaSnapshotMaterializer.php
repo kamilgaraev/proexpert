@@ -13,7 +13,6 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\Services\Customer\Reporting\Sla\DTO\CustomerSlaPauseWindow;
 use App\Services\Customer\Reporting\Sla\DTO\CustomerSlaPolicy;
 use App\Services\Customer\Reporting\Sla\DTO\CustomerWorkflowFact;
-use App\Services\Customer\Reporting\Sla\Enums\CustomerActorSide;
 use App\Services\Customer\Reporting\Sla\Enums\CustomerWorkflowEventType;
 use App\Services\Customer\Reporting\Sla\Models\CustomerSlaPolicyVersion;
 use App\Services\Customer\Reporting\Sla\Models\CustomerSlaRow;
@@ -30,9 +29,7 @@ final readonly class CustomerSlaSnapshotMaterializer
 {
     public const FORMULA_VERSION = 'customer-sla.v1';
 
-    public function __construct(private CustomerSlaFormula $formula)
-    {
-    }
+    public function __construct(private CustomerSlaFormula $formula) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): ReportSnapshotRef
     {
@@ -60,9 +57,6 @@ final readonly class CustomerSlaSnapshotMaterializer
         $policies = CustomerSlaPolicyVersion::query()
             ->where('organization_id', $query->scope->organizationId)
             ->where('effective_from', '<=', $query->asOf)
-            ->where(static function ($builder) use ($query): void {
-                $builder->whereNull('effective_to')->orWhere('effective_to', '>', $query->asOf);
-            })
             ->orderBy('effective_from')
             ->orderBy('id')
             ->get();
@@ -71,17 +65,18 @@ final readonly class CustomerSlaSnapshotMaterializer
         }
 
         $sourceHash = hash('sha256', CanonicalJson::encode([
+            'as_of' => $query->asOf->format(DATE_ATOM),
             'event_hashes' => $events->pluck('evidence_hash')->all(),
             'policy_versions' => $policies->map(static fn (CustomerSlaPolicyVersion $policy): array => [
                 'id' => (int) $policy->id,
+                'source_hash' => (string) $policy->source_hash,
                 'version' => (string) $policy->version,
-                'updated_at' => $policy->updated_at?->toISOString(),
             ])->all(),
+            'scope' => $query->scope->canonicalIdentity(),
         ]));
         $generatedAt = CarbonImmutable::now('UTC');
         $snapshotId = (string) Str::ulid();
-        $groups = $events->groupBy(static fn (CustomerWorkflowEvent $event): string =>
-            $event->workflow_type.':'.$event->workflow_id);
+        $groups = $events->groupBy(static fn (CustomerWorkflowEvent $event): string => $event->workflow_type.':'.$event->workflow_id);
 
         DB::transaction(function () use (
             $query,
@@ -113,6 +108,8 @@ final readonly class CustomerSlaSnapshotMaterializer
                 'generated_at' => $generatedAt,
                 'stale_at' => $generatedAt->addMinutes(15),
                 'watermarks' => [
+                    'as_of' => $query->asOf->format(DATE_ATOM),
+                    'open_aging_at' => $query->asOf->format(DATE_ATOM),
                     'source_schema_version' => 'customer-sla.v1',
                     'last_event_id' => (int) ($events->max('id') ?? 0),
                     'last_policy_version_id' => (int) ($policies->max('id') ?? 0),
@@ -122,18 +119,17 @@ final readonly class CustomerSlaSnapshotMaterializer
 
             foreach ($groups as $workflowEvents) {
                 $first = $workflowEvents->first();
-                if (!$first instanceof CustomerWorkflowEvent) {
+                if (! $first instanceof CustomerWorkflowEvent) {
                     continue;
                 }
-                $policyRecord = $this->selectPolicy($policies, $first);
-                $policy = $this->policy($policyRecord);
                 $opened = $workflowEvents->first(
-                    static fn (CustomerWorkflowEvent $event): bool =>
-                        $event->event_type === CustomerWorkflowEventType::OPENED,
+                    static fn (CustomerWorkflowEvent $event): bool => $event->event_type === CustomerWorkflowEventType::OPENED,
                 );
-                if (!$opened instanceof CustomerWorkflowEvent) {
+                if (! $opened instanceof CustomerWorkflowEvent) {
                     throw new InvalidArgumentException('customer_sla_open_event_missing');
                 }
+                $policyRecord = $this->selectPolicy($policies, $opened);
+                $policy = $this->policy($policyRecord);
                 $fact = new CustomerWorkflowFact(
                     (string) $first->workflow_type,
                     (int) $first->workflow_id,
@@ -143,8 +139,10 @@ final readonly class CustomerSlaSnapshotMaterializer
                         'type' => $event->event_type,
                         'actor_side' => $event->actor_side,
                         'occurred_at' => CarbonImmutable::instance($event->occurred_at),
+                        'source_version' => (int) $event->source_version,
                     ])->all(),
                     $this->pauseWindows($workflowEvents, $policy, CarbonImmutable::instance($query->asOf)),
+                    $opened->actor_side,
                 );
                 $metric = $this->formula->evaluate($fact, $policy);
                 $last = $workflowEvents->last();
@@ -152,20 +150,24 @@ final readonly class CustomerSlaSnapshotMaterializer
                 CustomerSlaRow::query()->create([
                     'organization_id' => $query->scope->organizationId,
                     'snapshot_id' => $snapshotId,
-                    'project_id' => $first->project_id,
-                    'customer_organization_id' => $first->customer_organization_id,
+                    'project_id' => $opened->project_id,
+                    'customer_organization_id' => $opened->customer_organization_id,
                     'workflow_type' => (string) $first->workflow_type,
                     'workflow_id' => (int) $first->workflow_id,
                     'priority' => $last?->priority,
                     'owner_id' => $last?->owner_id,
                     'status' => (string) $last?->current_status,
+                    'policy_version_id' => (int) $policyRecord->id,
                     'opened_at' => $opened->occurred_at,
+                    'first_response_target_seconds' => $policy->firstResponseTargetSeconds,
+                    'resolution_target_seconds' => $policy->resolutionTargetSeconds,
                     'first_response_seconds' => $metric->firstResponseSeconds,
                     'resolution_seconds' => $metric->resolutionSeconds,
                     'open_aging_seconds' => $metric->openAgingSeconds,
                     'first_response_breached' => $metric->firstResponseBreached,
                     'resolution_breached' => $metric->resolutionBreached,
-                    'actor_side_complete' => $metric->actorSideComplete && $first->customer_organization_id !== null,
+                    'actor_side_complete' => $metric->actorSideComplete
+                        && $opened->customer_organization_id !== null,
                     'event_refs' => $workflowEvents->map(static fn (CustomerWorkflowEvent $event): array => [
                         'event_id' => (string) $event->event_id,
                         'event_type' => $event->event_type->value,
@@ -214,7 +216,7 @@ final readonly class CustomerSlaSnapshotMaterializer
             return sprintf('%d:%s:%020d', $specificity, $policy->effective_from->format('U.u'), (int) $policy->id);
         });
         $selected = $matching->first();
-        if (!$selected instanceof CustomerSlaPolicyVersion) {
+        if (! $selected instanceof CustomerSlaPolicyVersion) {
             throw new InvalidArgumentException('customer_sla_policy_unavailable');
         }
 
@@ -251,7 +253,7 @@ final readonly class CustomerSlaSnapshotMaterializer
             if ($isPaused && $startedAt === null) {
                 $startedAt = CarbonImmutable::instance($event->occurred_at);
             }
-            if (!$isPaused && $startedAt !== null) {
+            if (! $isPaused && $startedAt !== null) {
                 $windows[] = new CustomerSlaPauseWindow($startedAt, CarbonImmutable::instance($event->occurred_at));
                 $startedAt = null;
             }

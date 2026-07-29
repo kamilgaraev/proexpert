@@ -15,7 +15,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportFreshnessStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportQualityStatus;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportReconciliationStatus;
-use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\NullableReportKeyset;
 use Illuminate\Database\Eloquent\Builder;
 use InvalidArgumentException;
 use JsonException;
@@ -37,10 +37,7 @@ final readonly class ContractorScorecardRowQuery implements ReportRowQuery
             [$lastSortValue, $lastRowKey] = $this->cursorPosition($cursor, $snapshot, $sort);
             $this->applyPosition($builder, $sort, $lastSortValue, $lastRowKey);
         }
-        $direction = $sort->direction->value;
-        $records = $builder
-            ->orderBy($sort->field, $direction)
-            ->orderBy('row_key', $direction)
+        $records = NullableReportKeyset::order($builder, $sort->field, $sort->direction)
             ->limit($limit + 1)
             ->get();
         $hasMore = $records->count() > $limit;
@@ -64,10 +61,11 @@ final readonly class ContractorScorecardRowQuery implements ReportRowQuery
         int $chunkSize,
     ): iterable {
         $this->assertRequest($context, $snapshot, $sort, max(1, min(100, $chunkSize)));
-        $direction = $sort->direction->value;
-        foreach ($this->builder($context, $snapshot)
-            ->orderBy($sort->field, $direction)
-            ->orderBy('row_key', $direction)
+        foreach (NullableReportKeyset::order(
+            $this->builder($context, $snapshot),
+            $sort->field,
+            $sort->direction,
+        )
             ->cursor() as $record) {
             yield $this->map($record);
         }
@@ -106,7 +104,7 @@ final readonly class ContractorScorecardRowQuery implements ReportRowQuery
         if (
             $snapshot->kind !== 'contractor_scorecard'
             || $context->scope->organizationId !== $snapshot->scope->organizationId
-            || !in_array($sort->field, self::SORTS, true)
+            || ! in_array($sort->field, self::SORTS, true)
             || $limit < 1
             || $limit > 100
         ) {
@@ -127,12 +125,12 @@ final readonly class ContractorScorecardRowQuery implements ReportRowQuery
             $payload = null;
         }
         if (
-            !is_array($payload)
+            ! is_array($payload)
             || ($payload['snapshot_id'] ?? null) !== $snapshot->id
             || ($payload['source_hash'] ?? null) !== $snapshot->sourceHash->value
             || ($payload['sort_field'] ?? null) !== $sort->field
             || ($payload['sort_direction'] ?? null) !== $sort->direction->value
-            || !is_string($payload['last_stable_row_key'] ?? null)
+            || ! is_string($payload['last_stable_row_key'] ?? null)
         ) {
             throw new InvalidArgumentException('contractor_scorecard_cursor_invalid');
         }
@@ -146,25 +144,19 @@ final readonly class ContractorScorecardRowQuery implements ReportRowQuery
         mixed $lastSortValue,
         string $lastRowKey,
     ): void {
-        $operator = $sort->direction === ReportSortDirection::ASC ? '>' : '<';
-        $builder->where(static function (Builder $position) use ($sort, $lastSortValue, $lastRowKey, $operator): void {
-            if ($lastSortValue === null) {
-                $position->whereNull($sort->field)->where('row_key', $operator, $lastRowKey);
-                return;
-            }
-            $position
-                ->where($sort->field, $operator, $lastSortValue)
-                ->orWhere(static function (Builder $tie) use ($sort, $lastSortValue, $lastRowKey, $operator): void {
-                    $tie->where($sort->field, $lastSortValue)->where('row_key', $operator, $lastRowKey);
-                });
-        });
+        NullableReportKeyset::after(
+            $builder,
+            $sort->field,
+            $sort->direction,
+            $lastSortValue,
+            $lastRowKey,
+        );
     }
 
     private function quality(
         ReportExecutionContext $context,
         ReportSnapshotRef $snapshot,
-    ): ReportQuality
-    {
+    ): ReportQuality {
         $rows = $this->builder($context, $snapshot);
         $total = (clone $rows)->count();
         $covered = (clone $rows)->whereNotNull('component_mean')->count();
@@ -182,7 +174,7 @@ final readonly class ContractorScorecardRowQuery implements ReportRowQuery
 
     private function freshness(ReportSnapshotRef $snapshot): ReportFreshnessStatus
     {
-        return $snapshot->staleAt !== null && $snapshot->staleAt <= new \DateTimeImmutable()
+        return $snapshot->staleAt !== null && $snapshot->staleAt <= new \DateTimeImmutable
             ? ReportFreshnessStatus::STALE
             : ReportFreshnessStatus::FRESH;
     }

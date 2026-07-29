@@ -13,22 +13,24 @@ final class HandoverAcceptanceServiceProvider extends ServiceProvider
         $this->app->singleton(HandoverAcceptanceModule::class);
         $this->app->singleton(Services\HandoverAcceptanceService::class);
         $this->app->singleton(Reporting\Readiness\Services\HandoverEvidenceEventRecorder::class);
+        $this->app->singleton(Reporting\Readiness\Services\HandoverGateVersionWriter::class);
         $this->app->singleton(Reporting\Readiness\Services\HandoverReadinessFormula::class);
         $this->app->singleton(Reporting\Readiness\Services\HandoverReadinessSnapshotMaterializer::class);
         $this->app->singleton(Reporting\Readiness\Providers\HandoverReadinessReportProvider::class);
         $this->app->singleton(Reporting\Readiness\Queries\HandoverReadinessRowQuery::class);
         $this->app->singleton(Reporting\Readiness\DrillDown\HandoverReadinessDrillDownProvider::class);
         $this->app->singleton(Reporting\Readiness\Readiness\HandoverReadinessProbe::class);
+        $this->app->singleton(Reporting\Readiness\Backfill\HandoverReadinessBackfill::class);
     }
 
     public function boot(): void
     {
-        $migrationsPath = __DIR__ . '/migrations';
+        $migrationsPath = __DIR__.'/migrations';
         if (is_dir($migrationsPath)) {
             $this->loadMigrationsFrom($migrationsPath);
         }
 
-        $routesPath = __DIR__ . '/routes.php';
+        $routesPath = __DIR__.'/routes.php';
         if (is_file($routesPath)) {
             require $routesPath;
         }

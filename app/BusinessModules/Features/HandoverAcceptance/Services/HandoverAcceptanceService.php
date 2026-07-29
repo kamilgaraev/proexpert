@@ -39,17 +39,16 @@ final class HandoverAcceptanceService
     public function __construct(
         private readonly FileService $fileService,
         private readonly HandoverEvidenceEventRecorder $evidenceEvents,
-    ) {
-    }
+    ) {}
 
     public function listScopes(int $organizationId, array $filters = []): Collection
     {
         return AcceptanceScope::query()
             ->where('organization_id', $organizationId)
-            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
-            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
-            ->when(!empty($filters['planned_from']), fn ($query) => $query->whereDate('planned_acceptance_date', '>=', (string) $filters['planned_from']))
-            ->when(!empty($filters['planned_to']), fn ($query) => $query->whereDate('planned_acceptance_date', '<=', (string) $filters['planned_to']))
+            ->when(! empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(! empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
+            ->when(! empty($filters['planned_from']), fn ($query) => $query->whereDate('planned_acceptance_date', '>=', (string) $filters['planned_from']))
+            ->when(! empty($filters['planned_to']), fn ($query) => $query->whereDate('planned_acceptance_date', '<=', (string) $filters['planned_to']))
             ->with(self::SCOPE_RELATIONS)
             ->orderByDesc('id')
             ->get();
@@ -65,7 +64,7 @@ final class HandoverAcceptanceService
         }
 
         $level = $parent ? ((int) $parent->level) + 1 : 0;
-        $path = trim(($parent?->path ? $parent->path . ' / ' : '') . (string) $data['name']);
+        $path = trim(($parent?->path ? $parent->path.' / ' : '').(string) $data['name']);
 
         return ProjectLocation::query()->create([
             'organization_id' => $organizationId,
@@ -117,6 +116,7 @@ final class HandoverAcceptanceService
 
             foreach ($data['items'] as $item) {
                 $checklist->items()->create([
+                    'code' => $item['code'],
                     'title' => $item['title'],
                     'is_required' => $item['is_required'] ?? true,
                     'status' => 'pending',
@@ -154,13 +154,14 @@ final class HandoverAcceptanceService
         return DB::transaction(function () use ($session, $userId, $data): AcceptanceFinding {
             $scope = $session->scope()->firstOrFail();
             $qualityDefect = null;
+            $occurredAt = CarbonImmutable::now();
 
             if ($data['create_quality_defect'] === true) {
                 $qualityDefect = QualityDefect::query()->create([
                     'organization_id' => $session->organization_id,
                     'project_id' => $session->project_id,
                     'created_by' => $userId,
-                    'defect_number' => 'HA-' . $session->id . '-' . now()->format('His'),
+                    'defect_number' => 'HA-'.$session->id.'-'.now()->format('His'),
                     'title' => $data['title'],
                     'description' => $data['description'] ?? null,
                     'severity' => $data['severity'],
@@ -197,9 +198,19 @@ final class HandoverAcceptanceService
                 'finding_opened',
                 'acceptance_finding',
                 (int) $finding->id,
-                CarbonImmutable::now(),
+                $occurredAt,
                 $userId,
             );
+            if ($qualityDefect instanceof QualityDefect) {
+                $this->evidenceEvents->record(
+                    $scope,
+                    'blocker_opened',
+                    'quality_defect',
+                    (int) $qualityDefect->id,
+                    $occurredAt,
+                    $userId,
+                );
+            }
 
             return $finding->fresh(['qualityDefect']);
         });
@@ -233,11 +244,17 @@ final class HandoverAcceptanceService
         }, 3);
     }
 
-    public function reviewChecklistItem(AcceptanceChecklistItem $item, array $data): AcceptanceChecklistItem
-    {
-        return DB::transaction(function () use ($item, $data): AcceptanceChecklistItem {
+    public function reviewChecklistItem(
+        AcceptanceChecklistItem $item,
+        int $userId,
+        array $data,
+    ): AcceptanceChecklistItem {
+        return DB::transaction(function () use ($item, $userId, $data): AcceptanceChecklistItem {
+            $occurredAt = CarbonImmutable::now();
             $item->update([
                 'status' => $data['status'],
+                'reviewed_at' => $occurredAt,
+                'reviewed_by_user_id' => $userId,
                 'comment' => $data['comment'] ?? null,
             ]);
             $checklist = $item->checklist()->firstOrFail();
@@ -248,8 +265,8 @@ final class HandoverAcceptanceService
                 'checklist_reviewed',
                 'acceptance_checklist_item',
                 (int) $item->id,
-                CarbonImmutable::now(),
-                null,
+                $occurredAt,
+                $userId,
             );
 
             return $item->fresh(['checklist.items']);
@@ -263,6 +280,7 @@ final class HandoverAcceptanceService
         }
 
         $this->assertStatus($scope, ['findings_open', 'in_progress', 'rejected']);
+
         return DB::transaction(function () use ($scope): AcceptanceScope {
             $occurredAt = CarbonImmutable::now();
             $scope->update(['status' => 'ready_for_reinspection']);
@@ -362,16 +380,42 @@ final class HandoverAcceptanceService
                 ]
             );
 
-            $package->documents()->delete();
+            $occurredAt = CarbonImmutable::now();
+            foreach ($package->documents()->lockForUpdate()->get() as $existingDocument) {
+                if ($existingDocument->status === 'approved') {
+                    $this->evidenceEvents->record(
+                        $scope,
+                        'document_approval_reversed',
+                        'handover_document',
+                        (int) $existingDocument->id,
+                        $occurredAt,
+                        $userId,
+                    );
+                }
+                $this->evidenceEvents->record(
+                    $scope,
+                    'document_deleted',
+                    'handover_document',
+                    (int) $existingDocument->id,
+                    $occurredAt,
+                    $userId,
+                );
+                $existingDocument->delete();
+            }
 
             foreach ($data['documents'] as $document) {
+                if ($document['status'] === 'approved') {
+                    throw new DomainException(
+                        trans_message('handover_acceptance.errors.document_requires_explicit_approval'),
+                    );
+                }
                 $package->documents()->create([
                     'title' => $document['title'],
                     'document_type' => $document['document_type'],
                     'is_required' => (bool) $document['is_required'],
                     'status' => $document['status'],
                     'external_url' => $document['external_url'] ?? null,
-                    'approved_at' => $document['status'] === 'approved' ? now() : null,
+                    'approved_at' => null,
                 ]);
             }
 
@@ -379,26 +423,37 @@ final class HandoverAcceptanceService
         });
     }
 
-    public function approveDocument(HandoverPackageDocument $document, array $data): HandoverPackageDocument
-    {
-        return DB::transaction(function () use ($document, $data): HandoverPackageDocument {
+    public function approveDocument(
+        HandoverPackageDocument $document,
+        int $userId,
+        array $data,
+    ): HandoverPackageDocument {
+        return DB::transaction(function () use ($document, $userId, $data): HandoverPackageDocument {
+            $lockedDocument = HandoverPackageDocument::query()
+                ->whereKey((int) $document->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            if ($lockedDocument->status === 'approved') {
+                return $lockedDocument;
+            }
             $occurredAt = CarbonImmutable::now();
-            $document->update([
+            $lockedDocument->update([
                 'status' => 'approved',
-                'external_url' => $data['external_url'] ?? $document->external_url,
+                'external_url' => $data['external_url'] ?? $lockedDocument->external_url,
                 'approved_at' => $occurredAt,
+                'approved_by_user_id' => $userId,
             ]);
-            $scope = $document->package()->firstOrFail()->scope()->firstOrFail();
+            $scope = $lockedDocument->package()->firstOrFail()->scope()->firstOrFail();
             $this->evidenceEvents->record(
                 $scope,
                 'document_approved',
                 'handover_document',
-                (int) $document->id,
+                (int) $lockedDocument->id,
                 $occurredAt,
-                null,
+                $userId,
             );
 
-            return $document->fresh();
+            return $lockedDocument->fresh();
         }, 3);
     }
 
@@ -407,7 +462,7 @@ final class HandoverAcceptanceService
         $package = $document->package()->firstOrFail();
         $organization = Organization::query()->find((int) $package->organization_id);
 
-        if (!$organization instanceof Organization) {
+        if (! $organization instanceof Organization) {
             throw new DomainException(trans_message('handover_acceptance.errors.organization_not_found'));
         }
 
@@ -423,24 +478,40 @@ final class HandoverAcceptanceService
             throw new DomainException(trans_message('handover_acceptance.errors.document_upload_failed'));
         }
 
-        return DB::transaction(function () use ($document, $package, $url): HandoverPackageDocument {
+        return DB::transaction(function () use ($document, $url): HandoverPackageDocument {
+            $lockedDocument = HandoverPackageDocument::query()
+                ->whereKey((int) $document->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $package = $lockedDocument->package()->firstOrFail();
             $occurredAt = CarbonImmutable::now();
-            $document->update([
-                'status' => 'approved',
-                'external_url' => $url,
-                'approved_at' => $occurredAt,
-            ]);
             $scope = $package->scope()->firstOrFail();
+            if ($lockedDocument->status === 'approved') {
+                $this->evidenceEvents->record(
+                    $scope,
+                    'document_approval_reversed',
+                    'handover_document',
+                    (int) $lockedDocument->id,
+                    $occurredAt,
+                    null,
+                );
+            }
+            $lockedDocument->update([
+                'status' => 'draft',
+                'external_url' => $url,
+                'approved_at' => null,
+                'approved_by_user_id' => null,
+            ]);
             $this->evidenceEvents->record(
                 $scope,
-                'document_approved',
+                'document_replaced',
                 'handover_document',
-                (int) $document->id,
+                (int) $lockedDocument->id,
                 $occurredAt,
                 null,
             );
 
-            return $document->fresh(['package.documents']);
+            return $lockedDocument->fresh(['package.documents']);
         }, 3);
     }
 
@@ -477,6 +548,7 @@ final class HandoverAcceptanceService
     public function reopenScope(AcceptanceScope $scope, int $userId, string $reason): AcceptanceScope
     {
         $this->assertStatus($scope, ['accepted', 'handed_over']);
+
         return DB::transaction(function () use ($scope, $userId, $reason): AcceptanceScope {
             $occurredAt = CarbonImmutable::now();
             $scope->update(['status' => 'reopened', 'reopened_at' => $occurredAt]);
@@ -556,7 +628,7 @@ final class HandoverAcceptanceService
 
     private function assertStatus(AcceptanceScope $scope, array $allowed): void
     {
-        if (!in_array($scope->status, $allowed, true)) {
+        if (! in_array($scope->status, $allowed, true)) {
             throw new DomainException(trans_message('handover_acceptance.errors.invalid_status'));
         }
     }
@@ -575,11 +647,13 @@ final class HandoverAcceptanceService
 
         if ($items->contains(fn (AcceptanceChecklistItem $item): bool => $item->status === 'rejected')) {
             $checklist->update(['status' => 'findings_open']);
+
             return;
         }
 
         if ($items->isNotEmpty() && $items->every(fn (AcceptanceChecklistItem $item): bool => $item->status === 'accepted')) {
             $checklist->update(['status' => 'completed']);
+
             return;
         }
 

@@ -5,11 +5,16 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\Services;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\BusinessModules\Features\ChangeManagement\Models\ChangeManagementRfi;
+use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceChecklistItem;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceFinding;
 use App\BusinessModules\Features\HandoverAcceptance\Models\AcceptanceScope;
 use App\BusinessModules\Features\HandoverAcceptance\Models\HandoverPackageDocument;
 use App\BusinessModules\Features\HandoverAcceptance\Reporting\Readiness\Models\HandoverEvidenceEvent;
+use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
+use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
+use BackedEnum;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -31,7 +36,7 @@ final readonly class HandoverEvidenceEventRecorder
             || preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $sourceType) !== 1
             || $sourceId < 1
             || ($actorId !== null && $actorId < 1)
-            || !$scope->exists
+            || ! $scope->exists
         ) {
             throw new InvalidArgumentException('handover_evidence_event_invalid');
         }
@@ -44,6 +49,12 @@ final readonly class HandoverEvidenceEventRecorder
             $occurredAt,
             $actorId,
         ): HandoverEvidenceEvent {
+            AcceptanceScope::query()
+                ->whereKey((int) $scope->id)
+                ->where('organization_id', (int) $scope->organization_id)
+                ->where('project_id', (int) $scope->project_id)
+                ->lockForUpdate()
+                ->firstOrFail();
             $identity = $this->sourceIdentity($scope, $sourceType, $sourceId);
             $status = match ($eventType) {
                 'inspection_resulted' => match ($identity['status']) {
@@ -132,9 +143,29 @@ final readonly class HandoverEvidenceEventRecorder
                     static fn ($query) => $query->where('acceptance_scope_id', (int) $scope->id),
                 )
                 ->first(),
-            'acceptance_finding', 'quality_defect', 'constraint' => AcceptanceFinding::query()
+            'acceptance_finding' => AcceptanceFinding::query()
                 ->whereKey($sourceId)
                 ->where('acceptance_scope_id', (int) $scope->id)
+                ->first(),
+            'rfi' => ChangeManagementRfi::query()
+                ->whereKey($sourceId)
+                ->where('organization_id', (int) $scope->organization_id)
+                ->where('project_id', (int) $scope->project_id)
+                ->first(),
+            'change', 'change_request' => ChangeRequest::query()
+                ->whereKey($sourceId)
+                ->where('organization_id', (int) $scope->organization_id)
+                ->where('project_id', (int) $scope->project_id)
+                ->first(),
+            'quality_defect' => QualityDefect::query()
+                ->whereKey($sourceId)
+                ->where('organization_id', (int) $scope->organization_id)
+                ->where('project_id', (int) $scope->project_id)
+                ->first(),
+            'constraint' => WorkConstraint::query()
+                ->whereKey($sourceId)
+                ->where('organization_id', (int) $scope->organization_id)
+                ->where('project_id', (int) $scope->project_id)
                 ->first(),
             'handover_document', 'document' => HandoverPackageDocument::query()
                 ->whereKey($sourceId)
@@ -146,17 +177,71 @@ final readonly class HandoverEvidenceEventRecorder
             default => null,
         };
 
-        if (!$source instanceof Model) {
+        if (! $source instanceof Model) {
             throw new InvalidArgumentException('handover_evidence_source_not_found');
         }
+        if (! $this->isPersistentlyLinked($scope, $sourceType, $source)) {
+            throw new InvalidArgumentException('handover_evidence_source_link_missing');
+        }
 
-        $status = (string) ($source->getAttribute('status') ?? 'recorded');
-        $rawCode = $source->getAttribute('document_type');
+        $rawStatus = $source->getAttribute('status');
+        $status = $rawStatus instanceof BackedEnum
+            ? (string) $rawStatus->value
+            : (string) ($rawStatus ?? 'recorded');
+        $rawCode = $source->getAttribute('document_type') ?? $source->getAttribute('code');
         $sourceCode = is_string($rawCode) && preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $rawCode) === 1
             ? $rawCode
             : $sourceType.'_'.$sourceId;
 
         return ['source_code' => $sourceCode, 'status' => $status];
+    }
+
+    private function isPersistentlyLinked(
+        AcceptanceScope $scope,
+        string $sourceType,
+        Model $source,
+    ): bool {
+        if (in_array($sourceType, [
+            'acceptance_scope',
+            'inspection',
+            'acceptance_checklist_item',
+            'acceptance_finding',
+            'handover_document',
+            'document',
+        ], true)) {
+            return true;
+        }
+
+        $scopeId = (int) $scope->id;
+        if ($sourceType === 'quality_defect') {
+            $metadata = $source->getAttribute('metadata');
+
+            return is_array($metadata)
+                && (int) ($metadata['source']['acceptance_scope_id'] ?? 0) === $scopeId;
+        }
+        if (in_array($sourceType, ['rfi', 'constraint'], true)) {
+            $metadata = $source->getAttribute('metadata');
+
+            return is_array($metadata)
+                && (int) ($metadata['acceptance_scope_id'] ?? 0) === $scopeId;
+        }
+        if (in_array($sourceType, ['change', 'change_request'], true)) {
+            $links = $source->getAttribute('linked_entities');
+            if (! is_array($links)) {
+                return false;
+            }
+            foreach ($links as $link) {
+                if (
+                    is_array($link)
+                    && ($link['type'] ?? null) === 'acceptance_scope'
+                    && (int) ($link['id'] ?? 0) === $scopeId
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private function causation(
@@ -166,7 +251,12 @@ final readonly class HandoverEvidenceEventRecorder
         int $sourceId,
     ): ?HandoverEvidenceEvent {
         $requiredEvent = match ($eventType) {
-            'finding_resolved' => ['finding_opened', 'finding_reopened'],
+            'finding_resolved', 'blocker_resolved' => [
+                'finding_opened',
+                'finding_reopened',
+                'blocker_opened',
+                'blocker_reopened',
+            ],
             'inspection_resulted' => ['inspection_attempted'],
             default => null,
         };

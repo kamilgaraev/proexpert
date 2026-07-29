@@ -13,9 +13,9 @@ use App\BusinessModules\ContractorMarketplace\Domain\Events\MarketplaceHiringOff
 use App\BusinessModules\ContractorMarketplace\Domain\Events\MarketplaceProfilePaused;
 use App\BusinessModules\ContractorMarketplace\Domain\Events\MarketplaceProfilePublished;
 use App\BusinessModules\ContractorMarketplace\Domain\Listeners\RecordMarketplaceActivity;
-use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceProfileService;
 use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceHiringOfferService;
 use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceNetworkService;
+use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceProfileService;
 use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceRatingService;
 use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceSearchService;
 use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceWorkCategoryService;
@@ -35,11 +35,14 @@ class ContractorMarketplaceServiceProvider extends ServiceProvider
         $this->app->singleton(MarketplaceSearchService::class);
         $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardFormula::class);
         $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardSourceResolver::class);
+        $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardObservationReader::class);
+        $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardPolicyWriter::class);
         $this->app->singleton(Reporting\Scorecard\Services\ContractorScorecardSnapshotMaterializer::class);
         $this->app->singleton(Reporting\Scorecard\Providers\ContractorScorecardReportProvider::class);
         $this->app->singleton(Reporting\Scorecard\Queries\ContractorScorecardRowQuery::class);
         $this->app->singleton(Reporting\Scorecard\DrillDown\ContractorScorecardDrillDownProvider::class);
         $this->app->singleton(Reporting\Scorecard\Readiness\ContractorScorecardReadinessProbe::class);
+        $this->app->singleton(Reporting\Scorecard\Backfill\ContractorScorecardBackfill::class);
     }
 
     public function boot(): void

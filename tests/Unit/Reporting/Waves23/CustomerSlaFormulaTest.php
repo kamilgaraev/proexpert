@@ -19,7 +19,7 @@ final class CustomerSlaFormulaTest extends TestCase
     #[Test]
     public function first_response_requires_delivery_team_actor_side_at_event_time(): void
     {
-        $metric = (new CustomerSlaFormula(new CustomerSlaClock()))->evaluate(
+        $metric = (new CustomerSlaFormula(new CustomerSlaClock))->evaluate(
             new CustomerWorkflowFact(
                 workflowType: 'issue',
                 workflowId: 17,
@@ -49,7 +49,7 @@ final class CustomerSlaFormulaTest extends TestCase
     #[Test]
     public function requester_reply_never_counts_as_response_and_open_age_is_right_censored(): void
     {
-        $metric = (new CustomerSlaFormula(new CustomerSlaClock()))->evaluate(
+        $metric = (new CustomerSlaFormula(new CustomerSlaClock))->evaluate(
             new CustomerWorkflowFact(
                 workflowType: 'request',
                 workflowId: 18,
@@ -68,12 +68,14 @@ final class CustomerSlaFormulaTest extends TestCase
         self::assertNull($metric->firstResponseSeconds);
         self::assertNull($metric->resolutionSeconds);
         self::assertSame(7_200, $metric->openAgingSeconds);
+        self::assertTrue($metric->firstResponseBreached);
+        self::assertFalse($metric->resolutionBreached);
     }
 
     #[Test]
     public function reopened_workflow_is_open_until_a_later_terminal_result(): void
     {
-        $metric = (new CustomerSlaFormula(new CustomerSlaClock()))->evaluate(
+        $metric = (new CustomerSlaFormula(new CustomerSlaClock))->evaluate(
             new CustomerWorkflowFact(
                 workflowType: 'issue',
                 workflowId: 19,
@@ -99,6 +101,51 @@ final class CustomerSlaFormulaTest extends TestCase
         self::assertSame(3_600, $metric->firstResponseSeconds);
         self::assertNull($metric->resolutionSeconds);
         self::assertSame(14_400, $metric->openAgingSeconds);
+        self::assertFalse($metric->resolutionBreached);
+    }
+
+    #[Test]
+    public function delivery_team_opening_is_not_a_customer_sla_observation(): void
+    {
+        $metric = (new CustomerSlaFormula(new CustomerSlaClock))->evaluate(
+            new CustomerWorkflowFact(
+                workflowType: 'issue',
+                workflowId: 20,
+                openedAt: CarbonImmutable::parse('2026-07-27T09:00:00+03:00'),
+                asOf: CarbonImmutable::parse('2026-07-27T13:00:00+03:00'),
+                events: [],
+                pauseWindows: [],
+                openedActorSide: CustomerActorSide::DELIVERY_TEAM,
+            ),
+            $this->policy(),
+        );
+
+        self::assertNull($metric->openAgingSeconds);
+        self::assertFalse($metric->actorSideComplete);
+    }
+
+    #[Test]
+    public function terminal_workflow_without_delivery_response_keeps_first_response_breach(): void
+    {
+        $metric = (new CustomerSlaFormula(new CustomerSlaClock))->evaluate(
+            new CustomerWorkflowFact(
+                workflowType: 'request',
+                workflowId: 21,
+                openedAt: CarbonImmutable::parse('2026-07-27T09:00:00+03:00'),
+                asOf: CarbonImmutable::parse('2026-07-27T13:00:00+03:00'),
+                events: [[
+                    'type' => CustomerWorkflowEventType::RESOLVED,
+                    'actor_side' => CustomerActorSide::CUSTOMER,
+                    'occurred_at' => CarbonImmutable::parse('2026-07-27T11:00:00+03:00'),
+                ]],
+                pauseWindows: [],
+            ),
+            $this->policy(),
+        );
+
+        self::assertNull($metric->firstResponseSeconds);
+        self::assertSame(7_200, $metric->resolutionSeconds);
+        self::assertTrue($metric->firstResponseBreached);
     }
 
     private function policy(): CustomerSlaPolicy

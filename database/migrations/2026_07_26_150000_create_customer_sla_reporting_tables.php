@@ -34,8 +34,8 @@ return new class extends Migration
             $table->timestampTz('created_at', 6);
 
             $table->unique(
-                ['organization_id', 'workflow_type', 'workflow_id', 'source_version', 'event_type'],
-                'customer_workflow_event_source_unique',
+                ['organization_id', 'workflow_type', 'workflow_id', 'source_version'],
+                'customer_workflow_event_source_version_unique',
             );
             $table->unique(['organization_id', 'idempotency_key_hash'], 'customer_workflow_event_idempotency_unique');
             $table->index(
@@ -58,6 +58,7 @@ return new class extends Migration
             $table->unsignedInteger('first_response_target_seconds');
             $table->unsignedInteger('resolution_target_seconds');
             $table->string('version', 64);
+            $table->char('source_hash', 64);
             $table->timestampTz('effective_from', 6);
             $table->timestampTz('effective_to', 6)->nullable();
             $table->timestampsTz(6);
@@ -98,7 +99,10 @@ return new class extends Migration
             $table->string('priority', 32)->nullable();
             $table->unsignedBigInteger('owner_id')->nullable();
             $table->string('status', 40);
+            $table->unsignedBigInteger('policy_version_id');
             $table->timestampTz('opened_at', 6);
+            $table->unsignedInteger('first_response_target_seconds');
+            $table->unsignedInteger('resolution_target_seconds');
             $table->unsignedBigInteger('first_response_seconds')->nullable();
             $table->unsignedBigInteger('resolution_seconds')->nullable();
             $table->unsignedBigInteger('open_aging_seconds')->nullable();
@@ -113,19 +117,49 @@ return new class extends Migration
                 ['organization_id', 'snapshot_id', 'opened_at', 'project_id', 'customer_organization_id', 'workflow_type', 'workflow_id', 'row_key'],
                 'customer_sla_row_keyset_idx',
             );
+            $table->index(
+                ['organization_id', 'snapshot_id', 'project_id', 'customer_organization_id', 'workflow_type', 'priority', 'row_key'],
+                'customer_sla_row_filter_idx',
+            );
         });
 
         foreach ([
             "ALTER TABLE customer_workflow_events ADD CONSTRAINT customer_workflow_event_type_check CHECK (workflow_type IN ('issue','request'))",
             "ALTER TABLE customer_workflow_events ADD CONSTRAINT customer_workflow_actor_side_check CHECK (actor_side IN ('customer','delivery_team','system','unknown'))",
             "ALTER TABLE customer_workflow_events ADD CONSTRAINT customer_workflow_event_hash_check CHECK (idempotency_key_hash ~ '^[a-f0-9]{64}$' AND evidence_hash ~ '^[a-f0-9]{64}$')",
-            "ALTER TABLE customer_sla_policy_versions ADD CONSTRAINT customer_sla_policy_interval_check CHECK (effective_to IS NULL OR effective_to > effective_from)",
-            "ALTER TABLE customer_sla_policy_versions ADD CONSTRAINT customer_sla_policy_targets_check CHECK (first_response_target_seconds > 0 AND resolution_target_seconds > 0)",
+            "CREATE UNIQUE INDEX customer_workflow_single_opened_unique ON customer_workflow_events (organization_id, workflow_type, workflow_id) WHERE event_type = 'opened'",
+            'ALTER TABLE customer_sla_policy_versions ADD CONSTRAINT customer_sla_policy_interval_check CHECK (effective_to IS NULL OR effective_to > effective_from)',
+            'ALTER TABLE customer_sla_policy_versions ADD CONSTRAINT customer_sla_policy_targets_check CHECK (first_response_target_seconds > 0 AND resolution_target_seconds > 0)',
+            "ALTER TABLE customer_sla_policy_versions ADD CONSTRAINT customer_sla_policy_hash_check CHECK (source_hash ~ '^[a-f0-9]{64}$')",
             "ALTER TABLE customer_sla_snapshots ADD CONSTRAINT customer_sla_snapshot_hash_check CHECK (definition_hash ~ '^[a-f0-9]{64}$' AND source_hash ~ '^[a-f0-9]{64}$')",
-            "ALTER TABLE customer_sla_snapshots ADD CONSTRAINT customer_sla_snapshot_time_check CHECK (stale_at IS NULL OR stale_at >= generated_at)",
-            "ALTER TABLE customer_sla_rows ADD CONSTRAINT customer_sla_row_terminal_check CHECK ((resolution_seconds IS NULL AND open_aging_seconds IS NOT NULL) OR (resolution_seconds IS NOT NULL AND open_aging_seconds IS NULL))",
+            'ALTER TABLE customer_sla_snapshots ADD CONSTRAINT customer_sla_snapshot_time_check CHECK (stale_at IS NULL OR stale_at >= generated_at)',
+            'ALTER TABLE customer_sla_rows ADD CONSTRAINT customer_sla_row_terminal_check CHECK ((NOT actor_side_complete AND first_response_seconds IS NULL AND resolution_seconds IS NULL AND open_aging_seconds IS NULL AND first_response_breached IS NULL AND resolution_breached IS NULL) OR (resolution_seconds IS NULL AND open_aging_seconds IS NOT NULL) OR (resolution_seconds IS NOT NULL AND open_aging_seconds IS NULL))',
+            'ALTER TABLE customer_sla_rows ADD CONSTRAINT customer_sla_row_targets_check CHECK (first_response_target_seconds > 0 AND resolution_target_seconds > 0)',
         ] as $statement) {
             DB::statement($statement);
+        }
+
+        DB::statement(<<<'SQL'
+            CREATE OR REPLACE FUNCTION most_prevent_reporting_mutation_v1()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                RAISE EXCEPTION 'reporting_fact_is_immutable';
+            END;
+            $$
+            SQL);
+
+        foreach ([
+            'customer_workflow_events',
+            'customer_sla_policy_versions',
+            'customer_sla_snapshots',
+            'customer_sla_rows',
+        ] as $table) {
+            DB::statement(
+                "CREATE TRIGGER {$table}_append_only BEFORE UPDATE OR DELETE ON {$table} "
+                .'FOR EACH ROW EXECUTE FUNCTION most_prevent_reporting_mutation_v1()',
+            );
         }
     }
 

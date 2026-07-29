@@ -17,7 +17,7 @@ final class HandoverReadinessFormulaTest extends TestCase
     #[Test]
     public function hard_blocker_forbids_ready_even_when_completeness_is_full(): void
     {
-        $metric = (new HandoverReadinessFormula())->evaluate(
+        $metric = (new HandoverReadinessFormula)->evaluate(
             new HandoverGateDefinition(
                 code: 'final_handover',
                 requiredChecklistCodes: ['scope_accepted'],
@@ -55,7 +55,7 @@ final class HandoverReadinessFormulaTest extends TestCase
     #[Test]
     public function reinspection_attempt_is_not_a_successful_result(): void
     {
-        $metric = (new HandoverReadinessFormula())->evaluate(
+        $metric = (new HandoverReadinessFormula)->evaluate(
             new HandoverGateDefinition(
                 code: 'reinspection',
                 requiredChecklistCodes: ['inspection_result'],
@@ -84,7 +84,7 @@ final class HandoverReadinessFormulaTest extends TestCase
     #[Test]
     public function blocker_resolution_and_successful_result_preserve_event_history(): void
     {
-        $metric = (new HandoverReadinessFormula())->evaluate(
+        $metric = (new HandoverReadinessFormula)->evaluate(
             new HandoverGateDefinition('handover', [], [], ['constraint'], true),
             [],
             [
@@ -127,5 +127,60 @@ final class HandoverReadinessFormulaTest extends TestCase
         self::assertSame(1, $metric->attemptCount);
         self::assertSame(1, $metric->successfulResultCount);
         self::assertTrue($metric->ready);
+    }
+
+    #[Test]
+    public function replacing_an_approved_document_reverses_readiness_at_same_timestamp(): void
+    {
+        $occurredAt = CarbonImmutable::parse('2026-07-26T10:00:00+03:00');
+        $metric = (new HandoverReadinessFormula)->evaluate(
+            new HandoverGateDefinition('handover', [], ['executive_scheme'], [], false),
+            [],
+            [
+                new HandoverEvidenceFact(
+                    'document_approved',
+                    'handover_document',
+                    10,
+                    'executive_scheme',
+                    'approved',
+                    $occurredAt,
+                    1,
+                ),
+                new HandoverEvidenceFact(
+                    'document_replaced',
+                    'handover_document',
+                    10,
+                    'executive_scheme',
+                    'draft',
+                    $occurredAt,
+                    2,
+                ),
+            ],
+        );
+
+        self::assertSame('0.00000000', $metric->documentCompleteness);
+        self::assertFalse($metric->ready);
+    }
+
+    #[Test]
+    public function every_required_owner_source_type_is_a_hard_blocker(): void
+    {
+        foreach (['rfi', 'change', 'quality_defect', 'constraint'] as $sourceType) {
+            $metric = (new HandoverReadinessFormula)->evaluate(
+                new HandoverGateDefinition('handover', [], [], [$sourceType], true),
+                [],
+                [new HandoverEvidenceFact(
+                    'blocker_opened',
+                    $sourceType,
+                    10,
+                    null,
+                    'open',
+                    CarbonImmutable::parse('2026-07-26T10:00:00+03:00'),
+                )],
+            );
+
+            self::assertSame(1, $metric->openHardBlockerCount, $sourceType);
+            self::assertFalse($metric->ready, $sourceType);
+        }
     }
 }

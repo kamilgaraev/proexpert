@@ -10,8 +10,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportWindowSort;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSortDirection;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Cursors\SignedReportCursorCodec;
-use DateTimeImmutable;
 use DateInterval;
+use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\Reporting\FakeReportExecutionClock;
@@ -22,9 +22,13 @@ final class SignedReportCursorCodecTest extends TestCase
     private const RUN_ID = '01J00000000000000000000000';
 
     private DateTimeImmutable $now;
+
     private FakeReportExecutionClock $clock;
+
     private SignedReportCursorCodec $codec;
+
     private ReportWindowSort $sort;
+
     private Sha256Hash $queryHash;
 
     protected function setUp(): void
@@ -76,7 +80,7 @@ final class SignedReportCursorCodecTest extends TestCase
                 'organizationId' => 1,
                 'reportCode' => 'report',
                 'runId' => self::RUN_ID,
-                'snapshot' => (new ReportRunBuilder())->ready()->resultMetadata->snapshot,
+                'snapshot' => (new ReportRunBuilder)->ready()->resultMetadata->snapshot,
                 'queryHash' => $this->queryHash,
                 'sort' => $this->sort,
             ];
@@ -92,7 +96,7 @@ final class SignedReportCursorCodecTest extends TestCase
         yield 'run' => ['runId', '01J00000000000000000000001'];
         yield 'snapshot' => [
             'snapshot',
-            (new ReportRunBuilder())->sourceHash(new Sha256Hash(str_repeat('d', 64)))->ready()->resultMetadata->snapshot,
+            (new ReportRunBuilder)->sourceHash(new Sha256Hash(str_repeat('d', 64)))->ready()->resultMetadata->snapshot,
         ];
         yield 'query' => ['queryHash', new Sha256Hash(str_repeat('d', 64))];
         yield 'sort field' => ['sort', new ReportWindowSort('amount', ReportSortDirection::ASC)];
@@ -133,7 +137,7 @@ final class SignedReportCursorCodecTest extends TestCase
             organizationId: 1,
             reportCode: 'report',
             runId: self::RUN_ID,
-            snapshot: (new ReportRunBuilder())->ready()->resultMetadata->snapshot,
+            snapshot: (new ReportRunBuilder)->ready()->resultMetadata->snapshot,
             queryHash: $this->queryHash,
             sort: $this->sort,
             lastSortValue: 'ООО Альфа',
@@ -148,7 +152,7 @@ final class SignedReportCursorCodecTest extends TestCase
             organizationId: 1,
             reportCode: 'report',
             runId: self::RUN_ID,
-            snapshot: (new ReportRunBuilder())->ready()->resultMetadata->snapshot,
+            snapshot: (new ReportRunBuilder)->ready()->resultMetadata->snapshot,
             queryHash: $this->queryHash,
             sort: $this->sort,
             lastSortValue: str_repeat('v', 300),
@@ -185,13 +189,66 @@ final class SignedReportCursorCodecTest extends TestCase
         yield 'invalid base64' => ['**.**'];
     }
 
+    public function test_drill_down_page_cursor_round_trip_is_bound_to_parent_row(): void
+    {
+        $snapshot = (new ReportRunBuilder)->ready()->resultMetadata->snapshot;
+        $token = $this->codec->encodeDrillDownPage(
+            organizationId: 1,
+            reportCode: 'report',
+            runId: self::RUN_ID,
+            snapshot: $snapshot,
+            queryHash: $this->queryHash,
+            parentRowKey: 'parent-row',
+            lastStableRowKey: 'evidence-row-10',
+            expiresAt: $this->now->modify('+5 minutes'),
+        );
+
+        self::assertSame(
+            'evidence-row-10',
+            $this->codec->decodeDrillDownPage(
+                token: $token,
+                organizationId: 1,
+                reportCode: 'report',
+                runId: self::RUN_ID,
+                snapshot: $snapshot,
+                queryHash: $this->queryHash,
+                parentRowKey: 'parent-row',
+            ),
+        );
+    }
+
+    public function test_drill_down_page_cursor_rejects_another_parent_row(): void
+    {
+        $snapshot = (new ReportRunBuilder)->ready()->resultMetadata->snapshot;
+        $token = $this->codec->encodeDrillDownPage(
+            organizationId: 1,
+            reportCode: 'report',
+            runId: self::RUN_ID,
+            snapshot: $snapshot,
+            queryHash: $this->queryHash,
+            parentRowKey: 'parent-row',
+            lastStableRowKey: 'evidence-row-10',
+            expiresAt: $this->now->modify('+5 minutes'),
+        );
+
+        $this->expectCursorFailure(fn () => $this->codec->decodeDrillDownPage(
+            token: $token,
+            organizationId: 1,
+            reportCode: 'report',
+            runId: self::RUN_ID,
+            snapshot: $snapshot,
+            queryHash: $this->queryHash,
+            parentRowKey: 'another-parent',
+        ));
+    }
+
     private function token(?SignedReportCursorCodec $codec = null): string
     {
         return ($codec ?? $this->codec)->encode(
             organizationId: 1,
             reportCode: 'report',
             runId: self::RUN_ID,
-            snapshot: (new ReportRunBuilder())->ready()->resultMetadata->snapshot,
+            snapshot: (new ReportRunBuilder)->ready()->resultMetadata->snapshot,
             queryHash: $this->queryHash,
             sort: $this->sort,
             lastSortValue: 'ООО Альфа',
@@ -207,7 +264,7 @@ final class SignedReportCursorCodecTest extends TestCase
             organizationId: 1,
             reportCode: 'report',
             runId: self::RUN_ID,
-            snapshot: (new ReportRunBuilder())->ready()->resultMetadata->snapshot,
+            snapshot: (new ReportRunBuilder)->ready()->resultMetadata->snapshot,
             queryHash: $this->queryHash,
             sort: $this->sort,
         );

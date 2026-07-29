@@ -36,13 +36,28 @@ final readonly class HandoverReadinessFormula
             if ($fact->eventType === 'document_approved' && $fact->sourceCode !== null) {
                 $approvedDocuments[$fact->sourceCode] = true;
             }
+            if (
+                in_array($fact->eventType, [
+                    'document_approval_reversed',
+                    'document_deleted',
+                    'document_replaced',
+                ], true)
+                && $fact->sourceCode !== null
+            ) {
+                unset($approvedDocuments[$fact->sourceCode]);
+            }
 
             if (in_array($fact->sourceType, $gate->hardBlockerSourceTypes, true)) {
                 $key = $fact->sourceType.':'.$fact->sourceId;
-                if (in_array($fact->eventType, ['finding_opened', 'finding_reopened'], true)) {
+                if (in_array($fact->eventType, [
+                    'finding_opened',
+                    'finding_reopened',
+                    'blocker_opened',
+                    'blocker_reopened',
+                ], true)) {
                     $blockers[$key] = true;
                 }
-                if ($fact->eventType === 'finding_resolved') {
+                if (in_array($fact->eventType, ['finding_resolved', 'blocker_resolved'], true)) {
                     unset($blockers[$key]);
                 }
             }
@@ -52,7 +67,7 @@ final readonly class HandoverReadinessFormula
             }
             if ($fact->eventType === 'inspection_resulted' && $fact->status === 'successful') {
                 $key = $fact->sourceType.':'.$fact->sourceId;
-                if (!isset($attempts[$key])) {
+                if (! isset($attempts[$key])) {
                     throw new InvalidArgumentException('handover_result_without_attempt');
                 }
                 $successfulResults[$key] = true;
@@ -97,7 +112,7 @@ final readonly class HandoverReadinessFormula
     {
         $statuses = [];
         foreach ($facts as $fact) {
-            if (!$fact instanceof HandoverChecklistFact) {
+            if (! $fact instanceof HandoverChecklistFact) {
                 throw new InvalidArgumentException('handover_checklist_fact_invalid');
             }
             $statuses[$fact->code] = $fact->status;
@@ -110,15 +125,15 @@ final readonly class HandoverReadinessFormula
     {
         $evidence = [];
         foreach ($facts as $fact) {
-            if (!$fact instanceof HandoverEvidenceFact) {
+            if (! $fact instanceof HandoverEvidenceFact) {
                 throw new InvalidArgumentException('handover_evidence_fact_invalid');
             }
             $evidence[] = $fact;
         }
         usort(
             $evidence,
-            static fn (HandoverEvidenceFact $left, HandoverEvidenceFact $right): int =>
-                $left->occurredAt <=> $right->occurredAt
+            static fn (HandoverEvidenceFact $left, HandoverEvidenceFact $right): int => $left->occurredAt <=> $right->occurredAt
+                ?: $left->sourceVersion <=> $right->sourceVersion
                 ?: strcmp($left->eventType, $right->eventType),
         );
 
