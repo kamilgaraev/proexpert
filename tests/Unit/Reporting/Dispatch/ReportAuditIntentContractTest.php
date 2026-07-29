@@ -310,7 +310,7 @@ final class ReportAuditIntentContractTest extends TestCase
             'row_count' => 10,
             'artifact' => [
                 'version_id' => 'version_one',
-                'etag' => str_repeat('e', 64),
+                'etag' => '"7f83b1657ff1fc53b92dc18148a1d65dfa13514a2096"-3',
                 'checksum' => str_repeat('f', 64),
                 'size' => 100,
                 'mime' => 'text/csv',
@@ -424,6 +424,44 @@ final class ReportAuditIntentContractTest extends TestCase
                 self::fail("Semantic mutation accepted for {$eventType}.");
             } catch (InvalidArgumentException) {
                 self::assertSame([], $store->added);
+            }
+        }
+    }
+
+    public function test_export_ready_keeps_etag_opaque_and_validates_checksum_separately(): void
+    {
+        $ready = iterator_to_array(self::validSubjects())['export ready'][1];
+        $context = (new ReportExecutionContextBuilder())->build();
+        $occurredAt = new DateTimeImmutable('2026-07-28T12:00:00Z');
+
+        $store = new RecordingAuditIntentStore();
+        (new OutboxReportTransitionAudit($store))->append(
+            'event:export-ready:opaque-etag',
+            'report.export.ready',
+            $context,
+            $ready,
+            $occurredAt,
+        );
+        self::assertSame($ready['artifact']['etag'], $store->added[0]['subject']['artifact']['etag']);
+
+        foreach ([
+            [...$ready, 'artifact' => [...$ready['artifact'], 'etag' => '']],
+            [...$ready, 'artifact' => [...$ready['artifact'], 'etag' => "part\x1Ftwo"]],
+            [...$ready, 'artifact' => [...$ready['artifact'], 'etag' => str_repeat('x', 256)]],
+            [...$ready, 'artifact' => [...$ready['artifact'], 'checksum' => strtoupper(str_repeat('f', 64))]],
+        ] as $mutation) {
+            $invalidStore = new RecordingAuditIntentStore();
+            try {
+                (new OutboxReportTransitionAudit($invalidStore))->append(
+                    'event:export-ready:invalid-artifact',
+                    'report.export.ready',
+                    $context,
+                    $mutation,
+                    $occurredAt,
+                );
+                self::fail('Invalid artifact identity accepted.');
+            } catch (InvalidArgumentException) {
+                self::assertSame([], $invalidStore->added);
             }
         }
     }

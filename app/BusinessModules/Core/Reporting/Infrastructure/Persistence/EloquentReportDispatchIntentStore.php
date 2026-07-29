@@ -19,6 +19,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportRunStatus;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportDispatchIntentRecord;
+use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportExportRecord;
 use App\BusinessModules\Core\Reporting\Infrastructure\Persistence\Models\ReportRunRecord;
 use DateTimeImmutable;
 use DateTimeInterface;
@@ -132,6 +133,11 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
                     && $record->topic === ReportDispatchTopic::MATERIALIZE_RUN->value
                 ) {
                     $this->failQueuedRun($record, $errorCode, $occurredAt);
+                } elseif (
+                    $record->aggregate_type === ReportDispatchAggregate::EXPORT->value
+                    && $record->topic === ReportDispatchTopic::GENERATE_EXPORT->value
+                ) {
+                    $this->failQueuedExport($record, $errorCode, $occurredAt);
                 }
 
                 return;
@@ -236,6 +242,29 @@ final class EloquentReportDispatchIntentStore implements ReportDispatchIntentSto
             ],
             $occurredAt,
         );
+    }
+
+    private function failQueuedExport(ReportDispatchIntentRecord $intent, ReportErrorCode $errorCode, DateTimeImmutable $occurredAt): void
+    {
+        $export = ReportExportRecord::query()
+            ->whereKey($intent->aggregate_id)
+            ->where('organization_id', $intent->organization_id)
+            ->lockForUpdate()
+            ->first();
+        if (! $export instanceof ReportExportRecord || $export->status !== 'queued') {
+            return;
+        }
+
+        ReportExportRecord::query()
+            ->whereKey($export->id)
+            ->where('organization_id', $export->organization_id)
+            ->where('status', 'queued')
+            ->update([
+                'status' => 'failed',
+                'error_code' => $errorCode->value,
+                'failed_at' => $this->timestamp($occurredAt),
+                'updated_at' => $this->timestamp($occurredAt),
+            ]);
     }
 
     private function context(ReportRunRecord $run): ReportExecutionContext

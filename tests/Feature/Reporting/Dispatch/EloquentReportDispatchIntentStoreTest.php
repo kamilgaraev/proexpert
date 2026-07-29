@@ -349,6 +349,15 @@ final class EloquentReportDispatchIntentStoreTest extends TestCase
         }
     }
 
+    public function test_attempt_twelve_export_failure_branch_is_owned_by_the_closed_dispatch_store(): void
+    {
+        $reflection = new \ReflectionClass(EloquentReportDispatchIntentStore::class);
+
+        self::assertTrue($reflection->hasMethod('markPublicationFailed'));
+        self::assertTrue($reflection->hasMethod('failQueuedExport'));
+        self::assertFalse($reflection->getMethod('failQueuedExport')->isPublic());
+    }
+
     private function store(): EloquentReportDispatchIntentStore
     {
         return new EloquentReportDispatchIntentStore(

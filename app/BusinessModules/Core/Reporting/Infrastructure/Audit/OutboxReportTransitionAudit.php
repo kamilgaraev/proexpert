@@ -145,7 +145,7 @@ final class OutboxReportTransitionAudit implements ReportTransitionAudit
             $this->assertClosedObject($subject['artifact'], ['version_id', 'etag', 'checksum', 'size', 'mime']);
             if (
                 !$this->isSafeString($subject['artifact']['version_id'])
-                || !$this->isHash($subject['artifact']['etag'])
+                || !$this->isSafeString($subject['artifact']['etag'])
                 || !$this->isHash($subject['artifact']['checksum'])
                 || !is_int($subject['artifact']['size'])
                 || $subject['artifact']['size'] < 0
