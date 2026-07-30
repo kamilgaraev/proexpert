@@ -27,7 +27,7 @@
         "owner_plan": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"},
         "phase": {"enum": ["platform", "release"]},
         "status": {"enum": ["pending", "passed", "failed", "skipped"]},
-        "command": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"},
+        "command": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$"},
         "count": {"type": "integer", "minimum": 0},
         "schema_sha256": {"$ref": "#/$defs/sha256"},
         "release_sha": {"$ref": "#/$defs/sha1"},

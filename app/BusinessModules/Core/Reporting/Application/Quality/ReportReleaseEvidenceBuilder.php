@@ -23,7 +23,7 @@ final class ReportReleaseEvidenceBuilder
         $this->assertGates($gateEvidence, ReportQualityEvidencePhase::PLATFORM, false, $releaseSha);
         $groups = [];
         foreach ($managementManifest->definitions as $definition) {
-            $group = $definition['group'] ?? null;
+            $group = $definition['catalog_group'] ?? $definition['group'] ?? null;
             if (! is_string($group)) {
                 throw new ReportQualityGateException(ReportQualityGateFailureCode::GROUP_COVERAGE_MISMATCH);
             }
@@ -44,6 +44,21 @@ final class ReportReleaseEvidenceBuilder
         }
         $this->assertGates($gateEvidence, ReportQualityEvidencePhase::RELEASE, true, $releaseSha);
         return new ReportQualityEvidenceLedger('release_passed', $releaseSha, $publishedRegistry->manifestSha256(), 28, 28, 28, [], $gateEvidence, $prerequisiteEvidence, $generatedAt);
+    }
+
+    public function buildReleaseFromActivation(ReportCatalogActivation $activation, array $gateEvidence, array $prerequisiteEvidence, string $releaseSha, DateTimeImmutable $generatedAt): ReportQualityEvidenceLedger
+    {
+        $this->assertReleaseSha($releaseSha);
+        if ($activation->releaseSha !== $releaseSha
+            || count($activation->publishedCodes) !== 28
+            || count($activation->bindingCodes) !== 28
+            || ! $this->sameSet($activation->publishedCodes, $activation->bindingCodes)) {
+            throw new ReportQualityGateException(ReportQualityGateFailureCode::BINDING_SET_MISMATCH);
+        }
+
+        $this->assertGates($gateEvidence, ReportQualityEvidencePhase::RELEASE, true, $releaseSha);
+
+        return new ReportQualityEvidenceLedger('release_passed', $releaseSha, $activation->publishedManifestHash, 28, 28, 28, [], $gateEvidence, $prerequisiteEvidence, $generatedAt);
     }
 
     private function assertGates(array $gates, ReportQualityEvidencePhase $phase, bool $allPassed, string $releaseSha): void
