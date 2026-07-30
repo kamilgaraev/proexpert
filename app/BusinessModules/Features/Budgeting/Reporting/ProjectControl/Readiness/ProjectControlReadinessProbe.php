@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectControlSourceRow;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Exceptions\ProjectControlSourceGapException;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Services\ProjectControlSourceAssembler;
 use App\Support\Reporting\ReportSourceReadinessFactory;
 use InvalidArgumentException;
@@ -39,6 +40,17 @@ final readonly class ProjectControlReadinessProbe implements ReportSourceReadine
     ): ReportSourceReadiness {
         try {
             $source = $this->sources->assemble($context->scope, $query);
+        } catch (ProjectControlSourceGapException $exception) {
+            return $this->readiness->make(
+                $exception->gaps,
+                [],
+                count($exception->gaps),
+                0,
+                $exception->watermark.':'.hash(
+                    'sha256',
+                    CanonicalJson::encode($exception->gaps),
+                ),
+            );
         } catch (InvalidArgumentException $exception) {
             return $this->readiness->make(
                 [['kind' => 'project_control_source', 'reason' => $exception->getMessage()]],

@@ -381,6 +381,58 @@ final class Waves23ProductionContractsTest extends TestCase
         self::assertStringContainsString("DB::table('accepted_production_rows')->insert(\$rowBatch)", $materializer);
     }
 
+    #[Test]
+    public function r05_r08_are_registered_as_complete_runtime_bindings(): void
+    {
+        $provider = $this->source(
+            'app/BusinessModules/Core/Reporting/ReportingContractsServiceProvider.php',
+        );
+
+        foreach ([
+            'project_evm_control',
+            'baseline_schedule_variance',
+            'lookahead_readiness',
+            'accepted_production_progress',
+        ] as $code) {
+            self::assertStringContainsString("'{$code}' => [", $provider);
+        }
+        foreach ([
+            'ReportProvider::class',
+            'RowQuery::class',
+            'DrillDownProvider::class',
+            'ReadinessProbe::class',
+        ] as $suffix) {
+            self::assertStringContainsString($suffix, $provider);
+        }
+        self::assertStringContainsString('new ReportDefinitionBinding(', $provider);
+    }
+
+    #[Test]
+    public function r05_wip_gap_cardinality_and_r07_filter_order_are_explicit(): void
+    {
+        $assembler = $this->source(
+            'app/BusinessModules/Features/Budgeting/Reporting/ProjectControl/Services/'
+            .'ProjectControlSourceAssembler.php',
+        );
+        $readiness = $this->source(
+            'app/BusinessModules/Features/Budgeting/Reporting/ProjectControl/Readiness/'
+            .'ProjectControlReadinessProbe.php',
+        );
+        $lookahead = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Readiness/'
+            .'LookaheadReadinessProbe.php',
+        );
+
+        self::assertStringContainsString('$wipOnlyGaps[] = [', $assembler);
+        self::assertStringContainsString('ProjectControlSourceGapException', $assembler);
+        self::assertStringContainsString('count($exception->gaps)', $readiness);
+        self::assertLessThan(
+            strpos($lookahead, '$missingTaskIds ='),
+            strpos($lookahead, '$selectedStates = $allStates'),
+        );
+        self::assertStringContainsString('$this->hasTaskFilters($query)', $lookahead);
+    }
+
     private function source(string $path): string
     {
         $source = file_get_contents(dirname(__DIR__, 3).'/'.$path);

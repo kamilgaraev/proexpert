@@ -116,11 +116,13 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
         $selectedStates = $allStates
             ->filter(fn ($state): bool => $state->active && $this->matchesTaskFilters($query, $state));
         $selectedTaskIds = $selectedStates->pluck('taskId')->map('intval')->all();
-        $missingTaskIds = $allTasks
-            ->reject(fn (ScheduleTask $task): bool => $allStatesByTask->has((int) $task->id))
-            ->pluck('id')
-            ->map('intval')
-            ->all();
+        $missingTaskIds = $this->hasTaskFilters($query)
+            ? []
+            : $allTasks
+                ->reject(fn (ScheduleTask $task): bool => $allStatesByTask->has((int) $task->id))
+                ->pluck('id')
+                ->map('intval')
+                ->all();
 
         $constraints = WorkConstraint::withTrashed()
             ->where('organization_id', $context->scope->organizationId)
@@ -340,6 +342,18 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
             && $this->matches($values['owner_ids'] ?? [], $state->ownerId)
             && $this->matches($values['contractor_ids'] ?? [], $state->contractorId)
             && $this->matches($values['task_statuses'] ?? [], $state->status);
+    }
+
+    private function hasTaskFilters(ReportQuery $query): bool
+    {
+        $values = $query->filters->values;
+
+        return ($values['horizon_days'] ?? null) !== null
+            || ($values['zone_ids'] ?? []) !== []
+            || ($values['wbs_ids'] ?? []) !== []
+            || ($values['owner_ids'] ?? []) !== []
+            || ($values['contractor_ids'] ?? []) !== []
+            || ($values['task_statuses'] ?? []) !== [];
     }
 
     private function intersectNullableIds(?array $left, ?array $right): ?array

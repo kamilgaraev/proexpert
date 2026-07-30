@@ -11,6 +11,7 @@ use App\BusinessModules\Features\Budgeting\Models\WipForecastVersion;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectControlAmounts;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectControlSourceIdentity;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\DTO\ProjectControlSourceRow;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Exceptions\ProjectControlSourceGapException;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectControl\Models\ProjectControlBaselineVersion;
 use App\Support\Reporting\ReportScopedResourceFilter;
 use DateTimeImmutable;
@@ -176,6 +177,7 @@ final readonly class ProjectControlSourceAssembler
                 sourceRefs: $sourceRefs,
             );
         }
+        $wipOnlyGaps = [];
         foreach ($linesByTask as $taskId => $line) {
             if (isset($baselineTaskIds[$taskId])
                 || ($scopedTaskIds !== null && ! in_array($taskId, $scopedTaskIds, true))
@@ -196,7 +198,27 @@ final readonly class ProjectControlSourceAssembler
                 continue;
             }
 
-            throw new InvalidArgumentException('project_control_wip_line_without_baseline');
+            $gapIdentity = [
+                'kind' => 'project_control_wip_line',
+                'project_id' => $projectId,
+                'reason' => 'project_control_wip_line_without_baseline',
+                'task_id' => $taskId,
+                'wip_line_id' => (int) $line->id,
+                'wip_version_id' => (int) $version->id,
+            ];
+            $wipOnlyGaps[] = [
+                ...$gapIdentity,
+                'source_hash' => hash(
+                    'sha256',
+                    \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode($gapIdentity),
+                ),
+            ];
+        }
+        if ($wipOnlyGaps !== []) {
+            throw new ProjectControlSourceGapException(
+                $wipOnlyGaps,
+                'project-control:wip:'.(string) $version->source_snapshot_hash,
+            );
         }
 
         $isActive = (string) $version->status === 'active';

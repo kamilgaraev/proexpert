@@ -109,7 +109,9 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             ->pluck('taskId')
             ->map('intval')
             ->all();
-        if (array_diff($eligibleTaskIds, $versionedTaskIds) !== []) {
+        if (! $this->hasTaskFilters($query)
+            && array_diff($eligibleTaskIds, $versionedTaskIds) !== []
+        ) {
             throw new InvalidArgumentException('historical_schedule_task_state_incomplete');
         }
 
@@ -504,6 +506,18 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             && $this->matches($values['owner_ids'] ?? [], $state->ownerId)
             && $this->matches($values['contractor_ids'] ?? [], $state->contractorId)
             && $this->matches($values['task_statuses'] ?? [], $state->status);
+    }
+
+    private function hasTaskFilters(ReportQuery $query): bool
+    {
+        $values = $query->filters->values;
+
+        return ($values['horizon_days'] ?? null) !== null
+            || ($values['zone_ids'] ?? []) !== []
+            || ($values['wbs_ids'] ?? []) !== []
+            || ($values['owner_ids'] ?? []) !== []
+            || ($values['contractor_ids'] ?? []) !== []
+            || ($values['task_statuses'] ?? []) !== [];
     }
 
     private function intersectNullableIds(?array $left, ?array $right): ?array
