@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportRowQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
+use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Contracts\ManagementPnlComponentSource;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\Support\ManagementPnlSourceTupleGuard;
 use App\BusinessModules\Features\TimeTracking\Reporting\Contracts\EffectiveLaborRateSource;
@@ -31,10 +32,14 @@ use DateTimeImmutable;
 use DateTimeZone;
 use DomainException;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\SQLiteConnection;
 use Illuminate\Support\Collection;
+use PDO;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
+use Tests\Support\Reporting\FakeReportExecutionClock;
+use Tests\Support\Reporting\ReportDefinitionBuilder;
 
 final class LaborPayrollSourceTest extends TestCase
 {
@@ -145,14 +150,18 @@ final class LaborPayrollSourceTest extends TestCase
             self::assertStringContainsString("->where('management_pnl_eligible', true)", $source);
             self::assertStringContainsString("->where('quality_status', 'complete')", $source);
             self::assertStringContainsString("->where('reconciliation_status', 'matched')", $source);
-            self::assertStringContainsString('$snapshots->count() !== 1', $source);
+            self::assertStringContainsString('selectActiveReadyRun(', $source);
+            self::assertStringContainsString("->where('id', \$run->snapshot_id)", $source);
+            self::assertStringContainsString("->where('query_hash', \$run->query_hash)", $source);
+            self::assertStringContainsString("->where('source_hash', \$run->source_hash)", $source);
+            self::assertStringContainsString('assertRunSnapshotTuple(', $source);
             self::assertStringContainsString('assertRequestedGroupCoverage', $source);
         }
         self::assertIsString($tupleGuard);
         self::assertStringContainsString('management_pnl_requested_group_coverage_gap', $tupleGuard);
-        self::assertStringContainsString("->where('query_hash', \$snapshot->query_hash)", $tupleGuard);
-        self::assertStringContainsString("->where('source_hash', \$snapshot->source_hash)", $tupleGuard);
-        self::assertStringContainsString("->where('snapshot_id', \$snapshot->id)", $tupleGuard);
+        self::assertStringContainsString("->where('status', 'ready')", $tupleGuard);
+        self::assertStringContainsString("->where('expires_at', '>', \$this->clock->now()", $tupleGuard);
+        self::assertStringContainsString("->orderByDesc('ready_at')", $tupleGuard);
         self::assertIsString($payrollAdapter);
         self::assertStringContainsString("'employee_name' => \$row['employee_name']", $payrollAdapter);
         self::assertStringContainsString("'project_name' => \$row['project_name']", $payrollAdapter);
@@ -244,6 +253,124 @@ final class LaborPayrollSourceTest extends TestCase
                 [21, 20],
                 ['USD', 'RUB'],
             ),
+        );
+    }
+
+    #[Test]
+    public function management_pnl_source_run_uses_the_newest_active_exact_run_and_ignores_orphans(): void
+    {
+        $connection = $this->sourceRunConnection();
+        $asOf = new DateTimeImmutable('2030-01-31T23:59:59+00:00');
+        $clock = new FakeReportExecutionClock(new DateTimeImmutable('2030-02-01T00:00:00+00:00'));
+        $scope = new ReportScope(10, [10], [20], [], new DateTimeZone('UTC'));
+        $definition = (new ReportDefinitionBuilder)
+            ->code('project_labor_cost')
+            ->formulaVersion('labor-cost.v1')
+            ->sourceSchemaVersion('project-labor-cost-source.v1')
+            ->published();
+        $canonical = CanonicalJson::encode([
+            'as_of' => $asOf->format(DATE_ATOM),
+            'comparison' => [],
+            'definition_hash' => $definition->definitionHash->value,
+            'filters' => [
+                'period_from' => '2030-01-01',
+                'period_to' => '2030-01-31',
+            ],
+            'locale' => 'ru',
+            'scope' => $scope->canonicalIdentity(),
+        ]);
+        $this->insertSourceRun(
+            $connection,
+            'expired-run',
+            'expired-snapshot',
+            $canonical,
+            $definition->definitionHash->value,
+            '2030-01-31T23:00:00+00:00',
+            '2030-01-31T22:00:00+00:00',
+        );
+        $this->insertSourceRun(
+            $connection,
+            'older-active-run',
+            'older-active-snapshot',
+            $canonical,
+            $definition->definitionHash->value,
+            '2030-02-02T00:00:00+00:00',
+            '2030-01-31T23:00:00+00:00',
+        );
+        $this->insertSourceRun(
+            $connection,
+            'current-active-run',
+            'current-active-snapshot',
+            $canonical,
+            $definition->definitionHash->value,
+            '2030-02-02T00:00:00+00:00',
+            '2030-01-31T23:30:00+00:00',
+        );
+
+        $run = (new ManagementPnlSourceTupleGuard($connection, $clock))->selectActiveReadyRun(
+            10,
+            'project_labor_cost',
+            'project_labor_cost',
+            $definition,
+            $scope,
+            '2030-01-01',
+            '2030-01-31',
+            $asOf,
+        );
+
+        self::assertSame('current-active-run', $run->id);
+        self::assertSame('current-active-snapshot', $run->snapshot_id);
+    }
+
+    #[Test]
+    public function management_pnl_source_run_rejects_ready_rows_after_their_expiry(): void
+    {
+        $connection = $this->sourceRunConnection();
+        $asOf = new DateTimeImmutable('2030-01-31T23:59:59+00:00');
+        $clock = new FakeReportExecutionClock(new DateTimeImmutable('2030-02-01T00:00:00+00:00'));
+        $scope = new ReportScope(10, [10], [20], [], new DateTimeZone('UTC'));
+        $definition = (new ReportDefinitionBuilder)
+            ->code('payroll_readiness')
+            ->formulaVersion('payroll-readiness.v1')
+            ->sourceSchemaVersion('workforce-payroll-calculation.v1')
+            ->published();
+        $canonical = CanonicalJson::encode([
+            'as_of' => $asOf->format(DATE_ATOM),
+            'comparison' => [],
+            'definition_hash' => $definition->definitionHash->value,
+            'filters' => [
+                'period_from' => '2030-01-01',
+                'period_to' => '2030-01-31',
+            ],
+            'locale' => 'ru',
+            'scope' => $scope->canonicalIdentity(),
+        ]);
+        $this->insertSourceRun(
+            $connection,
+            'expired-run',
+            'expired-snapshot',
+            $canonical,
+            $definition->definitionHash->value,
+            '2030-01-31T23:59:59+00:00',
+            '2030-01-31T23:00:00+00:00',
+            reportCode: 'payroll_readiness',
+            snapshotKind: 'payroll_readiness',
+            formulaVersion: 'payroll-readiness.v1',
+            sourceSchemaVersion: 'workforce-payroll-calculation.v1',
+        );
+
+        $this->expectException(DomainException::class);
+        $this->expectExceptionMessage('management_pnl_source_run_unavailable');
+
+        (new ManagementPnlSourceTupleGuard($connection, $clock))->selectActiveReadyRun(
+            10,
+            'payroll_readiness',
+            'payroll_readiness',
+            $definition,
+            $scope,
+            '2030-01-01',
+            '2030-01-31',
+            $asOf,
         );
     }
 
@@ -471,6 +598,8 @@ final class LaborPayrollSourceTest extends TestCase
         $totals->setAccessible(true);
         $result = $totals->invoke($adapter, [[
             'row_type' => 'source',
+            'calculation_version_id' => 3,
+            'source_row_id' => 11,
             'hours' => '8.0000',
             'rate' => '100.0000',
             'amount' => '800.0000',
@@ -584,6 +713,64 @@ final class LaborPayrollSourceTest extends TestCase
                 ));
             }
         };
+    }
+
+    private function sourceRunConnection(): SQLiteConnection
+    {
+        $connection = new SQLiteConnection(new PDO('sqlite::memory:'));
+        $connection->statement(
+            'CREATE TABLE report_runs (
+                id TEXT PRIMARY KEY,
+                organization_id INTEGER NOT NULL,
+                report_code TEXT NOT NULL,
+                status TEXT NOT NULL,
+                definition_hash TEXT NOT NULL,
+                formula_version TEXT NOT NULL,
+                source_schema_version TEXT NOT NULL,
+                query_hash TEXT NOT NULL,
+                canonical_query_json TEXT NOT NULL,
+                source_hash TEXT NOT NULL,
+                snapshot_kind TEXT NOT NULL,
+                snapshot_id TEXT NOT NULL,
+                as_of TEXT NOT NULL,
+                ready_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )',
+        );
+
+        return $connection;
+    }
+
+    private function insertSourceRun(
+        SQLiteConnection $connection,
+        string $id,
+        string $snapshotId,
+        string $canonical,
+        string $definitionHash,
+        string $expiresAt,
+        string $readyAt,
+        string $reportCode = 'project_labor_cost',
+        string $snapshotKind = 'project_labor_cost',
+        string $formulaVersion = 'labor-cost.v1',
+        string $sourceSchemaVersion = 'project-labor-cost-source.v1',
+    ): void {
+        $connection->table('report_runs')->insert([
+            'id' => $id,
+            'organization_id' => 10,
+            'report_code' => $reportCode,
+            'status' => 'ready',
+            'definition_hash' => $definitionHash,
+            'formula_version' => $formulaVersion,
+            'source_schema_version' => $sourceSchemaVersion,
+            'query_hash' => hash('sha256', $canonical),
+            'canonical_query_json' => $canonical,
+            'source_hash' => str_repeat('b', 64),
+            'snapshot_kind' => $snapshotKind,
+            'snapshot_id' => $snapshotId,
+            'as_of' => '2030-01-31 23:59:59+00:00',
+            'ready_at' => $readyAt,
+            'expires_at' => $expiresAt,
+        ]);
     }
 
     private function rate(

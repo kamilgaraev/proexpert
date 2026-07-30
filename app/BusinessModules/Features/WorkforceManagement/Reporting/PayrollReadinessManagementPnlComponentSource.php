@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\WorkforceManagement\Reporting;
 
+use App\BusinessModules\Core\Reporting\Application\Contracts\Execution\ReportExecutionClock;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDefinitionRegistry;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
@@ -24,6 +25,7 @@ final readonly class PayrollReadinessManagementPnlComponentSource implements Man
     public function __construct(
         private ConnectionInterface $connection,
         private ReportDefinitionRegistry $definitions,
+        private ReportExecutionClock $clock,
     ) {}
 
     public function componentCode(): string
@@ -34,10 +36,21 @@ final readonly class PayrollReadinessManagementPnlComponentSource implements Man
     public function snapshots(ReportScope $scope, ReportQuery $query): iterable
     {
         [$periodFrom, $periodTo, $scenario] = $this->scope($query);
-        $guard = new ManagementPnlSourceTupleGuard($this->connection);
+        $guard = new ManagementPnlSourceTupleGuard($this->connection, $this->clock);
         $expected = $this->definitions->published($this->sourceReportCode());
         $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
-        $snapshots = $this->connection->table('workforce_report_snapshots')
+        $run = $guard->selectActiveReadyRun(
+            $scope->organizationId,
+            $this->sourceReportCode(),
+            'payroll_readiness',
+            $expected,
+            $scope,
+            $periodFrom,
+            $periodTo,
+            $query->asOf,
+        );
+        $snapshot = $this->connection->table('workforce_report_snapshots')
+            ->where('id', $run->snapshot_id)
             ->where('organization_id', $scope->organizationId)
             ->where('report_code', 'payroll_readiness')
             ->where('scope_hash', $scopeHash)
@@ -48,20 +61,16 @@ final readonly class PayrollReadinessManagementPnlComponentSource implements Man
             ->where('definition_hash', $expected->definitionHash->value)
             ->where('formula_version', $expected->definition->formulaVersion)
             ->where('source_schema_version', $expected->definition->sourceSchemaVersion)
+            ->where('query_hash', $run->query_hash)
+            ->where('source_hash', $run->source_hash)
             ->where('quality_status', 'complete')
             ->where('reconciliation_status', 'matched')
-            ->orderBy('id')
-            ->get();
-        if ($snapshots->count() !== 1) {
-            throw new DomainException('management_pnl_payroll_readiness_tuple_ambiguous');
-        }
-        $snapshot = $snapshots->first();
+            ->first();
         if ($snapshot === null) {
             throw new DomainException('management_pnl_payroll_readiness_unsealed');
         }
-        $run = $guard->assertReadyRun(
-            $scope->organizationId,
-            $this->sourceReportCode(),
+        $guard->assertRunSnapshotTuple(
+            $run,
             'payroll_readiness',
             $snapshot,
             $expected,
