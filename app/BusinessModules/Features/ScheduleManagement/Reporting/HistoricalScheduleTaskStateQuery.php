@@ -55,6 +55,7 @@ final readonly class HistoricalScheduleTaskStateQuery
                 critical: (bool) $row->is_critical,
                 active: (bool) $row->is_active,
                 zoneId: $row->zone_id === null ? null : (int) $row->zone_id,
+                version: (int) $row->version,
             ));
     }
 }

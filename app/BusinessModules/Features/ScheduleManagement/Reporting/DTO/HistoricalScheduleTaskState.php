@@ -29,8 +29,10 @@ final readonly class HistoricalScheduleTaskState
         public bool $critical = false,
         public bool $active = true,
         public ?int $zoneId = null,
+        public int $version = 1,
     ) {
         if (min($taskId, $projectId, $scheduleId, $plannedDurationDays) < 1
+            || $version < 1
             || $plannedEnd < $plannedStart
             || trim($status) === ''
             || trim($taskType) === ''

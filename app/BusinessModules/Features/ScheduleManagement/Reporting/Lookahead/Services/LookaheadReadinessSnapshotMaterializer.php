@@ -152,31 +152,14 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 ownerId: $state->ownerId,
                 contractorId: $state->contractorId,
                 zoneId: $state->zoneId,
+                taskType: $state->taskType,
+                taskStateVersion: $state->version,
+                taskStateSourceHash: $state->sourceHash,
+                taskStateEffectiveAt: $state->effectiveAt,
             );
         }
         $canonicalInputs = array_map(
-            static fn (LookaheadEligibilityInput $input): array => [
-                'as_of' => $input->asOf->format(DATE_ATOM),
-                'constraints' => array_map(
-                    static fn (LookaheadConstraintState $constraint): array => [
-                        'constraint_id' => $constraint->constraintId,
-                        'opened_at' => $constraint->openedAt->format(DATE_ATOM),
-                        'severity' => $constraint->severity,
-                        'status' => $constraint->status,
-                        'type' => $constraint->type,
-                        'linked_resource_id' => $constraint->linkedResourceId,
-                        'linked_resource_type' => $constraint->linkedResourceType,
-                        'waiver_evidence_ref' => $constraint->waiverEvidenceRef,
-                        'waiver_until' => $constraint->waiverUntil?->format(DATE_ATOM),
-                    ],
-                    $input->constraints,
-                ),
-                'planned_start' => $input->plannedStart->format(DATE_ATOM),
-                'project_id' => $input->projectId,
-                'schedule_id' => $input->scheduleId,
-                'status' => $input->status,
-                'task_id' => $input->taskId,
-            ],
+            static fn (LookaheadEligibilityInput $input): array => $input->canonicalIdentity(),
             $inputs,
         );
         $policyHashes = array_map(
