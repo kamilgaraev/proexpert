@@ -65,7 +65,7 @@ final readonly class ProductionAcceptanceOwnerVersionWriter
                 'version' => $version,
             ]));
 
-            return ProductionAcceptanceOwnerVersion::query()->create([
+            $owner = ProductionAcceptanceOwnerVersion::query()->create([
                 'organization_id' => (int) $act->contract->organization_id,
                 'project_id' => (int) $act->project_id,
                 'contract_id' => (int) $act->contract_id,
@@ -77,6 +77,25 @@ final readonly class ProductionAcceptanceOwnerVersionWriter
                 'source_hash' => $sourceHash,
                 'members' => $members,
             ]);
+            foreach (array_chunk($members, 500) as $memberBatch) {
+                DB::table('production_acceptance_owner_members')->insert(array_map(
+                    static fn (array $member): array => [
+                        'owner_version_id' => (int) $owner->id,
+                        'organization_id' => (int) $act->contract->organization_id,
+                        'project_id' => (int) $act->project_id,
+                        'performance_act_id' => (int) $act->id,
+                        'source_line_type' => (string) $member['source_line_type'],
+                        'source_line_id' => (int) $member['source_line_id'],
+                        'work_id' => (int) $member['work_id'],
+                        'contractor_id' => $member['contractor_id'],
+                        'unit_code' => (string) $member['unit_code'],
+                        'zone' => $member['zone'],
+                    ],
+                    $memberBatch,
+                ));
+            }
+
+            return $owner;
         }, 5);
     }
 

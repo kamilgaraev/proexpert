@@ -18,6 +18,7 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\L
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Models\WorkConstraintTransitionEvent;
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Queries\LookaheadResourceCandidateQuery;
 use App\Models\ScheduleTask;
+use App\Support\Reporting\DeterministicObjectSpool;
 use App\Support\Reporting\ReportScopedResourceFilter;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
@@ -87,7 +88,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         );
         $resourceTaskIds = $this->intersectNullableIds($scopedTaskIds, $constraintTaskIds);
         $states = $this->historicalTasks
-            ->latestForProjects($scope->organizationId, $projectIds, $query->asOf)
+            ->latestForProjectsCursor($scope->organizationId, $projectIds, $query->asOf)
             ->whereIn('scheduleId', $scheduleIds)
             ->when(
                 $resourceTaskIds !== null,
@@ -187,7 +188,8 @@ final readonly class LookaheadReadinessSnapshotMaterializer
         if ($uncapturedConstraintExists) {
             throw new InvalidArgumentException('lookahead_constraint_history_incomplete');
         }
-        $inputs = [];
+        $inputSpool = new DeterministicObjectSpool;
+        $effectiveProjectIdMap = [];
         foreach ($states as $state) {
             $constraints = [];
             foreach ($events->get($state->taskId, []) as $event) {
@@ -221,7 +223,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
             if ($constraints === null) {
                 continue;
             }
-            $inputs[] = new LookaheadEligibilityInput(
+            $input = new LookaheadEligibilityInput(
                 taskId: $state->taskId,
                 container: $state->taskType === 'container',
                 status: $state->status,
@@ -239,11 +241,10 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 taskStateSourceHash: $state->sourceHash,
                 taskStateEffectiveAt: $state->effectiveAt,
             );
+            $inputSpool->append($input, $input->canonicalIdentity());
+            $effectiveProjectIdMap[(int) $input->projectId] = true;
         }
-        $effectiveProjectIds = array_values(array_unique(array_map(
-            static fn (LookaheadEligibilityInput $input): int => (int) $input->projectId,
-            $inputs,
-        )));
+        $effectiveProjectIds = array_keys($effectiveProjectIdMap);
         sort($effectiveProjectIds, SORT_NUMERIC);
         $policySet = $effectiveProjectIds === []
             ? null
@@ -252,18 +253,18 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 $effectiveProjectIds,
                 $query->asOf,
             );
-        $canonicalInputs = array_map(
-            static fn (LookaheadEligibilityInput $input): array => $input->canonicalIdentity(),
-            $inputs,
-        );
         $policyHashes = array_map(
             static fn ($policy): string => $policy->sourceHash,
             $policySet?->all() ?? [],
         );
-        $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
-            'inputs' => $canonicalInputs,
-            'policy_hashes' => $policyHashes,
-        ])));
+        $sourceHashContext = hash_init('sha256');
+        hash_update($sourceHashContext, '{"inputs":');
+        $inputSpool->updateCanonicalArrayHash($sourceHashContext);
+        hash_update(
+            $sourceHashContext,
+            ',"policy_hashes":'.CanonicalJson::encode($policyHashes).'}',
+        );
+        $sourceHash = new Sha256Hash(hash_final($sourceHashContext));
         $existing = LookaheadReadinessSnapshot::query()
             ->where('organization_id', $scope->organizationId)
             ->where('query_hash', $query->queryHash->value)
@@ -279,36 +280,44 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                 $query,
                 $policySet,
                 $policyHashes,
-                $inputs,
+                $inputSpool,
                 $sourceHash
             ): ReportSnapshotRef {
                 $snapshotId = (string) Str::ulid();
-                $metrics = array_map(
-                    fn (LookaheadEligibilityInput $input): array => [
+                $projectionRows = new DeterministicObjectSpool;
+                $metricSpool = new DeterministicObjectSpool;
+                $hasUnknownMetrics = false;
+                foreach ($inputSpool->items() as $input) {
+                    if (! $input instanceof LookaheadEligibilityInput) {
+                        throw new InvalidArgumentException('lookahead_input_spool_invalid');
+                    }
+                    $metric = $this->formula->evaluate(
                         $input,
-                        $this->formula->evaluate(
-                            $input,
-                            $policySet?->forProject((int) $input->projectId)
-                                ?? throw new InvalidArgumentException('lookahead_project_policy_unavailable'),
-                        ),
-                    ],
-                    $inputs,
-                );
-                $projectionRows = [];
-                foreach ($metrics as [$input, $metric]) {
+                        $policySet?->forProject((int) $input->projectId)
+                            ?? throw new InvalidArgumentException('lookahead_project_policy_unavailable'),
+                    );
+                    $metricSpool->append($metric, [
+                        'task_id' => $metric->taskId,
+                        'warning_code' => $metric->warningCode,
+                    ]);
+                    $hasUnknownMetrics = $hasUnknownMetrics || $metric->warningCode !== null;
                     $constraints = $input->constraints === [] ? [null] : $input->constraints;
                     foreach ($constraints as $constraint) {
-                        $projectionRows[] = [$input, $metric, $constraint];
+                        $row = new \ArrayObject([$input, $metric, $constraint]);
+                        $projectionRows->append($row, [
+                            'constraint_id' => $constraint?->constraintId,
+                            'task_id' => $input->taskId,
+                        ]);
                     }
                 }
-                $coverage = $this->formula->summarize(array_column($metrics, 1));
+                $coverage = $this->formula->summarize($metricSpool->items());
                 $totals = [
                     'eligible_tasks' => (int) $coverage->denominator,
                     'ready_tasks' => (int) $coverage->numerator,
                     'readiness_pct' => $coverage->ratio,
                     'hard_blockers' => $coverage->hardBlockers,
                     'soft_blockers' => $coverage->softBlockers,
-                    'unknown_metrics' => $this->snapshotUnknownMetrics($metrics),
+                    'unknown_metrics' => $hasUnknownMetrics ? ['waiver_validity'] : [],
                 ];
                 $sourceRefs = [[
                     'source' => 'schedule',
@@ -316,7 +325,7 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     'snapshot_id' => 'snapshot_'.strtolower($snapshotId),
                     'schema_version' => 'lookahead_events_v1',
                     'watermark' => 'source_'.substr($sourceHash->value, 0, 24),
-                    'row_count' => count($projectionRows),
+                    'row_count' => $projectionRows->count(),
                     'hash' => $sourceHash->value,
                 ]];
                 $snapshot = LookaheadReadinessSnapshot::query()->create([
@@ -340,11 +349,15 @@ final readonly class LookaheadReadinessSnapshotMaterializer
                     'totals' => $totals,
                     'source_refs' => $sourceRefs,
                     'row_schema' => $this->rowSchema(),
-                    'row_count' => count($projectionRows),
+                    'row_count' => $projectionRows->count(),
                 ]);
 
                 $rowBatch = [];
-                foreach ($projectionRows as [$input, $metric, $constraint]) {
+                foreach ($projectionRows->items() as $projectionRow) {
+                    if (! $projectionRow instanceof \ArrayObject) {
+                        throw new InvalidArgumentException('lookahead_projection_spool_invalid');
+                    }
+                    [$input, $metric, $constraint] = $projectionRow->getArrayCopy();
                     $payload = [
                         ...$input->eligibilityExplanation(),
                         'project_id' => $input->projectId,

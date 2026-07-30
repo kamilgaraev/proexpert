@@ -17,15 +17,14 @@ final class ProductionResourceBoundaryTest extends TestCase
             .'AcceptedProductionSnapshotMaterializer.php',
         );
 
-        $filterPosition = strpos($source, '$universe = $this->universe->resolve($scope, $query)');
+        $filterPosition = strpos($source, '$stream = $this->universe->stream($scope, $query)');
         $hashPosition = strpos($source, '$sourceHash = new Sha256Hash');
-        $factsPosition = strpos($source, '$facts = $events');
 
         self::assertIsInt($filterPosition);
         self::assertIsInt($hashPosition);
-        self::assertIsInt($factsPosition);
         self::assertLessThan($hashPosition, $filterPosition);
-        self::assertLessThan($factsPosition, $filterPosition);
+        self::assertStringNotContainsString('$facts = $events', $source);
+        self::assertStringContainsString('foreach ($stream->entries() as $entry)', $source);
         $universe = $this->source(
             'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
             .'AcceptedProductionEventUniverse.php',
@@ -51,18 +50,66 @@ final class ProductionResourceBoundaryTest extends TestCase
             .'AcceptedProductionEventUniverse.php',
         );
 
-        self::assertStringContainsString('$this->universe->resolve($context->scope, $query)', $readiness);
-        self::assertStringContainsString('$this->universe->resolve($scope, $query)', $materializer);
+        self::assertStringContainsString('$this->universe->stream($context->scope, $query)', $readiness);
+        self::assertStringContainsString('$this->universe->stream($scope, $query)', $materializer);
         self::assertStringContainsString('ProductionAcceptanceOwnerVersion::query()', $universe);
-        self::assertStringContainsString('$ownerQuery->lazyById(500)', $universe);
+        self::assertStringContainsString('$ownerQuery->lazyById(100)', $universe);
         self::assertStringContainsString('$eventQuery->lazyById(500)', $universe);
-        self::assertLessThan(
-            strpos($universe, '$eventQuery = ProductionAcceptanceEvent::query()'),
-            strpos($universe, '$ownerQuery = ProductionAcceptanceOwnerVersion::query()'),
+        self::assertTrue(
+            strpos($universe, '$ownerQuery = $this->ownerQuery(')
+                < strpos($universe, '$eventQuery = ProductionAcceptanceEvent::query()'),
         );
-        self::assertStringContainsString('$this->completeness->inspect(', $readiness);
-        self::assertStringContainsString('$this->completeness->assertComplete(', $materializer);
+        self::assertStringContainsString('$stream->gapCount()', $readiness);
+        self::assertStringContainsString('$stream->gapCount()', $materializer);
         self::assertStringNotContainsString('$completeEvents = ProductionAcceptanceEvent::query()', $materializer);
+    }
+
+    #[Test]
+    public function accepted_production_spools_a_stable_stream_and_never_accumulates_all_rows(): void
+    {
+        $universe = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionEventUniverse.php',
+        );
+        $stream = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/DTO/'
+            .'AcceptedProductionUniverseStream.php',
+        );
+        $materializer = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'AcceptedProductionSnapshotMaterializer.php',
+        );
+        $readiness = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Readiness/'
+            .'AcceptedProductionReadinessProbe.php',
+        );
+        $migration = $this->source(
+            'database/migrations/2026_07_26_100000_create_accepted_production_reporting_tables.php',
+        );
+        $writer = $this->source(
+            'app/Services/CompletedWork/Reporting/AcceptedProduction/Services/'
+            .'ProductionAcceptanceOwnerVersionWriter.php',
+        );
+
+        self::assertStringContainsString('new DeterministicObjectSpool', $universe);
+        self::assertStringContainsString('->chunkById(500, function ($memberPage)', $universe);
+        $streamPath = substr($universe, 0, (int) strpos($universe, 'public function resolve('));
+        self::assertStringNotContainsString('foreach ((array) $owner->members', $streamPath);
+        self::assertStringContainsString(
+            "Schema::create('production_acceptance_owner_members'",
+            $migration,
+        );
+        self::assertStringContainsString('production_acceptance_owner_members_append_only', $migration);
+        self::assertStringContainsString('array_chunk($members, 500)', $writer);
+        self::assertStringContainsString('updateCanonicalArrayHash($context)', $stream);
+        self::assertStringContainsString('new DeterministicReadinessAccumulator', $readiness);
+        self::assertStringNotContainsString('$eligible = []', $readiness);
+        self::assertStringNotContainsString('$projected = []', $readiness);
+        self::assertStringNotContainsString('$rows = $facts->map', $materializer);
+        self::assertStringContainsString(
+            "DB::table('accepted_production_rows')->insert(\$rowBatch)",
+            $materializer,
+        );
     }
 
     #[Test]
@@ -117,7 +164,7 @@ final class ProductionResourceBoundaryTest extends TestCase
             strpos($readiness, '$effectiveProjectIds = $selectedStates'),
         );
         self::assertLessThan(
-            strpos($materializer, '$effectiveProjectIds = array_values'),
+            strpos($materializer, '$effectiveProjectIds = array_keys'),
             strpos($materializer, '$constraints = $this->filterConstraints'),
         );
         self::assertStringContainsString(

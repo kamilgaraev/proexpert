@@ -18,8 +18,8 @@ use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services
 use App\BusinessModules\Features\ScheduleManagement\Reporting\Lookahead\Services\LookaheadResourceScope;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
+use App\Support\Reporting\DeterministicReadinessAccumulator;
 use App\Support\Reporting\ReportScopedResourceFilter;
-use App\Support\Reporting\ReportSourceReadinessFactory;
 use DateTimeImmutable;
 use InvalidArgumentException;
 
@@ -27,7 +27,6 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
 {
     public function __construct(
         private LookaheadReadinessPolicyService $policies,
-        private ReportSourceReadinessFactory $readiness,
         private HistoricalScheduleTaskStateQuery $historicalTasks,
         private ReportScopedResourceFilter $resourceFilter,
         private LookaheadResourceScope $resourceScope,
@@ -49,8 +48,7 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
         ReportExecutionContext $context,
         ReportQuery $query,
     ): ReportSourceReadiness {
-        $eligible = [];
-        $projected = [];
+        $measurement = new DeterministicReadinessAccumulator;
         $gapCount = 0;
         $projectIds = array_values(array_intersect(
             $context->scope->projectIds,
@@ -96,7 +94,7 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
         $allStates = $projectIds === []
             ? collect()
             : $this->historicalTasks
-                ->latestForProjects($context->scope->organizationId, $projectIds, $query->asOf)
+                ->latestForProjectsCursor($context->scope->organizationId, $projectIds, $query->asOf)
                 ->whereIn('scheduleId', $scheduleIds)
                 ->when(
                     $resourceTaskIds !== null,
@@ -249,16 +247,16 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
                 );
                 foreach ($effectiveProjectIds as $projectId) {
                     $policy = $policySet->forProject($projectId);
-                    $eligible[] = ['kind' => 'policy', 'project_id' => $projectId];
-                    $projected[] = [
+                    $measurement->eligible(['kind' => 'policy', 'project_id' => $projectId]);
+                    $measurement->projected([
                         'kind' => 'policy',
                         'project_id' => $projectId,
                         'source_hash' => $policy->sourceHash,
-                    ];
+                    ]);
                 }
             } catch (InvalidArgumentException) {
                 foreach ($effectiveProjectIds as $projectId) {
-                    $eligible[] = ['kind' => 'policy', 'project_id' => $projectId];
+                    $measurement->eligible(['kind' => 'policy', 'project_id' => $projectId]);
                     $gapCount++;
                 }
             }
@@ -272,12 +270,12 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
             if (isset($projectedConstraints[(int) $constraint->id])
                 && isset($selectedConstraintIds[(int) $constraint->id])
             ) {
-                $eligible[] = [
+                $measurement->eligible([
                     'created_at' => $constraint->created_at?->format(DATE_ATOM),
                     'kind' => 'constraint',
                     'source_id' => (int) $constraint->id,
-                ];
-                $projected[] = $projectedConstraints[(int) $constraint->id];
+                ]);
+                $measurement->projected($projectedConstraints[(int) $constraint->id]);
 
                 continue;
             }
@@ -286,28 +284,28 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
                 $missingConstraintsByTask[$taskId] ?? [],
                 true,
             )) {
-                $eligible[] = [
+                $measurement->eligible([
                     'created_at' => $constraint->created_at?->format(DATE_ATOM),
                     'kind' => 'constraint',
                     'source_id' => (int) $constraint->id,
-                ];
+                ]);
                 $gapCount++;
             }
         }
 
         foreach (array_values(array_unique([...$selectedTaskIds, ...$missingTaskIds])) as $taskId) {
-            $eligible[] = ['kind' => 'schedule_task_state', 'source_id' => $taskId];
+            $measurement->eligible(['kind' => 'schedule_task_state', 'source_id' => $taskId]);
             $state = $allStatesByTask->get($taskId);
             if ($state === null) {
                 $gapCount++;
 
                 continue;
             }
-            $projected[] = [
+            $measurement->projected([
                 'kind' => 'schedule_task_state',
                 'source_hash' => $state->sourceHash,
                 'source_id' => $taskId,
-            ];
+            ]);
         }
 
         $watermark = implode('.', [
@@ -320,7 +318,7 @@ final readonly class LookaheadReadinessProbe implements ReportSourceReadinessPro
             (int) ($allStates->max('taskId') ?? 0),
         ]);
 
-        return $this->readiness->make($eligible, $projected, $gapCount, 0, $watermark);
+        return $measurement->finish($gapCount, 0, $watermark);
     }
 
     private function matchesTaskFilters(ReportQuery $query, object $state): bool

@@ -10,6 +10,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionMetric;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionUniverseEntry;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\ProductionAcceptanceFact;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\AcceptedProductionSnapshot;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
@@ -24,18 +26,14 @@ final readonly class AcceptedProductionSnapshotMaterializer
 {
     private const FORMULA_VERSION = 'accepted_production.v1';
 
-    private AcceptedProductionLifecycleCompleteness $completeness;
-
     private AcceptedProductionEventUniverse $universe;
 
     public function __construct(
         private AcceptedProductionFormula $formula,
         private ProductionAcceptanceRecognitionGrain $grain,
         ?AcceptedProductionEventUniverse $universe = null,
-        ?AcceptedProductionLifecycleCompleteness $completeness = null,
     ) {
         $this->universe = $universe ?? new AcceptedProductionEventUniverse;
-        $this->completeness = $completeness ?? new AcceptedProductionLifecycleCompleteness;
     }
 
     public function materialize(ReportScope $scope, ReportQuery $query): ReportSnapshotRef
@@ -46,29 +44,15 @@ final readonly class AcceptedProductionSnapshotMaterializer
             throw new InvalidArgumentException('accepted_production_materialization_identity_invalid');
         }
 
-        $universe = $this->universe->resolve($scope, $query);
-        $events = $universe['events'];
-        $this->completeness->assertComplete($scope, $query->asOf, $events, $universe);
-        $watermark = (int) ($events->max('id') ?? 0);
-        $ownerWatermark = (int) collect($universe['candidates'])->max('owner_version_id');
-        $sourceHash = new Sha256Hash(hash('sha256', CanonicalJson::encode([
-            'event_watermark' => $watermark,
-            'events' => $events->map(static fn (ProductionAcceptanceEvent $event): array => [
-                'accepted_quantity_delta' => (string) $event->accepted_quantity_delta,
-                'approved_rate_minor' => $event->approved_rate_minor,
-                'currency' => $event->currency,
-                'currency_source' => $event->currency_source,
-                'event_type' => (string) $event->event_type,
-                'id' => (int) $event->id,
-                'performance_act_id' => (int) $event->performance_act_id,
-                'recognized_at' => $event->recognized_at->format(DATE_ATOM),
-                'source_hash' => (string) $event->source_hash,
-                'source_line_id' => (int) $event->source_line_id,
-                'source_line_type' => (string) $event->source_line_type,
-                'transition_version' => (int) $event->transition_version,
-            ])->all(),
-            'owner_candidates' => $universe['candidates'],
-        ])));
+        $stream = $this->universe->stream($scope, $query);
+        if ($stream->gapCount() !== 0) {
+            throw new InvalidArgumentException('accepted_production_owner_history_unproven');
+        }
+        $watermark = $stream->eventWatermark;
+        $ownerWatermark = $stream->ownerWatermark;
+        $hashContext = hash_init('sha256');
+        $stream->updateSourceHash($hashContext);
+        $sourceHash = new Sha256Hash(hash_final($hashContext));
         $existing = AcceptedProductionSnapshot::query()
             ->where('organization_id', $scope->organizationId)
             ->where('query_hash', $query->queryHash->value)
@@ -78,30 +62,14 @@ final readonly class AcceptedProductionSnapshotMaterializer
             return $this->reference($scope, $query, $existing);
         }
 
-        $candidates = collect($universe['candidates'])->keyBy(static fn (array $candidate): string => implode(':', [
-            (int) $candidate['performance_act_id'],
-            (string) $candidate['source_line_type'],
-            (int) $candidate['source_line_id'],
-        ]));
-        $facts = $events
-            ->groupBy(fn (ProductionAcceptanceEvent $event): string => $this->grain->key($event))
-            ->map(function (Collection $lineEvents) use ($candidates): array {
-                $event = $lineEvents->first();
-                if (! $event instanceof ProductionAcceptanceEvent) {
-                    throw new InvalidArgumentException('accepted_production_event_group_invalid');
-                }
-                $candidate = $candidates->get(implode(':', [
-                    (int) $event->performance_act_id,
-                    (string) $event->source_line_type,
-                    (int) $event->source_line_id,
-                ]));
-                if (! is_array($candidate)) {
-                    throw new InvalidArgumentException('accepted_production_owner_candidate_missing');
-                }
-
-                return $this->fact($lineEvents, $candidate);
-            })
-            ->values();
+        $rowCount = 0;
+        $totalsState = [];
+        foreach ($stream->entries() as $entry) {
+            [, $metric] = $this->metric($entry);
+            $this->accumulateTotal($totalsState, $metric);
+            $rowCount++;
+        }
+        $totals = $this->finalizeTotals($totalsState);
 
         try {
             return DB::transaction(function () use (
@@ -110,22 +78,18 @@ final readonly class AcceptedProductionSnapshotMaterializer
                 $sourceHash,
                 $watermark,
                 $ownerWatermark,
-                $facts,
+                $stream,
+                $rowCount,
+                $totals,
             ): ReportSnapshotRef {
                 $snapshotId = (string) Str::ulid();
-                $rows = $facts->map(function (array $item): array {
-                    $metric = $this->formula->row($item['fact']);
-
-                    return [$item, $metric];
-                });
-                $totals = $this->totals($rows);
                 $sourceRefs = [[
                     'source' => 'completed_work',
                     'snapshot_kind' => 'accepted_production',
                     'snapshot_id' => 'snapshot_'.strtolower($snapshotId),
                     'schema_version' => 'production_acceptance_events_v1',
                     'watermark' => 'event_'.$watermark,
-                    'row_count' => $rows->count(),
+                    'row_count' => $rowCount,
                     'hash' => $sourceHash->value,
                 ]];
                 $snapshot = AcceptedProductionSnapshot::query()->create([
@@ -146,11 +110,12 @@ final readonly class AcceptedProductionSnapshotMaterializer
                     'totals' => $totals,
                     'source_refs' => $sourceRefs,
                     'row_schema' => $this->rowSchema(),
-                    'row_count' => $rows->count(),
+                    'row_count' => $rowCount,
                 ]);
 
                 $rowBatch = [];
-                foreach ($rows as [$item, $metric]) {
+                foreach ($stream->entries() as $entry) {
+                    [$item, $metric] = $this->metric($entry);
                     $event = $item['event'];
                     $rowKey = $this->grain->key($event);
                     $payload = [
@@ -299,37 +264,45 @@ final readonly class AcceptedProductionSnapshotMaterializer
         ];
     }
 
-    private function totals(Collection $rows): array
+    private function metric(AcceptedProductionUniverseEntry $entry): array
     {
-        $groups = [];
-        foreach ($rows as [, $metric]) {
-            $key = implode(':', [
-                $metric->unitDimension,
-                $metric->unitCode,
-                $metric->conversionVersion,
-                $metric->currency ?? 'NO_CURRENCY',
-            ]);
-            $groups[$key] ??= [
-                'unit_dimension' => $metric->unitDimension,
-                'unit_code' => $metric->unitCode,
-                'conversion_version' => $metric->conversionVersion,
-                'currency' => $metric->currency,
-                'planned_quantity' => 0,
-                'reported_quantity' => 0,
-                'accepted_quantity' => 0,
-                'accepted_amount_minor' => $metric->acceptedAmountMinor === null ? null : 0,
-            ];
-            $groups[$key]['planned_quantity'] += $this->scaled($metric->plannedQuantity);
-            $groups[$key]['reported_quantity'] += $this->scaled($metric->reportedQuantity);
-            $groups[$key]['accepted_quantity'] += $this->scaled($metric->acceptedQuantity);
-            if ($groups[$key]['accepted_amount_minor'] !== null) {
-                if ($metric->acceptedAmountMinor === null) {
-                    $groups[$key]['accepted_amount_minor'] = null;
-                } else {
-                    $groups[$key]['accepted_amount_minor'] += $metric->acceptedAmountMinor;
-                }
+        $item = $this->fact(collect($entry->events), $entry->candidate);
+
+        return [$item, $this->formula->row($item['fact'])];
+    }
+
+    private function accumulateTotal(array &$groups, AcceptedProductionMetric $metric): void
+    {
+        $key = implode(':', [
+            $metric->unitDimension,
+            $metric->unitCode,
+            $metric->conversionVersion,
+            $metric->currency ?? 'NO_CURRENCY',
+        ]);
+        $groups[$key] ??= [
+            'unit_dimension' => $metric->unitDimension,
+            'unit_code' => $metric->unitCode,
+            'conversion_version' => $metric->conversionVersion,
+            'currency' => $metric->currency,
+            'planned_quantity' => 0,
+            'reported_quantity' => 0,
+            'accepted_quantity' => 0,
+            'accepted_amount_minor' => $metric->acceptedAmountMinor === null ? null : 0,
+        ];
+        $groups[$key]['planned_quantity'] += $this->scaled($metric->plannedQuantity);
+        $groups[$key]['reported_quantity'] += $this->scaled($metric->reportedQuantity);
+        $groups[$key]['accepted_quantity'] += $this->scaled($metric->acceptedQuantity);
+        if ($groups[$key]['accepted_amount_minor'] !== null) {
+            if ($metric->acceptedAmountMinor === null) {
+                $groups[$key]['accepted_amount_minor'] = null;
+            } else {
+                $groups[$key]['accepted_amount_minor'] += $metric->acceptedAmountMinor;
             }
         }
+    }
+
+    private function finalizeTotals(array $groups): array
+    {
         foreach ($groups as &$group) {
             $group['planned_quantity'] = $this->decimal($group['planned_quantity']);
             $group['reported_quantity'] = $this->decimal($group['reported_quantity']);

@@ -7,15 +7,197 @@ namespace App\Services\CompletedWork\Reporting\AcceptedProduction\Services;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\Models\ContractPerformanceAct;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionUniverseEntry;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\DTO\AcceptedProductionUniverseStream;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceBackfillLedger;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
+use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceOwnerMember;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceOwnerVersion;
+use App\Support\Reporting\DeterministicObjectSpool;
 use App\Support\Reporting\ReportScopedResourceFilter;
 use Illuminate\Database\Eloquent\Builder;
 use InvalidArgumentException;
 
 final readonly class AcceptedProductionEventUniverse
 {
+    public function stream(ReportScope $scope, ReportQuery $query): AcceptedProductionUniverseStream
+    {
+        [$projectIds, $workIds, $actIds, $actLineIds] = $this->filters($scope, $query);
+        $entries = new DeterministicObjectSpool;
+        $gaps = new DeterministicObjectSpool;
+        $eventWatermark = 0;
+        $ownerWatermark = 0;
+
+        $ownerQuery = $this->ownerQuery($scope, $query, $projectIds, $actIds);
+        foreach ($ownerQuery->lazyById(100) as $owner) {
+            $ownerWatermark = max($ownerWatermark, (int) $owner->id);
+            ProductionAcceptanceOwnerMember::query()
+                ->where('owner_version_id', (int) $owner->id)
+                ->chunkById(500, function ($memberPage) use (
+                    $owner,
+                    $scope,
+                    $query,
+                    $workIds,
+                    $actIds,
+                    $actLineIds,
+                    $entries,
+                    &$eventWatermark,
+                ): void {
+                    $candidates = [];
+                    foreach ($memberPage as $memberRow) {
+                        $member = [
+                            'contractor_id' => $memberRow->contractor_id,
+                            'source_line_id' => (int) $memberRow->source_line_id,
+                            'source_line_type' => (string) $memberRow->source_line_type,
+                            'unit_code' => (string) $memberRow->unit_code,
+                            'work_id' => (int) $memberRow->work_id,
+                            'zone' => $memberRow->zone,
+                        ];
+                        if (! $this->matchesMember($member, $workIds, $actLineIds, $query)) {
+                            continue;
+                        }
+                        $candidate = [
+                            'event_type' => (string) $owner->event_type,
+                            'effective_at' => $owner->effective_at->format(DATE_ATOM),
+                            'owner_source_hash' => (string) $owner->source_hash,
+                            'owner_version_id' => (int) $owner->id,
+                            'performance_act_id' => (int) $owner->performance_act_id,
+                            'project_id' => (int) $owner->project_id,
+                            'source_line_id' => (int) $member['source_line_id'],
+                            'source_line_type' => (string) $member['source_line_type'],
+                            'work_id' => (int) $member['work_id'],
+                        ];
+                        $key = $this->key($candidate);
+                        if ($this->candidateMatchesState($candidate, $query)) {
+                            $candidates[$key] = $candidate;
+                        }
+                    }
+                    if ($candidates === []) {
+                        return;
+                    }
+                    $eventsByKey = [];
+                    $eventQuery = ProductionAcceptanceEvent::query()
+                        ->where('organization_id', $scope->organizationId)
+                        ->where('performance_act_id', (int) $owner->performance_act_id)
+                        ->where('recognized_at', '<=', $query->asOf)
+                        ->whereIn(
+                            'source_line_id',
+                            array_values(array_unique(array_map(
+                                static fn (array $candidate): int => (int) $candidate['source_line_id'],
+                                $candidates,
+                            ))),
+                        );
+                    $this->applyEventScalarFilters($eventQuery, $query, $workIds, $actIds, $actLineIds);
+                    foreach ($eventQuery->lazyById(500) as $event) {
+                        $eventWatermark = max($eventWatermark, (int) $event->id);
+                        $key = $this->key([
+                            'performance_act_id' => (int) $event->performance_act_id,
+                            'source_line_id' => (int) $event->source_line_id,
+                            'source_line_type' => (string) $event->source_line_type,
+                        ]);
+                        if (isset($candidates[$key])) {
+                            $eventsByKey[$key][] = $event;
+                        }
+                    }
+                    foreach ($candidates as $key => $candidate) {
+                        $lineEvents = $eventsByKey[$key] ?? [];
+                        usort($lineEvents, static fn (
+                            ProductionAcceptanceEvent $left,
+                            ProductionAcceptanceEvent $right,
+                        ): int => [(int) $left->transition_version, (int) $left->id]
+                            <=> [(int) $right->transition_version, (int) $right->id]);
+                        $entry = new AcceptedProductionUniverseEntry($candidate, $lineEvents);
+                        $entries->append($entry, [
+                            'candidate' => $candidate,
+                            'events' => array_map([$this, 'eventIdentity'], $lineEvents),
+                        ]);
+                    }
+                });
+            $orphanQuery = ProductionAcceptanceEvent::query()
+                ->where('organization_id', $scope->organizationId)
+                ->where('performance_act_id', (int) $owner->performance_act_id)
+                ->where('recognized_at', '<=', $query->asOf)
+                ->whereNotExists(static function ($builder) use ($owner): void {
+                    $builder
+                        ->selectRaw('1')
+                        ->from('production_acceptance_owner_members as owner_member')
+                        ->where('owner_member.owner_version_id', (int) $owner->id)
+                        ->whereColumn(
+                            'owner_member.source_line_type',
+                            'production_acceptance_events.source_line_type',
+                        )
+                        ->whereColumn(
+                            'owner_member.source_line_id',
+                            'production_acceptance_events.source_line_id',
+                        );
+                });
+            $this->applyEventScalarFilters($orphanQuery, $query, $workIds, $actIds, $actLineIds);
+            foreach ($orphanQuery->lazyById(500) as $event) {
+                $eventWatermark = max($eventWatermark, (int) $event->id);
+                $key = $this->key([
+                    'performance_act_id' => (int) $event->performance_act_id,
+                    'source_line_id' => (int) $event->source_line_id,
+                    'source_line_type' => (string) $event->source_line_type,
+                ]);
+                if ($this->eventMatchesState($event, $query)) {
+                    $this->appendGap($gaps, [
+                        'event_id' => (int) $event->id,
+                        'kind' => 'owner_version_missing',
+                        'performance_act_id' => (int) $event->performance_act_id,
+                        'source_line_id' => (int) $event->source_line_id,
+                        'source_line_type' => (string) $event->source_line_type,
+                    ]);
+                }
+            }
+        }
+        $ownerlessEvents = ProductionAcceptanceEvent::query()
+            ->where('organization_id', $scope->organizationId)
+            ->whereIn('project_id', $projectIds)
+            ->where('recognized_at', '<=', $query->asOf)
+            ->whereNotExists(static function ($builder) use ($scope, $query): void {
+                $builder
+                    ->selectRaw('1')
+                    ->from('production_acceptance_owner_versions as owner_coverage')
+                    ->whereColumn(
+                        'owner_coverage.performance_act_id',
+                        'production_acceptance_events.performance_act_id',
+                    )
+                    ->where('owner_coverage.organization_id', $scope->organizationId)
+                    ->where('owner_coverage.effective_at', '<=', $query->asOf);
+            });
+        $this->applyEventScalarFilters(
+            $ownerlessEvents,
+            $query,
+            $workIds,
+            $actIds,
+            $actLineIds,
+        );
+        foreach ($ownerlessEvents->lazyById(500) as $event) {
+            if (! $this->eventMatchesState($event, $query)) {
+                continue;
+            }
+            $eventWatermark = max($eventWatermark, (int) $event->id);
+            $this->appendGap($gaps, [
+                'event_id' => (int) $event->id,
+                'kind' => 'owner_version_missing',
+                'performance_act_id' => (int) $event->performance_act_id,
+                'source_line_id' => (int) $event->source_line_id,
+                'source_line_type' => (string) $event->source_line_type,
+            ]);
+        }
+
+        foreach ($this->legacyGapRows($scope, $query, $projectIds, $actIds) as $gap) {
+            $this->appendGap($gaps, $gap);
+        }
+
+        return new AcceptedProductionUniverseStream(
+            $entries,
+            $gaps,
+            $eventWatermark,
+            $ownerWatermark,
+        );
+    }
+
     public function resolve(ReportScope $scope, ReportQuery $query): array
     {
         $resources = new ReportScopedResourceFilter;
@@ -196,6 +378,154 @@ final readonly class AcceptedProductionEventUniverse
             'legacy_gaps' => array_values($legacyGaps),
             'orphan_events' => array_values($orphanEvents),
             'project_ids' => $projectIds,
+        ];
+    }
+
+    private function filters(ReportScope $scope, ReportQuery $query): array
+    {
+        $resources = new ReportScopedResourceFilter;
+        $workIds = $this->intersect(
+            $resources->ids($scope, ['work', 'completed_work'], $scope->projectIds),
+            $this->positiveIntegerFilter($query, 'work_ids'),
+        );
+        $actIds = $this->intersect(
+            $resources->ids($scope, ['act', 'performance_act', 'contract_performance_act'], $scope->projectIds),
+            $this->positiveIntegerFilter($query, 'act_ids', 'performance_act_ids'),
+        );
+
+        return [
+            array_values(array_intersect(
+                $scope->projectIds,
+                $this->positiveIntegerFilter($query, 'project_ids') ?? $scope->projectIds,
+            )),
+            $workIds,
+            $actIds,
+            $resources->ids($scope, ['act_line', 'performance_act_line'], $scope->projectIds),
+        ];
+    }
+
+    private function ownerQuery(
+        ReportScope $scope,
+        ReportQuery $query,
+        array $projectIds,
+        ?array $actIds,
+    ): Builder {
+        return ProductionAcceptanceOwnerVersion::query()
+            ->where('organization_id', $scope->organizationId)
+            ->whereIn('project_id', $projectIds)
+            ->where('effective_at', '<=', $query->asOf)
+            ->whereRaw(
+                'NOT EXISTS (
+                    SELECT 1 FROM production_acceptance_owner_versions owner_later
+                    WHERE owner_later.organization_id = production_acceptance_owner_versions.organization_id
+                      AND owner_later.performance_act_id = production_acceptance_owner_versions.performance_act_id
+                      AND owner_later.effective_at <= ?
+                      AND (owner_later.effective_at > production_acceptance_owner_versions.effective_at
+                        OR (owner_later.effective_at = production_acceptance_owner_versions.effective_at
+                          AND owner_later.version > production_acceptance_owner_versions.version))
+                )',
+                [$query->asOf->format(DATE_ATOM)],
+            )
+            ->when(
+                $actIds !== null,
+                static fn (Builder $builder) => $builder->whereIn('performance_act_id', $actIds),
+            );
+    }
+
+    private function legacyGapRows(
+        ReportScope $scope,
+        ReportQuery $query,
+        array $projectIds,
+        ?array $actIds,
+    ): \Generator {
+        $acts = ContractPerformanceAct::query()
+            ->whereIn('project_id', $projectIds)
+            ->whereHas('contract', static fn (Builder $builder) => $builder
+                ->where('organization_id', $scope->organizationId))
+            ->where(static function (Builder $builder) use ($query): void {
+                $builder
+                    ->where(static fn (Builder $signed) => $signed
+                        ->whereNotNull('signed_at')
+                        ->where('signed_at', '<=', $query->asOf))
+                    ->orWhere(static fn (Builder $approved) => $approved
+                        ->whereNotNull('approval_date')
+                        ->where('approval_date', '<=', $query->asOf));
+            })
+            ->whereNotExists(static function ($builder) use ($scope, $query): void {
+                $builder
+                    ->selectRaw('1')
+                    ->from('production_acceptance_owner_versions as owner_coverage')
+                    ->whereColumn('owner_coverage.performance_act_id', 'contract_performance_acts.id')
+                    ->where('owner_coverage.organization_id', $scope->organizationId)
+                    ->where('owner_coverage.effective_at', '<=', $query->asOf);
+            })
+            ->when($actIds !== null, static fn (Builder $builder) => $builder->whereIn('id', $actIds));
+        foreach ($acts->lazyById(500) as $act) {
+            yield [
+                'kind' => 'legacy_owner_unprovable',
+                'performance_act_id' => (int) $act->id,
+                'project_id' => (int) $act->project_id,
+                'reason' => 'historical_membership_unprovable',
+            ];
+        }
+
+        $queryBuilder = ProductionAcceptanceBackfillLedger::query()
+            ->where('organization_id', $scope->organizationId)
+            ->whereIn('project_id', $projectIds)
+            ->where('recognized_at', '<=', $query->asOf)
+            ->where('status', 'unprovable')
+            ->when($actIds !== null, static fn (Builder $builder) => $builder
+                ->whereIn('performance_act_id', $actIds));
+        foreach ($queryBuilder->lazyById(500) as $ledger) {
+            yield [
+                'kind' => 'legacy_owner_unprovable',
+                'ledger_id' => (int) $ledger->id,
+                'performance_act_id' => (int) $ledger->performance_act_id,
+                'reason' => (string) $ledger->reason,
+            ];
+        }
+    }
+
+    private function appendGap(DeterministicObjectSpool $spool, array $gap): void
+    {
+        $spool->append((object) $gap, $gap);
+    }
+
+    private function candidateMatchesState(array $candidate, ReportQuery $query): bool
+    {
+        [$from, $to] = $this->period($query->filters->values);
+        $date = substr((string) $candidate['effective_at'], 0, 10);
+
+        return $this->matches($query->filters->values['statuses'] ?? [], $candidate['event_type'])
+            && ($from === null || $date >= $from)
+            && ($to === null || $date <= $to);
+    }
+
+    private function eventMatchesState(ProductionAcceptanceEvent $event, ReportQuery $query): bool
+    {
+        [$from, $to] = $this->period($query->filters->values);
+        $date = $event->recognized_at->format('Y-m-d');
+
+        return $this->matches($query->filters->values['statuses'] ?? [], (string) $event->event_type)
+            && ($from === null || $date >= $from)
+            && ($to === null || $date <= $to);
+    }
+
+    private function eventIdentity(ProductionAcceptanceEvent $event): array
+    {
+        return [
+            'accepted_quantity_delta' => (string) $event->accepted_quantity_delta,
+            'approved_rate_minor' => $event->approved_rate_minor,
+            'currency' => $event->currency,
+            'currency_source' => $event->currency_source,
+            'event_type' => (string) $event->event_type,
+            'id' => (int) $event->id,
+            'performance_act_id' => (int) $event->performance_act_id,
+            'recognized_at' => $event->recognized_at->format(DATE_ATOM),
+            'source_hash' => (string) $event->source_hash,
+            'source_line_id' => (int) $event->source_line_id,
+            'source_line_type' => (string) $event->source_line_type,
+            'transition_version' => (int) $event->transition_version,
         ];
     }
 

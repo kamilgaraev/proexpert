@@ -85,8 +85,8 @@ final class Waves23ProductionContractsTest extends TestCase
         self::assertStringNotContainsString('$laterKeys', $readiness);
         self::assertStringNotContainsString('$laterEventKeys', $materializer);
         self::assertStringContainsString("where('recognized_at', '<=', \$query->asOf)", $universe);
-        self::assertStringContainsString('$this->universe->resolve($context->scope, $query)', $readiness);
-        self::assertStringContainsString('$this->universe->resolve($scope, $query)', $materializer);
+        self::assertStringContainsString('$this->universe->stream($context->scope, $query)', $readiness);
+        self::assertStringContainsString('$this->universe->stream($scope, $query)', $materializer);
     }
 
     #[Test]
@@ -170,7 +170,7 @@ final class Waves23ProductionContractsTest extends TestCase
             '(string) $latest->event_type !== (string) $candidate[\'event_type\']',
             $lifecycle,
         );
-        self::assertStringContainsString('$this->completeness->inspect(', $readiness);
+        self::assertStringContainsString('$stream->gapCount()', $readiness);
         self::assertStringNotContainsString('$eventKeys->has($key)', $readiness);
     }
 
@@ -203,8 +203,8 @@ final class Waves23ProductionContractsTest extends TestCase
         );
         self::assertStringContainsString('accepted_production_owner_history_unproven', $lifecycle);
         self::assertStringNotContainsString('ContractPerformanceAct::query()', $lifecycle);
-        self::assertStringContainsString('$this->completeness->inspect(', $readiness);
-        self::assertStringContainsString('$this->completeness->assertComplete(', $materializer);
+        self::assertStringContainsString('$stream->gapCount()', $readiness);
+        self::assertStringContainsString('$stream->gapCount()', $materializer);
     }
 
     #[Test]
@@ -431,6 +431,30 @@ final class Waves23ProductionContractsTest extends TestCase
             strpos($lookahead, '$selectedStates = $allStates'),
         );
         self::assertStringContainsString('$this->hasTaskFilters($query)', $lookahead);
+    }
+
+    #[Test]
+    public function r07_materialization_spools_inputs_metrics_and_projection_rows(): void
+    {
+        $materializer = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Services/'
+            .'LookaheadReadinessSnapshotMaterializer.php',
+        );
+        $historical = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/'
+            .'HistoricalScheduleTaskStateQuery.php',
+        );
+        $resourceCandidates = $this->source(
+            'app/BusinessModules/Features/ScheduleManagement/Reporting/Lookahead/Queries/'
+            .'LookaheadResourceCandidateQuery.php',
+        );
+
+        self::assertGreaterThanOrEqual(3, substr_count($materializer, 'new DeterministicObjectSpool'));
+        self::assertStringContainsString('$inputSpool->updateCanonicalArrayHash(', $materializer);
+        self::assertStringContainsString('$metricSpool->items()', $materializer);
+        self::assertStringContainsString('$projectionRows->items()', $materializer);
+        self::assertStringContainsString("->lazyById(500, 'task_id', 'task_id')", $historical);
+        self::assertStringContainsString('->chunkById(500, function ($constraintPage)', $resourceCandidates);
     }
 
     private function source(string $path): string

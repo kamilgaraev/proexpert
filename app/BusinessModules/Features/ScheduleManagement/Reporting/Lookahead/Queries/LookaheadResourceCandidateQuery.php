@@ -41,35 +41,48 @@ final readonly class LookaheadResourceCandidateQuery
                 $scopedConstraintIds !== null,
                 static fn ($builder) => $builder->whereIn('id', $scopedConstraintIds),
             )
-            ->orderBy('id')
-            ->get();
-        $events = WorkConstraintTransitionEvent::query()
-            ->where('organization_id', $scope->organizationId)
-            ->whereIn('constraint_id', $constraints->pluck('id')->all())
-            ->where('occurred_at', '<=', $asOf)
-            ->orderBy('constraint_id')
-            ->orderBy('event_version')
-            ->get()
-            ->groupBy('constraint_id');
-
+            ->orderBy('id');
         $taskIds = [];
-        foreach ($constraints as $constraint) {
-            $latest = $events->get((int) $constraint->id)?->last();
-            $linked = $latest instanceof WorkConstraintTransitionEvent
-                ? $this->linkedFromEvidence((array) $latest->evidence_refs)
-                : $this->linkedFromConstraint($constraint);
-            if ($this->resourceScope->allowsConstraintIdentity(
-                $scope,
-                (int) $constraint->project_id,
-                (int) $constraint->schedule_id,
-                (int) $constraint->schedule_task_id,
-                (int) $constraint->id,
-                $linked['type'] ?? null,
-                $linked['id'] ?? null,
-            )) {
-                $taskIds[(int) $constraint->schedule_task_id] = true;
+        $constraints->chunkById(500, function ($constraintPage) use (
+            $scope,
+            $asOf,
+            &$taskIds,
+        ): void {
+            $constraintIds = $constraintPage->pluck('id')->map('intval')->all();
+            $events = WorkConstraintTransitionEvent::query()
+                ->where('organization_id', $scope->organizationId)
+                ->whereIn('constraint_id', $constraintIds)
+                ->where('occurred_at', '<=', $asOf)
+                ->whereRaw(
+                    'NOT EXISTS (
+                        SELECT 1 FROM work_constraint_transition_events later
+                        WHERE later.organization_id = work_constraint_transition_events.organization_id
+                          AND later.constraint_id = work_constraint_transition_events.constraint_id
+                          AND later.occurred_at <= ?
+                          AND later.event_version > work_constraint_transition_events.event_version
+                    )',
+                    [$asOf->format(DATE_ATOM)],
+                )
+                ->get()
+                ->keyBy('constraint_id');
+            foreach ($constraintPage as $constraint) {
+                $latest = $events->get((int) $constraint->id);
+                $linked = $latest instanceof WorkConstraintTransitionEvent
+                    ? $this->linkedFromEvidence((array) $latest->evidence_refs)
+                    : $this->linkedFromConstraint($constraint);
+                if ($this->resourceScope->allowsConstraintIdentity(
+                    $scope,
+                    (int) $constraint->project_id,
+                    (int) $constraint->schedule_id,
+                    (int) $constraint->schedule_task_id,
+                    (int) $constraint->id,
+                    $linked['type'] ?? null,
+                    $linked['id'] ?? null,
+                )) {
+                    $taskIds[(int) $constraint->schedule_task_id] = true;
+                }
             }
-        }
+        });
 
         $result = array_map('intval', array_keys($taskIds));
         sort($result, SORT_NUMERIC);

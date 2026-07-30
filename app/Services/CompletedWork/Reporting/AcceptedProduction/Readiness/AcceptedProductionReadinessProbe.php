@@ -9,22 +9,14 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDefinition;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportExecutionContext;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSourceReadiness;
-use App\Services\CompletedWork\Reporting\AcceptedProduction\Models\ProductionAcceptanceEvent;
 use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionEventUniverse;
-use App\Services\CompletedWork\Reporting\AcceptedProduction\Services\AcceptedProductionLifecycleCompleteness;
-use App\Support\Reporting\ReportSourceReadinessFactory;
+use App\Support\Reporting\DeterministicReadinessAccumulator;
 
 final readonly class AcceptedProductionReadinessProbe implements ReportSourceReadinessProbe
 {
-    private AcceptedProductionLifecycleCompleteness $completeness;
-
     public function __construct(
-        private ReportSourceReadinessFactory $readiness,
         private AcceptedProductionEventUniverse $universe,
-        ?AcceptedProductionLifecycleCompleteness $completeness = null,
-    ) {
-        $this->completeness = $completeness ?? new AcceptedProductionLifecycleCompleteness;
-    }
+    ) {}
 
     public function supports(ReportDefinition $definition): bool
     {
@@ -41,44 +33,17 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
         ReportExecutionContext $context,
         ReportQuery $query,
     ): ReportSourceReadiness {
-        $universe = $this->universe->resolve($context->scope, $query);
-        $events = $universe['events'];
-        $latestEvents = $events
-            ->groupBy(static fn (ProductionAcceptanceEvent $event): string => implode(':', [
-                (int) $event->performance_act_id,
-                (string) $event->source_line_type,
-                (int) $event->source_line_id,
-            ]))
-            ->map(static fn ($lineEvents): ?ProductionAcceptanceEvent => $lineEvents->last());
-        $eligible = array_map(static fn (array $candidate): array => [
-            'owner_source_hash' => (string) $candidate['owner_source_hash'],
-            'owner_version_id' => (int) $candidate['owner_version_id'],
-            'performance_act_id' => (int) $candidate['performance_act_id'],
-            'source_line_id' => (int) $candidate['source_line_id'],
-            'source_line_type' => (string) $candidate['source_line_type'],
-        ], $universe['candidates']);
-        foreach ($universe['orphan_events'] as $orphan) {
-            $eligible[] = [
-                'event_id' => (int) $orphan['event_id'],
-                'kind' => 'owner_version_missing',
-                'performance_act_id' => (int) $orphan['performance_act_id'],
-            ];
-        }
-        foreach ($universe['legacy_gaps'] as $legacyGap) {
-            $eligible[] = [
-                'kind' => 'legacy_owner_unprovable',
-                'ledger_id' => (int) ($legacyGap['ledger_id'] ?? 0),
-                'performance_act_id' => (int) $legacyGap['performance_act_id'],
-            ];
-        }
-        $projected = [];
-        foreach ($universe['candidates'] as $candidate) {
-            $event = $latestEvents->get(implode(':', [
-                (int) $candidate['performance_act_id'],
-                (string) $candidate['source_line_type'],
-                (int) $candidate['source_line_id'],
-            ]));
-            if (! $event instanceof ProductionAcceptanceEvent
+        $stream = $this->universe->stream($context->scope, $query);
+        $readiness = new DeterministicReadinessAccumulator;
+        foreach ($stream->entries() as $entry) {
+            $event = $entry->latestEvent();
+            $candidate = $entry->candidate;
+            $readiness->eligible([
+                'owner_version_id' => (int) $candidate['owner_version_id'],
+                'source_line_id' => (int) $candidate['source_line_id'],
+                'source_line_type' => (string) $candidate['source_line_type'],
+            ]);
+            if ($event === null
                 || (string) $event->event_type !== (string) $candidate['event_type']
                 || $event->approved_rate_minor === null
                 || preg_match('/^[A-Z]{3}$/D', (string) $event->currency) !== 1
@@ -86,28 +51,29 @@ final readonly class AcceptedProductionReadinessProbe implements ReportSourceRea
             ) {
                 continue;
             }
-            $projected[] = [
+            $readiness->projected([
                 'event_id' => (int) $event->id,
-                'owner_source_hash' => (string) $candidate['owner_source_hash'],
                 'source_hash' => (string) $event->source_hash,
-            ];
+            ]);
         }
-        $gapCount = count($eligible) - count($projected);
-
-        $this->completeness->inspect(
-            $context->scope,
-            $query->asOf,
-            $events,
-            $universe,
-        );
+        foreach ($stream->gaps() as $gap) {
+            $readiness->eligible([
+                'gap_id' => (int) ($gap['event_id'] ?? $gap['ledger_id'] ?? $gap['performance_act_id'] ?? 0),
+                'kind' => (string) ($gap['kind'] ?? 'unproven'),
+            ]);
+        }
 
         $watermark = implode(':', [
             'owner',
-            (int) collect($universe['candidates'])->max('owner_version_id'),
+            $stream->ownerWatermark,
             'event',
-            (int) ($events->max('id') ?? 0),
+            $stream->eventWatermark,
         ]);
 
-        return $this->readiness->make($eligible, $projected, $gapCount, 0, $watermark);
+        return $readiness->finish(
+            $stream->gapCount(),
+            0,
+            $watermark,
+        );
     }
 }

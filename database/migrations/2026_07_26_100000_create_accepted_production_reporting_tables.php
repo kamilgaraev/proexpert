@@ -40,6 +40,31 @@ return new class extends Migration
             "ALTER TABLE production_acceptance_owner_versions ADD CONSTRAINT production_acceptance_owner_event_check
             CHECK (event_type IN ('accepted', 'reversed') AND jsonb_typeof(members) = 'array')"
         );
+        Schema::create('production_acceptance_owner_members', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('owner_version_id');
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('performance_act_id');
+            $table->string('source_line_type', 64);
+            $table->unsignedBigInteger('source_line_id');
+            $table->unsignedBigInteger('work_id');
+            $table->unsignedBigInteger('contractor_id')->nullable();
+            $table->string('unit_code', 64);
+            $table->string('zone')->nullable();
+            $table->foreign('owner_version_id')
+                ->references('id')
+                ->on('production_acceptance_owner_versions')
+                ->restrictOnDelete();
+            $table->unique(
+                ['owner_version_id', 'source_line_type', 'source_line_id'],
+                'production_acceptance_owner_member_unique',
+            );
+            $table->index(
+                ['organization_id', 'performance_act_id', 'owner_version_id', 'id'],
+                'production_acceptance_owner_member_stream',
+            );
+        });
         Schema::create('production_acceptance_backfill_ledger', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
@@ -141,6 +166,10 @@ CREATE TRIGGER production_acceptance_owner_versions_append_only
 BEFORE UPDATE OR DELETE ON production_acceptance_owner_versions
 FOR EACH ROW
 EXECUTE FUNCTION production_acceptance_event_immutable_guard();
+CREATE TRIGGER production_acceptance_owner_members_append_only
+BEFORE UPDATE OR DELETE ON production_acceptance_owner_members
+FOR EACH ROW
+EXECUTE FUNCTION production_acceptance_event_immutable_guard();
 CREATE TRIGGER production_acceptance_backfill_ledger_append_only
 BEFORE UPDATE OR DELETE ON production_acceptance_backfill_ledger
 FOR EACH ROW
@@ -199,6 +228,7 @@ SQL);
         Schema::dropIfExists('accepted_production_snapshots');
         Schema::dropIfExists('production_acceptance_events');
         Schema::dropIfExists('production_acceptance_backfill_ledger');
+        Schema::dropIfExists('production_acceptance_owner_members');
         Schema::dropIfExists('production_acceptance_owner_versions');
         DB::statement('DROP FUNCTION IF EXISTS production_acceptance_event_immutable_guard()');
     }
