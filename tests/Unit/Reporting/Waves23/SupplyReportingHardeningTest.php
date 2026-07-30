@@ -194,10 +194,19 @@ final class SupplyReportingHardeningTest extends TestCase
         );
 
         self::assertStringContainsString('$eligibleItemIds', $source);
-        self::assertSame(3, substr_count(
+        self::assertStringContainsString('$eligiblePromiseIds', $source);
+        self::assertStringContainsString(
+            "->whereIn('promise_version_id', \$eligiblePromiseIds)",
             $source,
-            "->whereIn('purchase_order_item_id', \$eligibleItemIds)",
-        ));
+        );
+        self::assertStringContainsString('->whereNotExists(', $source);
+        self::assertStringContainsString("'readiness_event.promise_version_id'", $source);
+        self::assertStringContainsString("'purchase_order_promise_versions.id'", $source);
+        self::assertStringContainsString('$missingSent', $source);
+        self::assertStringNotContainsString('->get([', $source);
+        self::assertStringNotContainsString('->pluck(', $source);
+        self::assertStringNotContainsString('PurchaseOrderItem::query()', $source);
+        self::assertStringNotContainsString('min($projected, $sentItems)', $source);
     }
 
     public function test_database_fences_bind_inventory_events_and_receipt_lots_to_sources(): void
@@ -221,6 +230,10 @@ final class SupplyReportingHardeningTest extends TestCase
             'source.material_id <> NEW.material_id',
             "source.metadata->>'reporting_source_version'",
             'expected_on_hand IS DISTINCT FROM NEW.on_hand_delta',
+            'expected_unit_price_minor IS DISTINCT FROM NEW.unit_price_minor',
+            'expected_currency IS DISTINCT FROM NEW.currency',
+            'NEW.metadata IS DISTINCT FROM OLD.metadata',
+            'NEW.price IS DISTINCT FROM OLD.price',
         ] as $identityFence) {
             self::assertStringContainsString($identityFence, $inventory, $identityFence);
         }
@@ -230,6 +243,16 @@ final class SupplyReportingHardeningTest extends TestCase
             "source_movement.metadata->>'batch_number'",
             'source_balance.batch_number IS DISTINCT FROM',
             'NEW.original_quantity <> source_line.quantity_received',
+            'source_item.purchase_order_id <> source_receipt.purchase_order_id',
+            "NEW.unit_dimension IS DISTINCT FROM (source_movement.metadata->>'unit_dimension')",
+            'warehouse_reporting_balance_identity',
+            'purchase_receipt_reporting_identity',
+            'purchase_order_item_reporting_identity',
+            'purchase_order_reporting_identity',
+            'supply_promise_source_identity',
+            'supply_lifecycle_event_source_identity',
+            'source_promise.purchase_order_item_id <> NEW.purchase_order_item_id',
+            'reversed_event.promise_version_id <> NEW.promise_version_id',
         ] as $identityFence) {
             self::assertStringContainsString($identityFence, $supply, $identityFence);
         }

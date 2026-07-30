@@ -374,6 +374,9 @@ DECLARE source warehouse_movements%ROWTYPE;
 DECLARE expected_event_type text;
 DECLARE expected_on_hand numeric;
 DECLARE expected_reserved numeric;
+DECLARE expected_unit_price_minor bigint;
+DECLARE expected_currency text;
+DECLARE expected_currency_source text;
 BEGIN
     SELECT * INTO source
       FROM warehouse_movements
@@ -416,6 +419,21 @@ BEGIN
         WHEN 'adjustment' THEN COALESCE((source.metadata->>'reserved_delta')::numeric, 0)
         ELSE 0
     END;
+    expected_currency := CASE
+        WHEN source.price IS NOT NULL
+             AND NULLIF(BTRIM(source.metadata->>'currency'), '') IS NOT NULL
+             AND NULLIF(BTRIM(source.metadata->>'currency_source'), '') IS NOT NULL
+            THEN BTRIM(source.metadata->>'currency')
+        ELSE NULL
+    END;
+    expected_currency_source := CASE
+        WHEN expected_currency IS NOT NULL THEN BTRIM(source.metadata->>'currency_source')
+        ELSE NULL
+    END;
+    expected_unit_price_minor := CASE
+        WHEN expected_currency IS NOT NULL THEN (source.price * 100)::bigint
+        ELSE NULL
+    END;
 
     IF source.organization_id <> NEW.organization_id
        OR source.warehouse_id <> NEW.warehouse_id
@@ -426,10 +444,14 @@ BEGIN
        OR (source.metadata->>'unit_code') IS DISTINCT FROM NEW.unit_code
        OR (source.metadata->>'unit_conversion_version') IS DISTINCT FROM NEW.conversion_version
        OR (source.metadata->>'reporting_opening_basis') IS DISTINCT FROM NEW.opening_basis
+       OR (source.metadata->>'transfer_pair_key') IS DISTINCT FROM NEW.transfer_pair_key
        OR expected_event_type IS NULL
        OR expected_event_type <> NEW.event_type
        OR expected_on_hand IS DISTINCT FROM NEW.on_hand_delta
        OR expected_reserved IS DISTINCT FROM NEW.reserved_delta
+       OR expected_unit_price_minor IS DISTINCT FROM NEW.unit_price_minor
+       OR expected_currency IS DISTINCT FROM NEW.currency
+       OR expected_currency_source IS DISTINCT FROM NEW.currency_source
        OR source.movement_date IS DISTINCT FROM NEW.occurred_at
        OR (
            NEW.event_type = 'transfer_in'
@@ -472,6 +494,10 @@ BEGIN
         OR NEW.movement_date <> OLD.movement_date
         OR NEW.from_warehouse_id IS DISTINCT FROM OLD.from_warehouse_id
         OR NEW.to_warehouse_id IS DISTINCT FROM OLD.to_warehouse_id
+        OR NEW.operation_category IS DISTINCT FROM OLD.operation_category
+        OR NEW.project_material_delivery_id IS DISTINCT FROM OLD.project_material_delivery_id
+        OR NEW.price IS DISTINCT FROM OLD.price
+        OR NEW.metadata IS DISTINCT FROM OLD.metadata
     ) THEN
         RAISE EXCEPTION 'linked warehouse movement identity is immutable' USING ERRCODE = '55000';
     END IF;

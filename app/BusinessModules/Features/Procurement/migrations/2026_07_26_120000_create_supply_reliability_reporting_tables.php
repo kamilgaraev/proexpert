@@ -85,6 +85,12 @@ return new class extends Migration
                 ['organization_id', 'supplier_id', 'promised_at', 'purchase_order_item_id', 'promise_version'],
                 'supply_promise_default_idx',
             );
+            $table->foreign('purchase_order_id')->references('id')->on('purchase_orders')->restrictOnDelete();
+            $table->foreign('purchase_order_item_id')->references('id')->on('purchase_order_items')->restrictOnDelete();
+            $table->foreign('supersedes_id')
+                ->references('id')
+                ->on('purchase_order_promise_versions')
+                ->restrictOnDelete();
         });
 
         Schema::create('supply_lifecycle_events', function (Blueprint $table): void {
@@ -113,10 +119,21 @@ return new class extends Migration
                 'supply_event_source_unique',
             );
             $table->unique(['organization_id', 'idempotency_key'], 'supply_event_idempotency_unique');
+            $table->unique('reversed_event_id', 'supply_event_reversal_unique');
             $table->index(
                 ['organization_id', 'purchase_order_item_id', 'occurred_at', 'id'],
                 'supply_event_timeline_idx',
             );
+            $table->foreign('promise_version_id')
+                ->references('id')
+                ->on('purchase_order_promise_versions')
+                ->restrictOnDelete();
+            $table->foreign('purchase_order_id')->references('id')->on('purchase_orders')->restrictOnDelete();
+            $table->foreign('purchase_order_item_id')->references('id')->on('purchase_order_items')->restrictOnDelete();
+            $table->foreign('reversed_event_id')
+                ->references('id')
+                ->on('supply_lifecycle_events')
+                ->restrictOnDelete();
         });
 
         Schema::create('supply_reliability_policy_versions', function (Blueprint $table): void {
@@ -226,6 +243,18 @@ return new class extends Migration
             DB::statement('DROP FUNCTION IF EXISTS most_receipt_inventory_lot_identity_v1()');
             DB::statement('DROP TRIGGER IF EXISTS purchase_receipt_line_reversal_identity ON purchase_receipt_lines');
             DB::statement('DROP FUNCTION IF EXISTS most_purchase_receipt_line_reversal_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS warehouse_reporting_balance_identity ON warehouse_balances');
+            DB::statement('DROP FUNCTION IF EXISTS most_warehouse_reporting_balance_identity_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS purchase_receipt_reporting_identity ON purchase_receipts');
+            DB::statement('DROP FUNCTION IF EXISTS most_purchase_receipt_reporting_identity_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS purchase_order_item_reporting_identity ON purchase_order_items');
+            DB::statement('DROP FUNCTION IF EXISTS most_purchase_order_item_reporting_identity_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS purchase_order_reporting_identity ON purchase_orders');
+            DB::statement('DROP FUNCTION IF EXISTS most_purchase_order_reporting_identity_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS supply_lifecycle_event_source_identity ON supply_lifecycle_events');
+            DB::statement('DROP FUNCTION IF EXISTS most_supply_lifecycle_event_source_identity_v1()');
+            DB::statement('DROP TRIGGER IF EXISTS supply_promise_source_identity ON purchase_order_promise_versions');
+            DB::statement('DROP FUNCTION IF EXISTS most_supply_promise_source_identity_v1()');
         }
         Schema::dropIfExists('supply_reliability_rows');
         Schema::dropIfExists('supply_reliability_snapshots');
@@ -301,8 +330,13 @@ BEGIN
        OR source_movement.id IS NULL
        OR source_balance.id IS NULL
        OR NEW.organization_id <> source_receipt.organization_id
+       OR source_item.purchase_order_id <> source_receipt.purchase_order_id
        OR NEW.original_quantity <> source_line.quantity_received
        OR NEW.original_quantity <> source_movement.quantity
+       OR NEW.unit_dimension IS DISTINCT FROM (source_movement.metadata->>'unit_dimension')
+       OR NEW.unit_code IS DISTINCT FROM (source_movement.metadata->>'unit_code')
+       OR NEW.conversion_version IS DISTINCT FROM
+          (source_movement.metadata->>'unit_conversion_version')
        OR source_movement.organization_id <> source_receipt.organization_id
        OR source_movement.warehouse_id <> source_receipt.warehouse_id
        OR source_movement.material_id <> source_item.material_id
@@ -393,6 +427,215 @@ $$;
 CREATE TRIGGER purchase_receipt_inventory_lot_identity
 BEFORE UPDATE ON purchase_receipt_inventory_lots
 FOR EACH ROW EXECUTE FUNCTION most_receipt_inventory_lot_identity_v1()
+SQL);
+        $this->installLinkedSourceIdentityConstraints();
+        $this->installSupplySourceIdentityConstraints();
+    }
+
+    private function installLinkedSourceIdentityConstraints(): void
+    {
+        DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION most_warehouse_reporting_balance_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM purchase_receipt_inventory_lots
+         WHERE warehouse_balance_id = OLD.id
+    ) AND (
+        NEW.organization_id <> OLD.organization_id
+        OR NEW.warehouse_id <> OLD.warehouse_id
+        OR NEW.material_id <> OLD.material_id
+        OR NEW.batch_number IS DISTINCT FROM OLD.batch_number
+    ) THEN
+        RAISE EXCEPTION 'linked warehouse balance identity is immutable' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER warehouse_reporting_balance_identity
+BEFORE UPDATE ON warehouse_balances
+FOR EACH ROW EXECUTE FUNCTION most_warehouse_reporting_balance_identity_v1();
+
+CREATE OR REPLACE FUNCTION most_purchase_receipt_reporting_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM purchase_receipt_lines source_line
+          JOIN purchase_receipt_inventory_lots source_lot
+            ON source_lot.purchase_receipt_line_id = source_line.id
+         WHERE source_line.purchase_receipt_id = OLD.id
+    ) AND (
+        NEW.organization_id <> OLD.organization_id
+        OR NEW.purchase_order_id <> OLD.purchase_order_id
+        OR NEW.warehouse_id <> OLD.warehouse_id
+    ) THEN
+        RAISE EXCEPTION 'linked purchase receipt identity is immutable' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER purchase_receipt_reporting_identity
+BEFORE UPDATE ON purchase_receipts
+FOR EACH ROW EXECUTE FUNCTION most_purchase_receipt_reporting_identity_v1();
+
+CREATE OR REPLACE FUNCTION most_purchase_order_item_reporting_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF (
+        EXISTS (
+            SELECT 1
+              FROM purchase_receipt_lines source_line
+              JOIN purchase_receipt_inventory_lots source_lot
+                ON source_lot.purchase_receipt_line_id = source_line.id
+             WHERE source_line.purchase_order_item_id = OLD.id
+        )
+        OR EXISTS (
+            SELECT 1
+              FROM purchase_order_promise_versions
+             WHERE purchase_order_item_id = OLD.id
+        )
+    ) AND (
+        NEW.purchase_order_id <> OLD.purchase_order_id
+        OR NEW.material_id IS DISTINCT FROM OLD.material_id
+    ) THEN
+        RAISE EXCEPTION 'linked purchase order item identity is immutable' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER purchase_order_item_reporting_identity
+BEFORE UPDATE ON purchase_order_items
+FOR EACH ROW EXECUTE FUNCTION most_purchase_order_item_reporting_identity_v1();
+
+CREATE OR REPLACE FUNCTION most_purchase_order_reporting_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF (
+        EXISTS (
+            SELECT 1
+              FROM purchase_receipts source_receipt
+              JOIN purchase_receipt_lines source_line
+                ON source_line.purchase_receipt_id = source_receipt.id
+              JOIN purchase_receipt_inventory_lots source_lot
+                ON source_lot.purchase_receipt_line_id = source_line.id
+             WHERE source_receipt.purchase_order_id = OLD.id
+        )
+        OR EXISTS (
+            SELECT 1
+              FROM purchase_order_promise_versions
+             WHERE purchase_order_id = OLD.id
+        )
+    ) AND NEW.organization_id <> OLD.organization_id THEN
+        RAISE EXCEPTION 'linked purchase order identity is immutable' USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER purchase_order_reporting_identity
+BEFORE UPDATE ON purchase_orders
+FOR EACH ROW EXECUTE FUNCTION most_purchase_order_reporting_identity_v1()
+SQL);
+    }
+
+    private function installSupplySourceIdentityConstraints(): void
+    {
+        DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION most_supply_promise_source_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE source_order purchase_orders%ROWTYPE;
+DECLARE source_item purchase_order_items%ROWTYPE;
+DECLARE source_previous purchase_order_promise_versions%ROWTYPE;
+BEGIN
+    SELECT * INTO source_order
+      FROM purchase_orders
+     WHERE id = NEW.purchase_order_id;
+    SELECT * INTO source_item
+      FROM purchase_order_items
+     WHERE id = NEW.purchase_order_item_id;
+    IF NEW.supersedes_id IS NOT NULL THEN
+        SELECT * INTO source_previous
+          FROM purchase_order_promise_versions
+         WHERE id = NEW.supersedes_id;
+    END IF;
+
+    IF source_order.id IS NULL
+       OR source_item.id IS NULL
+       OR source_order.organization_id <> NEW.organization_id
+       OR source_item.purchase_order_id <> NEW.purchase_order_id
+       OR source_item.material_id IS DISTINCT FROM NEW.material_id
+       OR (
+           NEW.promise_version = 1
+           AND NEW.supersedes_id IS NOT NULL
+       )
+       OR (
+           NEW.promise_version > 1
+           AND (
+               source_previous.id IS NULL
+               OR source_previous.organization_id <> NEW.organization_id
+               OR source_previous.purchase_order_item_id <> NEW.purchase_order_item_id
+               OR source_previous.promise_version + 1 <> NEW.promise_version
+           )
+       ) THEN
+        RAISE EXCEPTION 'supply promise does not match its source order item'
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER supply_promise_source_identity
+BEFORE INSERT ON purchase_order_promise_versions
+FOR EACH ROW EXECUTE FUNCTION most_supply_promise_source_identity_v1();
+
+CREATE OR REPLACE FUNCTION most_supply_lifecycle_event_source_identity_v1() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE source_promise purchase_order_promise_versions%ROWTYPE;
+DECLARE reversed_event supply_lifecycle_events%ROWTYPE;
+BEGIN
+    SELECT * INTO source_promise
+      FROM purchase_order_promise_versions
+     WHERE id = NEW.promise_version_id;
+    IF NEW.reversed_event_id IS NOT NULL THEN
+        SELECT * INTO reversed_event
+          FROM supply_lifecycle_events
+         WHERE id = NEW.reversed_event_id;
+    END IF;
+
+    IF source_promise.id IS NULL
+       OR source_promise.organization_id <> NEW.organization_id
+       OR source_promise.purchase_order_id <> NEW.purchase_order_id
+       OR source_promise.purchase_order_item_id <> NEW.purchase_order_item_id
+       OR source_promise.unit_dimension <> NEW.unit_dimension
+       OR source_promise.unit_code <> NEW.unit_code
+       OR source_promise.conversion_version <> NEW.conversion_version
+       OR (
+           NEW.event_type = 'receipt_reversed'
+           AND (
+               reversed_event.id IS NULL
+               OR reversed_event.organization_id <> NEW.organization_id
+               OR reversed_event.purchase_order_id <> NEW.purchase_order_id
+               OR reversed_event.purchase_order_item_id <> NEW.purchase_order_item_id
+               OR reversed_event.promise_version_id <> NEW.promise_version_id
+               OR reversed_event.event_type <> 'received'
+               OR reversed_event.occurred_at > NEW.occurred_at
+           )
+       ) THEN
+        RAISE EXCEPTION 'supply lifecycle event does not match its promise'
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER supply_lifecycle_event_source_identity
+BEFORE INSERT ON supply_lifecycle_events
+FOR EACH ROW EXECUTE FUNCTION most_supply_lifecycle_event_source_identity_v1()
 SQL);
     }
 

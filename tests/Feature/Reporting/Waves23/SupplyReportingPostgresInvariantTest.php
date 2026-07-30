@@ -509,6 +509,95 @@ SQL);
             'created_at' => $now,
             'updated_at' => $now,
         ]);
+        $foreignOrderId = DB::table('purchase_orders')->insertGetId([
+            'organization_id' => $organization->id,
+            'supplier_id' => $supplierId,
+            'order_number' => 'FOREIGN-RECEIPT-'.$organization->id,
+            'order_date' => $now->toDateString(),
+            'status' => 'received',
+            'total_amount' => '1000.00',
+            'currency' => 'RUB',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $foreignItemId = DB::table('purchase_order_items')->insertGetId([
+            'purchase_order_id' => $foreignOrderId,
+            'material_id' => $materialId,
+            'material_name' => 'Foreign receipt material',
+            'quantity' => '10.000',
+            'unit' => 'kg',
+            'unit_price' => '100.00',
+            'total_price' => '1000.00',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $foreignLineId = DB::table('purchase_receipt_lines')->insertGetId([
+            'purchase_receipt_id' => $receiptId,
+            'purchase_order_item_id' => $foreignItemId,
+            'quantity_received' => '10.000',
+            'price' => '100.00',
+            'total_amount' => '1000.00',
+            'metadata' => '{}',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $foreignBalanceId = DB::table('warehouse_balances')->insertGetId([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $materialId,
+            'available_quantity' => '10.000',
+            'reserved_quantity' => '0.000',
+            'unit_price' => '100.00',
+            'batch_number' => 'purchase-receipt-line:'.$foreignLineId,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $foreignMovementId = DB::table('warehouse_movements')->insertGetId([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $materialId,
+            'movement_type' => 'receipt',
+            'quantity' => '10.000',
+            'price' => '100.00',
+            'metadata' => json_encode([
+                'reporting_source_version' => 1,
+                'unit_dimension' => 'mass',
+                'unit_code' => 'kg',
+                'unit_conversion_version' => 'kg:v1',
+                'reporting_inventory_project_id' => null,
+                'currency' => 'RUB',
+                'currency_source' => 'warehouse_movement.price',
+                'purchase_order_item_id' => $foreignItemId,
+                'batch_number' => 'purchase-receipt-line:'.$foreignLineId,
+            ], JSON_THROW_ON_ERROR),
+            'movement_date' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::beginTransaction();
+        try {
+            DB::table('purchase_receipt_inventory_lots')->insert([
+                'organization_id' => $organization->id,
+                'purchase_receipt_line_id' => $foreignLineId,
+                'warehouse_balance_id' => $foreignBalanceId,
+                'receipt_warehouse_movement_id' => $foreignMovementId,
+                'original_quantity' => '10.000000',
+                'reversed_quantity' => '0.000000',
+                'unit_dimension' => 'mass',
+                'unit_code' => 'kg',
+                'conversion_version' => 'kg:v1',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+            self::fail('Receipt line from another purchase order must be rejected.');
+        } catch (\Illuminate\Database\QueryException) {
+            DB::rollBack();
+            self::assertFalse(
+                DB::table('purchase_receipt_inventory_lots')
+                    ->where('purchase_receipt_line_id', $foreignLineId)
+                    ->exists(),
+            );
+        }
         DB::beginTransaction();
         try {
             DB::table('purchase_receipt_inventory_lots')->insert([
@@ -547,6 +636,20 @@ SQL);
             'created_at' => $now,
             'updated_at' => $now,
         ]);
+        foreach ([
+            ['warehouse_balances', $balanceId, ['batch_number' => 'tampered-batch']],
+            ['purchase_receipts', $receiptId, ['purchase_order_id' => $foreignOrderId]],
+            ['purchase_order_items', $itemId, ['purchase_order_id' => $foreignOrderId]],
+        ] as [$table, $id, $attributes]) {
+            DB::beginTransaction();
+            try {
+                DB::table($table)->where('id', $id)->update($attributes);
+                self::fail($table.' linked identity mutation must be rejected.');
+            } catch (\Illuminate\Database\QueryException) {
+                DB::rollBack();
+                self::assertTrue(DB::table($table)->where('id', $id)->exists());
+            }
+        }
         $line = PurchaseReceiptLine::query()
             ->with(['purchaseReceipt', 'purchaseOrderItem'])
             ->findOrFail($lineId);
@@ -557,6 +660,194 @@ SQL);
             'supplier_return',
             (int) $actor->id,
             CarbonImmutable::now('UTC'),
+        );
+    }
+
+    public function test_linked_inventory_event_rejects_source_valuation_metadata_mutation(): void
+    {
+        $organization = Organization::factory()->create();
+        $now = now('UTC');
+        $warehouseId = DB::table('organization_warehouses')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'Immutable source',
+            'code' => 'IMMUTABLE-'.$organization->id,
+            'warehouse_type' => 'central',
+            'is_main' => true,
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $materialId = DB::table('materials')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'Immutable material',
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $metadata = [
+            'reporting_source_version' => 1,
+            'reporting_inventory_project_id' => null,
+            'unit_dimension' => 'mass',
+            'unit_code' => 'kg',
+            'unit_conversion_version' => 'kg:v1',
+            'currency' => 'RUB',
+            'currency_source' => 'warehouse_movement.price',
+        ];
+        $movementId = DB::table('warehouse_movements')->insertGetId([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $materialId,
+            'movement_type' => 'receipt',
+            'quantity' => '10.000000',
+            'price' => '100.00',
+            'metadata' => json_encode($metadata, JSON_THROW_ON_ERROR),
+            'movement_date' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('warehouse_inventory_events')->insert([
+            'organization_id' => $organization->id,
+            'warehouse_id' => $warehouseId,
+            'material_id' => $materialId,
+            'source_movement_id' => $movementId,
+            'source_version' => 1,
+            'event_type' => 'receipt',
+            'on_hand_delta' => '10.000000',
+            'reserved_delta' => '0',
+            'unit_dimension' => 'mass',
+            'unit_code' => 'kg',
+            'conversion_version' => 'kg:v1',
+            'unit_price_minor' => 10000,
+            'currency' => 'RUB',
+            'currency_source' => 'warehouse_movement.price',
+            'occurred_at' => $now,
+            'source_hash' => str_repeat('c', 64),
+            'source_refs' => '[]',
+        ]);
+
+        $metadata['currency'] = 'USD';
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        DB::table('warehouse_movements')->where('id', $movementId)->update([
+            'metadata' => json_encode($metadata, JSON_THROW_ON_ERROR),
+        ]);
+    }
+
+    public function test_supply_lifecycle_event_rejects_item_outside_promise_identity(): void
+    {
+        $organization = Organization::factory()->create();
+        $now = now('UTC');
+        $supplierId = DB::table('suppliers')->insertGetId([
+            'organization_id' => $organization->id,
+            'name' => 'Identity supplier',
+            'is_active' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $orderId = DB::table('purchase_orders')->insertGetId([
+            'organization_id' => $organization->id,
+            'supplier_id' => $supplierId,
+            'order_number' => 'IDENTITY-'.$organization->id,
+            'order_date' => $now->toDateString(),
+            'status' => 'sent',
+            'total_amount' => '200.00',
+            'currency' => 'RUB',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $materialIds = [];
+        foreach (['A', 'B'] as $name) {
+            $materialIds[] = DB::table('materials')->insertGetId([
+                'organization_id' => $organization->id,
+                'name' => 'Identity material '.$name,
+                'is_active' => true,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+        $itemIds = [];
+        foreach ($materialIds as $index => $materialId) {
+            $itemIds[] = DB::table('purchase_order_items')->insertGetId([
+                'purchase_order_id' => $orderId,
+                'material_id' => $materialId,
+                'material_name' => 'Identity item '.$index,
+                'quantity' => '1.000',
+                'unit' => 'kg',
+                'unit_price' => '100.00',
+                'total_price' => '100.00',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+        $promiseId = DB::table('purchase_order_promise_versions')->insertGetId([
+            'organization_id' => $organization->id,
+            'purchase_order_id' => $orderId,
+            'purchase_order_item_id' => $itemIds[0],
+            'promise_version' => 1,
+            'supplier_id' => $supplierId,
+            'material_id' => $materialIds[0],
+            'ordered_quantity' => '1.000000',
+            'ordered_value_minor' => 10000,
+            'value_basis' => 'RUB:test:included:excluded',
+            'unit_dimension' => 'mass',
+            'unit_code' => 'kg',
+            'conversion_version' => 'kg:v1',
+            'promised_at' => $now,
+            'promise_timezone' => 'UTC',
+            'currency' => 'RUB',
+            'currency_source' => 'test',
+            'tax_basis' => 'included',
+            'freight_basis' => 'excluded',
+            'source_version' => 1,
+            'effective_from' => $now,
+            'source_hash' => str_repeat('d', 64),
+        ]);
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        DB::table('supply_lifecycle_events')->insert([
+            'organization_id' => $organization->id,
+            'purchase_order_id' => $orderId,
+            'purchase_order_item_id' => $itemIds[1],
+            'promise_version_id' => $promiseId,
+            'event_type' => 'sent',
+            'source_type' => 'purchase_order',
+            'source_id' => $orderId,
+            'source_version' => 1,
+            'signed_quantity' => '0',
+            'unit_dimension' => 'mass',
+            'unit_code' => 'kg',
+            'conversion_version' => 'kg:v1',
+            'occurred_at' => $now,
+            'idempotency_key' => 'mismatched-item-'.$organization->id,
+            'source_hash' => str_repeat('e', 64),
+        ]);
+    }
+
+    public function test_receipt_and_inventory_source_functions_expose_complete_identity_fences(): void
+    {
+        $receipt = (string) DB::scalar(
+            "SELECT pg_get_functiondef('most_receipt_inventory_lot_source_identity_v1'::regproc)",
+        );
+        $movement = (string) DB::scalar(
+            "SELECT pg_get_functiondef('most_warehouse_reporting_movement_identity_v1'::regproc)",
+        );
+        $lifecycle = (string) DB::scalar(
+            "SELECT pg_get_functiondef('most_supply_lifecycle_event_source_identity_v1'::regproc)",
+        );
+
+        self::assertStringContainsString(
+            'source_item.purchase_order_id <> source_receipt.purchase_order_id',
+            $receipt,
+        );
+        self::assertStringContainsString('unit_conversion_version', $receipt);
+        self::assertStringContainsString('new.metadata IS DISTINCT FROM old.metadata', $movement);
+        self::assertStringContainsString('new.price IS DISTINCT FROM old.price', $movement);
+        self::assertStringContainsString(
+            'source_promise.purchase_order_item_id <> new.purchase_order_item_id',
+            $lifecycle,
+        );
+        self::assertStringContainsString(
+            'reversed_event.promise_version_id <> new.promise_version_id',
+            $lifecycle,
         );
     }
 
