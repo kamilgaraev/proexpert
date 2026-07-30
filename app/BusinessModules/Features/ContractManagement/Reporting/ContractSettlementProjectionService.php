@@ -15,6 +15,7 @@ use App\BusinessModules\Features\ContractManagement\Reporting\DTO\ContractSettle
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementExposureSnapshot;
 use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementSourceFact;
 use DateInterval;
+use DateTimeImmutable;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -34,7 +35,10 @@ final readonly class ContractSettlementProjectionService
             throw new DomainException('report_projection_scope_invalid');
         }
 
-        $inputs = $this->ownerSource->read($scope, $query);
+        $inputs = $this->persistedInputs($scope, $query);
+        if ($inputs === []) {
+            $inputs = $this->ownerSource->read($scope, $query);
+        }
         if ($inputs === []) {
             throw new DomainException('report_mandatory_source_unavailable');
         }
@@ -86,9 +90,37 @@ final readonly class ContractSettlementProjectionService
             'rows' => $rows,
         ])));
         $totals = $this->totals($rows);
+        $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
+        $existing = ContractSettlementExposureSnapshot::query()
+            ->where('organization_id', $scope->organizationId)
+            ->where('scope_hash', $scopeHash)
+            ->where('query_hash', $query->queryHash->value)
+            ->where('source_hash', $sourceHash->value)
+            ->first();
+        if ($existing instanceof ContractSettlementExposureSnapshot) {
+            return new ReportSnapshotRef(
+                kind: 'contract_settlement_exposure',
+                id: (string) $existing->id,
+                scope: $scope,
+                definitionHash: $query->definition->definitionHash,
+                formulaVersion: ContractSettlementCalculator::FORMULA_VERSION,
+                sourceHash: $sourceHash,
+                generatedAt: $existing->generated_at->toDateTimeImmutable(),
+                staleAt: $existing->stale_at?->toDateTimeImmutable(),
+                watermarks: [
+                    'query_hash' => $query->queryHash->value,
+                    'as_of' => $query->asOf->format(DATE_ATOM),
+                    'aging_policy_version' => SettlementAgingPolicy::VERSION,
+                    'source_fact_id' => (int) $existing->source_watermark_id,
+                ],
+                classification: ReportSnapshotClassification::OPERATIONAL,
+                seal: null,
+            );
+        }
 
-        DB::transaction(function () use (
+        $persistedSnapshot = DB::transaction(function () use (
             $scope,
+            $scopeHash,
             $query,
             $snapshotId,
             $sourceHash,
@@ -98,13 +130,15 @@ final readonly class ContractSettlementProjectionService
             $rows,
             $totals,
             $selectedInputs,
-        ): void {
+        ): ContractSettlementExposureSnapshot {
             $timestamp = now();
             ContractSettlementSourceFact::query()->insertOrIgnore(array_map(
                 static fn (ContractSettlementInput $input): array => [
                     'organization_id' => $scope->organizationId,
+                    'scope_hash' => hash('sha256', CanonicalJson::encode($scope->canonicalIdentity())),
                     'query_hash' => $query->queryHash->value,
                     'source_hash' => $sourceHash->value,
+                    'as_of' => $query->asOf,
                     'contract_id' => $input->contractId,
                     'allocation_id' => $input->allocationId,
                     'project_id' => $input->projectId,
@@ -122,15 +156,29 @@ final readonly class ContractSettlementProjectionService
                 ],
                 $selectedInputs,
             ));
-            $snapshot = ContractSettlementExposureSnapshot::query()->create([
-                'id' => $snapshotId,
+            $persisted = ContractSettlementSourceFact::query()
+                ->where('organization_id', $scope->organizationId)
+                ->where('scope_hash', $scopeHash)
+                ->where('query_hash', $query->queryHash->value)
+                ->orderBy('contract_id')
+                ->orderBy('allocation_id')
+                ->get();
+            if ($persisted->count() !== count($selectedInputs)
+                || $persisted->contains(static fn (ContractSettlementSourceFact $fact): bool => ! hash_equals((string) $fact->source_hash, $sourceHash->value))) {
+                throw new DomainException('contract_settlement_source_fact_race_conflict');
+            }
+            $identity = [
                 'organization_id' => $scope->organizationId,
+                'scope_hash' => $scopeHash,
+                'query_hash' => $query->queryHash->value,
+                'source_hash' => $sourceHash->value,
+            ];
+            $inserted = ContractSettlementExposureSnapshot::query()->insertOrIgnore([[
+                'id' => $snapshotId,
+                ...$identity,
                 'definition_hash' => $query->definition->definitionHash->value,
                 'formula_version' => ContractSettlementCalculator::FORMULA_VERSION,
                 'aging_policy_version' => SettlementAgingPolicy::VERSION,
-                'scope_hash' => hash('sha256', CanonicalJson::encode($scope->canonicalIdentity())),
-                'query_hash' => $query->queryHash->value,
-                'source_hash' => $sourceHash->value,
                 'as_of' => $query->asOf,
                 'generated_at' => $generatedAt,
                 'stale_at' => $staleAt,
@@ -140,32 +188,43 @@ final readonly class ContractSettlementProjectionService
                 'coverage_numerator' => count($rows),
                 'coverage_denominator' => count($rows),
                 'quality_status' => 'complete',
-            ]);
-            foreach (array_chunk($rows, 500) as $chunk) {
-                $snapshot->rows()->createMany(array_map(
-                    static fn (array $row): array => [
-                        ...$row,
-                        'organization_id' => $scope->organizationId,
-                    ],
-                    $chunk,
-                ));
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]]);
+            $snapshot = ContractSettlementExposureSnapshot::query()->where($identity)->first();
+            if (! $snapshot instanceof ContractSettlementExposureSnapshot
+                || ! hash_equals((string) $snapshot->source_hash, $sourceHash->value)) {
+                throw new DomainException('contract_settlement_snapshot_race_conflict');
             }
+            if ($inserted === 1) {
+                foreach (array_chunk($rows, 500) as $chunk) {
+                    $snapshot->rows()->createMany(array_map(
+                        static fn (array $row): array => [
+                            ...$row,
+                            'organization_id' => $scope->organizationId,
+                        ],
+                        $chunk,
+                    ));
+                }
+            }
+
+            return $snapshot;
         });
 
         return new ReportSnapshotRef(
             kind: 'contract_settlement_exposure',
-            id: $snapshotId,
+            id: (string) $persistedSnapshot->id,
             scope: $scope,
             definitionHash: $query->definition->definitionHash,
             formulaVersion: ContractSettlementCalculator::FORMULA_VERSION,
             sourceHash: $sourceHash,
-            generatedAt: $generatedAt,
-            staleAt: $staleAt,
+            generatedAt: $persistedSnapshot->generated_at->toDateTimeImmutable(),
+            staleAt: $persistedSnapshot->stale_at?->toDateTimeImmutable(),
             watermarks: [
                 'query_hash' => $query->queryHash->value,
                 'as_of' => $query->asOf->format(DATE_ATOM),
                 'aging_policy_version' => SettlementAgingPolicy::VERSION,
-                'source_fact_id' => $sourceWatermarkId,
+                'source_fact_id' => (int) $persistedSnapshot->source_watermark_id,
             ],
             classification: ReportSnapshotClassification::OPERATIONAL,
             seal: null,
@@ -206,5 +265,36 @@ final readonly class ContractSettlementProjectionService
         }
 
         return $ids === [] ? 0 : max($ids);
+    }
+
+    /**
+     * @return list<ContractSettlementInput>
+     */
+    private function persistedInputs(ReportScope $scope, ReportQuery $query): array
+    {
+        $scopeHash = hash('sha256', CanonicalJson::encode($scope->canonicalIdentity()));
+        $facts = ContractSettlementSourceFact::query()
+            ->where('organization_id', $scope->organizationId)
+            ->where('scope_hash', $scopeHash)
+            ->where('query_hash', $query->queryHash->value)
+            ->where('as_of', $query->asOf)
+            ->orderBy('contract_id')
+            ->orderBy('allocation_id')
+            ->get();
+
+        return $facts->map(static fn (ContractSettlementSourceFact $fact): ContractSettlementInput => new ContractSettlementInput(
+            contractId: (int) $fact->contract_id,
+            allocationId: (int) $fact->allocation_id,
+            projectId: $fact->project_id === null ? null : (int) $fact->project_id,
+            partyId: $fact->party_id === null ? null : (int) $fact->party_id,
+            direction: (string) $fact->direction,
+            currency: (string) $fact->currency,
+            effectiveMinor: (int) $fact->effective_minor,
+            acceptedMinor: (int) $fact->accepted_minor,
+            cashMinor: (int) $fact->completed_cash_minor,
+            dueAt: $fact->due_at?->toDateTimeImmutable(),
+            asOf: new DateTimeImmutable((string) $fact->as_of),
+            sourceRefs: (array) $fact->source_refs,
+        ))->all();
     }
 }

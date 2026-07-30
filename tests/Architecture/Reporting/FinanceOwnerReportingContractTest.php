@@ -11,17 +11,17 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportDrillDownInput;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlProvider;
 use App\BusinessModules\Features\Budgeting\Reporting\ManagementPnl\ManagementPnlQueryService;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\BudgetPlanFactProvider;
+use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\ProjectFinanceProjectionService;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\ProjectFinanceQueryService;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\ProjectMarginProvider;
 use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\WipCompletionForecastProvider;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\DrillDown\ChangeClaimDrillDownProvider;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Providers\ChangeClaimContingencyReportProvider;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Queries\ChangeClaimRowQuery;
-use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureProvider;
-use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementQueryService;
-use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerSource;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Services\ChangeClaimSnapshotMaterializer;
-use App\BusinessModules\Features\Budgeting\Reporting\ProjectFinance\ProjectFinanceProjectionService;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementExposureProvider;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementOwnerSource;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementQueryService;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -84,7 +84,7 @@ final class FinanceOwnerReportingContractTest extends TestCase
             $path = $this->root().'/'.$migration;
             self::assertFileExists($path);
             $contents[$migration] = (string) file_get_contents($path);
-            self::assertStringNotContainsString('DB::', $contents[$migration]);
+            self::assertDoesNotMatchRegularExpression('/DB::table\\s*\\(/', $contents[$migration]);
             self::assertDoesNotMatchRegularExpression('/->(?:insert|update|delete|chunk|cursor|get)\\s*\\(/', $contents[$migration]);
         }
 
@@ -97,13 +97,60 @@ final class FinanceOwnerReportingContractTest extends TestCase
             $contents[self::MIGRATIONS[1]],
         );
         self::assertStringContainsString(
-            "['organization_id', 'source_hash', 'contract_id', 'allocation_id', 'direction', 'currency']",
+            "['organization_id', 'query_hash', 'contract_id', 'allocation_id', 'direction', 'currency']",
             $contents[self::MIGRATIONS[2]],
         );
         self::assertStringContainsString(
             "['organization_id', 'change_claim_id', 'claim_version']",
             $contents[self::MIGRATIONS[3]],
         );
+    }
+
+    #[Test]
+    public function finance_owner_facts_are_database_append_only_and_writers_are_race_fenced(): void
+    {
+        $root = $this->root();
+        $management = (string) file_get_contents($root.'/app/BusinessModules/Features/Budgeting/migrations/2026_07_26_000120_create_management_pnl_policies_and_projections.php');
+        $settlement = (string) file_get_contents($root.'/app/BusinessModules/Features/ContractManagement/migrations/2026_07_26_000140_create_contract_settlement_report_projections.php');
+        $change = (string) file_get_contents($root.'/app/BusinessModules/Features/ChangeManagement/migrations/2026_07_26_110000_create_change_claim_reporting_tables.php');
+        foreach ([
+            [$management, 'reports_management_pnl_append_only', 'management_pnl_snapshots_append_only'],
+            [$settlement, 'reports_contract_settlement_append_only', 'contract_settlement_source_facts_append_only'],
+            [$change, 'reports_change_claim_append_only', 'contingency_ledger_entries_append_only'],
+        ] as [$migration, $function, $trigger]) {
+            self::assertStringContainsString($function, $migration);
+            self::assertStringContainsString($trigger, $migration);
+            self::assertStringContainsString('BEFORE UPDATE OR DELETE', $migration);
+        }
+
+        $workflow = (string) file_get_contents($root.'/app/BusinessModules/Features/ChangeManagement/Reporting/ChangeClaim/Services/ChangeWorkflowEventRecorder.php');
+        $ledger = (string) file_get_contents($root.'/app/BusinessModules/Features/ChangeManagement/Reporting/ChangeClaim/Services/ContingencyLedgerService.php');
+        $settlementWriter = (string) file_get_contents($root.'/app/BusinessModules/Features/ContractManagement/Reporting/ContractSettlementProjectionService.php');
+        self::assertStringContainsString("DB::table('change_requests')", $workflow);
+        self::assertStringContainsString('->lockForUpdate()', $workflow);
+        self::assertStringContainsString('insertOrIgnore', $ledger);
+        self::assertStringContainsString('contingency_ledger_replay_conflict', $ledger);
+        self::assertStringContainsString('contract_settlement_source_fact_race_conflict', $settlementWriter);
+        self::assertStringContainsString('contract_settlement_snapshot_race_conflict', $settlementWriter);
+
+        $managementWriter = (string) file_get_contents($root.'/app/BusinessModules/Features/Budgeting/Reporting/ManagementPnl/ManagementPnlProjectionService.php');
+        $changeWriter = (string) file_get_contents($root.'/app/BusinessModules/Features/ChangeManagement/Reporting/ChangeClaim/Services/ChangeClaimSnapshotMaterializer.php');
+        self::assertStringContainsString('management_pnl_snapshot_race_conflict', $managementWriter);
+        self::assertStringContainsString('change_claim_snapshot_race_conflict', $changeWriter);
+        self::assertStringContainsString("->where('effective_at', '<=', \$query->asOf)", $changeWriter);
+    }
+
+    #[Test]
+    public function standard_change_workflow_pins_approved_exposure_and_contingency_movements(): void
+    {
+        $root = $this->root();
+        $recorder = (string) file_get_contents($root.'/app/BusinessModules/Features/ChangeManagement/Reporting/ChangeClaim/Services/ChangeWorkflowEventRecorder.php');
+        $workflow = (string) file_get_contents($root.'/app/BusinessModules/Features/ChangeManagement/Services/ChangeManagementService.php');
+        self::assertStringContainsString('? $proposed', $recorder);
+        self::assertStringContainsString("'approve' => 'consumption'", $recorder);
+        self::assertStringContainsString('$this->contingencyLedger->append(', $recorder);
+        self::assertStringContainsString("\$this->changeEvents->record(\$change, 'approve'", $workflow);
+        self::assertStringNotContainsString("array_key_exists('approved_cost'", $recorder);
     }
 
     #[Test]
@@ -149,7 +196,7 @@ final class FinanceOwnerReportingContractTest extends TestCase
         ] as $query) {
             $contents = (string) file_get_contents((new ReflectionClass($query))->getFileName());
             self::assertStringContainsString('->keyset->lastSortValue', $contents, $query);
-            self::assertStringContainsString("IS NULL ASC", $contents, $query);
+            self::assertStringContainsString('IS NULL ASC', $contents, $query);
             self::assertStringContainsString('->cursor()', $contents, $query);
             self::assertStringNotContainsString('->lazy(', $contents, $query);
             self::assertStringNotContainsString('tokenPayload(', $contents, $query);
@@ -180,6 +227,16 @@ final class FinanceOwnerReportingContractTest extends TestCase
         self::assertStringContainsString("'contract_performance_act'", $contractSource);
         self::assertStringContainsString("'payment_document'", $contractSource);
         self::assertStringContainsString("'payment_transaction'", $contractSource);
+        self::assertStringContainsString("'version' => (int) \$version", $contractSource);
+        self::assertStringContainsString("'hash' => \$hash", $contractSource);
+        self::assertStringContainsString('contract_settlement_owner_history_checkpoint_missing', $contractSource);
+
+        $backfill = (string) file_get_contents(
+            $this->root().'/app/BusinessModules/Features/ContractManagement/Reporting/ContractSettlementOwnerHistoryBackfillService.php',
+        );
+        self::assertStringContainsString("DB::table('organizations')", $backfill);
+        self::assertStringContainsString('->lockForUpdate()', $backfill);
+        self::assertStringContainsString('ContractSettlementOwnerHistoryCheckpoint::query()->create', $backfill);
     }
 
     #[Test]
@@ -194,9 +251,9 @@ final class FinanceOwnerReportingContractTest extends TestCase
         );
 
         foreach ([
-            'Contract::query()',
-            'ContractPerformanceAct::query()',
-            'PaymentDocument::query()',
+            'ContractSettlementOwnerVersion::query()',
+            "'contract_performance_act' => ContractPerformanceAct::class",
+            "'payment_document' => PaymentDocument::class",
             'PaymentTransactionStatus::COMPLETED',
             'ContractSettlementAllocationConserver',
         ] as $ownerContract) {
@@ -204,7 +261,8 @@ final class FinanceOwnerReportingContractTest extends TestCase
         }
         self::assertStringContainsString('private ContractSettlementOwnerSource $ownerSource', $projection);
         self::assertStringContainsString('ContractSettlementSourceFact::query()->insertOrIgnore', $projection);
-        self::assertStringNotContainsString('ContractSettlementSourceFact::query()->where', $projection);
+        self::assertStringContainsString("->where('scope_hash', \$scopeHash)", $projection);
+        self::assertStringContainsString("->where('query_hash', \$query->queryHash->value)", $projection);
     }
 
     private function phpFiles(array $paths): array

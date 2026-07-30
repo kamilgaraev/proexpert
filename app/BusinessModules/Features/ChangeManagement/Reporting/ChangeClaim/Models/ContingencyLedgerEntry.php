@@ -11,11 +11,15 @@ final class ContingencyLedgerEntry extends Model
 {
     protected $guarded = [];
 
-    protected $casts = ['effective_on' => 'immutable_date', 'signed_amount_minor' => 'integer'];
+    protected $casts = [
+        'effective_on' => 'immutable_date',
+        'effective_at' => 'immutable_datetime',
+        'signed_amount_minor' => 'integer',
+    ];
 
     protected static function booted(): void
     {
-        static::updating(static fn (): never => throw new DomainException('contingency_ledger_entry_immutable'));
-        static::deleting(static fn (): never => throw new DomainException('contingency_ledger_entry_immutable'));
+        self::updating(static fn (): never => throw new DomainException('contingency_ledger_entry_immutable'));
+        self::deleting(static fn (): never => throw new DomainException('contingency_ledger_entry_immutable'));
     }
 }

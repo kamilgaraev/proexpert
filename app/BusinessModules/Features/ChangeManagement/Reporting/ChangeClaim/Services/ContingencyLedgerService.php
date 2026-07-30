@@ -8,12 +8,17 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\DTO\ContingencyMovement;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ContingencyLedgerEntry;
+use Carbon\CarbonInterface;
 use DomainException;
+use Illuminate\Support\Facades\DB;
 
 final readonly class ContingencyLedgerService
 {
-    public function append(ChangeRequest $change, ContingencyMovement $movement): ContingencyLedgerEntry
-    {
+    public function append(
+        ChangeRequest $change,
+        ContingencyMovement $movement,
+        ?CarbonInterface $effectiveAt = null,
+    ): ContingencyLedgerEntry {
         if ($movement->projectId !== (int) $change->project_id
             || $movement->allocationId === null
             || $movement->sourceType === null
@@ -25,10 +30,11 @@ final readonly class ContingencyLedgerService
         if ($movement->type === 'consumption') {
             $approved = $change->approved_at !== null
                 && (int) $movement->sourceId === (int) $change->id;
-            if (!$approved) {
+            if (! $approved) {
                 throw new DomainException('contingency_consumption_requires_approved_change');
             }
         }
+        $occurredAt = $effectiveAt ?? now();
         $payload = [
             'organization_id' => (int) $change->organization_id,
             'project_id' => $movement->projectId,
@@ -37,16 +43,34 @@ final readonly class ContingencyLedgerService
             'currency_source' => 'change_request_version',
             'movement_type' => $movement->type,
             'signed_amount_minor' => $movement->signedMinor(),
-            'effective_on' => now()->toDateString(),
+            'effective_on' => $occurredAt->toDateString(),
+            'effective_at' => $occurredAt->toAtomString(),
             'source_type' => $movement->sourceType,
             'source_id' => $movement->sourceId,
             'source_version' => $movement->sourceVersion,
             'idempotency_key' => $movement->idempotencyKey,
         ];
 
-        return ContingencyLedgerEntry::query()->create([
-            ...$payload,
-            'entry_hash' => hash('sha256', CanonicalJson::encode($payload)),
-        ]);
+        $entryHash = hash('sha256', CanonicalJson::encode($payload));
+
+        return DB::transaction(function () use ($change, $movement, $payload, $entryHash): ContingencyLedgerEntry {
+            ContingencyLedgerEntry::query()->insertOrIgnore([[
+                ...$payload,
+                'entry_hash' => $entryHash,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]]);
+            $entry = ContingencyLedgerEntry::query()
+                ->where('organization_id', $change->organization_id)
+                ->where('idempotency_key', $movement->idempotencyKey)
+                ->lockForUpdate()
+                ->first();
+            if (! $entry instanceof ContingencyLedgerEntry
+                || ! hash_equals((string) $entry->entry_hash, $entryHash)) {
+                throw new DomainException('contingency_ledger_replay_conflict');
+            }
+
+            return $entry;
+        });
     }
 }

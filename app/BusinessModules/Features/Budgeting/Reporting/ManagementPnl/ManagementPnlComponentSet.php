@@ -17,6 +17,13 @@ final readonly class ManagementPnlComponentSet
         'payroll_readiness',
     ];
 
+    private const IDENTITIES = [
+        'project_margin' => ['budgeting.project-margin.v1', 'budgeting.project-margin.v1'],
+        'budget_plan_fact' => ['budgeting.plan-fact.v1', 'budgeting.plan-fact.v1'],
+        'project_labor_cost' => ['time-tracking.labor-cost.v1', 'approved-time-entry-reporting-fact.v1'],
+        'payroll_readiness' => ['workforce.payroll-readiness.v1', 'payroll-readiness-snapshot.v1'],
+    ];
+
     public function validate(
         array $components,
         int $organizationId,
@@ -38,10 +45,13 @@ final readonly class ManagementPnlComponentSet
                 || $component->periodTo !== $periodTo
                 || $component->scenario !== $scenario
                 || ($scopeHash !== null && $component->scopeHash !== $scopeHash)
-                || ($asOf !== null && ($component->asOf === null
-                    || new \DateTimeImmutable($component->asOf) > new \DateTimeImmutable($asOf)))
                 || $component->queryHash === null
+                || preg_match('/^[a-f0-9]{64}$/D', $component->queryHash) !== 1
                 || $component->definitionHash === null
+                || preg_match('/^[a-f0-9]{64}$/D', $component->definitionHash) !== 1
+                || ($asOf !== null && $component->asOf !== $asOf)
+                || [$component->formulaVersion, $component->sourceSchemaVersion]
+                    !== self::IDENTITIES[$component->componentCode]
                 || $component->rowCount === null
                 || $component->coverageNumerator === null
                 || $component->coverageDenominator === null) {

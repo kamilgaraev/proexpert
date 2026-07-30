@@ -124,10 +124,104 @@ final class ManagementPnlSourceTest extends TestCase
             $this->component('payroll_readiness'),
         ];
 
-        self::assertSame($components, $set->validate($components, 10, [101], '2026-07-01', '2026-07-31', 'base'));
+        self::assertSame($components, $set->validate(
+            $components,
+            10,
+            [101],
+            '2026-07-01',
+            '2026-07-31',
+            'base',
+            $components[0]->scopeHash,
+            '2026-07-31T23:59:59+03:00',
+            ['RUB'],
+        ));
 
         $this->expectException(DomainException::class);
         $set->validate([...$components, $this->component('project_margin')], 10, [101], '2026-07-01', '2026-07-31', 'base');
+    }
+
+    #[Test]
+    public function composite_pins_each_owner_identity_and_rejects_contract_drift(): void
+    {
+        $components = [
+            $this->component('project_margin'),
+            $this->component('budget_plan_fact'),
+            $this->component('project_labor_cost'),
+            $this->component('payroll_readiness'),
+        ];
+
+        foreach (['formula', 'schema', 'as_of'] as $drift) {
+            $mutated = $components;
+            $source = $components[0];
+            $mutated[0] = new ManagementPnlComponentSnapshot(
+                componentCode: $source->componentCode,
+                snapshotId: $source->snapshotId,
+                sourceHash: $source->sourceHash,
+                formulaVersion: $drift === 'formula' ? 'wrong.v1' : $source->formulaVersion,
+                sourceSchemaVersion: $drift === 'schema' ? 'wrong.v1' : $source->sourceSchemaVersion,
+                periodFrom: $source->periodFrom,
+                periodTo: $source->periodTo,
+                scenario: $source->scenario,
+                currency: $source->currency,
+                facts: $source->facts,
+                scopeHash: $source->scopeHash,
+                queryHash: $drift === 'query' ? str_repeat('d', 64) : $source->queryHash,
+                definitionHash: $drift === 'definition' ? str_repeat('e', 64) : $source->definitionHash,
+                asOf: $drift === 'as_of' ? '2026-07-31T20:59:59+00:00' : $source->asOf,
+                rowCount: $source->rowCount,
+                coverageNumerator: $source->coverageNumerator,
+                coverageDenominator: $source->coverageDenominator,
+            );
+            try {
+                (new ManagementPnlComponentSet)->validate(
+                    $mutated,
+                    10,
+                    [101],
+                    '2026-07-01',
+                    '2026-07-31',
+                    'base',
+                    $source->scopeHash,
+                    '2026-07-31T23:59:59+03:00',
+                    ['RUB'],
+                );
+                self::fail('Expected identity drift rejection for '.$drift);
+            } catch (DomainException) {
+                self::assertTrue(true);
+            }
+        }
+
+        $mutated = $components;
+        $source = $components[0];
+        $mutated[0] = new ManagementPnlComponentSnapshot(
+            componentCode: $source->componentCode,
+            snapshotId: $source->snapshotId,
+            sourceHash: $source->sourceHash,
+            formulaVersion: $source->formulaVersion,
+            sourceSchemaVersion: $source->sourceSchemaVersion,
+            periodFrom: $source->periodFrom,
+            periodTo: $source->periodTo,
+            scenario: $source->scenario,
+            currency: $source->currency,
+            facts: $source->facts,
+            scopeHash: $source->scopeHash,
+            queryHash: str_repeat('d', 64),
+            definitionHash: str_repeat('e', 64),
+            asOf: $source->asOf,
+            rowCount: $source->rowCount,
+            coverageNumerator: $source->coverageNumerator,
+            coverageDenominator: $source->coverageDenominator,
+        );
+        self::assertSame($mutated, (new ManagementPnlComponentSet)->validate(
+            $mutated,
+            10,
+            [101],
+            '2026-07-01',
+            '2026-07-31',
+            'base',
+            $source->scopeHash,
+            '2026-07-31T23:59:59+03:00',
+            ['RUB'],
+        ));
     }
 
     #[Test]
@@ -164,8 +258,18 @@ final class ManagementPnlSourceTest extends TestCase
             componentCode: $code,
             snapshotId: $code.'-snapshot',
             sourceHash: new Sha256Hash(str_repeat('a', 64)),
-            formulaVersion: $code.'.v1',
-            sourceSchemaVersion: $code.'_v1',
+            formulaVersion: match ($code) {
+                'project_margin' => 'budgeting.project-margin.v1',
+                'budget_plan_fact' => 'budgeting.plan-fact.v1',
+                'project_labor_cost' => 'time-tracking.labor-cost.v1',
+                'payroll_readiness' => 'workforce.payroll-readiness.v1',
+            },
+            sourceSchemaVersion: match ($code) {
+                'project_margin' => 'budgeting.project-margin.v1',
+                'budget_plan_fact' => 'budgeting.plan-fact.v1',
+                'project_labor_cost' => 'approved-time-entry-reporting-fact.v1',
+                'payroll_readiness' => 'payroll-readiness-snapshot.v1',
+            },
             periodFrom: '2026-07-01',
             periodTo: '2026-07-31',
             scenario: 'base',

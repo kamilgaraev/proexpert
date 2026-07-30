@@ -219,7 +219,7 @@ final readonly class ManagementPnlProjectionService
         $totals = $this->totals($rows);
         $qualityStatus = $coverageNumerator === $coverageDenominator ? 'complete' : 'partial';
 
-        DB::transaction(function () use (
+        $persistedSnapshotId = DB::transaction(function () use (
             $scope,
             $scopeHash,
             $query,
@@ -236,17 +236,20 @@ final readonly class ManagementPnlProjectionService
             $coverageDenominator,
             $qualityStatus,
             $warnings,
-        ): void {
-            $snapshot = ManagementPnlSnapshot::query()->create([
-                'id' => $snapshotId,
+        ): string {
+            $identity = [
                 'organization_id' => $scope->organizationId,
                 'policy_id' => $policyRecord->id,
-                'policy_version' => $policy->version(),
-                'definition_hash' => $query->definition->definitionHash->value,
-                'formula_version' => $query->definition->formulaVersion,
                 'scope_hash' => $scopeHash,
                 'query_hash' => $query->queryHash->value,
                 'source_hash' => $sourceHash->value,
+            ];
+            $inserted = ManagementPnlSnapshot::query()->insertOrIgnore([[
+                'id' => $snapshotId,
+                ...$identity,
+                'policy_version' => $policy->version(),
+                'definition_hash' => $query->definition->definitionHash->value,
+                'formula_version' => $query->definition->formulaVersion,
                 'component_snapshots' => $componentIdentities,
                 'as_of' => $query->asOf,
                 'generated_at' => $generatedAt,
@@ -257,15 +260,26 @@ final readonly class ManagementPnlProjectionService
                 'coverage_denominator' => $coverageDenominator,
                 'quality_status' => $qualityStatus,
                 'warnings' => $warnings,
-            ]);
-            foreach (array_chunk($rows, 500) as $chunk) {
-                $snapshot->rows()->createMany($chunk);
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]]);
+            $snapshot = ManagementPnlSnapshot::query()->where($identity)->first();
+            if (! $snapshot instanceof ManagementPnlSnapshot
+                || ! hash_equals((string) $snapshot->source_hash, $sourceHash->value)) {
+                throw new DomainException('management_pnl_snapshot_race_conflict');
             }
+            if ($inserted === 1) {
+                foreach (array_chunk($rows, 500) as $chunk) {
+                    $snapshot->rows()->createMany($chunk);
+                }
+            }
+
+            return (string) $snapshot->id;
         });
 
         return new ReportSnapshotRef(
             kind: 'management_pnl',
-            id: $snapshotId,
+            id: $persistedSnapshotId,
             scope: $scope,
             definitionHash: $query->definition->definitionHash,
             formulaVersion: $query->definition->formulaVersion,

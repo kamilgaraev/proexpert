@@ -4,17 +4,53 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
     public function up(): void
     {
+        Schema::create('contract_settlement_owner_versions', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('organization_id');
+            $table->string('owner_type', 48);
+            $table->string('owner_id', 96);
+            $table->unsignedInteger('version');
+            $table->string('operation', 16);
+            $table->dateTimeTz('occurred_at');
+            $table->jsonb('payload');
+            $table->char('owner_hash', 64);
+            $table->timestampsTz();
+
+            $table->unique(
+                ['organization_id', 'owner_type', 'owner_id', 'version'],
+                'contract_settlement_owner_version_unique',
+            );
+            $table->index(
+                ['organization_id', 'owner_type', 'occurred_at', 'owner_id', 'version'],
+                'contract_settlement_owner_asof_idx',
+            );
+        });
+
+        Schema::create('contract_settlement_owner_history_checkpoints', function (Blueprint $table): void {
+            $table->bigIncrements('id');
+            $table->unsignedBigInteger('organization_id');
+            $table->dateTimeTz('completed_at');
+            $table->jsonb('owner_counts');
+            $table->char('source_hash', 64);
+            $table->timestampsTz();
+
+            $table->unique('organization_id', 'contract_settlement_owner_checkpoint_unique');
+        });
+
         Schema::create('contract_settlement_source_facts', function (Blueprint $table): void {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('organization_id');
+            $table->char('scope_hash', 64);
             $table->char('query_hash', 64);
             $table->char('source_hash', 64);
+            $table->dateTimeTz('as_of');
             $table->unsignedBigInteger('contract_id');
             $table->unsignedBigInteger('allocation_id');
             $table->unsignedBigInteger('project_id')->nullable();
@@ -30,7 +66,7 @@ return new class extends Migration
             $table->timestampsTz();
 
             $table->unique(
-                ['organization_id', 'source_hash', 'contract_id', 'allocation_id', 'direction', 'currency'],
+                ['organization_id', 'query_hash', 'contract_id', 'allocation_id', 'direction', 'currency'],
                 'contract_settlement_source_identity_unique',
             );
             $table->index(
@@ -99,12 +135,39 @@ return new class extends Migration
                 'contract_settlement_row_contract_idx',
             );
         });
+
+        DB::unprepared(<<<'SQL'
+CREATE FUNCTION reports_contract_settlement_append_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'contract settlement reporting facts are append-only';
+END;
+$$;
+CREATE TRIGGER contract_settlement_source_facts_append_only
+BEFORE UPDATE OR DELETE ON contract_settlement_source_facts
+FOR EACH ROW EXECUTE FUNCTION reports_contract_settlement_append_only();
+CREATE TRIGGER contract_settlement_owner_versions_append_only
+BEFORE UPDATE OR DELETE ON contract_settlement_owner_versions
+FOR EACH ROW EXECUTE FUNCTION reports_contract_settlement_append_only();
+CREATE TRIGGER contract_settlement_owner_checkpoints_append_only
+BEFORE UPDATE OR DELETE ON contract_settlement_owner_history_checkpoints
+FOR EACH ROW EXECUTE FUNCTION reports_contract_settlement_append_only();
+CREATE TRIGGER contract_settlement_snapshots_append_only
+BEFORE UPDATE OR DELETE ON contract_settlement_exposure_snapshots
+FOR EACH ROW EXECUTE FUNCTION reports_contract_settlement_append_only();
+CREATE TRIGGER contract_settlement_rows_append_only
+BEFORE UPDATE OR DELETE ON contract_settlement_exposure_rows
+FOR EACH ROW EXECUTE FUNCTION reports_contract_settlement_append_only();
+SQL);
     }
 
     public function down(): void
     {
+        DB::unprepared('DROP FUNCTION IF EXISTS reports_contract_settlement_append_only() CASCADE');
         Schema::dropIfExists('contract_settlement_exposure_rows');
         Schema::dropIfExists('contract_settlement_exposure_snapshots');
         Schema::dropIfExists('contract_settlement_source_facts');
+        Schema::dropIfExists('contract_settlement_owner_history_checkpoints');
+        Schema::dropIfExists('contract_settlement_owner_versions');
     }
 };

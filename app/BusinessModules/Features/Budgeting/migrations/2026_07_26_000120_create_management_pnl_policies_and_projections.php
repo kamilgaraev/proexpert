@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -83,10 +84,39 @@ return new class extends Migration
                 'management_pnl_row_page_idx',
             );
         });
+
+        DB::unprepared(<<<'SQL'
+CREATE FUNCTION reports_management_pnl_append_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'management P&L projections are append-only';
+END;
+$$;
+CREATE FUNCTION reports_management_pnl_policy_immutable() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.status = 'active' THEN
+        RAISE EXCEPTION 'active management P&L policy is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER management_pnl_snapshots_append_only
+BEFORE UPDATE OR DELETE ON management_pnl_snapshots
+FOR EACH ROW EXECUTE FUNCTION reports_management_pnl_append_only();
+CREATE TRIGGER management_pnl_rows_append_only
+BEFORE UPDATE OR DELETE ON management_pnl_rows
+FOR EACH ROW EXECUTE FUNCTION reports_management_pnl_append_only();
+CREATE TRIGGER management_pnl_active_policy_immutable
+BEFORE UPDATE OR DELETE ON management_pnl_policies
+FOR EACH ROW EXECUTE FUNCTION reports_management_pnl_policy_immutable();
+SQL);
     }
 
     public function down(): void
     {
+        DB::unprepared('DROP FUNCTION IF EXISTS reports_management_pnl_policy_immutable() CASCADE');
+        DB::unprepared('DROP FUNCTION IF EXISTS reports_management_pnl_append_only() CASCADE');
         Schema::dropIfExists('management_pnl_rows');
         Schema::dropIfExists('management_pnl_snapshots');
         Schema::dropIfExists('management_pnl_policies');

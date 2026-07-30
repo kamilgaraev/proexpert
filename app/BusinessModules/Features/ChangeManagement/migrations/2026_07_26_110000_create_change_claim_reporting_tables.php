@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -71,6 +72,7 @@ return new class extends Migration
             $table->string('movement_type', 16);
             $table->bigInteger('signed_amount_minor');
             $table->date('effective_on');
+            $table->dateTimeTz('effective_at');
             $table->string('source_type', 64);
             $table->string('source_id', 96);
             $table->unsignedInteger('source_version');
@@ -84,7 +86,7 @@ return new class extends Migration
             );
             $table->unique(['organization_id', 'idempotency_key'], 'contingency_ledger_idempotency_unique');
             $table->index(
-                ['organization_id', 'project_id', 'contract_project_allocation_id', 'currency', 'effective_on', 'id'],
+                ['organization_id', 'project_id', 'contract_project_allocation_id', 'currency', 'effective_at', 'id'],
                 'contingency_ledger_scope_idx',
             );
         });
@@ -125,6 +127,11 @@ return new class extends Migration
             $table->string('quality_status', 16);
             $table->jsonb('warnings');
             $table->timestampsTz();
+
+            $table->unique(
+                ['organization_id', 'scope_hash', 'query_hash', 'source_hash'],
+                'change_claim_snapshot_identity_unique',
+            );
         });
 
         Schema::create('change_claim_rows', function (Blueprint $table): void {
@@ -159,10 +166,38 @@ return new class extends Migration
                 'change_claim_row_scope_idx',
             );
         });
+
+        DB::unprepared(<<<'SQL'
+CREATE FUNCTION reports_change_claim_append_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'change reporting facts are append-only';
+END;
+$$;
+CREATE TRIGGER change_request_versions_append_only
+BEFORE UPDATE OR DELETE ON change_request_versions
+FOR EACH ROW EXECUTE FUNCTION reports_change_claim_append_only();
+CREATE TRIGGER change_workflow_events_append_only
+BEFORE UPDATE OR DELETE ON change_workflow_events
+FOR EACH ROW EXECUTE FUNCTION reports_change_claim_append_only();
+CREATE TRIGGER contingency_ledger_entries_append_only
+BEFORE UPDATE OR DELETE ON contingency_ledger_entries
+FOR EACH ROW EXECUTE FUNCTION reports_change_claim_append_only();
+CREATE TRIGGER change_claim_links_append_only
+BEFORE UPDATE OR DELETE ON change_claim_links
+FOR EACH ROW EXECUTE FUNCTION reports_change_claim_append_only();
+CREATE TRIGGER change_claim_snapshots_append_only
+BEFORE UPDATE OR DELETE ON change_claim_snapshots
+FOR EACH ROW EXECUTE FUNCTION reports_change_claim_append_only();
+CREATE TRIGGER change_claim_rows_append_only
+BEFORE UPDATE OR DELETE ON change_claim_rows
+FOR EACH ROW EXECUTE FUNCTION reports_change_claim_append_only();
+SQL);
     }
 
     public function down(): void
     {
+        DB::unprepared('DROP FUNCTION IF EXISTS reports_change_claim_append_only() CASCADE');
         Schema::dropIfExists('change_claim_rows');
         Schema::dropIfExists('change_claim_snapshots');
         Schema::dropIfExists('change_claim_links');

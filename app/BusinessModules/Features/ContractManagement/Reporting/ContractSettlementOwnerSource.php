@@ -11,6 +11,8 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScope;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Features\ContractManagement\Reporting\DTO\ContractSettlementInput;
+use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerHistoryCheckpoint;
+use App\BusinessModules\Features\ContractManagement\Reporting\Models\ContractSettlementOwnerVersion;
 use App\Enums\Contract\ContractAllocationTypeEnum;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Models\Contract;
@@ -18,7 +20,6 @@ use App\Models\ContractPerformanceAct;
 use App\Models\ContractProjectAllocation;
 use DateTimeImmutable;
 use DomainException;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 final readonly class ContractSettlementOwnerSource
@@ -31,32 +32,35 @@ final readonly class ContractSettlementOwnerSource
     public function read(ReportScope $scope, ReportQuery $query): array
     {
         $this->assertSupportedFilters($query->filters->values);
-        $contracts = Contract::query()
-            ->where('organization_id', $scope->organizationId)
-            ->where('created_at', '<=', $query->asOf)
-            ->with(['activeAllocations' => static fn (Builder $builder): Builder => $builder
-                ->where('created_at', '<=', $query->asOf)
-                ->orderBy('id')])
-            ->when($scope->projectIds !== [], static function (Builder $builder) use ($scope): void {
-                $builder->whereHas('activeAllocations', static fn (Builder $allocation): Builder => $allocation
-                    ->whereIn('project_id', $scope->projectIds));
+        $owners = $this->historicalOwners($scope, $query);
+        $allocations = $owners['contract_allocation'];
+        $contracts = $owners['contract']
+            ->filter(function (Contract $contract) use ($scope, $allocations): bool {
+                $contractAllocations = $allocations->where('contract_id', $contract->id);
+                if ($scope->projectIds !== []
+                    && ! $contractAllocations->contains(
+                        static fn (ContractProjectAllocation $allocation): bool => in_array((int) $allocation->project_id, $scope->projectIds, true),
+                    )) {
+                    return false;
+                }
+                $contractIds = $this->resourceIds($scope, 'contract');
+
+                return $contractIds === [] || in_array((int) $contract->id, $contractIds, true);
             })
-            ->when($this->resourceIds($scope, 'contract') !== [], fn (Builder $builder): Builder => $builder
-                ->whereIn('id', $this->resourceIds($scope, 'contract')))
-            ->orderBy('id')
-            ->get();
+            ->sortBy('id')
+            ->values();
 
         $result = [];
         foreach ($contracts as $contract) {
-            $this->assertOwnerVersionAvailable($contract->updated_at, $query->asOf);
-            $allocations = $contract->activeAllocations;
-            if ($allocations->isEmpty()) {
+            $contractAllocations = $allocations
+                ->where('contract_id', $contract->id)
+                ->where('is_active', true)
+                ->sortBy('id')
+                ->values();
+            if ($contractAllocations->isEmpty()) {
                 throw new DomainException('contract_settlement_allocation_required');
             }
-            foreach ($allocations as $allocation) {
-                $this->assertOwnerVersionAvailable($allocation->updated_at, $query->asOf);
-            }
-            $result = [...$result, ...$this->contractInputs($contract, $allocations, $query)];
+            $result = [...$result, ...$this->contractInputs($contract, $contractAllocations, $query, $owners)];
         }
 
         return array_values(array_filter(
@@ -69,35 +73,35 @@ final readonly class ContractSettlementOwnerSource
      * @param  Collection<int, ContractProjectAllocation>  $allocations
      * @return list<ContractSettlementInput>
      */
-    private function contractInputs(Contract $contract, Collection $allocations, ReportQuery $query): array
-    {
+    private function contractInputs(
+        Contract $contract,
+        Collection $allocations,
+        ReportQuery $query,
+        array $owners,
+    ): array {
         $totalMinor = self::minor((string) ($contract->total_amount ?? '0'));
         $currency = strtoupper((string) ($contract->currency ?? ''));
         if (preg_match('/^[A-Z]{3}$/', $currency) !== 1) {
             throw new DomainException('contract_settlement_currency_invalid');
         }
 
-        $allActs = ContractPerformanceAct::query()
+        $allActs = $owners['contract_performance_act']
             ->where('contract_id', $contract->id)
             ->where('is_approved', true)
-            ->where('act_date', '<=', $query->asOf->format('Y-m-d'))
-            ->where(static fn (Builder $builder): Builder => $builder
-                ->whereNull('approval_date')
-                ->orWhere('approval_date', '<=', $query->asOf->format('Y-m-d')))
-            ->orderBy('id')
-            ->get();
-        foreach ($allActs as $act) {
-            $this->assertOwnerVersionAvailable($act->updated_at, $query->asOf);
-        }
+            ->filter(static fn (ContractPerformanceAct $act): bool => $act->act_date->format('Y-m-d') <= $query->asOf->format('Y-m-d')
+                && ($act->approval_date === null
+                    || $act->approval_date->format('Y-m-d') <= $query->asOf->format('Y-m-d')))
+            ->sortBy('id')
+            ->values();
 
         $effective = $this->effectiveAllocations($allocations, $totalMinor, $allActs);
         $allocationIds = array_keys($effective);
         $allocations = $allocations->whereIn('id', $allocationIds)->values();
-        $weights = array_fill_keys($allocationIds, 1);
+        $weights = $effective;
         $accepted = array_fill_keys($allocationIds, 0);
         $cash = array_fill_keys($allocationIds, 0);
         $dueAt = array_fill_keys($allocationIds, null);
-        $contractRef = $this->sourceRef('contract', (int) $contract->id, [
+        $contractRef = $this->sourceRef($contract, 'contract', [
             'organization_id' => (int) $contract->organization_id,
             'total_amount' => (string) $contract->total_amount,
             'currency' => $currency,
@@ -110,7 +114,7 @@ final readonly class ContractSettlementOwnerSource
         foreach ($allocations as $allocation) {
             $refs[(int) $allocation->id] = [
                 $contractRef,
-                $this->sourceRef('contract_allocation', (int) $allocation->id, [
+                $this->sourceRef($allocation, 'contract_allocation', [
                     'contract_id' => (int) $allocation->contract_id,
                     'project_id' => (int) $allocation->project_id,
                     'allocation_type' => $allocation->allocation_type->value,
@@ -135,7 +139,7 @@ final readonly class ContractSettlementOwnerSource
                 $accepted,
             );
             foreach ($this->targetAllocationIds($act->project_id, $allocations) as $allocationId) {
-                $refs[$allocationId][] = $this->sourceRef('contract_performance_act', (int) $act->id, [
+                $refs[$allocationId][] = $this->sourceRef($act, 'contract_performance_act', [
                     'contract_id' => (int) $act->contract_id,
                     'project_id' => $act->project_id === null ? null : (int) $act->project_id,
                     'amount' => (string) $act->amount,
@@ -147,30 +151,27 @@ final readonly class ContractSettlementOwnerSource
             }
         }
 
-        $documents = PaymentDocument::query()
+        $documents = $owners['payment_document']
             ->where('organization_id', $contract->organization_id)
             ->where('invoiceable_type', Contract::class)
             ->where('invoiceable_id', $contract->id)
-            ->whereNotIn('status', ['cancelled', 'rejected'])
-            ->where('created_at', '<=', $query->asOf)
-            ->when($this->firstFilter($query->filters->values, ['instrument', 'instruments']) !== null, fn (Builder $builder): Builder => $builder
-                ->whereIn('document_type', $this->filterValues($this->firstFilter($query->filters->values, ['instrument', 'instruments']))))
-            ->when($this->firstFilter($query->filters->values, ['status', 'statuses']) !== null, fn (Builder $builder): Builder => $builder
-                ->whereIn('status', $this->filterValues($this->firstFilter($query->filters->values, ['status', 'statuses']))))
-            ->when(isset($query->filters->values['due_from']), static fn (Builder $builder): Builder => $builder
-                ->whereDate('due_date', '>=', (string) $query->filters->values['due_from']))
-            ->when(isset($query->filters->values['due_to']), static fn (Builder $builder): Builder => $builder
-                ->whereDate('due_date', '<=', (string) $query->filters->values['due_to']))
-            ->with(['transactions' => static fn (Builder $builder): Builder => $builder
-                ->where('status', PaymentTransactionStatus::COMPLETED->value)
-                ->where('transaction_date', '<=', $query->asOf->format('Y-m-d'))
-                ->when(isset($query->filters->values['period_from']), static fn (Builder $queryBuilder): Builder => $queryBuilder
-                    ->where('transaction_date', '>=', (string) $query->filters->values['period_from']))
-                ->when(isset($query->filters->values['period_to']), static fn (Builder $queryBuilder): Builder => $queryBuilder
-                    ->where('transaction_date', '<=', (string) $query->filters->values['period_to']))
-                ->orderBy('id')])
-            ->orderBy('id')
-            ->get();
+            ->reject(static fn (PaymentDocument $document): bool => in_array($document->status->value, ['cancelled', 'rejected'], true))
+            ->filter(fn (PaymentDocument $document): bool => $this->documentMatchesFilters($document, $query->filters->values))
+            ->sortBy('id')
+            ->values()
+            ->each(function (PaymentDocument $document) use ($owners, $query): void {
+                $transactions = $owners['payment_transaction']
+                    ->where('payment_document_id', $document->id)
+                    ->filter(static fn ($transaction): bool => $transaction->status === PaymentTransactionStatus::COMPLETED
+                        && $transaction->transaction_date->format('Y-m-d') <= $query->asOf->format('Y-m-d')
+                        && (! isset($query->filters->values['period_from'])
+                            || $transaction->transaction_date->format('Y-m-d') >= (string) $query->filters->values['period_from'])
+                        && (! isset($query->filters->values['period_to'])
+                            || $transaction->transaction_date->format('Y-m-d') <= (string) $query->filters->values['period_to']))
+                    ->sortBy('id')
+                    ->values();
+                $document->setRelation('transactions', $transactions);
+            });
         if (($this->firstFilter($query->filters->values, ['instrument', 'instruments']) !== null
                 || $this->firstFilter($query->filters->values, ['status', 'statuses']) !== null
                 || isset($query->filters->values['due_from'])
@@ -178,13 +179,12 @@ final readonly class ContractSettlementOwnerSource
             return [];
         }
         foreach ($documents as $document) {
-            $this->assertOwnerVersionAvailable($document->updated_at, $query->asOf);
             $this->assertDocumentCompatible($contract, $document, $currency);
             $documentAllocationIds = $this->targetAllocationIds($document->project_id, $allocations);
             foreach ($documentAllocationIds as $allocationId) {
                 $refs[$allocationId][] = $this->sourceRef(
+                    $document,
                     'payment_document',
-                    (int) $document->id,
                     [
                         'contract_id' => (int) $contract->id,
                         'project_id' => $document->project_id === null ? null : (int) $document->project_id,
@@ -215,8 +215,8 @@ final readonly class ContractSettlementOwnerSource
                 );
                 foreach ($this->targetAllocationIds($transaction->project_id ?? $document->project_id, $allocations) as $allocationId) {
                     $refs[$allocationId][] = $this->sourceRef(
+                        $transaction,
                         'payment_transaction',
-                        (int) $transaction->id,
                         [
                             'payment_document_id' => (int) $transaction->payment_document_id,
                             'project_id' => $transaction->project_id === null ? null : (int) $transaction->project_id,
@@ -470,25 +470,101 @@ final readonly class ContractSettlementOwnerSource
     /**
      * @return array{type: string, id: string, version: int, hash: string}
      */
-    private function sourceRef(string $type, int $id, array $payload): array
-    {
+    private function sourceRef(
+        \Illuminate\Database\Eloquent\Model $owner,
+        string $type,
+        array $payload,
+    ): array {
+        $version = $owner->getAttribute('_report_owner_version');
+        $hash = $owner->getAttribute('_report_owner_hash');
+        if (! is_numeric($version)
+            || (int) $version < 1
+            || ! is_string($hash)
+            || preg_match('/^[a-f0-9]{64}$/D', $hash) !== 1) {
+            throw new DomainException('contract_settlement_owner_history_invalid');
+        }
+
         return [
             'type' => $type,
-            'id' => (string) $id,
-            'version' => 1,
-            'hash' => hash('sha256', CanonicalJson::encode([
-                'id' => $id,
-                'type' => $type,
-                'payload' => $payload,
-            ])),
+            'id' => (string) $owner->getKey(),
+            'version' => (int) $version,
+            'hash' => $hash,
+            'payload_hash' => hash('sha256', CanonicalJson::encode($payload)),
         ];
     }
 
-    private function assertOwnerVersionAvailable(mixed $updatedAt, DateTimeImmutable $asOf): void
+    private function documentMatchesFilters(PaymentDocument $document, array $filters): bool
     {
-        if ($updatedAt !== null && $updatedAt->toDateTimeImmutable() > $asOf) {
-            throw new DomainException('contract_settlement_historical_owner_snapshot_unavailable');
+        $instrument = $this->firstFilter($filters, ['instrument', 'instruments']);
+        $status = $this->firstFilter($filters, ['status', 'statuses']);
+        if ($instrument !== null && ! in_array($document->document_type->value, $this->filterValues($instrument), true)) {
+            return false;
         }
+        if ($status !== null && ! in_array($document->status->value, $this->filterValues($status), true)) {
+            return false;
+        }
+        if (isset($filters['due_from'])
+            && ($document->due_date === null || $document->due_date->format('Y-m-d') < (string) $filters['due_from'])) {
+            return false;
+        }
+        if (isset($filters['due_to'])
+            && ($document->due_date === null || $document->due_date->format('Y-m-d') > (string) $filters['due_to'])) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @return array<string, Collection<int, object>>
+     */
+    private function historicalOwners(ReportScope $scope, ReportQuery $query): array
+    {
+        $checkpoint = ContractSettlementOwnerHistoryCheckpoint::query()
+            ->where('organization_id', $scope->organizationId)
+            ->where('completed_at', '<=', $query->asOf)
+            ->first();
+        if (! $checkpoint instanceof ContractSettlementOwnerHistoryCheckpoint) {
+            throw new DomainException('contract_settlement_owner_history_checkpoint_missing');
+        }
+        $versions = ContractSettlementOwnerVersion::query()
+            ->where('organization_id', $scope->organizationId)
+            ->where('occurred_at', '<=', $query->asOf)
+            ->orderBy('owner_type')
+            ->orderBy('owner_id')
+            ->orderByDesc('version')
+            ->get()
+            ->unique(static fn (ContractSettlementOwnerVersion $version): string => $version->owner_type.':'.$version->owner_id);
+        if ($versions->isEmpty()) {
+            throw new DomainException('contract_settlement_owner_history_missing');
+        }
+
+        $classes = [
+            'contract' => Contract::class,
+            'contract_allocation' => ContractProjectAllocation::class,
+            'contract_performance_act' => ContractPerformanceAct::class,
+            'payment_document' => PaymentDocument::class,
+            'payment_transaction' => \App\BusinessModules\Core\Payments\Models\PaymentTransaction::class,
+        ];
+        $owners = array_fill_keys(array_keys($classes), null);
+        foreach ($owners as $type => $_) {
+            $owners[$type] = collect();
+        }
+        foreach ($versions as $version) {
+            if ($version->operation === 'delete') {
+                continue;
+            }
+            $class = $classes[$version->owner_type] ?? null;
+            if ($class === null || ! is_array($version->payload)) {
+                throw new DomainException('contract_settlement_owner_history_invalid');
+            }
+            $owner = (new $class)->newFromBuilder($version->payload);
+            $owner->setAttribute('_report_owner_version', (int) $version->version);
+            $owner->setAttribute('_report_owner_hash', (string) $version->owner_hash);
+            $owners[$version->owner_type]->push($owner);
+        }
+
+        return $owners;
     }
 
     private static function minor(string $amount): int

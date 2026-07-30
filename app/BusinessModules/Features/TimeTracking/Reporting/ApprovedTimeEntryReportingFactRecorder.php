@@ -19,7 +19,7 @@ final readonly class ApprovedTimeEntryReportingFactRecorder
         }
 
         $customFields = is_array($entry->custom_fields) ? $entry->custom_fields : [];
-        $currency = mb_strtoupper((string) ($customFields['rate_currency'] ?? config('payments.defaults.currency', 'RUB')));
+        $currency = mb_strtoupper((string) ($customFields['rate_currency'] ?? ''));
         if (preg_match('/^[A-Z]{3}$/D', $currency) !== 1) {
             throw new DomainException('approved_time_entry_reporting_currency_invalid');
         }
@@ -38,7 +38,7 @@ final readonly class ApprovedTimeEntryReportingFactRecorder
             'work_type_id' => $entry->work_type_id === null ? null : (int) $entry->work_type_id,
             'work_date' => $entry->work_date->format('Y-m-d'),
             'currency' => $currency,
-            'currency_source' => isset($customFields['rate_currency']) ? 'time_entry_rate' : 'organization_payment_default',
+            'currency_source' => 'time_entry_rate',
             'hours' => (string) $entry->hours_worked,
             'hourly_rate_minor' => $rateMinor,
             'cost_minor' => $costMinor,

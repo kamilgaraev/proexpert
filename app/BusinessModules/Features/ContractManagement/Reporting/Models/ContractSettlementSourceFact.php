@@ -18,5 +18,6 @@ final class ContractSettlementSourceFact extends Model
         'completed_cash_minor' => 'integer',
         'source_refs' => 'array',
         'due_at' => 'immutable_date',
+        'as_of' => 'immutable_datetime',
     ];
 }

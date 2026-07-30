@@ -6,8 +6,8 @@ namespace Tests\Unit\Reporting\WaveOne;
 
 use App\BusinessModules\Core\Payments\Reporting\SettlementAgingBucket;
 use App\BusinessModules\Core\Payments\Services\Reports\SettlementAgingPolicy;
-use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementCalculator;
 use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementAllocationConserver;
+use App\BusinessModules\Features\ContractManagement\Reporting\ContractSettlementCalculator;
 use App\BusinessModules\Features\ContractManagement\Reporting\DTO\ContractSettlementInput;
 use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\Test;
@@ -17,7 +17,7 @@ final class ContractSettlementExposureSourceTest extends TestCase
 {
     public function test_allocation_conservation_assigns_every_minor_once(): void
     {
-        $result = (new ContractSettlementAllocationConserver())->allocate(
+        $result = (new ContractSettlementAllocationConserver)->allocate(
             totalMinor: 10_001,
             weights: [41 => 50, 42 => 30, 43 => 20],
         );
@@ -26,11 +26,20 @@ final class ContractSettlementExposureSourceTest extends TestCase
         self::assertSame(10_001, array_sum($result));
     }
 
+    #[Test]
+    public function pinned_ninety_ten_shares_conserve_accepted_and_cash_minor_units(): void
+    {
+        $allocated = (new ContractSettlementAllocationConserver)->allocate(10_001, [101 => 90, 202 => 10]);
+
+        self::assertSame([101 => 9_001, 202 => 1_000], $allocated);
+        self::assertSame(10_001, array_sum($allocated));
+    }
+
     public function test_allocation_conservation_rejects_missing_or_negative_weights(): void
     {
         $this->expectException(\DomainException::class);
 
-        (new ContractSettlementAllocationConserver())->allocate(100, [41 => 0, 42 => -1]);
+        (new ContractSettlementAllocationConserver)->allocate(100, [41 => 0, 42 => -1]);
     }
 
     #[Test]
@@ -42,7 +51,7 @@ final class ContractSettlementExposureSourceTest extends TestCase
     #[Test]
     public function accepted_and_completed_cash_are_counted_once_for_an_allocation(): void
     {
-        $row = (new ContractSettlementCalculator())->calculate(
+        $row = (new ContractSettlementCalculator)->calculate(
             new ContractSettlementInput(
                 contractId: 10,
                 allocationId: 20,
@@ -60,7 +69,7 @@ final class ContractSettlementExposureSourceTest extends TestCase
                     ['type' => 'completed_transaction', 'id' => 31],
                 ],
             ),
-            new SettlementAgingPolicy(),
+            new SettlementAgingPolicy,
         );
 
         self::assertSame(100_000, $row->effectiveMinor);
@@ -82,7 +91,7 @@ final class ContractSettlementExposureSourceTest extends TestCase
     #[Test]
     public function missing_due_date_is_not_silently_classified_as_current(): void
     {
-        $row = (new ContractSettlementCalculator())->calculate(
+        $row = (new ContractSettlementCalculator)->calculate(
             new ContractSettlementInput(
                 contractId: 10,
                 allocationId: 20,
@@ -97,7 +106,7 @@ final class ContractSettlementExposureSourceTest extends TestCase
                 asOf: new DateTimeImmutable('2026-07-26T00:00:00+03:00'),
                 sourceRefs: [],
             ),
-            new SettlementAgingPolicy(),
+            new SettlementAgingPolicy,
         );
 
         self::assertSame('due_date_missing', $row->agingBucket);
@@ -106,7 +115,7 @@ final class ContractSettlementExposureSourceTest extends TestCase
     #[Test]
     public function aging_uses_the_explicit_as_of_boundary(): void
     {
-        $policy = new SettlementAgingPolicy();
+        $policy = new SettlementAgingPolicy;
         $asOf = new DateTimeImmutable('2026-07-26T15:30:00+03:00');
 
         self::assertSame(

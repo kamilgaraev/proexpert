@@ -75,7 +75,7 @@ final readonly class ProjectLaborCostManagementPnlComponentSource implements Man
                 componentCode: $this->componentCode(),
                 snapshotId: $snapshotId,
                 sourceHash: $sourceHash,
-                formulaVersion: 'time-tracking.project-labor-cost.v1',
+                formulaVersion: 'time-tracking.labor-cost.v1',
                 sourceSchemaVersion: 'approved-time-entry-reporting-fact.v1',
                 periodFrom: $periodFrom,
                 periodTo: $periodTo,

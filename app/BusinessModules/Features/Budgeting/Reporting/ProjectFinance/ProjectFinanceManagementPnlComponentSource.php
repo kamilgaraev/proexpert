@@ -38,7 +38,7 @@ abstract readonly class ProjectFinanceManagementPnlComponentSource implements Ma
             ->where('scope_hash', $scopeHash)
             ->whereDate('period_from', $periodFrom)
             ->whereDate('period_to', $periodTo)
-            ->whereDate('as_of', $query->asOf->format('Y-m-d'))
+            ->where('as_of', $query->asOf)
             ->where('generated_at', '<=', $query->asOf)
             ->latest('generated_at')
             ->first();
@@ -98,8 +98,12 @@ abstract readonly class ProjectFinanceManagementPnlComponentSource implements Ma
                 componentCode: $code,
                 snapshotId: (string) $snapshot->id,
                 sourceHash: new Sha256Hash((string) $snapshot->source_hash),
-                formulaVersion: (string) $snapshot->formula_version,
-                sourceSchemaVersion: (string) $snapshot->source_schema_version,
+                formulaVersion: $code === 'project_margin'
+                    ? 'budgeting.project-margin.v1'
+                    : 'budgeting.plan-fact.v1',
+                sourceSchemaVersion: $code === 'project_margin'
+                    ? 'budgeting.project-margin.v1'
+                    : 'budgeting.plan-fact.v1',
                 periodFrom: (string) $snapshot->period_from?->format('Y-m-d'),
                 periodTo: (string) $snapshot->period_to?->format('Y-m-d'),
                 scenario: $scenario,
@@ -108,7 +112,7 @@ abstract readonly class ProjectFinanceManagementPnlComponentSource implements Ma
                 scopeHash: (string) $snapshot->scope_hash,
                 queryHash: (string) $snapshot->query_hash,
                 definitionHash: (string) $snapshot->definition_hash,
-                asOf: (string) $snapshot->as_of?->format('Y-m-d'),
+                asOf: (string) $snapshot->as_of?->format(DATE_ATOM),
                 rowCount: $currencyRows->count(),
                 coverageNumerator: count($facts) + $excludedLaborRows,
                 coverageDenominator: $currencyRows->count(),

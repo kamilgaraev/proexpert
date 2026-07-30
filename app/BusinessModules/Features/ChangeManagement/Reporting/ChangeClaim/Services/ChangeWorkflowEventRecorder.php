@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Core\Reporting\Support\ExactDecimal;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeClaim;
 use App\BusinessModules\Features\ChangeManagement\Models\ChangeRequest;
+use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\DTO\ContingencyMovement;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeClaimLink;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeRequestVersion;
 use App\BusinessModules\Features\ChangeManagement\Reporting\ChangeClaim\Models\ChangeWorkflowEvent;
@@ -17,6 +18,8 @@ use Illuminate\Support\Facades\DB;
 
 final readonly class ChangeWorkflowEventRecorder
 {
+    public function __construct(private ContingencyLedgerService $contingencyLedger) {}
+
     public function record(
         ChangeRequest $change,
         string $eventType,
@@ -24,6 +27,11 @@ final readonly class ChangeWorkflowEventRecorder
         ?int $actorId,
     ): ChangeWorkflowEvent {
         return DB::transaction(function () use ($change, $eventType, $occurredAt, $actorId): ChangeWorkflowEvent {
+            DB::table('change_requests')
+                ->where('organization_id', $change->organization_id)
+                ->where('id', $change->id)
+                ->lockForUpdate()
+                ->first();
             $change->loadMissing('impact');
             $latest = ChangeRequestVersion::query()
                 ->where('organization_id', $change->organization_id)
@@ -37,8 +45,7 @@ final readonly class ChangeWorkflowEventRecorder
             $proposed = $this->minor($change->impact?->cost_delta ?? 0);
             $approved = in_array($eventType, ['approve', 'implement', 'close'], true)
                 && $change->approved_at !== null
-                && array_key_exists('approved_cost', $links)
-                ? $this->minor($links['approved_cost'])
+                ? $proposed
                 : null;
             $payload = [
                 'organization_id' => (int) $change->organization_id,
@@ -79,10 +86,13 @@ final readonly class ChangeWorkflowEventRecorder
                 'occurred_at' => $occurredAt->format(DATE_ATOM),
             ];
 
-            return ChangeWorkflowEvent::query()->create([
+            $event = ChangeWorkflowEvent::query()->create([
                 ...$eventPayload,
                 'event_hash' => hash('sha256', CanonicalJson::encode($eventPayload)),
             ]);
+            $this->recordContingency($change, $versionRecord, $eventType, $occurredAt);
+
+            return $event;
         });
     }
 
@@ -107,10 +117,24 @@ final readonly class ChangeWorkflowEventRecorder
             'relationship_type' => 'claim',
         ];
 
-        return ChangeClaimLink::query()->create([
+        $sourceHash = hash('sha256', CanonicalJson::encode($payload));
+        ChangeClaimLink::query()->insertOrIgnore([[
             ...$payload,
-            'source_hash' => hash('sha256', CanonicalJson::encode($payload)),
-        ]);
+            'source_hash' => $sourceHash,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]]);
+        $link = ChangeClaimLink::query()
+            ->where('organization_id', $change->organization_id)
+            ->where('change_claim_id', $claim->id)
+            ->where('claim_version', $claimVersion)
+            ->first();
+        if (! $link instanceof ChangeClaimLink
+            || ! hash_equals((string) $link->source_hash, $sourceHash)) {
+            throw new DomainException('change_claim_link_replay_conflict');
+        }
+
+        return $link;
     }
 
     private function minor(mixed $amount): int
@@ -134,5 +158,51 @@ final readonly class ChangeWorkflowEventRecorder
     private function positiveInt(mixed $value): ?int
     {
         return is_numeric($value) && (int) $value > 0 ? (int) $value : null;
+    }
+
+    private function recordContingency(
+        ChangeRequest $change,
+        ChangeRequestVersion $version,
+        string $eventType,
+        CarbonImmutable $occurredAt,
+    ): void {
+        if ($version->contract_project_allocation_id === null || $version->currency === null) {
+            return;
+        }
+        $links = is_array($change->linked_entities) ? $change->linked_entities : [];
+        $amount = match ($eventType) {
+            'create' => $links['contingency_opening_amount'] ?? null,
+            'submit' => $links['contingency_allocation_amount'] ?? null,
+            'approve' => $version->approved_cost_minor,
+            'close' => $links['contingency_release_amount'] ?? null,
+            default => null,
+        };
+        if ($amount === null) {
+            return;
+        }
+        $amountMinor = is_int($amount) && in_array($eventType, ['approve'], true)
+            ? $amount
+            : $this->minor($amount);
+        $type = match ($eventType) {
+            'create' => 'opening',
+            'submit' => 'allocation',
+            'approve' => 'consumption',
+            'close' => 'release',
+        };
+        $this->contingencyLedger->append(
+            $change,
+            ContingencyMovement::recorded(
+                type: $type,
+                amountMinor: $amountMinor,
+                currency: (string) $version->currency,
+                projectId: (int) $version->project_id,
+                allocationId: (int) $version->contract_project_allocation_id,
+                sourceType: 'change_request',
+                sourceId: (string) $change->id,
+                sourceVersion: (int) $version->version,
+                idempotencyKey: implode(':', ['change', $change->id, $version->version, $type]),
+            ),
+            $occurredAt,
+        );
     }
 }

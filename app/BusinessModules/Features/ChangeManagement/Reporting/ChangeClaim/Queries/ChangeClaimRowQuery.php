@@ -197,7 +197,7 @@ final readonly class ChangeClaimRowQuery implements ReportRowQuery
     {
         $n = (int) $snapshot->coverage_numerator;
         $d = (int) $snapshot->coverage_denominator;
-        $complete = $snapshot->quality_status === 'complete';
+        $complete = $snapshot->quality_status === 'complete' && $n === $d;
 
         return new ReportQuality(
             $complete ? ReportQualityStatus::COMPLETE : ReportQualityStatus::PARTIAL,
