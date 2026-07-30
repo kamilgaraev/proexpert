@@ -8,6 +8,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\CurrentReportAuthorizationFacts;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\ProductionReportScopedResourceAuthorizers;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
+use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Services\SafetyEvidenceVersionResolver;
 use App\BusinessModules\Features\SafetyManagement\Services\SafetyComplianceService;
 use App\Models\Organization;
 use App\Models\Project;
@@ -212,12 +213,28 @@ final class WorkforceAdmissionPostgresTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+        $evidenceVersion = DB::table('safety_evidence_versions')
+            ->where('evidence_type', 'training')
+            ->where('evidence_id', $trainingId)
+            ->latest('id')
+            ->first();
+        self::assertNotNull($evidenceVersion);
+        $evidenceIdentity = [
+            'evidence_id' => $trainingId,
+            'evidence_type' => 'training',
+            'version_hash' => (string) $evidenceVersion->content_hash,
+            'version_id' => (int) $evidenceVersion->id,
+        ];
+        $evidenceCutoff = CarbonImmutable::now();
         DB::table('safety_admission_rows')->where('id', $rowId)->update([
             'status' => 'fulfilled',
             'blocked' => false,
             'verified' => true,
             'evidence_type' => 'training',
             'evidence_id' => $trainingId,
+            'evidence_version_id' => $evidenceVersion->id,
+            'evidence_hash' => $evidenceVersion->content_hash,
+            'evidence_identity' => json_encode($evidenceIdentity, JSON_THROW_ON_ERROR),
         ]);
         $resource = new ReportScopedResource('workforce_snapshot_evidence', $rowId, (int) $project->id);
         $facts = new CurrentReportAuthorizationFacts(
@@ -235,7 +252,19 @@ final class WorkforceAdmissionPostgresTest extends TestCase
 
         DB::table('safety_training_records')->where('id', $trainingId)->update(['result' => 'failed']);
 
-        self::assertFalse($authorizer->authorize($actor, (int) $organization->id, $resource, $facts)->granted);
+        self::assertTrue($authorizer->authorize($actor, (int) $organization->id, $resource, $facts)->granted);
+        $temporal = app(SafetyEvidenceVersionResolver::class)->requirement(
+            (int) $organization->id,
+            $employeeId,
+            ['code' => 'training', 'type' => 'training', 'label' => 'Обучение', 'required' => true],
+            CarbonImmutable::parse('2026-07-30'),
+            $evidenceCutoff,
+        );
+        self::assertSame('fulfilled', $temporal->status);
+        self::assertNotSame(
+            (string) $evidenceVersion->content_hash,
+            (string) DB::table('safety_evidence_versions')->latest('id')->value('content_hash'),
+        );
     }
 
     private function structure(int $organizationId): array

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Reporting\Infrastructure\Access;
 
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
+use App\Services\Storage\FileService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
@@ -131,7 +132,12 @@ final class ProductionReportScopedResourceAuthorizers
                 'photo.caption',
                 'photo.created_at',
                 'photo.metadata',
+                'photo.mime_type',
                 'photo.quality_defect_id',
+                'photo.size_bytes',
+                'photo.storage_etag',
+                'photo.storage_sha256',
+                'photo.storage_version_id',
                 'photo.type',
                 'photo.uploaded_by',
                 'photo.url',
@@ -143,10 +149,29 @@ final class ProductionReportScopedResourceAuthorizers
             'caption' => $photo->caption,
             'created_at' => CarbonImmutable::parse((string) $photo->created_at)->toAtomString(),
             'metadata' => $photo->metadata === null ? null : json_decode((string) $photo->metadata, true, 512, JSON_THROW_ON_ERROR),
-            'storage_identity' => (string) $photo->url,
+            'mime_type' => (string) $photo->mime_type,
+            'size_bytes' => (int) $photo->size_bytes,
+            'storage_etag' => (string) $photo->storage_etag,
+            'storage_key' => (string) $photo->url,
+            'storage_sha256' => (string) $photo->storage_sha256,
+            'storage_version_id' => (string) $photo->storage_version_id,
             'type' => (string) $photo->type,
             'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
         ]));
+        try {
+            $stored = app(FileService::class)->headVersion(
+                (string) $photo->url,
+                (string) $photo->storage_version_id,
+            );
+        } catch (\Throwable) {
+            return false;
+        }
+        if (! hash_equals((string) $photo->storage_sha256, $stored->checksum->value)
+            || ! hash_equals((string) $photo->storage_etag, $stored->etag)
+            || (int) $photo->size_bytes !== $stored->sizeBytes
+            || ! hash_equals((string) $photo->mime_type, $stored->mime)) {
+            return false;
+        }
         $events = DB::table('quality_defect_transition_events')
             ->where('organization_id', $organizationId)
             ->where('project_id', $projectId)
@@ -312,7 +337,10 @@ final class ProductionReportScopedResourceAuthorizers
             ->first([
                 'employee_id',
                 'evidence_id',
+                'evidence_hash',
+                'evidence_identity',
                 'evidence_type',
+                'evidence_version_id',
                 'requirement_code',
                 'status',
                 'valid_until',
@@ -344,38 +372,32 @@ final class ProductionReportScopedResourceAuthorizers
             return false;
         }
         if ($row->evidence_id === null) {
-            return $row->evidence_type === null;
+            return $row->evidence_type === null
+                && $row->evidence_version_id === null
+                && $row->evidence_hash === null;
         }
-        if ($row->evidence_type === 'briefing') {
-            return DB::table('safety_briefing_participants as participant')
-                ->join('safety_briefings as briefing', 'briefing.id', '=', 'participant.briefing_id')
-                ->where('participant.id', $row->evidence_id)
-                ->where('participant.employee_id', $row->employee_id)
-                ->where('briefing.organization_id', $organizationId)
-                ->where('briefing.project_id', $projectId)
-                ->whereNotNull('participant.signed_at')
-                ->whereNull('briefing.deleted_at')
-                ->whereNull('briefing.cancelled_at')
-                ->exists();
-        }
-        $table = match ($row->evidence_type) {
-            'employee_requirement' => 'safety_employee_requirements',
-            'training' => 'safety_training_records',
-            'medical_exam' => 'safety_medical_exams',
-            'ppe' => 'safety_ppe_issues',
-            default => null,
-        };
-
-        if ($table === null) {
+        $identity = json_decode((string) $row->evidence_identity, true, 512, JSON_THROW_ON_ERROR);
+        if (! is_array($identity)
+            || (int) ($identity['version_id'] ?? 0) !== (int) $row->evidence_version_id
+            || ! hash_equals((string) ($identity['version_hash'] ?? ''), (string) $row->evidence_hash)
+            || (int) ($identity['evidence_id'] ?? 0) !== (int) $row->evidence_id
+            || ($identity['evidence_type'] ?? null) !== $row->evidence_type) {
             return false;
         }
-        $query = DB::table($table.' as evidence')
-            ->where('evidence.id', $row->evidence_id)
-            ->where('evidence.organization_id', $organizationId)
-            ->where('evidence.employee_id', $row->employee_id);
-        self::applyWorkforceEvidenceValidity($query, (string) $row->evidence_type, $row);
+        $version = DB::table('safety_evidence_versions')
+            ->where('id', $row->evidence_version_id)
+            ->where('organization_id', $organizationId)
+            ->where('evidence_type', $row->evidence_type)
+            ->where('evidence_id', $row->evidence_id)
+            ->where('employee_id', $row->employee_id)
+            ->where('content_hash', $row->evidence_hash)
+            ->first(['content']);
+        if ($version === null) {
+            return false;
+        }
+        $content = json_decode((string) $version->content, true, 512, JSON_THROW_ON_ERROR);
 
-        return $query->exists();
+        return is_array($content) && ($content['_deleted'] ?? false) !== true;
     }
 
     private static function applyWorkforceEvidenceValidity(Builder $query, string $type, ?object $row = null): void

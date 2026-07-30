@@ -69,11 +69,35 @@ SQL);
                 $arguments,
             ));
         }
+        DB::unprepared(<<<'SQL'
+CREATE FUNCTION bump_briefing_participant_report_generation() RETURNS trigger AS $$
+DECLARE
+    owner_organization_id bigint;
+BEGIN
+    SELECT organization_id INTO owner_organization_id
+    FROM safety_briefings
+    WHERE id = COALESCE(NEW.briefing_id, OLD.briefing_id);
+    IF owner_organization_id IS NULL THEN
+        RETURN COALESCE(NEW, OLD);
+    END IF;
+    INSERT INTO report_source_generations (organization_id, source_code, revision, watermark)
+    VALUES (owner_organization_id, 'safety_site_workforce_assignments', 1, clock_timestamp())
+    ON CONFLICT (organization_id, source_code) DO UPDATE
+    SET revision = report_source_generations.revision + 1,
+        watermark = EXCLUDED.watermark;
+    RETURN COALESCE(NEW, OLD);
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER safety_briefing_participants_report_source_generation
+AFTER INSERT OR UPDATE OR DELETE ON safety_briefing_participants
+FOR EACH ROW EXECUTE FUNCTION bump_briefing_participant_report_generation();
+SQL);
     }
 
     public function down(): void
     {
         DB::statement('DROP FUNCTION IF EXISTS bump_report_source_generation() CASCADE');
+        DB::statement('DROP FUNCTION IF EXISTS bump_briefing_participant_report_generation() CASCADE');
         Schema::dropIfExists('report_source_sync_ledgers');
         Schema::dropIfExists('report_source_generations');
     }
@@ -93,6 +117,7 @@ SQL);
             'safety_medical_exams' => ['safety_site_workforce_assignments'],
             'safety_ppe_issues' => ['safety_site_workforce_assignments'],
             'safety_employee_requirements' => ['safety_site_workforce_assignments'],
+            'safety_briefings' => ['safety_site_workforce_assignments'],
             'safety_incidents' => ['safety_subject_lifecycle'],
             'safety_violations' => ['safety_subject_lifecycle'],
             'safety_corrective_actions' => ['safety_subject_lifecycle'],

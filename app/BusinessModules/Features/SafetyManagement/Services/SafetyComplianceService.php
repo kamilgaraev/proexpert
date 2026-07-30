@@ -14,6 +14,7 @@ use App\BusinessModules\Features\SafetyManagement\Models\SafetyPpeIssue;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyPpeNorm;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyRequirementMatrix;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyTrainingRecord;
+use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\Services\SafetyEvidenceVersionResolver;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
@@ -23,6 +24,8 @@ use Illuminate\Support\Facades\DB;
 
 final class SafetyComplianceService
 {
+    public function __construct(private readonly SafetyEvidenceVersionResolver $evidenceVersions) {}
+
     public function check(SafetyComplianceContext $context): SafetyComplianceResult
     {
         $date = $context->date === null
@@ -86,7 +89,8 @@ final class SafetyComplianceService
         $date = $context->date === null
             ? CarbonImmutable::today()
             : CarbonImmutable::instance($context->date);
-        $employee = $this->findEmployee($context);
+        $this->findEmployee($context);
+        $asOf = $this->evidenceCutoff($context);
         $results = [];
 
         foreach ($requirements as $requirement) {
@@ -104,7 +108,13 @@ final class SafetyComplianceService
                 throw new DomainException('REPORT_SOURCE_UNAVAILABLE');
             }
 
-            $results[] = $this->evaluateRequirement($context, $employee, $normalized, $date);
+            $results[] = $this->evidenceVersions->requirement(
+                $context->organizationId,
+                $context->employeeId,
+                $normalized,
+                $date,
+                $asOf,
+            );
         }
 
         return $results;

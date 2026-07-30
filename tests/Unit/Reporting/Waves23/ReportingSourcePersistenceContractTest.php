@@ -49,11 +49,33 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         self::assertStringContainsString('->afterCommit()', $job);
         self::assertStringContainsString("Schema::create('report_source_generations'", $migration);
         self::assertStringContainsString('bump_report_source_generation', $migration);
+        self::assertStringContainsString('safety_briefing_participants_report_source_generation', $migration);
         self::assertStringContainsString("'revision' => (int) \$generation->revision", $generation);
         self::assertStringNotContainsString('LOCK TABLE', $generation);
         self::assertStringNotContainsString('chunkById', $generation);
         self::assertStringContainsString('ownerCutoff($this->organizationId, $this->sourceCode)', $job);
         self::assertStringContainsString("':missing_target:'", $job);
+    }
+
+    #[Test]
+    public function workforce_evidence_is_temporal_and_snapshot_rows_pin_an_exact_version(): void
+    {
+        $migration = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/SafetyManagement/migrations/'
+            .'2026_07_26_080000_create_workforce_admission_reporting_tables.php',
+        );
+        $materializer = file_get_contents(
+            dirname(__DIR__, 4).'/app/BusinessModules/Features/SafetyManagement/Reporting/Admission/Services/'
+            .'WorkforceAdmissionSnapshotMaterializer.php',
+        );
+
+        self::assertIsString($migration);
+        self::assertIsString($materializer);
+        self::assertStringContainsString("Schema::create('safety_evidence_versions'", $migration);
+        self::assertStringContainsString('capture_safety_evidence_version', $migration);
+        self::assertStringContainsString('capture_safety_briefing_evidence_version', $migration);
+        self::assertStringContainsString("'evidence_version_id' => \$evidenceVersion['id']", $materializer);
+        self::assertStringContainsString("'evidence_hash' => \$evidenceVersion['hash']", $materializer);
     }
 
     #[Test]

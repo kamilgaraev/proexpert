@@ -69,15 +69,24 @@ final readonly class QualityDefectTransitionRecorder
                 throw new LogicException('quality_defect_transition_evidence_invalid');
             }
             if ($evidence['type'] === 'quality_defect_photo') {
-                $required = ['caption', 'content_hash', 'created_at', 'metadata', 'photo_type', 'storage_identity', 'uploaded_by'];
+                $required = [
+                    'caption', 'content_hash', 'created_at', 'metadata', 'mime_type', 'photo_type',
+                    'size_bytes', 'storage_etag', 'storage_key', 'storage_sha256', 'storage_version_id', 'uploaded_by',
+                ];
                 if (array_filter($required, static fn (string $key): bool => ! array_key_exists($key, $evidence)) !== []
                     || ! is_string($evidence['content_hash'])
-                    || ! is_string($evidence['storage_identity'])
+                    || ! is_string($evidence['storage_key'])
+                    || preg_match('/^[a-f0-9]{64}$/D', (string) $evidence['storage_sha256']) !== 1
                     || ! hash_equals($evidence['content_hash'], hash('sha256', CanonicalJson::encode([
                         'caption' => $evidence['caption'],
                         'created_at' => $evidence['created_at'],
                         'metadata' => $evidence['metadata'],
-                        'storage_identity' => $evidence['storage_identity'],
+                        'mime_type' => $evidence['mime_type'],
+                        'size_bytes' => $evidence['size_bytes'],
+                        'storage_etag' => $evidence['storage_etag'],
+                        'storage_key' => $evidence['storage_key'],
+                        'storage_sha256' => $evidence['storage_sha256'],
+                        'storage_version_id' => $evidence['storage_version_id'],
                         'type' => $evidence['photo_type'],
                         'uploaded_by' => $evidence['uploaded_by'],
                     ])))) {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Integration\Reporting\Waves23;
 
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
+use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\CurrentReportAuthorizationFacts;
 use App\BusinessModules\Core\Reporting\Infrastructure\Access\ProductionReportScopedResourceAuthorizers;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
@@ -14,11 +15,14 @@ use App\BusinessModules\Features\QualityControl\Reporting\DefectFlow\Services\Qu
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Storage\DTO\StoredFile;
+use App\Services\Storage\FileService;
 use DateTimeImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use LogicException;
+use Mockery\MockInterface;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
@@ -87,6 +91,11 @@ final class QualityDefectFlowPostgresTest extends TestCase
             'uploaded_by' => $actor->id,
             'type' => 'evidence',
             'url' => 'org-'.$organization->id.'/quality/exact.jpg',
+            'storage_version_id' => 'version-1',
+            'storage_etag' => 'etag-1',
+            'storage_sha256' => str_repeat('a', 64),
+            'size_bytes' => 123,
+            'mime_type' => 'image/jpeg',
             'caption' => 'Original',
             'metadata' => json_encode(['sha256' => str_repeat('a', 64)], JSON_THROW_ON_ERROR),
             'created_at' => $createdAt,
@@ -96,7 +105,12 @@ final class QualityDefectFlowPostgresTest extends TestCase
             'caption' => 'Original',
             'created_at' => $createdAt->toAtomString(),
             'metadata' => ['sha256' => str_repeat('a', 64)],
-            'storage_identity' => 'org-'.$organization->id.'/quality/exact.jpg',
+            'mime_type' => 'image/jpeg',
+            'size_bytes' => 123,
+            'storage_etag' => 'etag-1',
+            'storage_key' => 'org-'.$organization->id.'/quality/exact.jpg',
+            'storage_sha256' => str_repeat('a', 64),
+            'storage_version_id' => 'version-1',
             'type' => 'evidence',
             'uploaded_by' => (int) $actor->id,
         ];
@@ -123,6 +137,26 @@ final class QualityDefectFlowPostgresTest extends TestCase
             ]],
         ]);
         app(QualityDefectTransitionRecorder::class)->record($defect, $history);
+        $this->mock(FileService::class, function (MockInterface $mock) use ($organization): void {
+            $mock->shouldReceive('headVersion')->andReturn(
+                new StoredFile(
+                    'org-'.$organization->id.'/quality/exact.jpg',
+                    'version-1',
+                    'etag-1',
+                    123,
+                    new Sha256Hash(str_repeat('a', 64)),
+                    'image/jpeg',
+                ),
+                new StoredFile(
+                    'org-'.$organization->id.'/quality/exact.jpg',
+                    'version-1',
+                    'etag-replaced',
+                    123,
+                    new Sha256Hash(str_repeat('b', 64)),
+                    'image/jpeg',
+                ),
+            );
+        });
         $resource = new ReportScopedResource('quality_defect_photo', $photoId, (int) $project->id);
         $facts = new CurrentReportAuthorizationFacts(
             'queue',
@@ -136,8 +170,6 @@ final class QualityDefectFlowPostgresTest extends TestCase
             ->first(static fn ($handler): bool => $handler->kind() === 'quality_defect_photo');
         self::assertNotNull($authorizer);
         self::assertTrue($authorizer->authorize($actor, (int) $organization->id, $resource, $facts)->granted);
-
-        DB::table('quality_defect_photos')->where('id', $photoId)->update(['caption' => 'Changed']);
 
         self::assertFalse($authorizer->authorize($actor, (int) $organization->id, $resource, $facts)->granted);
     }

@@ -16,6 +16,7 @@ use DomainException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 final class QualityDefectService
 {
@@ -240,24 +241,20 @@ final class QualityDefectService
         $organization = Organization::query()->find($organizationId);
 
         foreach ($photos as $photo) {
-            $url = $photo['url'] ?? null;
-
-            if (($photo['file'] ?? null) instanceof UploadedFile) {
-                $url = $this->fileService->upload(
-                    $photo['file'],
-                    "quality-control/defects/{$defect->id}",
-                    null,
-                    'private',
-                    $organization
-                );
-
-                if ($url === false) {
-                    throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
-                }
+            $file = $photo['file'] ?? null;
+            if (! $file instanceof UploadedFile || ! $file->isValid() || ! $organization instanceof Organization) {
+                throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
             }
-
-            if (! is_string($url) || trim($url) === '') {
-                continue;
+            $extension = strtolower((string) $file->getClientOriginalExtension());
+            $storageKey = 'org-'.$organizationId.'/quality-control/defects/'.$defect->id.'/'
+                .Str::uuid().($extension === '' ? '' : '.'.$extension);
+            $stored = $this->fileService->putImmutable(
+                $storageKey,
+                (string) $file->getContent(),
+                (string) $file->getMimeType(),
+            );
+            if (! is_string($stored['version_id']) || ! is_string($stored['etag'])) {
+                throw new DomainException(trans_message('quality_control.errors.photo_upload_failed'));
             }
 
             $type = $photo['type'] ?? null;
@@ -270,7 +267,12 @@ final class QualityDefectService
                 'organization_id' => $organizationId,
                 'uploaded_by' => $userId,
                 'type' => $type,
-                'url' => $url,
+                'url' => $storageKey,
+                'storage_version_id' => $stored['version_id'],
+                'storage_etag' => $stored['etag'],
+                'storage_sha256' => $stored['sha256'],
+                'size_bytes' => $stored['size'],
+                'mime_type' => $stored['content_type'],
                 'caption' => $photo['caption'] ?? null,
                 'metadata' => $photo['metadata'] ?? null,
             ]);
@@ -302,14 +304,22 @@ final class QualityDefectService
             'reporting_evidence_refs' => $defect->photos()
                 ->where('organization_id', $defect->organization_id)
                 ->orderBy('id')
-                ->get(['id', 'type', 'url', 'caption', 'metadata', 'uploaded_by', 'created_at'])
+                ->get([
+                    'id', 'type', 'url', 'storage_version_id', 'storage_etag', 'storage_sha256',
+                    'size_bytes', 'mime_type', 'caption', 'metadata', 'uploaded_by', 'created_at',
+                ])
                 ->map(static fn ($photo): array => [
                     'caption' => $photo->caption,
                     'content_hash' => hash('sha256', \App\BusinessModules\Core\Reporting\Support\CanonicalJson::encode([
                         'caption' => $photo->caption,
                         'created_at' => $photo->created_at?->toAtomString(),
                         'metadata' => $photo->metadata,
-                        'storage_identity' => (string) $photo->url,
+                        'mime_type' => (string) $photo->mime_type,
+                        'size_bytes' => (int) $photo->size_bytes,
+                        'storage_etag' => (string) $photo->storage_etag,
+                        'storage_key' => (string) $photo->url,
+                        'storage_sha256' => (string) $photo->storage_sha256,
+                        'storage_version_id' => (string) $photo->storage_version_id,
                         'type' => (string) $photo->type,
                         'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
                     ])),
@@ -317,7 +327,12 @@ final class QualityDefectService
                     'id' => (int) $photo->id,
                     'metadata' => $photo->metadata,
                     'photo_type' => (string) $photo->type,
-                    'storage_identity' => (string) $photo->url,
+                    'mime_type' => (string) $photo->mime_type,
+                    'size_bytes' => (int) $photo->size_bytes,
+                    'storage_etag' => (string) $photo->storage_etag,
+                    'storage_key' => (string) $photo->url,
+                    'storage_sha256' => (string) $photo->storage_sha256,
+                    'storage_version_id' => (string) $photo->storage_version_id,
                     'type' => 'quality_defect_photo',
                     'uploaded_by' => $photo->uploaded_by === null ? null : (int) $photo->uploaded_by,
                 ])

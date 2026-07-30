@@ -37,6 +37,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
     public function __construct(
         private SafetyComplianceService $compliance,
         private WorkforceAdmissionFormula $formula,
+        private SafetyEvidenceVersionResolver $evidenceVersions,
     ) {}
 
     public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyAdmissionSnapshot
@@ -354,6 +355,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
         $blockerCount = 0;
         $expiringCount = 0;
         $gapCount = 0;
+        $resolvedEvidenceVersions = [];
 
         if ($assignments->isEmpty()) {
             $projectIds = $query->scope->projectIds;
@@ -406,16 +408,37 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                 ...$this->requirementStates($policy, $results),
                 ...$this->lifecycleStates($lifecycleFlags),
             ];
+            $versionedStates = [];
             foreach ($states as $state) {
+                $evidenceVersion = null;
+                if ($state->evidenceType !== null && $state->evidenceId !== null) {
+                    $evidenceVersion = $this->evidenceVersions->effective(
+                        $organizationId,
+                        $state->evidenceType,
+                        $state->evidenceId,
+                        $asOf,
+                    );
+                    if ($evidenceVersion === null) {
+                        $gapCount++;
+                        $unknownCount++;
+
+                        continue;
+                    }
+                    $resolvedEvidenceVersions[$state->evidenceType.':'.$state->evidenceId] = $evidenceVersion;
+                }
                 $evidenceHashes[] = hash('sha256', CanonicalJson::encode([
                     'assignment_id' => (int) $assignment->workforce_assignment_id,
                     'code' => $state->code,
                     'evidence_id' => $state->evidenceId,
                     'evidence_type' => $state->evidenceType,
+                    'evidence_version_hash' => $evidenceVersion['hash'] ?? null,
+                    'evidence_version_id' => $evidenceVersion['id'] ?? null,
                     'status' => $state->status,
                     'valid_until' => $state->validUntil?->format('Y-m-d'),
                 ]));
+                $versionedStates[] = $state;
             }
+            $states = $versionedStates;
             $includedStates = array_values(array_filter(
                 $states,
                 fn (AdmissionRequirementState $state): bool => $this->stateMatchesFilters($state, $query),
@@ -453,6 +476,12 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             }
             foreach ($includedStates as $state) {
                 $blocked = in_array($state->code, $metric->blockerCodes, true);
+                $evidenceVersion = $state->evidenceType === null || $state->evidenceId === null
+                    ? null
+                    : ($resolvedEvidenceVersions[$state->evidenceType.':'.$state->evidenceId] ?? null);
+                if ($state->evidenceId !== null && $evidenceVersion === null) {
+                    continue;
+                }
                 $rows[] = [
                     'project_id' => (int) $assignment->project_id,
                     'safety_site_id' => (int) $assignment->safety_site_id,
@@ -477,6 +506,14 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
                     'valid_until' => $state->validUntil?->format('Y-m-d'),
                     'evidence_type' => $state->evidenceType,
                     'evidence_id' => $state->evidenceId,
+                    'evidence_version_id' => $evidenceVersion['id'] ?? null,
+                    'evidence_hash' => $evidenceVersion['hash'] ?? null,
+                    'evidence_identity' => $evidenceVersion === null ? null : [
+                        'evidence_id' => $state->evidenceId,
+                        'evidence_type' => $state->evidenceType,
+                        'version_hash' => $evidenceVersion['hash'],
+                        'version_id' => $evidenceVersion['id'],
+                    ],
                     'medical_details' => $state->type === 'medical_exam' ? [
                         'source_type' => 'medical_exam',
                         'source_id' => $state->evidenceId,

@@ -22,6 +22,8 @@ final class SafetyAdmissionRow extends Model
         'verified' => 'boolean',
         'valid_until' => 'immutable_date',
         'evidence_id' => 'integer',
+        'evidence_version_id' => 'integer',
+        'evidence_identity' => 'array',
         'medical_details' => 'array',
         'blocker_codes' => 'array',
     ];
