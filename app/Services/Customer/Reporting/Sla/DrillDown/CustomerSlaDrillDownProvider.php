@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Customer\Reporting\Sla\DrillDown;
 
+use App\BusinessModules\Core\Reporting\Application\Access\ReportEvidenceRedactor;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceObjectAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Rows\StableDrillDownPage;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
@@ -17,7 +18,10 @@ use JsonException;
 
 final readonly class CustomerSlaDrillDownProvider implements ReportDrillDownProvider
 {
-    public function __construct(private ReportSourceObjectAuthorizer $sources) {}
+    public function __construct(
+        private ReportSourceObjectAuthorizer $sources,
+        private ReportEvidenceRedactor $redactor,
+    ) {}
 
     public function drillDown(
         ReportExecutionContext $context,
@@ -45,17 +49,7 @@ final readonly class CustomerSlaDrillDownProvider implements ReportDrillDownProv
             $row->project_id === null ? null : (int) $row->project_id,
         );
         $events = array_map(
-            static fn (array $ref): array => $availability === 'available'
-                ? [
-                    'row_key' => (string) $ref['event_id'],
-                    'event_id' => (string) $ref['event_id'],
-                    'event_type' => (string) $ref['event_type'],
-                    'availability' => $availability,
-                ]
-                : [
-                    'row_key' => 'redacted:'.hash('sha256', (string) $ref['event_id']),
-                    'availability' => 'redacted',
-                ],
+            fn (array $ref): array => $this->redactor->event($ref, $availability),
             $row->event_refs,
         );
         $page = StableDrillDownPage::fromRows(

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DTO;
 
+use Carbon\CarbonImmutable;
 use InvalidArgumentException;
 
 final readonly class ContractorObjectiveObservationIndex
@@ -16,6 +17,8 @@ final readonly class ContractorObjectiveObservationIndex
         int $projectId,
         string $sourceMetric,
         string $unitCode,
+        string $cohortKey,
+        string $cohortPeriod,
     ): array {
         $rows = $this->rows[$sourceReportCode][$profileId][$projectId] ?? [];
         $signals = [];
@@ -23,6 +26,9 @@ final readonly class ContractorObjectiveObservationIndex
         foreach ($rows as $row) {
             if (! is_array($row)) {
                 throw new InvalidArgumentException('contractor_objective_observation_invalid');
+            }
+            if (! hash_equals($this->cohortKey($row, $cohortPeriod), $cohortKey)) {
+                continue;
             }
             [$value, $eligible] = $this->signal($sourceReportCode, $sourceMetric, $unitCode, $row);
             $signals[] = new ContractorComponentSignal($value, $eligible);
@@ -37,18 +43,46 @@ final readonly class ContractorObjectiveObservationIndex
         return ['signals' => $signals, 'evidence' => $evidence];
     }
 
-    public function profileProjects(): array
+    public function profileProjects(?string $cohortKey = null, ?string $cohortPeriod = null): array
     {
         $dimensions = [];
         foreach ($this->rows as $sources) {
             foreach ($sources as $profileId => $projects) {
-                foreach (array_keys($projects) as $projectId) {
-                    $dimensions[(int) $profileId][(int) $projectId] = true;
+                foreach ($projects as $projectId => $rows) {
+                    foreach ($rows as $row) {
+                        if (
+                            $cohortKey !== null
+                            && $cohortPeriod !== null
+                            && ! hash_equals($this->cohortKey($row, $cohortPeriod), $cohortKey)
+                        ) {
+                            continue;
+                        }
+                        $dimensions[(int) $profileId][(int) $projectId] = true;
+                        break;
+                    }
                 }
             }
         }
 
         return $dimensions;
+    }
+
+    private function cohortKey(array $row, string $period): string
+    {
+        if (is_string($row['_cohort_key'] ?? null) && $row['_cohort_key'] !== '') {
+            return $row['_cohort_key'];
+        }
+        if (! is_string($row['_observed_at'] ?? null)) {
+            throw new InvalidArgumentException('contractor_objective_observation_period_missing');
+        }
+        $date = CarbonImmutable::parse($row['_observed_at']);
+
+        return match ($period) {
+            'month' => $date->format('Y-m'),
+            'quarter' => $date->year.'-Q'.$date->quarter,
+            'year' => $date->format('Y'),
+            default => throw new InvalidArgumentException('contractor_objective_observation_period_invalid'),
+        };
     }
 
     private function signal(

@@ -63,6 +63,10 @@ final readonly class ContractorScorecardSnapshotMaterializer
         if (! $policy instanceof ContractorScorecardPolicyVersion) {
             throw new InvalidArgumentException('contractor_scorecard_policy_unavailable');
         }
+        $cohortPeriod = $policy->cohort_rules['period'] ?? null;
+        if (! in_array($cohortPeriod, ['month', 'quarter', 'year'], true)) {
+            throw new InvalidArgumentException('contractor_scorecard_cohort_invalid');
+        }
         $components = $this->components($policy);
         $this->assertPinnedSources($tuple, $components);
         $objectiveObservations = $this->observations->load($tuple);
@@ -109,6 +113,7 @@ final readonly class ContractorScorecardSnapshotMaterializer
             $query,
             $tuple,
             $policy,
+            $cohortPeriod,
             $components,
             $groups,
             $objectiveObservations,
@@ -179,6 +184,8 @@ final readonly class ContractorScorecardSnapshotMaterializer
                         $objectiveObservations,
                         $profileId,
                         $projectId,
+                        $cohortKey,
+                        $cohortPeriod,
                     );
                     $rawMetric = $this->formula->component(
                         $component['code'],
@@ -265,6 +272,8 @@ final readonly class ContractorScorecardSnapshotMaterializer
         ContractorObjectiveObservationIndex $objectiveObservations,
         int $profileId,
         int $projectId,
+        string $cohortKey,
+        string $cohortPeriod,
     ): array {
         $field = $component['source_metric'] ?? self::REVIEW_FIELDS[$component['code']] ?? null;
         if ($component['source_report_code'] === 'marketplace_reviews') {
@@ -290,6 +299,8 @@ final readonly class ContractorScorecardSnapshotMaterializer
             $projectId,
             $component['source_metric'],
             $component['unit_code'],
+            $cohortKey,
+            $cohortPeriod,
         );
     }
 
@@ -364,18 +375,19 @@ final readonly class ContractorScorecardSnapshotMaterializer
             $groups[$key]['reviews']->push($review);
         }
 
-        $profileIds = array_map('intval', array_keys($objectiveObservations->profileProjects()));
+        if ($requestedCohort !== null && ! is_string($requestedCohort)) {
+            throw new InvalidArgumentException('contractor_scorecard_cohort_invalid');
+        }
+        $objectiveCohort = $requestedCohort ?? $this->cohortKey(CarbonImmutable::instance($asOf), $period);
+        $objectiveDimensions = $objectiveObservations->profileProjects($objectiveCohort, $period);
+        $profileIds = array_map('intval', array_keys($objectiveDimensions));
         $categories = DB::table('marketplace_contractor_categories')
             ->whereIn('profile_id', $profileIds)
             ->orderByDesc('is_primary')
             ->orderBy('category_id')
             ->get(['profile_id', 'category_id'])
             ->groupBy('profile_id');
-        if ($requestedCohort !== null && ! is_string($requestedCohort)) {
-            throw new InvalidArgumentException('contractor_scorecard_cohort_invalid');
-        }
-        $objectiveCohort = $requestedCohort ?? $this->cohortKey(CarbonImmutable::instance($asOf), $period);
-        foreach ($objectiveObservations->profileProjects() as $profileId => $projects) {
+        foreach ($objectiveDimensions as $profileId => $projects) {
             foreach (array_keys($projects) as $projectId) {
                 foreach ($categories->get($profileId, collect()) as $category) {
                     $key = implode(':', [$profileId, (int) $category->category_id, $projectId, $objectiveCohort]);

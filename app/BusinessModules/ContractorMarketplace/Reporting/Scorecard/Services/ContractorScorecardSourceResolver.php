@@ -69,19 +69,32 @@ final readonly class ContractorScorecardSourceResolver
             ->where('report_code', $code)
             ->where('status', 'ready')
             ->where('as_of', $query->asOf)
+            ->whereRaw(
+                'scope_project_ids = ?::jsonb',
+                [CanonicalJson::encode($query->scope->projectIds)],
+            )
+            ->whereRaw(
+                'scope_holding_organization_ids = ?::jsonb',
+                [CanonicalJson::encode($query->scope->holdingOrganizationIds)],
+            )
+            ->whereRaw(
+                'scope_resources = ?::jsonb',
+                [CanonicalJson::encode(array_map(
+                    static fn ($resource): array => $resource->canonicalIdentity(),
+                    $query->scope->resources,
+                ))],
+            )
+            ->where('scope_timezone', $query->scope->timezone->getName())
+            ->whereRaw(
+                'filters = ?::jsonb',
+                [CanonicalJson::encode($query->filters->values)],
+            )
             ->whereNotNull('snapshot_id')
             ->whereNotNull('source_hash')
             ->orderByDesc('as_of')
             ->orderByDesc('ready_at')
-            ->limit(20)
-            ->get();
-        $record = $candidates->first(static function (ReportRunRecord $candidate) use ($query): bool {
-            $projects = array_map('intval', $candidate->scope_project_ids ?? []);
-
-            return $projects === $query->scope->projectIds
-                && $candidate->scope_holding_organization_ids === $query->scope->holdingOrganizationIds
-                && ($candidate->filters ?? []) === $query->filters->values;
-        });
+            ->first();
+        $record = $candidates;
         if (
             ! $record instanceof ReportRunRecord
             || $record->snapshot_stale_at === null

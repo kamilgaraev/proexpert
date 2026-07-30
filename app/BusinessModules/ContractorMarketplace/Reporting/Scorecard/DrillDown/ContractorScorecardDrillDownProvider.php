@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\DrillDown;
 
 use App\BusinessModules\ContractorMarketplace\Reporting\Scorecard\Models\ContractorScorecardRow;
+use App\BusinessModules\Core\Reporting\Application\Access\ReportEvidenceRedactor;
 use App\BusinessModules\Core\Reporting\Application\Access\ReportSourceObjectAuthorizer;
 use App\BusinessModules\Core\Reporting\Application\Rows\StableDrillDownPage;
 use App\BusinessModules\Core\Reporting\Domain\Contracts\ReportDrillDownProvider;
@@ -17,7 +18,10 @@ use JsonException;
 
 final readonly class ContractorScorecardDrillDownProvider implements ReportDrillDownProvider
 {
-    public function __construct(private ReportSourceObjectAuthorizer $sources) {}
+    public function __construct(
+        private ReportSourceObjectAuthorizer $sources,
+        private ReportEvidenceRedactor $redactor,
+    ) {}
 
     public function drillDown(
         ReportExecutionContext $context,
@@ -51,14 +55,7 @@ final readonly class ContractorScorecardDrillDownProvider implements ReportDrill
                 (int) $row->organization_id,
                 $row->project_id === null ? null : (int) $row->project_id,
             );
-            $rowKey = $sourceType.':'.$sourceId;
-            $evidence[] = $availability === 'available'
-                ? ['row_key' => $rowKey, ...$ref, 'availability' => $availability]
-                : [
-                    'row_key' => 'redacted:'.hash('sha256', $rowKey),
-                    'source_type' => $sourceType,
-                    'availability' => 'redacted',
-                ];
+            $evidence[] = $this->redactor->reference($ref, $sourceType, $sourceId, $availability);
         }
         $page = StableDrillDownPage::fromRows(
             $evidence,
