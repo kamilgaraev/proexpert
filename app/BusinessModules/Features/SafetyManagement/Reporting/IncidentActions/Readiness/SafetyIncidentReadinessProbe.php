@@ -44,6 +44,8 @@ final readonly class SafetyIncidentReadinessProbe implements ReportDefinitionRea
             ->where('status', 'ready')
             ->where('gap_count', 0)
             ->where('unknown_count', 0)
+            ->whereColumn('completed_owner_checksum', 'owner_checksum')
+            ->whereColumn('cursor', 'target_cursor')
             ->distinct()
             ->count('source_code');
         $ready = $readySources === 2

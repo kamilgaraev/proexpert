@@ -30,7 +30,7 @@ final readonly class QualityDefectFlowSnapshotMaterializer
     public function materialize(ReportExecutionContext $context, ReportQuery $query): QualityDefectFlowSnapshot
     {
         $organizationId = $context->scope->organizationId;
-        ReportingSourceBackfillJob::dispatch($organizationId, ReportingSourceBackfillJob::QUALITY_DEFECTS);
+        ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::QUALITY_DEFECTS);
         $asOf = CarbonImmutable::instance($query->asOf);
         [$periodFrom, $periodTo] = $this->period($query, $asOf);
         $events = $this->events(

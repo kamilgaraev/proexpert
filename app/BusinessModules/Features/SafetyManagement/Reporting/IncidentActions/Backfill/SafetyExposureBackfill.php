@@ -27,16 +27,6 @@ class SafetyExposureBackfill
     public function nextBatch(int $organizationId, int $afterId, int $limit = 500): Collection
     {
         return DB::table('workforce_attendance_corrections as attendance')
-            ->join('safety_site_workforce_assignments as mapping', function ($join): void {
-                $join->on('mapping.organization_id', '=', 'attendance.organization_id')
-                    ->on('mapping.employee_id', '=', 'attendance.employee_id')
-                    ->on('mapping.project_id', '=', 'attendance.project_id')
-                    ->whereColumn('mapping.valid_from', '<=', 'attendance.work_date')
-                    ->where(static function ($query): void {
-                        $query->whereNull('mapping.valid_to')
-                            ->orWhereColumn('mapping.valid_to', '>=', 'attendance.work_date');
-                    });
-            })
             ->where('attendance.organization_id', $organizationId)
             ->where('attendance.id', '>', $afterId)
             ->orderBy('attendance.id')
@@ -49,7 +39,6 @@ class SafetyExposureBackfill
                 'attendance.status',
                 'attendance.hours',
                 'attendance.updated_at',
-                'mapping.safety_site_id',
             ]);
     }
 
@@ -76,21 +65,20 @@ class SafetyExposureBackfill
     {
         $projected = [];
         $gaps = 0;
-        $keys = $batch->groupBy(
+        $attributed = collect();
+        foreach ($batch as $row) {
+            $siteIds = $this->siteIdsForCorrection($organizationId, $row);
+            if ($siteIds->count() !== 1) {
+                $gaps++;
+                continue;
+            }
+            $row->safety_site_id = (int) $siteIds->first();
+            $attributed->push($row);
+        }
+        $keys = $attributed->groupBy(
             static fn (object $row): string => $row->project_id.':'.$row->safety_site_id.':'.$row->work_date,
         );
         foreach ($keys as $rows) {
-            $ambiguous = $rows->unique('id')->filter(
-                fn (object $row): bool => ! $this->hasUnambiguousAttribution(
-                    $organizationId,
-                    (int) $row->id,
-                    (string) $row->work_date,
-                ),
-            );
-            if ($ambiguous->isNotEmpty()) {
-                $gaps += $ambiguous->count();
-                continue;
-            }
             $seed = $rows->first();
             if ($seed === null) {
                 $gaps++;
@@ -131,7 +119,9 @@ class SafetyExposureBackfill
             'projected_count' => count($projected),
             'gap_count' => $gaps,
             'unknown_count' => 0,
-            'input_hash' => hash('sha256', CanonicalJson::encode($batch->all())),
+            'input_hash' => hash('sha256', CanonicalJson::encode(
+                $batch->map(static fn (object $row): array => (array) $row)->all(),
+            )),
             'output_hash' => hash('sha256', implode('', $projected)),
             'source_watermark' => $batch->max('updated_at'),
         ];
@@ -139,17 +129,7 @@ class SafetyExposureBackfill
 
     private function rowsForDay(int $organizationId, int $projectId, int $siteId, string $workDate): Collection
     {
-        return $this->latestDailyCorrections(DB::table('workforce_attendance_corrections as attendance')
-            ->join('safety_site_workforce_assignments as mapping', function ($join) use ($siteId, $workDate): void {
-                $join->on('mapping.organization_id', '=', 'attendance.organization_id')
-                    ->on('mapping.employee_id', '=', 'attendance.employee_id')
-                    ->on('mapping.project_id', '=', 'attendance.project_id')
-                    ->where('mapping.safety_site_id', $siteId)
-                    ->whereDate('mapping.valid_from', '<=', $workDate)
-                    ->where(static function ($query) use ($workDate): void {
-                        $query->whereNull('mapping.valid_to')->orWhereDate('mapping.valid_to', '>=', $workDate);
-                    });
-            })
+        $corrections = DB::table('workforce_attendance_corrections as attendance')
             ->where('attendance.organization_id', $organizationId)
             ->where('attendance.project_id', $projectId)
             ->whereDate('attendance.work_date', $workDate)
@@ -159,7 +139,13 @@ class SafetyExposureBackfill
                 'attendance.status',
                 'attendance.hours',
                 'attendance.updated_at',
-            ]));
+                'attendance.project_id',
+                'attendance.work_date',
+            ]);
+
+        return $this->latestDailyCorrections($corrections)->filter(
+            fn (object $correction): bool => $this->siteIdsForCorrection($organizationId, $correction)->all() === [$siteId],
+        )->values();
     }
 
     public function latestDailyCorrections(Collection $corrections): Collection
@@ -173,21 +159,18 @@ class SafetyExposureBackfill
             ->values();
     }
 
-    private function hasUnambiguousAttribution(int $organizationId, int $correctionId, string $workDate): bool
+    protected function siteIdsForCorrection(int $organizationId, object $correction): Collection
     {
-        return DB::table('workforce_attendance_corrections as attendance')
-            ->join('safety_site_workforce_assignments as mapping', function ($join) use ($workDate): void {
-                $join->on('mapping.organization_id', '=', 'attendance.organization_id')
-                    ->on('mapping.employee_id', '=', 'attendance.employee_id')
-                    ->on('mapping.project_id', '=', 'attendance.project_id')
-                    ->whereDate('mapping.valid_from', '<=', $workDate)
-                    ->where(static function ($query) use ($workDate): void {
-                        $query->whereNull('mapping.valid_to')->orWhereDate('mapping.valid_to', '>=', $workDate);
-                    });
+        return DB::table('safety_site_workforce_assignments')
+            ->where('organization_id', $organizationId)
+            ->where('employee_id', (int) $correction->employee_id)
+            ->where('project_id', (int) $correction->project_id)
+            ->whereDate('valid_from', '<=', (string) $correction->work_date)
+            ->where(static function ($query) use ($correction): void {
+                $query->whereNull('valid_to')->orWhereDate('valid_to', '>=', (string) $correction->work_date);
             })
-            ->where('attendance.organization_id', $organizationId)
-            ->where('attendance.id', $correctionId)
             ->distinct()
-            ->count('mapping.safety_site_id') === 1;
+            ->orderBy('safety_site_id')
+            ->pluck('safety_site_id');
     }
 }

@@ -44,6 +44,8 @@ final readonly class WorkforceAdmissionReadinessProbe implements ReportDefinitio
             ->where('status', 'ready')
             ->where('gap_count', 0)
             ->where('unknown_count', 0)
+            ->whereColumn('completed_owner_checksum', 'owner_checksum')
+            ->whereColumn('cursor', 'target_cursor')
             ->exists();
         $ready = $sourceReady
             && (int) $snapshot->eligible_count === (int) $snapshot->projected_count

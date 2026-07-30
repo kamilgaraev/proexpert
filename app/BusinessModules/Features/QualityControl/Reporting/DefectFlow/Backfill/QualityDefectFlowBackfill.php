@@ -39,17 +39,22 @@ final readonly class QualityDefectFlowBackfill
         $inputHashes = [];
         $outputHashes = [];
         $gaps = 0;
+        $unknownOwnerKeys = [];
         foreach ($batch as $history) {
             if (! $history instanceof QualityDefectStatusHistory || $history->defect === null) {
                 $gaps++;
 
                 continue;
             }
-            if ($history->changed_at === null
-                || $history->defect->updated_at === null
-                || $history->defect->updated_at->greaterThan($history->changed_at)) {
+            if ($history->changed_at === null) {
                 $gaps++;
 
+                continue;
+            }
+            $dimensions = $history->reporting_dimensions;
+            if (! is_array($dimensions) && $history->defect->updated_at?->greaterThan($history->changed_at)) {
+                $gaps++;
+                $unknownOwnerKeys[] = 'quality_defect_status_history:'.(int) $history->id;
                 continue;
             }
             $inputHashes[] = hash('sha256', CanonicalJson::encode([
@@ -77,7 +82,8 @@ final readonly class QualityDefectFlowBackfill
             'source_count' => $batch->count(),
             'projected_count' => count($outputHashes),
             'gap_count' => $gaps,
-            'unknown_count' => 0,
+            'unknown_count' => count($unknownOwnerKeys),
+            'unknown_owner_keys' => $unknownOwnerKeys,
             'input_hash' => hash('sha256', implode('', $inputHashes)),
             'output_hash' => hash('sha256', implode('', $outputHashes)),
             'source_watermark' => $batch->max('changed_at'),

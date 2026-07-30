@@ -33,8 +33,8 @@ final readonly class SafetyIncidentSnapshotMaterializer
     public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyIncidentSnapshot
     {
         $organizationId = $context->scope->organizationId;
-        ReportingSourceBackfillJob::dispatch($organizationId, ReportingSourceBackfillJob::SAFETY_INCIDENTS);
-        ReportingSourceBackfillJob::dispatch($organizationId, ReportingSourceBackfillJob::SAFETY_EXPOSURE);
+        ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::SAFETY_INCIDENTS);
+        ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::SAFETY_EXPOSURE);
         $asOf = CarbonImmutable::instance($query->asOf);
         [$periodFrom, $periodTo] = $this->period($query, $asOf);
         $events = $this->events(

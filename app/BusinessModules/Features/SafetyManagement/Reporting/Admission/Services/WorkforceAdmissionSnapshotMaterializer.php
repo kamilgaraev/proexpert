@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportQuery;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportScopedResource;
 use App\BusinessModules\Core\Reporting\Support\CanonicalJson;
 use App\BusinessModules\Core\Reporting\Support\ReportSnapshotFirstWriter;
+use App\BusinessModules\Core\Reporting\Support\ReportIdentitySetReconciler;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceRequirementResult;
 use App\BusinessModules\Features\SafetyManagement\Reporting\Admission\DTO\AdmissionRequirementState;
@@ -40,7 +41,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
     public function materialize(ReportExecutionContext $context, ReportQuery $query): SafetyAdmissionSnapshot
     {
         $organizationId = $context->scope->organizationId;
-        ReportingSourceBackfillJob::dispatch($organizationId, ReportingSourceBackfillJob::WORKFORCE_ADMISSION);
+        ReportingSourceBackfillJob::request($organizationId, ReportingSourceBackfillJob::WORKFORCE_ADMISSION);
         $asOf = CarbonImmutable::instance($query->asOf);
         $date = $asOf->startOfDay();
         $assignments = $this->assignments(
@@ -52,7 +53,7 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             $query,
         );
         $projection = $this->projection($organizationId, $assignments, $date, $asOf, $query);
-        $ownerSourceCount = $this->ownerSourceCount(
+        $ownerSources = $this->ownerSources(
             $organizationId,
             $context->scope->projectIds,
             $context->scope->resources,
@@ -60,7 +61,16 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             $asOf,
             $query,
         );
-        $mappingGapCount = max(0, $ownerSourceCount - $assignments->count());
+        $ownerKeys = $ownerSources->map(
+            static fn (object $row): string => $row->mapping_id === null
+                ? 'assignment:'.$row->assignment_id.':employee:'.$row->employee_id.':site:missing'
+                : 'assignment:'.$row->assignment_id.':employee:'.$row->employee_id.':site:'.$row->safety_site_id,
+        );
+        $projectedKeys = $assignments->map(
+            static fn (SafetySiteWorkforceAssignment $mapping): string => 'assignment:'.$mapping->workforce_assignment_id
+                .':employee:'.$mapping->employee_id.':site:'.$mapping->safety_site_id,
+        );
+        $mappingGapCount = ReportIdentitySetReconciler::gapCount($ownerKeys, $projectedKeys);
         $projection['gap_count'] += $mappingGapCount;
         $projection['eligible_count'] += $mappingGapCount;
         $policyIds = collect($projection['policies'])
@@ -234,14 +244,14 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             ->get();
     }
 
-    private function ownerSourceCount(
+    private function ownerSources(
         int $organizationId,
         array $scopeProjectIds,
         array $scopeResources,
         CarbonImmutable $date,
         CarbonImmutable $asOf,
         ReportQuery $query,
-    ): int {
+    ): Collection {
         $builder = DB::table('workforce_employee_assignments as owner')
             ->leftJoin('safety_site_workforce_assignments as mapping', function ($join) use ($date, $asOf): void {
                 $join->on('mapping.organization_id', '=', 'owner.organization_id')
@@ -298,7 +308,12 @@ final readonly class WorkforceAdmissionSnapshotMaterializer
             });
         }
 
-        return $builder->distinct()->count('owner.id');
+        return $builder->get([
+            'owner.id as assignment_id',
+            'owner.employee_id',
+            'mapping.id as mapping_id',
+            'mapping.safety_site_id',
+        ]);
     }
 
     private function projection(

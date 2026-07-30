@@ -50,19 +50,20 @@ final readonly class QualityDefectTransitionRecorder
                     'type' => 'status_comment',
                 ];
             }
+            $dimensions = is_array($history->reporting_dimensions) ? $history->reporting_dimensions : [];
             $payload = [
                 'actor_user_id' => $history->changed_by === null ? null : (int) $history->changed_by,
-                'contractor_id' => $defect->contractor_id === null ? null : (int) $defect->contractor_id,
-                'due_date' => $defect->due_date?->toDateString(),
+                'contractor_id' => isset($dimensions['contractor_id']) ? (int) $dimensions['contractor_id'] : ($defect->contractor_id === null ? null : (int) $defect->contractor_id),
+                'due_date' => $dimensions['due_date'] ?? $defect->due_date?->toDateString(),
                 'evidence_refs' => $evidenceRefs,
                 'event_version' => $version,
                 'from_status' => $history->from_status?->value,
                 'occurred_at' => $history->changed_at?->toAtomString(),
                 'organization_id' => (int) $defect->organization_id,
-                'project_id' => (int) $defect->project_id,
+                'project_id' => (int) ($dimensions['project_id'] ?? $defect->project_id),
                 'quality_defect_id' => (int) $defect->id,
-                'schedule_task_id' => $defect->schedule_task_id === null ? null : (int) $defect->schedule_task_id,
-                'severity' => $defect->severity->value,
+                'schedule_task_id' => isset($dimensions['schedule_task_id']) ? (int) $dimensions['schedule_task_id'] : ($defect->schedule_task_id === null ? null : (int) $defect->schedule_task_id),
+                'severity' => (string) ($dimensions['severity'] ?? $defect->severity->value),
                 'status_history_id' => (int) $history->id,
                 'to_status' => $history->to_status->value,
             ];

@@ -63,4 +63,30 @@ final class SafetyExposureBackfillTest extends TestCase
         self::assertSame(3, $result['projected_count']);
         self::assertSame(0, $result['gap_count']);
     }
+
+    #[Test]
+    public function unmapped_owner_correction_is_a_gap_and_is_not_projected(): void
+    {
+        $backfill = new class(new SafetyExposureProjector) extends SafetyExposureBackfill {
+            protected function siteIdsForCorrection(int $organizationId, object $correction): Collection
+            {
+                return collect();
+            }
+        };
+        $batch = collect([(object) [
+            'id' => 11,
+            'project_id' => 2,
+            'employee_id' => 3,
+            'work_date' => '2026-07-01',
+            'status' => 'at_work',
+            'hours' => '8.00',
+            'updated_at' => '2026-07-01 18:00:00',
+        ]]);
+
+        $result = $backfill->apply(1, $batch);
+
+        self::assertSame(1, $result['source_count']);
+        self::assertSame(0, $result['projected_count']);
+        self::assertSame(1, $result['gap_count']);
+    }
 }

@@ -292,6 +292,13 @@ final class QualityDefectService
             'comment' => $comment,
             'changed_by' => $userId,
             'changed_at' => $changedAt,
+            'reporting_dimensions' => [
+                'contractor_id' => $defect->contractor_id,
+                'due_date' => $defect->due_date?->toDateString(),
+                'project_id' => (int) $defect->project_id,
+                'schedule_task_id' => $defect->schedule_task_id,
+                'severity' => $defect->severity->value,
+            ],
         ]);
         $this->transitionRecorder->record($defect, $history);
     }

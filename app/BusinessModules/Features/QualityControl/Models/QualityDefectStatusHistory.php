@@ -23,12 +23,14 @@ class QualityDefectStatusHistory extends Model
         'comment',
         'changed_by',
         'changed_at',
+        'reporting_dimensions',
     ];
 
     protected $casts = [
         'from_status' => QualityDefectStatusEnum::class,
         'to_status' => QualityDefectStatusEnum::class,
         'changed_at' => 'datetime',
+        'reporting_dimensions' => 'array',
     ];
 
     public function defect(): BelongsTo

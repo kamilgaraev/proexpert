@@ -36,8 +36,13 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         self::assertIsString($job);
         self::assertStringContainsString("Schema::create('report_source_sync_ledgers'", $migration);
         self::assertStringContainsString("->jsonb('cursor')", $migration);
+        self::assertStringContainsString("->jsonb('target_cursor')", $migration);
+        self::assertStringContainsString("->string('completed_owner_checksum', 64)", $migration);
         self::assertStringContainsString('lockForUpdate()', $job);
         self::assertStringContainsString('ShouldBeUniqueUntilProcessing', $job);
+        self::assertStringContainsString("'status' => 'pending'", $job);
+        self::assertStringContainsString("'completed_owner_checksum' => null", $job);
+        self::assertStringContainsString('->afterCommit()', $job);
     }
 
     #[Test]
@@ -50,7 +55,7 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         ] as $relativePath) {
             $source = file_get_contents(dirname(__DIR__, 4).'/'.$relativePath);
             self::assertIsString($source);
-            self::assertStringContainsString('ReportingSourceBackfillJob::dispatch', $source);
+            self::assertStringContainsString('ReportingSourceBackfillJob::request', $source);
             self::assertStringNotContainsString('->synchronize(', $source);
         }
     }
@@ -64,9 +69,10 @@ final class ReportingSourcePersistenceContractTest extends TestCase
         );
 
         self::assertIsString($source);
-        self::assertStringContainsString('hasUnambiguousAttribution', $source);
-        self::assertStringContainsString("count('mapping.safety_site_id') === 1", $source);
-        self::assertStringContainsString('$gaps += $ambiguous->count()', $source);
+        self::assertStringContainsString('siteIdsForCorrection', $source);
+        self::assertStringContainsString('$siteIds->count() !== 1', $source);
+        self::assertStringContainsString('$gaps++', $source);
+        self::assertStringNotContainsString("->join('safety_site_workforce_assignments as mapping'", $source);
     }
 
     #[Test]
