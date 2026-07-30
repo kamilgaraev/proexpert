@@ -523,6 +523,7 @@ final readonly class BudgetingPortfolioProjectionService
         ReportQuery $query,
         ReportProgress $progress,
     ): ReportSnapshotRef {
+        $this->assertImmutableHealthCoverage();
         $filters = $this->filters($context, $query, false);
         $projects = $this->projects($context, $query);
         $input = $this->reportInput($filters);
@@ -595,6 +596,11 @@ final readonly class BudgetingPortfolioProjectionService
         $progress->advance(100);
 
         return $snapshot;
+    }
+
+    private function assertImmutableHealthCoverage(): never
+    {
+        throw ReportContractException::fromCode(ReportErrorCode::REPORT_SOURCE_UNAVAILABLE);
     }
 
     private function materializeLiquidity(

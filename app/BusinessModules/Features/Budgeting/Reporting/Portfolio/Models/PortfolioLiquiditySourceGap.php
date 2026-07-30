@@ -21,6 +21,8 @@ final class PortfolioLiquiditySourceGap extends Model
             'source_id' => 'string',
             'missing_fields' => 'array',
             'observed_at' => 'immutable_datetime',
+            'business_effective_at' => 'immutable_datetime',
+            'recorded_at' => 'immutable_datetime',
             'resolved_at' => 'immutable_datetime',
         ];
     }

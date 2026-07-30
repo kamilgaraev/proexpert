@@ -15,11 +15,11 @@ use App\BusinessModules\Core\Reporting\Domain\DTO\ReportSnapshotRef;
 use App\BusinessModules\Core\Reporting\Domain\DTO\ReportVisibility;
 use App\BusinessModules\Core\Reporting\Domain\Enums\ReportSnapshotClassification;
 use App\BusinessModules\Core\Reporting\Domain\ValueObjects\Sha256Hash;
+use App\BusinessModules\Features\Budgeting\Models\CashGapOpeningBalance;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\BudgetingPortfolioProjectionService;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityAsOfSource;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquidityBackfillRunner;
 use App\BusinessModules\Features\Budgeting\Reporting\Portfolio\PortfolioLiquiditySourceVersionBackfill;
-use App\BusinessModules\Features\Budgeting\Models\CashGapOpeningBalance;
 use App\Models\Organization;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -27,8 +27,8 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
-use Tests\TestCase;
 use Tests\Support\Reporting\PostgresProcessRaceHarness;
+use Tests\TestCase;
 
 #[Group('postgres')]
 final class BudgetingPortfolioProviderTest extends TestCase
@@ -358,6 +358,14 @@ final class BudgetingPortfolioProviderTest extends TestCase
         }
 
         $organization = Organization::factory()->create();
+        $source = CashGapOpeningBalance::query()->create([
+            'organization_id' => $organization->getKey(),
+            'balance_date' => '2026-07-01',
+            'currency' => 'RUB',
+            'amount' => '100.00',
+            'status' => CashGapOpeningBalance::STATUS_APPROVED,
+            'approved_at' => '2026-07-01 10:00:00+00',
+        ]);
         $suffix = bin2hex(random_bytes(6));
         $harness = new PostgresProcessRaceHarness(
             sys_get_temp_dir().DIRECTORY_SEPARATOR.'portfolio-backfill-race-'.$suffix,
@@ -371,7 +379,7 @@ final class BudgetingPortfolioProviderTest extends TestCase
                         $result = app(PortfolioLiquidityBackfillRunner::class)->runChunk(
                             (int) $organization->getKey(),
                             'opening_balance',
-                            1,
+                            2,
                         );
 
                         return ['completed' => $result['has_more'] === false, 'busy' => false];
@@ -400,6 +408,22 @@ final class BudgetingPortfolioProviderTest extends TestCase
                     ->where('source_type', 'opening_balance')
                     ->count(),
             );
+            self::assertSame(
+                1,
+                DB::table('budgeting_portfolio_liquidity_source_versions')
+                    ->where('source_type', 'opening_balance')
+                    ->where('source_id', (string) $source->getKey())
+                    ->count(),
+            );
+            self::assertFalse((bool) DB::table('budgeting_portfolio_liquidity_source_versions')
+                ->where('source_type', 'opening_balance')
+                ->where('source_id', (string) $source->getKey())
+                ->value('history_complete'));
+            self::assertTrue(DB::table('budgeting_portfolio_liquidity_source_gaps')
+                ->where('source_type', 'opening_balance')
+                ->where('source_id', (string) $source->getKey())
+                ->whereJsonContains('missing_fields', 'source_history_unverifiable')
+                ->exists());
         } finally {
             $harness->terminateAndReap($children);
             $harness->cleanup();

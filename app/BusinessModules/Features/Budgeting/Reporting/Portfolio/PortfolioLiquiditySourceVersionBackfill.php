@@ -65,10 +65,12 @@ final readonly class PortfolioLiquiditySourceVersionBackfill
 
         foreach ($rows as $row) {
             $version = $this->recorder->record(
-                $row,
-                $row->getAttribute('updated_at') ?? $row->getAttribute('created_at'),
-                false,
-                $ingestedAt,
+                source: $row,
+                occurredAt: $ingestedAt,
+                tombstone: false,
+                recordedAt: $ingestedAt,
+                historyComplete: false,
+                historyGapEffectiveAt: $row->getAttribute('created_at') ?? $ingestedAt,
             );
             if ($version === null) {
                 $gapSourceIds[] = (string) $row->getKey();

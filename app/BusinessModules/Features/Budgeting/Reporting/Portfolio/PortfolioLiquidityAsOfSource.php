@@ -58,7 +58,8 @@ final readonly class PortfolioLiquidityAsOfSource
             ->get();
         $gaps = PortfolioLiquiditySourceGap::query()
             ->where('organization_id', $organizationId)
-            ->where('observed_at', '<=', $ingestedThrough)
+            ->where('business_effective_at', '<=', $asOf)
+            ->where('recorded_at', '<=', $ingestedThrough)
             ->where(static fn ($query) => $query
                 ->whereNull('resolved_at')
                 ->orWhere('resolved_at', '>', $ingestedThrough))
@@ -69,6 +70,8 @@ final readonly class PortfolioLiquidityAsOfSource
                 'source_type' => (string) $gap->source_type,
                 'source_id' => (string) $gap->source_id,
                 'missing_fields' => is_array($gap->missing_fields) ? $gap->missing_fields : [],
+                'business_effective_at' => $gap->business_effective_at?->format(DateTimeInterface::ATOM),
+                'recorded_at' => $gap->recorded_at?->format(DateTimeInterface::ATOM),
             ])
             ->all();
         if ($versions->isEmpty()) {
@@ -108,6 +111,7 @@ final readonly class PortfolioLiquidityAsOfSource
                 'created_at' => $version->created_at?->format(DateTimeInterface::ATOM),
                 'recorded_at' => $version->recorded_at?->format(DateTimeInterface::ATOM),
                 'effective_at' => $version->effective_at?->format(DateTimeInterface::ATOM),
+                'history_complete' => (bool) $version->history_complete,
                 'source_hash' => (string) $version->source_hash,
             ])->all(),
             'gaps' => $gaps,

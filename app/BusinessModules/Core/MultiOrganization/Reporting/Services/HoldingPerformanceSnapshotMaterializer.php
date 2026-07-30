@@ -92,10 +92,51 @@ final readonly class HoldingPerformanceSnapshotMaterializer
         $projectionGaps = HoldingAllocationProjectionGap::query()
             ->where('holding_id', $hierarchy->holdingId)
             ->whereIn('organization_id', $hierarchy->organizationIds)
-            ->where('observed_at', '<=', $recordedCutoff)
+            ->where('business_effective_at', '<=', $query->asOf)
+            ->where('recorded_at', '<=', $recordedCutoff)
             ->where(static fn (Builder $builder): Builder => $builder
                 ->whereNull('resolved_at')
                 ->orWhere('resolved_at', '>', $recordedCutoff))
+            ->whereNotExists(function (QueryBuilder $newer) use ($query, $recordedCutoff): void {
+                $newer
+                    ->selectRaw('1')
+                    ->from('holding_allocation_projection_gaps as newer_gap')
+                    ->whereColumn('newer_gap.holding_id', 'holding_allocation_projection_gaps.holding_id')
+                    ->whereColumn('newer_gap.organization_id', 'holding_allocation_projection_gaps.organization_id')
+                    ->whereColumn('newer_gap.source_type', 'holding_allocation_projection_gaps.source_type')
+                    ->whereColumn('newer_gap.source_id', 'holding_allocation_projection_gaps.source_id')
+                    ->whereColumn('newer_gap.source_version', 'holding_allocation_projection_gaps.source_version')
+                    ->whereColumn('newer_gap.monetary_basis', 'holding_allocation_projection_gaps.monetary_basis')
+                    ->where('newer_gap.business_effective_at', '<=', $query->asOf)
+                    ->where('newer_gap.recorded_at', '<=', $recordedCutoff)
+                    ->where(static fn (QueryBuilder $tuple): QueryBuilder => $tuple
+                        ->whereColumn(
+                            'newer_gap.business_effective_at',
+                            '>',
+                            'holding_allocation_projection_gaps.business_effective_at',
+                        )
+                        ->orWhere(static fn (QueryBuilder $sameBusiness): QueryBuilder => $sameBusiness
+                            ->whereColumn(
+                                'newer_gap.business_effective_at',
+                                'holding_allocation_projection_gaps.business_effective_at',
+                            )
+                            ->where(static fn (QueryBuilder $recorded): QueryBuilder => $recorded
+                                ->whereColumn(
+                                    'newer_gap.recorded_at',
+                                    '>',
+                                    'holding_allocation_projection_gaps.recorded_at',
+                                )
+                                ->orWhere(static fn (QueryBuilder $sameRecorded): QueryBuilder => $sameRecorded
+                                    ->whereColumn(
+                                        'newer_gap.recorded_at',
+                                        'holding_allocation_projection_gaps.recorded_at',
+                                    )
+                                    ->whereColumn(
+                                        'newer_gap.id',
+                                        '>',
+                                        'holding_allocation_projection_gaps.id',
+                                    )))));
+            })
             ->orderBy('id')
             ->get(['id', 'source_hash', 'missing_fields']);
         $projectionGapCount = $projectionGaps->count();

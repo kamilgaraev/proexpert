@@ -344,6 +344,11 @@ final readonly class HoldingAllocationFactProjector
             $hierarchyVersion = (string) ($source['hierarchy_version'] ?? 'unresolved');
         }
         sort($missingFields, SORT_STRING);
+        $businessEffectiveAt = $observedAt
+            ?? ($source['business_effective_at'] ?? null)
+            ?? ($source['recognized_on'] ?? null)
+            ?? now();
+        $recordedAt = now();
         $identity = [
             'organization_id' => $organizationId,
             'holding_id' => $holdingId,
@@ -356,7 +361,12 @@ final readonly class HoldingAllocationFactProjector
         ];
         HoldingAllocationProjectionGap::query()->firstOrCreate(
             [...$identity, 'source_hash' => hash('sha256', json_encode($identity, JSON_THROW_ON_ERROR))],
-            ['observed_at' => $observedAt ?? now(), 'resolved_at' => null],
+            [
+                'observed_at' => $recordedAt,
+                'business_effective_at' => $businessEffectiveAt,
+                'recorded_at' => $recordedAt,
+                'resolved_at' => null,
+            ],
         );
     }
 

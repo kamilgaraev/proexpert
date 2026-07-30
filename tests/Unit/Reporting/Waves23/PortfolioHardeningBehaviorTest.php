@@ -229,6 +229,49 @@ final class PortfolioHardeningBehaviorTest extends TestCase
     }
 
     #[Test]
+    public function liquidity_legacy_backfill_declares_history_unverifiable(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 4)
+            .'/app/BusinessModules/Features/Budgeting/Reporting/Portfolio/PortfolioLiquiditySourceVersionBackfill.php',
+        );
+
+        self::assertIsString($source);
+        self::assertStringContainsString('historyComplete: false', $source);
+        self::assertStringContainsString('occurredAt: $ingestedAt', $source);
+    }
+
+    #[Test]
+    public function accepted_work_observer_records_inactive_creation_anchor(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 4).'/app/Observers/ContractPerformanceActObserver.php');
+
+        self::assertIsString($source);
+        self::assertStringContainsString(
+            'HoldingAcceptedWorkEventVersion::record($act, $active, $occurredAt, historyComplete: true)',
+            $source,
+        );
+    }
+
+    #[Test]
+    public function holding_gap_queries_apply_business_and_recorded_cutoffs(): void
+    {
+        foreach ([
+            'HoldingPerformanceSnapshotMaterializer.php',
+            'IntercompanyContractFlowSnapshotMaterializer.php',
+        ] as $file) {
+            $source = file_get_contents(
+                dirname(__DIR__, 4)
+                .'/app/BusinessModules/Core/MultiOrganization/Reporting/Services/'.$file,
+            );
+
+            self::assertIsString($source);
+            self::assertStringContainsString("->where('business_effective_at', '<=', \$query->asOf)", $source);
+            self::assertStringContainsString("->where('recorded_at', '<=', \$recordedCutoff)", $source);
+        }
+    }
+
+    #[Test]
     public function liquidity_source_evidence_hash_includes_late_quality_gaps(): void
     {
         $base = [

@@ -21,10 +21,13 @@ class ContractPerformanceActObserver
 
     public function created(ContractPerformanceAct $act): void
     {
-        if ($act->is_approved
-            && in_array($act->status, [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED], true)) {
-            $occurredAt = $act->approval_date ?? $act->created_at ?? now();
-            $event = HoldingAcceptedWorkEventVersion::record($act, true, $occurredAt, historyComplete: true);
+        $active = $act->is_approved
+            && in_array($act->status, [ContractPerformanceAct::STATUS_APPROVED, ContractPerformanceAct::STATUS_SIGNED], true);
+        $occurredAt = $active
+            ? ($act->approval_date ?? $act->created_at ?? now())
+            : ($act->created_at ?? now());
+        $event = HoldingAcceptedWorkEventVersion::record($act, $active, $occurredAt, historyComplete: true);
+        if ($active) {
             $this->acceptedWorkFacts->project($act, $occurredAt, true, (int) $event->getKey());
         }
 

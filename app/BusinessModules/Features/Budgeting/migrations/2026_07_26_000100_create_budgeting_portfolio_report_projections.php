@@ -21,6 +21,7 @@ return new class extends Migration
             $table->dateTimeTz('created_at');
             $table->dateTimeTz('recorded_at');
             $table->dateTimeTz('effective_at');
+            $table->boolean('history_complete')->default(true);
             $table->jsonb('payload')->nullable();
             $table->char('source_hash', 64);
             $table->unique(
@@ -61,6 +62,8 @@ SQL);
             $table->jsonb('missing_fields');
             $table->char('source_hash', 64);
             $table->dateTimeTz('observed_at');
+            $table->dateTimeTz('business_effective_at');
+            $table->dateTimeTz('recorded_at');
             $table->dateTimeTz('resolved_at')->nullable();
             $table->unique(
                 ['organization_id', 'source_type', 'source_id', 'source_hash'],

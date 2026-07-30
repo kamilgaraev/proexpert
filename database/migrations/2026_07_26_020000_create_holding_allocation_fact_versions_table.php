@@ -162,13 +162,22 @@ SQL);
             $table->jsonb('missing_fields');
             $table->char('source_hash', 64);
             $table->dateTimeTz('observed_at');
+            $table->dateTimeTz('business_effective_at');
+            $table->dateTimeTz('recorded_at');
             $table->dateTimeTz('resolved_at')->nullable();
             $table->unique(
                 ['organization_id', 'source_type', 'source_id', 'source_version', 'monetary_basis', 'source_hash'],
                 'holding_allocation_gap_source_unique',
             );
             $table->index(
-                ['holding_id', 'organization_id', 'monetary_basis', 'resolved_at', 'id'],
+                [
+                    'holding_id',
+                    'organization_id',
+                    'monetary_basis',
+                    'business_effective_at',
+                    'recorded_at',
+                    'id',
+                ],
                 'holding_allocation_gap_readiness',
             );
         });

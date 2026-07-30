@@ -28,6 +28,8 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
         ?DateTimeInterface $occurredAt = null,
         bool $tombstone = false,
         ?DateTimeInterface $recordedAt = null,
+        bool $historyComplete = true,
+        ?DateTimeInterface $historyGapEffectiveAt = null,
     ): ?PortfolioLiquiditySourceVersion {
         $this->loadOwnerRelations($source);
         $identity = $this->identity($source);
@@ -71,15 +73,28 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
                 'created_at' => $createdAt,
                 'recorded_at' => $recordedAt,
                 'effective_at' => $effectiveAt,
+                'history_complete' => $historyComplete,
                 'payload' => $payload,
                 'source_hash' => $sourceHash,
             ],
         );
+        $persistedHistoryComplete = (bool) $version->history_complete;
+        if (! $persistedHistoryComplete) {
+            $this->recordGap(
+                $organizationId,
+                $sourceType,
+                $sourceId,
+                ['source_history_unverifiable'],
+                $historyGapEffectiveAt ?? $createdAt,
+                $recordedAt,
+            );
+        }
         PortfolioLiquiditySourceGap::query()
             ->where('organization_id', $organizationId)
             ->where('source_type', $sourceType)
             ->where('source_id', $sourceId)
             ->whereNull('resolved_at')
+            ->whereJsonDoesntContain('missing_fields', 'source_history_unverifiable')
             ->update(['resolved_at' => now()]);
 
         return $version;
@@ -179,6 +194,8 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
         string $sourceType,
         string $sourceId,
         array $missingFields,
+        ?DateTimeInterface $businessEffectiveAt = null,
+        ?DateTimeInterface $recordedAt = null,
     ): void {
         sort($missingFields, SORT_STRING);
         $identity = [
@@ -193,7 +210,12 @@ final readonly class PortfolioLiquiditySourceVersionRecorder
                 ...$identity,
                 'source_hash' => hash('sha256', CanonicalJson::encode($identity)),
             ],
-            ['observed_at' => now(), 'resolved_at' => null],
+            [
+                'observed_at' => $recordedAt ?? now(),
+                'business_effective_at' => $businessEffectiveAt ?? now(),
+                'recorded_at' => $recordedAt ?? now(),
+                'resolved_at' => null,
+            ],
         );
     }
 }

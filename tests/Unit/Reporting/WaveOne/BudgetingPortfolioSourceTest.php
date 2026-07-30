@@ -254,4 +254,17 @@ final class BudgetingPortfolioSourceTest extends TestCase
             self::assertSame(ReportErrorCode::REPORT_SCOPE_FORBIDDEN, $exception->errorCode);
         }
     }
+
+    #[Test]
+    public function project_portfolio_health_fails_closed_until_every_owner_source_is_versioned(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 4)
+            .'/app/BusinessModules/Features/Budgeting/Reporting/Portfolio/BudgetingPortfolioProjectionService.php',
+        );
+
+        self::assertIsString($source);
+        self::assertStringContainsString('assertImmutableHealthCoverage', $source);
+        self::assertStringContainsString('ReportErrorCode::REPORT_SOURCE_UNAVAILABLE', $source);
+    }
 }
