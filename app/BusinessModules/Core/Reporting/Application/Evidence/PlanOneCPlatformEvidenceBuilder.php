@@ -179,9 +179,7 @@ final readonly class PlanOneCPlatformEvidenceBuilder
         $hashes = ['platform_quality' => $qualityHash];
         foreach ($names as $name) {
             $artifact = $ci[$name];
-            if (!is_array($artifact) || ($artifact['artifact_id'] ?? null) !== 'reporting_ci_'.$name
-                || ($artifact['schema_version'] ?? null) !== '1.0.0' || ($artifact['status'] ?? null) !== 'passed'
-                || ($artifact['repository_commit'] ?? null) !== $commit || ($artifact['source_hashes'] ?? null) !== $this->sourceHashes()) {
+            if (!is_array($artifact) || !$this->isValidCiArtifact($artifact, $name, $commit)) {
                 throw new RuntimeException('plan_one_c_platform_evidence_invalid');
             }
             if (($artifact['published_count'] ?? null) !== $evidence['published_count']
@@ -211,6 +209,30 @@ final readonly class PlanOneCPlatformEvidenceBuilder
             throw new RuntimeException('plan_one_c_platform_evidence_invalid');
         }
         return $record;
+    }
+
+    private function isValidCiArtifact(array $artifact, string $name, string $commit): bool
+    {
+        if (array_keys($artifact) !== [
+            'artifact_id', 'schema_version', 'status', 'repository_commit', 'source_hashes', 'command_record',
+            'output', 'published_count', 'binding_count', 'unresolved_risks',
+        ] || ($artifact['artifact_id'] ?? null) !== 'reporting_ci_'.$name
+            || ($artifact['schema_version'] ?? null) !== '1.0.0' || ($artifact['status'] ?? null) !== 'passed'
+            || ($artifact['repository_commit'] ?? null) !== $commit || ($artifact['source_hashes'] ?? null) !== $this->sourceHashes()
+            || !is_array($artifact['output'] ?? null) || array_keys($artifact['output']) !== ['check_id', 'status', 'count']
+            || ($artifact['output']['check_id'] ?? null) !== 'reporting_ci_'.$name
+            || ($artifact['output']['status'] ?? null) !== 'passed' || !is_int($artifact['output']['count'] ?? null)) {
+            return false;
+        }
+        try {
+            $record = $this->commandRecord($artifact['command_record'] ?? null);
+        } catch (RuntimeException) {
+            return false;
+        }
+
+        return $record['command'] === 'reporting-ci-'.$name
+            && $record['count'] === $artifact['output']['count']
+            && hash_equals($this->documentHash($artifact['output']), $record['output_sha256']);
     }
 
     private function validateQualityArtifact(array $artifact): void
@@ -268,16 +290,22 @@ final readonly class PlanOneCPlatformEvidenceBuilder
         return $count;
     }
 
-    /** @return array{manifest:string,resource:string,permission:string,translation:string,route:string,schema:string} */
+    /** @return array{manifest:string,official_manifest:string,generated_catalog:string,resource:string,permission:string,translation:string,route:string,schema:string,candidate_validation:string,conformance_framework:string,publication_framework:string,platform_quality_ledger:string} */
     private function sourceHashes(): array
     {
         return [
             'manifest' => $this->sha256('app/BusinessModules/Core/Reporting/resources/management-catalog.v1.yaml'),
+            'official_manifest' => $this->sha256('app/BusinessModules/Core/Reporting/resources/official-document-catalog.v1.yaml'),
+            'generated_catalog' => $this->sha256('docs/reports/generated/reporting-catalog.v1.json'),
             'resource' => $this->sha256('docs/reports/contracts/reporting-admin-resources.v1.schema.json'),
-            'permission' => $this->sha256('config/RoleDefinitions/admin/web_admin.json'),
-            'translation' => $this->sha256('lang/ru/permissions.php'),
-            'route' => $this->sha256('routes/api.php'),
+            'permission' => $this->sha256('docs/reports/generated/report-permissions.v1.json'),
+            'translation' => $this->sha256('lang/ru/reports.php'),
+            'route' => $this->sha256('app/BusinessModules/Core/Reporting/routes.php'),
             'schema' => $this->sha256('app/BusinessModules/Core/Reporting/resources/management-catalog.v1.schema.json'),
+            'candidate_validation' => $this->sha256('docs/reports/contracts/report-candidate-validation.schema.json'),
+            'conformance_framework' => $this->sha256('docs/reports/contracts/report-conformance-evidence.schema.json'),
+            'publication_framework' => $this->sha256('docs/reports/contracts/report-publication-ledger.schema.json'),
+            'platform_quality_ledger' => $this->sha256('docs/reports/contracts/report-quality-evidence.schema.json'),
         ];
     }
 
